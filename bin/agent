@@ -288,8 +288,8 @@ cmd_dispatch() {
 
 cmd_loop() {
   local repo img; repo="$(resolve_repo)"; img="$(image_for_repo "$repo")"
-  local queue="$repo/.agent/TASKS.md"; [ -f "$queue" ] || queue="$repo/TASKS.md"
-  [ -f "$queue" ] || die "no TASKS.md found — run 'agent init' first"
+  local queue="$repo/.agent/TASKS.md"
+  [ -f "$queue" ] || die "no .agent/TASKS.md found — run 'agent init' first"
   image_exists "$img" || die "image '$img' not built — run 'agent build'"
   local work='Read .agent/TASKS.md and AGENTS.md, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains.'
   local audit='Audit: for every [x] in .agent/TASKS.md, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.'
@@ -577,7 +577,7 @@ when it's mechanically checkable.
 AGENTS_EOF
 }
 _tpl_tasks() { cat <<'TASKS_EOF'
-# TASKS.md — the work queue.
+# .agent/TASKS.md — the work queue.
 # [ ] todo   [w] claimed/in-progress   [x] done+gated+committed   [B] blocked
 
 - [ ] Example task (done when: the gate is green and the change is committed)
