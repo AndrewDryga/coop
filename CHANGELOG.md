@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+- Ship generic workflow skills — `/plan`, `/work`, `/batch`, `/verify-api` — under
+  `skills/`. `agent init` installs them into the repo's shared `.claude/skills/`
+  (Codex gets them via the symlink), without clobbering ones you've edited, and
+  the generated `AGENTS.md` points the agent at them. Adapted from the production
+  set (emisar), with the repo-specific parts (Iron Laws, Elixir contexts) removed.
+
 ## 1.3.0
 
 - `agent init` now scaffolds the full `.agent/` working set — `TASKS.md`,

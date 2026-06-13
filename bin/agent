@@ -16,7 +16,7 @@
 #
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 
 # Resolve this script through symlinks to find the toolkit dir (so the
 # convenient per-agent config folder is found no matter where 'agent' is run).
@@ -342,6 +342,17 @@ cmd_init() {
   _link_if_absent AGENTS.md "$repo/GEMINI.md"
   mkdir -p "$repo/.claude/skills" "$repo/.codex"
   _link_if_absent ../.claude/skills "$repo/.codex/skills"
+  # ship the generic workflow skills (plan → work → batch, verify-api) into the
+  # shared skills dir; both agents get them via the symlink. Don't clobber edits.
+  if [ -d "$AGENT_BOX_HOME/skills" ]; then
+    local s name
+    for s in "$AGENT_BOX_HOME"/skills/*/; do
+      [ -d "$s" ] || continue
+      name="$(basename "$s")"
+      if [ -e "$repo/.claude/skills/$name" ]; then info "kept existing skill $name"
+      else cp -R "$s" "$repo/.claude/skills/$name"; info "added skill /$name"; fi
+    done
+  fi
   # keep ephemeral state out of git, but track the rules/ knowledge base
   mkdir -p "$repo/.agent/rules"
   if ! grep -qs '^\.agent/\*' "$repo/.gitignore" 2>/dev/null; then
@@ -353,7 +364,7 @@ cmd_init() {
     _write_if_absent "$repo/compose.agent.yml" _tpl_compose
     info "stack '$stack': review Dockerfile.agent, then 'agent build' and 'agent up'"
   fi
-  info "scaffolded AGENTS.md, .agent/, and .claude/ hooks into $repo"
+  info "scaffolded AGENTS.md, .agent/, .claude/ hooks, and workflow skills into $repo"
   [ -n "$stack" ] && info "then: agent up && agent   (db/redis reachable in the box)"
   info "edit .agent/TASKS.md, then run 'agent loop'"
 }
@@ -587,6 +598,12 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
 - `IDEAS.md` — product ideas as short sketches. Never auto-implemented; a human
   approves and moves one into TASKS.md. The loop reads TASKS.md only.
 - `rules/` — the taste knowledge base (the one committed part).
+
+## Skills
+Use the workflow skills instead of hand-rolling: `/plan` before a multi-file
+change, `/work` to execute a plan step by step against the gate, `/batch` to
+drain `.agent/TASKS.md` unattended, `/verify-api` before calling anything you're
+not sure exists. They live in `.claude/skills/` (Codex shares them).
 
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it in

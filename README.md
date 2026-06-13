@@ -101,6 +101,12 @@ It also wires the tool-neutral setup so every agent reads one source of truth:
 shares Claude's skills directory. A real (non-symlink) instruction file you
 already have is left untouched.
 
+And it installs a set of generic **workflow skills** into `.claude/skills/`
+(shared with Codex): `/plan` a multi-file change, `/work` it step-by-step against
+the gate, `/batch` to drain `.agent/TASKS.md` unattended, and `/verify-api`
+before calling anything you're unsure of. Edit them freely — `init` won't
+overwrite a skill you've changed.
+
 ### The `.agent/` working folder
 
 `init` creates a tool-neutral working folder the agent reads back on every boot
@@ -249,6 +255,7 @@ optionally carries a `Dockerfile.agent` (its toolchain) and `compose.agent.yml`
 bin/agent      the CLI: claude · codex · gemini · login · run · shell · clone
                · dispatch · up · down · loop · init · doctor · build
 agents/        per-agent auth + settings (claude/ codex/ gemini/ env), gitignored
+skills/        generic workflow skills (plan · work · batch · verify-api) init installs
 Dockerfile     reference base image (agent build has a built-in copy too)
 install.sh     symlink onto PATH, build, verify
 Makefile       install · test · doctor · lint · check
