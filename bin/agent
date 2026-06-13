@@ -16,7 +16,7 @@
 #
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Resolve this script through symlinks to find the toolkit dir (so the
 # convenient per-agent config folder is found no matter where 'agent' is run).
@@ -327,7 +327,10 @@ cmd_init() {
   mkdir -p "$repo/.agent" "$repo/.claude/hooks"
   _write_if_absent "$repo/AGENTS.md" _tpl_agents
   _write_if_absent "$repo/.agent/TASKS.md" _tpl_tasks
+  _write_if_absent "$repo/.agent/BACKLOG.md" _tpl_backlog
   _write_if_absent "$repo/.agent/LOG.md" _tpl_log
+  _write_if_absent "$repo/.agent/PENDING_DECISIONS.md" _tpl_pending
+  _write_if_absent "$repo/.agent/IDEAS.md" _tpl_ideas
   _write_if_absent "$repo/.claude/settings.json" _tpl_settings
   _write_if_absent "$repo/.claude/hooks/stop-guard.sh" _tpl_stophook
   _write_if_absent "$repo/.claude/hooks/commit-gate.sh" _tpl_commithook
@@ -570,6 +573,21 @@ _tpl_agents() { cat <<'AGENTS_EOF'
 - One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
 - Never stop while a `[ ]` remains.
 
+## The .agent/ working state
+Durable working memory the BOOT protocol reads back. Only `rules/` is committed;
+the rest is local (git-ignored) so it never creates commit noise or merge churn.
+- `TASKS.md` — the work queue (the four states above).
+- `BACKLOG.md` — work you discover *outside* the current task: capture it, stay on
+  task, keep going. Not auto-worked, not scanned by the Stop hook; a human
+  promotes an item into TASKS.md when it's time.
+- `LOG.md` — your chain-of-thought: what you did and *why*, so intent survives a
+  compaction. Append a short entry per decision/task, newest first.
+- `PENDING_DECISIONS.md` — anything needing a human call: the decision, the
+  options, your recommendation. Mark the task `[B]`. Never guess on a one-way door.
+- `IDEAS.md` — product ideas as short sketches. Never auto-implemented; a human
+  approves and moves one into TASKS.md. The loop reads TASKS.md only.
+- `rules/` — the taste knowledge base (the one committed part).
+
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it in
 .agent/rules/, sweep the codebase for siblings, and graduate it into a lint/hook
@@ -580,12 +598,40 @@ _tpl_tasks() { cat <<'TASKS_EOF'
 # .agent/TASKS.md — the work queue.
 # [ ] todo   [w] claimed/in-progress   [x] done+gated+committed   [B] blocked
 
+## Active
+
 - [ ] Example task (done when: the gate is green and the change is committed)
 TASKS_EOF
 }
 _tpl_log() { cat <<'LOG_EOF'
-# LOG.md — what I did and why. One short entry per task, newest last.
+# .agent/LOG.md — chain-of-thought: what I did and why, so it survives compaction.
+# Append a short entry per decision/task, newest first under ## Recent.
+
+## Recent
 LOG_EOF
+}
+_tpl_backlog() { cat <<'BACKLOG_EOF'
+# .agent/BACKLOG.md — work discovered outside the current task's scope.
+# Capture it the moment you see it, then stay on task. Not auto-worked and not
+# scanned by the Stop hook; a human promotes an item into .agent/TASKS.md.
+
+- (nothing yet)
+BACKLOG_EOF
+}
+_tpl_pending() { cat <<'PENDING_EOF'
+# .agent/PENDING_DECISIONS.md — anything that needs a human call.
+# For each: the decision needed · the options · your recommendation.
+# Mark the related task [B] and move on. Never guess on a one-way door.
+
+- (nothing yet)
+PENDING_EOF
+}
+_tpl_ideas() { cat <<'IDEAS_EOF'
+# .agent/IDEAS.md — product ideas as short sketches. Never auto-implemented;
+# a human approves and moves an idea into .agent/TASKS.md first.
+
+- (nothing yet)
+IDEAS_EOF
 }
 _tpl_settings() { cat <<'SETTINGS_EOF'
 {

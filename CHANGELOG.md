@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+- `agent init` now scaffolds the full `.agent/` working set — `TASKS.md`,
+  `BACKLOG.md`, `LOG.md`, `PENDING_DECISIONS.md`, `IDEAS.md`, `rules/` — and the
+  generated `AGENTS.md` documents each one's role, so the canonical manual that's
+  re-injected after a compaction tells the agent how to use them. Matches the
+  layout used in production (emisar). Everything but `rules/` stays git-ignored.
+
 ## 1.2.0
 
 - `agent dispatch <name>` — the fleet unit: clone into an isolated workspace,
