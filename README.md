@@ -143,22 +143,61 @@ generation, is your bottleneck.
 ### Drive it from Zed (ACP)
 
 The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer
-the sandboxed agent from Zed's agent panel. Add it to Zed's `settings.json`:
+the sandboxed agent from Zed's own agent panel — Zed is the cockpit, the box
+stays the cage. Connect it in four steps:
+
+**1. Install and build** (once). `./install.sh` puts `agent` on your `PATH` and
+builds the image with the ACP adapters baked in. Check it resolves:
+
+```bash
+command -v agent      # e.g. /Users/you/.local/bin/agent
+```
+
+**2. Authenticate** the agent you'll use — once; the token persists in
+`agents/<agent>/`:
+
+```bash
+agent login claude    # or: agent login codex   (gemini logs in on first use)
+```
+
+**3. Register it in Zed.** In the agent panel, use **Add Custom Agent** (it
+writes the entry for you), or edit `settings.json` directly:
 
 ```jsonc
 {
   "agent_servers": {
-    "agent-box": { "type": "custom", "command": "agent", "args": ["acp", "claude"], "env": {} }
+    "agent-box": {
+      "type": "custom",
+      "command": "agent",          // absolute path if Zed's PATH lacks ~/.local/bin
+      "args": ["acp", "claude"],   // or "codex" / "gemini"
+      "env": {}
+    }
   }
 }
 ```
 
-`agent acp [claude|codex|gemini]` runs the matching ACP adapter
+GUI apps don't always inherit your shell's `PATH`. If Zed can't find `agent`,
+use the absolute path from step 1 as `command`.
+
+**4. Use it.** Open Zed's agent panel, pick **agent-box** from the agent
+dropdown, and start a thread. For each project window Zed launches
+`agent acp claude` with that project as the cwd; the agent runs in the box, edits
+your files over ACP, and you approve its tool calls in Zed (or let them run — the
+box is the boundary).
+
+Under the hood, `agent acp [claude|codex|gemini]` runs the matching adapter
 (`@zed-industries/claude-code-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
-inside the box over stdio. It mounts the repo at its **real host path** (not
-`/workspace`) so Zed's absolute paths resolve, attaches stdin without a pty, and
-keeps secrets shadowed. Authenticate once with `agent login claude`; the token
-persists in `agents/claude/`. Zed becomes the cockpit, the box stays the cage.
+inside the box over stdio: the repo is mounted at its **real host path** (not
+`/workspace`) so Zed's absolute paths resolve, stdin is attached without a pty
+(ACP is JSON-RPC over stdio), and your secrets stay shadowed.
+
+Notes:
+- **Services work too.** If the repo has a `compose.agent.yml`, `agent up` first
+  — the ACP box joins the same network, so the agent reaches `db`/`redis` by name.
+- **Stack images need the adapters.** A repo with its own `Dockerfile.agent`
+  runs in *that* image, which doesn't ship the ACP adapters by default — add
+  `@zed-industries/claude-code-acp` (and `@zed-industries/codex-acp`) to its
+  `npm install -g` line if you want ACP there.
 
 ## Project dependencies: toolchain in the image, services alongside
 
