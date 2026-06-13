@@ -16,7 +16,7 @@
 #
 set -euo pipefail
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 
 # Resolve this script through symlinks to find the toolkit dir (so the
 # convenient per-agent config folder is found no matter where 'agent' is run).
@@ -122,7 +122,10 @@ box_run() {
   compute_mounts "$repo"
   [ "$SHADOW_COUNT" -gt 0 ] && info "shadowed $SHADOW_COUNT secret path(s)"
   local args=(run --rm)
-  [ -t 0 ] && args+=(-it)
+  # ACP needs stdin attached (-i) but never a pty (-t corrupts the JSON-RPC
+  # stream); an interactive run gets -it; a headless/piped run needs neither.
+  if [ "${FORCE_NO_TTY:-0}" = 1 ]; then args+=(-i)
+  elif [ -t 0 ]; then args+=(-it); fi
   args+=("${MOUNTS[@]}")
   # Each agent's auth + settings, bind-mounted from the convenient folder so a
   # login or settings change persists on the host. Skipped in `doctor`.
@@ -183,7 +186,8 @@ cmd_build() {
     "$RT" build -t "$BASE_IMAGE" - <<'DOCKERFILE_EOF'
 FROM node:22
 RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
- && git config --system --add safe.directory /workspace
+      @zed-industries/claude-code-acp @zed-industries/codex-acp \
+ && git config --system --add safe.directory '*'
 USER node
 WORKDIR /workspace
 DOCKERFILE_EOF
@@ -248,6 +252,25 @@ cmd_login() {
 }
 
 cmd_shell() { launch "$SHELL_CMD"; }
+
+# Run the box as an ACP agent for an editor (e.g. Zed). The editor launches this
+# with stdin/stdout piped and cwd = the project root, then speaks JSON-RPC over
+# stdio. We mount the repo at its *real* host path (not /workspace) so the
+# editor's absolute paths resolve, allocate no tty, and keep secrets shadowed.
+cmd_acp() {
+  local tool="${1:-claude}" cmd
+  case "$tool" in
+    claude) cmd="claude-code-acp" ;;
+    codex)  cmd="codex-acp" ;;
+    gemini) cmd="gemini --acp" ;;
+    *) die "usage: agent acp [claude|codex|gemini]" ;;
+  esac
+  local repo img; repo="$(resolve_repo)"; img="$(image_for_repo "$repo")"
+  image_exists "$img" || die "image '$img' not built — run 'agent build'"
+  # Mount at the host path (not /workspace) and never allocate a tty.
+  WORKDIR="$repo"; FORCE_NO_TTY=1
+  box_run "$img" "$repo" -- $cmd
+}
 
 cmd_clone() {
   local name="${1:-}"; [ -n "$name" ] || die "usage: agent clone <name>"
@@ -438,6 +461,7 @@ ${C_B}usage${C_N}
   agent                      sandboxed \`claude\` in the current repo
   agent claude|codex|gemini  a specific agent, with its autonomous flags
   agent login <agent>        authenticate an agent (persists in agents/<agent>/)
+  agent acp [agent]          run as an ACP agent over stdio (point Zed at this)
   agent run -- <cmd...>      run any command in the box
   agent shell                a shell in the box
   agent clone <name>         a secrets-free clone workspace + an agent in it
@@ -457,6 +481,10 @@ ${C_B}per-project environment${C_N}
 ${C_B}a fleet${C_N}  split the queue into .agent/TASKS.<name>.md, then:
   agent dispatch perf > perf.log 2>&1 &
   agent dispatch deps > deps.log 2>&1 &   # each gets its own clone + branch
+
+${C_B}drive from Zed (ACP)${C_N}  add to Zed settings.json, then pick it in the agent panel:
+  "agent_servers": { "agent-box": { "type": "custom",
+      "command": "agent", "args": ["acp", "claude"], "env": {} } }
 
 ${C_B}auth & settings${C_N}  per-agent, in ${CONFIG_DIR#"$HOME"/}/
   claude/ codex/ gemini/  ->  mounted at ~/.claude ~/.codex ~/.gemini in the box
@@ -725,6 +753,7 @@ main() {
   case "$sub" in
     claude|codex|gemini)  shift || true; launch_agent "$sub" "$@" ;;
     login)                shift || true; cmd_login "$@" ;;
+    acp)                  shift || true; cmd_acp "$@" ;;
     up)                   shift || true; cmd_up "$@" ;;
     down)                 shift || true; cmd_down "$@" ;;
     run)                  shift || true; cmd_run "$@" ;;

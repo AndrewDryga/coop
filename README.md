@@ -140,6 +140,26 @@ Each clone is isolated (no shared working copy, no shared remote). Review and
 merge the branches like contractor PRs. Add agents until *review*, not
 generation, is your bottleneck.
 
+### Drive it from Zed (ACP)
+
+The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer
+the sandboxed agent from Zed's agent panel. Add it to Zed's `settings.json`:
+
+```jsonc
+{
+  "agent_servers": {
+    "agent-box": { "type": "custom", "command": "agent", "args": ["acp", "claude"], "env": {} }
+  }
+}
+```
+
+`agent acp [claude|codex|gemini]` runs the matching ACP adapter
+(`@zed-industries/claude-code-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
+inside the box over stdio. It mounts the repo at its **real host path** (not
+`/workspace`) so Zed's absolute paths resolve, attaches stdin without a pty, and
+keeps secrets shadowed. Authenticate once with `agent login claude`; the token
+persists in `agents/claude/`. Zed becomes the cockpit, the box stays the cage.
+
 ## Project dependencies: toolchain in the image, services alongside
 
 Real projects need a language toolchain (Elixir, Python, …) and stateful
@@ -252,7 +272,7 @@ optionally carries a `Dockerfile.agent` (its toolchain) and `compose.agent.yml`
 (its services):
 
 ```
-bin/agent      the CLI: claude · codex · gemini · login · run · shell · clone
+bin/agent      the CLI: claude · codex · gemini · login · acp · run · shell · clone
                · dispatch · up · down · loop · init · doctor · build
 agents/        per-agent auth + settings (claude/ codex/ gemini/ env), gitignored
 skills/        generic workflow skills (plan · work · batch · verify-api) init installs

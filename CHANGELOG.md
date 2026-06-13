@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+- `agent acp [claude|codex|gemini]` — run the box as an ACP agent over stdio, so
+  editors like Zed can drive the sandboxed agent. Mounts the repo at its real
+  host path (so the editor's absolute paths resolve), attaches stdin without a
+  pty, and keeps secrets shadowed. Point Zed's `agent_servers` at
+  `command: "agent", args: ["acp", "claude"]`.
+- The default image now bakes in the ACP adapters (`@zed-industries/claude-code-acp`,
+  `@zed-industries/codex-acp`; Gemini's is built in) and trusts any git worktree
+  (`safe.directory '*'`) so git works on the host-path mount.
+
 ## 1.4.0
 
 - Ship generic workflow skills — `/plan`, `/work`, `/batch`, `/verify-api` — under
