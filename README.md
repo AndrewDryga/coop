@@ -85,7 +85,7 @@ git fetch ../<repo>-agents/perf perf:review/perf && git diff @...review/perf
 ### Leave it running
 
 ```bash
-agent init             # scaffold AGENTS.md, .agent/TASKS.md, and the hooks
+agent init             # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 # ...fill in .agent/TASKS.md with checkbox tasks...
 agent loop             # disposable agents work the queue until it's done, then audit
 ```
@@ -100,6 +100,24 @@ It also wires the tool-neutral setup so every agent reads one source of truth:
 `CLAUDE.md` and `GEMINI.md` symlink to the canonical `AGENTS.md`, and Codex
 shares Claude's skills directory. A real (non-symlink) instruction file you
 already have is left untouched.
+
+### The `.agent/` working folder
+
+`init` creates a tool-neutral working folder the agent reads back on every boot
+(and after each compaction). Everything here is local working state and
+git-ignored — **except `rules/`**, the shared knowledge base, which is committed.
+
+| File | What it's for |
+|---|---|
+| `TASKS.md` | the work queue — four states (`[ ]` todo · `[w]` claimed · `[x]` done+gated+committed · `[B]` blocked); the loop reads only this |
+| `BACKLOG.md` | work discovered *outside* the current task — captured so it's not lost, but not auto-worked; a human promotes items into `TASKS.md` |
+| `LOG.md` | the agent's chain-of-thought (what + why), so intent survives a compaction |
+| `PENDING_DECISIONS.md` | anything needing a human call — the decision, the options, the agent's recommendation; the task goes `[B]` |
+| `IDEAS.md` | product ideas, never auto-implemented — a human moves one into `TASKS.md` first |
+| `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
+
+The generated `AGENTS.md` documents these too, so the canonical manual that's
+re-injected after a compaction tells the agent how to use them.
 
 ### A fleet
 
