@@ -1,0 +1,683 @@
+#!/usr/bin/env bash
+#
+# agent — run a coding agent in a sandbox it can't escape, with your repo's
+#         secrets shadowed out of reach. Your daily driver.
+#
+#   agent                     sandboxed `claude` in the current repo
+#   agent run -- npm test     run any command in the box
+#   agent shell               a shell in the box, to poke around
+#   agent clone perf          a secrets-free clone workspace + an agent in it
+#   agent loop                work .agent/TASKS.md unattended until it's done
+#   agent init                scaffold the queue + hooks into this repo
+#   agent doctor              verify the box still contains the agent
+#   agent build               (re)build the agent-box image
+#
+# Config: env vars below, or ~/.config/agent-box/agent.conf (sourced).
+#
+set -euo pipefail
+
+VERSION="1.2.0"
+
+# Resolve this script through symlinks to find the toolkit dir (so the
+# convenient per-agent config folder is found no matter where 'agent' is run).
+_src="${BASH_SOURCE[0]}"
+while [ -h "$_src" ]; do
+  _d="$(cd -P "$(dirname "$_src")" && pwd)"; _src="$(readlink "$_src")"
+  case "$_src" in /*) ;; *) _src="$_d/$_src" ;; esac
+done
+AGENT_BOX_HOME="$(cd -P "$(dirname "$_src")/.." && pwd)"
+
+# ---------------------------------------------------------------- defaults ----
+BASE_IMAGE="${AGENT_BASE_IMAGE:-agent-box}"
+WORKDIR="${AGENT_WORKDIR:-/workspace}"
+HOME_IN_BOX="${AGENT_HOME_IN_BOX:-/home/node}"
+SHELL_CMD="${AGENT_SHELL:-bash}"
+
+# The convenient folder: each agent's auth + settings, mounted into the box.
+#   <config>/claude -> ~/.claude   <config>/codex -> ~/.codex
+#   <config>/gemini -> ~/.gemini   <config>/env   -> env vars (API keys)
+CONFIG_DIR="${AGENT_CONFIG_DIR:-$AGENT_BOX_HOME/agents}"
+AGENTS=(claude codex gemini)
+
+# Per-agent default command — autonomous, since the box is already the sandbox.
+CLAUDE_CMD="${AGENT_CLAUDE_CMD:-claude --dangerously-skip-permissions}"
+CODEX_CMD="${AGENT_CODEX_CMD:-codex --dangerously-bypass-approvals-and-sandbox}"
+GEMINI_CMD="${AGENT_GEMINI_CMD:-gemini --yolo}"
+
+# Anything matching these never enters the VM.
+SECRET_GLOBS=(
+  '.env' '.env.*' '*.secret' '*.secrets'
+  '*.tfvars' '*.tfstate' '*.tfstate.*'
+  '*.pem' '*.key' '*.p12' '*.pfx' '*.jks'
+  'id_rsa*' 'id_ed25519*' 'id_ecdsa*'
+  '.netrc' '.npmrc' '.pypirc' '.git-credentials'
+  'secrets' '.secrets' 'credentials' '.aws' '.kube' '.ssh' '.gnupg'
+)
+# Templates are documentation — the agent should see them.
+ALLOW_GLOBS=( '*.example' '*.sample' '*.template' )
+
+CONF="${AGENT_CONF:-$HOME/.config/agent-box/agent.conf}"
+# shellcheck source=/dev/null
+[ -f "$CONF" ] && . "$CONF"
+
+# ------------------------------------------------------------------- utils ----
+if [ -t 2 ]; then C_G=$'\033[32m'; C_R=$'\033[31m'; C_D=$'\033[2m'; C_B=$'\033[1m'; C_N=$'\033[0m'
+else C_G=; C_R=; C_D=; C_B=; C_N=; fi
+info() { printf '%sagent:%s %s\n' "$C_D" "$C_N" "$*" >&2; }
+die()  { printf '%sagent: %s%s\n' "$C_R" "$*" "$C_N" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+detect_runtime() {
+  if [ -n "${AGENT_RUNTIME:-}" ]; then echo "$AGENT_RUNTIME"; return; fi
+  for r in container docker podman; do have "$r" && { echo "$r"; return; }; done
+  die "no container runtime found — install Apple 'container' (macOS 26), Docker, or Podman"
+}
+RT="$(basename "$(detect_runtime)")"
+
+ensure_daemon() {
+  [ "$RT" = docker ] && ! docker info >/dev/null 2>&1 \
+    && die "Docker is installed but not running — start Docker Desktop and retry"
+  return 0
+}
+
+resolve_repo() {
+  if [ -n "${AGENT_REPO:-}" ]; then ( cd "$AGENT_REPO" && pwd ); return; fi
+  git rev-parse --show-toplevel 2>/dev/null || pwd
+}
+
+# Deterministic compose project name for a repo, so the box can find its network.
+services_project() {
+  echo "agentbox-$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+}
+compose_file() {
+  local repo="$1" f
+  for f in "$repo/compose.agent.yml" "$repo/.agent/compose.yml"; do
+    [ -f "$f" ] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
+# Compute mount args for a repo. Sets MOUNTS (array) and SHADOW_COUNT.
+compute_mounts() {
+  local repo="$1" decoy n path rel
+  decoy="$(mktemp)"
+  MOUNTS=(-v "$repo:$WORKDIR")
+  SHADOW_COUNT=0
+  local match=(-name "${SECRET_GLOBS[0]}")
+  for n in "${SECRET_GLOBS[@]:1}"; do match+=(-o -name "$n"); done
+  local skip=()
+  for n in "${ALLOW_GLOBS[@]}"; do skip+=(! -name "$n"); done
+  while IFS= read -r -d '' path; do
+    rel="${path#"$repo"/}"
+    if [ -d "$path" ]; then MOUNTS+=(--tmpfs "$WORKDIR/$rel")
+    else MOUNTS+=(-v "$decoy:$WORKDIR/$rel:ro"); fi
+    SHADOW_COUNT=$((SHADOW_COUNT + 1))
+  done < <(find "$repo" -name .git -prune -o \( "${match[@]}" \) "${skip[@]}" -print0 -prune)
+}
+
+# box_run <image> <repo> -- cmd...   (reads optional EXTRA_RUN_ARGS array)
+box_run() {
+  local image="$1" repo="$2"; shift 2; [ "${1:-}" = -- ] && shift
+  ensure_daemon
+  compute_mounts "$repo"
+  [ "$SHADOW_COUNT" -gt 0 ] && info "shadowed $SHADOW_COUNT secret path(s)"
+  local args=(run --rm)
+  [ -t 0 ] && args+=(-it)
+  args+=("${MOUNTS[@]}")
+  # Each agent's auth + settings, bind-mounted from the convenient folder so a
+  # login or settings change persists on the host. Skipped in `doctor`.
+  if [ "${AGENT_HOMES:-1}" = 1 ]; then
+    local t
+    for t in "${AGENTS[@]}"; do
+      mkdir -p "$CONFIG_DIR/$t"
+      args+=(-v "$CONFIG_DIR/$t:$HOME_IN_BOX/.$t")
+    done
+    [ -f "$CONFIG_DIR/env" ] && args+=(--env-file "$CONFIG_DIR/env")
+    # One canonical instruction file, wired into each agent's native global path
+    # — unless that agent has its own override in its folder. One source of truth.
+    local ins="$CONFIG_DIR/INSTRUCTIONS.md"
+    if [ -f "$ins" ]; then
+      [ -f "$CONFIG_DIR/claude/CLAUDE.md" ] || args+=(-v "$ins:$HOME_IN_BOX/.claude/CLAUDE.md:ro")
+      [ -f "$CONFIG_DIR/codex/AGENTS.md"  ] || args+=(-v "$ins:$HOME_IN_BOX/.codex/AGENTS.md:ro")
+      [ -f "$CONFIG_DIR/gemini/GEMINI.md" ] || args+=(-v "$ins:$HOME_IN_BOX/.gemini/GEMINI.md:ro")
+    fi
+  fi
+  if [ "${#EXTRA_RUN_ARGS[@]}" -gt 0 ]; then args+=("${EXTRA_RUN_ARGS[@]}"); fi
+  # Join the sibling-services network if `agent up` started one for this repo,
+  # so the box reaches db / redis / ... by name. (Skipped in doctor.)
+  if [ "${AGENT_NETWORK:-1}" = 1 ]; then
+    local _net; _net="${AGENT_SERVICES_NET:-$(services_project "$repo")_default}"
+    "$RT" network inspect "$_net" >/dev/null 2>&1 && args+=(--network "$_net")
+  fi
+  # A warm, shared dependency cache across disposable runs.
+  [ "${AGENT_CACHE:-1}" = 1 ] && args+=(-v "agentbox-cache:$HOME_IN_BOX/.cache")
+  args+=(-w "$WORKDIR" "$image" "$@")
+  "$RT" "${args[@]}"
+}
+EXTRA_RUN_ARGS=()
+[ -n "${AGENT_RUN_ARGS:-}" ] && read -ra EXTRA_RUN_ARGS <<< "$AGENT_RUN_ARGS"
+
+image_exists() { "$RT" image inspect "${1:-$BASE_IMAGE}" >/dev/null 2>&1; }
+
+# Which image a repo runs in. An explicit AGENT_IMAGE always wins (used to point
+# a dispatched clone at its origin's image). Otherwise a repo with its own
+# Dockerfile.agent gets its own tag, so a project's toolchain never clobbers the
+# shared base. Everything else uses the base.
+image_for_repo() {
+  if [ -n "${AGENT_IMAGE:-}" ]; then echo "$AGENT_IMAGE"; return; fi
+  if [ -f "$1/Dockerfile.agent" ]; then
+    echo "agentbox-$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+  else echo "$BASE_IMAGE"; fi
+}
+
+# ---------------------------------------------------------------- commands ----
+cmd_build() {
+  ensure_daemon
+  local repo; repo="$(resolve_repo)"
+  if [ -f "$repo/Dockerfile.agent" ]; then
+    local img; img="$(image_for_repo "$repo")"
+    info "building $img from Dockerfile.agent (this project's toolchain)"
+    "$RT" build -t "$img" -f "$repo/Dockerfile.agent" "$repo"
+  else
+    info "building $BASE_IMAGE (shared base)"
+    "$RT" build -t "$BASE_IMAGE" - <<'DOCKERFILE_EOF'
+FROM node:22
+RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+ && git config --system --add safe.directory /workspace
+USER node
+WORKDIR /workspace
+DOCKERFILE_EOF
+  fi
+}
+
+launch() {            # run a command in the box against the current repo
+  local repo img; repo="$(resolve_repo)"; img="$(image_for_repo "$repo")"
+  image_exists "$img" || die "image '$img' not built — run 'agent build' (or './install.sh')"
+  box_run "$img" "$repo" -- "$@"
+}
+
+cmd_up() {            # start the project's sibling services (db, redis, ...)
+  ensure_daemon
+  [ "$RT" = container ] && die "Apple 'container' has no compose yet — use Docker or Podman for services"
+  local repo file proj; repo="$(resolve_repo)"
+  file="$(compose_file "$repo")" || die "no compose.agent.yml — run 'agent init --stack <name>' to scaffold one"
+  proj="$(services_project "$repo")"
+  info "starting services from ${file#"$repo"/} (waiting until healthy)"
+  "$RT" compose -p "$proj" -f "$file" up -d --wait
+  info "up on network ${proj}_default — the box reaches them by name (db, redis, ...)"
+}
+
+cmd_down() {          # stop services; --volumes also wipes their data
+  ensure_daemon
+  local repo file proj; repo="$(resolve_repo)"
+  file="$(compose_file "$repo")" || die "no compose.agent.yml here"
+  proj="$(services_project "$repo")"
+  if [ "${1:-}" = --volumes ] || [ "${1:-}" = -v ]; then
+    "$RT" compose -p "$proj" -f "$file" down --volumes
+  else
+    "$RT" compose -p "$proj" -f "$file" down
+  fi
+}
+
+cmd_run() {
+  [ "${1:-}" = -- ] && shift
+  [ "$#" -eq 0 ] && set -- $CLAUDE_CMD
+  launch "$@"
+}
+
+# Launch a named agent with its autonomous default flags, or pass your own.
+launch_agent() {
+  local tool="$1"; shift
+  local def
+  case "$tool" in
+    claude) def="$CLAUDE_CMD" ;;
+    codex)  def="$CODEX_CMD" ;;
+    gemini) def="$GEMINI_CMD" ;;
+    *)      def="$tool" ;;
+  esac
+  if [ "$#" -eq 0 ]; then launch $def; else launch "$tool" "$@"; fi
+}
+
+cmd_login() {
+  local tool="${1:-claude}"
+  info "logging in to $tool — credentials persist in $CONFIG_DIR/$tool/"
+  case "$tool" in
+    codex)  launch codex login ;;
+    *)      launch "$tool" ;;     # claude/gemini authenticate on first interactive run
+  esac
+}
+
+cmd_shell() { launch "$SHELL_CMD"; }
+
+cmd_clone() {
+  local name="${1:-}"; [ -n "$name" ] || die "usage: agent clone <name>"
+  local repo; repo="$(resolve_repo)"
+  local ws; ws="$(dirname "$repo")/$(basename "$repo")-agents/$name"
+  [ -e "$ws" ] && die "workspace already exists: $ws"
+  local img; img="$(image_for_repo "$repo")"
+  image_exists "$img" || die "image '$img' not built — run 'agent build'"
+  info "cloning into $ws (secrets are gitignored, so they don't come along)"
+  git clone --quiet "$repo" "$ws"
+  git -C "$ws" checkout --quiet -b "$name" 2>/dev/null || true
+  AGENT_REPO="$ws" box_run "$img" "$ws" -- $CLAUDE_CMD || true
+  info "review the work, then merge from your repo:"
+  info "  git fetch \"$ws\" $name:review/$name && git diff @...review/$name"
+}
+
+# The fleet unit: clone into an isolated workspace, seed it with that agent's
+# slice of the queue (.agent/TASKS.<name>.md), and run the loop there. Run
+# several in the background for a fleet:  agent dispatch perf & agent dispatch x &
+cmd_dispatch() {
+  local name="${1:-}"; [ -n "$name" ] || die "usage: agent dispatch <name>   (reads .agent/TASKS.<name>.md)"
+  local repo; repo="$(resolve_repo)"
+  local img; img="$(image_for_repo "$repo")"
+  image_exists "$img" || die "image '$img' not built — run 'agent build'"
+  local slice="$repo/.agent/TASKS.$name.md"
+  [ -f "$slice" ] || die "no .agent/TASKS.$name.md — split the queue into per-agent files first"
+  local ws; ws="$(dirname "$repo")/$(basename "$repo")-agents/$name"
+  [ -e "$ws" ] && die "workspace already exists: $ws (remove it, or pick another name)"
+  info "dispatching '$name' into $ws"
+  git clone --quiet "$repo" "$ws"
+  git -C "$ws" checkout --quiet -b "$name"
+  mkdir -p "$ws/.agent"; cp "$slice" "$ws/.agent/TASKS.md"
+  # Reuse this repo's image for the clone (its basename would derive an unbuilt tag).
+  AGENT_IMAGE="$img" AGENT_REPO="$ws" cmd_loop
+  info "branch '$name' ready — merge from your repo:"
+  info "  git fetch \"$ws\" $name:review/$name && git diff @...review/$name"
+}
+
+cmd_loop() {
+  local repo img; repo="$(resolve_repo)"; img="$(image_for_repo "$repo")"
+  local queue="$repo/.agent/TASKS.md"; [ -f "$queue" ] || queue="$repo/TASKS.md"
+  [ -f "$queue" ] || die "no TASKS.md found — run 'agent init' first"
+  image_exists "$img" || die "image '$img' not built — run 'agent build'"
+  local work='Read .agent/TASKS.md and AGENTS.md, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains.'
+  local audit='Audit: for every [x] in .agent/TASKS.md, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.'
+  local n=0 base=(); read -ra base <<< "${AGENT_LOOP_CMD:-$CLAUDE_CMD}"
+  info "starting unattended loop on $queue (Ctrl-C to stop)"
+  while grep -q '\[ \]' "$queue"; do
+    n=$((n + 1)); info "iteration $n"
+    if [ -n "${AGENT_LOOP_CMD:-}" ]; then
+      box_run "$img" "$repo" -- "${base[@]}" </dev/null || { info "iteration failed; retry in 10s"; sleep 10; }
+    else
+      box_run "$img" "$repo" -- "${base[@]}" -p "$work" </dev/null || { info "iteration failed; retry in 10s"; sleep 10; }
+    fi
+  done
+  if [ -z "${AGENT_LOOP_CMD:-}" ]; then
+    info "queue empty — running audit pass"
+    box_run "$img" "$repo" -- "${base[@]}" -p "$audit" </dev/null || true
+  fi
+  if grep -q '\[ \]' "$queue"; then
+    info "audit reopened items — run 'agent loop' again"
+  else
+    printf '%s%s✓ queue verified done%s\n' "$C_B" "$C_G" "$C_N" >&2
+  fi
+}
+
+cmd_init() {
+  local stack=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --stack) stack="${2:-}"; shift 2 ;;
+      --stack=*) stack="${1#*=}"; shift ;;
+      *) shift ;;
+    esac
+  done
+  local repo; repo="$(resolve_repo)"
+  mkdir -p "$repo/.agent" "$repo/.claude/hooks"
+  _write_if_absent "$repo/AGENTS.md" _tpl_agents
+  _write_if_absent "$repo/.agent/TASKS.md" _tpl_tasks
+  _write_if_absent "$repo/.agent/LOG.md" _tpl_log
+  _write_if_absent "$repo/.claude/settings.json" _tpl_settings
+  _write_if_absent "$repo/.claude/hooks/stop-guard.sh" _tpl_stophook
+  _write_if_absent "$repo/.claude/hooks/commit-gate.sh" _tpl_commithook
+  chmod +x "$repo/.claude/hooks/stop-guard.sh" "$repo/.claude/hooks/commit-gate.sh" 2>/dev/null || true
+  # One brain, every agent: AGENTS.md is canonical; the others symlink to it,
+  # and Codex shares Claude's skills directory. (Per-agent overrides still win:
+  # a real CLAUDE.md or GEMINI.md is kept untouched.)
+  _link_if_absent AGENTS.md "$repo/CLAUDE.md"
+  _link_if_absent AGENTS.md "$repo/GEMINI.md"
+  mkdir -p "$repo/.claude/skills" "$repo/.codex"
+  _link_if_absent ../.claude/skills "$repo/.codex/skills"
+  # keep ephemeral state out of git, but track the rules/ knowledge base
+  mkdir -p "$repo/.agent/rules"
+  if ! grep -qs '^\.agent/\*' "$repo/.gitignore" 2>/dev/null; then
+    printf '\n# agent-box working state (commit knowledge, ignore state)\n.agent/*\n!.agent/rules/\n' >> "$repo/.gitignore"
+    info "updated .gitignore (.agent state ignored, rules/ tracked)"
+  fi
+  if [ -n "$stack" ]; then
+    _write_if_absent "$repo/Dockerfile.agent" _tpl_dockerfile "$stack"
+    _write_if_absent "$repo/compose.agent.yml" _tpl_compose
+    info "stack '$stack': review Dockerfile.agent, then 'agent build' and 'agent up'"
+  fi
+  info "scaffolded AGENTS.md, .agent/, and .claude/ hooks into $repo"
+  [ -n "$stack" ] && info "then: agent up && agent   (db/redis reachable in the box)"
+  info "edit .agent/TASKS.md, then run 'agent loop'"
+}
+_write_if_absent() { # <path> <template-cmd...>
+  local path="$1"; shift
+  if [ -e "$path" ]; then info "kept existing $(basename "$path")"
+  else "$@" > "$path"; info "wrote ${path#"$(resolve_repo)"/}"; fi
+}
+_link_if_absent() { # <target> <linkpath> — never clobbers a real file
+  local target="$1" link="$2"
+  if [ -L "$link" ] || [ ! -e "$link" ]; then
+    ln -sf "$target" "$link"; info "linked ${link#"$(resolve_repo)"/} -> $target"
+  else info "kept existing $(basename "$link") (real file, not a symlink)"; fi
+}
+
+cmd_doctor() {
+  ensure_daemon
+  local probe; probe="$(mktemp)"; _doctor_probe > "$probe"
+  local fixture; fixture="$(mktemp -d)"; local clone; clone="$(mktemp -d)"; rmdir "$clone"
+  mkdir -p "$fixture/src" "$fixture/config" "$fixture/secrets"
+  printf 'SECRET=hunter2\n'        > "$fixture/.env"
+  printf 'KEY=put-your-key-here\n' > "$fixture/.env.example"
+  printf 'x = "hunter2"\n'         > "$fixture/config/prod.tfvars"
+  printf 'tok-hunter2\n'           > "$fixture/secrets/api-token"
+  printf 'console.log(1)\n'        > "$fixture/src/app.js"
+  printf '.env\n*.tfvars\nsecrets/\n' > "$fixture/.gitignore"
+  git -C "$fixture" init -q
+  git -C "$fixture" add -A
+  git -C "$fixture" -c user.email=d@d -c user.name=d commit -qm init >/dev/null
+
+  local pass=0 fail=0 line
+  _ok() { pass=$((pass+1)); printf '  %s✓%s %s\n' "$C_G" "$C_N" "$1"; }
+  _no() { fail=$((fail+1)); printf '  %s✗%s %s\n' "$C_R" "$C_N" "$1"; }
+
+  printf '%s== agent-box doctor ==%s  %s(runtime: %s)%s\n' "$C_B" "$C_N" "$C_D" "$RT" "$C_N"
+  printf '\n%sinside the sandbox%s\n' "$C_B" "$C_N"
+  EXTRA_RUN_ARGS=(-v "$probe:/probe.sh:ro")
+  local out
+  out="$(AGENT_HOMES=0 AGENT_NETWORK=0 AGENT_CACHE=0 box_run alpine "$fixture" -- sh /probe.sh </dev/null 2>/dev/null || true)"
+  EXTRA_RUN_ARGS=()
+  if [ -z "$out" ]; then _no "the sandbox produced no output (the container failed to run)"; fi
+  while IFS= read -r line; do
+    case "$line" in
+      "RESULT PASS "*) _ok "${line#RESULT PASS }" ;;
+      "RESULT FAIL "*) _no "${line#RESULT FAIL }" ;;
+    esac
+  done <<< "$out"
+
+  printf '\n%son the host (the clone handoff)%s\n' "$C_B" "$C_N"
+  git clone -q "$fixture" "$clone"
+  [ ! -e "$clone/.env" ]     && _ok "gitignored .env never enters a clone"     || _no ".env leaked into the clone"
+  [ ! -e "$clone/secrets" ]  && _ok "gitignored secrets/ never enters a clone" || _no "secrets/ leaked into the clone"
+  [ -f "$clone/src/app.js" ] && _ok "tracked source is present in the clone"   || _no "tracked source missing"
+  grep -rqs hunter2 "$clone" 2>/dev/null && _no "secret value leaked into the clone" || _ok "no secret value anywhere in the clone"
+  case "$(git -C "$clone" remote get-url origin 2>/dev/null)" in
+    /*) _ok "clone origin is a local path — there is nowhere to push" ;;
+    *)  _no "clone origin is not a local path" ;;
+  esac
+
+  rm -rf "$probe" "$fixture" "$clone"
+  printf '\n'
+  if [ "$fail" -eq 0 ]; then printf '%s%s✓ all %d checks passed%s — the box contains the agent.\n' "$C_B" "$C_G" "$pass" "$C_N"; return 0
+  else printf '%s%s✗ %d passed, %d failed%s\n' "$C_B" "$C_R" "$pass" "$fail" "$C_N"; return 1; fi
+}
+
+cmd_help() {
+  cat <<EOF
+${C_B}agent-box${C_N} $VERSION — run a coding agent in a box it can't escape.
+
+${C_B}usage${C_N}
+  agent                      sandboxed \`claude\` in the current repo
+  agent claude|codex|gemini  a specific agent, with its autonomous flags
+  agent login <agent>        authenticate an agent (persists in agents/<agent>/)
+  agent run -- <cmd...>      run any command in the box
+  agent shell                a shell in the box
+  agent clone <name>         a secrets-free clone workspace + an agent in it
+  agent up | down            start/stop sibling services (db, redis) for this repo
+  agent loop                 work .agent/TASKS.md unattended until done
+  agent dispatch <name>      clone + that agent's queue slice + loop (fleet unit)
+  agent init [--stack X]     scaffold the queue + hooks (+ toolchain & services)
+  agent doctor               verify the box still contains the agent
+  agent build                build the box image (per-project if Dockerfile.agent)
+  agent help | version
+
+${C_B}per-project environment${C_N}
+  agent init --stack elixir  # writes Dockerfile.agent (toolchain) + compose.agent.yml
+  agent build && agent up    # build the image, start db/redis
+  agent                      # the box has Elixir + reaches db/redis by name
+
+${C_B}a fleet${C_N}  split the queue into .agent/TASKS.<name>.md, then:
+  agent dispatch perf > perf.log 2>&1 &
+  agent dispatch deps > deps.log 2>&1 &   # each gets its own clone + branch
+
+${C_B}auth & settings${C_N}  per-agent, in ${CONFIG_DIR#"$HOME"/}/
+  claude/ codex/ gemini/  ->  mounted at ~/.claude ~/.codex ~/.gemini in the box
+  env                     ->  API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...)
+  INSTRUCTIONS.md         ->  one instruction file, wired into all three agents
+
+${C_B}config${C_N}  env vars (AGENT_IMAGE, AGENT_REPO, AGENT_RUNTIME, AGENT_CLAUDE_CMD,
+        AGENT_CODEX_CMD, AGENT_GEMINI_CMD, ...) or ~/.config/agent-box/agent.conf
+EOF
+}
+
+# ----------------------------------------------------------- init templates ---
+# Per-project toolchain image: the language base + Node + the three agent CLIs,
+# as a non-root uid-1000 `node` user (so the agents/ home mounts line up).
+_tpl_dockerfile() {
+  case "${1:-generic}" in
+    elixir) cat <<'DF_EOF'
+# Elixir toolchain + the three agent CLIs. Tune versions to your project.
+FROM elixir:1.18-otp-27
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl git ca-certificates postgresql-client \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory /workspace \
+ && useradd -m -u 1000 -s /bin/bash node
+USER node
+RUN mix local.hex --force && mix local.rebar --force
+WORKDIR /workspace
+DF_EOF
+    ;;
+    python) cat <<'DF_EOF'
+# Python toolchain + the three agent CLIs.
+FROM python:3.12
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl git postgresql-client \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+ && pip install --no-cache-dir uv \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory /workspace \
+ && useradd -m -u 1000 -s /bin/bash node
+USER node
+WORKDIR /workspace
+DF_EOF
+    ;;
+    go) cat <<'DF_EOF'
+# Go toolchain + the three agent CLIs.
+FROM golang:1.23
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl git postgresql-client \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory /workspace \
+ && useradd -m -u 1000 -s /bin/bash node
+USER node
+WORKDIR /workspace
+DF_EOF
+    ;;
+    *) cat <<'DF_EOF'
+# Node toolchain + the three agent CLIs. Change FROM to add your language,
+# keeping a uid-1000 `node` user with home /home/node.
+FROM node:22
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+ && git config --system --add safe.directory /workspace
+USER node
+WORKDIR /workspace
+DF_EOF
+    ;;
+  esac
+}
+_tpl_compose() { cat <<'COMPOSE_EOF'
+# Sibling services for the agent. `agent up` starts them; the box reaches them
+# by name (db, redis). Dev data is throwaway — it lives in named volumes.
+# Connection string for the box, e.g.: DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app_dev
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  redis:
+    image: redis:7
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+volumes:
+  pgdata:
+  redisdata:
+COMPOSE_EOF
+}
+_tpl_agents() { cat <<'AGENTS_EOF'
+# AGENTS.md — the contract every agent in this repo follows.
+# CLAUDE.md should symlink here:  ln -s AGENTS.md CLAUDE.md
+
+## BOOT — on a fresh start or after compaction, read in order:
+1. this file
+2. .agent/LOG.md      (what was done and why)
+3. .agent/TASKS.md    (what's left)
+
+## The gate (adapt to this repo)
+`<format-check> && <build --warnings-as-errors> && <tests>`
+
+## The contract
+- States: `[ ]` todo · `[w]` claimed · `[x]` done+gated+committed · `[B]` blocked.
+- Claim a task by flipping it to `[w]` BEFORE you start it.
+- `[x]` only when the gate is green, the change is committed, and LOG.md has an entry.
+- Blocked? `[B]` + a .agent/PENDING_DECISIONS.md entry. There is no fifth state.
+- One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
+- Never stop while a `[ ]` remains.
+
+## Taste
+Every correction from me becomes a rule the same day: fix it, record it in
+.agent/rules/, sweep the codebase for siblings, and graduate it into a lint/hook
+when it's mechanically checkable.
+AGENTS_EOF
+}
+_tpl_tasks() { cat <<'TASKS_EOF'
+# TASKS.md — the work queue.
+# [ ] todo   [w] claimed/in-progress   [x] done+gated+committed   [B] blocked
+
+- [ ] Example task (done when: the gate is green and the change is committed)
+TASKS_EOF
+}
+_tpl_log() { cat <<'LOG_EOF'
+# LOG.md — what I did and why. One short entry per task, newest last.
+LOG_EOF
+}
+_tpl_settings() { cat <<'SETTINGS_EOF'
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./**/*.tfvars)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guard.sh" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/commit-gate.sh" } ] }
+    ]
+  }
+}
+SETTINGS_EOF
+}
+_tpl_stophook() { cat <<'STOPHOOK_EOF'
+#!/bin/bash
+# Refuse to stop while the queue has unclaimed work. Armed only during a batch
+# (when .agent/active exists), so it never nags during interactive use.
+[ -f "$CLAUDE_PROJECT_DIR/.agent/active" ] || exit 0
+q="$CLAUDE_PROJECT_DIR/.agent/TASKS.md"; [ -f "$q" ] || exit 0
+left=$(grep -c '\[ \]' "$q" 2>/dev/null || echo 0)
+if [ "$left" -gt 0 ]; then
+  echo "TASKS.md has $left unclaimed item(s). Keep going, or mark a blocker [B]." >&2
+  exit 2
+fi
+STOPHOOK_EOF
+}
+_tpl_commithook() { cat <<'COMMITHOOK_EOF'
+#!/bin/bash
+# Fast commit gate: format staged files, block the commit if they're dirty.
+# Reads the tool call on stdin; only acts on `git commit`. Fails open.
+input=$(cat)
+echo "$input" | grep -q '"command"[^}]*git commit' || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
+# Go
+go_files=$(echo "$staged" | grep '\.go$' || true)
+[ -n "$go_files" ] && command -v gofmt >/dev/null && {
+  bad=$(gofmt -l $go_files 2>/dev/null)
+  [ -n "$bad" ] && { echo "gofmt: $bad" >&2; exit 2; }
+}
+# Add your own fast checks here (e.g. mix format --check-formatted).
+exit 0
+COMMITHOOK_EOF
+}
+
+# ----------------------------------------------------------------- doctor probe
+_doctor_probe() { cat <<'PROBE_EOF'
+#!/bin/sh
+cd /workspace 2>/dev/null || { echo "RESULT FAIL workspace was not mounted"; exit 1; }
+empty() { [ -f "$1" ] && [ ! -s "$1" ]; }
+empty .env               && echo "RESULT PASS .env is shadowed (empty in the VM)"     || echo "RESULT FAIL .env is READABLE in the VM"
+empty config/prod.tfvars && echo "RESULT PASS *.tfvars in a subdir is shadowed"       || echo "RESULT FAIL config/prod.tfvars is READABLE"
+if [ -d secrets ] && [ -z "$(ls -A secrets 2>/dev/null)" ]; then echo "RESULT PASS secrets/ is shadowed (empty)"; else echo "RESULT FAIL secrets/ exposes files"; fi
+if echo x >> .env 2>/dev/null; then echo "RESULT FAIL the .env decoy is writable"; else echo "RESULT PASS writing the .env decoy is blocked"; fi
+[ -s .env.example ] && echo "RESULT PASS .env.example template stays readable" || echo "RESULT FAIL .env.example was hidden"
+[ -s src/app.js ]   && echo "RESULT PASS source files stay readable"           || echo "RESULT FAIL source files were hidden"
+if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL secret value reachable in the tree"; else echo "RESULT PASS secret value appears nowhere the agent can read"; fi
+PROBE_EOF
+}
+
+# -------------------------------------------------------------------- dispatch
+main() {
+  local sub="${1:-run}"
+  case "$sub" in
+    claude|codex|gemini)  shift || true; launch_agent "$sub" "$@" ;;
+    login)                shift || true; cmd_login "$@" ;;
+    up)                   shift || true; cmd_up "$@" ;;
+    down)                 shift || true; cmd_down "$@" ;;
+    run)                  shift || true; cmd_run "$@" ;;
+    shell)                shift || true; cmd_shell "$@" ;;
+    clone)                shift || true; cmd_clone "$@" ;;
+    dispatch)             shift || true; cmd_dispatch "$@" ;;
+    loop)                 shift || true; cmd_loop "$@" ;;
+    init)                 shift || true; cmd_init "$@" ;;
+    doctor)               shift || true; cmd_doctor "$@" ;;
+    build)                shift || true; cmd_build "$@" ;;
+    help|-h|--help)       cmd_help ;;
+    version|-v|--version) echo "agent-box $VERSION" ;;
+    *)                    cmd_run "$@" ;;     # e.g. `agent npm test`
+  esac
+}
+
+# Run main only when executed, not when sourced — so tests can load the
+# functions without launching anything.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then main "$@"; fi

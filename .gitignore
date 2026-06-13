@@ -1,0 +1,5 @@
+# This folder ships no secrets. Test/demo fixtures are created in temp dirs at
+# runtime and cleaned up, so there's nothing to ignore here by default — this
+# file just keeps stray local experiments out of git.
+*.local
+.DS_Store

@@ -1,0 +1,16 @@
+# Copy to `INSTRUCTIONS.md` (same folder) to give every agent the same
+# cross-project, machine-level instructions. One file, wired into each agent's
+# native global path: ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md.
+#
+# Project-specific rules belong in the repo (its own CLAUDE.md / AGENTS.md).
+# This is for things you want true everywhere, regardless of which repo or agent.
+#
+# A per-agent override wins: if you drop a CLAUDE.md in agents/claude/ (or
+# AGENTS.md in agents/codex/, GEMINI.md in agents/gemini/), that agent uses it
+# instead of this shared file.
+
+## How I work
+- Prefer small, reviewable commits. Explain *why* in the message, not just what.
+- Verify before claiming done: run the build and tests, don't assume.
+- Match the surrounding code's style; don't reformat unrelated lines.
+- When you're unsure, ask rather than guess on anything destructive.
