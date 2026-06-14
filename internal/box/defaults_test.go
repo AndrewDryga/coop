@@ -135,24 +135,43 @@ func TestEnsureGeminiDefaults(t *testing.T) {
 	cfg := &config.Config{ConfigDir: dir}
 	path := filepath.Join(dir, "gemini", "settings.json")
 
-	// Missing → seeded with valid JSON.
-	ensureGeminiDefaults(cfg)
-	if got := strings.TrimSpace(readFile(t, path)); got != "{}" {
-		t.Errorf("missing settings should seed {}, got %q", got)
+	folderTrust := func(t *testing.T) (any, bool) {
+		t.Helper()
+		m := readJSONMap(t, path)
+		sec, _ := m["security"].(map[string]any)
+		ft, _ := sec["folderTrust"].(map[string]any)
+		v, ok := ft["enabled"]
+		return v, ok
 	}
 
-	// Empty file (the reported crash) → seeded.
+	// Missing → valid JSON with the folder-trust prompt disabled.
+	ensureGeminiDefaults(cfg)
+	if v, ok := folderTrust(t); !ok || v != false {
+		t.Errorf("missing settings: folderTrust.enabled = %v (present=%v), want false", v, ok)
+	}
+
+	// Empty file (the launch crash) → same.
 	os.WriteFile(path, []byte(""), 0o644)
 	ensureGeminiDefaults(cfg)
-	if got := strings.TrimSpace(readFile(t, path)); got != "{}" {
-		t.Errorf("empty settings should be seeded {}, got %q", got)
+	if v, ok := folderTrust(t); !ok || v != false {
+		t.Errorf("empty settings: folderTrust.enabled = %v (present=%v), want false", v, ok)
 	}
 
-	// Existing settings → preserved, never clobbered.
+	// Existing settings preserved; the folder-trust disable is added alongside.
 	os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o644)
 	ensureGeminiDefaults(cfg)
-	if got := readFile(t, path); got != `{"theme":"dark"}` {
-		t.Errorf("existing settings clobbered: %q", got)
+	if m := readJSONMap(t, path); m["theme"] != "dark" {
+		t.Errorf("existing theme dropped: %v", m["theme"])
+	}
+	if v, _ := folderTrust(t); v != false {
+		t.Errorf("folderTrust not disabled on existing settings: %v", v)
+	}
+
+	// A user's explicit folderTrust choice is respected, not overridden.
+	os.WriteFile(path, []byte(`{"security":{"folderTrust":{"enabled":true}}}`), 0o644)
+	ensureGeminiDefaults(cfg)
+	if v, _ := folderTrust(t); v != true {
+		t.Errorf("user's folderTrust=true should be respected, got %v", v)
 	}
 }
 

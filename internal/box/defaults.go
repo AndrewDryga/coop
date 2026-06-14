@@ -92,10 +92,13 @@ func ensureCodexDefaults(cfg *config.Config, workdir string) {
 	os.WriteFile(path, []byte(out), 0o644)
 }
 
-// ensureGeminiDefaults makes sure Gemini's settings.json is valid JSON so the CLI
-// starts: an empty or missing settings.json makes gemini fail at launch with
-// "Unexpected end of JSON input". We seed "{}" only when the file is missing or
-// blank, so any settings you've added are left untouched. It runs before MCP
+// ensureGeminiDefaults makes Gemini start cleanly in the box: it guarantees a
+// valid settings.json (an empty/missing one makes gemini fail at launch with
+// "Unexpected end of JSON input") and turns off Gemini's folder-trust prompt
+// (security.folderTrust.enabled=false) so it doesn't ask to trust the mounted
+// repo — the box is the sandbox, matching the Claude/Codex first-run seeding.
+// Existing settings are preserved and an explicit folderTrust choice is kept; a
+// non-blank but unparseable file is left for the user to fix. Runs before MCP
 // generation, which reads this file to merge in servers.
 func ensureGeminiDefaults(cfg *config.Config) {
 	dir := cfg.AgentDir("gemini")
@@ -103,10 +106,37 @@ func ensureGeminiDefaults(cfg *config.Config) {
 		return
 	}
 	path := filepath.Join(dir, "settings.json")
-	if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
-		return // has content (yours to keep, or to fix) — don't clobber it
+	data, _ := os.ReadFile(path)
+	blank := strings.TrimSpace(string(data)) == ""
+	m := map[string]any{}
+	if !blank {
+		if json.Unmarshal(data, &m) != nil {
+			return // non-blank but unparseable — don't clobber it
+		}
 	}
-	os.WriteFile(path, []byte("{}\n"), 0o644)
+	if disableGeminiFolderTrust(m) || blank {
+		writeJSONFile(path, m, 0o644)
+	}
+}
+
+// disableGeminiFolderTrust sets security.folderTrust.enabled=false unless the user
+// already chose a value, reporting whether it changed m.
+func disableGeminiFolderTrust(m map[string]any) bool {
+	security, _ := m["security"].(map[string]any)
+	if security == nil {
+		security = map[string]any{}
+		m["security"] = security
+	}
+	ft, _ := security["folderTrust"].(map[string]any)
+	if ft == nil {
+		ft = map[string]any{}
+		security["folderTrust"] = ft
+	}
+	if _, ok := ft["enabled"]; ok {
+		return false // user already chose — respect it
+	}
+	ft["enabled"] = false
+	return true
 }
 
 // ensureTrue sets m[key]=true unless it already is, reporting whether it changed.
