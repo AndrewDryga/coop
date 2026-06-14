@@ -3,3 +3,7 @@
 # file just keeps stray local experiments out of git.
 *.local
 .DS_Store
+
+# agent-box working state (commit knowledge, ignore state)
+.agent/*
+!.agent/rules/
