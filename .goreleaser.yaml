@@ -34,14 +34,9 @@ checksum:
   name_template: checksums.txt
 
 changelog:
-  use: github
-  sort: asc
-  filters:
-    exclude:
-      - '^docs:'
-      - '^test:'
-      - '^chore:'
-      - 'Merge '
+  # Delegate to GitHub's auto-generated release notes (categorized via
+  # .github/release.yml, with a "Full Changelog" compare link).
+  use: github-native
 
 release:
   github:

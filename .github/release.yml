@@ -1,0 +1,22 @@
+# Configures GitHub's automatically generated release notes — used both by the
+# github-native changelog in .goreleaser.yaml and the "Generate release notes"
+# button. Merged PRs are grouped by label; direct commits are listed under
+# "Other Changes" with a compare link.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - duplicate
+    authors:
+      - dependabot
+  categories:
+    - title: Features
+      labels: [enhancement, feature]
+    - title: Bug Fixes
+      labels: [bug, fix]
+    - title: Maintenance
+      labels: [chore, ci, refactor, dependencies]
+    - title: Documentation
+      labels: [documentation, docs]
+    - title: Other Changes
+      labels: ["*"]
