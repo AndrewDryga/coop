@@ -14,7 +14,7 @@ import (
 // in Load and passed down; nothing else reads the environment directly.
 type Config struct {
 	BaseImage string // COOP_BASE_IMAGE — shared base image tag
-	Workdir   string // COOP_WORKDIR — where the repo mounts in the box
+	Workdir   string // COOP_WORKDIR — where the repo mounts in the box (empty = its real host path)
 	HomeInBox string // COOP_HOME_IN_BOX — the box user's home
 	Shell     string // COOP_SHELL — `coop shell`'s shell
 
@@ -70,7 +70,7 @@ func Load() *Config {
 
 	c := &Config{
 		BaseImage: get("COOP_BASE_IMAGE", "coop-box"),
-		Workdir:   get("COOP_WORKDIR", "/workspace"),
+		Workdir:   get("COOP_WORKDIR", ""),
 		HomeInBox: get("COOP_HOME_IN_BOX", "/home/node"),
 		Shell:     get("COOP_SHELL", "bash"),
 		ConfigDir: get("COOP_CONFIG_DIR", filepath.Join(boxHome, "agents")),

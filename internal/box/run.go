@@ -15,7 +15,7 @@ import (
 type RunSpec struct {
 	Image   string
 	Repo    string   // host repo to mount
-	Workdir string   // where Repo mounts; defaults to cfg.Workdir (ACP uses the repo's host path)
+	Workdir string   // where Repo mounts; empty defers to resolveWorkdir (the repo's real host path)
 	Cmd     []string // command + args to run in the box
 
 	Homes   bool // mount per-agent home dirs, env-file, INSTRUCTIONS, and MCP configs
@@ -49,10 +49,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
-	workdir := spec.Workdir
-	if workdir == "" {
-		workdir = cfg.Workdir
-	}
+	workdir := resolveWorkdir(spec, cfg)
 
 	mounts, err := ComputeMounts(spec.Repo, workdir)
 	if err != nil {
@@ -120,7 +117,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		for _, agent := range cfg.Agents {
 			os.MkdirAll(cfg.AgentDir(agent), 0o755)
 		}
-		ensureClaudeDefaults(cfg)
+		ensureClaudeDefaults(cfg, workdir)
 	}
 
 	networkName := ""
@@ -136,6 +133,24 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 
 	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, networkName)
 	return rt.Run(stdin, stdout, stderr, args...)
+}
+
+// resolveWorkdir picks where the repo mounts inside the box — and thus the
+// agent's cwd. The default is the repo's real host path, so each agent's
+// per-project session history (~/.<agent>/projects/<cwd>) is identical across
+// `coop`, `coop loop`, and `coop acp`; a loop's thread is then visible and
+// resumable when you open the same repo in an ACP editor like Zed. An explicit
+// spec.Workdir (doctor's self-contained fixture) or COOP_WORKDIR (cfg.Workdir)
+// overrides it, in that order.
+func resolveWorkdir(spec RunSpec, cfg *config.Config) string {
+	switch {
+	case spec.Workdir != "":
+		return spec.Workdir
+	case cfg.Workdir != "":
+		return cfg.Workdir
+	default:
+		return spec.Repo
+	}
 }
 
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an

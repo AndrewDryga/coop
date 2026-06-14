@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +86,9 @@ func (a *app) cmdLogin(args []string) (int, error) {
 }
 
 // cmdACP runs the box as an ACP agent over stdio: the repo mounts at its real
-// host path (so the editor's absolute paths resolve) and no tty is allocated.
+// host path (so the editor's absolute paths resolve, and the session history
+// matches `coop`/`coop loop` — see resolveWorkdir) and no tty is allocated. The
+// explicit Workdir forces the real path even if COOP_WORKDIR is set.
 func (a *app) cmdACP(args []string) (int, error) {
 	tool := "claude"
 	if len(args) > 0 {
@@ -277,7 +280,10 @@ const (
 )
 
 // loop works .agent/TASKS.md unattended until no "[ ]" remains, then (unless a
-// custom COOP_LOOP_CMD is set) runs a one-shot audit pass over the results.
+// custom COOP_LOOP_CMD is set) runs a one-shot audit pass over the results. A
+// model rate/usage limit is not a failure: the loop waits for the reset — parsed
+// from the agent's own output when possible — and resumes the same iteration, so
+// a long run survives hitting the limit and continues once it clears.
 func (a *app) loop(repo, img string) (int, error) {
 	queue := filepath.Join(repo, ".agent", "TASKS.md")
 	if !fileExists(queue) {
@@ -292,20 +298,34 @@ func (a *app) loop(repo, img string) (int, error) {
 		base = a.cfg.ClaudeCmd
 	}
 	ui.Info("starting unattended loop on %s (Ctrl-C to stop)", queue)
-	for n := 1; queueHasTodo(queue); n++ {
+	fails, waits := 0, 0
+	for n := 1; queueHasTodo(queue); {
 		ui.Info("iteration %d", n)
 		cmd := base
 		if len(custom) == 0 {
 			cmd = append(append([]string{}, base...), "-p", loopWork)
 		}
-		if code, err := a.runBatch(repo, img, cmd); err != nil || code != 0 {
-			ui.Info("iteration failed; retry in 10s")
+		code, out, err := a.runIteration(repo, img, cmd)
+		switch action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits); action {
+		case actContinue:
+			n++
+		case actWait:
+			// A rate/usage limit is expected on long runs: wait for the reset,
+			// then retry this same iteration rather than burning it.
+			sleepForLimit(wait, resetAt)
+		case actRetry:
+			ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
 			time.Sleep(10 * time.Second)
+		case actStop:
+			if waits > maxLimitWaits {
+				return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
+			}
+			return code, fmt.Errorf("iteration failed %d times in a row — stopping", fails)
 		}
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _ = a.runBatch(repo, img, append(append([]string{}, base...), "-p", loopAudit))
+		_, _, _ = a.runIteration(repo, img, append(append([]string{}, base...), "-p", loopAudit))
 	}
 	if queueHasTodo(queue) {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -315,9 +335,15 @@ func (a *app) loop(repo, img string) (int, error) {
 	return 0, nil
 }
 
-func (a *app) runBatch(repo, img string, cmd []string) (int, error) {
-	return box.Run(a.cfg, a.rt, box.RunSpec{
+// runIteration runs one boxed command in batch mode, teeing its output to the
+// terminal while capturing the tail so a rate-limit notice can be detected.
+func (a *app) runIteration(repo, img string, cmd []string) (code int, output string, err error) {
+	tail := &tailWriter{max: 64 << 10}
+	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		Stdout: io.MultiWriter(os.Stdout, tail),
+		Stderr: io.MultiWriter(os.Stderr, tail),
 	})
+	return code, tail.String(), err
 }

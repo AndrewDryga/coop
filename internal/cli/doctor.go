@@ -66,7 +66,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	fmt.Printf("\n%s\n", ui.Bold("inside the sandbox"))
 	var out bytes.Buffer
 	_, runErr := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: "alpine", Repo: fixture, Cmd: []string{"sh", "/probe.sh"},
+		Image: "alpine", Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe.sh"},
 		Batch: true, Quiet: true, Stdout: &out, Stderr: io.Discard,
 		ExtraArgs: []string{"-v", probe + ":/probe.sh:ro"},
 	})

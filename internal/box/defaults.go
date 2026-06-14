@@ -14,7 +14,9 @@ import (
 // accepting bypass mode inside it is the intended posture. Existing values are
 // preserved (account, credentials, the user's own settings); only missing flags
 // are filled in, and the config file is rewritten only when something changes.
-func ensureClaudeDefaults(cfg *config.Config) {
+// workdir is the resolved cwd (see resolveWorkdir) so folder-trust is accepted
+// for the path the agent actually runs in, across run/loop/acp.
+func ensureClaudeDefaults(cfg *config.Config, workdir string) {
 	dir := cfg.AgentDir("claude")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
@@ -49,7 +51,7 @@ func ensureClaudeDefaults(cfg *config.Config) {
 	if ensureTrue(m, "bypassPermissionsModeAccepted") {
 		changed = true
 	}
-	if ensureWorkdirTrusted(m, cfg.Workdir) {
+	if ensureWorkdirTrusted(m, workdir) {
 		changed = true
 	}
 	if changed {

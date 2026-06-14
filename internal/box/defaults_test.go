@@ -25,8 +25,8 @@ func readJSONMap(t *testing.T, path string) map[string]any {
 
 func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir, Workdir: "/workspace"}
-	ensureClaudeDefaults(cfg)
+	cfg := &config.Config{ConfigDir: dir}
+	ensureClaudeDefaults(cfg, "/workspace")
 
 	s := readJSONMap(t, filepath.Join(dir, "claude", "settings.json"))
 	if s["theme"] != "dark" {
@@ -58,9 +58,9 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 	os.WriteFile(filepath.Join(cdir, ".claude.json"),
 		[]byte(`{"oauthAccount":{"u":"x"},"numStartups":5}`), 0o600)
 	os.WriteFile(filepath.Join(cdir, "settings.json"), []byte(`{"theme":"light"}`), 0o644)
-	cfg := &config.Config{ConfigDir: dir, Workdir: "/workspace"}
+	cfg := &config.Config{ConfigDir: dir}
 
-	ensureClaudeDefaults(cfg)
+	ensureClaudeDefaults(cfg, "/workspace")
 
 	c := readJSONMap(t, filepath.Join(cdir, ".claude.json"))
 	if c["oauthAccount"] == nil {
@@ -79,7 +79,7 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 
 	// Idempotent: a second call must not rewrite the file.
 	before, _ := os.ReadFile(filepath.Join(cdir, ".claude.json"))
-	ensureClaudeDefaults(cfg)
+	ensureClaudeDefaults(cfg, "/workspace")
 	after, _ := os.ReadFile(filepath.Join(cdir, ".claude.json"))
 	if !bytes.Equal(before, after) {
 		t.Error("second call rewrote .claude.json (not idempotent)")

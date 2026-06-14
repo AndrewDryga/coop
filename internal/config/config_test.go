@@ -31,7 +31,9 @@ func TestDefaults(t *testing.T) {
 	if c.BaseImage != "coop-box" {
 		t.Errorf("BaseImage = %q, want coop-box", c.BaseImage)
 	}
-	if c.Workdir != "/workspace" || c.HomeInBox != "/home/node" {
+	// Workdir defaults to empty, which box.resolveWorkdir reads as "mount the
+	// repo at its real host path" so history is shared across run/loop/acp.
+	if c.Workdir != "" || c.HomeInBox != "/home/node" {
 		t.Errorf("Workdir=%q HomeInBox=%q", c.Workdir, c.HomeInBox)
 	}
 	wantDir := filepath.Join(tmp, "coop", "agents")

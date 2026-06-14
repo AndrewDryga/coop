@@ -28,6 +28,29 @@ func TestDecideTTY(t *testing.T) {
 	}
 }
 
+func TestResolveWorkdir(t *testing.T) {
+	cases := []struct {
+		name        string
+		specWorkdir string
+		cfgWorkdir  string
+		repo        string
+		want        string
+	}{
+		{"default is the real repo path", "", "", "/Users/x/proj", "/Users/x/proj"},
+		{"COOP_WORKDIR overrides the default", "", "/workspace", "/Users/x/proj", "/workspace"},
+		{"explicit spec wins over both", "/probe", "/workspace", "/Users/x/proj", "/probe"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			spec := RunSpec{Repo: c.repo, Workdir: c.specWorkdir}
+			cfg := &config.Config{Workdir: c.cfgWorkdir}
+			if got := resolveWorkdir(spec, cfg); got != c.want {
+				t.Errorf("resolveWorkdir = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestAssembleArgsMinimal(t *testing.T) {
 	cfg := &config.Config{
 		HomeInBox: "/home/node",

@@ -88,10 +88,13 @@ via `--mcp-config`, Gemini merged into its `settings.json`, Codex converted to
 read-only on top of your existing config, so your own files are never touched and
 servers from `mcp.json` win on a name clash.
 
-Your repo is mounted at `/workspace`; the agent edits real files and you see
-them in your editor. Everything else — your home dir, SSH keys, the rest of the
-disk — isn't there. The worst an off-the-rails agent can do is trash one repo
-you can restore from git.
+Your repo is mounted into the box at the **same path it has on your machine**;
+the agent edits real files and you see them in your editor. (Mounting at the real
+path, rather than a fixed `/workspace`, keeps the agent's working directory — and
+so its session history — identical across `coop`, `coop loop`, and `coop acp`, so
+a thread you started looping shows up when you open the repo in Zed.) Everything
+else — your home dir, SSH keys, the rest of the disk — isn't there. The worst an
+off-the-rails agent can do is trash one repo you can restore from git.
 
 ### Secrets never enter the box
 
@@ -132,7 +135,11 @@ coop loop             # disposable agents work the queue until it's done, then a
 `loop` starts a fresh agent per iteration (no context rot), works unchecked
 `[ ]` items, and won't quit while any remain. When the queue empties, a fresh
 auditor re-checks every `[x]` against the git log and reopens anything that
-doesn't hold up. `init` also installs a `Stop` hook (won't let a session end
+doesn't hold up. If the model hits a **rate or usage limit** mid-run, the loop
+doesn't treat it as a failure: it reads the reset time from the agent's own
+output, waits it out (with a countdown), and resumes the same item once the limit
+clears — so an overnight run rides through the daily cap instead of burning
+retries against it. `init` also installs a `Stop` hook (won't let a session end
 with work outstanding) and a fast commit-gate hook.
 
 It also wires the tool-neutral setup so every agent reads one source of truth:
@@ -227,9 +234,11 @@ box is the boundary).
 
 Under the hood, `coop acp [claude|codex|gemini]` runs the matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
-inside the box over stdio: the repo is mounted at its **real host path** (not
-`/workspace`) so Zed's absolute paths resolve, stdin is attached without a pty
-(ACP is JSON-RPC over stdio), and your secrets stay shadowed.
+inside the box over stdio: the repo is mounted at its **real host path** — the
+same path `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the
+session history lines up (a thread you started with `coop loop` is there to resume
+in Zed); stdin is attached without a pty (ACP is JSON-RPC over stdio), and your
+secrets stay shadowed.
 
 Notes:
 - **Services work too.** If the repo has a `compose.agent.yml`, `coop up` first

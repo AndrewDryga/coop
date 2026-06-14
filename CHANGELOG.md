@@ -6,6 +6,17 @@
   lives in `~/.config/coop`, and env vars use the `COOP_` prefix (previously
   `agent-box` / `agent` / `AGENT_`). `install.sh` migrates an existing
   `~/.config/agent-box/agents` over on upgrade.
+- The loop rides out rate limits. When the model hits a rate or usage limit
+  mid-run, `coop loop` no longer spins on a fixed retry — it parses the reset
+  time from the agent's own output (Claude's `usage limit reached|<epoch>`, or a
+  `retry-after` delay), waits until then with a countdown, and resumes the same
+  item, so an unattended overnight run survives the daily cap instead of burning
+  retries against it. Non-limit failures back off and stop after a few in a row.
+- Unified working directory and history across modes. `coop`, `coop loop`, and
+  `coop acp` now all mount the repo at its real host path (not `/workspace`), so
+  each agent's per-project session history is shared — a thread you started with
+  `coop loop` is there to resume when you open the repo in Zed. `COOP_WORKDIR`
+  still overrides the mount path for the old `/workspace` behavior.
 - One-line install + releases: `curl -fsSL .../install.sh | sh` downloads the
   prebuilt binary (no Go, no clone). GoReleaser publishes cross-platform binaries
   — with auto-generated, categorized release notes — to GitHub Releases on every
