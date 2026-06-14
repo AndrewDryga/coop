@@ -14,7 +14,8 @@ jobs:
         with:
           go-version: '1.23'
       - name: gofmt
-        run: gofmt -l . | (! grep .) || { echo "run: gofmt -w ."; exit 1; }
+        run: |
+          gofmt -l . | (! grep .) || { echo "needs gofmt -w ."; exit 1; }
       - name: vet
         run: go vet ./...
       - name: staticcheck
@@ -25,3 +26,5 @@ jobs:
         run: go test ./...
       - name: build
         run: go build ./...
+      - name: shellcheck
+        run: shellcheck install.sh

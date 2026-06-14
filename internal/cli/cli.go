@@ -1,20 +1,36 @@
 // Package cli is the command-line surface: it parses argv, resolves the config
 // and runtime, and dispatches to the box engine and scaffolder. The routing
-// mirrors the original tool: bare `coop` runs Claude, `agent <agent>` runs a
+// mirrors the original tool: bare `coop` runs Claude, `coop <agent>` runs a
 // named agent, known subcommands run their command, and anything else is run as
-// a command inside the box (so `agent npm test` just works).
+// a command inside the box (so `coop npm test` just works).
 package cli
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// Version is the tool version, reported by `coop version`.
-const Version = "2.0.0"
+// Version is the tool version, reported by `coop version`. Defaults to "dev" and
+// is overridden at build time via -ldflags (GoReleaser and the Makefile).
+var Version = "dev"
+
+// resolveVersion returns the -ldflags version if set, otherwise the module
+// version embedded by `go install pkg@version`, otherwise "dev".
+func resolveVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return Version
+}
 
 type app struct {
 	cfg *config.Config
@@ -30,7 +46,7 @@ func Main(argv []string) int {
 			printHelp(config.Load())
 			return 0
 		case "version", "-v", "--version":
-			fmt.Println("coop " + Version)
+			fmt.Println("coop " + resolveVersion())
 			return 0
 		}
 	}
@@ -89,6 +105,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "build":
 		return a.cmdBuild(rest)
 	default:
-		return a.cmdRun(argv) // e.g. `agent npm test`
+		return a.cmdRun(argv) // e.g. `coop npm test`
 	}
 }

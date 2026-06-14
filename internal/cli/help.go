@@ -15,7 +15,7 @@ func printHelp(cfg *config.Config) {
 	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
 	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %-27s%s\n", cmd, desc) }
 
-	p("%s %s — run a coding agent in a box it can't escape.\n\n", ui.Bold("coop"), Version)
+	p("%s %s — run a coding agent in a box it can't escape.\n\n", ui.Bold("coop"), resolveVersion())
 
 	p("%s\n", ui.Bold("usage"))
 	row("coop", "sandboxed `claude` in the current repo")

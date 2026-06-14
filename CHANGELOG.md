@@ -6,6 +6,10 @@
   lives in `~/.config/coop`, and env vars use the `COOP_` prefix (previously
   `agent-box` / `agent` / `AGENT_`). `install.sh` migrates an existing
   `~/.config/agent-box/agents` over on upgrade.
+- One-line install + releases: `curl -fsSL .../install.sh | sh` downloads the
+  prebuilt binary (no Go, no clone), and GoReleaser publishes cross-platform
+  binaries to GitHub Releases on every `v*` tag. CI runs gofmt, vet, staticcheck,
+  tests, build, and shellcheck.
 - Rewritten in Go: `coop` is now a single static binary (no bash, no runtime
   dependencies) built with `go build`. Same commands, same box, same
   secret-shadowing — faithfully ported, with the security core (mount

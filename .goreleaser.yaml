@@ -1,0 +1,50 @@
+# GoReleaser — cross-platform release binaries published to GitHub Releases on a
+# tag push. Validate locally with:  goreleaser release --snapshot --clean
+version: 2
+
+project_name: coop
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: coop
+    main: .
+    binary: coop
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/AndrewDryga/coop/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: coop
+    formats: [tar.gz]
+    name_template: "coop_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - 'Merge '
+
+release:
+  github:
+    owner: AndrewDryga
+    name: coop
+  prerelease: auto

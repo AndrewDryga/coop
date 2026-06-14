@@ -1,11 +1,15 @@
 # coop — see README.md
 .DEFAULT_GOAL := help
 
-build: ## Build the coop binary to ./coop
-	@go build -trimpath -o coop .
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 
-install: ## Build + install onto PATH, build the image, run doctor
-	@./install.sh
+build: ## Build the coop binary to ./coop
+	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
+
+install: ## Build from source and install to ~/.local/bin/coop
+	@go build -trimpath -ldflags "$(LDFLAGS)" -o "$(HOME)/.local/bin/coop" .
+	@echo "installed $(HOME)/.local/bin/coop ($(VERSION)) — run 'coop build' to build the box image"
 
 test: ## Run unit tests (no container runtime needed)
 	@go test ./...
@@ -18,6 +22,9 @@ lint: ## gofmt check + go vet (+ staticcheck if installed)
 	@go vet ./...
 	@command -v staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "(staticcheck not installed — skipping)"
 
+snapshot: ## Build a local release snapshot with GoReleaser (no publish)
+	@goreleaser release --snapshot --clean
+
 doctor: ## Integration check: prove isolation holds (needs a runtime)
 	@go run . doctor
 
@@ -25,8 +32,9 @@ check: lint test ## What CI runs: lint + unit tests
 
 clean: ## Remove build artifacts
 	@rm -f coop
+	@rm -rf dist
 
 help: ## List targets
 	@grep -hE '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint doctor check clean help
+.PHONY: build install test cover lint snapshot doctor check clean help
