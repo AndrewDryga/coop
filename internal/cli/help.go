@@ -1,0 +1,70 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
+)
+
+func printHelp(cfg *config.Config) {
+	var b strings.Builder
+	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
+	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %-27s%s\n", cmd, desc) }
+
+	p("%s %s — run a coding agent in a box it can't escape.\n\n", ui.Bold("coop"), Version)
+
+	p("%s\n", ui.Bold("usage"))
+	row("coop", "sandboxed `claude` in the current repo")
+	row("coop claude|codex|gemini", "a specific agent, with its autonomous flags")
+	row("coop login <agent>", "authenticate an agent (persists in the config dir)")
+	row("coop acp [agent]", "run as an ACP agent over stdio (point Zed at this)")
+	row("coop run -- <cmd...>", "run any command in the box")
+	row("coop shell", "a shell in the box")
+	row("coop clone <name>", "a secrets-free clone workspace + an agent in it")
+	row("coop up | down", "start/stop sibling services (db, redis) for this repo")
+	row("coop loop", "work .agent/TASKS.md unattended until done")
+	row("coop dispatch <name>", "clone + that agent's queue slice + loop (fleet unit)")
+	row("coop init [--stack X]", "scaffold the queue + hooks (+ toolchain & services)")
+	row("coop doctor", "verify the box still contains the agent")
+	row("coop build", "build the box image (per-project if Dockerfile.agent)")
+	row("coop help | version", "")
+	p("\n")
+
+	p("%s\n", ui.Bold("per-project environment"))
+	p("  coop init --stack elixir   # writes Dockerfile.agent (toolchain) + compose.agent.yml\n")
+	p("  coop build && coop up      # build the image, start db/redis\n")
+	p("  coop                       # the box has Elixir + reaches db/redis by name\n\n")
+
+	p("%s  split the queue into .agent/TASKS.<name>.md, then:\n", ui.Bold("a fleet"))
+	p("  coop dispatch perf > perf.log 2>&1 &\n")
+	p("  coop dispatch deps > deps.log 2>&1 &   # each gets its own clone + branch\n\n")
+
+	p("%s  add to Zed settings.json, then pick it in the agent panel:\n", ui.Bold("drive from Zed (ACP)"))
+	p("  \"agent_servers\": { \"coop\": { \"type\": \"custom\",\n")
+	p("      \"command\": \"coop\", \"args\": [\"acp\", \"claude\"], \"env\": {} } }\n\n")
+
+	p("%s  per-agent, in %s\n", ui.Bold("auth & settings"), tildeify(cfg.ConfigDir))
+	p("  claude/ codex/ gemini/  ->  mounted at ~/.claude ~/.codex ~/.gemini in the box\n")
+	p("  env                     ->  API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...)\n")
+	p("  INSTRUCTIONS.md         ->  one instruction file, wired into all three agents\n")
+	p("  mcp.json                ->  MCP servers, defined once for all three agents\n\n")
+
+	p("%s  env vars (COOP_IMAGE, COOP_REPO, COOP_RUNTIME, COOP_CLAUDE_CMD,\n", ui.Bold("config"))
+	p("        COOP_CODEX_CMD, COOP_GEMINI_CMD, ...) or %s\n", tildeify(filepath.Join(cfg.BoxHome, "coop.conf")))
+
+	fmt.Print(b.String())
+}
+
+// tildeify shortens a path under the home dir to ~/… for readable help.
+func tildeify(path string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(filepath.Join("~", rel))
+		}
+	}
+	return path
+}
