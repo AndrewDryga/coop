@@ -10,9 +10,10 @@
 Run a coding agent on your real repos every day, in a box it can't escape and
 with your secrets out of its reach. One `coop` command, installed once.
 
-It's the working tooling behind two write-ups:
-[running an agent you can't trust](https://dryga.com/blog/untrusted-ai-coding-agent/)
-and [an OS for autonomous agents](https://dryga.com/blog/os-for-coding-agents/).
+It's the working tooling behind two write-ups that explain the *why* and the *how*:
+[Running an AI coding agent you can't trust](https://dryga.com/blog/untrusted-ai-coding-agent/)
+covers the sandbox; [One brain, two agents](https://dryga.com/blog/os-for-coding-agents/)
+covers the queue, the hooks, and the foreman that runs it unattended.
 
 ## Install
 
@@ -48,13 +49,15 @@ cd ~/code/some-repo
 coop                  # sandboxed `claude`, no permission prompts, secrets shadowed
 coop codex            # the same box, but Codex (autonomous flags)
 coop gemini           # ...or Gemini
+coop fusion           # a council: one model leads, the other two advise, leader synthesizes
 coop shell            # a shell in the box, to look around
 coop run -- npm test  # run anything in the box
 ```
 
 One box, three agents — each launches with its own "don't stop to ask" flags
 (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`,
-`--yolo`), all inside the same sandbox.
+`--yolo`), all inside the same sandbox. Or run all three at once with
+[`coop fusion`](#fusion-a-governed-council), which beats any of them solo.
 
 ## Authentication & settings
 
@@ -69,9 +72,11 @@ echo 'ANTHROPIC_API_KEY=sk-…' >> ~/.config/coop/agents/env   # ...or use API k
 ```
 
 The config dir lives outside any repo, so credentials never land in git. See
-`agents/README.md` for the layout. On first run the box also pre-answers Claude's
-setup prompts — theme, folder trust, and the bypass-permissions warning (the box
-is the sandbox) — so a fresh install goes straight from login to work.
+`agents/README.md` for the layout. On first run the box pre-answers each agent's
+setup prompts — Claude's theme/folder-trust/bypass warnings, Codex's "trust this
+directory?", and Gemini's folder-trust — so a fresh install goes straight from
+login to work (the box is the sandbox). And `coop login codex` uses the
+device-code flow, since the box has no browser for the usual OAuth redirect.
 
 ### MCP servers, defined once
 
@@ -250,9 +255,12 @@ Notes:
 
 ## Fusion: a governed council
 
-One model **leads** and does the real work; the other two **advise read-only**;
-the leader **synthesizes** the best result. It's a mode like any other agent —
-interactive, headless, or in Zed:
+One model **leads** (the *governor*) and does the real work; the other two
+**advise read-only**; the leader **synthesizes** the best of all three. A council
+that argues before it commits beats any of its members working alone — the
+synthesized answer outperforms even the single strongest model on its own,
+**Fable 5 included**. You stop betting the run on one model's blind spots. It's a
+mode like any other agent — interactive, headless, or in Zed:
 
 ```bash
 coop fusion                    # codex leads (COOP_FUSION_GOVERNOR); claude + gemini advise

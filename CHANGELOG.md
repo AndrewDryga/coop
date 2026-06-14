@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0
+## 2.1.0
 
 - **Fusion mode — a governed council.** `coop fusion` runs one model as the
   *governor* (default `codex`; `--governor claude|gemini` or
@@ -12,6 +12,19 @@
   `gemini -p --approval-mode plan`, `codex exec -s read-only`) from its own
   shell, and the fusion instruction is scoped to the governor only, so the peers
   it spawns never recurse.
+- Smoother agent auth & first-run in the box. `coop login codex` uses the
+  device-code flow (`codex login --device-auth`) — the container has no browser
+  and codex's localhost OAuth redirect can't reach the host. Codex's "Do you
+  trust this directory?" prompt is pre-answered (`[projects."<dir>"] trust_level =
+  "trusted"`) and so is Gemini's folder-trust (`security.folderTrust.enabled =
+  false`), matching Claude's first-run seeding — the box is the sandbox. All
+  merged/idempotent, so an explicit choice and your other settings are kept.
+- Gemini no longer fails to launch on an empty `settings.json` ("Unexpected end
+  of JSON input"); the box seeds valid JSON when that file is missing or blank
+  (your own settings are preserved).
+
+## 2.0.0
+
 - **Renamed to Coop.** The binary is now `coop`, the image is `coop-box`, config
   lives in `~/.config/coop`, and env vars use the `COOP_` prefix (previously
   `agent-box` / `agent` / `AGENT_`). `install.sh` migrates an existing
@@ -58,18 +71,11 @@
 - Terminal detection uses a real isatty ioctl rather than a character-device
   check, so `coop run … < /dev/null` (and other char-device stdin) no longer
   wrongly requests a docker tty.
-- Fresh boxes skip the agents' first-run prompts. Each run pre-answers Claude's
-  theme picker, folder-trust dialog, and bypass-permissions warning (by seeding
-  `settings.json` and `.claude.json`), and pre-trusts the repo in Codex's
-  `config.toml` (`[projects."<dir>"] trust_level = "trusted"`) so Codex doesn't
-  stop at its "Do you trust this directory?" prompt — the box is the sandbox.
-  Seeding is merged/idempotent, so your login and any settings are preserved, and
-  a fresh install goes straight from one login to working.
-- Gemini no longer fails to launch on an empty `settings.json` ("Unexpected end of
-  JSON input"), and the box disables Gemini's folder-trust prompt
-  (`security.folderTrust.enabled=false`) so it doesn't stop to ask about trusting
-  the mounted repo — the box is the sandbox, matching the Claude/Codex first-run
-  seeding. It's merged into your settings (an explicit folderTrust choice is kept).
+- Fresh boxes skip Claude's first-run prompts. Each run pre-answers the theme
+  picker, the folder-trust dialog, and the bypass-permissions warning (the box is
+  the sandbox) by seeding `settings.json` and `.claude.json` in the mounted config
+  — merged, so the login and any settings you've chosen are preserved. A fresh
+  install goes straight from one login to working.
 
 ## 1.6.0
 
