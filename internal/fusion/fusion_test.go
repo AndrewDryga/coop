@@ -35,7 +35,7 @@ func TestPeers(t *testing.T) {
 func TestPeerCmd(t *testing.T) {
 	cases := map[string][]string{
 		"claude": {"claude", "-p", "--permission-mode", "plan", "Q"},
-		"gemini": {"gemini", "-p", "--approval-mode", "plan", "Q"},
+		"gemini": {"gemini", "--approval-mode", "plan", "-p", "Q"},
 		"codex":  {"codex", "exec", "-s", "read-only", "Q"},
 	}
 	for tool, want := range cases {
@@ -53,7 +53,7 @@ func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
 	// Names both peers' read-only commands.
 	for _, want := range []string{
 		"claude -p --permission-mode plan",
-		"gemini -p --approval-mode plan",
+		"gemini --approval-mode plan -p",
 	} {
 		if !strings.Contains(ins, want) {
 			t.Errorf("instruction missing peer command %q", want)

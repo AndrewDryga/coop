@@ -9,7 +9,7 @@
   interactive, headless, or in Zed via `coop acp fusion <governor>` (one
   `agent_servers` entry per governor to switch who leads). No extra service or
   MCP: the governor runs its peers (`claude -p --permission-mode plan`,
-  `gemini -p --approval-mode plan`, `codex exec -s read-only`) from its own
+  `gemini --approval-mode plan -p`, `codex exec -s read-only`) from its own
   shell, and the fusion instruction is scoped to the governor only, so the peers
   it spawns never recurse.
 - Smoother agent auth & first-run in the box. `coop login codex` uses the

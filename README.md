@@ -276,7 +276,7 @@ parallel:
 
 ```
 claude -p --permission-mode plan "<question>"   # read-only: returns its approach, never edits
-gemini -p --approval-mode plan   "<question>"
+gemini --approval-mode plan -p   "<question>"
 codex  exec -s read-only          "<question>"
 ```
 

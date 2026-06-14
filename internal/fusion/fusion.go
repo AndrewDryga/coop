@@ -41,7 +41,9 @@ func peerCmd(tool, question string) []string {
 	case "claude":
 		return []string{"claude", "-p", "--permission-mode", "plan", question}
 	case "gemini":
-		return []string{"gemini", "-p", "--approval-mode", "plan", question}
+		// -p takes the prompt as its value, so it must come last (right before the
+		// question); otherwise -p swallows --approval-mode and gemini prints help.
+		return []string{"gemini", "--approval-mode", "plan", "-p", question}
 	case "codex":
 		return []string{"codex", "exec", "-s", "read-only", question}
 	}
@@ -69,25 +71,30 @@ func consultBlock(peers []string) string {
 // peers read-only and in parallel, then synthesize. Naming the exact commands
 // makes the governor run the right thing.
 func Instruction(governor string, peers []string) string {
-	return fmt.Sprintf(`# Fusion mode — you are the governor of a model council
+	return fmt.Sprintf(`# Fusion mode — you are %s, the governor of a model council
 
-You are the lead agent (%s). For any non-trivial question, decision, or change,
-FIRST get independent perspectives from your peer models (%s), then synthesize
-the best result yourself. Skip the council only for trivial or mechanical steps.
+Your peers are %s. The defining rule of this mode: you never answer alone. Before
+you respond to a question, propose a plan, or make a non-trivial change, you MUST
+first consult BOTH peers and then synthesize their answers with your own. This is
+mandatory and is NOT conditional on how confident you feel — answering from your
+own knowledge without consulting the peers defeats the entire purpose of fusion
+mode. Only skip it for pure shell mechanics (ls, cd, cat, git status).
 
-## 1. Consult your peers — read-only, in parallel
-Substitute your full question or task for the placeholder and run this from your
-shell. The peers run read-only (they cannot edit files); they return their own
-analysis or proposed approach:
+## 1. Consult BOTH peers FIRST — read-only, in parallel
+Put your actual question/task where the placeholder is and run this whole block
+from your shell. Run it verbatim — do not drop a peer, even if the first answer
+already looks sufficient:
 
 %s
+If a peer errors or is unavailable, proceed with the others — but always attempt
+all of them before you answer.
+
 ## 2. Synthesize, then act
-- Combine the strongest parts of each peer's answer with your own reasoning.
-- Surface disagreements and resolve them by evidence or verification, not by vote.
-- Call out anything all of you missed.
-- You are the decider: produce the single best answer or implementation, then
-  proceed — do not merely relay the peers. Briefly note where a peer changed your
-  approach.
+- Read every peer's answer in full before you respond.
+- Combine the strongest parts of each with your own reasoning; resolve
+  disagreements by evidence or verification, not by a vote.
+- You are the decider: produce the single best answer or implementation, and
+  briefly note where the peers agreed or shifted your approach.
 `, governor, strings.Join(peers, " and "), consultBlock(peers))
 }
 
