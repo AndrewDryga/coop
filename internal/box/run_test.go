@@ -82,6 +82,9 @@ func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	if !slices.Contains(got, "-it") {
 		t.Errorf("interactive run should pass -it: %v", got)
 	}
+	if !containsSeq(got, []string{"-e", "TERM"}) {
+		t.Errorf("interactive run should propagate TERM for color: %v", got)
+	}
 }
 
 func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {

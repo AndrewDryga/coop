@@ -19,6 +19,8 @@
   "trusted"`) and so is Gemini's folder-trust (`security.folderTrust.enabled =
   false`), matching Claude's first-run seeding — the box is the sandbox. All
   merged/idempotent, so an explicit choice and your other settings are kept.
+  Interactive runs also propagate your terminal's `TERM`, so the agents' TUIs
+  render in full color instead of warning about a basic terminal.
 - Gemini no longer fails to launch on an empty `settings.json` ("Unexpected end
   of JSON input"); the box seeds valid JSON when that file is missing or blank
   (your own settings are preserved).

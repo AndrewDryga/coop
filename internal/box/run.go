@@ -226,7 +226,10 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 	args := []string{"run", "--rm", "--label", "coop=box"}
 	switch mode {
 	case ttyInteractive:
-		args = append(args, "-it")
+		// -e TERM propagates the host terminal type so the agents' TUIs render in
+		// full color (without it the box reports a basic terminal — e.g. Gemini
+		// warns about missing 256-color support).
+		args = append(args, "-it", "-e", "TERM")
 	case ttyStdinOnly:
 		args = append(args, "-i")
 	}
