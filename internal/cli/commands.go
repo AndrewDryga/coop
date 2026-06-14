@@ -81,7 +81,10 @@ func (a *app) cmdLogin(args []string) (int, error) {
 	ui.Info("logging in to %s — credentials persist in %s/", tool, a.cfg.AgentDir(tool))
 	cmd := []string{tool} // claude/gemini authenticate on first interactive run
 	if tool == "codex" {
-		cmd = []string{"codex", "login"}
+		// Device-code flow: the box has no browser and codex's default localhost
+		// OAuth redirect can't reach the host, so browser login hangs. --device-auth
+		// prints a URL + code to open on any device instead.
+		cmd = []string{"codex", "login", "--device-auth"}
 	}
 	return a.runInBox(cmd)
 }

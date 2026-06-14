@@ -64,7 +64,7 @@ Each agent reads its config and credentials from
 box. Two ways to authenticate:
 
 ```bash
-coop login codex                                # interactive login; the token persists
+coop login codex                                # device-code login (no browser); token persists
 echo 'ANTHROPIC_API_KEY=sk-…' >> ~/.config/coop/agents/env   # ...or use API keys
 ```
 
