@@ -1,7 +1,7 @@
-# agent-box
+# Coop
 
 Run a coding agent on your real repos every day, in a box it can't escape and
-with your secrets out of its reach. One `agent` command, installed once.
+with your secrets out of its reach. One `coop` command, installed once.
 
 It's the working tooling behind two write-ups:
 [running an agent you can't trust](https://dryga.com/blog/untrusted-ai-coding-agent/)
@@ -13,22 +13,25 @@ and [an OS for autonomous agents](https://dryga.com/blog/os-for-coding-agents/).
 ./install.sh
 ```
 
-Symlinks `agent` into `~/.local/bin`, builds the `agent-box` image (Node +
-Claude Code + Codex + Gemini), and runs `agent doctor` to prove the sandbox
-holds. After that, `agent` works from any repo. Needs a container runtime —
-Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or
-Podman — auto-detected.
+Builds the `coop` binary (Go 1.23+) into `~/.local/bin`, builds the `coop-box`
+image (Node + Claude Code + Codex + Gemini), and runs `coop doctor` to prove the
+sandbox holds. After that, `coop` works from any repo. Needs Go to build, plus a
+container runtime — Apple [`container`](https://github.com/apple/container)
+(macOS 26+), Docker, or Podman — auto-detected.
+
+`coop` is a single static binary with no runtime dependencies; `go build .`
+produces it anywhere.
 
 ## Daily use
 
 ```bash
 cd ~/code/some-repo
 
-agent                  # sandboxed `claude`, no permission prompts, secrets shadowed
-agent codex            # the same box, but Codex (autonomous flags)
-agent gemini           # ...or Gemini
-agent shell            # a shell in the box, to look around
-agent run -- npm test  # run anything in the box
+coop                  # sandboxed `claude`, no permission prompts, secrets shadowed
+coop codex            # the same box, but Codex (autonomous flags)
+coop gemini           # ...or Gemini
+coop shell            # a shell in the box, to look around
+coop run -- npm test  # run anything in the box
 ```
 
 One box, three agents — each launches with its own "don't stop to ask" flags
@@ -37,17 +40,35 @@ One box, three agents — each launches with its own "don't stop to ask" flags
 
 ## Authentication & settings
 
-Each agent reads its config and credentials from `agents/<name>/`, mounted into
-the box at `~/.claude`, `~/.codex`, `~/.gemini`. Edit those files on the host;
-they take effect in the box. Two ways to authenticate:
+Each agent reads its config and credentials from
+`~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`,
+`~/.codex`, `~/.gemini`. Edit those files on the host; they take effect in the
+box. Two ways to authenticate:
 
 ```bash
-cp agents/env.example agents/env   # 1. drop in API keys, or...
-agent login codex                  # 2. interactive login; token persists in agents/codex/
+coop login codex                                # interactive login; the token persists
+echo 'ANTHROPIC_API_KEY=sk-…' >> ~/.config/coop/agents/env   # ...or use API keys
 ```
 
-See `agents/README.md`. Everything there except the templates is gitignored, so
-credentials never land in git.
+The config dir lives outside any repo, so credentials never land in git. See
+`agents/README.md` for the layout. On first run the box also pre-answers Claude's
+setup prompts — theme, folder trust, and the bypass-permissions warning (the box
+is the sandbox) — so a fresh install goes straight from login to work.
+
+### MCP servers, defined once
+
+Drop your MCP servers into `~/.config/coop/agents/mcp.json` (the standard
+`{ "mcpServers": { ... } }` shape) and all three agents pick them up:
+
+```bash
+cp agents/mcp.json.example ~/.config/coop/agents/mcp.json   # then edit
+```
+
+`coop` wires that one file into each agent's native mechanism on launch: Claude
+via `--mcp-config`, Gemini merged into its `settings.json`, Codex converted to
+`[mcp_servers.*]` in its `config.toml`. The Gemini/Codex versions are generated
+read-only on top of your existing config, so your own files are never touched and
+servers from `mcp.json` win on a name clash.
 
 Your repo is mounted at `/workspace`; the agent edits real files and you see
 them in your editor. Everything else — your home dir, SSH keys, the rest of the
@@ -62,7 +83,7 @@ Templates (`*.example`, `*.sample`, `*.template`) stay visible. Verify it
 yourself anytime:
 
 ```bash
-agent doctor
+coop doctor
 ```
 
 It plants a fake secret, launches the box, and checks from *inside* that the
@@ -72,7 +93,7 @@ carries neither the secret nor a pushable remote. Run it after changing config.
 ### Hand off a clone, not your working tree
 
 ```bash
-agent clone perf       # fresh clone in ../<repo>-agents/perf, agent runs there
+coop clone perf       # fresh clone in ../<repo>-agents/perf, agent runs there
 ```
 
 The clone has no gitignored secrets (they were never committed) and its `origin`
@@ -85,9 +106,9 @@ git fetch ../<repo>-agents/perf perf:review/perf && git diff @...review/perf
 ### Leave it running
 
 ```bash
-agent init             # scaffold AGENTS.md, the .agent/ working folder, and the hooks
+coop init             # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 # ...fill in .agent/TASKS.md with checkbox tasks...
-agent loop             # disposable agents work the queue until it's done, then audit
+coop loop             # disposable agents work the queue until it's done, then audit
 ```
 
 `loop` starts a fresh agent per iteration (no context rot), works unchecked
@@ -102,8 +123,8 @@ shares Claude's skills directory. A real (non-symlink) instruction file you
 already have is left untouched.
 
 And it installs a set of generic **workflow skills** into `.claude/skills/`
-(shared with Codex): `/plan` a multi-file change, `/work` it step-by-step against
-the gate, `/batch` to drain `.agent/TASKS.md` unattended, and `/verify-api`
+(shared with Codex): `/spec` a multi-file change, `/work` it step-by-step against
+the gate, `/sweep` to drain `.agent/TASKS.md` unattended, and `/verify-api`
 before calling anything you're unsure of. Edit them freely — `init` won't
 overwrite a skill you've changed.
 
@@ -132,8 +153,8 @@ own clone, branch, and loop:
 
 ```bash
 # .agent/TASKS.perf.md, .agent/TASKS.deps.md — independent items
-agent dispatch perf > perf.log 2>&1 &
-agent dispatch deps > deps.log 2>&1 &
+coop dispatch perf > perf.log 2>&1 &
+coop dispatch deps > deps.log 2>&1 &
 ```
 
 Each clone is isolated (no shared working copy, no shared remote). Review and
@@ -146,18 +167,18 @@ The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer
 the sandboxed agent from Zed's own agent panel — Zed is the cockpit, the box
 stays the cage. Connect it in four steps:
 
-**1. Install and build** (once). `./install.sh` puts `agent` on your `PATH` and
+**1. Install and build** (once). `./install.sh` puts `coop` on your `PATH` and
 builds the image with the ACP adapters baked in. Check it resolves:
 
 ```bash
-command -v agent      # e.g. /Users/you/.local/bin/agent
+command -v coop      # e.g. /Users/you/.local/bin/coop
 ```
 
 **2. Authenticate** the agent you'll use — once; the token persists in
 `agents/<agent>/`:
 
 ```bash
-agent login claude    # or: agent login codex   (gemini logs in on first use)
+coop login claude    # or: coop login codex   (gemini logs in on first use)
 ```
 
 **3. Register it in Zed.** In the agent panel, use **Add Custom Agent** (it
@@ -166,9 +187,9 @@ writes the entry for you), or edit `settings.json` directly:
 ```jsonc
 {
   "agent_servers": {
-    "agent-box": {
+    "coop": {
       "type": "custom",
-      "command": "agent",          // absolute path if Zed's PATH lacks ~/.local/bin
+      "command": "coop",          // absolute path if Zed's PATH lacks ~/.local/bin
       "args": ["acp", "claude"],   // or "codex" / "gemini"
       "env": {}
     }
@@ -176,23 +197,23 @@ writes the entry for you), or edit `settings.json` directly:
 }
 ```
 
-GUI apps don't always inherit your shell's `PATH`. If Zed can't find `agent`,
+GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`,
 use the absolute path from step 1 as `command`.
 
-**4. Use it.** Open Zed's agent panel, pick **agent-box** from the agent
+**4. Use it.** Open Zed's agent panel, pick **coop** from the agent
 dropdown, and start a thread. For each project window Zed launches
-`agent acp claude` with that project as the cwd; the agent runs in the box, edits
+`coop acp claude` with that project as the cwd; the agent runs in the box, edits
 your files over ACP, and you approve its tool calls in Zed (or let them run — the
 box is the boundary).
 
-Under the hood, `agent acp [claude|codex|gemini]` runs the matching adapter
+Under the hood, `coop acp [claude|codex|gemini]` runs the matching adapter
 (`@zed-industries/claude-code-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
 inside the box over stdio: the repo is mounted at its **real host path** (not
 `/workspace`) so Zed's absolute paths resolve, stdin is attached without a pty
 (ACP is JSON-RPC over stdio), and your secrets stay shadowed.
 
 Notes:
-- **Services work too.** If the repo has a `compose.agent.yml`, `agent up` first
+- **Services work too.** If the repo has a `compose.agent.yml`, `coop up` first
   — the ACP box joins the same network, so the agent reaches `db`/`redis` by name.
 - **Stack images need the adapters.** A repo with its own `Dockerfile.agent`
   runs in *that* image, which doesn't ship the ACP adapters by default — add
@@ -207,11 +228,11 @@ that's slow, non-reproducible, and dies with the container. You declare them
 once instead:
 
 ```bash
-agent init --stack elixir   # writes Dockerfile.agent (toolchain) + compose.agent.yml (db, redis)
-agent build                 # bakes Elixir + the agent CLIs into this repo's own image
-agent up                    # starts Postgres + Redis, waits until healthy
-agent                       # the box has Elixir AND reaches db/redis by name
-agent down -v               # stop services and wipe their throwaway data
+coop init --stack elixir   # writes Dockerfile.agent (toolchain) + compose.agent.yml (db, redis)
+coop build                 # bakes Elixir + the agent CLIs into this repo's own image
+coop up                    # starts Postgres + Redis, waits until healthy
+coop                       # the box has Elixir AND reaches db/redis by name
+coop down -v               # stop services and wipe their throwaway data
 ```
 
 - **Toolchain → the image.** A repo with its own `Dockerfile.agent` gets its own
@@ -223,22 +244,22 @@ agent down -v               # stop services and wipe their throwaway data
   containers on a private network the box joins; connect with e.g.
   `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in
   `agents/env`). The agent never installs or hosts a database, so it can't
-  corrupt one — and `agent down -v` resets to a clean slate.
-- **Caches stay warm.** A shared `agentbox-cache` volume is mounted at `~/.cache`
+  corrupt one — and `coop down -v` resets to a clean slate.
+- **Caches stay warm.** A shared `coop-cache` volume is mounted at `~/.cache`
   so disposable runs don't re-download the world.
 
 This is the Dev Containers + Compose model, minus the ceremony.
 
 ### How `Dockerfile.agent` works
 
-Drop a `Dockerfile.agent` at a repo's root (usually via `agent init --stack`).
+Drop a `Dockerfile.agent` at a repo's root (usually via `coop init --stack`).
 From then on, in that repo:
 
-- `agent build` builds it and tags it `agentbox-<repo-name>` — its **own** image,
-  so a project's toolchain never clobbers the shared `agent-box` base.
-- every `agent`, `agent codex`, `agent loop`, `agent clone` uses that image
+- `coop build` builds it and tags it `coop-<repo-name>` — its **own** image,
+  so a project's toolchain never clobbers the shared `coop-box` base.
+- every `coop`, `coop codex`, `coop loop`, `coop clone` uses that image
   automatically (detected by the file's presence).
-- need a new system package? add it to the `RUN` line and `agent build` again —
+- need a new system package? add it to the `RUN` line and `coop build` again —
   the dependency *graduates into the image* instead of being installed each run.
 
 The box has a small contract. An image is a valid agent box when:
@@ -246,7 +267,7 @@ The box has a small contract. An image is a valid agent box when:
 1. **It runs as a non-root user** — Claude Code refuses `--dangerously-skip-permissions` as root.
 2. **That user's home is `/home/node`** — the `agents/` auth mounts and
    `INSTRUCTIONS.md` land at `$HOME/.claude`, `$HOME/.codex`, `$HOME/.gemini`.
-   (Different base? Set `AGENT_HOME_IN_BOX=/home/<user>` to match.)
+   (Different base? Set `COOP_HOME_IN_BOX=/home/<user>` to match.)
 3. **`claude`, `codex`, `gemini` are on `PATH`** (so it needs Node).
 4. **`git config --system --add safe.directory /workspace`** — git works on the
    host-owned bind mount.
@@ -277,11 +298,11 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
  && git config --system --add safe.directory /workspace
 USER <the devcontainer's non-root user>
 WORKDIR /workspace
-# If that user's home isn't /home/node, run with AGENT_HOME_IN_BOX=/home/<user>.
+# If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.
 ```
 
 The division of labour: **devcontainer = what's in the environment**
-(toolchain, features, reproducibility); **agent-box = running an untrusted agent
+(toolchain, features, reproducibility); **Coop = running an untrusted agent
 in it safely** (secret shadowing, the VM boundary, the queue + foreman). Don't
 lean on the devcontainer as the security boundary — by itself it mounts your
 whole workspace (`.env` included), and upstream docs warn that under
@@ -290,43 +311,50 @@ The shadowing and VM are what the box adds on top.
 
 ## Configure
 
-Env vars, or `~/.config/agent-box/agent.conf` (sourced — set the same names):
+Env vars, or `~/.config/coop/coop.conf` (`KEY=VALUE` lines, same names —
+environment wins over the file):
 
 | Var | Default | |
 |---|---|---|
-| `AGENT_IMAGE` | (auto) | force a specific image (overrides `Dockerfile.agent` detection) |
-| `AGENT_BASE_IMAGE` | `agent-box` | the shared base image tag |
-| `AGENT_RUNTIME` | auto | `container` / `docker` / `podman` |
-| `AGENT_CONFIG_DIR` | `agents/` | per-agent auth + settings folder |
-| `AGENT_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |
-| `AGENT_CLAUDE_CMD` · `AGENT_CODEX_CMD` · `AGENT_GEMINI_CMD` | autonomous defaults | per-agent command |
-| `SECRET_GLOBS` · `ALLOW_GLOBS` | see `bin/agent` | shadow / keep-visible patterns |
-| `AGENT_NETWORK` · `AGENT_CACHE` | `1` | join services network / mount cache volume |
-| `AGENT_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
+| `COOP_IMAGE` | (auto) | force a specific image (overrides `Dockerfile.agent` detection) |
+| `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
+| `COOP_RUNTIME` | auto | `container` / `docker` / `podman` |
+| `COOP_CONFIG_DIR` | `~/.config/coop/agents` | per-agent auth + settings folder |
+| `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |
+| `COOP_CLAUDE_CMD` · `COOP_CODEX_CMD` · `COOP_GEMINI_CMD` | autonomous defaults | per-agent command |
+| `COOP_NETWORK` · `COOP_CACHE` | `1` | join services network / mount cache volume |
+| `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
+
+The shadow / keep-visible patterns are compiled in (see `internal/box/secrets.go`).
 
 ## Layout
 
-Everything is one self-contained script plus a config folder. A repo you work on
-optionally carries a `Dockerfile.agent` (its toolchain) and `compose.agent.yml`
-(its services):
+A single static Go binary plus a config folder. A repo you work on optionally
+carries a `Dockerfile.agent` (its toolchain) and `compose.agent.yml` (its
+services):
 
 ```
-bin/agent      the CLI: claude · codex · gemini · login · acp · run · shell · clone
-               · dispatch · up · down · loop · init · doctor · build
-agents/        per-agent auth + settings (claude/ codex/ gemini/ env), gitignored
-skills/        generic workflow skills (plan · work · batch · verify-api) init installs
-Dockerfile     reference base image (agent build has a built-in copy too)
-install.sh     symlink onto PATH, build, verify
-Makefile       install · test · doctor · lint · check
-test/unit.sh   unit tests for the pure logic (no runtime needed)
+main.go             entrypoint
+internal/box/       the engine: secret-shadowing mounts, image selection, container run
+internal/mcp/       one mcp.json → Claude / Gemini / Codex native configs (no Python)
+internal/scaffold/  `coop init` templates + the workflow skills (embedded in the binary)
+internal/cli/       command dispatch, grouped help, doctor
+internal/config·runtime·ui/   settings · runtime detection · terminal output
+agents/             example config (env.example, mcp.json.example); copied to
+                    ~/.config/coop/agents on install
+skills/             the workflow skills (spec · work · sweep · verify-api), also embedded
+install.sh          build, install onto PATH, seed config, verify
+Makefile            build · install · test · lint · doctor · check
 ```
 
 ## Development
 
 ```bash
-make check     # shellcheck + unit tests (what CI runs; no Docker needed)
+make build     # build ./coop
+make check     # gofmt + vet + staticcheck + unit tests (what CI runs; no Docker needed)
 make doctor    # the integration check — proves isolation, needs a runtime
 ```
 
-The script is source-guarded, so `test/unit.sh` loads its functions and tests
-the pure logic (secret enumeration, image selection, naming) directly.
+The security-critical logic — secret enumeration (`internal/box/mounts.go`) and
+run-arg assembly (`internal/box/run.go`) — is pure and unit-tested without a
+runtime; `coop doctor` proves the whole thing end-to-end against the real box.

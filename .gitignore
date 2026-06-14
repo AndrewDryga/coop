@@ -4,6 +4,9 @@
 *.local
 .DS_Store
 
-# agent-box working state (commit knowledge, ignore state)
+# the compiled binary (make build)
+/coop
+
+# coop working state (commit knowledge, ignore state)
 .agent/*
 !.agent/rules/
