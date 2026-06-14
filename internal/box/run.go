@@ -96,6 +96,18 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		stderr = os.Stderr
 	}
 
+	// Ensure the per-agent home dirs exist and pre-answer first-run prompts —
+	// Claude's theme/trust/bypass and Codex's directory-trust — BEFORE generating
+	// MCP configs, so a fresh box is ready to work and the generated Codex config
+	// carries the trust entry on the very first run.
+	if spec.Homes {
+		for _, agent := range cfg.Agents {
+			os.MkdirAll(cfg.AgentDir(agent), 0o755)
+		}
+		ensureClaudeDefaults(cfg, workdir)
+		ensureCodexDefaults(cfg, workdir)
+	}
+
 	// Generate MCP configs into temp files that live for the container's run.
 	var tmpFiles []string
 	defer func() {
@@ -140,16 +152,6 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
 			}
 		}
-	}
-
-	// Ensure the per-agent home dirs exist so their bind mounts resolve, and
-	// pre-answer Claude's first-run prompts (theme/trust/bypass) so the box is
-	// ready to work on a fresh install.
-	if spec.Homes {
-		for _, agent := range cfg.Agents {
-			os.MkdirAll(cfg.AgentDir(agent), 0o755)
-		}
-		ensureClaudeDefaults(cfg, workdir)
 	}
 
 	networkName := ""

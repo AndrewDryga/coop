@@ -2,8 +2,10 @@ package box
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -57,6 +59,37 @@ func ensureClaudeDefaults(cfg *config.Config, workdir string) {
 	if changed {
 		writeJSONFile(cj, m, 0o600)
 	}
+}
+
+// ensureCodexDefaults pre-trusts the workdir in Codex's config.toml so a fresh box
+// doesn't stop at Codex's "Do you trust this directory?" prompt. Codex records
+// trust as [projects."<dir>"] trust_level = "trusted" in ~/.codex/config.toml; we
+// append that entry (idempotently) to the mounted config. The box is itself the
+// sandbox, so trusting the one mounted repo is the intended posture. It runs
+// before MCP generation so the merged config carries the entry on the first run.
+func ensureCodexDefaults(cfg *config.Config, workdir string) {
+	if workdir == "" {
+		return
+	}
+	dir := cfg.AgentDir("codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(dir, "config.toml")
+	data, _ := os.ReadFile(path) // missing file → empty, which is fine
+	// Leave any existing entry for this dir (the user's, or Codex's own) untouched.
+	if strings.Contains(string(data), fmt.Sprintf("projects.%q", workdir)) {
+		return
+	}
+	out := string(data)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	if out != "" {
+		out += "\n"
+	}
+	out += fmt.Sprintf("[projects.%q]\ntrust_level = \"trusted\"\n", workdir)
+	os.WriteFile(path, []byte(out), 0o644)
 }
 
 // ensureTrue sets m[key]=true unless it already is, reporting whether it changed.

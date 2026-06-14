@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -84,4 +85,56 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Error("second call rewrote .claude.json (not idempotent)")
 	}
+}
+
+func TestEnsureCodexDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	cfgPath := filepath.Join(dir, "codex", "config.toml")
+
+	// Fresh: appends a trust entry for the workdir.
+	ensureCodexDefaults(cfg, "/Users/x/proj")
+	got := readFile(t, cfgPath)
+	if !strings.Contains(got, `[projects."/Users/x/proj"]`) || !strings.Contains(got, `trust_level = "trusted"`) {
+		t.Errorf("config.toml missing trust entry:\n%s", got)
+	}
+
+	// Idempotent: a second call must not duplicate or rewrite.
+	before := readFile(t, cfgPath)
+	ensureCodexDefaults(cfg, "/Users/x/proj")
+	if after := readFile(t, cfgPath); after != before {
+		t.Error("second call changed config.toml (not idempotent)")
+	}
+
+	// A different workdir adds a second entry; the first survives.
+	ensureCodexDefaults(cfg, "/Users/x/other")
+	got = readFile(t, cfgPath)
+	if !strings.Contains(got, `[projects."/Users/x/proj"]`) || !strings.Contains(got, `[projects."/Users/x/other"]`) {
+		t.Errorf("expected both project entries:\n%s", got)
+	}
+}
+
+func TestEnsureCodexDefaultsPreservesExisting(t *testing.T) {
+	dir := t.TempDir()
+	cdir := filepath.Join(dir, "codex")
+	os.MkdirAll(cdir, 0o755)
+	os.WriteFile(filepath.Join(cdir, "config.toml"), []byte("model = \"o3\"\n"), 0o644)
+
+	ensureCodexDefaults(&config.Config{ConfigDir: dir}, "/w")
+	got := readFile(t, filepath.Join(cdir, "config.toml"))
+	if !strings.Contains(got, `model = "o3"`) {
+		t.Error("existing config was dropped")
+	}
+	if !strings.Contains(got, `[projects."/w"]`) {
+		t.Error("trust entry not appended")
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }

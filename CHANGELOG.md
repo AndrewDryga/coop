@@ -58,11 +58,13 @@
 - Terminal detection uses a real isatty ioctl rather than a character-device
   check, so `coop run … < /dev/null` (and other char-device stdin) no longer
   wrongly requests a docker tty.
-- Fresh boxes skip Claude's first-run prompts. Each run pre-answers the theme
-  picker, the folder-trust dialog, and the bypass-permissions warning (the box is
-  the sandbox) by seeding `settings.json` and `.claude.json` in the mounted config
-  — merged, so the login and any settings you've chosen are preserved. A fresh
-  install goes straight from one login to working.
+- Fresh boxes skip the agents' first-run prompts. Each run pre-answers Claude's
+  theme picker, folder-trust dialog, and bypass-permissions warning (by seeding
+  `settings.json` and `.claude.json`), and pre-trusts the repo in Codex's
+  `config.toml` (`[projects."<dir>"] trust_level = "trusted"`) so Codex doesn't
+  stop at its "Do you trust this directory?" prompt — the box is the sandbox.
+  Seeding is merged/idempotent, so your login and any settings are preserved, and
+  a fresh install goes straight from one login to working.
 
 ## 1.6.0
 
