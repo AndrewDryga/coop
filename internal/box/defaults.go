@@ -92,6 +92,23 @@ func ensureCodexDefaults(cfg *config.Config, workdir string) {
 	os.WriteFile(path, []byte(out), 0o644)
 }
 
+// ensureGeminiDefaults makes sure Gemini's settings.json is valid JSON so the CLI
+// starts: an empty or missing settings.json makes gemini fail at launch with
+// "Unexpected end of JSON input". We seed "{}" only when the file is missing or
+// blank, so any settings you've added are left untouched. It runs before MCP
+// generation, which reads this file to merge in servers.
+func ensureGeminiDefaults(cfg *config.Config) {
+	dir := cfg.AgentDir("gemini")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(dir, "settings.json")
+	if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
+		return // has content (yours to keep, or to fix) — don't clobber it
+	}
+	os.WriteFile(path, []byte("{}\n"), 0o644)
+}
+
 // ensureTrue sets m[key]=true unless it already is, reporting whether it changed.
 func ensureTrue(m map[string]any, key string) bool {
 	if v, ok := m[key].(bool); ok && v {

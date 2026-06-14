@@ -106,6 +106,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 		ensureClaudeDefaults(cfg, workdir)
 		ensureCodexDefaults(cfg, workdir)
+		ensureGeminiDefaults(cfg)
 	}
 
 	// Generate MCP configs into temp files that live for the container's run.

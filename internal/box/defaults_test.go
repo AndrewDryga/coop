@@ -130,6 +130,32 @@ func TestEnsureCodexDefaultsPreservesExisting(t *testing.T) {
 	}
 }
 
+func TestEnsureGeminiDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	path := filepath.Join(dir, "gemini", "settings.json")
+
+	// Missing → seeded with valid JSON.
+	ensureGeminiDefaults(cfg)
+	if got := strings.TrimSpace(readFile(t, path)); got != "{}" {
+		t.Errorf("missing settings should seed {}, got %q", got)
+	}
+
+	// Empty file (the reported crash) → seeded.
+	os.WriteFile(path, []byte(""), 0o644)
+	ensureGeminiDefaults(cfg)
+	if got := strings.TrimSpace(readFile(t, path)); got != "{}" {
+		t.Errorf("empty settings should be seeded {}, got %q", got)
+	}
+
+	// Existing settings → preserved, never clobbered.
+	os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o644)
+	ensureGeminiDefaults(cfg)
+	if got := readFile(t, path); got != `{"theme":"dark"}` {
+		t.Errorf("existing settings clobbered: %q", got)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

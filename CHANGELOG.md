@@ -65,6 +65,10 @@
   stop at its "Do you trust this directory?" prompt — the box is the sandbox.
   Seeding is merged/idempotent, so your login and any settings are preserved, and
   a fresh install goes straight from one login to working.
+- Gemini no longer fails to launch on an empty `settings.json` ("Unexpected end of
+  JSON input"); the box seeds a valid `{}` when that file is missing or blank
+  (your own settings are left untouched), so `coop login gemini` reaches its auth
+  step instead of erroring.
 
 ## 1.6.0
 
