@@ -1,4 +1,8 @@
-# Coop
+<p align="center">
+  <img src=".github/assets/coop.png" alt="Coop" width="200">
+</p>
+
+<h1 align="center">Coop</h1>
 
 Run a coding agent on your real repos every day, in a box it can't escape and
 with your secrets out of its reach. One `coop` command, installed once.
