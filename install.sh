@@ -41,7 +41,7 @@ echo "coop: installed $bindir/coop ($("$bindir/coop" version))"
 
 case ":$PATH:" in
   *":$bindir:"*) ;;
-  *) printf '\n  %s is not on your PATH — add to your shell rc:\n    export PATH="%s:$PATH"\n\n' "$bindir" "$bindir" ;;
+  *) printf "\n  %s is not on your PATH — add to your shell rc:\n    export PATH=\"%s:\$PATH\"\n\n" "$bindir" "$bindir" ;;
 esac
 
 # Carry over an existing agent-box config (the pre-rename location), once.

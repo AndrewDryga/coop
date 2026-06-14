@@ -2,6 +2,11 @@
 
 <img src=".github/assets/coop.png" alt="Coop" width="200">
 
+[![CI](https://github.com/AndrewDryga/coop/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewDryga/coop/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AndrewDryga/coop?sort=semver)](https://github.com/AndrewDryga/coop/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/AndrewDryga/coop)](https://goreportcard.com/report/github.com/AndrewDryga/coop)
+[![License](https://img.shields.io/github/license/AndrewDryga/coop)](LICENSE)
+
 Run a coding agent on your real repos every day, in a box it can't escape and
 with your secrets out of its reach. One `coop` command, installed once.
 
@@ -12,17 +17,28 @@ and [an OS for autonomous agents](https://dryga.com/blog/os-for-coding-agents/).
 ## Install
 
 ```bash
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
 ```
 
-Builds the `coop` binary (Go 1.23+) into `~/.local/bin`, builds the `coop-box`
-image (Node + Claude Code + Codex + Gemini), and runs `coop doctor` to prove the
-sandbox holds. After that, `coop` works from any repo. Needs Go to build, plus a
-container runtime — Apple [`container`](https://github.com/apple/container)
-(macOS 26+), Docker, or Podman — auto-detected.
+Downloads the prebuilt `coop` binary for your OS/arch into `~/.local/bin` — no Go,
+no clone. With a container runtime present the installer also builds the sandbox
+image and runs `coop doctor`; otherwise do it once yourself:
 
-`coop` is a single static binary with no runtime dependencies; `go build .`
-produces it anywhere.
+```bash
+coop build && coop doctor
+```
+
+`coop` is a single static binary with no runtime dependencies. It needs a
+container runtime — Apple [`container`](https://github.com/apple/container)
+(macOS 26+), Docker, or Podman — auto-detected. Re-run the one-liner to upgrade.
+
+<details><summary><b>Other ways to install</b></summary>
+
+```bash
+go install github.com/AndrewDryga/coop@latest                              # with Go
+git clone https://github.com/AndrewDryga/coop && cd coop && make install   # from source
+```
+</details>
 
 ## Daily use
 
@@ -169,8 +185,9 @@ The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer
 the sandboxed agent from Zed's own agent panel — Zed is the cockpit, the box
 stays the cage. Connect it in four steps:
 
-**1. Install and build** (once). `./install.sh` puts `coop` on your `PATH` and
-builds the image with the ACP adapters baked in. Check it resolves:
+**1. Install** (once). The [install one-liner](#install) puts `coop` on your
+`PATH`; `coop build` builds the image with the ACP adapters baked in. Check it
+resolves:
 
 ```bash
 command -v coop      # e.g. /Users/you/.local/bin/coop
@@ -345,7 +362,7 @@ internal/config·runtime·ui/   settings · runtime detection · terminal output
 agents/             example config (env.example, mcp.json.example); copied to
                     ~/.config/coop/agents on install
 skills/             the workflow skills (spec · work · sweep · verify-api), also embedded
-install.sh          build, install onto PATH, seed config, verify
+install.sh          the curl one-liner: download the prebuilt binary onto PATH
 Makefile            build · install · test · lint · doctor · check
 ```
 
