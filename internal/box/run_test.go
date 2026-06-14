@@ -60,9 +60,9 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Homes: true}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}}
 
-	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/workspace", ttyNone, false, nil, "")
+	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/workspace", ttyNone, false, nil, nil, "")
 	want := []string{
-		"run", "--rm",
+		"run", "--rm", "--label", "coop=box",
 		"-v", "/repo:/workspace",
 		"-v", cfg.ConfigDir + "/claude:/home/node/.claude",
 		"-v", cfg.ConfigDir + "/codex:/home/node/.codex",
@@ -78,7 +78,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/workspace", ttyInteractive, false, nil, "")
+		"/d", "/workspace", ttyInteractive, false, nil, nil, "")
 	if !slices.Contains(got, "-it") {
 		t.Errorf("interactive run should pass -it: %v", got)
 	}
@@ -100,7 +100,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mcpMounts := []extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}
 
 	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/workspace", ttyNone, true, mcpMounts, "coop-r_default")
+		"/d", "/workspace", ttyNone, true, mcpMounts, nil, "coop-r_default")
 	joined := slices.Clone(got)
 
 	mustContain := func(seq ...string) {
@@ -141,7 +141,7 @@ func TestInstructionOverrideSkipsClaude(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", Agents: []string{"claude", "codex", "gemini"}, ConfigDir: dir}
 
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true},
-		[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}, "/d", "/workspace", ttyNone, false, nil, "")
+		[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}, "/d", "/workspace", ttyNone, false, nil, nil, "")
 	for _, a := range got {
 		if a == filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro" {
 			t.Error("claude override should suppress the shared CLAUDE.md mount")
@@ -150,5 +150,33 @@ func TestInstructionOverrideSkipsClaude(t *testing.T) {
 	// codex/gemini still get the shared instructions.
 	if !containsSeq(got, []string{"-v", filepath.Join(dir, "INSTRUCTIONS.md") + ":/home/node/.codex/AGENTS.md:ro"}) {
 		t.Error("codex should still get the shared instructions")
+	}
+}
+
+// TestAssembleArgsFusionGovernorScoped verifies fusion mode mounts the augmented
+// instruction at the governor's path and skips the governor in the shared mounts,
+// while peers still get the shared instructions (so a peer can't recurse).
+func TestAssembleArgsFusionGovernorScoped(t *testing.T) {
+	dir := t.TempDir()
+	ins := filepath.Join(dir, "INSTRUCTIONS.md")
+	os.WriteFile(ins, []byte("shared"), 0o644)
+	cfg := &config.Config{HomeInBox: "/home/node", Agents: []string{"claude", "codex", "gemini"}, ConfigDir: dir}
+	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}
+	fusionMounts := []extraMount{{"/tmp/fusion", "/home/node/.codex/AGENTS.md"}}
+
+	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		"/d", "/workspace", ttyStdinOnly, false, nil, fusionMounts, "")
+
+	if !containsSeq(got, []string{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"}) {
+		t.Error("governor should get the fusion-augmented instruction mount")
+	}
+	if containsSeq(got, []string{"-v", ins + ":/home/node/.codex/AGENTS.md:ro"}) {
+		t.Error("governor should be skipped in the shared-instruction mounts (no double mount)")
+	}
+	if !containsSeq(got, []string{"-v", ins + ":/home/node/.claude/CLAUDE.md:ro"}) {
+		t.Error("claude peer should still get the shared instructions")
+	}
+	if !containsSeq(got, []string{"-v", ins + ":/home/node/.gemini/GEMINI.md:ro"}) {
+		t.Error("gemini peer should still get the shared instructions")
 	}
 }

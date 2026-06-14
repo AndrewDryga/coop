@@ -40,6 +40,8 @@ type Config struct {
 	LoopCmd      []string // COOP_LOOP_CMD — override the loop's per-iteration command
 	ExtraRunArgs []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
+	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
+
 	// BoxHome is ~/.config/coop: the home for conf, mcp.json, and agents/.
 	BoxHome string
 }
@@ -90,6 +92,8 @@ func Load() *Config {
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
 		LoopCmd:      fields(get("COOP_LOOP_CMD", "")),
 		ExtraRunArgs: fields(get("COOP_RUN_ARGS", "")),
+
+		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),
 
 		BoxHome: boxHome,
 	}

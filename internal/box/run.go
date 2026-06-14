@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -28,6 +29,11 @@ type RunSpec struct {
 	Stdout     io.Writer // capture output (doctor); nil means inherit os.Stdout
 	Stderr     io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
 	ExtraArgs  []string  // extra runtime args for this run (e.g. doctor's probe mount)
+
+	// FusionGovernor, when set, marks this run as fusion mode: the named agent
+	// governs (fronts the session) and gets the fusion instruction merged into its
+	// instruction file; its peers are consulted read-only. Empty = not fusion.
+	FusionGovernor string
 }
 
 // ttyMode is how stdin and the tty are wired for a run.
@@ -41,6 +47,15 @@ const (
 
 // extraMount is a generated host file mounted read-only at a box path.
 type extraMount struct{ host, box string }
+
+// agentInstructionFile is each agent's native global instruction filename — where
+// coop mounts the shared INSTRUCTIONS.md (and, in fusion mode, the governor's
+// fusion-augmented instruction).
+var agentInstructionFile = map[string]string{
+	"claude": "CLAUDE.md",
+	"codex":  "AGENTS.md",
+	"gemini": "GEMINI.md",
+}
 
 // Run assembles and executes one container run, shadowing secrets and wiring up
 // agent homes + MCP. It returns the container's exit code (with a nil error when
@@ -110,6 +125,23 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		wire("Codex", cx, cerr, cfg.HomeInBox+"/.codex/config.toml")
 	}
 
+	// Fusion: the governor gets the fusion instruction (consult peers + synthesize)
+	// merged into its native instruction file — only the governor, so the peers it
+	// spawns read their normal instructions and never recurse into a council.
+	var fusionMounts []extraMount
+	if spec.Homes && spec.FusionGovernor != "" {
+		if file := agentInstructionFile[spec.FusionGovernor]; file != "" {
+			base := governorBaseInstructions(cfg, spec.FusionGovernor, file)
+			content := fusion.GovernorInstructions(base, spec.FusionGovernor, cfg.Agents)
+			if p, err := writeTempFile(content); err != nil {
+				ui.Info("fusion: skipped instruction wiring: %v", err)
+			} else {
+				tmpFiles = append(tmpFiles, p)
+				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
+			}
+		}
+	}
+
 	// Ensure the per-agent home dirs exist so their bind mounts resolve, and
 	// pre-answer Claude's first-run prompts (theme/trust/bypass) so the box is
 	// ready to work on a fresh install.
@@ -131,7 +163,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, networkName)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, fusionMounts, networkName)
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
@@ -153,6 +185,21 @@ func resolveWorkdir(spec RunSpec, cfg *config.Config) string {
 	}
 }
 
+// governorBaseInstructions returns the instructions the governor would normally
+// receive (its own per-agent override if present, else the shared INSTRUCTIONS.md),
+// so fusion augments rather than replaces what the user wrote.
+func governorBaseInstructions(cfg *config.Config, governor, file string) string {
+	if data, err := os.ReadFile(filepath.Join(cfg.AgentDir(governor), file)); err == nil {
+		return string(data)
+	}
+	if ins := cfg.Instructions(); fileExists(ins) {
+		if data, err := os.ReadFile(ins); err == nil {
+			return string(data)
+		}
+	}
+	return ""
+}
+
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an
 // interactive terminal (-it) or ACP (-i); batch and piped runs get neither,
 // matching the original tool's behavior.
@@ -172,8 +219,8 @@ func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
 // assembleArgs builds the full container-runtime argument list. It is pure given
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon.
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts []extraMount, networkName string) []string {
-	args := []string{"run", "--rm"}
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts []extraMount, networkName string) []string {
+	args := []string{"run", "--rm", "--label", "coop=box"}
 	switch mode {
 	case ttyInteractive:
 		args = append(args, "-it")
@@ -196,17 +243,22 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 			args = append(args, "--env-file", cfg.EnvFile())
 		}
 		// One canonical instruction file → each agent's native global path,
-		// unless that agent has its own override in its folder.
+		// unless that agent has its own override. The fusion governor is skipped
+		// here — it gets a fusion-augmented file mounted just below.
 		if ins := cfg.Instructions(); fileExists(ins) {
-			if !fileExists(filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md")) {
-				args = append(args, "-v", ins+":"+cfg.HomeInBox+"/.claude/CLAUDE.md:ro")
+			for _, agent := range cfg.Agents {
+				if agent == spec.FusionGovernor {
+					continue
+				}
+				file := agentInstructionFile[agent]
+				if !fileExists(filepath.Join(cfg.AgentDir(agent), file)) {
+					args = append(args, "-v", ins+":"+cfg.HomeInBox+"/."+agent+"/"+file+":ro")
+				}
 			}
-			if !fileExists(filepath.Join(cfg.AgentDir("codex"), "AGENTS.md")) {
-				args = append(args, "-v", ins+":"+cfg.HomeInBox+"/.codex/AGENTS.md:ro")
-			}
-			if !fileExists(filepath.Join(cfg.AgentDir("gemini"), "GEMINI.md")) {
-				args = append(args, "-v", ins+":"+cfg.HomeInBox+"/.gemini/GEMINI.md:ro")
-			}
+		}
+		// Fusion: the governor's augmented instruction file (peers + synthesis).
+		for _, m := range fusionMounts {
+			args = append(args, "-v", m.host+":"+m.box+":ro")
 		}
 		if mcpPresent {
 			args = append(args, "-v", cfg.MCPFile+":"+cfg.MCPInBox+":ro")

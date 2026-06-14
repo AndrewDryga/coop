@@ -2,6 +2,16 @@
 
 ## 2.0.0
 
+- **Fusion mode — a governed council.** `coop fusion` runs one model as the
+  *governor* (default `codex`; `--governor claude|gemini` or
+  `COOP_FUSION_GOVERNOR`) and has it consult the other two **read-only and in
+  parallel**, then synthesize the best result. It's a normal agent mode —
+  interactive, headless, or in Zed via `coop acp fusion <governor>` (one
+  `agent_servers` entry per governor to switch who leads). No extra service or
+  MCP: the governor runs its peers (`claude -p --permission-mode plan`,
+  `gemini -p --approval-mode plan`, `codex exec -s read-only`) from its own
+  shell, and the fusion instruction is scoped to the governor only, so the peers
+  it spawns never recurse.
 - **Renamed to Coop.** The binary is now `coop`, the image is `coop-box`, config
   lives in `~/.config/coop`, and env vars use the `COOP_` prefix (previously
   `agent-box` / `agent` / `AGENT_`). `install.sh` migrates an existing

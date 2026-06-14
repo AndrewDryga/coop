@@ -22,6 +22,7 @@ func printHelp(cfg *config.Config) {
 	row("coop claude|codex|gemini", "a specific agent, with its autonomous flags")
 	row("coop login <agent>", "authenticate an agent (persists in the config dir)")
 	row("coop acp [agent]", "run as an ACP agent over stdio (point Zed at this)")
+	row("coop fusion [--governor g]", "a council: g leads, the other two advise read-only")
 	row("coop run -- <cmd...>", "run any command in the box")
 	row("coop shell", "a shell in the box")
 	row("coop clone <name>", "a secrets-free clone workspace + an agent in it")
@@ -43,9 +44,14 @@ func printHelp(cfg *config.Config) {
 	p("  coop dispatch perf > perf.log 2>&1 &\n")
 	p("  coop dispatch deps > deps.log 2>&1 &   # each gets its own clone + branch\n\n")
 
+	p("%s  one model leads, the other two advise read-only, the leader synthesizes:\n", ui.Bold("fusion"))
+	p("  coop fusion                     # codex leads (COOP_FUSION_GOVERNOR); peers advise\n")
+	p("  coop fusion --governor claude   # claude leads instead\n\n")
+
 	p("%s  add to Zed settings.json, then pick it in the agent panel:\n", ui.Bold("drive from Zed (ACP)"))
 	p("  \"agent_servers\": { \"coop\": { \"type\": \"custom\",\n")
-	p("      \"command\": \"coop\", \"args\": [\"acp\", \"claude\"], \"env\": {} } }\n\n")
+	p("      \"command\": \"coop\", \"args\": [\"acp\", \"claude\"], \"env\": {} } }\n")
+	p("  one entry per governor for fusion, e.g. args [\"acp\", \"fusion\", \"codex\"]\n\n")
 
 	p("%s  per-agent, in %s\n", ui.Bold("auth & settings"), tildeify(cfg.ConfigDir))
 	p("  claude/ codex/ gemini/  ->  mounted at ~/.claude ~/.codex ~/.gemini in the box\n")

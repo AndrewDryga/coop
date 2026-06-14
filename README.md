@@ -248,6 +248,52 @@ Notes:
   `@agentclientprotocol/claude-agent-acp` (and `@zed-industries/codex-acp`) to its
   `npm install -g` line if you want ACP there.
 
+## Fusion: a governed council
+
+One model **leads** and does the real work; the other two **advise read-only**;
+the leader **synthesizes** the best result. It's a mode like any other agent —
+interactive, headless, or in Zed:
+
+```bash
+coop fusion                    # codex leads (COOP_FUSION_GOVERNOR); claude + gemini advise
+coop fusion --governor claude  # claude leads instead; codex + gemini advise
+coop fusion -- -p "Design the retry strategy"   # headless; args pass to the leader
+```
+
+There's no extra service or protocol behind it: the leader is just that agent
+running normally (so it edits, runs the gate, and streams), plus a fusion
+instruction injected **into the leader's instruction file only**. For a
+non-trivial question it consults its peers from its shell — read-only and in
+parallel:
+
+```
+claude -p --permission-mode plan "<question>"   # read-only: returns its approach, never edits
+gemini -p --approval-mode plan   "<question>"
+codex  exec -s read-only          "<question>"
+```
+
+It then merges the strongest parts, resolves disagreements by verification, and
+proceeds. Because the instruction lands only on the leader, the peers it spawns
+read their normal instructions and never recurse into a council of their own.
+
+**In Zed:** add one `agent_servers` entry per leader and pick the one you want
+from the agent dropdown to switch who governs:
+
+```json
+"agent_servers": {
+  "coop fusion (codex)":  { "command": "coop", "args": ["acp", "fusion", "codex"] },
+  "coop fusion (claude)": { "command": "coop", "args": ["acp", "fusion", "claude"] },
+  "coop fusion (gemini)": { "command": "coop", "args": ["acp", "fusion", "gemini"] }
+}
+```
+
+The leader runs as a normal ACP agent, so Zed drives it like any other — it just
+consults its peers along the way.
+
+Each consultation is two extra read-only runs, so fusion is for decisions and
+hard problems, not every keystroke — the leader is told to skip the council for
+trivial steps.
+
 ## Project dependencies: toolchain in the image, services alongside
 
 Real projects need a language toolchain (Elixir, Python, …) and stateful

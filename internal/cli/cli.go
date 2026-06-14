@@ -88,6 +88,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdLogin(rest)
 	case "acp":
 		return a.cmdACP(rest)
+	case "fusion":
+		return a.cmdFusion(rest)
 	case "clone":
 		return a.cmdClone(rest)
 	case "dispatch":

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -85,25 +86,47 @@ func (a *app) cmdLogin(args []string) (int, error) {
 	return a.runInBox(cmd)
 }
 
+// acpCommand maps an agent to its ACP adapter command inside the box.
+func acpCommand(tool string) ([]string, bool) {
+	switch tool {
+	case "claude":
+		return []string{"claude-agent-acp"}, true
+	case "codex":
+		return []string{"codex-acp"}, true
+	case "gemini":
+		return []string{"gemini", "--acp"}, true
+	}
+	return nil, false
+}
+
 // cmdACP runs the box as an ACP agent over stdio: the repo mounts at its real
 // host path (so the editor's absolute paths resolve, and the session history
 // matches `coop`/`coop loop` — see resolveWorkdir) and no tty is allocated. The
 // explicit Workdir forces the real path even if COOP_WORKDIR is set.
+//
+// `coop acp fusion [governor]` fronts the governor's adapter as a normal ACP
+// agent (so Zed drives it like any other) but wired for fusion: it consults its
+// peers read-only and synthesizes (see cmdFusion). Add one Zed agent_servers
+// entry per governor to switch which model leads.
 func (a *app) cmdACP(args []string) (int, error) {
 	tool := "claude"
 	if len(args) > 0 {
 		tool = args[0]
 	}
-	var cmd []string
-	switch tool {
-	case "claude":
-		cmd = []string{"claude-agent-acp"}
-	case "codex":
-		cmd = []string{"codex-acp"}
-	case "gemini":
-		cmd = []string{"gemini", "--acp"}
-	default:
-		return 2, errors.New("usage: coop acp [claude|codex|gemini]")
+	governor := ""
+	if tool == "fusion" {
+		governor = a.cfg.FusionGovernor
+		if len(args) > 1 {
+			governor = args[1]
+		}
+		if !fusion.Valid(governor, a.cfg.Agents) {
+			return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
+		}
+		tool = governor
+	}
+	cmd, ok := acpCommand(tool)
+	if !ok {
+		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
 	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
@@ -111,8 +134,55 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
+		FusionGovernor: governor,
+		Homes:          a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+	})
+}
+
+// cmdFusion runs a council: the governor agent (default COOP_FUSION_GOVERNOR, or
+// --governor) runs normally — it edits and does the real work — while a fusion
+// instruction injected into its instruction file tells it to consult its two
+// peers read-only and synthesize. It behaves like `coop <agent>`: `coop fusion`
+// opens the governor interactively; `coop fusion <args>` passes args through.
+func (a *app) cmdFusion(args []string) (int, error) {
+	governor, rest := a.parseGovernor(args)
+	if !fusion.Valid(governor, a.cfg.Agents) {
+		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
+	}
+	repo, img, err := a.resolveImage()
+	if err != nil {
+		return -1, err
+	}
+	cmd := a.defaultCmd(governor)
+	if len(rest) > 0 {
+		cmd = append([]string{governor}, rest...)
+	}
+	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
+		strings.Join(fusion.Peers(governor, a.cfg.Agents), " + "))
+	return box.Run(a.cfg, a.rt, box.RunSpec{
+		Image: img, Repo: repo, Cmd: cmd, FusionGovernor: governor,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
+}
+
+// parseGovernor pulls an optional `--governor <agent>` (or `--governor=<agent>`)
+// from args, defaulting to COOP_FUSION_GOVERNOR; everything else passes through.
+func (a *app) parseGovernor(args []string) (governor string, rest []string) {
+	governor = a.cfg.FusionGovernor
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--":
+			return governor, append(rest, args[i+1:]...) // everything after passes through
+		case args[i] == "--governor" && i+1 < len(args):
+			governor = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--governor="):
+			governor = strings.TrimPrefix(args[i], "--governor=")
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return governor, rest
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
@@ -120,7 +190,13 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	return 0, box.Build(a.rt, a.cfg, repo)
+	if err := box.Build(a.rt, a.cfg, repo); err != nil {
+		return -1, err
+	}
+	if n := a.rt.KillByLabel("coop", "box"); n > 0 {
+		ui.Info("killed %d running container(s) — new sessions will use the updated image", n)
+	}
+	return 0, nil
 }
 
 func (a *app) cmdUp(args []string) (int, error) {

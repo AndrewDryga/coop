@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 // Runtime is a resolved container CLI (e.g. "docker").
@@ -62,4 +63,20 @@ func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) 
 // existence probes like `image inspect` and `network inspect`.
 func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
+}
+
+// KillByLabel sends SIGKILL to every running container whose label matches
+// key=value. Returns the number of containers killed.
+func (r Runtime) KillByLabel(key, value string) int {
+	out, err := exec.Command(r.Name, "ps", "-q", "--filter", "label="+key+"="+value).Output()
+	if err != nil || len(out) == 0 {
+		return 0
+	}
+	n := 0
+	for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if id != "" && exec.Command(r.Name, "kill", id).Run() == nil {
+			n++
+		}
+	}
+	return n
 }
