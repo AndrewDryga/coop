@@ -3,7 +3,7 @@
 # Connection string for the box, e.g.: DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev
 services:
   db:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -15,7 +15,7 @@ services:
       timeout: 3s
       retries: 15
   redis:
-    image: redis:7
+    image: redis:8
     volumes: ["redisdata:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

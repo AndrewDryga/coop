@@ -226,7 +226,7 @@ your files over ACP, and you approve its tool calls in Zed (or let them run — 
 box is the boundary).
 
 Under the hood, `coop acp [claude|codex|gemini]` runs the matching adapter
-(`@zed-industries/claude-code-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
+(`@agentclientprotocol/claude-agent-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
 inside the box over stdio: the repo is mounted at its **real host path** (not
 `/workspace`) so Zed's absolute paths resolve, stdin is attached without a pty
 (ACP is JSON-RPC over stdio), and your secrets stay shadowed.
@@ -236,7 +236,7 @@ Notes:
   — the ACP box joins the same network, so the agent reaches `db`/`redis` by name.
 - **Stack images need the adapters.** A repo with its own `Dockerfile.agent`
   runs in *that* image, which doesn't ship the ACP adapters by default — add
-  `@zed-industries/claude-code-acp` (and `@zed-industries/codex-acp`) to its
+  `@agentclientprotocol/claude-agent-acp` (and `@zed-industries/codex-acp`) to its
   `npm install -g` line if you want ACP there.
 
 ## Project dependencies: toolchain in the image, services alongside

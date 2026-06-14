@@ -114,7 +114,7 @@ func TestInitStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	df2, _ := os.ReadFile(filepath.Join(repo2, "Dockerfile.agent"))
-	if !strings.Contains(string(df2), "FROM node:22") {
+	if !strings.Contains(string(df2), "FROM node:24") {
 		t.Errorf("unknown stack should fall back to node:\n%s", df2)
 	}
 }

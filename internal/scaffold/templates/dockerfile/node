@@ -1,6 +1,6 @@
 # Node toolchain + the three agent CLIs. Change FROM to add your language,
 # keeping a uid-1000 `node` user with home /home/node.
-FROM node:22
+FROM node:24
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \

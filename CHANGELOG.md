@@ -11,6 +11,10 @@
   — with auto-generated, categorized release notes — to GitHub Releases on every
   `v*` tag. CI runs gofmt, vet, staticcheck,
   tests, build, and shellcheck.
+- Updated to current toolchain + base images: Go 1.26; GitHub Actions checkout
+  v6, setup-go v6, goreleaser-action v7; the box base on node:24 (LTS); and the
+  scaffolded stacks on python 3.14 / golang 1.26 / elixir 1.20-otp-29 /
+  postgres 18 / redis 8.
 - Rewritten in Go: `coop` is now a single static binary (no bash, no runtime
   dependencies) built with `go build`. Same commands, same box, same
   secret-shadowing — faithfully ported, with the security core (mount

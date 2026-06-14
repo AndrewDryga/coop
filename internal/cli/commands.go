@@ -94,7 +94,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	var cmd []string
 	switch tool {
 	case "claude":
-		cmd = []string{"claude-code-acp"}
+		cmd = []string{"claude-agent-acp"}
 	case "codex":
 		cmd = []string{"codex-acp"}
 	case "gemini":
