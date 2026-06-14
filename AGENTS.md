@@ -33,8 +33,8 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
 - `rules/` — the taste knowledge base (the one committed part).
 
 ## Skills
-Use the workflow skills instead of hand-rolling: `/plan` before a multi-file
-change, `/work` to execute a plan step by step against the gate, `/batch` to
+Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
+change, `/work` to execute a plan step by step against the gate, `/sweep` to
 drain `.agent/TASKS.md` unattended, `/verify-api` before calling anything you're
 not sure exists. They live in `.claude/skills/` (Codex shares them).
 

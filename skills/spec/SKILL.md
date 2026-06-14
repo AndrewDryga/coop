@@ -1,5 +1,5 @@
 ---
-name: plan
+name: spec
 description: Design an opinionated, boring-by-default implementation plan before writing code. Use when a change spans more than one file or context, when the approach isn't obvious, or when asked to plan/design/think through a feature. Produces a small-step, verifiable plan to approve before /work.
 argument-hint: "<what you want to build>"
 allowed-tools: Read, Grep, Glob, Bash
@@ -37,4 +37,4 @@ serves one caller.
 - Anything you're unsure of → a `/verify-api` to run, or a `PENDING_DECISIONS`
   entry if it needs a human call.
 
-Stop and let the user approve before `/work`. Don't start building from `/plan`.
+Stop and let the user approve before `/work`. Don't start building from `/spec`.

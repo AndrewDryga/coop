@@ -1,11 +1,11 @@
 ---
-name: batch
-description: Drain this repo's .agent/TASKS.md queue autonomously and run-to-completion, taking EACH item to a ship-ready bar — claim `[ ]`, build it, gate it green, self-review it against the .agent/rules KB and every hat, ITERATE until clean, COMMIT it on its own, tick `[x]` — without quitting early. Arms the Stop-hook sentinel. Use to "work all the tasks" / drain a backlog / run an unattended batch.
+name: sweep
+description: Drain this repo's .agent/TASKS.md queue autonomously and run-to-completion, taking EACH item to a ship-ready bar — claim `[ ]`, build it, gate it green, self-review it against the .agent/rules KB and every hat, ITERATE until clean, COMMIT it on its own, tick `[x]` — without quitting early. Arms the Stop-hook sentinel. Use to "work all the tasks" / drain a backlog / run an unattended sweep.
 argument-hint: "[optional note or filter]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
-# /batch — drain the queue to a ship-ready bar, one commit per item
+# /sweep — drain the queue to a ship-ready bar, one commit per item
 
 Run the work loop to completion with the Stop hook armed, so it can't quit while
 work remains. Scope: this repo's `.agent/TASKS.md`.
@@ -28,7 +28,7 @@ Build *to* them, then *check the diff against them*.
 1. **Claim** — flip `- [ ]` → `- [w]` *first*, so a parallel agent won't grab it.
    Skip any `- [w]` (someone's live claim).
 2. **Build** — wear the hats; obey `AGENTS.md`, match `.agent/rules/` and the
-   surrounding style exactly. `/plan` first if it spans more than one file.
+   surrounding style exactly. `/spec` first if it spans more than one file.
    `/verify-api` before calling anything you're not certain exists.
 3. **Gate green** — the repo's exact gate (`AGENTS.md` → "The gate"). No green, no
    review, no commit.

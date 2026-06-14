@@ -8,7 +8,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 # Work the plan
 
 Implement one step at a time. The point is a green, reviewable change — not speed.
-If there's no plan yet and the change is non-trivial, run `/plan` first.
+If there's no plan yet and the change is non-trivial, run `/spec` first.
 
 ## The loop (per step)
 1. **State the step** in one line so progress is visible.
@@ -30,5 +30,5 @@ If there's no plan yet and the change is non-trivial, run `/plan` first.
 - **Greenfield.** Replacing code → delete the old and update every caller in the
   same change; no shims for behavior nothing depends on yet.
 
-When the change is green and reviewable, hand back for review (or, in a `/batch`
+When the change is green and reviewable, hand back for review (or, in a `/sweep`
 run, self-review the diff, commit, and tick the task).
