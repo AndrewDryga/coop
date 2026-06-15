@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+- **`.tool-versions` honored by default.** In a repo with a `.tool-versions`,
+  `coop init` (no `--stack` needed) scaffolds an asdf-based `Dockerfile.agent`
+  that installs the exact versions you pin — Elixir, Erlang, Go, Node, … — as a
+  single source of truth (`coop init --stack asdf` forces it). Edit
+  `.tool-versions`, run `coop build`, and the box follows.
+
 ## 2.1.1
 
 - Scaffolded stack images (`coop init --stack`) bake in the ACP adapters

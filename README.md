@@ -319,6 +319,11 @@ coop                       # the box has Elixir AND reaches db/redis by name
 coop down -v               # stop services and wipe their throwaway data
 ```
 
+If your repo pins versions in a **`.tool-versions`** (asdf), plain `coop init`
+(no `--stack`) scaffolds an asdf-based `Dockerfile.agent` instead — it installs the
+exact versions you declare there (Elixir, Erlang, Go, Node, …) as the single
+source of truth. Edit `.tool-versions`, run `coop build`, and the box follows.
+
 - **Toolchain → the image.** A repo with its own `Dockerfile.agent` gets its own
   image tag, so projects never collide. Stacks: `elixir`, `python`, `go`, `node`
   (or edit the generated file). When the agent needs a new system package, it

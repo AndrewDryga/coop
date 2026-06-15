@@ -36,9 +36,10 @@ func printHelp(cfg *config.Config) {
 	p("\n")
 
 	p("%s\n", ui.Bold("per-project environment"))
-	p("  coop init --stack elixir   # writes Dockerfile.agent (toolchain) + compose.agent.yml\n")
+	p("  coop init                  # a repo with .tool-versions → an asdf box at those exact versions\n")
+	p("  coop init --stack elixir   # or pin a stack: writes Dockerfile.agent + compose.agent.yml\n")
 	p("  coop build && coop up      # build the image, start db/redis\n")
-	p("  coop                       # the box has Elixir + reaches db/redis by name\n\n")
+	p("  coop                       # the box has the toolchain + reaches db/redis by name\n\n")
 
 	p("%s  split the queue into .agent/TASKS.<name>.md, then:\n", ui.Bold("a fleet"))
 	p("  coop dispatch perf > perf.log 2>&1 &\n")

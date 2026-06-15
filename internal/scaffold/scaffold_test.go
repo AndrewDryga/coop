@@ -118,3 +118,42 @@ func TestInitStack(t *testing.T) {
 		t.Errorf("unknown stack should fall back to node:\n%s", df2)
 	}
 }
+
+func TestInitToolVersionsAsdf(t *testing.T) {
+	// No --stack but a .tool-versions present → scaffold the asdf Dockerfile that
+	// installs straight from it.
+	repo := t.TempDir()
+	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("erlang 29.0.1\nelixir 1.20.0-otp-29\ngolang 1.26.4\n"), 0o644)
+	if err := Init(repo, ""); err != nil {
+		t.Fatal(err)
+	}
+	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
+	if err != nil {
+		t.Fatalf("asdf Dockerfile.agent not written: %v", err)
+	}
+	for _, want := range []string{"asdf install", ".tool-versions"} {
+		if !strings.Contains(string(df), want) {
+			t.Errorf("asdf Dockerfile missing %q:\n%s", want, df)
+		}
+	}
+
+	// No --stack and no .tool-versions → no Dockerfile is scaffolded.
+	repo2 := t.TempDir()
+	if err := Init(repo2, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo2, "Dockerfile.agent")); !os.IsNotExist(err) {
+		t.Error("no stack + no .tool-versions should not scaffold a Dockerfile.agent")
+	}
+
+	// An explicit --stack wins over .tool-versions auto-detect.
+	repo3 := t.TempDir()
+	os.WriteFile(filepath.Join(repo3, ".tool-versions"), []byte("elixir 1.20.0-otp-29\n"), 0o644)
+	if err := Init(repo3, "go"); err != nil {
+		t.Fatal(err)
+	}
+	df3, _ := os.ReadFile(filepath.Join(repo3, "Dockerfile.agent"))
+	if !strings.Contains(string(df3), "FROM golang") || strings.Contains(string(df3), "asdf install") {
+		t.Errorf("explicit --stack should win over .tool-versions:\n%s", df3)
+	}
+}

@@ -71,6 +71,15 @@ func Init(repo, stack string) error {
 		return err
 	}
 
+	// Pick the Dockerfile.agent: an explicit --stack wins; otherwise, if the repo
+	// pins tool versions in .tool-versions, use the asdf template that installs
+	// straight from it — so the box's toolchain tracks .tool-versions by default.
+	if stack == "" {
+		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err == nil {
+			stack = "asdf"
+			ui.Info("detected .tool-versions — scaffolding an asdf-driven Dockerfile.agent")
+		}
+	}
 	if stack != "" {
 		if err := s.writeIfAbsent(filepath.Join(repo, "Dockerfile.agent"), dockerfileTemplate(stack), 0o644); err != nil {
 			return err
@@ -198,7 +207,7 @@ func copyEmbedDir(src, dest string) error {
 
 func dockerfileTemplate(stack string) string {
 	switch stack {
-	case "elixir", "python", "go":
+	case "elixir", "python", "go", "asdf":
 		return "templates/dockerfile/" + stack
 	default:
 		return "templates/dockerfile/node"
