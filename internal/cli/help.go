@@ -32,6 +32,7 @@ func printHelp(cfg *config.Config) {
 	row("coop init [--stack X]", "scaffold the queue + hooks (+ toolchain & services)")
 	row("coop doctor", "verify the box still contains the agent")
 	row("coop build", "build the box image (per-project if Dockerfile.agent)")
+	row("coop update", "rebuild fresh — pull latest agent CLIs + ACP adapters + base")
 	row("coop help | version", "")
 	p("\n")
 

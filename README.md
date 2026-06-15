@@ -31,7 +31,9 @@ coop build && coop doctor
 
 `coop` is a single static binary with no runtime dependencies. It needs a
 container runtime — Apple [`container`](https://github.com/apple/container)
-(macOS 26+), Docker, or Podman — auto-detected. Re-run the one-liner to upgrade.
+(macOS 26+), Docker, or Podman — auto-detected. Re-run the one-liner to upgrade
+the binary; **`coop update`** rebuilds the box image fresh — pulling the latest
+agent CLIs + ACP adapters (they ship features often) and a newer base.
 
 <details><summary><b>Other ways to install</b></summary>
 

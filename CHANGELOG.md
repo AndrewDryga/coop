@@ -10,6 +10,11 @@
   instant. For a baked, reproducible image instead, `coop init` (or
   `--stack asdf`) scaffolds an asdf `Dockerfile.agent` that installs the same
   `.tool-versions` at build time. (`COOP_NO_ASDF=1` in agents/env opts out.)
+- **`coop update`** rebuilds the box image fresh (`--pull --no-cache`) so the base
+  image and the npm-installed agent CLIs + ACP adapters refresh to their latest
+  (plain `coop build` is cache-bound and won't), then prints the resulting
+  versions. The ACP adapters ship features often, so this is the easy way to stay
+  current.
 
 ## 2.1.1
 

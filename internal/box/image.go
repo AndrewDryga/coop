@@ -86,22 +86,37 @@ func ImageExists(rt runtime.Runtime, image string) bool {
 }
 
 // Build builds the box image: a repo with a Dockerfile.agent builds that (its
-// own toolchain), otherwise the shared base is built from BaseDockerfile.
-func Build(rt runtime.Runtime, cfg *config.Config, repo string) error {
+// own toolchain), otherwise the shared base is built from BaseDockerfile. When
+// fresh is set it adds --pull --no-cache so the base image and the npm-installed
+// agent CLIs + ACP adapters are pulled to their latest (this is `coop update`).
+func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) error {
 	if err := rt.EnsureDaemon(); err != nil {
 		return err
 	}
+	args, base := buildArgs(cfg, repo, fresh)
+	if base {
+		ui.Info("building %s (shared base)", cfg.BaseImage)
+		return buildErr(rt.Run(strings.NewReader(BaseDockerfile), os.Stdout, os.Stderr, args...))
+	}
+	ui.Info("building %s from Dockerfile.agent (this project's toolchain)",
+		ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride))
+	return buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
+}
+
+// buildArgs assembles the runtime build arguments for repo's image. fresh adds
+// --pull --no-cache so the base image and the agent CLIs / ACP adapters refresh
+// to their latest; base reports whether the shared base (BaseDockerfile via
+// stdin) is built, vs the repo's own Dockerfile.agent (a build context).
+func buildArgs(cfg *config.Config, repo string, fresh bool) (args []string, base bool) {
+	args = []string{"build"}
+	if fresh {
+		args = append(args, "--pull", "--no-cache")
+	}
 	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
 		img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
-		ui.Info("building %s from Dockerfile.agent (this project's toolchain)", img)
-		code, err := rt.Run(os.Stdin, os.Stdout, os.Stderr,
-			"build", "-t", img, "-f", filepath.Join(repo, "Dockerfile.agent"), repo)
-		return buildErr(code, err)
+		return append(args, "-t", img, "-f", filepath.Join(repo, "Dockerfile.agent"), repo), false
 	}
-	ui.Info("building %s (shared base)", cfg.BaseImage)
-	code, err := rt.Run(strings.NewReader(BaseDockerfile), os.Stdout, os.Stderr,
-		"build", "-t", cfg.BaseImage, "-")
-	return buildErr(code, err)
+	return append(args, "-t", cfg.BaseImage, "-"), true
 }
 
 func buildErr(code int, err error) error {

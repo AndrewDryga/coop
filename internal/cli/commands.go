@@ -193,12 +193,37 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	if err := box.Build(a.rt, a.cfg, repo); err != nil {
+	if err := box.Build(a.rt, a.cfg, repo, false); err != nil {
 		return -1, err
 	}
 	if n := a.rt.KillByLabel("coop", "box"); n > 0 {
 		ui.Info("killed %d running container(s) — new sessions will use the updated image", n)
 	}
+	return 0, nil
+}
+
+// cmdUpdate force-rebuilds the box image (--pull --no-cache) so the base image
+// and the npm-installed agent CLIs + ACP adapters refresh to their latest, then
+// reports the versions it landed on. ACP/agent packages ship features often.
+func (a *app) cmdUpdate(args []string) (int, error) {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
+	}
+	ui.Info("updating the box: newer base image + latest agent CLIs and ACP adapters")
+	if err := box.Build(a.rt, a.cfg, repo, true); err != nil {
+		return -1, err
+	}
+	if n := a.rt.KillByLabel("coop", "box"); n > 0 {
+		ui.Info("killed %d running container(s) — new sessions use the updated image", n)
+	}
+	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	ui.Info("installed versions:")
+	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
+		Image: img, Repo: repo, Batch: true, Quiet: true,
+		Cmd:       []string{"sh", "-c", "npm ls -g --depth=0 2>/dev/null | grep -iE 'claude|codex|gemini|acp' || true"},
+		ExtraArgs: []string{"-e", "COOP_NO_ASDF=1"}, // skip the .tool-versions provision for a quick version print
+	})
 	return 0, nil
 }
 

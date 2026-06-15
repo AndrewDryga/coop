@@ -106,6 +106,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdDoctor(rest)
 	case "build":
 		return a.cmdBuild(rest)
+	case "update":
+		return a.cmdUpdate(rest)
 	default:
 		return a.cmdRun(argv) // e.g. `coop npm test`
 	}

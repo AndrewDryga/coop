@@ -184,6 +184,29 @@ func TestAssembleArgsFusionGovernorScoped(t *testing.T) {
 	}
 }
 
+func TestBuildArgs(t *testing.T) {
+	cfg := &config.Config{BaseImage: "coop-box"}
+	repo := t.TempDir() // no Dockerfile.agent → shared base
+
+	if a, base := buildArgs(cfg, repo, false); !base || !slices.Equal(a, []string{"build", "-t", "coop-box", "-"}) {
+		t.Errorf("base cached: base=%v args=%v", base, a)
+	}
+	if a, _ := buildArgs(cfg, repo, true); !slices.Equal(a, []string{"build", "--pull", "--no-cache", "-t", "coop-box", "-"}) {
+		t.Errorf("base fresh: args=%v", a)
+	}
+
+	// A Dockerfile.agent → per-project image built from a context, with the fresh flags.
+	os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM x\n"), 0o644)
+	a, base := buildArgs(cfg, repo, true)
+	if base {
+		t.Error("with a Dockerfile.agent, base should be false")
+	}
+	if !containsSeq(a, []string{"build", "--pull", "--no-cache"}) ||
+		!containsSeq(a, []string{"-f", filepath.Join(repo, "Dockerfile.agent"), repo}) {
+		t.Errorf("custom fresh: args=%v", a)
+	}
+}
+
 // TestAssembleArgsAsdfVolume: the base image mounts the persistent ~/.asdf volume
 // (for runtime .tool-versions installs); a per-project image does not.
 func TestAssembleArgsAsdfVolume(t *testing.T) {
