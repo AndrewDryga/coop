@@ -282,6 +282,12 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 	if spec.Cache {
 		args = append(args, "-v", "coop-cache:"+cfg.HomeInBox+"/.cache")
 	}
+	// The base box provisions a repo's .tool-versions toolchain via asdf at run
+	// time; persist ~/.asdf in a volume so installs survive the disposable box and
+	// are reused across repos. Only the base image carries the asdf entrypoint.
+	if spec.Homes && spec.Image == cfg.BaseImage {
+		args = append(args, "-v", "coop-asdf:"+cfg.HomeInBox+"/.asdf")
+	}
 	args = append(args, "-w", workdir, spec.Image)
 	return append(args, spec.Cmd...)
 }

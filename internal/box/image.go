@@ -11,14 +11,59 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// BaseDockerfile is the shared base image: Node, the three agent CLIs, and the
-// ACP adapters, running as the non-root `node` user. It is built from stdin so
-// the base never needs a repo checkout.
+// BaseDockerfile is the shared base image: Node, the three agent CLIs, the ACP
+// adapters, and asdf — so the box honors a repo's .tool-versions at runtime, with
+// no per-project Dockerfile needed. It runs as the non-root `node` user and is
+// built from stdin, so the base never needs a repo checkout.
 const BaseDockerfile = `FROM node:24
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+
+ARG ASDF_VERSION=0.19.0
+
+# Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
+# compile toolchains a repo pins in .tool-versions at runtime.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
+ && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
+ && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
       @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
- && git config --system --add safe.directory '*'
+ && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
+      | tar -C /usr/local/bin -xzf - asdf \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory '*' \
+ && mkdir -p /home/node/.asdf && chown node:node /home/node/.asdf
+
+# Entrypoint: install whatever a repo's .tool-versions (or ~/.tool-versions) pins
+# via asdf, then run the requested command. A no-op when there is no .tool-versions.
+# The first install of a toolchain can be slow (e.g. Erlang compiles), but it
+# persists in the mounted ~/.asdf volume and is reused across runs and repos.
+COPY <<'ENTRY' /usr/local/bin/coop-entry
+#!/bin/sh
+if [ -z "$COOP_NO_ASDF" ] && command -v asdf >/dev/null 2>&1; then
+  f=; d=$PWD
+  while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
+  [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
+  if [ -n "$f" ]; then
+    echo "coop: provisioning toolchain from $f (first run may compile; cached after)" >&2
+    for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
+      asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >&2 || true
+    done
+    asdf install >&2 || true
+    asdf reshim >/dev/null 2>&1 || true
+  fi
+fi
+exec "$@"
+ENTRY
+RUN chmod +x /usr/local/bin/coop-entry
+
+ENV ASDF_DATA_DIR=/home/node/.asdf \
+    PATH="/home/node/.asdf/shims:${PATH}" \
+    LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8 \
+    KERL_BUILD_DOCS=no \
+    KERL_CONFIGURE_OPTIONS="--without-wx --without-observer --without-debugger --without-et --without-megaco --without-javac"
+
 USER node
+ENTRYPOINT ["/usr/local/bin/coop-entry"]
 WORKDIR /workspace
 `
 

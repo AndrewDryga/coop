@@ -183,3 +183,23 @@ func TestAssembleArgsFusionGovernorScoped(t *testing.T) {
 		t.Error("gemini peer should still get the shared instructions")
 	}
 }
+
+// TestAssembleArgsAsdfVolume: the base image mounts the persistent ~/.asdf volume
+// (for runtime .tool-versions installs); a per-project image does not.
+func TestAssembleArgsAsdfVolume(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box", Agents: []string{"claude"}, ConfigDir: t.TempDir()}
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+	asdf := []string{"-v", "coop-asdf:/home/node/.asdf"}
+
+	base := assembleArgs(cfg, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
+		"/d", "/workspace", ttyNone, false, nil, nil, "")
+	if !containsSeq(base, asdf) {
+		t.Errorf("base image should mount the asdf volume:\n%v", base)
+	}
+
+	custom := assembleArgs(cfg, RunSpec{Image: "coop-myrepo", Repo: "/r", Homes: true}, mounts,
+		"/d", "/workspace", ttyNone, false, nil, nil, "")
+	if containsSeq(custom, asdf) {
+		t.Errorf("a per-project image should not mount the asdf volume:\n%v", custom)
+	}
+}

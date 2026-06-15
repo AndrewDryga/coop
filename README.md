@@ -319,10 +319,14 @@ coop                       # the box has Elixir AND reaches db/redis by name
 coop down -v               # stop services and wipe their throwaway data
 ```
 
-If your repo pins versions in a **`.tool-versions`** (asdf), plain `coop init`
-(no `--stack`) scaffolds an asdf-based `Dockerfile.agent` instead — it installs the
-exact versions you declare there (Elixir, Erlang, Go, Node, …) as the single
-source of truth. Edit `.tool-versions`, run `coop build`, and the box follows.
+**`.tool-versions`, no `Dockerfile.agent` needed.** If your repo pins versions in a
+`.tool-versions` (asdf), the base box provisions that toolchain **at runtime** —
+resolved from the working dir up the tree, or `~/.tool-versions` — and caches it in
+a shared volume, so a repo with *just* a `.tool-versions` gets its toolchain with
+zero setup. The first install of a new toolchain can be slow (e.g. Erlang
+compiles), then it's reused across runs and repos. For a baked, fully-reproducible
+image instead, `coop init` (or `--stack asdf`) scaffolds an asdf `Dockerfile.agent`
+that installs the same `.tool-versions` at build time.
 
 - **Toolchain → the image.** A repo with its own `Dockerfile.agent` gets its own
   image tag, so projects never collide. Stacks: `elixir`, `python`, `go`, `node`

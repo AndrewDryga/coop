@@ -2,11 +2,14 @@
 
 ## 2.2.0
 
-- **`.tool-versions` honored by default.** In a repo with a `.tool-versions`,
-  `coop init` (no `--stack` needed) scaffolds an asdf-based `Dockerfile.agent`
-  that installs the exact versions you pin — Elixir, Erlang, Go, Node, … — as a
-  single source of truth (`coop init --stack asdf` forces it). Edit
-  `.tool-versions`, run `coop build`, and the box follows.
+- **`.tool-versions` honored by default — no `Dockerfile.agent` needed.** The base
+  `coop-box` ships asdf and provisions a repo's `.tool-versions` toolchain at
+  runtime (resolved from the cwd up the tree, or `~/.tool-versions`), cached in a
+  shared `coop-asdf` volume so it installs once and is reused across repos. The
+  first install of a toolchain can be slow (e.g. Erlang compiles), then it's
+  instant. For a baked, reproducible image instead, `coop init` (or
+  `--stack asdf`) scaffolds an asdf `Dockerfile.agent` that installs the same
+  `.tool-versions` at build time. (`COOP_NO_ASDF=1` in agents/env opts out.)
 
 ## 2.1.1
 
