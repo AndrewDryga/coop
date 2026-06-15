@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.1
+
+- Scaffolded stack images (`coop init --stack`) bake in the ACP adapters
+  (`@agentclientprotocol/claude-agent-acp`, `@zed-industries/codex-acp`), so
+  `coop acp` works in a project that has its own `Dockerfile.agent`. Without them
+  it failed with `codex-acp: executable file not found`. An existing or
+  hand-written `Dockerfile.agent` still needs the adapters added to its
+  `npm install -g` line, followed by `coop build`.
+
 ## 2.1.0
 
 - **Fusion mode — a governed council.** `coop fusion` runs one model as the

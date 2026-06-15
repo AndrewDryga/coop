@@ -4,6 +4,7 @@ FROM node:24
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+      @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
  && git config --system --add safe.directory /workspace
 USER node
 WORKDIR /workspace

@@ -249,9 +249,11 @@ Notes:
 - **Services work too.** If the repo has a `compose.agent.yml`, `coop up` first
   — the ACP box joins the same network, so the agent reaches `db`/`redis` by name.
 - **Stack images need the adapters.** A repo with its own `Dockerfile.agent`
-  runs in *that* image, which doesn't ship the ACP adapters by default — add
-  `@agentclientprotocol/claude-agent-acp` (and `@zed-industries/codex-acp`) to its
-  `npm install -g` line if you want ACP there.
+  runs in *that* image, so it must carry the ACP adapters. Scaffolds from
+  `coop init --stack` now include them; if you have an **older or hand-written**
+  `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp` and
+  `@zed-industries/codex-acp` to its `npm install -g` line and `coop build` —
+  otherwise `coop acp` fails with `codex-acp: executable file not found`.
 
 ## Fusion: a governed council
 
