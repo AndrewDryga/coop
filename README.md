@@ -227,7 +227,7 @@ its peers from its shell — read-only and in parallel:
 ```bash
 claude -p --permission-mode plan "<question>"   # read-only: returns its approach, never edits
 gemini --approval-mode plan -p   "<question>"
-codex  exec -s read-only          "<question>"
+codex  exec -s read-only         "<question>"
 ```
 
 It then merges the strongest parts, resolves disagreements by verification, and
@@ -274,7 +274,7 @@ coop login claude    # or codex / gemini
   "agent_servers": {
     "coop": {
       "type": "custom",
-      "command": "coop",          // absolute path if Zed's PATH lacks ~/.local/bin
+      "command": "coop",           // absolute path if Zed's PATH lacks ~/.local/bin
       "args": ["acp", "claude"],   // or "codex" / "gemini" / "fusion"
       "env": {}
     }
