@@ -159,6 +159,14 @@ The agent (`claude` by default; pass `codex`/`gemini` to pick the model) works i
 the fork; you stay the reviewer and the only one who can push. `coop clone` is a
 back-compat alias for `coop fork`.
 
+`coop fork review` shows a brief (commits, files, the agent's reasoning) then the diff
+in your pager — no setup. To review in an IDE instead: `--tool` hands the diff to your
+configured GUI difftool (`git config diff.tool` — VS Code, JetBrains, Meld, vim…),
+`--open` opens the fork in your editor (`$COOP_EDITOR`, else a detected
+`code`/`cursor`/`zed`/`idea`/`subl`, else `$VISUAL`/`$EDITOR`) so you review via its
+SCM panel, and **`COOP_REVIEW_CMD`** overrides it entirely (run via `sh -c` with
+`$COOP_FORK_PATH` / `$COOP_FORK_NAME` / `$COOP_REVIEW_REF` set).
+
 ## Agents & config
 
 One box, three agents. Each reads its config and credentials from

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -284,34 +285,100 @@ func gitFetchInto(repo, ws, name string) error {
 }
 
 func (a *app) forkReview(args []string) (int, error) {
-	name, stat := "", false
+	name, stat, tool, open := "", false, false, false
 	for _, x := range args {
 		switch x {
 		case "--stat":
 			stat = true
+		case "--tool":
+			tool = true
+		case "--open":
+			open = true
 		default:
+			if strings.HasPrefix(x, "-") {
+				return 2, fmt.Errorf("coop fork review: unknown flag %q", x)
+			}
 			name = x
 		}
 	}
 	if name == "" {
-		return 2, errors.New("usage: coop fork review <name> [--stat]")
+		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open]")
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	if !pathExists(forkWorkspace(repo, name)) {
+	ws := forkWorkspace(repo, name)
+	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	if err := gitFetchInto(repo, forkWorkspace(repo, name), name); err != nil {
+	if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("git fetch: %w", err)
 	}
 	ref := "review/" + name
-	a.forkBrief(repo, forkWorkspace(repo, name), name, ref)
-	if stat {
+	a.forkBrief(repo, ws, name, ref)
+
+	switch {
+	case open: // open the fork in your IDE; review via its SCM panel
+		return a.openInEditor(ws)
+	case tool: // hand the diff to your configured GUI difftool (git config diff.tool)
+		_ = gitInteractive(repo, "difftool", "HEAD..."+ref)
+		return 0, nil
+	case stat:
 		return 0, nil // the brief already lists the files
+	case a.cfg.ReviewCmd != "": // a user-defined review command
+		return a.runReviewCmd(repo, ws, name, ref)
+	default:
+		_ = gitInteractive(repo, "diff", "HEAD..."+ref)
+		return 0, nil
 	}
-	_ = gitInteractive(repo, "diff", "HEAD..."+ref)
+}
+
+// openInEditor opens the fork directory in an editor so you can review via its SCM
+// panel: $COOP_EDITOR if set, then a detected GUI editor, then $VISUAL/$EDITOR.
+func (a *app) openInEditor(ws string) (int, error) {
+	editor := a.cfg.Editor
+	if editor == "" {
+		editor = detectEditor()
+	}
+	if editor == "" {
+		return 1, errors.New("no editor found — set $COOP_EDITOR (or $VISUAL/$EDITOR), or install code/cursor/zed/idea")
+	}
+	parts := append(strings.Fields(editor), ws)
+	ui.Info("opening %s in %s", ws, parts[0])
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+	if err := cmd.Run(); err != nil {
+		return 1, fmt.Errorf("open %q: %w", parts[0], err)
+	}
+	return 0, nil
+}
+
+// detectEditor finds a GUI editor on PATH (for opening a fork as a folder), falling
+// back to $VISUAL/$EDITOR.
+func detectEditor() string {
+	for _, e := range []string{"cursor", "code", "zed", "idea", "subl"} {
+		if _, err := exec.LookPath(e); err == nil {
+			return e
+		}
+	}
+	if v := os.Getenv("VISUAL"); v != "" {
+		return v
+	}
+	return os.Getenv("EDITOR")
+}
+
+// runReviewCmd runs COOP_REVIEW_CMD via sh -c from the parent repo, with the fork's
+// path/name/ref in the environment so the command can use them.
+func (a *app) runReviewCmd(repo, ws, name, ref string) (int, error) {
+	cmd := exec.Command("sh", "-c", a.cfg.ReviewCmd)
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(),
+		"COOP_FORK_PATH="+ws, "COOP_FORK_NAME="+name, "COOP_REVIEW_REF="+ref)
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+	if err := cmd.Run(); err != nil {
+		return 1, fmt.Errorf("COOP_REVIEW_CMD failed: %w", err)
+	}
 	return 0, nil
 }
 

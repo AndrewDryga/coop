@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestForkWorkspace(t *testing.T) {
@@ -216,5 +218,32 @@ func TestForkCarriesGlobalIgnore(t *testing.T) {
 	}
 	if !strings.Contains(string(excl), "*.tmp") || !strings.Contains(string(excl), ".DS_Store") {
 		t.Errorf("global ignore not carried into the fork's .git/info/exclude:\n%s", excl)
+	}
+}
+
+func TestDetectEditor(t *testing.T) {
+	// With no GUI editor reachable on PATH, fall back to $VISUAL, then $EDITOR.
+	t.Setenv("PATH", t.TempDir()) // empty dir → none of code/cursor/zed/idea/subl found
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "myeditor")
+	if got := detectEditor(); got != "myeditor" {
+		t.Errorf("detectEditor() = %q, want %q ($EDITOR fallback)", got, "myeditor")
+	}
+	t.Setenv("VISUAL", "myvisual")
+	if got := detectEditor(); got != "myvisual" {
+		t.Errorf("detectEditor() = %q, want %q ($VISUAL beats $EDITOR)", got, "myvisual")
+	}
+}
+
+func TestRunReviewCmd(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out.txt")
+	// COOP_REVIEW_CMD runs via sh -c and must see the fork path/name/ref in env.
+	a := &app{cfg: &config.Config{ReviewCmd: `printf '%s|%s' "$COOP_FORK_NAME" "$COOP_FORK_PATH" > ` + out}}
+	if code, err := a.runReviewCmd(dir, "/the/fork", "demo", "review/demo"); err != nil || code != 0 {
+		t.Fatalf("runReviewCmd = (%d, %v), want (0, nil)", code, err)
+	}
+	if data, _ := os.ReadFile(out); string(data) != "demo|/the/fork" {
+		t.Errorf("COOP_REVIEW_CMD env not passed: got %q, want %q", data, "demo|/the/fork")
 	}
 }

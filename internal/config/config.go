@@ -43,6 +43,9 @@ type Config struct {
 
 	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
 
+	Editor    string // COOP_EDITOR — editor for `coop fork review --open` (else $VISUAL/$EDITOR or a detected GUI editor)
+	ReviewCmd string // COOP_REVIEW_CMD — full override for `coop fork review` (run via sh -c; gets $COOP_FORK_PATH/$COOP_FORK_NAME/$COOP_REVIEW_REF)
+
 	// BoxHome is ~/.config/coop: the home for conf, mcp.json, and agents/.
 	BoxHome string
 }
@@ -96,6 +99,9 @@ func Load() *Config {
 		ExtraRunArgs: fields(get("COOP_RUN_ARGS", "")),
 
 		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),
+
+		Editor:    get("COOP_EDITOR", ""),
+		ReviewCmd: get("COOP_REVIEW_CMD", ""),
 
 		BoxHome: boxHome,
 	}
