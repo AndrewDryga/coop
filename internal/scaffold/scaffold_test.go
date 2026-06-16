@@ -1,11 +1,41 @@
 package scaffold
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestDockerfileTemplatesTrustAnyWorktree guards the real-path-mount contract:
+// coop mounts the repo at its real host path and sets the workdir itself, so every
+// stack image must trust any worktree (safe.directory '*'), not a fixed /workspace
+// (the stale pre-2.0 path, which leaves git with "dubious ownership" on runtimes
+// that preserve host uid).
+func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
+	err := fs.WalkDir(templates, "templates/dockerfile", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		df, err := templates.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		switch s := string(df); {
+		case !strings.Contains(s, "safe.directory"):
+			t.Errorf("%s: no git safe.directory — git won't work on the host-path mount", p)
+		case strings.Contains(s, "safe.directory /workspace"):
+			t.Errorf("%s: stale safe.directory /workspace; real-path mounts need '*'", p)
+		case !strings.Contains(s, "safe.directory '*'"):
+			t.Errorf("%s: should trust any worktree with safe.directory '*'", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestInit(t *testing.T) {
 	repo := t.TempDir()

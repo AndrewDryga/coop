@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.1
+
+- Scaffolded stack images (`go`, `node`, `python`, `elixir`) now trust any git
+  worktree (`safe.directory '*'`) like the base box and the asdf template, instead
+  of a fixed `/workspace`. Since 2.0 the repo mounts at its **real host path**, so
+  the old `/workspace` entry left git with "dubious ownership" on runtimes that
+  preserve host uid (Linux/Podman). Re-run `coop build` to pick it up.
+
 ## 2.2.0
 
 - **`.tool-versions` honored by default — no `Dockerfile.agent` needed.** The base

@@ -8,7 +8,7 @@ RUN apt-get update \
       @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
  && pip install --no-cache-dir uv \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
- && git config --system --add safe.directory /workspace \
+ && git config --system --add safe.directory '*' \
  && useradd -m -u 1000 -s /bin/bash node
 USER node
 WORKDIR /workspace

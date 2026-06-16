@@ -7,7 +7,7 @@ RUN apt-get update \
  && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
       @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
- && git config --system --add safe.directory /workspace \
+ && git config --system --add safe.directory '*' \
  && useradd -m -u 1000 -s /bin/bash node
 USER node
 RUN mix local.hex --force && mix local.rebar --force
