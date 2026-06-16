@@ -61,9 +61,9 @@ func printHelp(cfg *config.Config) {
 	p("  coop build && coop up      # build the image, start db/redis\n")
 	p("  coop                       # the box has the toolchain + reaches db/redis by name\n\n")
 
-	p("%s  split the queue into .agent/TASKS.<name>.md, then hand each slice to a model:\n", ui.Bold("a fleet"))
-	p("  coop fork perf codex --loop -d     # own fork + branch + model, detached\n")
-	p("  coop fork deps gemini --loop -d\n")
+	p("%s  give each model its own fork, branch, and tasks file, looping detached:\n", ui.Bold("a fleet"))
+	p("  coop fork perf codex  --loop -d --tasks .agent/TASKS.perf.md\n")
+	p("  coop fork deps gemini --loop -d --tasks .agent/TASKS.deps.md\n")
 	p("  coop fork ls  ·  coop fork logs -f  ·  coop fork stop perf  ·  coop fork merge perf\n\n")
 
 	p("%s  one model leads, the other two advise read-only, the leader synthesizes:\n", ui.Bold("fusion"))

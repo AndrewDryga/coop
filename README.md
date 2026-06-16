@@ -117,7 +117,7 @@ any of them.
 | Command | What it does |
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
-| `coop fork <name> <agent> --loop [-d]` | run the unattended queue loop in the fork (`-d`/`--detach` backgrounds it) |
+| `coop fork <name> <agent> --loop --tasks <path> [-d]` | loop a tasks file unattended in the fork (`-d`/`--detach` backgrounds it) |
 | `coop fork ls` | list this repo's forks: branch, change size, state, last activity |
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
 | `coop fork merge <name> [--all]` | rebase the fork onto your branch and land it (`--all` = the whole fleet) |
@@ -490,23 +490,23 @@ after each compaction). Everything here is local working state and git-ignored �
 ### A fleet
 
 Run several models at once, each looping unattended in its own [fork](#forks-hand-off-work-like-a-pr).
-Split the queue into per-fork slices (`.agent/TASKS.<name>.md`) and hand each to a
-different model:
+Split the work into separate tasks files and hand each fork one with `--tasks`:
 
 ```bash
-coop fork perf codex  --loop -d    # codex loops the perf slice, detached
-coop fork deps gemini --loop -d    # gemini takes the deps slice
-coop fork docs claude --loop -d    # claude takes the docs
+coop fork perf codex  --loop -d --tasks .agent/TASKS.perf.md   # codex loops the perf file, detached
+coop fork deps gemini --loop -d --tasks .agent/TASKS.deps.md   # gemini takes the deps file
+coop fork docs claude --loop -d --tasks .agent/TASKS.docs.md   # claude takes the docs
 
 coop fork ls            # who's running, how big the diff, last activity
 coop fork logs -f       # tail every fork at once (compose-style, prefixed)
 coop fork stop perf     # halt one; coop fork logs perf -f to watch just it
 ```
 
-`--loop` seeds the fork from its `TASKS.<name>.md` slice and runs the loop with the
-chosen model; `-d` (`--detach`) backgrounds it, capturing output to
-`../<repo>-forks/.coop/<name>.log`. (`coop dispatch <name> [agent]` is the foreground
-one-liner: fork + slice + loop.) When one finishes,
+`--loop` needs `--tasks <path>` — the file is **explicit**, never inferred from the
+fork name, so a fork and its tasks file can be named independently. It seeds the fork's
+queue from that file (once — a resumed loop keeps its own progress) and runs the loop
+with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
+`../<repo>-forks/.coop/<name>.log`. When one finishes,
 [review and land it](#forks-hand-off-work-like-a-pr) like a PR, then `git push`. Add
 agents until *review*, not generation, is your bottleneck.
 
@@ -515,18 +515,20 @@ agents until *review*, not generation, is your bottleneck.
 "green" fork can't ride in against a base an earlier landing already changed. It stops at
 the first conflict or red gate, leaving the rest untouched.
 
-**Declare the fleet once** in `.agent/fleet` (one fork per line, `<name> [agent]`):
+**Declare the fleet once** in `.agent/fleet`, one fork per line as
+`<name> [agent] <tasks-path>` (agent defaults to `claude`; the path is relative to the
+repo root):
 
 ```
-perf  codex
-deps  gemini
-docs  claude
+perf  codex  .agent/TASKS.perf.md
+deps  gemini .agent/TASKS.deps.md
+docs         .agent/TASKS.docs.md
 ```
 
 Then `coop fleet up` starts them all detached, `coop fleet ls` shows the board, and
 `coop fleet down` stops them. `coop fleet split <n>` mechanically round-robins your
-`.agent/TASKS.md` into per-fork slices to get started (use an agent for *semantic*
-slicing).
+`.agent/TASKS.md` into `.agent/TASKS.slice<n>.md` files and prints the `.agent/fleet`
+lines to paste (use an agent for *semantic* slicing).
 
 ## Project toolchain & services
 

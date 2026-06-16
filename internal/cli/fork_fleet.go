@@ -12,14 +12,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// fleetEntry is one fork in the declarative fleet: a name and the model to run it.
+// fleetEntry is one fork in the declarative fleet: a name, the model to run it, and
+// the tasks file that seeds its loop.
 type fleetEntry struct {
 	name  string
 	agent string
+	tasks string
 }
 
 // fleetFile is the declarative fleet: .agent/fleet, one fork per line as
-// "<name> [agent]" (agent defaults to claude). Blank and `#` lines are ignored.
+// "<name> [agent] <tasks-path>" (agent defaults to claude; the tasks path is required
+// and is relative to the repo root). Blank and `#` lines are ignored.
 func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet") }
 
 func parseFleet(data string) ([]fleetEntry, error) {
@@ -31,14 +34,19 @@ func parseFleet(data string) ([]fleetEntry, error) {
 		}
 		f := strings.Fields(line)
 		e := fleetEntry{name: f[0], agent: "claude"}
-		if len(f) > 1 {
-			switch f[1] {
+		rest := f[1:]
+		// An optional agent token may precede the required tasks path.
+		if len(rest) > 0 {
+			switch rest[0] {
 			case "claude", "codex", "gemini":
-				e.agent = f[1]
-			default:
-				return nil, fmt.Errorf("fleet: unknown agent %q for %q", f[1], f[0])
+				e.agent = rest[0]
+				rest = rest[1:]
 			}
 		}
+		if len(rest) == 0 {
+			return nil, fmt.Errorf("fleet: %q needs a tasks path — %q", e.name, "<name> [agent] <tasks-path>")
+		}
+		e.tasks = rest[0]
 		if !validForkName(e.name) {
 			return nil, fmt.Errorf("fleet: invalid fork name %q", e.name)
 		}
@@ -85,7 +93,11 @@ func (a *app) fleetUp() (int, error) {
 		return -1, err
 	}
 	for _, e := range fleet {
-		if code, err := a.cmdFork([]string{e.name, e.agent, "--loop", "-d"}); err != nil {
+		tasks := e.tasks // fleet paths are repo-relative; make them absolute for the fork
+		if !filepath.IsAbs(tasks) {
+			tasks = filepath.Join(repo, tasks)
+		}
+		if code, err := a.cmdFork([]string{e.name, e.agent, "--loop", "-d", "--tasks", tasks}); err != nil {
 			ui.Error("fleet: %s failed: %v", e.name, err)
 			return code, err
 		}
@@ -159,17 +171,23 @@ func (a *app) fleetSplit(args []string) (int, error) {
 	for i, t := range todos {
 		buckets[i%len(names)] = append(buckets[i%len(names)], t)
 	}
+	var fleetLines []string
 	for i, name := range names {
 		if len(buckets[i]) == 0 {
 			continue
 		}
-		slice := filepath.Join(repo, ".agent", "TASKS."+name+".md")
-		body := fmt.Sprintf("# .agent/TASKS.%s.md — slice for fork %s\n\n%s\n", name, name, strings.Join(buckets[i], "\n"))
-		if err := os.WriteFile(slice, []byte(body), 0o644); err != nil {
+		rel := filepath.Join(".agent", "TASKS."+name+".md")
+		body := fmt.Sprintf("# %s — slice for fork %s\n\n%s\n", rel, name, strings.Join(buckets[i], "\n"))
+		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
 			return -1, err
 		}
-		ui.Info("wrote %s (%d items)", slice, len(buckets[i]))
+		ui.Info("wrote %s (%d items)", rel, len(buckets[i]))
+		fleetLines = append(fleetLines, fmt.Sprintf("%s claude %s", name, rel))
 	}
-	ui.Info("mechanical round-robin split — review the slices, then 'coop fleet up'")
+	ui.Info("mechanical round-robin split — review the slices, then declare them in .agent/fleet:")
+	for _, l := range fleetLines {
+		fmt.Printf("  %s\n", l)
+	}
+	ui.Info("(edit the agent per line if you like, then 'coop fleet up')")
 	return 0, nil
 }

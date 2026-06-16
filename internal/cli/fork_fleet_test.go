@@ -12,19 +12,29 @@ import (
 )
 
 func TestParseFleet(t *testing.T) {
-	in := "# a fleet\nperf codex\ndeps gemini\ndocs\n\n"
+	in := "# a fleet\n" +
+		"perf codex .agent/TASKS.perf.md\n" +
+		"deps gemini .agent/TASKS.deps.md\n" +
+		"docs .agent/TASKS.docs.md\n\n" // agent omitted → claude
 	got, err := parseFleet(in)
 	if err != nil {
 		t.Fatalf("parseFleet: %v", err)
 	}
-	want := []fleetEntry{{"perf", "codex"}, {"deps", "gemini"}, {"docs", "claude"}}
+	want := []fleetEntry{
+		{"perf", "codex", ".agent/TASKS.perf.md"},
+		{"deps", "gemini", ".agent/TASKS.deps.md"},
+		{"docs", "claude", ".agent/TASKS.docs.md"},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleet = %v, want %v", got, want)
 	}
-	if _, err := parseFleet("perf bogus"); err == nil {
-		t.Error("parseFleet: want error for unknown agent")
+	if _, err := parseFleet("perf"); err == nil {
+		t.Error("parseFleet: want error when the tasks path is missing")
 	}
-	if _, err := parseFleet("ls codex"); err == nil {
+	if _, err := parseFleet("perf codex"); err == nil {
+		t.Error("parseFleet: want error when only an agent is given (no tasks path)")
+	}
+	if _, err := parseFleet("ls codex q.md"); err == nil {
 		t.Error("parseFleet: want error for reserved name")
 	}
 }

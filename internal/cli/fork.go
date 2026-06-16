@@ -58,7 +58,7 @@ func validForkName(name string) bool {
 func forkHelp() (int, error) {
 	rows := []struct{ cmd, desc string }{
 		{"coop fork <name> [agent]", "open or re-enter a fork + run an agent (re-entry continues the last session)"},
-		{"coop fork <name> <agent> --loop [-d|--detach]", "run the unattended .agent/TASKS.md loop, optionally detached"},
+		{"coop fork <name> <agent> --loop --tasks <path>", "loop a tasks file unattended in the fork (add -d to detach)"},
 		{"coop fork ls", "list this repo's forks: branch, changes, state, last activity"},
 		{"coop fork logs [name] [-f|--follow]", "tail a fork's loop log (no name tails every fork, prefixed)"},
 		{"coop fork review <name> [--stat|--tool|--open]", "brief + diff; --tool = git difftool, --open = your editor"},
@@ -72,6 +72,7 @@ func forkHelp() (int, error) {
 		{"    --new", "start a fresh agent session on re-entry"},
 		{"    --fresh", "recreate the fork from scratch (new clone + session)"},
 		{"-d, --detach", "with --loop, run it in the background"},
+		{"-t, --tasks", "with --loop, path to the tasks file that seeds the queue (required)"},
 		{"-f, --force", "merge / rm: override the gate, policy, or unmerged-or-dirty guard"},
 		{"-f, --follow", "logs: keep streaming new output"},
 	}
@@ -90,11 +91,11 @@ func forkHelp() (int, error) {
 	return 0, nil
 }
 
-// cmdFork is the `coop fork` family. Bare `coop fork` lists; a reserved verb runs
-// that subcommand; anything else opens (or resumes) a fork by that name.
+// cmdFork is the `coop fork` family. Bare `coop fork` prints the family help; a
+// reserved verb runs that subcommand; anything else opens (or resumes) a fork by name.
 func (a *app) cmdFork(args []string) (int, error) {
 	if len(args) == 0 {
-		return a.forkLs(nil)
+		return forkHelp()
 	}
 	switch args[0] {
 	case "ls":
@@ -125,31 +126,42 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	worker     bool // internal: this process IS the detached loop worker (--_detached)
+	tasks      string // --tasks <path>: the tasks file to seed the loop's queue (required with --loop)
+	worker     bool   // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{agent: "claude"}
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini] [--loop [-d]]")
+		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini] [--loop --tasks <path> [-d]]")
 	}
 	fa.name = args[0]
-	for _, x := range args[1:] {
-		switch x {
-		case "claude", "codex", "gemini":
+	rest := args[1:]
+	for i := 0; i < len(rest); i++ {
+		x := rest[i]
+		switch {
+		case x == "claude", x == "codex", x == "gemini":
 			fa.agent = x
-		case "--fresh":
+		case x == "--fresh":
 			fa.fresh = true
-		case "--continue", "-c":
+		case x == "--continue", x == "-c":
 			fa.cont = true
-		case "--new":
+		case x == "--new":
 			fa.newSession = true
-		case "--loop":
+		case x == "--loop":
 			fa.loop = true
-		case "-d", "--detach":
+		case x == "-d", x == "--detach":
 			fa.detach = true
 			fa.loop = true
-		case "--_detached": // hidden: re-exec target for a detached loop
+		case x == "--tasks", x == "-t":
+			if i+1 >= len(rest) {
+				return fa, errors.New("coop fork --tasks needs a path to a tasks file")
+			}
+			i++
+			fa.tasks = rest[i]
+		case strings.HasPrefix(x, "--tasks="):
+			fa.tasks = strings.TrimPrefix(x, "--tasks=")
+		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true
 		default:
@@ -158,6 +170,13 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	if !validForkName(fa.name) {
 		return fa, fmt.Errorf("invalid fork name %q (no slashes, not a reserved verb)", fa.name)
+	}
+	// A loop must say which tasks file seeds its queue — no implicit name→file mapping.
+	if fa.loop && fa.tasks == "" {
+		return fa, fmt.Errorf("coop fork %s --loop needs --tasks <path> (the tasks file to seed the queue)", fa.name)
+	}
+	if !fa.loop && fa.tasks != "" {
+		return fa, errors.New("coop fork --tasks only applies with --loop")
 	}
 	return fa, nil
 }
@@ -168,6 +187,16 @@ func (a *app) forkCreate(args []string) (int, error) {
 	fa, err := parseForkCreate(args)
 	if err != nil {
 		return 2, err
+	}
+	if fa.tasks != "" { // resolve to an absolute path now, so a detached worker still finds it
+		abs, err := filepath.Abs(fa.tasks)
+		if err != nil {
+			return -1, err
+		}
+		if !fileExists(abs) {
+			return -1, fmt.Errorf("coop fork --tasks: no such file: %s", fa.tasks)
+		}
+		fa.tasks = abs
 	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
@@ -191,11 +220,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.loop {
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, false)
 		}
 	}
 	// Resume the agent's prior session by default when re-entering a fork (opt out with

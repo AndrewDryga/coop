@@ -23,13 +23,15 @@
   Forks live in a sibling `../<repo>-forks/` (was `-agents/`). `coop clone` stays a
   back-compat alias, and `coop dispatch` now forks into the same place.
 - **A fleet of forks, each on a different model, looping in the background.**
-  `coop fork <name> <agent> --loop` runs the unattended queue loop in a fork with the
-  chosen model — claude (`-p`), codex (`exec`), or gemini (`-p`) — seeding it from the
-  `.agent/TASKS.<name>.md` slice. Add `-d` to detach it (session-leader background
-  worker; logs captured to `../<repo>-forks/.coop/<name>.log`). New process commands:
-  `coop fork logs [name] [-f]` (no name = every fork at once, prefixed),
-  `coop fork stop <name>`, and a running/idle column in `coop fork ls`. `coop dispatch`
-  now takes an optional agent too.
+  `coop fork <name> <agent> --loop --tasks <path>` runs the unattended loop in a fork
+  with the chosen model — claude (`-p`), codex (`exec`), or gemini (`-p`) — seeding its
+  queue from the tasks file you name. `--tasks` is **required and explicit** (no implicit
+  `TASKS.<name>.md` mapping), so a fork and its tasks file are named independently. Add
+  `-d` to detach it (session-leader background worker; logs captured to
+  `../<repo>-forks/.coop/<name>.log`). New process commands: `coop fork logs [name] [-f]`
+  (no name = every fork at once, prefixed), `coop fork stop <name>`, and a running/idle
+  column in `coop fork ls`. Declare a fleet in `.agent/fleet` as
+  `<name> [agent] <tasks-path>` per line; `coop dispatch` takes an optional agent too.
 - **Forks land by rebasing, and revalidate before they land.** `coop fork merge`
   rebases the fork onto your current branch (in the fork) and fast-forwards — linear
   history, no merge commits. Set `COOP_GATE` (e.g. `make check`) and it re-runs that

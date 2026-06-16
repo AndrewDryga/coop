@@ -97,13 +97,14 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 	tests := []struct {
 		args                 []string
 		loop, detach, worker bool
-		agent                string
+		agent, tasks         string
 	}{
-		{[]string{"perf", "codex", "--loop"}, true, false, false, "codex"},
-		{[]string{"perf", "-d"}, true, true, false, "claude"},
-		{[]string{"perf", "--loop", "--detach"}, true, true, false, "claude"}, // long form of -d
-		{[]string{"perf", "gemini", "--loop", "-d"}, true, true, false, "gemini"},
-		{[]string{"perf", "--_detached"}, true, false, true, "claude"},
+		{[]string{"perf", "codex", "--loop", "--tasks", "q.md"}, true, false, false, "codex", "q.md"},
+		{[]string{"perf", "-d", "--tasks", "q.md"}, true, true, false, "claude", "q.md"},
+		{[]string{"perf", "--loop", "--detach", "--tasks", "q.md"}, true, true, false, "claude", "q.md"}, // long form of -d
+		{[]string{"perf", "gemini", "--loop", "-d", "-t", "q.md"}, true, true, false, "gemini", "q.md"},  // short -t
+		{[]string{"perf", "--loop", "--tasks=q.md"}, true, false, false, "claude", "q.md"},               // --tasks=VALUE form
+		{[]string{"perf", "--_detached", "--tasks", "q.md"}, true, false, true, "claude", "q.md"},
 	}
 	for _, tc := range tests {
 		fa, err := parseForkCreate(tc.args)
@@ -111,10 +112,22 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 			t.Errorf("parseForkCreate(%v) err = %v", tc.args, err)
 			continue
 		}
-		if fa.loop != tc.loop || fa.detach != tc.detach || fa.worker != tc.worker || fa.agent != tc.agent {
-			t.Errorf("parseForkCreate(%v) = {loop:%v detach:%v worker:%v agent:%q}, want {loop:%v detach:%v worker:%v agent:%q}",
-				tc.args, fa.loop, fa.detach, fa.worker, fa.agent, tc.loop, tc.detach, tc.worker, tc.agent)
+		if fa.loop != tc.loop || fa.detach != tc.detach || fa.worker != tc.worker || fa.agent != tc.agent || fa.tasks != tc.tasks {
+			t.Errorf("parseForkCreate(%v) = {loop:%v detach:%v worker:%v agent:%q tasks:%q}, want {loop:%v detach:%v worker:%v agent:%q tasks:%q}",
+				tc.args, fa.loop, fa.detach, fa.worker, fa.agent, fa.tasks, tc.loop, tc.detach, tc.worker, tc.agent, tc.tasks)
 		}
+	}
+
+	// --loop without --tasks is rejected (no implicit name→file mapping), as is --tasks
+	// without --loop.
+	if _, err := parseForkCreate([]string{"perf", "--loop"}); err == nil {
+		t.Error("parseForkCreate(--loop, no --tasks): want error")
+	}
+	if _, err := parseForkCreate([]string{"perf", "-d"}); err == nil {
+		t.Error("parseForkCreate(-d, no --tasks): want error")
+	}
+	if _, err := parseForkCreate([]string{"perf", "--tasks", "q.md"}); err == nil {
+		t.Error("parseForkCreate(--tasks without --loop): want error")
 	}
 }
 
