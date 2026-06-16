@@ -18,8 +18,7 @@ func printHelp(cfg *config.Config) {
 	p("%s %s — run a coding agent in a box it can't escape.\n\n", ui.Bold("coop"), resolveVersion())
 
 	p("%s\n", ui.Bold("usage"))
-	row("coop", "sandboxed `claude` in the current repo")
-	row("coop claude|codex|gemini", "a specific agent, with its autonomous flags")
+	row("coop claude|codex|gemini", "a sandboxed agent, with its autonomous flags")
 	row("coop login <agent>", "authenticate an agent (persists in the config dir)")
 	row("coop acp [agent]", "run as an ACP agent over stdio (point Zed at this)")
 	row("coop fusion [--governor g]", "a council: g leads, the other two advise read-only")

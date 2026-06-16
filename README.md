@@ -78,7 +78,7 @@ git clone https://github.com/AndrewDryga/coop && cd coop && make install   # fro
 ```bash
 cd ~/code/some-repo
 
-coop                  # sandboxed Claude — no permission prompts, secrets shadowed
+coop claude           # sandboxed Claude — no permission prompts, secrets shadowed
 coop codex            # same box, Codex instead
 coop gemini           # ...or Gemini
 coop fusion           # a council: one model leads, the other two advise, then it synthesizes
@@ -96,8 +96,8 @@ from git.
 
 | Command | What it does |
 |---|---|
-| `coop` | sandboxed Claude in the current repo (bare `coop` = `coop claude`) |
-| `coop claude` · `codex` · `gemini` | a specific agent, with its autonomous flags |
+| `coop` | print help — running an agent is explicit (`coop claude`) |
+| `coop claude` · `codex` · `gemini` | a sandboxed agent, with its autonomous flags |
 | `coop fusion [--governor g]` | a [governed council](#fusion-a-governed-council): `g` leads, the other two advise |
 | `coop run -- <cmd>` | run any command in the box |
 | `coop shell` | a shell in the box |
@@ -377,7 +377,7 @@ zero setup:
 
 ```bash
 cd ~/code/phoenix-app   # has a .tool-versions
-coop                    # box provisions elixir/erlang/node/… from it, then runs
+coop claude             # provisions elixir/erlang/node/… from it, then runs the agent
 ```
 
 The first install of a new toolchain can be slow (e.g. Erlang compiles), then it's
@@ -451,7 +451,7 @@ can exfiltrate `~/.claude`. The shadowing and the box are what Coop adds on top.
 
 ```bash
 coop up        # starts Postgres + Redis from compose.agent.yml, waits until healthy
-coop           # the box reaches them by name (db, redis)
+coop claude    # the box reaches them by name (db, redis)
 coop down -v   # stop services and wipe their throwaway data
 ```
 

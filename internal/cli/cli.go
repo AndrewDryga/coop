@@ -39,16 +39,20 @@ type app struct {
 
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
 func Main(argv []string) int {
-	// help and version work without a container runtime.
-	if len(argv) > 0 {
-		switch argv[0] {
-		case "help", "-h", "--help":
-			printHelp(config.Load())
-			return 0
-		case "version", "-v", "--version":
-			fmt.Println("coop " + resolveVersion())
-			return 0
-		}
+	// Bare `coop`, help, and version all work without a container runtime. Bare
+	// `coop` prints help rather than launching an agent — running one is explicit
+	// (`coop claude`), so a stray `coop` never turns an agent loose on the cwd.
+	if len(argv) == 0 {
+		printHelp(config.Load())
+		return 0
+	}
+	switch argv[0] {
+	case "help", "-h", "--help":
+		printHelp(config.Load())
+		return 0
+	case "version", "-v", "--version":
+		fmt.Println("coop " + resolveVersion())
+		return 0
 	}
 
 	cfg := config.Load()
@@ -73,8 +77,9 @@ func Main(argv []string) int {
 }
 
 func (a *app) dispatch(argv []string) (int, error) {
-	if len(argv) == 0 {
-		return a.cmdRun(nil) // bare `coop` → Claude
+	if len(argv) == 0 { // unreachable (Main intercepts bare coop); defensive
+		printHelp(a.cfg)
+		return 0, nil
 	}
 	sub, rest := argv[0], argv[1:]
 	switch sub {

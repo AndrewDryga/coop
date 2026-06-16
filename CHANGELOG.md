@@ -2,6 +2,9 @@
 
 ## 2.2.1
 
+- **Bare `coop` now prints help instead of launching Claude.** Running an agent is
+  explicit — `coop claude` (or `codex` / `gemini`) — so a stray `coop` never turns
+  an autonomous agent loose on the current repo. `coop help` / `-h` are unchanged.
 - **Per-language stacks dropped — `.tool-versions` is the single way to declare a
   toolchain.** `coop init --stack elixir|go|node|python` is gone; `coop init`
   auto-detects a `.tool-versions` and scaffolds the asdf `Dockerfile.agent` from it
