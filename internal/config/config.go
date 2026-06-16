@@ -38,6 +38,7 @@ type Config struct {
 
 	ServicesNet  string   // COOP_SERVICES_NET — override the services network name
 	LoopCmd      []string // COOP_LOOP_CMD — override the loop's per-iteration command
+	Gate         []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
 	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
@@ -91,6 +92,7 @@ func Load() *Config {
 
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
 		LoopCmd:      fields(get("COOP_LOOP_CMD", "")),
+		Gate:         fields(get("COOP_GATE", "")),
 		ExtraRunArgs: fields(get("COOP_RUN_ARGS", "")),
 
 		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),

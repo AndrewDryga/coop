@@ -384,6 +384,13 @@ it like a contractor PR (`coop fork review <name>` · `coop fork merge <name>`),
 generation, is your bottleneck. (`coop dispatch <name> [agent]` is the one-liner
 equivalent: fork + slice + loop, foreground.)
 
+**Land the whole fleet at once** with `coop fork merge --all` — a revalidating merge
+*queue*: it merges each fork onto the result of the last, so a "green" fork can't
+ride in against a base an earlier merge already changed. Set **`COOP_GATE`** (e.g.
+`COOP_GATE="make check"`) and every `coop fork merge` re-runs that gate in the box on
+the merged tree, rolling the merge back if it goes red — the machine gate behind your
+human review. It stops at the first conflict or red gate, leaving the rest untouched.
+
 ## Project toolchain & services
 
 Real projects need a language toolchain (Elixir, Go, …) and stateful services

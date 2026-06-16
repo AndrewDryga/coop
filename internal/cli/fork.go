@@ -288,50 +288,6 @@ func (a *app) forkReview(args []string) (int, error) {
 	return 0, nil
 }
 
-func (a *app) forkMerge(args []string) (int, error) {
-	name := ""
-	for _, x := range args {
-		if strings.HasPrefix(x, "-") {
-			return 2, fmt.Errorf("coop fork merge: unknown flag %q", x)
-		}
-		name = x
-	}
-	if name == "" {
-		return 2, errors.New("usage: coop fork merge <name>")
-	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
-	if !pathExists(forkWorkspace(repo, name)) {
-		return -1, fmt.Errorf("no such fork: %s", name)
-	}
-	if gitDirty(repo) {
-		return 1, errors.New("your working tree has uncommitted changes — commit or stash before merging")
-	}
-	if err := gitFetchInto(repo, forkWorkspace(repo, name), name); err != nil {
-		return -1, fmt.Errorf("git fetch: %w", err)
-	}
-	ref := "review/" + name
-	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
-	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
-	ui.Info("merge %s into %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
-	if !confirm("merge?", true) {
-		return 0, nil
-	}
-	if err := gitRun(repo, "merge", "--no-edit", ref); err != nil {
-		return 1, fmt.Errorf("merge hit conflicts — resolve them, then `git merge --continue`")
-	}
-	ui.Info("%s", ui.Green("✓ merged "+name))
-	if confirm("remove the fork?", true) {
-		if err := destroyFork(repo, name); err != nil {
-			return -1, err
-		}
-		ui.Info("removed fork %s", name)
-	}
-	return 0, nil
-}
-
 // forkRmSafe is the guard for `rm`: never silently drop an agent's work.
 func forkRmSafe(unmerged, dirty, force bool) error {
 	if force {

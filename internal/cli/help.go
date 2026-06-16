@@ -64,7 +64,7 @@ func printHelp(cfg *config.Config) {
 	p("  mcp.json                ->  MCP servers, defined once for all three agents\n\n")
 
 	p("%s  env vars (COOP_IMAGE, COOP_REPO, COOP_RUNTIME, COOP_CLAUDE_CMD,\n", ui.Bold("config"))
-	p("        COOP_CODEX_CMD, COOP_GEMINI_CMD, ...) or %s\n", tildeify(filepath.Join(cfg.BoxHome, "coop.conf")))
+	p("        COOP_CODEX_CMD, COOP_GEMINI_CMD, COOP_GATE, ...) or %s\n", tildeify(filepath.Join(cfg.BoxHome, "coop.conf")))
 
 	fmt.Print(b.String())
 }

@@ -25,6 +25,12 @@
   `coop fork logs [name] [-f]` (no name = every fork at once, prefixed),
   `coop fork stop <name>`, and a running/idle column in `coop fork ls`. `coop dispatch`
   now takes an optional agent too.
+- **Merges revalidate before they land.** Set `COOP_GATE` (e.g. `make check`) and
+  `coop fork merge` re-runs it in the box on the *merged* tree, rolling the merge back
+  if it goes red — so "green" means green against your tree as it stands now, not the
+  stale base the fork was cut from. `coop fork merge --all` lands the whole fleet as a
+  revalidating merge *queue*: each fork is merged onto the result of the previous one
+  and re-gated, stopping at the first conflict or failure and leaving the rest.
 
 ## 2.3.1
 
