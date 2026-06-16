@@ -101,6 +101,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdFork(rest)
 	case "dispatch":
 		return a.cmdDispatch(rest)
+	case "fleet":
+		return a.cmdFleet(rest)
 	case "loop":
 		return a.cmdLoop(rest)
 	case "up":

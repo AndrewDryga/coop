@@ -31,6 +31,13 @@
   stale base the fork was cut from. `coop fork merge --all` lands the whole fleet as a
   revalidating merge *queue*: each fork is merged onto the result of the previous one
   and re-gated, stopping at the first conflict or failure and leaving the rest.
+- **Review and fleet management.** `coop fork review` now leads with a *brief* —
+  commits, files changed, and the agent's own `.agent/LOG.md` reasoning — before the
+  diff, so you get a map first. `coop fork merge` runs a *policy check* that blocks
+  secret-looking (`.env`, `*.pem`, `id_rsa`, …) or oversized files unless `--force`.
+  Declare a fleet once in `.agent/fleet` (`<name> [agent]` per line) and drive it with
+  `coop fleet up | ls | down`; `coop fleet split <n>` round-robins `.agent/TASKS.md`
+  into per-fork slices to bootstrap one.
 
 ## 2.3.1
 

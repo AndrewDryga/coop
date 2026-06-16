@@ -391,6 +391,22 @@ ride in against a base an earlier merge already changed. Set **`COOP_GATE`** (e.
 the merged tree, rolling the merge back if it goes red — the machine gate behind your
 human review. It stops at the first conflict or red gate, leaving the rest untouched.
 
+**Declare the fleet once** in `.agent/fleet` (one fork per line, `<name> [agent]`):
+
+```
+perf  codex
+deps  gemini
+docs  claude
+```
+
+Then `coop fleet up` starts them all detached, `coop fleet ls` shows the board, and
+`coop fleet down` stops them. `coop fleet split <n>` mechanically round-robins your
+`.agent/TASKS.md` into per-fork slices to get started (use an agent for *semantic*
+slicing). Two guards make review trustworthy: `coop fork review <name>` opens with a
+**brief** — commits, files, and the agent's own `.agent/LOG.md` reasoning — before the
+diff; and `coop fork merge` runs a **policy check** that blocks secret-looking or
+oversized files from sneaking in (override with `--force`).
+
 ## Project toolchain & services
 
 Real projects need a language toolchain (Elixir, Go, …) and stateful services

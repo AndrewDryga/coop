@@ -26,7 +26,7 @@ func TestMergeOneNoGate(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "work")
 
-	landed, err := a.mergeOne(repo, "", "perf")
+	landed, err := a.mergeOne(repo, "", "perf", false)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v), want (true, nil)", landed, err)
 	}
@@ -56,7 +56,7 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 	}
 	git(t, repo, "commit", "-aqm", "parent edit")
 
-	landed, err := a.mergeOne(repo, "", "a")
+	landed, err := a.mergeOne(repo, "", "a", false)
 	if landed || err == nil {
 		t.Fatalf("mergeOne = (%v, %v), want (false, error)", landed, err)
 	}

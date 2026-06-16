@@ -94,6 +94,24 @@ func parseShortstat(s string) (ins, del int) {
 	return ins, del
 }
 
+// indent prefixes every line of s with two spaces.
+func indent(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = "  " + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// lastLines returns the last n lines of s (trailing blank lines trimmed first).
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // confirm asks a yes/no question, returning def with no tty (batch runs) or on a
 // bare Enter.
 func confirm(prompt string, def bool) bool {

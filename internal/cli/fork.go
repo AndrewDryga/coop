@@ -278,14 +278,41 @@ func (a *app) forkReview(args []string) (int, error) {
 		return -1, fmt.Errorf("git fetch: %w", err)
 	}
 	ref := "review/" + name
-	ui.Info("%s ← %s", ref, name)
-	diffArgs := []string{"diff"}
+	a.forkBrief(repo, forkWorkspace(repo, name), name, ref)
 	if stat {
-		diffArgs = append(diffArgs, "--stat")
+		return 0, nil // the brief already lists the files
 	}
-	diffArgs = append(diffArgs, "HEAD..."+ref)
-	_ = gitInteractive(repo, diffArgs...)
+	_ = gitInteractive(repo, "diff", "HEAD..."+ref)
 	return 0, nil
+}
+
+// forkBrief prints a review summary before the diff — commits, files changed, and
+// the agent's own reasoning from the fork's .agent/LOG.md — so a reviewer gets a map
+// before reading the patch.
+func (a *app) forkBrief(repo, ws, name, ref string) {
+	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
+	files := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
+	nfiles := 0
+	if files != "" {
+		nfiles = len(strings.Split(files, "\n"))
+	}
+	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
+	ui.Info("%s ← %s  ·  %s commit(s), +%d -%d across %d file(s)", ref, name, ahead, ins, del, nfiles)
+	if log := gitOut(repo, "log", "--oneline", "--no-decorate", "HEAD.."+ref); log != "" {
+		fmt.Println(ui.Bold("commits:"))
+		fmt.Println(indent(log))
+	}
+	if files != "" {
+		fmt.Println(ui.Bold("files:"))
+		fmt.Println(indent(files))
+	}
+	if data, err := os.ReadFile(filepath.Join(ws, ".agent", "LOG.md")); err == nil {
+		if why := lastLines(string(data), 12); strings.TrimSpace(why) != "" {
+			fmt.Println(ui.Bold("why (.agent/LOG.md, latest):"))
+			fmt.Println(indent(why))
+		}
+	}
+	fmt.Println(ui.Bold("diff:"))
 }
 
 // forkRmSafe is the guard for `rm`: never silently drop an agent's work.

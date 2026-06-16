@@ -3,11 +3,46 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// secretRe flags filenames that look like credentials or keys — agents are good at
+// passing the gate while quietly widening the blast radius, so a merge surfaces them.
+var secretRe = regexp.MustCompile(`(?i)(^|/)(\.env(\.|$)|[^/]*\.(pem|key|p12|pfx)$|id_rsa|id_ed25519|credentials(\.|$)|[^/]*secret[^/]*)`)
+
+// policyScan returns human-readable concerns about a fork's added/changed files:
+// secret-looking files and large blobs. Empty means nothing flagged.
+func policyScan(repo, ref string) []string {
+	out := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
+	if out == "" {
+		return nil
+	}
+	var warns []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] == "D" { // deletions are never a concern
+			continue
+		}
+		path := f[len(f)-1]
+		if secretRe.MatchString(path) {
+			warns = append(warns, "secret-like file: "+path)
+		}
+		if size := gitBlobSize(repo, ref, path); size > 5<<20 {
+			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
+		}
+	}
+	return warns
+}
+
+func gitBlobSize(repo, ref, path string) int64 {
+	n, _ := strconv.ParseInt(gitOut(repo, "cat-file", "-s", ref+":"+path), 10, 64)
+	return n
+}
 
 // mergeGate resolves the box image when COOP_GATE is set (so a merge can be
 // revalidated in the box), or returns "" when no gate is configured.
@@ -36,7 +71,7 @@ func (a *app) runGate(repo, img string) bool {
 // gate is configured — revalidates the merged result, rolling back on failure.
 // "green" thus means green against the tree as it stands now, not the stale base the
 // fork was cut from. Reports whether the merge landed.
-func (a *app) mergeOne(repo, img, name string) (bool, error) {
+func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	ws := forkWorkspace(repo, name)
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
@@ -45,6 +80,9 @@ func (a *app) mergeOne(repo, img, name string) (bool, error) {
 		return false, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
 	ref := "review/" + name
+	if warns := policyScan(repo, ref); len(warns) > 0 && !force {
+		return false, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
+	}
 	pre := gitOut(repo, "rev-parse", "HEAD")
 	if err := gitRun(repo, "merge", "--no-edit", ref); err != nil {
 		_ = gitRun(repo, "merge", "--abort")
@@ -60,11 +98,13 @@ func (a *app) mergeOne(repo, img, name string) (bool, error) {
 }
 
 func (a *app) forkMerge(args []string) (int, error) {
-	all, name := false, ""
+	all, force, name := false, false, ""
 	for _, x := range args {
 		switch x {
 		case "--all":
 			all = true
+		case "--force", "-f":
+			force = true
 		default:
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork merge: unknown flag %q", x)
@@ -84,7 +124,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return -1, err
 	}
 	if all {
-		return a.forkMergeAll(repo, img)
+		return a.forkMergeAll(repo, img, force)
 	}
 	if name == "" {
 		return 2, errors.New("usage: coop fork merge <name> [--all]")
@@ -103,7 +143,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !confirm("merge?", true) {
 		return 0, nil
 	}
-	landed, err := a.mergeOne(repo, img, name)
+	landed, err := a.mergeOne(repo, img, name, force)
 	if err != nil {
 		ui.Error("%v", err)
 		return 1, nil
@@ -125,7 +165,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 // the result of the previous one and re-gated, so a later fork can't ride in green
 // against a base that an earlier merge already changed. It stops at the first
 // conflict or gate failure, leaving the remaining forks untouched.
-func (a *app) forkMergeAll(repo, img string) (int, error) {
+func (a *app) forkMergeAll(repo, img string, force bool) (int, error) {
 	names := forkNames(repo)
 	if len(names) == 0 {
 		ui.Info("no forks to merge")
@@ -140,7 +180,7 @@ func (a *app) forkMergeAll(repo, img string) (int, error) {
 		if gitOut(repo, "rev-list", "--count", "HEAD..review/"+n) == "0" {
 			continue // nothing to land
 		}
-		ok, err := a.mergeOne(repo, img, n)
+		ok, err := a.mergeOne(repo, img, n, force)
 		if err != nil {
 			ui.Error("%v", err)
 			ui.Info("merge queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
