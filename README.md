@@ -217,12 +217,63 @@ needed. To review in an IDE instead:
 | | |
 |---|---|
 | `--stat` | brief only, skip the diff |
-| `--tool` | hand the diff to your `git difftool` (VS Code, JetBrains, Meld, vim — whatever `git config diff.tool` is) |
-| `--open` | open the fork in your editor (`$COOP_EDITOR`, else a detected `code`/`cursor`/`zed`/`idea`/`subl`, else `$VISUAL`/`$EDITOR`) and review via its SCM panel |
+| `--open` | open the fork as a folder in your editor and review via its SCM panel |
+| `--tool` | open each changed file in your GUI difftool |
 
-For full control, set **`COOP_REVIEW_CMD`** — coop runs it via `sh -c` with
-`$COOP_FORK_PATH`, `$COOP_FORK_NAME`, and `$COOP_REVIEW_REF` set, so you can wire any
-tool (a TUI like `lazygit`, a script, anything).
+<details>
+<summary><b><code>--open</code></b> — register your editor</summary>
+
+coop opens the fork directory with the **first** of these that's set:
+
+1. **`COOP_EDITOR`** — a coop-only override
+2. **`git config core.editor`** — your normal git editor (local config beats global)
+3. an auto-detected GUI editor on `PATH`: `cursor`, `code`, `zed`, `idea`, `subl`
+4. `$VISUAL` / `$EDITOR`
+
+Detection (step 3) is just a best-effort fallback — with both `code` and `zed`
+installed it picks `code`. To choose, set one of the first two:
+
+```bash
+git config --global core.editor "zed --wait"   # your standard git editor (git commit uses it too)
+export COOP_EDITOR="zed"                        # coop-only; overrides core.editor
+```
+
+coop runs the editor command **verbatim**, so `core.editor = "zed --wait"` blocks the
+terminal until you close the window — that's what `--wait` is for. If you'd rather the
+command return immediately, set `COOP_EDITOR` without `--wait` (e.g. `COOP_EDITOR=zed`).
+</details>
+
+<details>
+<summary><b><code>--tool</code></b> — register your difftool</summary>
+
+`--tool` runs `git difftool`, which opens each changed file in whatever
+`git config diff.tool` points at. Register one once:
+
+```bash
+# VS Code
+git config --global diff.tool vscode
+git config --global difftool.vscode.cmd 'code --wait --diff "$LOCAL" "$REMOTE"'
+
+# Zed
+git config --global diff.tool zed
+git config --global difftool.zed.cmd 'zed --wait --diff "$LOCAL" "$REMOTE"'
+```
+
+JetBrains, Meld, Beyond Compare, vimdiff, etc. work the same way — see
+`git difftool --tool-help` for the tools git already knows.
+</details>
+
+<details>
+<summary><b><code>COOP_REVIEW_CMD</code></b> — wire any tool</summary>
+
+For full control, set `COOP_REVIEW_CMD`. coop runs it via `sh -c` from the parent repo
+with `$COOP_FORK_PATH`, `$COOP_FORK_NAME`, and `$COOP_REVIEW_REF` in the environment, so
+you can launch a TUI, a script, anything:
+
+```bash
+export COOP_REVIEW_CMD='cd "$COOP_FORK_PATH" && lazygit'
+```
+</details>
 
 ### Land it: rebase, gate, sign
 

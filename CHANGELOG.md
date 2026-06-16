@@ -45,8 +45,8 @@
   commits, files changed, and the agent's own `.agent/LOG.md` reasoning — before the
   diff, so you get a map first. Review in your IDE instead of the pager with `--tool`
   (your configured `git difftool` — VS Code/JetBrains/Meld/vim), `--open` (open the
-  fork in `$COOP_EDITOR` or a detected `code`/`cursor`/`zed`/`idea`), or override it
-  entirely with `COOP_REVIEW_CMD`. `coop fork merge` runs a *policy check* that blocks
+  fork in your editor — `$COOP_EDITOR`, then your `git config core.editor`, then a
+  detected `code`/`cursor`/`zed`/`idea`), or override it entirely with `COOP_REVIEW_CMD`. `coop fork merge` runs a *policy check* that blocks
   secret-looking (`.env`, `*.pem`, `id_rsa`, …) or oversized files unless `--force`.
   Declare a fleet once in `.agent/fleet` (`<name> [agent]` per line) and drive it with
   `coop fleet up | ls | down`; `coop fleet split <n>` round-robins `.agent/TASKS.md`

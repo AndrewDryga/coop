@@ -84,6 +84,8 @@ func forkHelp() (int, error) {
 	for _, f := range flags {
 		fmt.Fprintf(&b, "  %-16s %s\n", f.flag, f.desc)
 	}
+	fmt.Fprintf(&b, "\n%s --open uses $COOP_EDITOR, else `git config core.editor`, else a detected\n", ui.Bold("review"))
+	fmt.Fprintf(&b, "         GUI editor; --tool uses `git config diff.tool`. Setup details in the README.\n")
 	fmt.Print(b.String())
 	return 0, nil
 }
@@ -379,7 +381,7 @@ func (a *app) forkReview(args []string) (int, error) {
 
 	switch {
 	case open: // open the fork in your IDE; review via its SCM panel
-		return a.openInEditor(ws)
+		return a.openInEditor(repo, ws)
 	case tool: // hand the diff to your configured GUI difftool (git config diff.tool)
 		_ = gitInteractive(repo, "difftool", "HEAD..."+ref)
 		return 0, nil
@@ -393,15 +395,26 @@ func (a *app) forkReview(args []string) (int, error) {
 	}
 }
 
-// openInEditor opens the fork directory in an editor so you can review via its SCM
-// panel: $COOP_EDITOR if set, then a detected GUI editor, then $VISUAL/$EDITOR.
-func (a *app) openInEditor(ws string) (int, error) {
-	editor := a.cfg.Editor
-	if editor == "" {
-		editor = detectEditor()
+// resolveEditor picks the command used to open a fork for review, in order:
+// $COOP_EDITOR, then git's own core.editor (your explicit choice — local config
+// beats global), then a detected GUI editor, then $VISUAL/$EDITOR. Returns "" if
+// nothing is configured or found.
+func resolveEditor(cfgEditor, repo string) string {
+	if cfgEditor != "" {
+		return cfgEditor
 	}
+	if e := gitOut(repo, "config", "core.editor"); e != "" {
+		return e // honor `git config core.editor`, e.g. "zed --wait"
+	}
+	return detectEditor()
+}
+
+// openInEditor opens the fork directory in an editor so you can review via its SCM
+// panel. See resolveEditor for how the editor is chosen.
+func (a *app) openInEditor(repo, ws string) (int, error) {
+	editor := resolveEditor(a.cfg.Editor, repo)
 	if editor == "" {
-		return 1, errors.New("no editor found — set $COOP_EDITOR (or $VISUAL/$EDITOR), or install code/cursor/zed/idea")
+		return 1, errors.New("no editor found — set $COOP_EDITOR, git config core.editor, or $VISUAL/$EDITOR (or install code/cursor/zed/idea)")
 	}
 	parts := append(strings.Fields(editor), ws)
 	ui.Info("opening %s in %s", ws, parts[0])

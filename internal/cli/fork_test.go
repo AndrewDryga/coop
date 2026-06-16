@@ -286,6 +286,34 @@ func TestDetectEditor(t *testing.T) {
 	}
 }
 
+func TestResolveEditor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	// Isolate from the host's global/system git config so core.editor is only what we set.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo := initRepo(t)
+	git(t, repo, "config", "core.editor", "zed --wait")
+
+	// $COOP_EDITOR wins over everything.
+	if got := resolveEditor("nvim", repo); got != "nvim" {
+		t.Errorf("resolveEditor(COOP_EDITOR) = %q, want %q", got, "nvim")
+	}
+	// With no $COOP_EDITOR, git's core.editor is honored — the reported bug.
+	if got := resolveEditor("", repo); got != "zed --wait" {
+		t.Errorf("resolveEditor(core.editor) = %q, want %q", got, "zed --wait")
+	}
+	// With neither set, fall through to detection ($VISUAL; PATH has no GUI editor).
+	git(t, repo, "config", "--unset", "core.editor")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "myvisual")
+	if got := resolveEditor("", repo); got != "myvisual" {
+		t.Errorf("resolveEditor(fallback) = %q, want %q", got, "myvisual")
+	}
+}
+
 func TestRunReviewCmd(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.txt")
