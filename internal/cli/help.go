@@ -10,6 +10,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+// helpRequested reports whether args contains -h or --help.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 func printHelp(cfg *config.Config) {
 	var b strings.Builder
 	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }

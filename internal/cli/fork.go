@@ -54,6 +54,29 @@ func validForkName(name string) bool {
 	return !strings.ContainsAny(name, "/\\")
 }
 
+// forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
+func forkHelp() (int, error) {
+	rows := []struct{ cmd, desc string }{
+		{"coop fork <name> [agent]", "open or re-enter a fork + run an agent (re-entry continues the last session)"},
+		{"coop fork <name> <agent> --loop [-d]", "run the unattended .agent/TASKS.md loop (-d detaches it)"},
+		{"coop fork ls", "list this repo's forks: branch, changes, state, last activity"},
+		{"coop fork logs [name] [-f]", "tail a fork's loop log (no name tails every fork, prefixed)"},
+		{"coop fork review <name> [--stat|--tool|--open]", "brief + diff; --tool = git difftool, --open = your editor"},
+		{"coop fork merge <name> [--all] [--force]", "rebase the fork onto your branch and land it (--all = queue)"},
+		{"coop fork rm <name> [--force]", "discard a fork (refuses unmerged/dirty work without --force)"},
+		{"coop fork open <name>", "print the fork's path"},
+		{"coop fork stop <name>", "stop a detached loop"},
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s — a throwaway local clone handed to an agent; review and merge it like a PR.\n\n", ui.Bold("coop fork"))
+	for _, r := range rows {
+		fmt.Fprintf(&b, "  %-48s %s\n", r.cmd, r.desc)
+	}
+	fmt.Fprint(&b, "\nflags: --new (fresh session) · --fresh (recreate the fork) · -c (force-resume)\n")
+	fmt.Print(b.String())
+	return 0, nil
+}
+
 // cmdFork is the `coop fork` family. Bare `coop fork` lists; a reserved verb runs
 // that subcommand; anything else opens (or resumes) a fork by that name.
 func (a *app) cmdFork(args []string) (int, error) {

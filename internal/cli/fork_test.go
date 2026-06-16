@@ -248,6 +248,21 @@ func TestForkCarriesSigningMaterials(t *testing.T) {
 	}
 }
 
+func TestHelpRequested(t *testing.T) {
+	if !helpRequested([]string{"review", "demo", "--help"}) || !helpRequested([]string{"-h"}) {
+		t.Error("helpRequested should detect -h/--help anywhere in args")
+	}
+	if helpRequested([]string{"demo", "codex"}) {
+		t.Error("helpRequested should be false with no help flag")
+	}
+}
+
+func TestForkHelp(t *testing.T) {
+	if code, err := forkHelp(); code != 0 || err != nil {
+		t.Errorf("forkHelp = (%d, %v), want (0, nil)", code, err)
+	}
+}
+
 func TestParseForkContinue(t *testing.T) {
 	if fa, err := parseForkCreate([]string{"demo", "-c"}); err != nil || !fa.cont {
 		t.Errorf("parseForkCreate(demo -c) = {cont:%v}, err=%v; want cont", fa.cont, err)

@@ -55,6 +55,21 @@ func Main(argv []string) int {
 		return 0
 	}
 
+	// `-h`/`--help` on coop's own subcommands prints help without needing a runtime —
+	// fork gets its own family help, the rest fall back to the main help. Agent and raw
+	// commands (claude/codex/gemini/run/…) instead forward --help to the underlying CLI,
+	// so they're left to fall through to the box below.
+	if helpRequested(argv[1:]) {
+		switch argv[0] {
+		case "fork", "clone":
+			code, _ := forkHelp()
+			return code
+		case "loop", "dispatch", "fleet", "up", "down", "init", "doctor", "build", "update":
+			printHelp(config.Load())
+			return 0
+		}
+	}
+
 	cfg := config.Load()
 	rt, err := runtime.Detect(cfg.RuntimeName)
 	if err != nil {

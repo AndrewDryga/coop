@@ -64,6 +64,11 @@
   global, so it's safe even before subcommands), instead of dropping the defaults — so
   `coop claude --continue`, `coop codex resume --last`, `coop gemini -p "…"`, etc. keep
   coop's autonomy + MCP wiring. `coop fusion` forwards extra args the same way.
+- **`-h`/`--help` works on subcommands.** `coop fork [verb] --help` prints the fork
+  family help, and `coop loop|up|down|init|doctor|build|update|dispatch|fleet --help`
+  print the main help — all without needing a container runtime, instead of erroring
+  (`unknown flag "--help"`) or running the command. (Agent commands still forward
+  `--help` to the agent, so `coop claude --help` shows Claude's help.)
 
 ## 2.3.1
 
