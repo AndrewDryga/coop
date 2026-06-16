@@ -149,6 +149,10 @@ func TestForkLifecycle(t *testing.T) {
 	if got := gitBranch(ws); got != "perf" {
 		t.Errorf("fork branch = %q, want %q", got, "perf")
 	}
+	// The fork must carry the parent's git identity so an agent can commit in it.
+	if got := gitOut(ws, "config", "user.email"); got != "t@t" {
+		t.Errorf("fork git identity not propagated: user.email = %q, want %q", got, "t@t")
+	}
 
 	// A commit in the fork is "unmerged" from the parent's point of view.
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {

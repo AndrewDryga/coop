@@ -178,6 +178,15 @@ func setupFork(repo, name string) (string, error) {
 		return ws, fmt.Errorf("git clone: %w", err)
 	}
 	_ = gitCheckoutNewBranch(ws, name) // branch may already exist in origin; fine
+	// A clone keeps no local git identity, and the box has no ambient ~/.gitconfig —
+	// so carry the parent's effective user.name/email into the fork, or the agent
+	// can't commit its work inside it.
+	if email := gitOut(repo, "config", "user.email"); email != "" {
+		_ = gitRun(ws, "config", "user.email", email)
+	}
+	if un := gitOut(repo, "config", "user.name"); un != "" {
+		_ = gitRun(ws, "config", "user.name", un)
+	}
 	return ws, nil
 }
 

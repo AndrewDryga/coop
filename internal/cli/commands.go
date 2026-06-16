@@ -350,15 +350,9 @@ func (a *app) cmdDispatch(args []string) (int, error) {
 	if pathExists(ws) {
 		return -1, fmt.Errorf("workspace already exists: %s (remove it, or pick another name)", ws)
 	}
-	if err := os.MkdirAll(forkHome(repo), 0o755); err != nil {
-		return -1, err
-	}
 	ui.Info("dispatching %q into %s", name, ws)
-	if err := gitClone(repo, ws); err != nil {
-		return -1, fmt.Errorf("git clone: %w", err)
-	}
-	if err := gitCheckoutNewBranch(ws, name); err != nil {
-		return -1, fmt.Errorf("git checkout: %w", err)
+	if _, err := setupFork(repo, name); err != nil {
+		return -1, err
 	}
 	if err := os.MkdirAll(filepath.Join(ws, ".agent"), 0o755); err != nil {
 		return -1, err
