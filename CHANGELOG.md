@@ -52,9 +52,16 @@
   fork in your editor — `$COOP_EDITOR`, then your `git config core.editor`, then a
   detected `code`/`cursor`/`zed`/`idea`), or override it entirely with `COOP_REVIEW_CMD`. `coop fork merge` runs a *policy check* that blocks
   secret-looking (`.env`, `*.pem`, `id_rsa`, …) or oversized files unless `--force`.
-  Declare a fleet once in `.agent/fleet` (`<name> [agent]` per line) and drive it with
-  `coop fleet up | ls | down`; `coop fleet split <n>` round-robins `.agent/TASKS.md`
-  into per-fork slices to bootstrap one.
+  Declare a fleet once in `.agent/fleet` (`<name> [agent] <tasks-path>` per line) and
+  drive it with `coop fleet up | ls | down`; `coop fleet split <n>` round-robins
+  `.agent/TASKS.md` into per-fork slices and writes a matching `.agent/fleet`.
+- **Drive a fork from your editor (Zed).** `coop fork <name> acp [agent]` fronts a fork
+  as an ACP agent over stdio, pinned to the fork's path and the parent's image. And every
+  fork now carries a `.zed/settings.json` (git-excluded, so it never lands) that registers
+  its coop agents — claude/codex/gemini — so opening the fork in Zed (`coop fork review
+  --open`) surfaces them in the agent panel, scoped to that project. Trust the worktree
+  once (Zed's secure-by-default gate); resuming a prior session rides on ACP `session/load`,
+  which the editor drives.
 - **Every box run gets your git environment.** The box has no ambient `~/.gitconfig`,
   so an agent would otherwise commit with no author ("Author identity unknown") and
   ignore none of your global ignores. coop now mounts a curated `~/.gitconfig` into

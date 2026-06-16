@@ -288,6 +288,27 @@ the box on the *rebased* tree, rolling back if it goes red — the machine gate 
 your human review. A **policy check** also blocks secret-looking or oversized files from
 sneaking in (override with `--force`). Merge refuses if your own tree is dirty.
 
+### Drive a fork from Zed (ACP)
+
+`coop fork <name> acp [agent]` fronts the fork as an [ACP](#drive-it-from-zed-acp) agent
+over stdio — so an editor can drive the fork's agent, sandboxed, like any other ACP
+agent. And every fork carries a **`.zed/settings.json`** (written by coop, kept out of
+the diff via the fork's local git excludes) that registers its coop agents — `claude`,
+`codex`, `gemini` — pinned to that fork. So when you `coop fork review --open` a fork in
+Zed, those agents show up in the **agent panel, scoped to that project** — nothing
+global, nothing to hand-edit.
+
+Two things to know:
+
+- **Trust the worktree once.** Zed is secure-by-default: it won't launch a command from
+  a project's `.zed/settings.json` until you trust the worktree. The first time you open
+  a fork, click the Restricted-Mode shield in the title bar (coop reminds you), and the
+  fork's coop agents go live.
+- **Resuming the conversation is Zed's call.** Picking up a fork's prior agent session
+  rides on ACP's (still-stabilizing) `session/load`, which the *editor* drives — coop
+  pins the fork so its session history is there to load, but can't force the resume from
+  its side.
+
 ## Agents & config
 
 One box, three agents. Each reads its config and credentials from

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,57 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+func TestWriteForkEditorConfig(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkEditorConfig(ws, "demo", "coop-agent"); err != nil {
+		t.Fatalf("writeForkEditorConfig: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(ws, ".zed", "settings.json"))
+	if err != nil {
+		t.Fatalf("read .zed/settings.json: %v", err)
+	}
+	var doc struct {
+		AgentServers map[string]struct {
+			Type    string
+			Command string
+			Args    []string
+			Env     map[string]string
+		} `json:"agent_servers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("settings.json is not valid JSON: %v\n%s", err, data)
+	}
+	if len(doc.AgentServers) != 3 {
+		t.Errorf("agent_servers has %d entries, want 3 (claude/codex/gemini)", len(doc.AgentServers))
+	}
+	for name, e := range doc.AgentServers {
+		if e.Type != "custom" || len(e.Args) != 2 || e.Args[0] != "acp" {
+			t.Errorf("%s: bad entry %+v", name, e)
+		}
+		// Each entry is pinned to this fork's path and the parent's image, so it
+		// resolves the right box regardless of Zed's launch cwd.
+		if e.Env["COOP_REPO"] != ws || e.Env["COOP_IMAGE"] != "coop-agent" {
+			t.Errorf("%s: env not pinned to fork/image: %v", name, e.Env)
+		}
+	}
+	// It's excluded from the fork's git so it never lands in a review/merge.
+	excl, _ := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+	if !strings.Contains(string(excl), ".zed/") {
+		t.Errorf(".git/info/exclude missing .zed/: %q", excl)
+	}
+	// Idempotent: a second call doesn't error or duplicate the exclude entry.
+	if err := writeForkEditorConfig(ws, "demo", "coop-agent"); err != nil {
+		t.Fatalf("writeForkEditorConfig (2nd call): %v", err)
+	}
+	excl2, _ := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+	if strings.Count(string(excl2), ".zed/") != 1 {
+		t.Errorf("exclude duplicated .zed/: %q", excl2)
+	}
+}
 
 func TestForkWorkspace(t *testing.T) {
 	repo := "/home/me/proj"
