@@ -82,13 +82,14 @@ func (a *app) cmdFork(args []string) (int, error) {
 
 // forkArgs is the parsed form of `coop fork <name> [agent] [flags]`.
 type forkArgs struct {
-	name   string
-	agent  string
-	fresh  bool
-	cont   bool // -c/--continue: resume the agent's most recent session in the fork
-	loop   bool
-	detach bool
-	worker bool // internal: this process IS the detached loop worker (--_detached)
+	name       string
+	agent      string
+	fresh      bool
+	cont       bool // -c/--continue: force-resume the prior session (now the default on re-entry)
+	newSession bool // --new: start a fresh agent session even when re-entering a fork
+	loop       bool
+	detach     bool
+	worker     bool // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
@@ -105,6 +106,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.fresh = true
 		case "--continue", "-c":
 			fa.cont = true
+		case "--new":
+			fa.newSession = true
 		case "--loop":
 			fa.loop = true
 		case "-d", "--detach":
@@ -135,6 +138,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		return -1, err
 	}
 	ws := forkWorkspace(repo, fa.name)
+	existed := pathExists(ws) // a re-entry (vs a fresh fork) — resume by default below
 	if fa.fresh && pathExists(ws) {
 		if err := destroyFork(repo, fa.name); err != nil {
 			return -1, err
@@ -158,9 +162,15 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, false)
 		}
 	}
+	// Resume the agent's prior session by default when re-entering a fork (opt out with
+	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
+	// run when no session for this fork exists.
 	cmd := a.defaultCmd(fa.agent)
-	if fa.cont {
-		cmd = a.forkResumeCmd(fa.agent) // resume the agent's most recent session
+	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
+		if rc, ok := a.forkResume(ws, fa.agent); ok {
+			cmd = rc
+			ui.Info("continuing your last %s session in this fork", fa.agent)
+		}
 	}
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, ConsultLead: fa.agent,

@@ -24,7 +24,7 @@ func printHelp(cfg *config.Config) {
 	row("coop fusion [--governor g]", "a council: g leads, the other two advise read-only")
 	row("coop run -- <cmd...>", "run any command in the box")
 	row("coop shell", "a shell in the box")
-	row("coop fork <name> [agent]", "open/resume a fork + an agent; -c resumes its session, --loop [-d] loops")
+	row("coop fork <name> [agent]", "open a fork + an agent; re-entry continues the last session (--new resets)")
 	row("coop fork <verb>", "ls · logs · review · merge · rm · stop — the fork lifecycle")
 	row("coop up | down", "start/stop sibling services (db, redis) for this repo")
 	row("coop loop", "work .agent/TASKS.md unattended until done")

@@ -148,8 +148,8 @@ close.
 
 ```bash
 coop fork perf codex     # fork into ../<repo>-forks/perf; run codex there
-coop fork perf           # later: re-enter the same fork (fresh agent session)
-coop fork perf -c        # …or re-enter and continue the agent's last session
+coop fork perf           # later: re-enter — continues your last session by default
+coop fork perf --new     # …or re-enter with a fresh session
 coop fork ls             # your forks: branch, changes, last activity
 coop fork review perf    # fetch the fork's branch + show the diff
 coop fork merge perf     # rebase it onto your branch (linear), then close it
@@ -159,8 +159,10 @@ coop fork rm perf        # discard (refuses unmerged/dirty work without --force)
 The agent (`claude` by default; pass `codex`/`gemini` to pick the model) works in
 the fork; you stay the reviewer and the only one who can push. `coop clone` is a
 back-compat alias for `coop fork`. The agent's session history persists in the fork,
-so `coop fork <name> -c` re-enters and **continues the last conversation** instead of
-starting fresh (claude `--continue`, gemini `--resume latest`, codex `resume --last`).
+so re-entering **continues your last conversation by default** (claude `--continue`,
+gemini `--resume latest`, and codex by the session whose recorded `cwd` is that fork) —
+scoped to the fork, falling back to a fresh session when none exists. Pass `--new` to
+start fresh.
 
 `coop fork review` shows a brief (commits, files, the agent's reasoning) then the diff
 in your pager — no setup. To review in an IDE instead: `--tool` hands the diff to your
