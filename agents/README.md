@@ -61,7 +61,7 @@ It's the standard `{ "mcpServers": { ... } }` shape:
 The Gemini and Codex versions are generated **read-only**, merged on top of
 whatever you already keep in `gemini/settings.json` and `codex/config.toml` — your
 files are never modified, and servers from `mcp.json` win on a name clash.
-Generating those two needs **python3 on the host**; Claude works without it.
+Generating those two is built into `coop` — pure Go, no extra runtime needed.
 
 Keep secrets out of `mcp.json`: have the server read an env var (put the value in
 `env`) instead of pasting tokens. For a Codex HTTP server, add

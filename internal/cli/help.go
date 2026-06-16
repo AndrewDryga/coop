@@ -23,28 +23,36 @@ func helpRequested(args []string) bool {
 func printHelp(cfg *config.Config) {
 	var b strings.Builder
 	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
-	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %-27s%s\n", cmd, desc) }
+	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %-33s%s\n", cmd, desc) }
+	group := func(label string) { fmt.Fprintf(&b, "\n  %s\n", ui.Bold(label)) }
 
 	p("%s %s — run a coding agent in a box it can't escape.\n\n", ui.Bold("coop"), resolveVersion())
-
 	p("%s\n", ui.Bold("usage"))
-	row("coop claude|codex|gemini [args]", "a sandboxed agent — its autonomous flags, plus any args you add")
-	row("coop login <agent>", "authenticate an agent (persists in the config dir)")
-	row("coop acp [agent]", "run as an ACP agent over stdio (point Zed at this)")
-	row("coop fusion [--governor g]", "a council: g leads, the other two advise read-only")
-	row("coop run -- <cmd...>", "run any command in the box")
+
+	group("agents")
+	row("coop claude|codex|gemini [args]", "a sandboxed agent — its autonomous flags, plus your args")
+	row("coop fusion [--governor g]", "a council: g leads, the other two advise, it synthesizes")
+	row("coop <agent> --consult", "opt-in: may ask authenticated peers on hard calls")
+	row("coop run -- <cmd...>", "run any command in the box (raw)")
 	row("coop shell", "a shell in the box")
-	row("coop fork <name> [agent]", "open a fork + an agent; re-entry continues the last session (--new resets)")
-	row("coop fork <verb>", "ls · logs · review · merge · rm · stop — the fork lifecycle")
-	row("coop up | down", "start/stop sibling services (db, redis) for this repo")
-	row("coop loop", "work .agent/TASKS.md unattended until done")
-	row("coop dispatch <name>", "fork + that agent's queue slice + loop (fleet unit)")
-	row("coop fleet up|ls|down", ".agent/fleet → start/list/stop a fleet of forks")
-	row("coop init [--stack asdf]", "scaffold the queue + hooks (+ toolchain & services)")
-	row("coop doctor", "verify the box still contains the agent")
-	row("coop build", "build the box image (per-project if Dockerfile.agent)")
-	row("coop update", "rebuild fresh — pull latest agent CLIs + ACP adapters + base")
-	row("coop help | version", "")
+	row("coop login <agent>", "authenticate an agent (token persists in the config dir)")
+	row("coop acp [agent|fusion]", "run as an ACP agent over stdio (point Zed at this)")
+
+	group("forks — review and land work like a PR")
+	row("coop fork <name> [agent]", "open/re-enter a fork (re-entry resumes; --new resets)")
+	row("coop fork <verb> <name>", "ls · logs · review · merge · rm · stop · open")
+
+	group("run unattended")
+	row("coop loop", "work .agent/TASKS.md until done, then audit")
+	row("coop dispatch <name> [agent]", "fork + that agent's queue slice + loop")
+	row("coop fleet up|ls|down|split", "drive a fleet declared in .agent/fleet")
+
+	group("set up & maintain")
+	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills (+ toolchain)")
+	row("coop up | down [-v]", "start/stop sibling services (db, redis)")
+	row("coop build | update", "build the box image | rebuild it fresh")
+	row("coop doctor", "prove isolation — attack the box, check it holds")
+	row("coop help | version", "this help · the version")
 	p("\n")
 
 	p("%s\n", ui.Bold("per-project environment"))
@@ -74,8 +82,8 @@ func printHelp(cfg *config.Config) {
 	p("  INSTRUCTIONS.md         ->  one instruction file, wired into all three agents\n")
 	p("  mcp.json                ->  MCP servers, defined once for all three agents\n\n")
 
-	p("%s  env vars (COOP_IMAGE, COOP_REPO, COOP_RUNTIME, COOP_CLAUDE_CMD,\n", ui.Bold("config"))
-	p("        COOP_CODEX_CMD, COOP_GEMINI_CMD, COOP_GATE, ...) or %s\n", tildeify(filepath.Join(cfg.BoxHome, "coop.conf")))
+	p("%s  COOP_* env vars or %s — full list in the README\n", ui.Bold("config"), tildeify(filepath.Join(cfg.BoxHome, "coop.conf")))
+	p("  common: COOP_RUNTIME · COOP_IMAGE · COOP_GATE · COOP_FUSION_GOVERNOR · COOP_EDITOR\n")
 
 	fmt.Print(b.String())
 }
