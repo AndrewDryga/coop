@@ -182,6 +182,23 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
+	// Git environment: a curated ~/.gitconfig (your identity + signing off, since the
+	// box holds no key) and your global gitignore, mounted into every box run. Without
+	// it the agent would commit with no author and ignore none of your global patterns.
+	var gitMounts []extraMount
+	if spec.Homes {
+		if p, err := writeTempFile(gitConfigForBox()); err == nil {
+			tmpFiles = append(tmpFiles, p)
+			gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
+		}
+		if gi := hostGlobalGitignore(); gi != "" {
+			if p, err := writeTempFile(gi); err == nil {
+				tmpFiles = append(tmpFiles, p)
+				gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.config/git/ignore"})
+			}
+		}
+	}
+
 	networkName := ""
 	if spec.Network {
 		net := cfg.ServicesNet
@@ -193,7 +210,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, fusionMounts, networkName)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, networkName)
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
@@ -249,7 +266,7 @@ func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
 // assembleArgs builds the full container-runtime argument list. It is pure given
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon.
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts []extraMount, networkName string) []string {
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts []extraMount, networkName string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
 	switch mode {
 	case ttyInteractive:
@@ -291,6 +308,10 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 		}
 		// Fusion: the governor's augmented instruction file (peers + synthesis).
 		for _, m := range fusionMounts {
+			args = append(args, "-v", m.host+":"+m.box+":ro")
+		}
+		// Your git environment: identity + signing-off + global gitignore.
+		for _, m := range gitMounts {
 			args = append(args, "-v", m.host+":"+m.box+":ro")
 		}
 		if mcpPresent {
