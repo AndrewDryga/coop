@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.1
+
+- **`--consult` makes the second opinion opt-in.** The peer-consultation directive
+  introduced in 2.3.0 was always on; it now requires the `--consult` flag —
+  `coop claude --consult` (or `codex`/`gemini`; in Zed, `coop acp claude --consult`).
+  Off by default, otherwise unchanged: still injected only into the launched agent,
+  still naming only the authenticated peers.
+
 ## 2.3.0
 
 - **Agents can ask each other for a second opinion.** A normal `coop claude` (or

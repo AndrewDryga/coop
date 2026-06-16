@@ -34,3 +34,23 @@ func TestParseGovernor(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractConsult(t *testing.T) {
+	cases := []struct {
+		args     []string
+		want     bool
+		wantRest []string
+	}{
+		{nil, false, nil},
+		{[]string{"-p", "hi"}, false, []string{"-p", "hi"}},
+		{[]string{"--consult"}, true, nil},
+		{[]string{"--consult", "-p", "hi"}, true, []string{"-p", "hi"}},
+		{[]string{"-p", "hi", "--consult"}, true, []string{"-p", "hi"}},
+	}
+	for _, c := range cases {
+		got, rest := extractConsult(c.args)
+		if got != c.want || !slices.Equal(rest, c.wantRest) {
+			t.Errorf("extractConsult(%v) = (%v, %v), want (%v, %v)", c.args, got, rest, c.want, c.wantRest)
+		}
+	}
+}

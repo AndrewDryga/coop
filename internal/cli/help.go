@@ -47,7 +47,8 @@ func printHelp(cfg *config.Config) {
 
 	p("%s  one model leads, the other two advise read-only, the leader synthesizes:\n", ui.Bold("fusion"))
 	p("  coop fusion                     # codex leads (COOP_FUSION_GOVERNOR); peers advise\n")
-	p("  coop fusion --governor claude   # claude leads instead\n\n")
+	p("  coop fusion --governor claude   # claude leads instead\n")
+	p("  coop <agent> --consult          # lighter & opt-in: may ask authed peers on hard calls\n\n")
 
 	p("%s  add to Zed settings.json, then pick it in the agent panel:\n", ui.Bold("drive from Zed (ACP)"))
 	p("  \"agent_servers\": { \"coop\": { \"type\": \"custom\",\n")

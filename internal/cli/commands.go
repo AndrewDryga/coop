@@ -56,10 +56,30 @@ func (a *app) cmdRun(args []string) (int, error) {
 // launchAgent runs a named agent: its autonomous default command when given no
 // args, or a pass-through of the args you supply (without the default flags).
 func (a *app) launchAgent(tool string, args []string) (int, error) {
-	if len(args) == 0 {
-		return a.runInBox(a.defaultCmd(tool), tool)
+	consult, args := extractConsult(args)
+	lead := "" // ConsultLead is set only with --consult, so the directive is opt-in
+	if consult {
+		lead = tool
 	}
-	return a.runInBox(append([]string{tool}, args...), tool)
+	if len(args) == 0 {
+		return a.runInBox(a.defaultCmd(tool), lead)
+	}
+	return a.runInBox(append([]string{tool}, args...), lead)
+}
+
+// extractConsult pulls coop's own --consult flag out of an agent's args (so it is
+// not forwarded to the agent CLI) and reports whether it was present. --consult
+// opts a normal run into the second-opinion directive — letting the agent consult
+// its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
+func extractConsult(args []string) (consult bool, rest []string) {
+	for _, a := range args {
+		if a == "--consult" {
+			consult = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return consult, rest
 }
 
 func (a *app) defaultCmd(tool string) []string {
@@ -114,6 +134,7 @@ func acpCommand(tool string) ([]string, bool) {
 // peers read-only and synthesizes (see cmdFusion). Add one Zed agent_servers
 // entry per governor to switch which model leads.
 func (a *app) cmdACP(args []string) (int, error) {
+	consult, args := extractConsult(args)
 	tool := "claude"
 	if len(args) > 0 {
 		tool = args[0]
@@ -137,9 +158,13 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	lead := "" // --consult opts into the second-opinion directive (a no-op under fusion)
+	if consult {
+		lead = tool
+	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
-		FusionGovernor: governor, ConsultLead: tool, // consult applies only when not fusion (governor == "")
+		FusionGovernor: governor, ConsultLead: lead,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
