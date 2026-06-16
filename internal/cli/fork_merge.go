@@ -84,17 +84,38 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 		return false, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
 	pre := gitOut(repo, "rev-parse", "HEAD")
-	if err := gitMerge(repo, ref); err != nil {
-		_ = gitRun(repo, "merge", "--abort")
-		return false, fmt.Errorf("%s: merge conflicts — resolve in your tree, then `git merge %s`", name, ref)
+	if err := a.landFork(repo, ws, name); err != nil {
+		return false, err
 	}
 	if img != "" { // COOP_GATE configured
 		if !a.runGate(repo, img) {
 			_ = gitRun(repo, "reset", "--hard", pre)
-			return false, fmt.Errorf("%s: gate failed after merge — rolled back", name)
+			return false, fmt.Errorf("%s: gate failed after rebase — rolled back", name)
 		}
 	}
 	return true, nil
+}
+
+// landFork rebases the fork's branch onto the parent's current HEAD — in the fork,
+// where that branch is checked out — then fast-forwards the parent onto the result.
+// Forks therefore land as a linear replay, never a merge commit. A rebase conflict
+// leaves the fork untouched and points at where to resolve.
+func (a *app) landFork(repo, ws, name string) error {
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
+		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
+	}
+	if err := gitRun(ws, "rebase", head); err != nil {
+		_ = gitRun(ws, "rebase", "--abort")
+		return fmt.Errorf("%s: rebase onto %s hit conflicts — resolve in the fork (cd %q && git rebase %s), then re-run", name, gitBranch(repo), ws, head)
+	}
+	if err := gitFetchInto(repo, ws, name); err != nil {
+		return fmt.Errorf("%s: git fetch: %w", name, err)
+	}
+	if err := gitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
+		return fmt.Errorf("%s: fast-forward after rebase failed unexpectedly", name)
+	}
+	return nil
 }
 
 func (a *app) forkMerge(args []string) (int, error) {
@@ -139,8 +160,8 @@ func (a *app) forkMerge(args []string) (int, error) {
 	ref := "review/" + name
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
-	ui.Info("merge %s into %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
-	if !confirm("merge?", true) {
+	ui.Info("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
+	if !confirm("rebase and land?", true) {
 		return 0, nil
 	}
 	landed, err := a.mergeOne(repo, img, name, force)
@@ -151,7 +172,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !landed {
 		return 1, nil
 	}
-	ui.Info("%s", ui.Green("✓ merged "+name))
+	ui.Info("%s", ui.Green("✓ landed "+name))
 	if confirm("remove the fork?", true) {
 		if err := destroyFork(repo, name); err != nil {
 			return -1, err
@@ -161,9 +182,9 @@ func (a *app) forkMerge(args []string) (int, error) {
 	return 0, nil
 }
 
-// forkMergeAll lands every fork as a revalidating merge queue: each is merged onto
+// forkMergeAll lands every fork as a revalidating rebase queue: each is rebased onto
 // the result of the previous one and re-gated, so a later fork can't ride in green
-// against a base that an earlier merge already changed. It stops at the first
+// against a base that an earlier landing already changed. It stops at the first
 // conflict or gate failure, leaving the remaining forks untouched.
 func (a *app) forkMergeAll(repo, img string, force bool) (int, error) {
 	names := forkNames(repo)
@@ -183,15 +204,15 @@ func (a *app) forkMergeAll(repo, img string, force bool) (int, error) {
 		ok, err := a.mergeOne(repo, img, n, force)
 		if err != nil {
 			ui.Error("%v", err)
-			ui.Info("merge queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
+			ui.Info("rebase queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
 			return 1, nil
 		}
 		if ok {
-			ui.Info("%s", ui.Green("✓ merged "+n))
+			ui.Info("%s", ui.Green("✓ landed "+n))
 			_ = destroyFork(repo, n)
 			landed = append(landed, n)
 		}
 	}
-	ui.Info("merge queue: %d landed", len(landed))
+	ui.Info("rebase queue: %d landed", len(landed))
 	return 0, nil
 }

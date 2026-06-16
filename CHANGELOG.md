@@ -11,8 +11,9 @@
     `coop fork open <name>` prints its path.
   - `coop fork review <name>` — fetch the fork's branch into `review/<name>` and show
     the diff (no more hand-typed `git fetch … && git diff`).
-  - `coop fork merge <name>` — merge it back into your working tree, then offer to
-    close it; refuses to merge into a dirty tree.
+  - `coop fork merge <name>` — land it by **rebasing** the fork onto your branch
+    (linear history, no merge commit), then offer to close it; refuses if your tree
+    is dirty.
   - `coop fork rm <name>` — discard a fork; refuses while its work is unmerged or
     dirty unless `--force`.
   Forks live in a sibling `../<repo>-forks/` (was `-agents/`). `coop clone` stays a
@@ -25,12 +26,14 @@
   `coop fork logs [name] [-f]` (no name = every fork at once, prefixed),
   `coop fork stop <name>`, and a running/idle column in `coop fork ls`. `coop dispatch`
   now takes an optional agent too.
-- **Merges revalidate before they land.** Set `COOP_GATE` (e.g. `make check`) and
-  `coop fork merge` re-runs it in the box on the *merged* tree, rolling the merge back
-  if it goes red — so "green" means green against your tree as it stands now, not the
-  stale base the fork was cut from. `coop fork merge --all` lands the whole fleet as a
-  revalidating merge *queue*: each fork is merged onto the result of the previous one
-  and re-gated, stopping at the first conflict or failure and leaving the rest.
+- **Forks land by rebasing, and revalidate before they land.** `coop fork merge`
+  rebases the fork onto your current branch (in the fork) and fast-forwards — linear
+  history, no merge commits. Set `COOP_GATE` (e.g. `make check`) and it re-runs that
+  gate in the box on the rebased tree, rolling back if it goes red — so "green" means
+  green against your tree as it stands now, not the stale base the fork was cut from.
+  `coop fork merge --all` lands the whole fleet as a revalidating rebase *queue*: each
+  fork is rebased onto the result of the previous one and re-gated, stopping at the
+  first conflict or failure and leaving the rest.
 - **Review and fleet management.** `coop fork review` now leads with a *brief* —
   commits, files changed, and the agent's own `.agent/LOG.md` reasoning — before the
   diff, so you get a map first. `coop fork merge` runs a *policy check* that blocks

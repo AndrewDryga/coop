@@ -249,9 +249,11 @@ func forkUpdated(ws string) string {
 	return "—"
 }
 
-// gitFetchInto fetches a fork's branch into review/<name> in the parent repo.
+// gitFetchInto fetches a fork's branch into review/<name> in the parent repo. The
+// fetch is forced (+) because landing rebases the fork branch, so a re-fetch after a
+// rebase is not a fast-forward of the prior review ref.
 func gitFetchInto(repo, ws, name string) error {
-	return gitRun(repo, "fetch", "--quiet", ws, name+":review/"+name)
+	return gitRun(repo, "fetch", "--quiet", ws, "+"+name+":review/"+name)
 }
 
 func (a *app) forkReview(args []string) (int, error) {

@@ -151,7 +151,7 @@ coop fork perf codex     # fork into ../<repo>-forks/perf; run codex there
 coop fork perf           # later: re-enter (resume) the same fork
 coop fork ls             # your forks: branch, changes, last activity
 coop fork review perf    # fetch the fork's branch + show the diff
-coop fork merge perf     # merge it back into your working tree, then close it
+coop fork merge perf     # rebase it onto your branch (linear), then close it
 coop fork rm perf        # discard (refuses unmerged/dirty work without --force)
 ```
 
@@ -384,12 +384,14 @@ it like a contractor PR (`coop fork review <name>` · `coop fork merge <name>`),
 generation, is your bottleneck. (`coop dispatch <name> [agent]` is the one-liner
 equivalent: fork + slice + loop, foreground.)
 
-**Land the whole fleet at once** with `coop fork merge --all` — a revalidating merge
-*queue*: it merges each fork onto the result of the last, so a "green" fork can't
-ride in against a base an earlier merge already changed. Set **`COOP_GATE`** (e.g.
-`COOP_GATE="make check"`) and every `coop fork merge` re-runs that gate in the box on
-the merged tree, rolling the merge back if it goes red — the machine gate behind your
-human review. It stops at the first conflict or red gate, leaving the rest untouched.
+Landing **rebases** the fork onto your current branch and fast-forwards — linear
+history, no merge commits. **Land the whole fleet at once** with `coop fork merge
+--all` — a revalidating rebase *queue*: it rebases each fork onto the result of the
+last, so a "green" fork can't ride in against a base an earlier landing already
+changed. Set **`COOP_GATE`** (e.g. `COOP_GATE="make check"`) and every `coop fork
+merge` re-runs that gate in the box on the rebased tree, rolling back if it goes red —
+the machine gate behind your human review. It stops at the first conflict or red gate,
+leaving the rest untouched.
 
 **Declare the fleet once** in `.agent/fleet` (one fork per line, `<name> [agent]`):
 

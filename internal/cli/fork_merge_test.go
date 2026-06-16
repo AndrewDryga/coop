@@ -128,4 +128,8 @@ func TestForkMergeQueue(t *testing.T) {
 	if got := forkNames(repo); len(got) != 0 {
 		t.Errorf("forks remain after the queue closed them: %v", got)
 	}
+	// Rebasing must keep history linear — no merge commits.
+	if merges := gitOut(repo, "rev-list", "--merges", "HEAD"); merges != "" {
+		t.Errorf("rebase queue produced merge commits (history not linear):\n%s", merges)
+	}
 }
