@@ -59,6 +59,11 @@
   global `gpgsign=true` would otherwise fail every commit). Forks additionally carry
   the parent repo's *local* identity (which a global mount can't see) and its global
   gitignore into the fork itself.
+- **`coop claude|codex|gemini` now pass your extra args through.** They run the agent's
+  autonomous default command *with any args you add appended* (the autonomous flags are
+  global, so it's safe even before subcommands), instead of dropping the defaults — so
+  `coop claude --continue`, `coop codex resume --last`, `coop gemini -p "…"`, etc. keep
+  coop's autonomy + MCP wiring. `coop fusion` forwards extra args the same way.
 
 ## 2.3.1
 

@@ -97,7 +97,7 @@ from git.
 | Command | What it does |
 |---|---|
 | `coop` | print help — running an agent is explicit (`coop claude`) |
-| `coop claude` · `codex` · `gemini` | a sandboxed agent, with its autonomous flags |
+| `coop claude` · `codex` · `gemini` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add (e.g. `coop claude --continue`) |
 | `coop fusion [--governor g]` | a [governed council](#fusion-a-governed-council): `g` leads, the other two advise |
 | `coop run -- <cmd>` | run any command in the box |
 | `coop shell` | a shell in the box |

@@ -53,18 +53,18 @@ func (a *app) cmdRun(args []string) (int, error) {
 	return a.runInBox(args, "") // raw command runner — not an agent session
 }
 
-// launchAgent runs a named agent: its autonomous default command when given no
-// args, or a pass-through of the args you supply (without the default flags).
+// launchAgent runs a named agent: its autonomous default command, with any extra CLI
+// args you pass appended — so `coop claude --continue` keeps coop's autonomy + MCP
+// flags and just adds yours. The agents' autonomous flags are global, so this is safe
+// even before subcommands (e.g. `coop codex resume --last`). coop's own --consult is
+// stripped first so it isn't forwarded to the agent.
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	consult, args := extractConsult(args)
 	lead := "" // ConsultLead is set only with --consult, so the directive is opt-in
 	if consult {
 		lead = tool
 	}
-	if len(args) == 0 {
-		return a.runInBox(a.defaultCmd(tool), lead)
-	}
-	return a.runInBox(append([]string{tool}, args...), lead)
+	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), lead)
 }
 
 // extractConsult pulls coop's own --consult flag out of an agent's args (so it is
@@ -183,10 +183,8 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	cmd := a.defaultCmd(governor)
-	if len(rest) > 0 {
-		cmd = append([]string{governor}, rest...)
-	}
+	// The governor's autonomous default command, plus any extra args you pass through.
+	cmd := append(append([]string{}, a.defaultCmd(governor)...), rest...)
 	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
 		strings.Join(fusion.Peers(governor, a.cfg.Agents), " + "))
 	return box.Run(a.cfg, a.rt, box.RunSpec{
