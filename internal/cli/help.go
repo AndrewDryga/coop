@@ -48,7 +48,7 @@ func printHelp(cfg *config.Config) {
 	row("coop fleet up|ls|down|split", "drive a fleet declared in .agent/fleet")
 
 	group("set up & maintain")
-	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills (+ toolchain)")
+	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, Zed agents (+ toolchain)")
 	row("coop up | down [-v]", "start/stop sibling services (db, redis)")
 	row("coop build | update", "build the box image | rebuild it fresh")
 	row("coop doctor", "prove isolation — attack the box, check it holds")

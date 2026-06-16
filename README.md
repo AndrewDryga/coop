@@ -136,7 +136,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (and optionally a toolchain) |
+| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, Zed agents (and optionally a toolchain) |
 | `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
@@ -308,6 +308,11 @@ Two things to know:
   rides on ACP's (still-stabilizing) `session/load`, which the *editor* drives — coop
   pins the fork so its session history is there to load, but can't force the resume from
   its side.
+
+`coop init` sets the same thing up for the **main project**: it writes a portable
+`.zed/settings.json` (one `coop acp` agent per model, command `coop` — no machine paths,
+safe to commit) so opening the repo in Zed gives you the same in-panel agents. It won't
+overwrite a `.zed/settings.json` you already have.
 
 ## Agents & config
 

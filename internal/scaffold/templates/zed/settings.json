@@ -1,0 +1,22 @@
+{
+  "agent_servers": {
+    "coop · claude": {
+      "type": "custom",
+      "command": "coop",
+      "args": ["acp", "claude"],
+      "env": {}
+    },
+    "coop · codex": {
+      "type": "custom",
+      "command": "coop",
+      "args": ["acp", "codex"],
+      "env": {}
+    },
+    "coop · gemini": {
+      "type": "custom",
+      "command": "coop",
+      "args": ["acp", "gemini"],
+      "env": {}
+    }
+  }
+}

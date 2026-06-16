@@ -59,9 +59,10 @@
   as an ACP agent over stdio, pinned to the fork's path and the parent's image. And every
   fork now carries a `.zed/settings.json` (git-excluded, so it never lands) that registers
   its coop agents — claude/codex/gemini — so opening the fork in Zed (`coop fork review
-  --open`) surfaces them in the agent panel, scoped to that project. Trust the worktree
-  once (Zed's secure-by-default gate); resuming a prior session rides on ACP `session/load`,
-  which the editor drives.
+  --open`) surfaces them in the agent panel, scoped to that project. `coop init` writes the
+  same thing for the main project (a portable `.zed/settings.json`, command `coop`, safe to
+  commit). Trust the worktree once (Zed's secure-by-default gate); resuming a prior session
+  rides on ACP `session/load`, which the editor drives.
 - **Every box run gets your git environment.** The box has no ambient `~/.gitconfig`,
   so an agent would otherwise commit with no author ("Author identity unknown") and
   ignore none of your global ignores. coop now mounts a curated `~/.gitconfig` into

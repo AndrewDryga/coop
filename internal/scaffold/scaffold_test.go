@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -48,6 +49,7 @@ func TestInit(t *testing.T) {
 		"AGENTS.md", ".agent/TASKS.md", ".agent/LOG.md", ".agent/BACKLOG.md",
 		".agent/IDEAS.md", ".agent/PENDING_DECISIONS.md",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
+		".zed/settings.json",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
 		if err != nil {
@@ -56,6 +58,30 @@ func TestInit(t *testing.T) {
 		}
 		if fi.Size() == 0 {
 			t.Errorf("%s is empty", rel)
+		}
+	}
+
+	// .zed/settings.json registers one coop ACP agent per model (valid JSON, so Zed
+	// accepts it; portable command "coop" so it's safe to commit).
+	zdata, err := os.ReadFile(filepath.Join(repo, ".zed", "settings.json"))
+	if err != nil {
+		t.Fatalf("read .zed/settings.json: %v", err)
+	}
+	var zdoc struct {
+		AgentServers map[string]struct {
+			Command string
+			Args    []string
+		} `json:"agent_servers"`
+	}
+	if err := json.Unmarshal(zdata, &zdoc); err != nil {
+		t.Fatalf(".zed/settings.json is not valid JSON: %v", err)
+	}
+	if len(zdoc.AgentServers) != 3 {
+		t.Errorf(".zed agent_servers has %d entries, want 3", len(zdoc.AgentServers))
+	}
+	for name, e := range zdoc.AgentServers {
+		if e.Command != "coop" || len(e.Args) != 2 || e.Args[0] != "acp" {
+			t.Errorf("%s: want a portable `coop acp <agent>` entry, got command=%q args=%v", name, e.Command, e.Args)
 		}
 	}
 
