@@ -106,7 +106,7 @@ from git.
 | `coop loop` | [work `.agent/TASKS.md`](#the-loop) unattended until done, then audit |
 | `coop dispatch <name>` | [a fleet unit](#a-fleet): clone + that agent's queue slice + loop |
 | `coop clone <name>` | a [secrets-free clone](#hand-off-a-clone) workspace + an agent in it |
-| `coop init [--stack X]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (+ a toolchain) |
+| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (+ a toolchain) |
 | `coop up` · `down` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
@@ -299,7 +299,7 @@ to resume in Zed.
 
 > **Services** work too — if the repo has a `compose.agent.yml`, run `coop up`
 > first and the ACP box joins the same network.
-> **Custom images** must carry the ACP adapters: `coop init --stack` scaffolds them
+> **Custom images** must carry the ACP adapters: `coop init` scaffolds them
 > in; for an older/hand-written `Dockerfile.agent`, add
 > `@agentclientprotocol/claude-agent-acp` and `@zed-industries/codex-acp` to its
 > `npm install -g` line (else `coop acp` fails with `codex-acp: not found`).
@@ -389,18 +389,19 @@ same `.tool-versions` at build time.
 ### `Dockerfile.agent` — a per-project image
 
 ```bash
-coop init --stack elixir   # writes Dockerfile.agent (toolchain) + compose.agent.yml
-coop build                 # builds it, tagged coop-<repo-name> — its own image
+coop init --stack asdf   # writes an asdf Dockerfile.agent (from .tool-versions) + compose.agent.yml
+coop build               # builds it, tagged coop-<repo-name> — its own image
 ```
 
 A repo with its own `Dockerfile.agent` gets its **own** image tag, so projects never
 collide, and every `coop`, `coop loop`, `coop clone`, `coop acp` in that repo uses
-it. Stacks: `elixir`, `python`, `go`, `node`, `asdf` (or edit the generated file).
-When the agent needs a new system package, add it to the `RUN` line and `coop build`
-again — the dependency *graduates into the image* instead of being installed each
-run.
+it. The scaffolded one is the **asdf** image — it bakes in the exact `.tool-versions`
+toolchain (versions live there, not in the Dockerfile). For anything more exotic,
+hand-write a `Dockerfile.agent` (see the box contract below). When the agent needs a
+new system package, add it to the `RUN` line and `coop build` again — the dependency
+*graduates into the image* instead of being installed each run.
 
-<details><summary><b>The box contract (build any stack)</b></summary>
+<details><summary><b>The box contract (build any base)</b></summary>
 
 An image is a valid agent box when:
 
@@ -421,7 +422,7 @@ RUN <install your toolchain> \
 USER node
 ```
 
-(If the base lacks Node, install it first — the `--stack` templates use NodeSource.)
+(If the base lacks Node, install it first — the asdf template uses NodeSource.)
 </details>
 
 <details><summary><b>Reusing an existing devcontainer</b></summary>

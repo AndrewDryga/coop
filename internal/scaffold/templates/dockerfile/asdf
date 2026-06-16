@@ -33,11 +33,13 @@ USER node
 
 # Install whatever .tool-versions pins: an asdf plugin per listed tool, then
 # `asdf install`. (Erlang compiles here — slow once, then Docker-cached until
-# .tool-versions changes.)
+# .tool-versions changes.) When Elixir is in the mix, seed hex + rebar so
+# `mix deps.get` doesn't stop to prompt for them in an autonomous run.
 COPY --chown=node:node .tool-versions /home/node/.tool-versions
 RUN cd /home/node \
  && awk 'NF && $1 !~ /^#/ {print $1}' .tool-versions | while read -r tool; do asdf plugin add "$tool"; done \
  && MAKEFLAGS="-j$(nproc)" asdf install \
- && asdf reshim
+ && asdf reshim \
+ && { command -v mix >/dev/null 2>&1 && mix local.hex --force && mix local.rebar --force || true; }
 
 WORKDIR /workspace

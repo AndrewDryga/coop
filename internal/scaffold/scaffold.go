@@ -6,6 +6,7 @@ package scaffold
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,9 +18,10 @@ import (
 //go:embed all:templates
 var templates embed.FS
 
-// Init scaffolds the working set into repo. An optional stack (elixir, python,
-// go, or anything else → node) also writes a Dockerfile.agent + compose file.
-// Existing files are never clobbered.
+// Init scaffolds the working set into repo. The toolchain is driven by
+// .tool-versions: with no --stack a present .tool-versions auto-scaffolds the asdf
+// Dockerfile.agent (+ compose file); `--stack asdf` forces it. Existing files are
+// never clobbered.
 func Init(repo, stack string) error {
 	s := &scaffolder{repo: repo}
 	if err := mkdirs(
@@ -71,23 +73,34 @@ func Init(repo, stack string) error {
 		return err
 	}
 
-	// Pick the Dockerfile.agent: an explicit --stack wins; otherwise, if the repo
-	// pins tool versions in .tool-versions, use the asdf template that installs
-	// straight from it — so the box's toolchain tracks .tool-versions by default.
-	if stack == "" {
+	// The toolchain is driven by .tool-versions (asdf). With no --stack, auto-detect
+	// a .tool-versions and scaffold the asdf Dockerfile from it. The only explicit
+	// stack is "asdf"; the per-language stacks are gone — pin versions in
+	// .tool-versions instead, and coop provisions them.
+	switch stack {
+	case "":
 		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err == nil {
 			stack = "asdf"
 			ui.Info("detected .tool-versions — scaffolding an asdf-driven Dockerfile.agent")
 		}
+	case "asdf":
+		// scaffolded below
+	default:
+		return fmt.Errorf("unknown --stack %q: coop provisions toolchains from .tool-versions now\n"+
+			"  pin versions there and run `coop init` (auto-detected), or `coop init --stack asdf`", stack)
 	}
-	if stack != "" {
-		if err := s.writeIfAbsent(filepath.Join(repo, "Dockerfile.agent"), dockerfileTemplate(stack), 0o644); err != nil {
+	if stack == "asdf" {
+		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err != nil {
+			return fmt.Errorf("--stack asdf needs a .tool-versions in the repo\n" +
+				"  e.g. `echo 'elixir 1.18.3-otp-27' > .tool-versions`, then re-run")
+		}
+		if err := s.writeIfAbsent(filepath.Join(repo, "Dockerfile.agent"), "templates/dockerfile/asdf", 0o644); err != nil {
 			return err
 		}
 		if err := s.writeIfAbsent(filepath.Join(repo, "compose.agent.yml"), "templates/compose.agent.yml", 0o644); err != nil {
 			return err
 		}
-		ui.Info("stack %q: review Dockerfile.agent, then 'coop build' and 'coop up'", stack)
+		ui.Info("asdf stack: review Dockerfile.agent, then 'coop build' and 'coop up'")
 	}
 
 	ui.Info("scaffolded AGENTS.md, .agent/, .claude/ hooks, and workflow skills into %s", repo)
@@ -203,15 +216,6 @@ func copyEmbedDir(src, dest string) error {
 		}
 		return os.WriteFile(target, data, 0o644)
 	})
-}
-
-func dockerfileTemplate(stack string) string {
-	switch stack {
-	case "elixir", "python", "go", "asdf":
-		return "templates/dockerfile/" + stack
-	default:
-		return "templates/dockerfile/node"
-	}
 }
 
 func mkdirs(paths ...string) error {

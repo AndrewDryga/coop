@@ -2,11 +2,16 @@
 
 ## 2.2.1
 
-- Scaffolded stack images (`go`, `node`, `python`, `elixir`) now trust any git
-  worktree (`safe.directory '*'`) like the base box and the asdf template, instead
-  of a fixed `/workspace`. Since 2.0 the repo mounts at its **real host path**, so
-  the old `/workspace` entry left git with "dubious ownership" on runtimes that
-  preserve host uid (Linux/Podman). Re-run `coop build` to pick it up.
+- **Per-language stacks dropped — `.tool-versions` is the single way to declare a
+  toolchain.** `coop init --stack elixir|go|node|python` is gone; `coop init`
+  auto-detects a `.tool-versions` and scaffolds the asdf `Dockerfile.agent` from it
+  (`--stack asdf` forces it; a removed stack name now errors with a pointer to
+  `.tool-versions`). The asdf image is a superset of the old per-language ones — it
+  carries the build toolchain, `postgresql-client`, `procps`, and `inotify-tools`,
+  and seeds `hex`/`rebar` when Elixir is present.
+- The shared base box gains `postgresql-client`, `procps`, and `inotify-tools`, so
+  the zero-config runtime path (bare `coop` on a repo with just a `.tool-versions`)
+  matches a baked image. Run `coop update` to pull it.
 
 ## 2.2.0
 

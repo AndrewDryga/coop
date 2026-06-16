@@ -29,7 +29,7 @@ func printHelp(cfg *config.Config) {
 	row("coop up | down", "start/stop sibling services (db, redis) for this repo")
 	row("coop loop", "work .agent/TASKS.md unattended until done")
 	row("coop dispatch <name>", "clone + that agent's queue slice + loop (fleet unit)")
-	row("coop init [--stack X]", "scaffold the queue + hooks (+ toolchain & services)")
+	row("coop init [--stack asdf]", "scaffold the queue + hooks (+ toolchain & services)")
 	row("coop doctor", "verify the box still contains the agent")
 	row("coop build", "build the box image (per-project if Dockerfile.agent)")
 	row("coop update", "rebuild fresh — pull latest agent CLIs + ACP adapters + base")
@@ -38,7 +38,7 @@ func printHelp(cfg *config.Config) {
 
 	p("%s\n", ui.Bold("per-project environment"))
 	p("  coop init                  # a repo with .tool-versions → an asdf box at those exact versions\n")
-	p("  coop init --stack elixir   # or pin a stack: writes Dockerfile.agent + compose.agent.yml\n")
+	p("  coop init --stack asdf     # force a baked asdf Dockerfile.agent + compose.agent.yml\n")
 	p("  coop build && coop up      # build the image, start db/redis\n")
 	p("  coop                       # the box has the toolchain + reaches db/redis by name\n\n")
 

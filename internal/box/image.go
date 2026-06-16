@@ -20,10 +20,12 @@ const BaseDockerfile = `FROM node:24
 ARG ASDF_VERSION=0.19.0
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
-# compile toolchains a repo pins in .tool-versions at runtime.
+# compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
+# procps, and inotify-tools come along so the runtime path matches a baked image.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
+      postgresql-client procps inotify-tools \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
  && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
       @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \

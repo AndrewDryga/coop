@@ -126,26 +126,28 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 }
 
 func TestInitStack(t *testing.T) {
+	// --stack asdf with a .tool-versions → the asdf Dockerfile.agent + compose.
 	repo := t.TempDir()
-	if err := Init(repo, "go"); err != nil {
+	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("golang 1.26.4\n"), 0o644)
+	if err := Init(repo, "asdf"); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
-	if err != nil || !strings.Contains(string(df), "golang") {
-		t.Errorf("go stack Dockerfile.agent missing or wrong:\n%s", df)
+	if err != nil || !strings.Contains(string(df), "asdf install") {
+		t.Errorf("asdf stack Dockerfile.agent missing or wrong:\n%s", df)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "compose.agent.yml")); err != nil {
 		t.Errorf("compose.agent.yml missing: %v", err)
 	}
 
-	// Unknown stack falls back to the node toolchain.
-	repo2 := t.TempDir()
-	if err := Init(repo2, "rust"); err != nil {
-		t.Fatal(err)
+	// A removed per-language stack is now an error pointing at .tool-versions.
+	if err := Init(t.TempDir(), "go"); err == nil {
+		t.Error("--stack go should error now that language stacks are gone")
 	}
-	df2, _ := os.ReadFile(filepath.Join(repo2, "Dockerfile.agent"))
-	if !strings.Contains(string(df2), "FROM node:24") {
-		t.Errorf("unknown stack should fall back to node:\n%s", df2)
+
+	// --stack asdf without a .tool-versions is an error (nothing to install from).
+	if err := Init(t.TempDir(), "asdf"); err == nil {
+		t.Error("--stack asdf without a .tool-versions should error")
 	}
 }
 
@@ -176,14 +178,11 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 		t.Error("no stack + no .tool-versions should not scaffold a Dockerfile.agent")
 	}
 
-	// An explicit --stack wins over .tool-versions auto-detect.
+	// A removed language stack errors even when a .tool-versions is present —
+	// the bad flag is surfaced rather than silently using .tool-versions.
 	repo3 := t.TempDir()
 	os.WriteFile(filepath.Join(repo3, ".tool-versions"), []byte("elixir 1.20.0-otp-29\n"), 0o644)
-	if err := Init(repo3, "go"); err != nil {
-		t.Fatal(err)
-	}
-	df3, _ := os.ReadFile(filepath.Join(repo3, "Dockerfile.agent"))
-	if !strings.Contains(string(df3), "FROM golang") || strings.Contains(string(df3), "asdf install") {
-		t.Errorf("explicit --stack should win over .tool-versions:\n%s", df3)
+	if err := Init(repo3, "python"); err == nil {
+		t.Error("--stack python should error regardless of .tool-versions")
 	}
 }
