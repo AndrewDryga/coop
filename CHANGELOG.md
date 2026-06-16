@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.4.0
+
+- **`coop clone` is now `coop fork` — a full local-PR lifecycle, not a one-shot
+  handoff.** A fork is a throwaway local clone (own `origin`, nowhere to push, no
+  gitignored secrets); treat it like a contractor's PR — open, review, merge, close:
+  - `coop fork <name> [claude|codex|gemini]` — open **or resume** a fork and run the
+    chosen agent in it (re-entering an existing fork no longer errors).
+  - `coop fork ls` — list this repo's forks with branch, change size, last activity;
+    `coop fork open <name>` prints its path.
+  - `coop fork review <name>` — fetch the fork's branch into `review/<name>` and show
+    the diff (no more hand-typed `git fetch … && git diff`).
+  - `coop fork merge <name>` — merge it back into your working tree, then offer to
+    close it; refuses to merge into a dirty tree.
+  - `coop fork rm <name>` — discard a fork; refuses while its work is unmerged or
+    dirty unless `--force`.
+  Forks live in a sibling `../<repo>-forks/` (was `-agents/`). `coop clone` stays a
+  back-compat alias, and `coop dispatch` now forks into the same place.
+
 ## 2.3.1
 
 - **`--consult` makes the second opinion opt-in.** The peer-consultation directive

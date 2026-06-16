@@ -32,7 +32,7 @@ It's the working tooling behind two write-ups:
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Command reference](#command-reference)
-- [The sandbox](#the-sandbox) — secrets shadowed · `coop doctor` · clone handoff
+- [The sandbox](#the-sandbox) — secrets shadowed · `coop doctor` · fork handoff
 - [Agents & config](#agents--config) — auth · instructions · MCP
 - [Fusion: a governed council](#fusion-a-governed-council)
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
@@ -104,8 +104,9 @@ from git.
 | `coop login <agent>` | [authenticate](#authentication) an agent (persists in the config dir) |
 | `coop acp [agent\|fusion]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) |
 | `coop loop` | [work `.agent/TASKS.md`](#the-loop) unattended until done, then audit |
-| `coop dispatch <name>` | [a fleet unit](#a-fleet): clone + that agent's queue slice + loop |
-| `coop clone <name>` | a [secrets-free clone](#hand-off-a-clone) workspace + an agent in it |
+| `coop dispatch <name>` | [a fleet unit](#a-fleet): fork + that agent's queue slice + loop |
+| `coop fork <name> [agent]` | open/resume a [secrets-free fork](#fork-a-clone) + run an agent in it |
+| `coop fork ls\|review\|merge\|rm` | [list · diff · merge back · discard](#fork-a-clone) your forks |
 | `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (+ a toolchain) |
 | `coop up` · `down` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
@@ -133,26 +134,30 @@ coop doctor
 ```
 
 `doctor` plants a fake secret, launches the box, and checks **from inside** that the
-secret is unreachable and unwritable — then checks on the host that a clone carries
+secret is unreachable and unwritable — then checks on the host that a fork carries
 neither the secret nor a pushable remote. Run it anytime, especially after changing
 config.
 
-### Hand off a clone
+### Fork a clone
 
 For an extra layer (or to run several agents at once), hand the agent a throwaway
-clone instead of your working tree:
+**fork** — a local clone of your repo — instead of your working tree. A fork has no
+gitignored secrets (they were never committed) and its `origin` is a local path, so
+the agent has nowhere to push. Treat it like a contractor's PR: open, review, merge,
+close.
 
 ```bash
-coop clone perf       # fresh clone in ../<repo>-agents/perf; the agent runs there
+coop fork perf codex     # fork into ../<repo>-forks/perf; run codex there
+coop fork perf           # later: re-enter (resume) the same fork
+coop fork ls             # your forks: branch, changes, last activity
+coop fork review perf    # fetch the fork's branch + show the diff
+coop fork merge perf     # merge it back into your working tree, then close it
+coop fork rm perf        # discard (refuses unmerged/dirty work without --force)
 ```
 
-The clone has no gitignored secrets (they were never committed) and its `origin` is
-a local path — the agent has nowhere to push. When it's done, review and merge like
-a contractor's PR:
-
-```bash
-git fetch ../<repo>-agents/perf perf:review/perf && git diff @...review/perf
-```
+The agent (`claude` by default; pass `codex`/`gemini` to pick the model) works in
+the fork; you stay the reviewer and the only one who can push. `coop clone` is a
+back-compat alias for `coop fork`.
 
 ## Agents & config
 
@@ -359,7 +364,7 @@ after each compaction). Everything here is local working state and git-ignored �
 ### A fleet
 
 Split the queue into per-agent slices and run several at once — each gets its own
-clone, branch, and loop:
+fork, branch, and loop:
 
 ```bash
 # .agent/TASKS.perf.md, .agent/TASKS.deps.md — independent items
@@ -367,9 +372,9 @@ coop dispatch perf > perf.log 2>&1 &
 coop dispatch deps > deps.log 2>&1 &
 ```
 
-Each clone is isolated (no shared working copy, no shared remote). Review and merge
-the branches like contractor PRs. Add agents until *review*, not generation, is your
-bottleneck.
+Each fork is isolated (no shared working copy, no shared remote). Review and merge
+them like contractor PRs (`coop fork review <name>` · `coop fork merge <name>`). Add
+agents until *review*, not generation, is your bottleneck.
 
 ## Project toolchain & services
 
@@ -405,7 +410,7 @@ coop build               # builds it, tagged coop-<repo-name> — its own image
 ```
 
 A repo with its own `Dockerfile.agent` gets its **own** image tag, so projects never
-collide, and every `coop`, `coop loop`, `coop clone`, `coop acp` in that repo uses
+collide, and every `coop`, `coop loop`, `coop fork`, `coop acp` in that repo uses
 it. The scaffolded one is the **asdf** image — it bakes in the exact `.tool-versions`
 toolchain (versions live there, not in the Dockerfile). For anything more exotic,
 hand-write a `Dockerfile.agent` (see the box contract below). When the agent needs a

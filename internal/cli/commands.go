@@ -318,39 +318,6 @@ func (a *app) cmdInit(args []string) (int, error) {
 	return 0, scaffold.Init(repo, stack)
 }
 
-// cmdClone hands off a secrets-free clone workspace and runs an agent in it.
-func (a *app) cmdClone(args []string) (int, error) {
-	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop clone <name>")
-	}
-	name := args[0]
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
-	ws := filepath.Join(filepath.Dir(repo), filepath.Base(repo)+"-agents", name)
-	if pathExists(ws) {
-		return -1, fmt.Errorf("workspace already exists: %s", ws)
-	}
-	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	if !box.ImageExists(a.rt, img) {
-		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
-	}
-	ui.Info("cloning into %s (secrets are gitignored, so they don't come along)", ws)
-	if err := gitClone(repo, ws); err != nil {
-		return -1, fmt.Errorf("git clone: %w", err)
-	}
-	_ = gitCheckoutNewBranch(ws, name) // branch may already exist; that's fine
-	// Run the agent in the clone; its exit status doesn't fail the handoff.
-	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Cmd: a.cfg.ClaudeCmd,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-	})
-	ui.Info("review the work, then merge from your repo:")
-	ui.Info("  git fetch %q %s:review/%s && git diff @...review/%s", ws, name, name, name)
-	return 0, nil
-}
-
 // cmdDispatch is the fleet unit: clone into an isolated workspace, seed it with
 // that agent's slice of the queue, and run the loop there.
 func (a *app) cmdDispatch(args []string) (int, error) {
@@ -370,9 +337,12 @@ func (a *app) cmdDispatch(args []string) (int, error) {
 	if !fileExists(slice) {
 		return -1, fmt.Errorf("no .agent/TASKS.%s.md — split the queue into per-agent files first", name)
 	}
-	ws := filepath.Join(filepath.Dir(repo), filepath.Base(repo)+"-agents", name)
+	ws := forkWorkspace(repo, name)
 	if pathExists(ws) {
 		return -1, fmt.Errorf("workspace already exists: %s (remove it, or pick another name)", ws)
+	}
+	if err := os.MkdirAll(forkHome(repo), 0o755); err != nil {
+		return -1, err
 	}
 	ui.Info("dispatching %q into %s", name, ws)
 	if err := gitClone(repo, ws); err != nil {
@@ -391,8 +361,8 @@ func (a *app) cmdDispatch(args []string) (int, error) {
 	if code, err := a.loop(ws, img); err != nil {
 		return code, err
 	}
-	ui.Info("branch %q ready — merge from your repo:", name)
-	ui.Info("  git fetch %q %s:review/%s && git diff @...review/%s", ws, name, name, name)
+	ui.Info("branch %q ready — review and merge:", name)
+	ui.Info("  coop fork review %s   coop fork merge %s", name, name)
 	return 0, nil
 }
 

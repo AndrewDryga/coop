@@ -95,8 +95,10 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdACP(rest)
 	case "fusion":
 		return a.cmdFusion(rest)
-	case "clone":
-		return a.cmdClone(rest)
+	case "fork":
+		return a.cmdFork(rest)
+	case "clone": // back-compat alias for `coop fork`
+		return a.cmdFork(rest)
 	case "dispatch":
 		return a.cmdDispatch(rest)
 	case "loop":
