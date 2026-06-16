@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.0
+
+- **Agents can ask each other for a second opinion.** A normal `coop claude` (or
+  `codex` / `gemini`) run now carries a light, optional directive: on a genuinely
+  hard or risky call the agent may consult its peers **read-only and in parallel**
+  to catch blind spots, then decide. It's injected only into the agent you launched
+  (so peers it spawns don't recurse) and **names only peers that are authenticated**
+  — if no other agent is logged in, nothing is added. The everyday, low-cost cousin
+  of `coop fusion`, which mandates a full council + synthesis. Also covers
+  `coop acp <agent>`; autonomous runs (`loop`, `dispatch`) are unaffected.
+
 ## 2.2.2
 
 - **CI/CD supply-chain hardening.** Actions pinned to commit SHAs; CI runs with an

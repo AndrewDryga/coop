@@ -247,6 +247,16 @@ dropdown to switch who governs:
 }
 ```
 
+### Second opinions, always on
+
+Outside fusion, a normal `coop claude` (or `codex`/`gemini`) run gets a lighter,
+automatic version of the same idea: on a genuinely hard or risky call the agent
+**may** consult its peers read-only and in parallel to catch blind spots, then
+decide. Unlike fusion it's optional — no synthesis mandate, not for routine work —
+and it only names peers that are **authenticated**: if no other agent is logged in,
+nothing is injected. It's scoped to the agent you launched, so peers it spawns read
+their normal instructions and never recurse into a council of their own.
+
 ## Drive it from Zed (ACP)
 
 The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer

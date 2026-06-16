@@ -29,14 +29,16 @@ func (a *app) resolveImage() (repo, img string, err error) {
 }
 
 // runInBox runs a command in the box against the current repo with the default
-// homes/network/cache toggles (the common interactive path).
-func (a *app) runInBox(cmd []string) (int, error) {
+// homes/network/cache toggles (the common interactive path). lead names the agent
+// being driven (claude/codex/gemini) so it gets the optional consult directive;
+// pass "" for raw commands (coop run/shell/login) that aren't an agent session.
+func (a *app) runInBox(cmd []string, lead string) (int, error) {
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd,
+		Image: img, Repo: repo, Cmd: cmd, ConsultLead: lead,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -48,16 +50,16 @@ func (a *app) cmdRun(args []string) (int, error) {
 	if len(args) == 0 {
 		args = a.cfg.ClaudeCmd
 	}
-	return a.runInBox(args)
+	return a.runInBox(args, "") // raw command runner — not an agent session
 }
 
 // launchAgent runs a named agent: its autonomous default command when given no
 // args, or a pass-through of the args you supply (without the default flags).
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	if len(args) == 0 {
-		return a.runInBox(a.defaultCmd(tool))
+		return a.runInBox(a.defaultCmd(tool), tool)
 	}
-	return a.runInBox(append([]string{tool}, args...))
+	return a.runInBox(append([]string{tool}, args...), tool)
 }
 
 func (a *app) defaultCmd(tool string) []string {
@@ -86,7 +88,7 @@ func (a *app) cmdLogin(args []string) (int, error) {
 		// prints a URL + code to open on any device instead.
 		cmd = []string{"codex", "login", "--device-auth"}
 	}
-	return a.runInBox(cmd)
+	return a.runInBox(cmd, "") // logging in, not an agent session
 }
 
 // acpCommand maps an agent to its ACP adapter command inside the box.
@@ -137,8 +139,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
-		FusionGovernor: governor,
-		Homes:          a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		FusionGovernor: governor, ConsultLead: tool, // consult applies only when not fusion (governor == "")
+		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
 

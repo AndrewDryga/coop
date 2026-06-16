@@ -34,6 +34,12 @@ type RunSpec struct {
 	// governs (fronts the session) and gets the fusion instruction merged into its
 	// instruction file; its peers are consulted read-only. Empty = not fusion.
 	FusionGovernor string
+
+	// ConsultLead names the lead agent of a normal (non-fusion) run: it gets a
+	// light, optional "second opinion" directive merged into its instruction file,
+	// naming the authenticated peers it may consult read-only on hard calls. Scoped
+	// to the lead so peers it spawns don't recurse. Empty = no consult directive.
+	ConsultLead string
 }
 
 // ttyMode is how stdin and the tty are wired for a run.
@@ -155,6 +161,27 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
+	// Second opinions: a normal lead may consult its authenticated peers read-only
+	// on hard calls. The directive is merged into the lead's instruction file only
+	// (so peers it spawns read their normal instructions and never recurse), and
+	// only when a peer is actually authenticated — otherwise there's nothing to
+	// consult and nothing is injected. (Fusion's stronger directive takes over when
+	// FusionGovernor is set, so the two never both apply.)
+	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
+		if peers := authedPeers(cfg, spec.ConsultLead); len(peers) > 0 {
+			if file := agentInstructionFile[spec.ConsultLead]; file != "" {
+				base := governorBaseInstructions(cfg, spec.ConsultLead, file)
+				content := fusion.LeadInstructions(base, peers)
+				if p, err := writeTempFile(content); err != nil {
+					ui.Info("consult: skipped instruction wiring: %v", err)
+				} else {
+					tmpFiles = append(tmpFiles, p)
+					fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
+				}
+			}
+		}
+	}
+
 	networkName := ""
 	if spec.Network {
 		net := cfg.ServicesNet
@@ -249,11 +276,11 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 			args = append(args, "--env-file", cfg.EnvFile())
 		}
 		// One canonical instruction file → each agent's native global path,
-		// unless that agent has its own override. The fusion governor is skipped
-		// here — it gets a fusion-augmented file mounted just below.
+		// unless that agent has its own override. The lead is skipped
+		// here (fusion governor or consult lead) — its augmented file is below.
 		if ins := cfg.Instructions(); fileExists(ins) {
 			for _, agent := range cfg.Agents {
-				if agent == spec.FusionGovernor {
+				if agent == spec.FusionGovernor || agent == spec.ConsultLead {
 					continue
 				}
 				file := agentInstructionFile[agent]

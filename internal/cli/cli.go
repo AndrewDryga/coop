@@ -88,7 +88,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "run":
 		return a.cmdRun(rest)
 	case "shell":
-		return a.runInBox([]string{a.cfg.Shell})
+		return a.runInBox([]string{a.cfg.Shell}, "")
 	case "login":
 		return a.cmdLogin(rest)
 	case "acp":

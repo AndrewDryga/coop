@@ -86,3 +86,26 @@ func TestGovernorInstructionsPreservesBase(t *testing.T) {
 		t.Errorf("empty base should yield just the block, got prefix %q", out[:min(20, len(out))])
 	}
 }
+
+func TestLeadInstructions(t *testing.T) {
+	// No peers → the base is returned unchanged (nothing to consult).
+	if got := LeadInstructions("BASE", nil); got != "BASE" {
+		t.Errorf("no peers: got %q, want %q", got, "BASE")
+	}
+	// With peers → an optional directive that spells out each peer's exact
+	// read-only command, naming only those peers, with the base kept.
+	out := LeadInstructions("BASE", []string{"codex", "gemini"})
+	for _, want := range []string{"second opinion", "codex exec -s read-only", "gemini --approval-mode plan -p", "BASE"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("LeadInstructions missing %q in:\n%s", want, out)
+		}
+	}
+	// Names only the peers passed in, and stays optional — not the mandatory
+	// fusion directive ("you never answer alone").
+	if strings.Contains(out, "claude") {
+		t.Error("consult should name only the peers passed in")
+	}
+	if strings.Contains(out, "never answer alone") {
+		t.Error("consult must stay optional, not the mandatory fusion directive")
+	}
+}

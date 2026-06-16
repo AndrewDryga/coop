@@ -184,6 +184,35 @@ func TestAssembleArgsFusionGovernorScoped(t *testing.T) {
 	}
 }
 
+// TestAssembleArgsConsultLeadScoped: the consult lead's augmented instruction is
+// mounted at its path and the lead is skipped in the shared-instruction mounts (no
+// double mount), while peers still get the shared instructions (so they don't
+// inherit the consult directive and recurse).
+func TestAssembleArgsConsultLeadScoped(t *testing.T) {
+	dir := t.TempDir()
+	ins := filepath.Join(dir, "INSTRUCTIONS.md")
+	os.WriteFile(ins, []byte("shared"), 0o644)
+	cfg := &config.Config{HomeInBox: "/home/node", Agents: []string{"claude", "codex", "gemini"}, ConfigDir: dir}
+	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, ConsultLead: "claude"}
+	consultMount := []extraMount{{"/tmp/consult", "/home/node/.claude/CLAUDE.md"}}
+
+	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		"/d", "/workspace", ttyInteractive, false, nil, consultMount, "")
+
+	if !containsSeq(got, []string{"-v", "/tmp/consult:/home/node/.claude/CLAUDE.md:ro"}) {
+		t.Error("consult lead should get the augmented instruction mount")
+	}
+	if containsSeq(got, []string{"-v", ins + ":/home/node/.claude/CLAUDE.md:ro"}) {
+		t.Error("consult lead should be skipped in the shared-instruction mounts (no double mount)")
+	}
+	if !containsSeq(got, []string{"-v", ins + ":/home/node/.codex/AGENTS.md:ro"}) {
+		t.Error("codex peer should still get the shared instructions")
+	}
+	if !containsSeq(got, []string{"-v", ins + ":/home/node/.gemini/GEMINI.md:ro"}) {
+		t.Error("gemini peer should still get the shared instructions")
+	}
+}
+
 func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
 	repo := t.TempDir() // no Dockerfile.agent → shared base

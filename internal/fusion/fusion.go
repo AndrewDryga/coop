@@ -67,6 +67,16 @@ func consultBlock(peers []string) string {
 	return b.String()
 }
 
+// peerCmdList renders one read-only command per peer as a labeled list, so a lead
+// knows exactly how to invoke each model and can consult one or several.
+func peerCmdList(peers []string) string {
+	var b strings.Builder
+	for _, p := range peers {
+		fmt.Fprintf(&b, "- %s: %s\n", p, strings.Join(peerCmd(p, placeholder), " "))
+	}
+	return b.String()
+}
+
 // Instruction is the fusion directive for the governor: consult these specific
 // peers read-only and in parallel, then synthesize. Naming the exact commands
 // makes the governor run the right thing.
@@ -105,6 +115,48 @@ all of them before you answer.
 func GovernorInstructions(base, governor string, all []string) string {
 	block := Instruction(governor, Peers(governor, all))
 	if base = strings.TrimSpace(base); base != "" {
+		return block + "\n" + base + "\n"
+	}
+	return block
+}
+
+// ConsultInstruction is the light, optional second-opinion directive for a normal
+// (non-fusion) lead agent: it MAY consult these peers read-only when a decision is
+// genuinely hard, to catch its own blind spots — never required and never for
+// routine work, so it stays cheap. Only authenticated peers are passed in, so it
+// never points the lead at an agent that can't answer.
+func ConsultInstruction(peers []string) string {
+	return fmt.Sprintf(`# A second opinion is available
+
+For a genuinely hard or risky call — a load-bearing architectural choice, a subtle
+bug, a security-sensitive change — you can get a read-only second opinion from %s,
+whose different blind spots may catch what you'd miss. This is optional and for the
+decisions that matter, not routine work; you remain the decider.
+
+Each peer runs read-only — it returns its analysis and never edits your files. Run
+the matching command from your shell, with your real question in the quotes:
+
+%s
+Consulting more than one? Run them in parallel and read every reply:
+
+  ( <command A> ) >/tmp/a.txt 2>&1 &
+  ( <command B> ) >/tmp/b.txt 2>&1 &
+  wait; cat /tmp/a.txt /tmp/b.txt
+
+Weigh each answer against your own reasoning, then decide and act.
+`, strings.Join(peers, " and "), peerCmdList(peers))
+}
+
+// LeadInstructions is the instruction file mounted for a normal lead agent: the
+// optional consult directive first, then the lead's existing instructions
+// unchanged. With no peers to consult it returns the base alone (no directive).
+func LeadInstructions(base string, peers []string) string {
+	base = strings.TrimSpace(base)
+	if len(peers) == 0 {
+		return base
+	}
+	block := ConsultInstruction(peers)
+	if base != "" {
 		return block + "\n" + base + "\n"
 	}
 	return block
