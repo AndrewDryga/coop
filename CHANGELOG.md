@@ -68,7 +68,9 @@
   family help, and `coop loop|up|down|init|doctor|build|update|dispatch|fleet --help`
   print the main help — all without needing a container runtime, instead of erroring
   (`unknown flag "--help"`) or running the command. (Agent commands still forward
-  `--help` to the agent, so `coop claude --help` shows Claude's help.)
+  `--help` to the agent, so `coop claude --help` shows Claude's help.) Every short flag
+  has a long form too (`-c`/`--continue`, `-d`/`--detach`, `-f`/`--force`/`--follow`),
+  now shown in `coop fork --help`.
 
 ## 2.3.1
 

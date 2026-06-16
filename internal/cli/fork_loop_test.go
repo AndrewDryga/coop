@@ -101,6 +101,7 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 	}{
 		{[]string{"perf", "codex", "--loop"}, true, false, false, "codex"},
 		{[]string{"perf", "-d"}, true, true, false, "claude"},
+		{[]string{"perf", "--loop", "--detach"}, true, true, false, "claude"}, // long form of -d
 		{[]string{"perf", "gemini", "--loop", "-d"}, true, true, false, "gemini"},
 		{[]string{"perf", "--_detached"}, true, false, true, "claude"},
 	}
