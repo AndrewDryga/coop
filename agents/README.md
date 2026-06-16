@@ -47,7 +47,16 @@ It's the standard `{ "mcpServers": { ... } }` shape:
 {
   "mcpServers": {
     "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] },
-    "sentry":   { "type": "http", "url": "https://mcp.sentry.dev/mcp" }
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace_with_your_token" }
+    },
+    "sentry": {
+      "type": "http",
+      "url": "https://mcp.sentry.dev/mcp",
+      "bearer_token_env_var": "SENTRY_TOKEN"
+    }
   }
 }
 ```
@@ -63,9 +72,23 @@ whatever you already keep in `gemini/settings.json` and `codex/config.toml` — 
 files are never modified, and servers from `mcp.json` win on a name clash.
 Generating those two is built into `coop` — pure Go, no extra runtime needed.
 
-Keep secrets out of `mcp.json`: have the server read an env var (put the value in
-`env`) instead of pasting tokens. For a Codex HTTP server, add
-`"bearer_token_env_var": "NAME"` to wire up a bearer token.
+### Environment variables
+
+**Set them on a stdio server** with an `env` block of `KEY: value` pairs (see
+`github` above). coop passes them through to that server under all three agents —
+verbatim, so the values are literal strings (no `$VAR` substitution).
+
+**Reference a secret instead of pasting it** — for a Codex HTTP server, name the
+variable that holds its token with `"bearer_token_env_var": "SENTRY_TOKEN"` (see
+`sentry`) and put the value in the `env` file:
+
+```bash
+echo 'SENTRY_TOKEN=…' >> env     # the env file is loaded into every box
+```
+
+coop loads that file into the box on every launch, so Codex reads the token from the
+environment at run time and it never appears in `mcp.json`. `mcp.json` is gitignored
+regardless, so any token you do inline stays on your machine.
 
 ## Authenticate (two ways)
 
