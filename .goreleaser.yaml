@@ -33,6 +33,25 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Sign checksums.txt keyless via Sigstore/cosign, so the checksum file is itself
+# tamper-evident. Verify:
+#   cosign verify-blob checksums.txt --signature checksums.txt.sig \
+#     --certificate checksums.txt.pem \
+#     --certificate-identity-regexp 'https://github.com/AndrewDryga/coop' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    output: true
+
 changelog:
   # Delegate to GitHub's auto-generated release notes (categorized via
   # .github/release.yml, with a "Full Changelog" compare link).

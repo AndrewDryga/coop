@@ -10,6 +10,12 @@
   the pinned actions patched.
 - `install.sh` now verifies the downloaded tarball against the release's
   `checksums.txt` and fails closed on a mismatch.
+- **Signed, attested releases.** `checksums.txt` is signed keyless with
+  Sigstore/cosign (`checksums.txt.sig` + `.pem`), and every archive carries a build
+  provenance attestation — verify with
+  `gh attestation verify coop_*.tar.gz --repo AndrewDryga/coop`. The repo also
+  restricts Actions to an allowlist (GitHub-owned + goreleaser + cosign-installer)
+  and requires approval for all outside-collaborator PR runs.
 
 ## 2.2.1
 
