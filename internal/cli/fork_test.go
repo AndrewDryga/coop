@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -190,5 +191,30 @@ func TestForkLifecycle(t *testing.T) {
 	}
 	if gitOut(repo, "rev-parse", "--verify", "-q", "review/perf") != "" {
 		t.Error("review/perf ref not removed")
+	}
+}
+
+func TestForkCarriesGlobalIgnore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	// Stand in for the user's global gitignore via a (repo-local) core.excludesfile.
+	ignore := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(ignore, []byte("*.tmp\n.DS_Store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "config", "core.excludesfile", ignore)
+
+	ws, err := setupFork(repo, "ig")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	excl, err := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(excl), "*.tmp") || !strings.Contains(string(excl), ".DS_Store") {
+		t.Errorf("global ignore not carried into the fork's .git/info/exclude:\n%s", excl)
 	}
 }

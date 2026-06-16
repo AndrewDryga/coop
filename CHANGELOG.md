@@ -41,6 +41,11 @@
   Declare a fleet once in `.agent/fleet` (`<name> [agent]` per line) and drive it with
   `coop fleet up | ls | down`; `coop fleet split <n>` round-robins `.agent/TASKS.md`
   into per-fork slices to bootstrap one.
+- **Forks inherit your git environment.** A fresh clone keeps no local identity and
+  the box has no ambient `~/.gitconfig`, so a fork now carries your `user.name`/
+  `user.email` (or the agent couldn't commit — "Author identity unknown") and your
+  global gitignore (`core.excludesfile` content copied into the fork's
+  `.git/info/exclude`), so the agent ignores the same noise you do.
 
 ## 2.3.1
 

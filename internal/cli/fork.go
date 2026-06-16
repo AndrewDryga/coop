@@ -178,16 +178,34 @@ func setupFork(repo, name string) (string, error) {
 		return ws, fmt.Errorf("git clone: %w", err)
 	}
 	_ = gitCheckoutNewBranch(ws, name) // branch may already exist in origin; fine
-	// A clone keeps no local git identity, and the box has no ambient ~/.gitconfig —
-	// so carry the parent's effective user.name/email into the fork, or the agent
-	// can't commit its work inside it.
+	propagateGitEnv(repo, ws)
+	return ws, nil
+}
+
+// propagateGitEnv carries the parent's git environment into a fresh fork. A clone
+// keeps no local identity and the box has no ambient ~/.gitconfig, so without this an
+// agent couldn't commit and the user's global ignores wouldn't apply:
+//   - user.name / user.email — so the agent's commits have an author;
+//   - the global gitignore (core.excludesfile) content into .git/info/exclude — git's
+//     local, uncommitted ignore file, so no host config path dangles inside the box.
+func propagateGitEnv(repo, ws string) {
 	if email := gitOut(repo, "config", "user.email"); email != "" {
 		_ = gitRun(ws, "config", "user.email", email)
 	}
-	if un := gitOut(repo, "config", "user.name"); un != "" {
-		_ = gitRun(ws, "config", "user.name", un)
+	if name := gitOut(repo, "config", "user.name"); name != "" {
+		_ = gitRun(ws, "config", "user.name", name)
 	}
-	return ws, nil
+	// `--path` expands a leading ~ in the configured excludesfile.
+	if gi := gitOut(repo, "config", "--path", "core.excludesfile"); gi != "" {
+		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
+			excl := filepath.Join(ws, ".git", "info", "exclude")
+			if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				_, _ = f.WriteString("\n# carried from your global core.excludesfile\n")
+				_, _ = f.Write(data)
+				_ = f.Close()
+			}
+		}
+	}
 }
 
 // destroyFork removes a fork's workspace and its review/<name> ref, then prunes an
