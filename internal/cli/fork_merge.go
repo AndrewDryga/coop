@@ -96,6 +96,12 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	return true, nil
 }
 
+// wantsSigning reports whether you sign commits (commit.gpgsign=true in your git
+// config), so a fork's unsigned box commits can be signed with your key on land.
+func wantsSigning(repo string) bool {
+	return gitOut(repo, "config", "--bool", "--get", "commit.gpgsign") == "true"
+}
+
 // landFork rebases the fork's branch onto the parent's current HEAD — in the fork,
 // where that branch is checked out — then fast-forwards the parent onto the result.
 // Forks therefore land as a linear replay, never a merge commit. A rebase conflict
@@ -105,9 +111,19 @@ func (a *app) landFork(repo, ws, name string) error {
 	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
 		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
 	}
-	if err := gitRun(ws, "rebase", head); err != nil {
+	// Box commits are unsigned (the box holds no key). If you sign your commits, sign
+	// them here with your host key as the rebase rewrites them — -f forces the rewrite
+	// so even a fast-forward land gets signed. Run with real stdio so a passphrase
+	// pinentry can prompt.
+	var rebaseErr error
+	if wantsSigning(repo) {
+		rebaseErr = gitInteractive(ws, "rebase", "-f", "--gpg-sign", head)
+	} else {
+		rebaseErr = gitRun(ws, "rebase", head)
+	}
+	if rebaseErr != nil {
 		_ = gitRun(ws, "rebase", "--abort")
-		return fmt.Errorf("%s: rebase onto %s hit conflicts — resolve in the fork (cd %q && git rebase %s), then re-run", name, gitBranch(repo), ws, head)
+		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s), then re-run", name, gitBranch(repo), ws, head)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)

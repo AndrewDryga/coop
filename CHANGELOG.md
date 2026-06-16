@@ -33,7 +33,10 @@
   green against your tree as it stands now, not the stale base the fork was cut from.
   `coop fork merge --all` lands the whole fleet as a revalidating rebase *queue*: each
   fork is rebased onto the result of the previous one and re-gated, stopping at the
-  first conflict or failure and leaving the rest.
+  first conflict or failure and leaving the rest. **Commits get signed on land** if you
+  sign (`commit.gpgsign=true`): the keyless box commits unsigned, then the rebase signs
+  them with your host key (GPG or SSH) as it rewrites them — your signing key never
+  enters the box.
 - **Review and fleet management.** `coop fork review` now leads with a *brief* —
   commits, files changed, and the agent's own `.agent/LOG.md` reasoning — before the
   diff, so you get a map first. Review in your IDE instead of the pager with `--tool`

@@ -221,6 +221,33 @@ func TestForkCarriesGlobalIgnore(t *testing.T) {
 	}
 }
 
+func TestForkCarriesSigningMaterials(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	git(t, repo, "config", "gpg.format", "ssh")
+	git(t, repo, "config", "user.signingkey", "/home/me/.ssh/id_ed25519.pub")
+	git(t, repo, "config", "commit.gpgsign", "true")
+
+	ws, err := setupFork(repo, "s")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	// The key + format travel so the rebase-on-land can sign.
+	if got := gitOut(ws, "config", "--get", "gpg.format"); got != "ssh" {
+		t.Errorf("gpg.format not propagated: %q", got)
+	}
+	if gitOut(ws, "config", "--get", "user.signingkey") == "" {
+		t.Error("user.signingkey not propagated")
+	}
+	// commit.gpgsign must NOT be in the fork's local config, or the keyless box would
+	// try to sign and every agent commit would fail.
+	if got := gitOut(ws, "config", "--local", "--get", "commit.gpgsign"); got != "" {
+		t.Errorf("commit.gpgsign must not be copied to the fork's local config, got %q", got)
+	}
+}
+
 func TestDetectEditor(t *testing.T) {
 	// With no GUI editor reachable on PATH, fall back to $VISUAL, then $EDITOR.
 	t.Setenv("PATH", t.TempDir()) // empty dir → none of code/cursor/zed/idea/subl found

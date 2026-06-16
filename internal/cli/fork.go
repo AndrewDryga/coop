@@ -196,6 +196,14 @@ func propagateGitEnv(repo, ws string) {
 	if name := gitOut(repo, "config", "user.name"); name != "" {
 		_ = gitRun(ws, "config", "user.name", name)
 	}
+	// Signing materials (key + format) travel to the fork so commits can be signed
+	// with your key when they're rebased on land — on the host, where the key lives.
+	// commit.gpgsign is deliberately NOT copied: the keyless box must commit unsigned.
+	for _, k := range []string{"user.signingkey", "gpg.format"} {
+		if v := gitOut(repo, "config", "--get", k); v != "" {
+			_ = gitRun(ws, "config", k, v)
+		}
+	}
 	// `--path` expands a leading ~ in the configured excludesfile.
 	if gi := gitOut(repo, "config", "--path", "core.excludesfile"); gi != "" {
 		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
