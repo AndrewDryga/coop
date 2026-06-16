@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.2
+
+- **CI/CD supply-chain hardening.** Actions pinned to commit SHAs; CI runs with an
+  explicit read-only token and no Actions cache (closes the cache-poisoning surface);
+  `staticcheck` and the GoReleaser binary are version-pinned instead of tracking
+  `@latest` / `~> v2`; checkout no longer persists the token in `.git/config`; release
+  write scope is narrowed to the one job that needs it; and a Dependabot config keeps
+  the pinned actions patched.
+- `install.sh` now verifies the downloaded tarball against the release's
+  `checksums.txt` and fails closed on a mismatch.
+
 ## 2.2.1
 
 - **Bare `coop` now prints help instead of launching Claude.** Running an agent is

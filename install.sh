@@ -34,6 +34,27 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 echo "coop: downloading $asset ($ver)…"
 curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" >&2; exit 1; }
+
+# Verify the download against the release's published checksums — defends against a
+# tampered or MITM'd asset. Fails closed on a mismatch; best-effort if no sha tool.
+if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o "$tmp/checksums.txt"; then
+  want=$(awk -v f="$asset" '$2 == f {print $1}' "$tmp/checksums.txt")
+  if command -v sha256sum >/dev/null 2>&1; then
+    got=$(sha256sum "$tmp/coop.tar.gz" | cut -d ' ' -f 1)
+  elif command -v shasum >/dev/null 2>&1; then
+    got=$(shasum -a 256 "$tmp/coop.tar.gz" | cut -d ' ' -f 1)
+  else
+    got=""
+  fi
+  if [ -n "$want" ] && [ -n "$got" ] && [ "$want" != "$got" ]; then
+    echo "coop: checksum mismatch for $asset — aborting (expected $want, got $got)" >&2
+    exit 1
+  fi
+  [ -z "$got" ] && echo "coop: no sha256 tool found; skipping checksum verification" >&2
+else
+  echo "coop: could not fetch checksums.txt; skipping verification" >&2
+fi
+
 tar -xzf "$tmp/coop.tar.gz" -C "$tmp"
 mkdir -p "$bindir"
 install -m 0755 "$tmp/coop" "$bindir/coop"
@@ -64,4 +85,4 @@ else
 fi
 
 echo
-echo "Done. From any repo:  coop        # sandboxed claude"
+echo "Done. From any repo:  coop claude   # a sandboxed agent"

@@ -1,0 +1,12 @@
+# Keep the SHA-pinned GitHub Actions current — Dependabot bumps the commit SHA and
+# the trailing "# vN" comment together, so pinning doesn't mean going stale on
+# security patches. (The goreleaser binary version and the staticcheck pin are
+# in-line in the workflows and bumped by hand.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
