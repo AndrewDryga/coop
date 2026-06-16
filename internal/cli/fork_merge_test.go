@@ -68,3 +68,64 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 		t.Errorf("README.md = %q, want %q", data, "parent-version\n")
 	}
 }
+
+func TestMergeOnePolicyForce(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	ws, err := setupFork(repo, "leak")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".env"), []byte("S=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "leak")
+
+	// Without --force the policy guard blocks the secret-like file.
+	if landed, err := a.mergeOne(repo, "", "leak", false); landed || err == nil {
+		t.Fatalf("mergeOne(force=false) = (%v, %v), want blocked", landed, err)
+	}
+	if pathExists(filepath.Join(repo, ".env")) {
+		t.Fatal(".env landed despite the policy block")
+	}
+	// With --force it lands.
+	if landed, err := a.mergeOne(repo, "", "leak", true); !landed || err != nil {
+		t.Fatalf("mergeOne(force=true) = (%v, %v), want landed", landed, err)
+	}
+	if !pathExists(filepath.Join(repo, ".env")) {
+		t.Error(".env not landed with --force")
+	}
+}
+
+func TestForkMergeQueue(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	// Two independent forks, each adding a distinct file.
+	for _, n := range []string{"a", "b"} {
+		ws, err := setupFork(repo, n)
+		if err != nil {
+			t.Fatalf("setupFork %s: %v", n, err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, n+".txt"), []byte(n+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "-A")
+		git(t, ws, "commit", "-qm", n)
+	}
+	if code, err := a.forkMergeAll(repo, "", false); err != nil || code != 0 {
+		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
+	}
+	if !pathExists(filepath.Join(repo, "a.txt")) || !pathExists(filepath.Join(repo, "b.txt")) {
+		t.Error("merge queue did not land both forks")
+	}
+	if got := forkNames(repo); len(got) != 0 {
+		t.Errorf("forks remain after the queue closed them: %v", got)
+	}
+}

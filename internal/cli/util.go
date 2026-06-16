@@ -73,6 +73,13 @@ func gitInteractive(dir string, args ...string) error {
 	return cmd.Run()
 }
 
+// gitMerge merges ref into dir's HEAD (ff when possible, else a merge commit). It
+// forces merge.ff=true so a user's global merge.ff=only — which would abort any
+// non-fast-forward merge — doesn't break landing a diverged fork.
+func gitMerge(dir, ref string) error {
+	return exec.Command("git", "-c", "merge.ff=true", "-C", dir, "merge", "--no-edit", ref).Run()
+}
+
 func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }

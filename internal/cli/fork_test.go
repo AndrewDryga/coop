@@ -89,6 +89,18 @@ func TestParseShortstat(t *testing.T) {
 	}
 }
 
+func TestIndentLastLines(t *testing.T) {
+	if got := indent("a\nb"); got != "  a\n  b" {
+		t.Errorf("indent = %q, want %q", got, "  a\n  b")
+	}
+	if got := lastLines("a\nb\nc\nd", 2); got != "c\nd" {
+		t.Errorf("lastLines(.., 2) = %q, want %q", got, "c\nd")
+	}
+	if got := lastLines("a\nb", 5); got != "a\nb" {
+		t.Errorf("lastLines short = %q, want %q", got, "a\nb")
+	}
+}
+
 // --- git-backed lifecycle ---
 
 func git(t *testing.T, dir string, args ...string) {
@@ -110,6 +122,8 @@ func initRepo(t *testing.T) string {
 	}
 	git(t, repo, "init", "-q")
 	git(t, repo, "checkout", "-q", "-b", "main")
+	git(t, repo, "config", "user.email", "t@t") // so merge-commits work without ambient identity
+	git(t, repo, "config", "user.name", "t")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hi\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -84,7 +84,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 		return false, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
 	pre := gitOut(repo, "rev-parse", "HEAD")
-	if err := gitRun(repo, "merge", "--no-edit", ref); err != nil {
+	if err := gitMerge(repo, ref); err != nil {
 		_ = gitRun(repo, "merge", "--abort")
 		return false, fmt.Errorf("%s: merge conflicts — resolve in your tree, then `git merge %s`", name, ref)
 	}

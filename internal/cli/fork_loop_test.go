@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -93,5 +95,34 @@ func TestForkRunningPid(t *testing.T) {
 	}
 	if pathExists(forkPid(repo, "dead")) {
 		t.Error("stale pidfile not removed")
+	}
+}
+
+func TestStreamLog(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.log")
+	if err := os.WriteFile(p, []byte("line1\nline2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var buf bytes.Buffer
+	if err := streamLog(p, "", false, &buf, &mu); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "line1\nline2\n" {
+		t.Errorf("streamLog = %q, want unprefixed lines", buf.String())
+	}
+	buf.Reset()
+	_ = streamLog(p, "perf", false, &buf, &mu)
+	if buf.String() != "perf | line1\nperf | line2\n" {
+		t.Errorf("streamLog prefixed = %q", buf.String())
+	}
+	// A missing log is not an error and produces nothing.
+	buf.Reset()
+	if err := streamLog(filepath.Join(dir, "missing.log"), "", false, &buf, &mu); err != nil {
+		t.Fatalf("missing log should not error: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("missing log produced %q", buf.String())
 	}
 }
