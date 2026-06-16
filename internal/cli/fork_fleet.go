@@ -128,29 +128,31 @@ func (a *app) fleetDown() (int, error) {
 }
 
 // fleetSplit mechanically round-robins the unchecked items in .agent/TASKS.md into
-// per-fork slices (.agent/TASKS.<name>.md). It is a DUMB split — for semantic
-// slicing, have an agent partition the queue. Names come from .agent/fleet, or from
-// `coop fleet split <n>` (slice1..N).
+// per-fork slices (.agent/TASKS.<name>.md) and writes a matching .agent/fleet that
+// names each slice's path explicitly. It is a DUMB split — for semantic slicing, have
+// an agent partition the queue. Forks come from .agent/fleet (preserving its agents),
+// or from `coop fleet split <n>` (slice1..N, all claude).
 func (a *app) fleetSplit(args []string) (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	var names []string
+	type target struct{ name, agent string }
+	var targets []target
 	if len(args) >= 1 {
 		n, err := strconv.Atoi(args[0])
 		if err != nil || n <= 0 {
 			return 2, errors.New("usage: coop fleet split <n>")
 		}
 		for i := 1; i <= n; i++ {
-			names = append(names, "slice"+strconv.Itoa(i))
+			targets = append(targets, target{"slice" + strconv.Itoa(i), "claude"})
 		}
 	} else if fleet, err := a.loadFleet(repo); err == nil {
 		for _, e := range fleet {
-			names = append(names, e.name)
+			targets = append(targets, target{e.name, e.agent})
 		}
 	}
-	if len(names) == 0 {
+	if len(targets) == 0 {
 		return 2, errors.New("usage: coop fleet split <n>   (or define .agent/fleet first)")
 	}
 	data, err := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.md"))
@@ -167,27 +169,38 @@ func (a *app) fleetSplit(args []string) (int, error) {
 		ui.Info("no unchecked [ ] items to split")
 		return 0, nil
 	}
-	buckets := make([][]string, len(names))
+	buckets := make([][]string, len(targets))
 	for i, t := range todos {
-		buckets[i%len(names)] = append(buckets[i%len(names)], t)
+		buckets[i%len(targets)] = append(buckets[i%len(targets)], t)
 	}
 	var fleetLines []string
-	for i, name := range names {
+	for i, t := range targets {
 		if len(buckets[i]) == 0 {
 			continue
 		}
-		rel := filepath.Join(".agent", "TASKS."+name+".md")
-		body := fmt.Sprintf("# %s — slice for fork %s\n\n%s\n", rel, name, strings.Join(buckets[i], "\n"))
+		rel := filepath.Join(".agent", "TASKS."+t.name+".md")
+		body := fmt.Sprintf("# %s — slice for fork %s\n\n%s\n", rel, t.name, strings.Join(buckets[i], "\n"))
 		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
 			return -1, err
 		}
 		ui.Info("wrote %s (%d items)", rel, len(buckets[i]))
-		fleetLines = append(fleetLines, fmt.Sprintf("%s claude %s", name, rel))
+		fleetLines = append(fleetLines, fmt.Sprintf("%s %s %s", t.name, t.agent, rel))
 	}
-	ui.Info("mechanical round-robin split — review the slices, then declare them in .agent/fleet:")
+	// Write .agent/fleet so its config shows each fork's explicit tasks path. Don't
+	// clobber a hand-authored fleet (it already carries the agents/paths you chose) —
+	// print the lines to reconcile instead.
+	if !fileExists(fleetFile(repo)) {
+		header := "# coop fleet — one fork per line: <name> [agent] <tasks-path>\n"
+		out := header + strings.Join(fleetLines, "\n") + "\n"
+		if err := os.WriteFile(fleetFile(repo), []byte(out), 0o644); err != nil {
+			return -1, err
+		}
+		ui.Info("wrote .agent/fleet — review the slices, then 'coop fleet up'")
+		return 0, nil
+	}
+	ui.Info("mechanical round-robin split — .agent/fleet exists, so reconcile these lines:")
 	for _, l := range fleetLines {
 		fmt.Printf("  %s\n", l)
 	}
-	ui.Info("(edit the agent per line if you like, then 'coop fleet up')")
 	return 0, nil
 }

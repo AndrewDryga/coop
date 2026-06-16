@@ -64,7 +64,7 @@ func Main(argv []string) int {
 		case "fork", "clone":
 			code, _ := forkHelp()
 			return code
-		case "loop", "dispatch", "fleet", "up", "down", "init", "doctor", "build", "update":
+		case "loop", "fleet", "up", "down", "init", "doctor", "build", "update":
 			printHelp(config.Load())
 			return 0
 		}
@@ -114,8 +114,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdFork(rest)
 	case "clone": // back-compat alias for `coop fork`
 		return a.cmdFork(rest)
-	case "dispatch":
-		return a.cmdDispatch(rest)
 	case "fleet":
 		return a.cmdFleet(rest)
 	case "loop":

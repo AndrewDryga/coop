@@ -90,4 +90,13 @@ func TestFleetSplit(t *testing.T) {
 	if !strings.Contains(string(s2), "[ ] b") {
 		t.Errorf("slice2 = %q, want b", s2)
 	}
+	// It also writes .agent/fleet with each fork's explicit tasks path.
+	fleet, _ := os.ReadFile(filepath.Join(repo, ".agent", "fleet"))
+	if !strings.Contains(string(fleet), "slice1 claude .agent/TASKS.slice1.md") {
+		t.Errorf(".agent/fleet = %q, want an explicit slice1 path line", fleet)
+	}
+	parsed, err := parseFleet(string(fleet))
+	if err != nil || len(parsed) != 2 {
+		t.Errorf("written .agent/fleet does not parse back: %v (%d entries)", err, len(parsed))
+	}
 }

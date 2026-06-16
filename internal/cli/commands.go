@@ -316,57 +316,6 @@ func (a *app) cmdInit(args []string) (int, error) {
 	return 0, scaffold.Init(repo, stack)
 }
 
-// cmdDispatch is the fleet unit: clone into an isolated workspace, seed it with
-// that agent's slice of the queue, and run the loop there.
-func (a *app) cmdDispatch(args []string) (int, error) {
-	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop dispatch <name> [agent]   (reads .agent/TASKS.<name>.md)")
-	}
-	name := args[0]
-	agent := "claude"
-	if len(args) > 1 {
-		switch args[1] {
-		case "claude", "codex", "gemini":
-			agent = args[1]
-		default:
-			return 2, fmt.Errorf("coop dispatch: unknown agent %q", args[1])
-		}
-	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
-	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	if !box.ImageExists(a.rt, img) {
-		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
-	}
-	slice := filepath.Join(repo, ".agent", "TASKS."+name+".md")
-	if !fileExists(slice) {
-		return -1, fmt.Errorf("no .agent/TASKS.%s.md — split the queue into per-agent files first", name)
-	}
-	ws := forkWorkspace(repo, name)
-	if pathExists(ws) {
-		return -1, fmt.Errorf("workspace already exists: %s (remove it, or pick another name)", ws)
-	}
-	ui.Info("dispatching %q into %s", name, ws)
-	if _, err := setupFork(repo, name); err != nil {
-		return -1, err
-	}
-	if err := os.MkdirAll(filepath.Join(ws, ".agent"), 0o755); err != nil {
-		return -1, err
-	}
-	if err := copyFile(slice, filepath.Join(ws, ".agent", "TASKS.md")); err != nil {
-		return -1, err
-	}
-	// Run the loop in the clone, reusing the origin's image.
-	if code, err := a.loop(ws, img, agent, nil); err != nil {
-		return code, err
-	}
-	ui.Info("branch %q ready — review and merge:", name)
-	ui.Info("  coop fork review %s   coop fork merge %s", name, name)
-	return 0, nil
-}
-
 func (a *app) cmdLoop(args []string) (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
