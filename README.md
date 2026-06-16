@@ -363,18 +363,26 @@ after each compaction). Everything here is local working state and git-ignored �
 
 ### A fleet
 
-Split the queue into per-agent slices and run several at once — each gets its own
-fork, branch, and loop:
+Split the queue into per-agent slices (`.agent/TASKS.<name>.md`) and hand each one
+to a different model, each looping unattended in its own fork:
 
 ```bash
-# .agent/TASKS.perf.md, .agent/TASKS.deps.md — independent items
-coop dispatch perf > perf.log 2>&1 &
-coop dispatch deps > deps.log 2>&1 &
+coop fork perf codex  --loop -d    # codex loops the perf slice, detached
+coop fork deps gemini --loop -d    # gemini takes the deps slice
+coop fork docs claude --loop -d    # claude takes the docs
+
+coop fork ls            # who's running, how big the diff, last activity
+coop fork logs -f       # tail every fork at once (compose-style, prefixed)
+coop fork stop perf     # halt one; coop fork logs perf -f to watch just it
 ```
 
-Each fork is isolated (no shared working copy, no shared remote). Review and merge
-them like contractor PRs (`coop fork review <name>` · `coop fork merge <name>`). Add
-agents until *review*, not generation, is your bottleneck.
+`--loop` seeds the fork from its `TASKS.<name>.md` slice and runs the loop with the
+chosen model (claude `-p`, codex `exec`, gemini `-p`); `-d` detaches it (logs are
+captured to `../<repo>-forks/.coop/<name>.log`). When one finishes, review and merge
+it like a contractor PR (`coop fork review <name>` · `coop fork merge <name>`), then
+`git push` — the only step the agents can't do. Add agents until *review*, not
+generation, is your bottleneck. (`coop dispatch <name> [agent]` is the one-liner
+equivalent: fork + slice + loop, foreground.)
 
 ## Project toolchain & services
 

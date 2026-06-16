@@ -17,6 +17,14 @@
     dirty unless `--force`.
   Forks live in a sibling `../<repo>-forks/` (was `-agents/`). `coop clone` stays a
   back-compat alias, and `coop dispatch` now forks into the same place.
+- **A fleet of forks, each on a different model, looping in the background.**
+  `coop fork <name> <agent> --loop` runs the unattended queue loop in a fork with the
+  chosen model — claude (`-p`), codex (`exec`), or gemini (`-p`) — seeding it from the
+  `.agent/TASKS.<name>.md` slice. Add `-d` to detach it (session-leader background
+  worker; logs captured to `../<repo>-forks/.coop/<name>.log`). New process commands:
+  `coop fork logs [name] [-f]` (no name = every fork at once, prefixed),
+  `coop fork stop <name>`, and a running/idle column in `coop fork ls`. `coop dispatch`
+  now takes an optional agent too.
 
 ## 2.3.1
 

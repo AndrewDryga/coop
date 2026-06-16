@@ -322,9 +322,18 @@ func (a *app) cmdInit(args []string) (int, error) {
 // that agent's slice of the queue, and run the loop there.
 func (a *app) cmdDispatch(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop dispatch <name>   (reads .agent/TASKS.<name>.md)")
+		return 2, errors.New("usage: coop dispatch <name> [agent]   (reads .agent/TASKS.<name>.md)")
 	}
 	name := args[0]
+	agent := "claude"
+	if len(args) > 1 {
+		switch args[1] {
+		case "claude", "codex", "gemini":
+			agent = args[1]
+		default:
+			return 2, fmt.Errorf("coop dispatch: unknown agent %q", args[1])
+		}
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -358,7 +367,7 @@ func (a *app) cmdDispatch(args []string) (int, error) {
 		return -1, err
 	}
 	// Run the loop in the clone, reusing the origin's image.
-	if code, err := a.loop(ws, img); err != nil {
+	if code, err := a.loop(ws, img, agent, nil); err != nil {
 		return code, err
 	}
 	ui.Info("branch %q ready — review and merge:", name)
@@ -372,7 +381,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img)
+	return a.loop(repo, img, "claude", nil)
 }
 
 const (
@@ -385,7 +394,7 @@ const (
 // model rate/usage limit is not a failure: the loop waits for the reset — parsed
 // from the agent's own output when possible — and resumes the same iteration, so
 // a long run survives hitting the limit and continues once it clears.
-func (a *app) loop(repo, img string) (int, error) {
+func (a *app) loop(repo, img, agent string, sink io.Writer) (int, error) {
 	queue := filepath.Join(repo, ".agent", "TASKS.md")
 	if !fileExists(queue) {
 		return -1, errors.New("no .agent/TASKS.md found — run 'coop init' first")
@@ -394,19 +403,19 @@ func (a *app) loop(repo, img string) (int, error) {
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
 	custom := a.cfg.LoopCmd
-	base := custom
-	if len(base) == 0 {
-		base = a.cfg.ClaudeCmd
+	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
+	// otherwise the chosen agent's headless form carrying the work/audit prompt.
+	iterCmd := func(prompt string) []string {
+		if len(custom) > 0 {
+			return custom
+		}
+		return a.agentLoopCmd(agent, prompt)
 	}
 	ui.Info("starting unattended loop on %s (Ctrl-C to stop)", queue)
 	fails, waits := 0, 0
 	for n := 1; queueHasTodo(queue); {
 		ui.Info("iteration %d", n)
-		cmd := base
-		if len(custom) == 0 {
-			cmd = append(append([]string{}, base...), "-p", loopWork)
-		}
-		code, out, err := a.runIteration(repo, img, cmd)
+		code, out, err := a.runIteration(repo, img, iterCmd(loopWork), sink)
 		switch action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits); action {
 		case actContinue:
 			n++
@@ -426,7 +435,7 @@ func (a *app) loop(repo, img string) (int, error) {
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(repo, img, append(append([]string{}, base...), "-p", loopAudit))
+		_, _, _ = a.runIteration(repo, img, iterCmd(loopAudit), sink)
 	}
 	if queueHasTodo(queue) {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -438,13 +447,19 @@ func (a *app) loop(repo, img string) (int, error) {
 
 // runIteration runs one boxed command in batch mode, teeing its output to the
 // terminal while capturing the tail so a rate-limit notice can be detected.
-func (a *app) runIteration(repo, img string, cmd []string) (code int, output string, err error) {
+func (a *app) runIteration(repo, img string, cmd []string, sink io.Writer) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
+	outW := []io.Writer{os.Stdout, tail}
+	errW := []io.Writer{os.Stderr, tail}
+	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
+		outW = append(outW, sink)
+		errW = append(errW, sink)
+	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-		Stdout: io.MultiWriter(os.Stdout, tail),
-		Stderr: io.MultiWriter(os.Stderr, tail),
+		Stdout: io.MultiWriter(outW...),
+		Stderr: io.MultiWriter(errW...),
 	})
 	return code, tail.String(), err
 }

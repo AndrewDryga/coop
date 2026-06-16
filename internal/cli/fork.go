@@ -70,6 +70,10 @@ func (a *app) cmdFork(args []string) (int, error) {
 		return a.forkRm(args[1:])
 	case "open":
 		return a.forkOpen(args[1:])
+	case "logs":
+		return a.forkLogs(args[1:])
+	case "stop":
+		return a.forkStop(args[1:])
 	default:
 		return a.forkCreate(args)
 	}
@@ -77,15 +81,18 @@ func (a *app) cmdFork(args []string) (int, error) {
 
 // forkArgs is the parsed form of `coop fork <name> [agent] [flags]`.
 type forkArgs struct {
-	name  string
-	agent string
-	fresh bool
+	name   string
+	agent  string
+	fresh  bool
+	loop   bool
+	detach bool
+	worker bool // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{agent: "claude"}
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini]")
+		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini] [--loop [-d]]")
 	}
 	fa.name = args[0]
 	for _, x := range args[1:] {
@@ -94,6 +101,14 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.agent = x
 		case "--fresh":
 			fa.fresh = true
+		case "--loop":
+			fa.loop = true
+		case "-d", "--detach":
+			fa.detach = true
+			fa.loop = true
+		case "--_detached": // hidden: re-exec target for a detached loop
+			fa.worker = true
+			fa.loop = true
 		default:
 			return fa, fmt.Errorf("coop fork: unexpected argument %q", x)
 		}
@@ -126,8 +141,18 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if _, err := setupFork(repo, fa.name); err != nil {
 			return -1, err
 		}
-	} else {
+	} else if !fa.worker {
 		ui.Info("resuming fork %s (%s)", fa.name, ws)
+	}
+	if fa.loop {
+		switch {
+		case fa.worker:
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, true)
+		case fa.detach:
+			return a.detachForkLoop(repo, fa.name, fa.agent)
+		default:
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, false)
+		}
 	}
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: a.defaultCmd(fa.agent), ConsultLead: fa.agent,
@@ -193,10 +218,15 @@ func (a *app) forkLs(_ []string) (int, error) {
 		ui.Info("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
 	}
-	fmt.Printf("  %-18s %-14s %-16s %s\n", ui.Bold("NAME"), ui.Bold("BRANCH"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
+	fmt.Printf("  %-16s %-12s %-9s %-15s %s\n",
+		ui.Bold("NAME"), ui.Bold("BRANCH"), ui.Bold("STATE"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
 	for _, n := range names {
 		ws := forkWorkspace(repo, n)
-		fmt.Printf("  %-18s %-14s %-16s %s\n", n, gitBranch(ws), forkChanges(ws), forkUpdated(ws))
+		state := "idle"
+		if forkRunningPid(repo, n) != 0 {
+			state = "running"
+		}
+		fmt.Printf("  %-16s %-12s %-9s %-15s %s\n", n, gitBranch(ws), state, forkChanges(ws), forkUpdated(ws))
 	}
 	return 0, nil
 }
