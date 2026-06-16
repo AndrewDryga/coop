@@ -85,6 +85,7 @@ type forkArgs struct {
 	name   string
 	agent  string
 	fresh  bool
+	cont   bool // -c/--continue: resume the agent's most recent session in the fork
 	loop   bool
 	detach bool
 	worker bool // internal: this process IS the detached loop worker (--_detached)
@@ -102,6 +103,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.agent = x
 		case "--fresh":
 			fa.fresh = true
+		case "--continue", "-c":
+			fa.cont = true
 		case "--loop":
 			fa.loop = true
 		case "-d", "--detach":
@@ -155,8 +158,12 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, false)
 		}
 	}
+	cmd := a.defaultCmd(fa.agent)
+	if fa.cont {
+		cmd = a.forkResumeCmd(fa.agent) // resume the agent's most recent session
+	}
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Cmd: a.defaultCmd(fa.agent), ConsultLead: fa.agent,
+		Image: img, Repo: ws, Cmd: cmd, ConsultLead: fa.agent,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	forkNextSteps(fa.name)

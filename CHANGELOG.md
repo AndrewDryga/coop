@@ -6,7 +6,10 @@
   handoff.** A fork is a throwaway local clone (own `origin`, nowhere to push, no
   gitignored secrets); treat it like a contractor's PR — open, review, merge, close:
   - `coop fork <name> [claude|codex|gemini]` — open **or resume** a fork and run the
-    chosen agent in it (re-entering an existing fork no longer errors).
+    chosen agent in it (re-entering an existing fork no longer errors). Add `-c` to
+    **continue the agent's last session** instead of starting fresh — the fork's
+    session history persists, so claude `--continue` / gemini `--resume latest` /
+    codex `resume --last` picks up where you left off.
   - `coop fork ls` — list this repo's forks with branch, change size, last activity;
     `coop fork open <name>` prints its path.
   - `coop fork review <name>` — fetch the fork's branch into `review/<name>` and show

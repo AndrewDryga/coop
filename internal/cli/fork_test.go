@@ -248,6 +248,15 @@ func TestForkCarriesSigningMaterials(t *testing.T) {
 	}
 }
 
+func TestParseForkContinue(t *testing.T) {
+	if fa, err := parseForkCreate([]string{"demo", "-c"}); err != nil || !fa.cont {
+		t.Errorf("parseForkCreate(demo -c) = {cont:%v}, err=%v; want cont", fa.cont, err)
+	}
+	if fa, err := parseForkCreate([]string{"demo", "codex", "--continue"}); err != nil || !fa.cont || fa.agent != "codex" {
+		t.Errorf("parseForkCreate(demo codex --continue) = {cont:%v agent:%q}, err=%v", fa.cont, fa.agent, err)
+	}
+}
+
 func TestDetectEditor(t *testing.T) {
 	// With no GUI editor reachable on PATH, fall back to $VISUAL, then $EDITOR.
 	t.Setenv("PATH", t.TempDir()) // empty dir → none of code/cursor/zed/idea/subl found

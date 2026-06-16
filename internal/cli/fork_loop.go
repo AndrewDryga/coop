@@ -41,6 +41,27 @@ func (a *app) agentLoopCmd(agent, prompt string) []string {
 	}
 }
 
+// forkResumeCmd builds the command to resume an agent's most recent session in a
+// fork, so re-entering picks up the same conversation (the fork's cwd is stable and
+// ~/.<agent> persists). Each CLI resumes its own way:
+//
+//	claude --continue   ·   gemini --resume latest   ·   codex resume --last
+func (a *app) forkResumeCmd(agent string) []string {
+	switch agent {
+	case "codex":
+		base := a.cfg.CodexCmd
+		if len(base) == 0 {
+			base = []string{"codex"}
+		}
+		// codex resumes via a subcommand: `codex resume --last [flags]`.
+		return append([]string{base[0], "resume", "--last"}, base[1:]...)
+	case "gemini":
+		return append(append([]string{}, a.cfg.GeminiCmd...), "--resume", "latest")
+	default: // claude
+		return append(append([]string{}, a.cfg.ClaudeCmd...), "--continue")
+	}
+}
+
 // Per-fork process state (logs + pidfiles) lives in <repo>-forks/.coop/.
 func forkStateDir(repo string) string  { return filepath.Join(forkHome(repo), ".coop") }
 func forkLog(repo, name string) string { return filepath.Join(forkStateDir(repo), name+".log") }

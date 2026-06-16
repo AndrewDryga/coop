@@ -33,6 +33,27 @@ func TestAgentLoopCmd(t *testing.T) {
 	}
 }
 
+func TestForkResumeCmd(t *testing.T) {
+	a := &app{cfg: &config.Config{
+		ClaudeCmd: []string{"claude", "--dangerously-skip-permissions"},
+		CodexCmd:  []string{"codex", "--dangerously-bypass-approvals-and-sandbox"},
+		GeminiCmd: []string{"gemini", "--yolo"},
+	}}
+	tests := []struct {
+		agent string
+		want  []string
+	}{
+		{"claude", []string{"claude", "--dangerously-skip-permissions", "--continue"}},
+		{"gemini", []string{"gemini", "--yolo", "--resume", "latest"}},
+		{"codex", []string{"codex", "resume", "--last", "--dangerously-bypass-approvals-and-sandbox"}},
+	}
+	for _, tc := range tests {
+		if got := a.forkResumeCmd(tc.agent); !slices.Equal(got, tc.want) {
+			t.Errorf("forkResumeCmd(%q) = %v, want %v", tc.agent, got, tc.want)
+		}
+	}
+}
+
 func TestParseForkCreateLoopFlags(t *testing.T) {
 	tests := []struct {
 		args                 []string
