@@ -11,7 +11,7 @@
 - `install.sh` now verifies the downloaded tarball against the release's
   `checksums.txt` and fails closed on a mismatch.
 - **Signed, attested releases.** `checksums.txt` is signed keyless with
-  Sigstore/cosign (`checksums.txt.sig` + `.pem`), and every archive carries a build
+  Sigstore/cosign (a `checksums.txt.bundle`), and every archive carries a build
   provenance attestation — verify with
   `gh attestation verify coop_*.tar.gz --repo AndrewDryga/coop`. The repo also
   restricts Actions to an allowlist (GitHub-owned + goreleaser + cosign-installer)

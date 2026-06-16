@@ -25,6 +25,8 @@ jobs:
           go-version-file: go.mod # reproducible toolchain for the published binaries
           cache: false # no cache → a poisoned cache can't reach a release artifact
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.1' # pin cosign so its CLI defaults can't drift the release
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7
         with:
           version: 'v2.16.0' # pin the goreleaser binary, not a floating "~> v2"

@@ -34,20 +34,17 @@ checksum:
   name_template: checksums.txt
 
 # Sign checksums.txt keyless via Sigstore/cosign, so the checksum file is itself
-# tamper-evident. Verify:
-#   cosign verify-blob checksums.txt --signature checksums.txt.sig \
-#     --certificate checksums.txt.pem \
-#     --certificate-identity-regexp 'https://github.com/AndrewDryga/coop' \
+# tamper-evident. Modern cosign emits one bundle (signature + cert + tlog). Verify:
+#   cosign verify-blob checksums.txt --bundle checksums.txt.bundle \
+#     --certificate-identity-regexp '^https://github.com/AndrewDryga/coop' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 signs:
   - cmd: cosign
     artifacts: checksum
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.bundle"
     args:
       - sign-blob
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"
     output: true
