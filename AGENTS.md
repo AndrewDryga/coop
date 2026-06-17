@@ -22,6 +22,7 @@
 - `[x]` only when the gate is green, the change is committed, and LOG.md has an entry.
 - Blocked? `[B]` + a .agent/PENDING_DECISIONS.md entry. There is no fifth state.
 - One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
+- **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
 - **Tasks are self-contained.** TASKS.md gets read by a fresh agent after a compaction or in a new session — so a task can't lean on prior chat, a past review, or memory not in the repo. Each one states: the problem + context, likely files, an implementation direction, and acceptance checks. If it can't stand on its own with just the BOOT files, it isn't ready for the queue.
 - Never stop while a `[ ]` remains.
 
