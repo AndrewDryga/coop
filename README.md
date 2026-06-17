@@ -774,6 +774,13 @@ turn them off.
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
 
+Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the
+`COOP_<AGENT>_CMD` overrides — are split into `argv` with **shell quoting** (single/double
+quotes group, `\` escapes), but **no shell runs** them (no globbing or `$VAR`). So quotes
+group as you'd expect — `COOP_GATE='bash -lc "make check && make lint"'` is three args, not
+five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -lc "…"`.
+(`COOP_REVIEW_CMD` is the exception — it *is* run via `sh -c`.)
+
 ## Layout & development
 
 A single static Go binary plus a config folder. A repo you work on optionally carries a

@@ -117,6 +117,49 @@ func TestCmd(t *testing.T) {
 	}
 }
 
+func TestShellSplit(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"bar --baz", []string{"bar", "--baz"}},
+		{`bash -lc "npm test && npm run lint"`, []string{"bash", "-lc", "npm test && npm run lint"}},
+		{`bash -lc 'a b'`, []string{"bash", "-lc", "a b"}},
+		{`a\ b`, []string{"a b"}}, // escaped space joins a word
+		{`a "b c" d`, []string{"a", "b c", "d"}},
+		{`"a""b"`, []string{"ab"}},       // adjacent quotes concatenate
+		{`''`, []string{""}},             // an empty quoted arg survives
+		{`a "b c`, []string{"a", "b c"}}, // unterminated quote runs to the end
+		{`trail\`, []string{`trail\`}},   // a trailing backslash is literal
+	}
+	for _, c := range cases {
+		if got := shellSplit(c.in); !slices.Equal(got, c.want) {
+			t.Errorf("shellSplit(%q) = %#v, want %#v", c.in, got, c.want)
+		}
+	}
+}
+
+// Command-like settings honor shell quoting through both the environment and the conf
+// file, with the environment winning — so a gate like `bash -lc "a && b"` parses as
+// three args, not five.
+func TestCommandQuoting(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	os.WriteFile(conf, []byte(`COOP_GATE=bash -lc "make check"`+"\n"), 0o644)
+	t.Setenv("COOP_CONF", conf)
+
+	if got := Load().Gate; !slices.Equal(got, []string{"bash", "-lc", "make check"}) {
+		t.Errorf("conf gate = %#v", got)
+	}
+	t.Setenv("COOP_GATE", `bash -lc "npm test && npm run lint"`)
+	if got := Load().Gate; !slices.Equal(got, []string{"bash", "-lc", "npm test && npm run lint"}) {
+		t.Errorf("env gate = %#v", got)
+	}
+}
+
 // MCPActive flips on when an mcp.json exists (the claude adapter turns it into
 // --mcp-config; gemini/codex get generated config files in box.Run).
 func TestMCPActive(t *testing.T) {

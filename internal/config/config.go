@@ -54,12 +54,12 @@ type Config struct {
 // knowing the agent set.
 func (c *Config) Cmd(env, def string) []string {
 	if v, ok := os.LookupEnv(env); ok {
-		return fields(v)
+		return shellSplit(v)
 	}
 	if v, ok := c.conf[env]; ok {
-		return fields(v)
+		return shellSplit(v)
 	}
-	return fields(def)
+	return shellSplit(def)
 }
 
 // Load resolves the configuration from the environment and conf file.
@@ -103,9 +103,9 @@ func Load() *Config {
 		Cache:   flag("COOP_CACHE"),
 
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
-		LoopCmd:      fields(get("COOP_LOOP_CMD", "")),
-		Gate:         fields(get("COOP_GATE", "")),
-		ExtraRunArgs: fields(get("COOP_RUN_ARGS", "")),
+		LoopCmd:      shellSplit(get("COOP_LOOP_CMD", "")),
+		Gate:         shellSplit(get("COOP_GATE", "")),
+		ExtraRunArgs: shellSplit(get("COOP_RUN_ARGS", "")),
 
 		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),
 
@@ -151,13 +151,73 @@ func envOr(key, def string) string {
 	return def
 }
 
-// fields splits a command string into words. Empty input yields a nil slice.
-func fields(s string) []string {
-	f := strings.Fields(s)
-	if len(f) == 0 {
+// shellSplit splits a command string into argv the way a shell word-splits it:
+// whitespace separates words, single and double quotes group, and a backslash
+// escapes the next character (outside single quotes). It does NOT run a shell — no
+// globbing, no variable expansion — so a quoted command setting like
+//
+//	COOP_GATE='bash -lc "npm test && npm run lint"'
+//
+// becomes the three args [bash, -lc, "npm test && npm run lint"], not five. Empty or
+// all-whitespace input yields a nil slice; an unterminated quote is tolerated (its
+// contents run to the end of the string).
+func shellSplit(s string) []string {
+	const (
+		bare = iota
+		inSingle
+		inDouble
+	)
+	var args []string
+	var cur strings.Builder
+	state, started, escaped := bare, false, false
+	for _, r := range s {
+		switch {
+		case escaped: // previous char was a backslash
+			cur.WriteRune(r)
+			escaped = false
+		case state == inSingle:
+			if r == '\'' {
+				state = bare
+			} else {
+				cur.WriteRune(r)
+			}
+		case state == inDouble:
+			switch r {
+			case '\\':
+				escaped = true
+			case '"':
+				state = bare
+			default:
+				cur.WriteRune(r)
+			}
+		case r == '\\':
+			escaped, started = true, true
+		case r == '\'':
+			state, started = inSingle, true
+		case r == '"':
+			state, started = inDouble, true
+		case r == ' ', r == '\t', r == '\n', r == '\r':
+			if started {
+				args = append(args, cur.String())
+				cur.Reset()
+				started = false
+			}
+		default:
+			cur.WriteRune(r)
+			started = true
+		}
+	}
+	if escaped { // a trailing backslash is taken literally
+		cur.WriteByte('\\')
+		started = true
+	}
+	if started {
+		args = append(args, cur.String())
+	}
+	if len(args) == 0 {
 		return nil
 	}
-	return f
+	return args
 }
 
 func fileExists(path string) bool {
@@ -169,8 +229,8 @@ func fileExists(path string) bool {
 }
 
 // loadConfFile parses a simple KEY=VALUE file: blank lines and #-comments are
-// ignored, a leading "export " is allowed, and surrounding quotes are stripped.
-// A missing file yields an empty map — the conf file is always optional.
+// ignored, a leading "export " is allowed, and one matched pair of surrounding quotes
+// is stripped. A missing file yields an empty map — the conf file is always optional.
 func loadConfFile(path string) map[string]string {
 	out := map[string]string{}
 	f, err := os.Open(path)
@@ -191,7 +251,12 @@ func loadConfFile(path string) map[string]string {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
-		val = strings.Trim(val, `"'`)
+		// Strip one matched pair of surrounding quotes (not a greedy cutset), so a
+		// shell-quoted command value keeps its inner quotes for shellSplit:
+		//   COOP_GATE=bash -lc "npm test"   stays intact (no outer pair to strip).
+		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[len(val)-1] == val[0] {
+			val = val[1 : len(val)-1]
+		}
 		if key != "" {
 			out[key] = val
 		}
