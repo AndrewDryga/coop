@@ -721,9 +721,17 @@ from re-downloading the world.
 coop update    # rebuild the image fresh: latest agent CLIs + ACP adapters + base
 ```
 
-`coop build` is cache-bound and won't pull newer package versions; `coop update` rebuilds
-with `--pull --no-cache` and prints the resulting versions. The agent CLIs and ACP
-adapters ship features often, so this is the easy way to stay current.
+**Stable vs fresh.** `coop build` is the *stable* path: it pins the base image to a
+specific Node digest, so a rebuild gets the same OS/runtime every time, and the cache
+holds the agent CLIs steady between builds. `coop update` is the *fresh* path: it floats
+the base back to the `node:24` tag and rebuilds with `--pull --no-cache`, so the base and
+the agent CLIs + ACP adapters all jump to latest (they ship features often). To move the
+pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
+
+For a **fully reproducible** image, also pin the tool versions: set
+`COOP_AGENT_PACKAGES` to exact specs and `coop build`, e.g.
+`COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@1.2.3 @openai/codex@1.0.0 …"` (the full
+list is in `internal/agent/*.go`).
 
 ## Configuration
 
@@ -738,6 +746,7 @@ turn them off.
 | `COOP_RUNTIME` | auto | `container` / `docker` / `podman` |
 | `COOP_IMAGE` | (auto) | force a specific image (overrides `Dockerfile.agent` detection) |
 | `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
+| `COOP_AGENT_PACKAGES` | (latest) | pin the global agent + ACP npm specs for a reproducible `coop build` |
 | `COOP_REPO` | (git toplevel) | the repo to operate on, overriding cwd detection |
 | `COOP_WORKDIR` | (real path) | where the repo mounts in the box |
 | `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |

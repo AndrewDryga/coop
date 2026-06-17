@@ -26,6 +26,7 @@ type Config struct {
 	RuntimeName   string // COOP_RUNTIME — "" means autodetect
 	RepoOverride  string // COOP_REPO — overrides git-toplevel detection
 	ImageOverride string // COOP_IMAGE — overrides image selection
+	AgentPackages string // COOP_AGENT_PACKAGES — pin/override the global agent+ACP npm specs (e.g. "@anthropic-ai/claude-code@1.2.3 …")
 
 	Homes   bool // COOP_HOMES — mount the per-agent home dirs
 	Network bool // COOP_NETWORK — join the sibling-services network
@@ -95,6 +96,7 @@ func Load() *Config {
 		RuntimeName:   get("COOP_RUNTIME", ""),
 		RepoOverride:  get("COOP_REPO", ""),
 		ImageOverride: get("COOP_IMAGE", ""),
+		AgentPackages: get("COOP_AGENT_PACKAGES", ""),
 
 		Homes:   flag("COOP_HOMES"),
 		Network: flag("COOP_NETWORK"),

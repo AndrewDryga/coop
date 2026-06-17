@@ -20,10 +20,23 @@ func BaseDockerfile() string {
 	return fmt.Sprintf(baseDockerfileTemplate, strings.Join(agents.Packages(), " "))
 }
 
-// baseDockerfileTemplate is BaseDockerfile with %s for the npm package list.
-const baseDockerfileTemplate = `FROM node:24
+// Base-image references for the shared box. coop build pins the FROM image to a
+// digest for a reproducible box; coop update (fresh) floats it to the tag so --pull
+// fetches the newest. Bump pinnedNodeImage when you intentionally move the stable
+// base (e.g. after a `coop update` proves a newer node works).
+const (
+	pinnedNodeImage   = "node:24@sha256:40ad9f3064e67d6860b4bc3fe1880b2953934fd6320ada990e45fe0efa6badd7" // node v24.16.0
+	floatingNodeImage = "node:24"
+)
+
+// baseDockerfileTemplate is BaseDockerfile with %s for the npm package list. The
+// FROM image (NODE_IMAGE) and the agent npm specs (AGENT_PACKAGES) are build args so
+// a build can pin them; the defaults preserve the floating behavior for a raw build.
+const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24
+FROM ${NODE_IMAGE}
 
 ARG ASDF_VERSION=0.19.0
+ARG AGENT_PACKAGES="%s"
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
@@ -33,7 +46,7 @@ RUN apt-get update \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
       postgresql-client procps inotify-tools \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
- && npm install -g %s \
+ && npm install -g ${AGENT_PACKAGES} \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
@@ -122,6 +135,17 @@ func buildArgs(cfg *config.Config, repo string, fresh bool) (args []string, base
 	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
 		img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
 		return append(args, "-t", img, "-f", filepath.Join(repo, "Dockerfile.agent"), repo), false
+	}
+	// Shared base: pin the FROM image so `coop build` is reproducible; `coop update`
+	// (fresh) floats it so --pull fetches the newest node:24. Tool versions stay latest
+	// unless pinned via COOP_AGENT_PACKAGES.
+	node := pinnedNodeImage
+	if fresh {
+		node = floatingNodeImage
+	}
+	args = append(args, "--build-arg", "NODE_IMAGE="+node)
+	if cfg.AgentPackages != "" {
+		args = append(args, "--build-arg", "AGENT_PACKAGES="+cfg.AgentPackages)
 	}
 	return append(args, "-t", cfg.BaseImage, "-"), true
 }

@@ -20,7 +20,14 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	if strings.Contains(df, "%s") || strings.Contains(df, "%!") {
 		t.Errorf("BaseDockerfile template not resolved:\n%s", df)
 	}
-	if !strings.Contains(df, "npm install -g @") {
-		t.Error("npm install line not assembled")
+	// The npm install and the FROM image are driven by build args so a build can pin
+	// them; the packages live in the AGENT_PACKAGES default.
+	for _, want := range []string{
+		"ARG NODE_IMAGE=node:24", "FROM ${NODE_IMAGE}",
+		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
+	} {
+		if !strings.Contains(df, want) {
+			t.Errorf("BaseDockerfile missing %q", want)
+		}
 	}
 }

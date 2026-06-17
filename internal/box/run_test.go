@@ -219,11 +219,17 @@ func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
 	repo := t.TempDir() // no Dockerfile.agent → shared base
 
-	if a, base := buildArgs(cfg, repo, false); !base || !slices.Equal(a, []string{"build", "-t", "coop-box", "-"}) {
+	// Stable build pins the FROM image; fresh (coop update) floats it and adds --pull --no-cache.
+	if a, base := buildArgs(cfg, repo, false); !base || !slices.Equal(a, []string{"build", "--build-arg", "NODE_IMAGE=" + pinnedNodeImage, "-t", "coop-box", "-"}) {
 		t.Errorf("base cached: base=%v args=%v", base, a)
 	}
-	if a, _ := buildArgs(cfg, repo, true); !slices.Equal(a, []string{"build", "--pull", "--no-cache", "-t", "coop-box", "-"}) {
+	if a, _ := buildArgs(cfg, repo, true); !slices.Equal(a, []string{"build", "--pull", "--no-cache", "--build-arg", "NODE_IMAGE=" + floatingNodeImage, "-t", "coop-box", "-"}) {
 		t.Errorf("base fresh: args=%v", a)
+	}
+	// COOP_AGENT_PACKAGES pins the agent npm specs via a build arg.
+	pinned := &config.Config{BaseImage: "coop-box", AgentPackages: "@anthropic-ai/claude-code@1.2.3"}
+	if a, _ := buildArgs(pinned, repo, false); !containsSeq(a, []string{"--build-arg", "AGENT_PACKAGES=@anthropic-ai/claude-code@1.2.3"}) {
+		t.Errorf("pinned packages not forwarded: %v", a)
 	}
 
 	// A Dockerfile.agent → per-project image built from a context, with the fresh flags.
