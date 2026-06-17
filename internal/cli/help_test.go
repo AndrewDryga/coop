@@ -31,4 +31,13 @@ func TestHelpTextAligned(t *testing.T) {
 	if strings.Contains(out, "<verb>") {
 		t.Error("help still collapses fork verbs into a <verb> placeholder")
 	}
+	// No middle-dot separators, and section headers are capitalized.
+	if strings.Contains(out, "·") {
+		t.Errorf("help should not use · separators:\n%s", out)
+	}
+	for _, want := range []string{"AGENTS", "FORKS", "UNATTENDED", "SETUP & MAINTENANCE"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help missing capitalized section header %q", want)
+		}
+	}
 }

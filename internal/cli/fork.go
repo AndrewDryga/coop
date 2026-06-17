@@ -85,11 +85,11 @@ func forkHelp() (int, error) {
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %-50s %s\n", r.cmd, r.desc)
 	}
-	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", ui.Bold("flags"))
+	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", ui.Bold("FLAGS"))
 	for _, f := range flags {
 		fmt.Fprintf(&b, "  %-16s %s\n", f.flag, f.desc)
 	}
-	fmt.Fprintf(&b, "\n%s --open uses $COOP_EDITOR, else `git config core.editor`, else a detected\n", ui.Bold("review"))
+	fmt.Fprintf(&b, "\n%s --open uses $COOP_EDITOR, else `git config core.editor`, else a detected\n", ui.Bold("REVIEW"))
 	fmt.Fprintf(&b, "         GUI editor; --tool uses `git config diff.tool`. Setup details in the README.\n")
 	fmt.Print(b.String())
 	return 0, nil

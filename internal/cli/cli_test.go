@@ -25,7 +25,7 @@ func TestMainBarePrintsHelp(t *testing.T) {
 	if code != 0 {
 		t.Errorf("bare coop exit = %d, want 0", code)
 	}
-	if s := string(out); !strings.Contains(s, "usage") || !strings.Contains(s, "coop claude") {
+	if s := string(out); !strings.Contains(s, "Usage") || !strings.Contains(s, "coop claude") {
 		t.Errorf("bare coop should print help listing `coop claude`; got:\n%s", s)
 	}
 }
