@@ -702,7 +702,7 @@ turn them off.
 | Var | Default | |
 |---|---|---|
 | `COOP_CONFIG_DIR` | `~/.config/coop/agents` | per-agent auth + settings folder |
-| `COOP_CLAUDE_CMD` · `COOP_CODEX_CMD` · `COOP_GEMINI_CMD` | autonomous defaults | per-agent base command |
+| `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_FUSION_GOVERNOR` | `codex` | default leader for `coop fusion` |
 | `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
@@ -723,6 +723,7 @@ A single static Go binary plus a config folder. A repo you work on optionally ca
 
 ```
 main.go             entrypoint
+internal/agent/     one file per coding agent (claude/codex/gemini): commands, resume, MCP, defaults, packages
 internal/box/       the engine: secret-shadowing mounts, git env, image selection, container run
 internal/fusion/    the council: peer commands + the governor instruction
 internal/mcp/       one mcp.json → Claude / Gemini / Codex native configs (pure Go, no Python)
