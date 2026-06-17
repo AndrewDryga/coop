@@ -45,7 +45,8 @@ func helpText(cfg *config.Config) string {
 	row("coop fusion [agent]", "a council: one agent leads, the others advise, it synthesizes")
 	row("coop run -- <cmd...>", "run a raw command in the box")
 	row("coop shell", "an interactive shell in the box")
-	row("coop login <agent>", "authenticate an agent (token persists in the config dir)")
+	row("coop login <agent> [--profile p]", "authenticate an agent (a profile = one subscription)")
+	row("coop profiles [agent]", "list stored credential profiles and which are signed in")
 	row("coop acp [agent|fusion]", "serve as an ACP agent over stdio (for editors like Zed)")
 
 	group("FORKS — review and land work like a PR")
@@ -105,6 +106,14 @@ var commandHelp = map[string]string{
   one agent can hold several subscriptions. The unattended loop rotates across a
   repo's profiles when one is rate limited (see 'coop pool'). Without --profile
   the sign-in targets the default profile.`,
+
+	"profiles": `coop profiles [agent] — list stored credential profiles.
+
+  Usage: coop profiles [claude|codex|gemini]
+
+  Shows each agent's profiles and whether they're signed in. A profile is one
+  subscription; add more with 'coop login <agent> --profile <name>', then let the
+  loop rotate across them on a rate limit ('coop pool').`,
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 

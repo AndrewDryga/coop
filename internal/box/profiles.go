@@ -5,8 +5,25 @@ import (
 	"os"
 	"path/filepath"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+// ProfileAuthed reports whether agent's named profile looks signed in: its credential
+// marker file is present in that profile's dir, or the agent's API key is set in the env
+// file (a key authenticates every profile). Like AuthedAgents, it's a presence heuristic,
+// not a validity check.
+func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return false
+	}
+	file, envKey := ag.AuthMarker()
+	if envFileKeys(cfg.EnvFile())[envKey] {
+		return true
+	}
+	return fileExists(filepath.Join(cfg.AgentProfileDir(agent, profile), file))
+}
 
 // EnsureProfilesDir prepares agent's credential vault for the named-profile layout, run
 // before a profile other than the default is created. The first time it runs (no

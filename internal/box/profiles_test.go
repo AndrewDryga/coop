@@ -88,3 +88,34 @@ func TestEnsureProfilesDirFreshVault(t *testing.T) {
 		t.Error("fresh vault should not create a default profile")
 	}
 }
+
+func TestProfileAuthed(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+
+	// Unknown agent, and a missing credential, both read as unauthed.
+	if ProfileAuthed(cfg, "nope", "default") {
+		t.Error("unknown agent should be unauthed")
+	}
+	if ProfileAuthed(cfg, "claude", "work") {
+		t.Error("missing credential should be unauthed")
+	}
+	// A credential marker file in the profile dir → authed.
+	work := cfg.AgentProfileDir("claude", "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, ".credentials.json"), []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !ProfileAuthed(cfg, "claude", "work") {
+		t.Error("credential present should be authed")
+	}
+	// An API key in the env file authenticates every profile, even one with no cred file.
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=sk-x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !ProfileAuthed(cfg, "claude", "personal") {
+		t.Error("env API key should authenticate any profile")
+	}
+}
