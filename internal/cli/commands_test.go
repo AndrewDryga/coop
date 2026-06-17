@@ -30,6 +30,8 @@ func TestParseGovernor(t *testing.T) {
 		wantRest []string
 	}{
 		{"default governor, no args", nil, "codex", nil},
+		{"positional governor", []string{"claude"}, "claude", nil},
+		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", []string{"exec"}},
 		{"--governor flag", []string{"--governor", "claude"}, "claude", nil},
 		{"--governor=value", []string{"--governor=gemini"}, "gemini", nil},
 		{"passthrough args keep order", []string{"exec", "foo"}, "codex", []string{"exec", "foo"}},

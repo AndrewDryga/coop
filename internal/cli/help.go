@@ -31,7 +31,7 @@ func printHelp(cfg *config.Config) {
 
 	group("agents")
 	row("coop claude|codex|gemini [args]", "a sandboxed agent — its autonomous flags, plus your args")
-	row("coop fusion [--governor g]", "a council: g leads, the other two advise, it synthesizes")
+	row("coop fusion [agent]", "a council: that agent leads, the other two advise, it synthesizes")
 	row("coop <agent> --consult", "opt-in: may ask authenticated peers on hard calls")
 	row("coop run -- <cmd...>", "run any command in the box (raw)")
 	row("coop shell", "a shell in the box")
@@ -67,8 +67,8 @@ func printHelp(cfg *config.Config) {
 	p("  coop fork ls  ·  coop fork logs -f  ·  coop fork stop perf  ·  coop fork merge perf\n\n")
 
 	p("%s  one model leads, the other two advise read-only, the leader synthesizes:\n", ui.Bold("fusion"))
-	p("  coop fusion                     # codex leads (COOP_FUSION_GOVERNOR); peers advise\n")
-	p("  coop fusion --governor claude   # claude leads instead\n")
+	p("  coop fusion                     # the default governor leads (COOP_FUSION_GOVERNOR); peers advise\n")
+	p("  coop fusion claude              # claude leads instead\n")
 	p("  coop <agent> --consult          # lighter & opt-in: may ask authed peers on hard calls\n\n")
 
 	p("%s  add to Zed settings.json, then pick it in the agent panel:\n", ui.Bold("drive from Zed (ACP)"))

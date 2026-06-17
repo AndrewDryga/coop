@@ -213,6 +213,10 @@ func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 			i++
 		case strings.HasPrefix(args[i], "--governor="):
 			governor = strings.TrimPrefix(args[i], "--governor=")
+		case len(rest) == 0 && (args[i] == "claude" || args[i] == "codex" || args[i] == "gemini"):
+			// A leading agent name is the governor: `coop fusion claude` (matches
+			// `coop acp fusion claude`). `--governor` stays as an alias.
+			governor = args[i]
 		default:
 			rest = append(rest, args[i])
 		}

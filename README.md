@@ -105,7 +105,7 @@ any of them.
 | Command | What it does |
 |---|---|
 | `coop claude` · `codex` · `gemini` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
-| `coop fusion [--governor g]` | a [governed council](#fusion-a-governed-council): `g` leads, the other two advise |
+| `coop fusion [agent]` | a [governed council](#fusion-a-governed-council): that agent leads, the other two advise |
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
 | `coop run -- <cmd>` | run any command in the box (raw — none of coop's agent flags) |
 | `coop shell` | a shell in the box, to look around |
@@ -378,9 +378,9 @@ betting the run on one model's blind spots. It's a mode like any other agent —
 interactive, headless, or in Zed:
 
 ```bash
-coop fusion                    # codex leads (COOP_FUSION_GOVERNOR); claude + gemini advise
-coop fusion --governor claude  # claude leads instead
-coop fusion -- -p "Design the retry strategy"   # headless; args pass to the leader
+coop fusion                    # the default governor leads (COOP_FUSION_GOVERNOR); the others advise
+coop fusion claude             # claude leads instead (--governor claude also works)
+coop fusion claude -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
 ```
 
 **No extra service or protocol** behind it: the leader is just that agent running
