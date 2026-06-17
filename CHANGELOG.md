@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.4.0
+## 2.5.0
 
 - **Fusion mode consults on every task.** The governor's directive is now
   unconditional — no "trivial change" or "I already know it" exception — so a
