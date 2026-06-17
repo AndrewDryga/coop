@@ -7,8 +7,9 @@ hangs.
 - **codex** — `coop login codex` runs `codex login --device-auth` (prints a URL +
   code to open on any device). Plain `codex login` (browser/localhost redirect)
   hangs in the box.
-- **claude** — `coop login claude` works as-is: Claude Code's login shows a
-  paste-a-code flow, not a localhost redirect.
+- **claude** — `coop login claude` runs `claude auth login`; Claude Code's sign-in is a
+  paste-a-code flow, not a localhost redirect, so it works in the box — and unlike a bare
+  `claude` it re-authenticates even when you're already logged in.
 - **gemini** — logs in on first interactive use (Google OAuth). If that ever
   hangs in the box, switch it to a device / no-browser flow too.
 

@@ -35,6 +35,10 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
   promotes an item into TASKS.md when it's time.
 - `LOG.md` — your chain-of-thought: what you did and *why*, so intent survives a
   compaction. Append a short entry per decision/task, newest first.
+  **Housekeeping is mandatory, not optional.** When LOG.md exceeds 20 entries,
+  trim older entries down to one-liners or remove them entirely in the same
+  commit. Never postpone cleanup because the file is large — that is exactly
+  when it must happen.
 - `PENDING_DECISIONS.md` — anything needing a human call: the decision, the
   options, your recommendation. Mark the task `[B]`. Never guess on a one-way door.
 - `IDEAS.md` — product ideas: dump your current thinking, a sketch or a full spec if you
