@@ -68,6 +68,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-v", cfg.ConfigDir + "/codex:/home/node/.codex",
 		"-v", cfg.ConfigDir + "/gemini:/home/node/.gemini",
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
+		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
 		"-w", "/workspace", "coop-box", "claude",
 	}
 	if !slices.Equal(got, want) {
@@ -114,6 +115,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 		}
 	}
 	mustContain("-e", "CLAUDE_CONFIG_DIR=/home/node/.claude")
+	mustContain("-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
 	mustContain("--env-file", filepath.Join(dir, "env"))
 	mustContain("-v", filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro")
 	mustContain("-v", cfg.MCPFile+":/home/node/.mcp.json:ro")

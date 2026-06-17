@@ -2,6 +2,13 @@
 
 ## 2.4.0
 
+- **In-box agents no longer trip over the absent OS sandbox.** The box is itself the
+  sandbox and ships no bubblewrap, so coop tells Claude Code to skip subprocess
+  env-scrubbing (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0`) and pins its bash sandbox off
+  in settings (`sandbox.enabled=false`, `failIfUnavailable=false`); the shared
+  `INSTRUCTIONS.md` now notes a missing sandbox is expected, not a bug. Codex and
+  Gemini already launch unsandboxed (`--dangerously-bypass-approvals-and-sandbox`,
+  `--yolo`), so they needed no change.
 - **`coop clone` is now `coop fork` — a full local-PR lifecycle, not a one-shot
   handoff.** A fork is a throwaway local clone (own `origin`, nowhere to push, no
   gitignored secrets); treat it like a contractor's PR — open, review, merge, close:

@@ -289,6 +289,11 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 		// the config persists alongside the credentials. (Codex and Gemini already
 		// store everything under their mounted ~/.codex and ~/.gemini dirs.)
 		args = append(args, "-e", "CLAUDE_CONFIG_DIR="+cfg.HomeInBox+"/.claude")
+		// Claude Code wraps every subprocess in bubblewrap to scrub env vars from it.
+		// The box ships no bubblewrap (and is itself the sandbox), so without this it
+		// warns "bubblewrap is required for subprocess env scrubbing" before each
+		// command. Turn the scrub off — the container is the isolation boundary.
+		args = append(args, "-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
 		if fileExists(cfg.EnvFile()) {
 			args = append(args, "--env-file", cfg.EnvFile())
 		}

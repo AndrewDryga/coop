@@ -36,6 +36,10 @@ func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 	if s["skipDangerousModePermissionPrompt"] != true {
 		t.Error("settings.json should skip the bypass-permissions prompt")
 	}
+	sb, _ := s["sandbox"].(map[string]any)
+	if sb == nil || sb["enabled"] != false || sb["failIfUnavailable"] != false {
+		t.Errorf("sandbox should be pinned off: %v", s["sandbox"])
+	}
 
 	c := readJSONMap(t, filepath.Join(dir, "claude", ".claude.json"))
 	if c["hasCompletedOnboarding"] != true {

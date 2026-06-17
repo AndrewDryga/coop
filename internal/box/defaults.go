@@ -39,6 +39,13 @@ func ensureClaudeDefaults(cfg *config.Config, workdir string) {
 	if ensureTrue(sm, "skipDangerousModePermissionPrompt") {
 		sChanged = true
 	}
+	// Pin the bash OS-sandbox off: the box is the sandbox and ships no bubblewrap, so
+	// a forced sandbox (e.g. cloud review mode) can't start. enabled=false keeps it
+	// off; failIfUnavailable=false makes any forced path degrade to unsandboxed rather
+	// than erroring. Only missing keys are filled, so a user's own choice survives.
+	if ensureSandboxOff(sm) {
+		sChanged = true
+	}
 	if sChanged {
 		writeJSONFile(settings, sm, 0o644)
 	}
@@ -137,6 +144,27 @@ func disableGeminiFolderTrust(m map[string]any) bool {
 	}
 	ft["enabled"] = false
 	return true
+}
+
+// ensureSandboxOff pins Claude Code's bash OS-sandbox off in settings.json, filling
+// only the keys that are missing so a user's explicit choice survives. Reports
+// whether m changed.
+func ensureSandboxOff(m map[string]any) bool {
+	sb, _ := m["sandbox"].(map[string]any)
+	if sb == nil {
+		sb = map[string]any{}
+		m["sandbox"] = sb
+	}
+	changed := false
+	if _, ok := sb["enabled"]; !ok {
+		sb["enabled"] = false
+		changed = true
+	}
+	if _, ok := sb["failIfUnavailable"]; !ok {
+		sb["failIfUnavailable"] = false
+		changed = true
+	}
+	return changed
 }
 
 // ensureTrue sets m[key]=true unless it already is, reporting whether it changed.

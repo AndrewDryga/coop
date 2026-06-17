@@ -14,3 +14,9 @@
 - Verify before claiming done: run the build and tests, don't assume.
 - Match the surrounding code's style; don't reformat unrelated lines.
 - When you're unsure, ask rather than guess on anything destructive.
+
+## Your sandbox
+- You run inside a coop container — that container is your sandbox and security
+  boundary. OS-level sandboxing (bubblewrap) is intentionally absent here, so a
+  missing sandbox or a "bubblewrap is required" notice is expected, not a bug.
+  Don't stop to investigate, work around, or report it — just carry on.
