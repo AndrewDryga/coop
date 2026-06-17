@@ -176,7 +176,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too) |
+| `coop loop [agent] [--debug-on-fail]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
 | `coop fleet up` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` (list with `coop fork ls`) |
 

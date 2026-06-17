@@ -2,6 +2,10 @@
 
 ## 2.6.0
 
+- **`coop loop --debug-on-fail`.** When an iteration fails at a terminal, the loop opens
+  an interactive shell in the box (same repo + image) instead of auto-retrying or
+  stopping — inspect files/env/run the gate, then exit the shell to retry (Ctrl-C to
+  stop). A no-op in non-interactive/detached runs.
 - **`.coopignore` works in subdirectories.** Like `.gitignore`, a `.coopignore` in any
   directory is scoped to that subtree (basename patterns at any depth under it, path
   patterns relative to it), so a monorepo's sub-teams can keep folder-local shadow rules

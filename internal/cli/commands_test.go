@@ -21,6 +21,32 @@ func TestLoopAgent(t *testing.T) {
 	}
 }
 
+func TestParseLoopArgs(t *testing.T) {
+	cases := []struct {
+		args      []string
+		wantAgent string
+		wantDebug bool
+		wantErr   bool
+	}{
+		{nil, "claude", false, false},
+		{[]string{"codex"}, "codex", false, false},
+		{[]string{"--debug-on-fail"}, "claude", true, false},
+		{[]string{"gemini", "--debug"}, "gemini", true, false},
+		{[]string{"--debug-on-fail", "codex"}, "codex", true, false},
+		{[]string{"bogus"}, "", false, true},
+	}
+	for _, c := range cases {
+		agent, debug, err := parseLoopArgs(c.args)
+		if (err != nil) != c.wantErr {
+			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
+			continue
+		}
+		if !c.wantErr && (agent != c.wantAgent || debug != c.wantDebug) {
+			t.Errorf("parseLoopArgs(%v) = (%q, %v), want (%q, %v)", c.args, agent, debug, c.wantAgent, c.wantDebug)
+		}
+	}
+}
+
 func TestParseGovernor(t *testing.T) {
 	a := &app{cfg: &config.Config{FusionGovernor: "codex"}}
 	cases := []struct {

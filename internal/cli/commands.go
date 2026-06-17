@@ -336,7 +336,7 @@ func loopAgent(args []string) (string, error) {
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
-	agent, err := loopAgent(args)
+	agent, debugOnFail, err := parseLoopArgs(args)
 	if err != nil {
 		return 2, err
 	}
@@ -345,7 +345,23 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, nil)
+	return a.loop(repo, img, agent, nil, debugOnFail)
+}
+
+// parseLoopArgs pulls the --debug-on-fail flag (alias --debug) out of `coop loop` args;
+// what remains must be at most one agent name.
+func parseLoopArgs(args []string) (agent string, debugOnFail bool, err error) {
+	var rest []string
+	for _, x := range args {
+		switch x {
+		case "--debug-on-fail", "--debug":
+			debugOnFail = true
+		default:
+			rest = append(rest, x)
+		}
+	}
+	agent, err = loopAgent(rest)
+	return agent, debugOnFail, err
 }
 
 const (
@@ -358,7 +374,7 @@ const (
 // model rate/usage limit is not a failure: the loop waits for the reset — parsed
 // from the agent's own output when possible — and resumes the same iteration, so
 // a long run survives hitting the limit and continues once it clears.
-func (a *app) loop(repo, img, agent string, sink io.Writer) (int, error) {
+func (a *app) loop(repo, img, agent string, sink io.Writer, debugOnFail bool) (int, error) {
 	queue := filepath.Join(repo, ".agent", "TASKS.md")
 	if !fileExists(queue) {
 		return -1, errors.New("no .agent/TASKS.md found — run 'coop init' first")
@@ -384,7 +400,16 @@ func (a *app) loop(repo, img, agent string, sink io.Writer) (int, error) {
 	for n := 1; queueHasTodo(queue); {
 		ui.Info("iteration %d", n)
 		code, out, err := a.runIteration(repo, img, iterCmd(loopWork), sink)
-		switch action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits); action {
+		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
+		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
+		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
+		if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
+			ui.Info("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
+			a.debugShell(repo, img)
+			fails = 0 // the developer intervened; don't count this toward the stop cap
+			continue
+		}
+		switch action {
 		case actContinue:
 			n++
 		case actWait:
@@ -411,6 +436,16 @@ func (a *app) loop(repo, img, agent string, sink io.Writer) (int, error) {
 		fmt.Fprintln(os.Stderr, ui.Bold(ui.Green("✓ queue verified done")))
 	}
 	return 0, nil
+}
+
+// debugShell opens an interactive shell in the box against the same repo/image as the
+// loop iteration, so --debug-on-fail can inspect the failed state. The box is disposable
+// per iteration, so this is a fresh shell in the same context, not the failed container.
+func (a *app) debugShell(repo, img string) {
+	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
+		Image: img, Repo: repo, Cmd: []string{a.cfg.Shell},
+		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+	})
 }
 
 // runIteration runs one boxed command in batch mode, teeing its output to the

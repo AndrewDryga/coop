@@ -83,7 +83,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 			}
 		}
 	}
-	code, err := a.loop(ws, img, agent, sink)
+	code, err := a.loop(ws, img, agent, sink, false) // detached/fork loops aren't interactive
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}
