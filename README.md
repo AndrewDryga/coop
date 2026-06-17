@@ -74,6 +74,32 @@ git clone https://github.com/AndrewDryga/coop && cd coop && make install   # fro
 ```
 </details>
 
+<details><summary><b>Verifying a download</b></summary>
+
+`install.sh` verifies automatically: when [cosign](https://github.com/sigstore/cosign)
+is on your `PATH` it checks `checksums.txt`'s keyless Sigstore signature (so the
+checksum file itself is trusted, not just internally consistent) and aborts on failure;
+otherwise it compares the archive's SHA-256 and prints that the signature was not
+verified. To verify by hand, set `VER` and `ASSET` for your platform — e.g.
+`VER=v0.1.0 ASSET=coop_0.1.0_darwin_arm64.tar.gz`:
+
+```bash
+base="https://github.com/AndrewDryga/coop/releases/download/$VER"
+curl -fsSLO "$base/$ASSET"
+curl -fsSLO "$base/checksums.txt"
+curl -fsSLO "$base/checksums.txt.bundle"
+
+# 1. checksums.txt is signed by the release workflow (keyless Sigstore):
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.bundle \
+  --certificate-identity-regexp '^https://github.com/AndrewDryga/coop/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):
+awk -v f="$ASSET" '$2==f{print $1"  "f}' checksums.txt | shasum -a 256 -c -
+```
+</details>
+
 ## Quickstart
 
 ```bash

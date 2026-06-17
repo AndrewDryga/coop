@@ -37,7 +37,29 @@ curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" 
 
 # Verify the download against the release's published checksums — defends against a
 # tampered or MITM'd asset. Fails closed on a mismatch; best-effort if no sha tool.
+# When cosign is present we first verify checksums.txt's Sigstore signature, so the
+# checksum file itself is trusted (not just internally consistent) — an attacker who
+# swapped both the archive and checksums.txt would be caught here. Without cosign we
+# fall back to the plain checksum and say the signature was not verified.
 if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o "$tmp/checksums.txt"; then
+  if command -v cosign >/dev/null 2>&1; then
+    if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt.bundle" -o "$tmp/checksums.txt.bundle"; then
+      if cosign verify-blob "$tmp/checksums.txt" \
+          --bundle "$tmp/checksums.txt.bundle" \
+          --certificate-identity-regexp '^https://github.com/AndrewDryga/coop/' \
+          --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+          >/dev/null 2>&1; then
+        echo "coop: verified checksums.txt signature with cosign"
+      else
+        echo "coop: checksums.txt failed cosign signature verification — aborting" >&2
+        exit 1
+      fi
+    else
+      echo "coop: no checksums.txt.bundle for $ver; skipping signature verification" >&2
+    fi
+  else
+    echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2
+  fi
   want=$(awk -v f="$asset" '$2 == f {print $1}' "$tmp/checksums.txt")
   if command -v sha256sum >/dev/null 2>&1; then
     got=$(sha256sum "$tmp/coop.tar.gz" | cut -d ' ' -f 1)
