@@ -2,6 +2,11 @@
 
 ## 2.6.0
 
+- **Stale-image warning.** A per-project image (built from `Dockerfile.agent`) bakes the
+  repo's toolchain at build time, so it can drift from the files that define it. `coop`
+  now records a hash of `Dockerfile.agent` + `.tool-versions` at `coop build` time and, on
+  a later interactive run, warns when they've changed so you remember to rebuild. (The
+  shared base is exempt — `coop update` keeps it fresh.)
 - **`coop loop --debug-on-fail`.** When an iteration fails at a terminal, the loop opens
   an interactive shell in the box (same repo + image) instead of auto-retrying or
   stopping — inspect files/env/run the gate, then exit the shell to retry (Ctrl-C to

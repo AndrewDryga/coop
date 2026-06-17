@@ -80,6 +80,9 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
 	}
+	if !spec.Batch && !spec.Quiet && StaleImageInputs(cfg, spec.Repo, spec.Image) {
+		ui.Info("box image is stale — Dockerfile.agent/.tool-versions changed since it was built; run 'coop build'")
+	}
 
 	// A single empty read-only file shadows every secret file.
 	decoy, err := os.CreateTemp("", "coop-decoy-")

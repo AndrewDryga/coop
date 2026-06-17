@@ -679,7 +679,9 @@ The scaffolded one is the **asdf** image — it bakes in the exact `.tool-versio
 toolchain (versions live there, not in the Dockerfile). For anything more exotic,
 hand-write a `Dockerfile.agent` (see the box contract below). When the agent needs a new
 system package, add it to the `RUN` line and `coop build` again — the dependency
-*graduates into the image* instead of being installed each run.
+*graduates into the image* instead of being installed each run. If you change
+`Dockerfile.agent` or `.tool-versions` but forget to rebuild, `coop` notices on the next
+run and reminds you to `coop build` (it records the image's inputs at build time).
 
 <details><summary><b>The box contract (build any base)</b></summary>
 
@@ -827,6 +829,7 @@ five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -
 | **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <agent>` runs in a terminal first. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
 | **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
+| **"box image is stale … run 'coop build'"** | You changed `Dockerfile.agent` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
 
 ## Layout & development
 

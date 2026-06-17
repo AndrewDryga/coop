@@ -124,9 +124,13 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) erro
 		ui.Info("building %s (shared base)", cfg.BaseImage)
 		return buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, args...))
 	}
-	ui.Info("building %s from Dockerfile.agent (this project's toolchain)",
-		ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride))
-	return buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
+	img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
+	ui.Info("building %s from Dockerfile.agent (this project's toolchain)", img)
+	err := buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
+	if err == nil {
+		StampImageInputs(cfg, repo, img) // record inputs so a later run can flag drift
+	}
+	return err
 }
 
 // buildArgs assembles the runtime build arguments for repo's image. fresh adds
