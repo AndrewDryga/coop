@@ -112,7 +112,9 @@ func (a *app) cmdStatus(_ []string) (int, error) {
 	fmt.Printf("%s — %d fork(s), %d running, %d blocked\n\n",
 		ui.Bold(filepath.Base(repo)+" fleet"), len(names), running, blocked)
 	const format = "  %-16s %-8s %-10s %-14s %s\n"
-	fmt.Printf(format, ui.Bold("NAME"), ui.Bold("STATE"), ui.Bold("TASKS"), ui.Bold("CHANGES"), ui.Bold("ACTIVE"))
+	// Bold the rendered line, not each cell (see forkLs): per-cell bold would count the
+	// ANSI bytes inside the %-Ns widths and misalign the header against the rows.
+	fmt.Print(ui.Bold(fmt.Sprintf(format, "NAME", "STATE", "TASKS", "CHANGES", "ACTIVE")))
 	for _, s := range statuses {
 		fmt.Printf(format, s.Name, s.stateCell(), s.tasksCell(), s.changesCell(), s.activeCell())
 	}

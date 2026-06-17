@@ -408,8 +408,9 @@ func (a *app) forkLs(_ []string) (int, error) {
 		return 0, nil
 	}
 	const format = "  %-16s %-8s %-12s %-9s %-8s %-15s %s\n"
-	fmt.Printf(format, ui.Bold("NAME"), ui.Bold("AGENT"), ui.Bold("BRANCH"),
-		ui.Bold("STATE"), ui.Bold("TASKS"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
+	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
+	// escape bytes inside the %-Ns width count and misalign the header against the rows.
+	fmt.Print(ui.Bold(fmt.Sprintf(format, "NAME", "AGENT", "BRANCH", "STATE", "TASKS", "CHANGES", "UPDATED")))
 	for _, n := range names {
 		s := gatherForkStatus(repo, n)
 		fmt.Printf(format, s.Name, s.Agent, s.Branch, s.stateCell(), s.tasksCell(), s.changesCell(), s.Updated)
