@@ -77,7 +77,7 @@ func helpText(cfg *config.Config) string {
 	row("coop version", "print the version")
 
 	fmt.Fprint(&b, "\nRun 'coop <command> --help' for any command's flags and details.\n")
-	fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    the README\n",
+	fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://github.com/AndrewDryga/coop\n",
 		tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
 
 	return b.String()
