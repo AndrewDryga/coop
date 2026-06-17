@@ -62,6 +62,7 @@ func helpText(cfg *config.Config) string {
 
 	group("UNATTENDED")
 	row("coop loop [agent]", "work .agent/TASKS.md until done, then audit")
+	row("coop pool add <agent> <profile…>", "pick which subscriptions the loop rotates on a rate limit")
 	row("coop fleet init|up|down|split", "drive a fleet of forks from .agent/fleet")
 	row("coop status", "fleet roll-up: per-fork progress, running/idle, blockers")
 	row("coop tasks list|lint|add|split", "inspect and validate .agent/TASKS.md")
@@ -114,6 +115,18 @@ var commandHelp = map[string]string{
   Shows each agent's profiles and whether they're signed in. A profile is one
   subscription; add more with 'coop login <agent> --profile <name>', then let the
   loop rotate across them on a rate limit ('coop pool').`,
+
+	"pool": `coop pool — which credential profiles this repo's loop rotates.
+
+  Usage: coop pool                          show this repo's pool
+         coop pool add <agent> <profile…>   add profiles to the rotation
+         coop pool rm  <agent> <profile…>   remove profiles
+         coop pool clear <agent>            drop the agent's pool
+
+  When the unattended loop hits a rate/usage limit it switches to another profile in
+  the pool and keeps going, so a long run survives a subscription cap. With no pool
+  set the loop rotates across ALL signed-in profiles for the agent; a pool narrows
+  that to a chosen set. Pools are per-repo and stored outside the repo (names only).`,
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
