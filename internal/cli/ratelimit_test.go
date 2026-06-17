@@ -28,6 +28,11 @@ func TestDetectLimit(t *testing.T) {
 			"request failed: rate limit exceeded", true, time.Time{}},
 		{"http 429, no reset",
 			"HTTP 429 Too Many Requests", true, time.Time{}},
+		{"weekly subscription limit with stated reset",
+			"agent: shadowed 4 secret path(s)\nYou've hit your weekly limit · resets Oct 18, 8pm (UTC)\n",
+			true, time.Date(now.Year(), time.October, 18, 20, 0, 0, 0, time.UTC)},
+		{"subscription limit with no reset clause",
+			"You've hit your weekly limit.", true, time.Time{}},
 		{"normal success output",
 			"flipped [x], committed abc123, done", false, time.Time{}},
 		{"unrelated failure",
@@ -50,6 +55,46 @@ func TestDetectLimit(t *testing.T) {
 	}
 }
 
+func TestParseResetTime(t *testing.T) {
+	base := time.Date(2026, time.June, 16, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		now  time.Time
+		in   string
+		want time.Time // zero = expect no parse
+	}{
+		{"date and time in utc",
+			base, "You've hit your weekly limit · resets Jun 18, 8pm (UTC)",
+			time.Date(2026, time.June, 18, 20, 0, 0, 0, time.UTC)},
+		{"date and time with minutes",
+			base, "resets Jun 18, 8:30pm (UTC)",
+			time.Date(2026, time.June, 18, 20, 30, 0, 0, time.UTC)},
+		{"time only, later today",
+			base, "resets 5pm (UTC)",
+			time.Date(2026, time.June, 16, 17, 0, 0, 0, time.UTC)},
+		{"time only, already past, rolls to tomorrow",
+			base, "resets 9am (UTC)",
+			time.Date(2026, time.June, 17, 9, 0, 0, 0, time.UTC)},
+		{"december notice resetting in january rolls the year",
+			time.Date(2026, time.December, 30, 12, 0, 0, 0, time.UTC), "resets Jan 2, 8am (UTC)",
+			time.Date(2027, time.January, 2, 8, 0, 0, 0, time.UTC)},
+		{"no resets clause", base, "You've hit your weekly limit.", time.Time{}},
+		{"unparseable when", base, "resets soon, hang tight", time.Time{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := parseResetTime(c.in, c.now)
+			if c.want.IsZero() {
+				if !got.IsZero() {
+					t.Errorf("parseResetTime = %v, want zero", got)
+				}
+			} else if !got.Equal(c.want) {
+				t.Errorf("parseResetTime = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestLimitWait(t *testing.T) {
 	now := time.Unix(1_000_000_000, 0)
 	cases := []struct {
@@ -62,8 +107,12 @@ func TestLimitWait(t *testing.T) {
 			limitHint{limited: true, resetAt: now.Add(10 * time.Minute)}, 1, 10*time.Minute + limitBuffer},
 		{"past reset clamps to the minimum",
 			limitHint{limited: true, resetAt: now.Add(-time.Hour)}, 1, limitMinWait},
-		{"far-future reset clamps to the maximum",
-			limitHint{limited: true, resetAt: now.Add(3 * time.Hour)}, 1, limitMaxWait},
+		{"a multi-hour reset is honored, not clamped to an hour",
+			limitHint{limited: true, resetAt: now.Add(3 * time.Hour)}, 1, 3*time.Hour + limitBuffer},
+		{"a multi-day weekly reset is honored",
+			limitHint{limited: true, resetAt: now.Add(48 * time.Hour)}, 1, 48*time.Hour + limitBuffer},
+		{"an absurd far-future reset clamps to the ceiling",
+			limitHint{limited: true, resetAt: now.Add(30 * 24 * time.Hour)}, 1, limitMaxWait},
 		{"unknown reset backs off: attempt 1 → 1m", limitHint{limited: true}, 1, time.Minute},
 		{"unknown reset backs off: attempt 3 → 4m", limitHint{limited: true}, 3, 4 * time.Minute},
 		{"unknown reset backs off: capped at 32m", limitHint{limited: true}, 99, 32 * time.Minute},
@@ -94,6 +143,12 @@ func TestDecideIteration(t *testing.T) {
 	a, wait, _ := decideIteration(1, nil, "Claude AI usage limit reached|1700000000", now, &fails, &waits)
 	if a != actWait || waits != 1 || fails != 0 || wait <= 0 {
 		t.Errorf("limit: action=%d wait=%v fails=%d waits=%d, want actWait/>0/0/1", a, wait, fails, waits)
+	}
+
+	// The newer human-readable weekly limit is a wait, not a failure.
+	fails, waits = 0, 0
+	if a, _, _ := decideIteration(1, nil, "You've hit your weekly limit · resets Jun 18, 8pm (UTC)", now, &fails, &waits); a != actWait || waits != 1 || fails != 0 {
+		t.Errorf("weekly limit: action=%d waits=%d fails=%d, want actWait/1/0", a, waits, fails)
 	}
 
 	// A non-limit failure bumps fails and asks to retry.
