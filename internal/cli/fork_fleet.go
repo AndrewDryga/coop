@@ -68,6 +68,8 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		sub = args[0]
 	}
 	switch sub {
+	case "init":
+		return a.fleetInit()
 	case "up":
 		return a.fleetUp()
 	case "down":
@@ -76,8 +78,41 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		return a.fleetSplit(args[1:])
 	default:
 		// `ls` was a pure alias for `coop fork ls`; point there instead of duplicating.
-		return 2, errors.New("usage: coop fleet up|down|split   (list forks with 'coop fork ls')")
+		return 2, errors.New("usage: coop fleet init|up|down|split   (list forks with 'coop fork ls')")
 	}
+}
+
+// fleetTemplate seeds .agent/fleet with a documented, ready-to-edit format.
+const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path>
+#   <name>        the fork's name (also its git branch)
+#   [agent]       claude (default), codex, or gemini
+#   <tasks-path>  the tasks file that seeds the fork's loop (relative to the repo)
+# Blank lines and #-comments are ignored.  Start the fleet with: coop fleet up
+#
+# Example:
+# api    codex   .agent/TASKS.api.md
+# deps   gemini  .agent/TASKS.deps.md
+`
+
+// fleetInit writes a documented .agent/fleet template so you can declare a fleet without
+// remembering the format. It never clobbers an existing file.
+func (a *app) fleetInit() (int, error) {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
+	}
+	path := fleetFile(repo)
+	if fileExists(path) {
+		return 1, errors.New(".agent/fleet already exists — edit it, or remove it to start over")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return -1, err
+	}
+	if err := os.WriteFile(path, []byte(fleetTemplate), 0o644); err != nil {
+		return -1, err
+	}
+	ui.Info("wrote .agent/fleet — add a fork per line, then 'coop fleet up'")
+	return 0, nil
 }
 
 func (a *app) fleetUp() (int, error) {

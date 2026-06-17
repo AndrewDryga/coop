@@ -178,7 +178,7 @@ any of them.
 |---|---|
 | `coop loop [agent] [--debug-on-fail]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
-| `coop fleet up` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` (list with `coop fork ls`) |
+| `coop fleet init` · `up` · `down` · `split <n>` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template) |
 | `coop status` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on |
 | `coop tasks list` · `lint` · `add "<title>"` · `split <n>` | inspect/validate `.agent/TASKS.md` — `lint` flags stale `[w]` claims and tasks that aren't [self-contained](#the-loop); `split` carves it into self-contained slices |
 
@@ -640,9 +640,9 @@ agents until *review*, not generation, is your bottleneck.
 "green" fork can't ride in against a base an earlier landing already changed. It stops at
 the first conflict or red gate, leaving the rest untouched.
 
-**Declare the fleet once** in `.agent/fleet`, one fork per line as
-`<name> [agent] <tasks-path>` (agent defaults to `claude`; the path is relative to the
-repo root):
+**Declare the fleet once** in `.agent/fleet` (run `coop fleet init` for a template with
+the format documented inline), one fork per line as `<name> [agent] <tasks-path>` (agent
+defaults to `claude`; the path is relative to the repo root):
 
 ```
 perf  codex  .agent/TASKS.perf.md

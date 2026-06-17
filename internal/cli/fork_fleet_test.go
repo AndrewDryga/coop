@@ -131,6 +131,34 @@ func TestFleetSplitIgnoresLegendAndExample(t *testing.T) {
 	}
 }
 
+func TestFleetInit(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "r")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.fleetInit(); err != nil || code != 0 {
+		t.Fatalf("fleetInit = (%d, %v), want (0, nil)", code, err)
+	}
+	body, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet"))
+	if err != nil {
+		t.Fatalf(".agent/fleet not written: %v", err)
+	}
+	for _, want := range []string{"one fork per line", "<name> [agent] <tasks-path>", "coop fleet up"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("fleet template missing %q:\n%s", want, body)
+		}
+	}
+	// The template is all comments, so it parses to an empty fleet (nothing to start yet).
+	if entries, err := parseFleet(string(body)); err != nil || len(entries) != 0 {
+		t.Errorf("template should parse to 0 forks, got %d (%v)", len(entries), err)
+	}
+	// Re-init refuses to clobber.
+	if code, err := a.fleetInit(); err == nil || code == 0 {
+		t.Errorf("re-init should refuse to clobber, got (%d, %v)", code, err)
+	}
+}
+
 func TestFleetSplit(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "r")
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

@@ -15,6 +15,9 @@
   `split <n>` carves the queue into slices. All run through one anchored parser shared
   with the loop, fleet split, and status — so `coop fleet split` now carries each task's
   whole body into its slice (slices stay self-contained) instead of bare title lines.
+- **`coop fleet init`.** Writes a documented `.agent/fleet` template — the
+  `<name> [agent] <tasks-path>` format explained in inline comments — so you can declare a
+  fleet without looking up the syntax. Refuses to clobber an existing file.
 - **`coop status` + a richer `coop fork ls`.** Watching a fleet loop overnight meant
   tailing N logs. `coop status` now rolls the fleet up at a glance — per fork: running or
   idle, tasks done/total, blockers, diff size, and the task it's on — plus fleet totals.

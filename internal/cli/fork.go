@@ -58,39 +58,45 @@ func validForkName(name string) bool {
 // forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
 func forkHelp() (int, error) {
 	rows := []struct{ cmd, desc string }{
-		{"coop fork <name> [agent]", "open or re-enter a fork + run an agent (re-entry continues the last session)"},
-		{"coop fork <name> <agent> --loop --tasks <path>", "loop a tasks file unattended in the fork (add -d to detach)"},
-		{"coop fork ls", "list this repo's forks: agent, branch, changes, state, last activity"},
-		{"coop fork logs [name] [-f|--follow]", "tail a fork's loop log (no name tails every fork, prefixed)"},
-		{"coop fork review <name> [--stat|--tool|--open]", "brief + diff; --tool = git difftool, --open = your editor"},
-		{"coop fork <name> acp [agent]", "front the fork as an ACP agent over stdio (drive it from Zed)"},
-		{"coop fork merge <name> [--all] [-f|--force] [-y|--yes]", "rebase the fork onto your branch and land it (--all = queue)"},
-		{"coop fork rm <name> [-f|--force]", "discard a fork (refuses unmerged/dirty work without --force)"},
-		{"coop fork open <name>", "open the fork in your editor ($COOP_EDITOR / git core.editor / …)"},
+		{"coop fork <name> [agent]", "open or re-enter a fork and run an agent"},
+		{"coop fork <name> <agent> --loop", "loop the fork on a tasks file (-d detaches)"},
+		{"coop fork ls", "list this repo's forks"},
+		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
+		{"coop fork review <name>", "brief + diff (--stat, --tool, --open)"},
+		{"coop fork <name> acp [agent]", "front the fork as an ACP agent (for editors)"},
+		{"coop fork merge <name>", "rebase onto your branch and land it (--all = fleet)"},
+		{"coop fork rm <name>", "discard a fork (refuses unmerged/dirty without --force)"},
+		{"coop fork open <name>", "open the fork in your editor"},
 		{"coop fork path <name>", "print the fork's filesystem path"},
 		{"coop fork stop <name>", "stop a detached loop"},
 	}
 	flags := []struct{ flag, desc string }{
-		{"-c, --continue", "force-resume the prior session (the default on re-entry)"},
+		{"-c, --continue", "resume the prior session (the default on re-entry)"},
 		{"    --new", "start a fresh agent session on re-entry"},
 		{"    --fresh", "recreate the fork from scratch (new clone + session)"},
 		{"-d, --detach", "with --loop, run it in the background"},
-		{"-t, --tasks", "with --loop, path to the tasks file that seeds the queue (required)"},
-		{"-f, --force", "merge / rm: override the gate, policy, or unmerged-or-dirty guard"},
-		{"-y, --yes", "merge: confirm landing + fork removal (required without a TTY)"},
+		{"-t, --tasks", "with --loop, the tasks file that seeds the queue (required)"},
+		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
+		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
 	}
+	pad := func(s string, w int) string {
+		n := w - len(s)
+		if n < 2 {
+			n = 2
+		}
+		return s + strings.Repeat(" ", n)
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — a throwaway local clone handed to an agent; review and merge it like a PR.\n\n", ui.Bold("coop fork"))
+	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", ui.Bold("coop fork"))
 	for _, r := range rows {
-		fmt.Fprintf(&b, "  %-50s %s\n", r.cmd, r.desc)
+		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
 	}
 	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", ui.Bold("FLAGS"))
 	for _, f := range flags {
-		fmt.Fprintf(&b, "  %-16s %s\n", f.flag, f.desc)
+		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
-	fmt.Fprintf(&b, "\n%s --open uses $COOP_EDITOR, else `git config core.editor`, else a detected\n", ui.Bold("REVIEW"))
-	fmt.Fprintf(&b, "         GUI editor; --tool uses `git config diff.tool`. Setup details in the README.\n")
+	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else git core.editor); --tool uses git diff.tool.\n", ui.Bold("REVIEW"))
 	fmt.Print(b.String())
 	return 0, nil
 }

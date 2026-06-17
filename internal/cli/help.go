@@ -61,7 +61,7 @@ func helpText(cfg *config.Config) string {
 
 	group("UNATTENDED")
 	row("coop loop [agent]", "work .agent/TASKS.md until done, then audit")
-	row("coop fleet up|down|split", "drive a fleet of forks from .agent/fleet")
+	row("coop fleet init|up|down|split", "drive a fleet of forks from .agent/fleet")
 	row("coop status", "fleet roll-up: per-fork progress, running/idle, blockers")
 	row("coop tasks list|lint|add|split", "inspect and validate .agent/TASKS.md")
 
@@ -75,6 +75,9 @@ func helpText(cfg *config.Config) string {
 	row("coop check-secrets", "scan the working tree for committed secrets")
 	row("coop help", "this help")
 	row("coop version", "print the version")
+
+	fmt.Fprint(&b, "\nExample — loop a fork on its own tasks file, in the background:\n")
+	fmt.Fprint(&b, "    coop fork api codex --loop -d --tasks .agent/TASKS.md\n")
 
 	fmt.Fprint(&b, "\nRun 'coop <command> --help' for any command's flags and details.\n")
 	fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://github.com/AndrewDryga/coop\n",
@@ -91,118 +94,119 @@ var commandHelp = map[string]string{
 
   Usage: coop shell
 
-  Drops you into the configured shell (default bash) in the sandbox at your repo, with the
-  same mounts, secret-shadowing, and network as an agent run. Exit to return.`,
+  A shell in the sandbox at your repo — same mounts, secret-shadowing, and
+  network as an agent run. Exit to return.`,
 
-	"login": `coop login <agent> — authenticate an agent; its token persists in coop's config dir.
+	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
 
   Usage: coop login <claude|codex|gemini>
 
-  Runs the agent's sign-in (paste a code, no browser) so later runs are authenticated.
-  Re-run any time to refresh or switch accounts — e.g. after a subscription usage limit.`,
+  Runs the agent's sign-in (paste a code, no browser). Re-run any time to
+  refresh or switch accounts — e.g. after a usage limit.`,
 
-	"acp": `coop acp [agent|fusion] — front coop as an ACP agent over stdio (drive it from an editor).
+	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
   Usage: coop acp [claude|codex|gemini | fusion [agent]]
 
-  Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP command at
-  e.g. ["acp","claude"] (one entry per agent or governor). See the README's Zed section.`,
+  Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
+  command at e.g. ["acp","claude"] — one entry per agent or governor.`,
 
-	"fusion": `coop fusion [agent] — a council: the named agent leads, the other two advise read-only, then it synthesizes.
+	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
   Usage: coop fusion [claude|codex|gemini]
 
-  Defaults to the COOP_FUSION_GOVERNOR governor. Peers are consulted read-only; only the
-  leader writes. For a lighter, opt-in variant, run: coop <agent> --consult`,
+  Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
+  writes. Lighter, opt-in variant: coop <agent> --consult`,
 
-	"fleet": `coop fleet up|down|split — drive a declarative fleet of forks from .agent/fleet.
+	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
 
-  Usage: coop fleet up | down | split <n>
+  Usage: coop fleet <init|up|down|split>
 
-  up         start every fork in .agent/fleet, each looping its tasks file, detached
+  init       write a .agent/fleet template
+  up         start every fork in the fleet, looping its tasks, detached
   down       stop the fleet's running loops
-  split <n>  round-robin .agent/TASKS.md into n self-contained slices, then write .agent/fleet
+  split <n>  split .agent/TASKS.md into n fork slices, then write .agent/fleet
 
-  List forks with 'coop fork ls'; watch them with 'coop status'.`,
+  List forks: coop fork ls    Watch: coop status`,
 
-	"status": `coop status — a fleet roll-up: where every fork stands, without tailing N logs.
+	"status": `coop status — fleet roll-up: where every fork stands, without tailing N logs.
 
   Usage: coop status
 
-  Per fork: running/idle, tasks done/total, blockers, diff size, and the task it's on, plus
-  fleet totals. Reads the fork queues, git, and loop state — no daemon.`,
+  Per fork: running/idle, tasks done/total, blockers, diff size, and the task
+  it's on — plus fleet totals. Reads queues, git, and loop state; no daemon.`,
 
-	"tasks": `coop tasks list|lint|add|split — treat .agent/TASKS.md as a validated surface.
+	"tasks": `coop tasks — inspect and validate .agent/TASKS.md.
 
-  Usage: coop tasks list | lint | add "<title>" | split <n>
+  Usage: coop tasks <list|lint|add|split>
 
-  list       states + titles, with a count summary
-  lint       flag stale [w] claims, non-self-contained tasks, and malformed entries (exit 1 on findings)
-  add        append a well-shaped [ ] task stub to fill in
-  split <n>  carve the open tasks into n slices (whole task blocks, bodies included)`,
+  list        list tasks by state, with a count
+  lint        flag stale claims, unshaped or malformed tasks (exits 1 if any)
+  add "..."   append a new task stub
+  split <n>   split the open tasks into n files`,
 
-	"check-secrets": `coop check-secrets — scan the files the box can see for committed secrets, by content.
+	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 
   Usage: coop check-secrets
 
-  Walks the non-shadowed working tree (what an agent actually sees), flags provider token
-  shapes and high-entropy values as file:line, and exits non-zero on a hit (good for CI or
-  pre-flight). Already-shadowed files are skipped; hide a flagged file with .coopignore.`,
+  Scans every file the box can see (not shadowed) for token shapes and
+  high-entropy values, reporting file:line. Exits non-zero on a hit, for use
+  as a pre-flight or CI check. Hide a flagged file with .coopignore.`,
 
-	"loop": `coop loop [agent] [--debug-on-fail] — work .agent/TASKS.md unattended until done, then audit.
+	"loop": `coop loop [agent] — work .agent/TASKS.md until done, then audit.
 
   Usage: coop loop [claude|codex|gemini] [--debug-on-fail]
 
-  A fresh agent per iteration works the unchecked [ ] items; when the queue empties an
-  auditor re-checks every [x]. Rides out rate limits by waiting for the reset.
+  A fresh agent per iteration works the [ ] items; when the queue empties, an
+  auditor re-checks every [x]. Waits out rate limits and resumes.
 
-  --debug-on-fail   on an iteration failure at a terminal, open a box shell to inspect,
-                    then retry when you exit it (a no-op in unattended runs)
+  --debug-on-fail   on a failure at a terminal, open a box shell, then retry
+                    on exit (a no-op in unattended runs)
 
-  COOP_LOOP_CMD overrides the whole per-iteration command.`,
+  COOP_LOOP_CMD overrides the per-iteration command.`,
 
 	"up": `coop up — start the repo's sibling services so the box can reach them by name.
 
   Usage: coop up
 
-  Brings up the services in compose.agent.yml on coop's network; an agent in the box then
-  reaches db/redis/… by hostname. Stop them with: coop down`,
+  Brings up the services in compose.agent.yml on coop's network; an agent in
+  the box reaches db/redis/… by hostname. Stop them with: coop down`,
 
 	"down": `coop down [-v] — stop the repo's sibling services.
 
   Usage: coop down [-v | --volumes]
 
-  -v, --volumes   also remove the services' volumes (their data), not just the containers`,
+  -v, --volumes   also remove the services' volumes (their data)`,
 
 	"init": `coop init [--stack asdf] — scaffold coop's working set into the repo.
 
   Usage: coop init [--stack asdf]
 
-  Writes AGENTS.md, the .agent/ queue, the Claude + git pre-commit hooks, and the workflow
-  skills. With a .tool-versions present (or --stack asdf) it also scaffolds an asdf
-  Dockerfile.agent + compose.agent.yml. Existing files are never clobbered.`,
+  Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, and the
+  workflow skills. A .tool-versions (or --stack asdf) also scaffolds an asdf
+  Dockerfile.agent + compose.agent.yml. Never clobbers existing files.`,
 
-	"doctor": `coop doctor — prove the box's isolation: attack it from inside and from the host.
+	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 
   Usage: coop doctor
 
-  Runs the escape/leak checks — secret shadowing, network limits, host reach, the fork
-  handoff — and prints a pass/fail report. No flags. Honors COOP_RUNTIME.`,
+  Runs the escape/leak checks — secret shadowing, network limits, host reach,
+  the fork handoff — and prints a pass/fail report. Honors COOP_RUNTIME.`,
 
-	"build": `coop build — build the box image (the stable, pinned path).
+	"build": `coop build — build the box image (stable, pinned).
 
   Usage: coop build
 
-  Builds the shared base, or a per-project image if the repo has a Dockerfile.agent,
-  pinning the base + agent versions for a reproducible image. Re-run after changing
-  Dockerfile.agent or .tool-versions. For the latest base/agents instead, use: coop update`,
+  Builds the shared base, or a per-project image if the repo has a
+  Dockerfile.agent — pinning versions for reproducibility. Re-run after
+  changing Dockerfile.agent or .tool-versions. For the latest, use coop update.`,
 
-	"update": `coop update — rebuild the box image fresh, floating to the latest base + agents.
+	"update": `coop update — rebuild the box image fresh, to the latest base + agents.
 
   Usage: coop update
 
-  Like coop build but --pull --no-cache and unpinned, so you get the newest node base and
-  agent CLIs. Use it when you want updates; use coop build for a reproducible image.`,
+  Like coop build but --pull --no-cache and unpinned, so you get the newest
+  node base and agent CLIs. Use coop build for a reproducible image.`,
 }
 
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,
@@ -213,7 +217,7 @@ func printCommandHelp(text string) {
 	} else {
 		fmt.Println(ui.Bold(text))
 	}
-	fmt.Println("\n  see all commands: coop help")
+	fmt.Println("\nRun 'coop help' for all commands.")
 }
 
 // tildeify shortens a path under the home dir to ~/… for readable help.
