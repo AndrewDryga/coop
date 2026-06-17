@@ -190,7 +190,7 @@ func TestMCP(t *testing.T) {
 func TestLogin(t *testing.T) {
 	cfg := &config.Config{}
 	for name, want := range map[string][]string{
-		"claude": {"claude"},
+		"claude": {"claude", "auth", "login"},
 		"gemini": {"gemini"},
 		"codex":  {"codex", "login", "--device-auth"},
 	} {

@@ -40,7 +40,10 @@ func (a claudeAgent) Resume(cfg *config.Config, ws string) ([]string, bool) {
 	return a.Interactive(cfg), false
 }
 
-func (claudeAgent) Login(*config.Config) []string { return []string{"claude"} }
+// Login forces the sign-in flow via the explicit subcommand. Bare `claude` only
+// prompts to log in when no credentials exist, so it's a no-op once authenticated
+// (it just opens a session) — `auth login` re-authenticates and switches accounts.
+func (claudeAgent) Login(*config.Config) []string { return []string{"claude", "auth", "login"} }
 
 func (claudeAgent) ConsultCmd(question string) []string {
 	return []string{"claude", "-p", "--permission-mode", "plan", question}

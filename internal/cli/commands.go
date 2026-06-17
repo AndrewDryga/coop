@@ -61,6 +61,11 @@ func (a *app) cmdRun(args []string) (int, error) {
 // stripped first so it isn't forwarded to the agent.
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	consult, args := extractConsult(args)
+	// `coop claude login` reads as "log in to claude", not "prompt claude with the
+	// word login" — route it to the sign-in flow like `coop login claude`.
+	if len(args) == 1 && args[0] == "login" {
+		return a.loginTo(tool)
+	}
 	lead := "" // ConsultLead is set only with --consult, so the directive is opt-in
 	if consult {
 		lead = tool
@@ -97,6 +102,12 @@ func (a *app) cmdLogin(args []string) (int, error) {
 	if len(args) > 0 {
 		tool = args[0]
 	}
+	return a.loginTo(tool)
+}
+
+// loginTo runs an agent's sign-in flow in the box; its token persists in the
+// agent's config dir. Shared by `coop login [agent]` and `coop <agent> login`.
+func (a *app) loginTo(tool string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {
 		return 2, fmt.Errorf("unknown agent %q — use %s", tool, strings.Join(agents.Names(), ", "))
