@@ -70,11 +70,18 @@ if [ -z "$COOP_NO_ASDF" ] && command -v asdf >/dev/null 2>&1; then
   while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
   [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
   if [ -n "$f" ]; then
-    echo "coop: provisioning toolchain from $f (first run may compile; cached after)" >&2
+    # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor
+    # over stdio, not a human, so the toolchain chatter is just noise in its log.
+    log=/dev/stderr
+    if [ -n "$COOP_QUIET" ]; then
+      log=/dev/null
+    else
+      echo "coop: provisioning toolchain from $f (first run may compile; cached after)" >&2
+    fi
     for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
-      asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >&2 || true
+      asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
     done
-    asdf install >&2 || true
+    asdf install >"$log" 2>&1 || true
     asdf reshim >/dev/null 2>&1 || true
   fi
 fi

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.2
+
+- **`coop acp` runs quiet.** ACP speaks to an editor over stdio, so coop's progress lines
+  (the secret-shadow count, the fusion-governor note) and the box's toolchain-provisioning
+  chatter were just noise in the editor's log. ACP now suppresses them — the toolchain
+  still provisions, silently (`COOP_QUIET`). Other modes are unchanged.
+
 ## 2.5.1
 
 - **Secret directories are now shadowed on Podman too.** Directory shadowing used
