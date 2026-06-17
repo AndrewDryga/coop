@@ -26,9 +26,12 @@ func TestScanSecretsPatterns(t *testing.T) {
 }
 
 func TestScanSecretsEntropy(t *testing.T) {
-	// A long, high-entropy value on a secret-named key is flagged.
+	// A long, high-entropy value on a secret-named key is flagged — quoted or not.
 	if f := ScanSecrets(`api_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sG2eU4iO7p"`); len(f) == 0 {
 		t.Error("expected an entropy finding for a random api_key value")
+	}
+	if f := ScanSecrets(`API_TOKEN=aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx`); len(f) == 0 {
+		t.Error("expected an entropy finding for an unquoted random token (e.g. a .env value)")
 	}
 	// No false positives: a hash on a non-secret key, a short secret, prose, plain code.
 	for _, clean := range []string{
@@ -37,6 +40,12 @@ func TestScanSecretsEntropy(t *testing.T) {
 		`greeting = "hello there, how are you today friend"`,  // spaces / low entropy
 		`func main() { fmt.Println("ok") }`,
 		`name: Jane Doe`,
+		// Code expressions on a secret-named key are references, not literal secrets.
+		`databricks_api_key        = var.blitz_databricks_api_key`, // a Terraform var reference
+		`password = config.database.api_password_field`,            // a dotted config reference
+		`secret_token = process.env.SOME_LONG_SECRET_NAME`,         // an env reference
+		`api_key = "${var.databricks_api_key_reference_here}"`,     // a template interpolation
+		`api_key = generateApiKeyFromTheVaultService()`,            // a function call
 	} {
 		if f := ScanSecrets(clean); len(f) != 0 {
 			t.Errorf("false positive on %q: %v", clean, f)

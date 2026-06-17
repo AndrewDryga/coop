@@ -39,6 +39,29 @@ var secretAssignRe = regexp.MustCompile(`(?i)(\w*(?:secret|token|password|passwd
 // Real base64/hex tokens sit ~3.5–6; English/placeholder text sits lower.
 const entropyThreshold = 3.5
 
+// codeRefRe matches a dotted identifier path with a short leading segment — var.x,
+// data.y.z, process.env.API_KEY, config.databricks_api_key — i.e. a code reference, not a
+// literal secret. The ≤16-char first segment keeps it from matching dotted base64 blobs
+// like JWTs, whose segments are long.
+var codeRefRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$-]{0,15}(\.[A-Za-z_$][A-Za-z0-9_$-]*)+$`)
+
+// looksLikeCodeRef reports whether a value is a code expression — a variable/config
+// reference, a template interpolation, or a function call — rather than a literal secret.
+// It keeps the entropy heuristic from flagging innocent code, e.g. the common
+// `databricks_api_key = var.blitz_databricks_api_key`.
+func looksLikeCodeRef(v string) bool {
+	switch {
+	case strings.Contains(v, "${"), strings.Contains(v, "{{"):
+		return true // interpolation: ${var.x}, {{ .Secret }}
+	case strings.IndexByte(v, '(') >= 0 && strings.IndexByte(v, ')') >= 0:
+		return true // a call: generateKey(), os.getenv("X")
+	case codeRefRe.MatchString(v):
+		return true // a dotted reference: var.x, process.env.API_KEY, config.token
+	default:
+		return false
+	}
+}
+
 // ScanSecrets reports likely secrets in content: the provider patterns on every line,
 // plus a conservative entropy check (a long, high-entropy value assigned to a
 // secret-named key). It is pure; callers skip binary/oversized blobs before calling.
@@ -55,7 +78,7 @@ func ScanSecrets(content string) []SecretFinding {
 		}
 		// Don't double-report a line a pattern already flagged.
 		if !matched {
-			if m := secretAssignRe.FindStringSubmatch(line); m != nil && shannonEntropy(m[2]) >= entropyThreshold {
+			if m := secretAssignRe.FindStringSubmatch(line); m != nil && !looksLikeCodeRef(m[2]) && shannonEntropy(m[2]) >= entropyThreshold {
 				out = append(out, SecretFinding{n, "high-entropy value assigned to '" + m[1] + "'"})
 			}
 		}

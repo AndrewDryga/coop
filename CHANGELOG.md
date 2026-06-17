@@ -14,6 +14,11 @@
   launch even when every pinned tool was already present — pure noise. The entrypoint now
   checks `.tool-versions` against what's installed and stays silent unless a tool is
   missing.
+- **Fewer secret-scan false positives on code.** The content scanner's entropy check
+  flagged code *expressions* assigned to secret-named keys — `api_key =
+  var.blitz_databricks_api_key`, `${var.x}`, `config.db.password`, `getSecret()`. It now
+  skips values that are variable/config references, interpolations, or function calls, so
+  `coop check-secrets` and the fork-merge policy stop crying wolf on ordinary IaC/config.
 
 ## 2.5.1
 
