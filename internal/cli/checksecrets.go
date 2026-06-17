@@ -18,7 +18,10 @@ const maxScanBytes = 5 << 20
 // cmdCheckSecrets scans the files the box can actually see — the non-shadowed working
 // tree — for secret-looking content, so a committed token is caught before the repo is
 // handed to an agent. Exits non-zero on any hit (usable in CI / as a pre-flight check).
-func (a *app) cmdCheckSecrets(_ []string) (int, error) {
+func (a *app) cmdCheckSecrets(args []string) (int, error) {
+	if err := rejectArgs("check-secrets", args); err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

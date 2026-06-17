@@ -220,6 +220,9 @@ func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
+	if err := rejectArgs("build", args); err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -237,6 +240,9 @@ func (a *app) cmdBuild(args []string) (int, error) {
 // and the npm-installed agent CLIs + ACP adapters refresh to their latest, then
 // reports the versions it landed on. ACP/agent packages ship features often.
 func (a *app) cmdUpdate(args []string) (int, error) {
+	if err := rejectArgs("update", args); err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -259,6 +265,9 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 }
 
 func (a *app) cmdUp(args []string) (int, error) {
+	if err := rejectArgs("up", args); err != nil {
+		return 2, err
+	}
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}

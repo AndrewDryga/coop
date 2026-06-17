@@ -57,11 +57,11 @@ func Main(argv []string) int {
 		return 0
 	}
 
-	// `-h`/`--help` on coop's own subcommands prints help without needing a runtime —
-	// fork gets its own family help, the rest fall back to the main help. Agent and raw
-	// commands (claude/codex/gemini/run/…) instead forward --help to the underlying CLI,
-	// so they're left to fall through to the box below.
-	if helpRequested(argv[1:]) {
+	// `-h`/`--help` (or a bare `help` arg) on coop's own subcommands prints that command's
+	// help without needing a runtime — fork gets its own family help. Agent and raw
+	// commands (claude/codex/gemini/run/…) aren't in the map, so they fall through and
+	// forward `--help`/`help` to the underlying CLI / box.
+	if helpRequested(argv[1:]) || (len(argv) > 1 && argv[1] == "help") {
 		if argv[0] == "fork" || argv[0] == "clone" {
 			code, _ := forkHelp()
 			return code
@@ -103,6 +103,9 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "run":
 		return a.cmdRun(rest)
 	case "shell":
+		if err := rejectArgs("shell", rest); err != nil {
+			return 2, err
+		}
 		return a.runInBox([]string{a.cfg.Shell}, "")
 	case "login":
 		return a.cmdLogin(rest)

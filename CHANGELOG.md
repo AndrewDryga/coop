@@ -33,6 +33,11 @@
   used to print the generic usage; now it prints focused help — synopsis, what it does,
   and its flags/subcommands. (`coop fork` keeps its fuller help; `coop run` and the agents
   still forward `--help` to the underlying command.)
+- **`coop <command> help` works, and no-argument commands reject stray args.** `coop build
+  help` (or any extra token) used to be silently ignored — the build just ran. Now a
+  positional `help` prints the command's help like `--help`, and the no-argument commands
+  (`build`, `update`, `doctor`, `status`, `up`, `shell`, `check-secrets`) reject unexpected
+  arguments with a clear error instead of ignoring them.
 - **`coop help` is a clean command reference.** Reworked into one-command-per-line groups
   (fork verbs are listed individually, not collapsed into `<verb>`), fixed long commands
   gluing onto their descriptions, and dropped the verbose prose tutorials — each command's

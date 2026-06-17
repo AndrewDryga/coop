@@ -85,7 +85,10 @@ func (s forkStatus) activeCell() string {
 
 // cmdStatus rolls up the fleet: one progress line per fork plus totals, so an overnight
 // run can be checked at a glance without tailing N logs.
-func (a *app) cmdStatus(_ []string) (int, error) {
+func (a *app) cmdStatus(args []string) (int, error) {
+	if err := rejectArgs("status", args); err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

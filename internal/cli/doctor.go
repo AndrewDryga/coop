@@ -38,6 +38,9 @@ func (r *report) no(msg string) { r.fail++; fmt.Printf("  %s %s\n", ui.Cross(), 
 // secrets, runs the box against it, and checks that every secret is shadowed
 // inside the sandbox and absent from a clone handoff.
 func (a *app) cmdDoctor(args []string) (int, error) {
+	if err := rejectArgs("doctor", args); err != nil {
+		return 2, err
+	}
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}

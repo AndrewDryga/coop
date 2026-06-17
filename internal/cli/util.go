@@ -150,6 +150,16 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 	return "", false
 }
 
+// rejectArgs returns a usage error when a command that takes no arguments is given some,
+// so a stray token fails clearly instead of being silently ignored. (A `help`/`--help`
+// arg is intercepted earlier, so it never reaches here.)
+func rejectArgs(cmd string, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("coop %s takes no arguments (got %q) — see 'coop %s --help'", cmd, strings.Join(args, " "), cmd)
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
