@@ -43,6 +43,13 @@ func TestRegistry(t *testing.T) {
 	if _, ok := Get("nope"); ok {
 		t.Error("Get(nope) should be absent")
 	}
+	if Default() != "claude" {
+		t.Errorf("Default() = %q, want claude", Default())
+	}
+	// Packages is the union across agents (claude 2 + codex 2 + gemini 1).
+	if got := Packages(); len(got) != 5 || !slices.Contains(got, "@google/gemini-cli") {
+		t.Errorf("Packages() = %v", got)
+	}
 }
 
 func TestCommands(t *testing.T) {

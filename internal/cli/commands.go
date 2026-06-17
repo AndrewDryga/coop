@@ -93,7 +93,7 @@ func (a *app) defaultCmd(tool string) []string {
 }
 
 func (a *app) cmdLogin(args []string) (int, error) {
-	tool := "claude"
+	tool := agents.Default()
 	if len(args) > 0 {
 		tool = args[0]
 	}
@@ -124,7 +124,7 @@ func acpCommand(tool string) ([]string, bool) {
 // entry per governor to switch which model leads.
 func (a *app) cmdACP(args []string) (int, error) {
 	consult, args := extractConsult(args)
-	tool := "claude"
+	tool := agents.Default()
 	if len(args) > 0 {
 		tool = args[0]
 	}
@@ -314,7 +314,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 // loopAgent picks the model for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
 func loopAgent(args []string) (string, error) {
-	agent := "claude"
+	agent := agents.Default()
 	for _, x := range args {
 		if !agents.Valid(x) {
 			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s])", x, strings.Join(agents.Names(), "|"))

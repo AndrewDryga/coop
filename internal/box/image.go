@@ -6,16 +6,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// BaseDockerfile is the shared base image: Node, the three agent CLIs, the ACP
-// adapters, and asdf — so the box honors a repo's .tool-versions at runtime, with
-// no per-project Dockerfile needed. It runs as the non-root `node` user and is
-// built from stdin, so the base never needs a repo checkout.
-const BaseDockerfile = `FROM node:24
+// BaseDockerfile is the shared base image: Node, the agent CLIs + ACP adapters (each
+// agent names its own npm packages), and asdf — so the box honors a repo's
+// .tool-versions at runtime, with no per-project Dockerfile needed. It runs as the
+// non-root `node` user and is built from stdin, so the base never needs a checkout.
+func BaseDockerfile() string {
+	return fmt.Sprintf(baseDockerfileTemplate, strings.Join(agents.Packages(), " "))
+}
+
+// baseDockerfileTemplate is BaseDockerfile with %s for the npm package list.
+const baseDockerfileTemplate = `FROM node:24
 
 ARG ASDF_VERSION=0.19.0
 
@@ -27,8 +33,7 @@ RUN apt-get update \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
       postgresql-client procps inotify-tools \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
- && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
-      @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
+ && npm install -g %s \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
@@ -98,7 +103,7 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) erro
 	args, base := buildArgs(cfg, repo, fresh)
 	if base {
 		ui.Info("building %s (shared base)", cfg.BaseImage)
-		return buildErr(rt.Run(strings.NewReader(BaseDockerfile), os.Stdout, os.Stderr, args...))
+		return buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, args...))
 	}
 	ui.Info("building %s from Dockerfile.agent (this project's toolchain)",
 		ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride))

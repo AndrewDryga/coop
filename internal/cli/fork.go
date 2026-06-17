@@ -141,7 +141,7 @@ type forkArgs struct {
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
-	fa := forkArgs{agent: "claude"}
+	fa := forkArgs{agent: agents.Default()}
 	if len(args) == 0 || args[0] == "" {
 		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini] [--loop --tasks <path> [-d]]")
 	}
@@ -539,7 +539,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	consult, rest := extractConsult(rest)
-	agent := "claude"
+	agent := agents.Default()
 	for _, x := range rest {
 		switch {
 		case agents.Valid(x):

@@ -44,6 +44,9 @@ func (geminiAgent) ConsultCmd(question string) []string {
 	return []string{"gemini", "--approval-mode", "plan", "-p", question}
 }
 
+// Packages is just the CLI: gemini's ACP mode is built in (gemini --acp).
+func (geminiAgent) Packages() []string { return []string{"@google/gemini-cli"} }
+
 func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
 
 func (geminiAgent) AuthMarker() (file, envKey string) {

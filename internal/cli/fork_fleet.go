@@ -34,7 +34,7 @@ func parseFleet(data string) ([]fleetEntry, error) {
 			continue
 		}
 		f := strings.Fields(line)
-		e := fleetEntry{name: f[0], agent: "claude"}
+		e := fleetEntry{name: f[0], agent: agents.Default()}
 		rest := f[1:]
 		// An optional agent token may precede the required tasks path.
 		if len(rest) > 0 && agents.Valid(rest[0]) {
@@ -142,7 +142,7 @@ func (a *app) fleetSplit(args []string) (int, error) {
 			return 2, errors.New("usage: coop fleet split <n>")
 		}
 		for i := 1; i <= n; i++ {
-			targets = append(targets, target{"slice" + strconv.Itoa(i), "claude"})
+			targets = append(targets, target{"slice" + strconv.Itoa(i), agents.Default()})
 		}
 	} else if fleet, err := a.loadFleet(repo); err == nil {
 		for _, e := range fleet {

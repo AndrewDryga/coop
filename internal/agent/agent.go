@@ -43,6 +43,21 @@ type Agent interface {
 	// sandbox) in its config dir so a fresh box goes straight to work. Best-effort; an
 	// agent that needs nothing leaves it empty. workdir is the resolved box cwd.
 	EnsureDefaults(cfg *config.Config, workdir string)
+	// Packages are the npm packages the box image installs for this agent — its CLI and
+	// (if separate) its ACP adapter.
+	Packages() []string
+}
+
+// Default is the agent used when a command takes one but none is given.
+func Default() string { return "claude" }
+
+// Packages is the union of every agent's npm packages, for the box image's install.
+func Packages() []string {
+	var pkgs []string
+	for _, n := range Names() {
+		pkgs = append(pkgs, registry[n].Packages()...)
+	}
+	return pkgs
 }
 
 // MCPMount is one generated config file an agent needs to see the shared mcp.json: its

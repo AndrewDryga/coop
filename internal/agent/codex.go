@@ -60,6 +60,10 @@ func (codexAgent) ConsultCmd(question string) []string {
 	return []string{"codex", "exec", "-s", "read-only", question}
 }
 
+func (codexAgent) Packages() []string {
+	return []string{"@openai/codex", "@zed-industries/codex-acp"}
+}
+
 func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
