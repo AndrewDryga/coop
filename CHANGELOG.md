@@ -9,6 +9,11 @@
 - **Consistent `coop:` log prefix.** coop's progress/error lines used a dimmed `agent:`
   prefix while the box's provisioning printed `coop:` — now both are a dimmed `coop:` (the
   tool's own name), so output reads as one voice.
+- **The box only narrates provisioning when there's actually something to install.** The
+  "provisioning toolchain…" line (and asdf's "already installed" output) printed on every
+  launch even when every pinned tool was already present — pure noise. The entrypoint now
+  checks `.tool-versions` against what's installed and stays silent unless a tool is
+  missing.
 
 ## 2.5.1
 

@@ -70,19 +70,28 @@ if [ -z "$COOP_NO_ASDF" ] && command -v asdf >/dev/null 2>&1; then
   while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
   [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
   if [ -n "$f" ]; then
-    # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor
-    # over stdio, not a human, so the toolchain chatter is just noise in its log.
-    log=/dev/stderr
-    if [ -n "$COOP_QUIET" ]; then
-      log=/dev/null
-    else
-      if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
-      echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
+    # Only provision (and say so) when a pinned tool is actually missing. Otherwise this
+    # ran on every launch and printed a "provisioning" line with nothing to do — just spam.
+    need=
+    while read -r t v _; do
+      case "$t" in ''|'#'*) continue ;; esac
+      [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/$t/$v" ] || { need=1; break; }
+    done < "$f"
+    if [ -n "$need" ]; then
+      # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
+      # stdio, not a human. Otherwise narrate with a dimmed coop: prefix (matching ui).
+      log=/dev/stderr
+      if [ -n "$COOP_QUIET" ]; then
+        log=/dev/null
+      else
+        if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
+        echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
+      fi
+      for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
+        asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
+      done
+      asdf install >"$log" 2>&1 || true
     fi
-    for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
-      asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
-    done
-    asdf install >"$log" 2>&1 || true
     asdf reshim >/dev/null 2>&1 || true
   fi
 fi
