@@ -32,7 +32,7 @@ It's the working tooling behind two write-ups:
 
 ## Contents
 
-- [Install](#install) · [Quickstart](#quickstart) · [Command reference](#command-reference)
+- [Install](#install) · [Happy path](#happy-path-5-commands) · [Quickstart](#quickstart) · [Command reference](#command-reference)
 - [The sandbox](#the-sandbox) — what's mounted · secrets shadowed · git identity · `coop doctor`
 - [Forks](#forks-hand-off-work-like-a-pr) — open · review · land work like a contractor's PR
 - [Agents & config](#agents--config) — authentication · instructions · MCP servers
@@ -40,7 +40,7 @@ It's the working tooling behind two write-ups:
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · a fleet
 - [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `Dockerfile.agent` · services
-- [Configuration](#configuration) · [Layout & development](#layout--development)
+- [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Layout & development](#layout--development)
 
 ---
 
@@ -99,6 +99,26 @@ cosign verify-blob checksums.txt \
 awk -v f="$ASSET" '$2==f{print $1"  "f}' checksums.txt | shasum -a 256 -c -
 ```
 </details>
+
+## Happy path (5 commands)
+
+From nothing to a sandboxed agent landing reviewed work:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
+# ^ installs the binary, and (if a runtime is present) builds the box + runs coop doctor
+
+cd ~/code/your-repo          # 1. any git repo
+coop doctor                  # 2. prove isolation holds (builds the box first if needed)
+coop login claude            # 3. authenticate once (token persists; paste-code, no browser needed)
+coop claude                  # 4. a sandboxed agent, brakes off, your secrets shadowed
+coop fork feature claude     # 5. or hand off a branch: agent works in a throwaway clone…
+coop fork review feature     #    …you review the diff…
+coop fork merge feature      #    …and land it (rebased onto your branch, signed if you sign)
+```
+
+If `coop doctor` says the image isn't built, run `coop build` once. Stuck on any step?
+See [Troubleshooting](#troubleshooting).
 
 ## Quickstart
 
@@ -780,6 +800,20 @@ quotes group, `\` escapes), but **no shell runs** them (no globbing or `$VAR`). 
 group as you'd expect — `COOP_GATE='bash -lc "make check && make lint"'` is three args, not
 five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -lc "…"`.
 (`COOP_REVIEW_CMD` is the exception — it *is* run via `sh -c`.)
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| **"no container runtime found"** | Install Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman, then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
+| **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `Dockerfile.agent` (its own image). `coop doctor` builds it too. |
+| **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own. |
+| **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
+| **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
+| **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the toolchain there (e.g. `golang 1.26.4`) so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
+| **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <agent>` runs in a terminal first. |
+| **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
+| **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
 
 ## Layout & development
 
