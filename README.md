@@ -15,9 +15,9 @@
 
 Coding agents are most useful with the brakes off (`--dangerously-skip-permissions`,
 `--yolo`) — and that's exactly when you don't want them loose on your laptop.
-**Coop** runs them in a disposable container that mounts only the repo you're working
+Coop runs them in a disposable container that mounts only the repo you're working
 on, shadows its secrets, and can't reach your home dir, SSH keys, or other projects.
-One command, installed once; the same box drives **Claude, Codex, and Gemini**.
+One command, installed once; the same box drives Claude, Codex, and Gemini.
 
 ```bash
 cd ~/code/some-repo && coop claude     # a sandboxed Claude, brakes off, secrets hidden
@@ -62,8 +62,8 @@ coop build && coop doctor
 [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman,
 auto-detected. `coop` itself is a single static binary with no other dependencies.
 
-**Staying current:** re-run the one-liner to upgrade the **binary**;
-[`coop update`](#keeping-the-box-current) rebuilds the **box image** fresh, pulling the
+**Staying current:** re-run the one-liner to upgrade the binary;
+[`coop update`](#keeping-the-box-current) rebuilds the box image fresh, pulling the
 latest agent CLIs and ACP adapters (they ship features often) plus a newer base.
 
 <details><summary><b>Other ways to install</b></summary>
@@ -138,7 +138,7 @@ Point it at a repo and go. Each agent launches with its own "don't stop to ask" 
 `--yolo`), all inside the same sandbox. The worst an off-the-rails agent can do is
 trash one repo you can restore from git.
 
-Anything after the agent name is **passed through** to it, on top of those flags — so
+Anything after the agent name is passed through to it, on top of those flags — so
 `coop claude --continue` resumes Claude's last session, still sandboxed.
 
 ## Command reference
@@ -195,21 +195,21 @@ any of them.
 
 ## The sandbox
 
-The repo is bind-mounted into the box at the **same path it has on your machine**, so
+The repo is bind-mounted into the box at the same path it has on your machine, so
 the agent edits real files and you see them live in your editor. Everything else —
 your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 
 ### Secrets never enter the box
 
-`.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are **shadowed**: an empty
+`.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are shadowed: an empty
 `tmpfs` over secret directories, a read-only empty file over secret files. Templates
 (`*.example`, `*.sample`, `*.template`) stay visible so the agent can still see the
 shape of your config. The default patterns are compiled in (see
 `internal/box/secrets.go`).
 
-That default list is a **denylist of well-known names** — it can't know your repo holds
+That default list is a denylist of well-known names — it can't know your repo holds
 a `config/credentials.yaml` or a committed `prod.yml` full of secrets. Hide those by
-adding a **`.coopignore`** at the repo root, one pattern per line (`#` comments and
+adding a `.coopignore` at the repo root, one pattern per line (`#` comments and
 blank lines ignored):
 
 ```gitignore
@@ -221,16 +221,16 @@ vault/                   # a directory — its contents are hidden whole
 
 Patterns extend the defaults; they never un-hide. Templates (`*.example` and friends)
 always stay visible, even if a `.coopignore` line would match them. A `.coopignore` also
-works in any **subdirectory** (like `.gitignore`): it's scoped to that subtree — basename
+works in any subdirectory (like `.gitignore`): it's scoped to that subtree — basename
 patterns match at any depth under it, path patterns are relative to it — so a monorepo's
 sub-teams can keep folder-local rules next to their code. A denylist can never be
 exhaustive, so prefer gitignoring real secrets (gitignored files never enter a
 [fork](#forks-hand-off-work-like-a-pr) either) and use `.coopignore` for anything that
 must live in the working tree. Prove your setup with [`coop doctor`](#prove-it-coop-doctor).
 
-Shadowing hides secrets by **filename**, but a token can hide *inside* an ordinary file.
+Shadowing hides secrets by filename, but a token can hide *inside* an ordinary file.
 `coop check-secrets` scans the files the box can actually see (everything not shadowed)
-for secret-looking **content** — provider token shapes and high-entropy values — and
+for secret-looking content — provider token shapes and high-entropy values — and
 reports each as `file:line`, exiting non-zero on a hit so it works as a pre-flight or CI
 check. It deliberately ignores already-shadowed files (the box never sees them) — if it
 flags something you keep on purpose, hide that file with a `.coopignore` entry. Forks land
@@ -239,11 +239,11 @@ through the same content scan ([`coop fork merge`](#forks-hand-off-work-like-a-p
 ### Your git identity, not the box's
 
 The box has no `~/.gitconfig` of its own, so coop mounts a curated one into every run:
-your global **`user.name`/`user.email`** (commits are authored as you), your global
-**gitignore** (`core.excludesfile`), and **`commit.gpgsign=false`** — the box holds no
+your global `user.name`/`user.email` (commits are authored as you), your global
+gitignore (`core.excludesfile`), and `commit.gpgsign=false` — the box holds no
 signing key, so without that a global `gpgsign=true` would fail every commit. Your key
 never enters the box; commits made inside it are unsigned. (Forks can still land
-**signed** — see [Landing](#land-it-rebase-gate-sign).)
+signed — see [Landing](#land-it-rebase-gate-sign).)
 
 ### Prove it: `coop doctor`
 
@@ -251,20 +251,20 @@ never enters the box; commits made inside it are unsigned. (Forks can still land
 coop doctor
 ```
 
-`doctor` plants a fake secret, launches the box, and checks **from inside** that the
+`doctor` plants a fake secret, launches the box, and checks from inside that the
 secret is unreachable and unwritable — then checks on the host that a fork carries
 neither the secret nor a pushable remote. Run it anytime, especially after changing
 config.
 
 ## Forks: hand off work like a PR
 
-A **fork** is a throwaway local clone of your repo, handed to an agent instead of your
+A fork is a throwaway local clone of your repo, handed to an agent instead of your
 working tree. It's an extra layer of isolation (the agent never touches your checkout)
 and the unit of parallelism (run several at once). Because a fork's `origin` is a local
-path, **the agent has nowhere to push** — and gitignored secrets were never committed,
+path, the agent has nowhere to push — and gitignored secrets were never committed,
 so they don't come along. You stay the reviewer and the only one who lands anything.
 
-The lifecycle mirrors a contractor's PR: **open → work → review → land**.
+The lifecycle mirrors a contractor's PR: open → work → review → land.
 
 ```bash
 coop fork perf codex     # open: clone into ../<repo>-forks/perf, run codex there
@@ -290,17 +290,17 @@ See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to ru
 
 ### Re-entry resumes the session
 
-A fork **remembers the agent it was created with**, so `coop fork perf` after
+A fork remembers the agent it was created with, so `coop fork perf` after
 `coop fork perf codex` re-enters with *codex*, not a silent fallback to claude (pass an
 agent to switch; `coop fork ls` shows each fork's agent). The agent's session history
-persists too, so re-entry **continues its last conversation** instead of starting fresh
+persists too, so re-entry continues its last conversation instead of starting fresh
 — scoped to that fork (claude `--continue`, gemini `--resume latest`, and codex by the
 session whose recorded cwd is the fork). It falls back to a fresh session when none
 exists. Force one with `--new`; `--fresh` recreates the whole fork.
 
 ### Review — in your terminal or your IDE
 
-`coop fork review <name>` opens with a **brief** — the commits, the files changed, and
+`coop fork review <name>` opens with a brief — the commits, the files changed, and
 the agent's own `.agent/LOG.md` reasoning — then shows the diff in your pager. No setup
 needed. To review in an IDE instead:
 
@@ -313,10 +313,10 @@ needed. To review in an IDE instead:
 <details>
 <summary><b><code>--open</code></b> — register your editor</summary>
 
-coop opens the fork directory with the **first** of these that's set:
+coop opens the fork directory with the first of these that's set:
 
-1. **`COOP_EDITOR`** — a coop-only override
-2. **`git config core.editor`** — your normal git editor (local config beats global)
+1. `COOP_EDITOR` — a coop-only override
+2. `git config core.editor` — your normal git editor (local config beats global)
 3. an auto-detected GUI editor on `PATH`: `cursor`, `code`, `zed`, `idea`, `subl`
 4. `$VISUAL` / `$EDITOR`
 
@@ -328,7 +328,7 @@ git config --global core.editor "zed --wait"   # your standard git editor (git c
 export COOP_EDITOR="zed"                        # coop-only; overrides core.editor
 ```
 
-coop runs the editor command **verbatim**, so `core.editor = "zed --wait"` blocks the
+coop runs the editor command verbatim, so `core.editor = "zed --wait"` blocks the
 terminal until you close the window — that's what `--wait` is for. If you'd rather the
 command return immediately, set `COOP_EDITOR` without `--wait` (e.g. `COOP_EDITOR=zed`).
 </details>
@@ -367,23 +367,23 @@ export COOP_REVIEW_CMD='cd "$COOP_FORK_PATH" && lazygit'
 
 ### Land it: rebase, gate, sign
 
-`coop fork merge <name>` **rebases** the fork onto your current branch and
+`coop fork merge <name>` rebases the fork onto your current branch and
 fast-forwards — linear history, no merge commits. The rebase happens on the host, where
 your key lives, so if you sign commits (`commit.gpgsign=true`) the landed commits are
-**signed with your key** even though the box committed them unsigned. Then `git push` —
+signed with your key even though the box committed them unsigned. Then `git push` —
 the only step the agents can't do.
 
-Set **`COOP_GATE`** (e.g. `COOP_GATE="make check"`) and every merge re-runs that gate in
+Set `COOP_GATE` (e.g. `COOP_GATE="make check"`) and every merge re-runs that gate in
 the box on the *rebased* tree, rolling back if it goes red — the machine gate behind
-your human review. A **policy check** also flags secret-looking or oversized files and
-**scans each changed file's content** for real credentials (provider token shapes —
+your human review. A policy check also flags secret-looking or oversized files and
+scans each changed file's content for real credentials (provider token shapes —
 AWS/OpenAI/Anthropic/GitHub/Slack/… — plus high-entropy values on secret-named keys), so
 a token committed inside an ordinary file is caught even though its filename is innocuous
 (override with `--force`). Merge refuses if your own tree is dirty.
 
 Merging lands work and then offers to delete the fork, so it asks first. In a
-**non-interactive** shell (CI, a pipe) there's no one to answer, and merge refuses
-rather than landing on the default — pass **`--yes`** (`-y`) to confirm landing and
+non-interactive shell (CI, a pipe) there's no one to answer, and merge refuses
+rather than landing on the default — pass `--yes` (`-y`) to confirm landing and
 removal up front. `--yes` also skips the prompts interactively.
 
 ### Drive a fork from Zed (ACP)
@@ -391,10 +391,10 @@ removal up front. `--yes` also skips the prompts interactively.
 `coop fork <name> acp [agent]` fronts a fork as an [ACP](#drive-it-from-zed-acp) agent
 over stdio; `coop acp [agent]` does the same for the project in your current directory.
 
-To get coop agents into Zed's **agent panel**, register them **once in your Zed user
-settings** — `agent_servers` is a *user-level* setting, so Zed rejects it in a project's
+To get coop agents into Zed's agent panel, register them once in your Zed user
+settings — `agent_servers` is a *user-level* setting, so Zed rejects it in a project's
 `.zed/settings.json`. Because `coop acp` resolves the repo from its working directory,
-**one set of entries covers every coop project you open, forks included**: open a fork
+one set of entries covers every coop project you open, forks included: open a fork
 with `coop fork open <name>` and the same agents resolve to it.
 
 ```jsonc
@@ -408,7 +408,7 @@ with `coop fork open <name>` and the same agents resolve to it.
 }
 ```
 
-Zed's secure-by-default **Worktree Trust** still applies: click the Restricted-Mode
+Zed's secure-by-default Worktree Trust still applies: click the Restricted-Mode
 shield once to trust a project before its agents launch. Resuming a prior conversation
 rides on ACP's (still-stabilizing) `session/load`, which the editor drives.
 
@@ -450,7 +450,7 @@ agent's global instruction path.
 ### MCP servers, defined once
 
 Drop your MCP servers into `~/.config/coop/agents/mcp.json` (the standard
-`{ "mcpServers": { ... } }` shape) and **all three** agents pick them up:
+`{ "mcpServers": { ... } }` shape) and all three agents pick them up:
 
 ```bash
 cp agents/mcp.json.example ~/.config/coop/agents/mcp.json   # then edit
@@ -464,10 +464,10 @@ are never touched, and servers from `mcp.json` win on a name clash.
 
 ## Fusion: a governed council
 
-One model **leads** (the *governor*) and does the real work; the other two **advise
-read-only**; the leader **synthesizes** the best of all three. A council that argues
+One model leads (the *governor*) and does the real work; the other two advise
+read-only; the leader synthesizes the best of all three. A council that argues
 before it commits beats any of its members working alone — the synthesized answer
-outperforms even the single strongest model on its own, **Fable 5 included**. You stop
+outperforms even the single strongest model on its own, Fable 5 included. You stop
 betting the run on one model's blind spots. It's a mode like any other agent —
 interactive, headless, or in Zed:
 
@@ -477,9 +477,9 @@ coop fusion claude             # claude leads instead
 coop fusion claude -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
 ```
 
-**No extra service or protocol** behind it: the leader is just that agent running
-normally (it edits, runs the gate, streams), plus a fusion instruction injected **into
-the leader's instruction file only**. For a non-trivial question it consults its peers
+No extra service or protocol behind it: the leader is just that agent running
+normally (it edits, runs the gate, streams), plus a fusion instruction injected into
+the leader's instruction file only. For a non-trivial question it consults its peers
 from its shell — read-only and in parallel:
 
 ```bash
@@ -508,17 +508,17 @@ every keystroke — the leader is told to skip the council for trivial steps.
 
 Outside fusion, add `--consult` to a normal run — `coop claude --consult` (or
 `codex`/`gemini`; in Zed, `coop acp claude --consult`) — for a lighter version of the
-same idea: on a genuinely hard or risky call the agent **may** consult its peers
-read-only and in parallel to catch blind spots, then decide. It's **off by default**
+same idea: on a genuinely hard or risky call the agent may consult its peers
+read-only and in parallel to catch blind spots, then decide. It's off by default
 and, unlike fusion, optional — no synthesis mandate, not for routine work. It only names
-peers that are **authenticated**: if no other agent is logged in, nothing is injected.
+peers that are authenticated: if no other agent is logged in, nothing is injected.
 And it's scoped to the agent you launched, so peers it spawns never recurse.
 
 ## Drive it from Zed (ACP)
 
 The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer the
-sandboxed agent from Zed's own agent panel — **Zed is the cockpit, the box stays the
-cage**. Four steps:
+sandboxed agent from Zed's own agent panel — Zed is the cockpit, the box stays the
+cage. Four steps:
 
 **1. Install** (once). The [install one-liner](#install) puts `coop` on your `PATH` and
 builds the image with the ACP adapters baked in. Check it resolves:
@@ -533,7 +533,7 @@ command -v coop      # e.g. /Users/you/.local/bin/coop
 coop login claude    # or codex / gemini
 ```
 
-**3. Register it in Zed.** In the agent panel use **Add Custom Agent**, or edit
+**3. Register it in Zed.** In the agent panel use Add Custom Agent, or edit
 `settings.json` directly:
 
 ```jsonc
@@ -552,14 +552,14 @@ coop login claude    # or codex / gemini
 > GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`, use the
 > absolute path from step 1 as `command`.
 
-**4. Use it.** Open the agent panel, pick **coop** from the dropdown, and start a
+**4. Use it.** Open the agent panel, pick coop from the dropdown, and start a
 thread. Zed launches `coop acp <agent>` with the project as cwd; the agent runs in the
 box, edits your files over ACP, and you approve its tool calls in Zed (or let them run —
 the box is the boundary).
 
 Under the hood `coop acp [claude|codex|gemini|fusion]` runs the matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
-inside the box over stdio. The repo mounts at its **real host path** — the same path
+inside the box over stdio. The repo mounts at its real host path — the same path
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
 lines up: a thread you started with `coop loop` is there to resume in Zed.
 
@@ -581,24 +581,24 @@ coop loop             # disposable agents work the queue until it's done, then a
 coop loop codex       # …or pick the model: claude (default), codex, or gemini
 ```
 
-`loop` starts a **fresh agent per iteration** (no context rot), works unchecked `[ ]`
+`loop` starts a fresh agent per iteration (no context rot), works unchecked `[ ]`
 items, and won't quit while any remain. Pass `claude`/`codex`/`gemini` to choose the
 model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration command if
 you need something custom. When the queue empties, a fresh auditor
 re-checks every `[x]` against the git log and reopens anything that doesn't hold up.
 `init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
 fast Claude commit-gate hook. Because those are Claude-only, `init` *also* installs a
-tracked git **pre-commit** gate (`.githooks/pre-commit`) and points `core.hooksPath` at
+tracked git pre-commit gate (`.githooks/pre-commit`) and points `core.hooksPath` at
 it, so the format check runs for *every* committer — Codex, Gemini, and a plain
 `git commit` — and rides along on a fresh clone. A custom `core.hooksPath` is left
 untouched; skip the gate once with `git commit --no-verify`.
 
-If the model hits a **rate or usage limit** mid-run, the loop doesn't treat it as a
+If the model hits a rate or usage limit mid-run, the loop doesn't treat it as a
 failure: it reads the reset time from the agent's own output, waits it out with a
 countdown, and resumes the same item once the limit clears — so an overnight run rides
 through the daily cap instead of burning retries against it.
 
-`init` also installs generic **workflow skills** into `.claude/skills/` (shared with
+`init` also installs generic workflow skills into `.claude/skills/` (shared with
 Codex): `/spec` a multi-file change, `/work` it step-by-step against the gate, `/sweep`
 to drain `.agent/TASKS.md`, `/investigate` to root-cause a failure, and `/verify-api`
 before calling anything you're unsure of. Edit them freely — `init` won't overwrite a
@@ -608,7 +608,7 @@ skill you've changed.
 
 `init` creates a tool-neutral working folder the agent reads back on every boot (and
 after each compaction). Everything here is local working state and git-ignored —
-**except `rules/`**, the shared knowledge base, which is committed.
+except `rules/`, the shared knowledge base, which is committed.
 
 | File | What it's for |
 |---|---|
@@ -635,7 +635,7 @@ coop fork logs -f      # tail every fork at once (compose-style, prefixed)
 coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
 ```
 
-`--loop` needs `--tasks <path>` — the file is **explicit**, never inferred from the
+`--loop` needs `--tasks <path>` — the file is explicit, never inferred from the
 fork name, so a fork and its tasks file can be named independently. It seeds the fork's
 queue from that file (once — a resumed loop keeps its own progress) and runs the loop
 with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
@@ -660,22 +660,22 @@ docs         .agent/TASKS.docs.md
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
 `coop fleet down` stops them. To bootstrap that file, `coop fleet split <n>` mechanically
-round-robins your `.agent/TASKS.md` into `.agent/TASKS.slice<n>.md` files **and writes a
-matching `.agent/fleet`** with each slice's explicit path (use an agent for *semantic*
+round-robins your `.agent/TASKS.md` into `.agent/TASKS.slice<n>.md` files and writes a
+matching `.agent/fleet` with each slice's explicit path (use an agent for *semantic*
 slicing). It won't clobber a fleet you've already written — it prints the lines to
 reconcile instead.
 
 ## Project toolchain & services
 
 Real projects need a language toolchain (Elixir, Go, …) and stateful services
-(Postgres, Redis). The agent does **not** install those at runtime — that's slow,
+(Postgres, Redis). The agent does not install those at runtime — that's slow,
 non-reproducible, and dies with the container. Declare them once instead. This is the
 Dev Containers + Compose model, minus the ceremony.
 
 ### `.tool-versions` — zero config
 
 If your repo pins versions in a `.tool-versions` (asdf), the base box provisions that
-toolchain **at runtime** — resolved from the working dir up the tree, or
+toolchain at runtime — resolved from the working dir up the tree, or
 `~/.tool-versions` — and caches it in a shared volume. So a repo with *just* a
 `.tool-versions` (no `Dockerfile.agent`, no scaffolding) gets its toolchain with zero
 setup:
@@ -687,7 +687,7 @@ coop claude             # provisions elixir/erlang/node/… from it, then runs t
 
 The first install of a new toolchain can be slow (e.g. Erlang compiles), then it's
 reused across runs and repos. Set `COOP_NO_ASDF=1` (in `agents/env`) to skip it. For a
-**baked, fully-reproducible** image instead, `coop init --stack asdf` scaffolds an asdf
+baked, fully-reproducible image instead, `coop init --stack asdf` scaffolds an asdf
 `Dockerfile.agent` that installs the same `.tool-versions` at build time.
 
 ### `Dockerfile.agent` — a per-project image
@@ -697,9 +697,9 @@ coop init --stack asdf   # writes an asdf Dockerfile.agent (from .tool-versions)
 coop build               # builds it, tagged coop-<repo-name> — its own image
 ```
 
-A repo with its own `Dockerfile.agent` gets its **own** image tag, so projects never
+A repo with its own `Dockerfile.agent` gets its own image tag, so projects never
 collide, and every `coop`, `coop loop`, `coop fork`, `coop acp` in that repo uses it.
-The scaffolded one is the **asdf** image — it bakes in the exact `.tool-versions`
+The scaffolded one is the asdf image — it bakes in the exact `.tool-versions`
 toolchain (versions live there, not in the Dockerfile). For anything more exotic,
 hand-write a `Dockerfile.agent` (see the box contract below). When the agent needs a new
 system package, add it to the `RUN` line and `coop build` again — the dependency
@@ -711,9 +711,9 @@ run and reminds you to `coop build` (it records the image's inputs at build time
 
 An image is a valid agent box when:
 
-1. **It runs as a non-root user** — Claude Code refuses `--dangerously-skip-permissions` as root.
-2. **That user's home is `/home/node`** — the `agents/` auth mounts land at `$HOME/.claude`, `$HOME/.codex`, `$HOME/.gemini`. (Different base? Set `COOP_HOME_IN_BOX=/home/<user>`.)
-3. **`claude`, `codex`, `gemini` are on `PATH`** (so it needs Node) — plus the ACP adapters if you want `coop acp`.
+1. It runs as a non-root user — Claude Code refuses `--dangerously-skip-permissions` as root.
+2. That user's home is `/home/node` — the `agents/` auth mounts land at `$HOME/.claude`, `$HOME/.codex`, `$HOME/.gemini`. (Different base? Set `COOP_HOME_IN_BOX=/home/<user>`.)
+3. `claude`, `codex`, `gemini` are on `PATH` (so it needs Node) — plus the ACP adapters if you want `coop acp`.
 4. **`git config --system --add safe.directory '*'`** — git works on the host-owned bind mount (which lives at the repo's real path, not a fixed `/workspace`).
 
 coop sets the working directory itself, so no `WORKDIR` is required. A skeleton:
@@ -745,8 +745,8 @@ USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.
 ```
 
-Division of labour: **devcontainer = what's in the environment** (toolchain, features,
-reproducibility); **Coop = running an untrusted agent in it safely** (secret shadowing,
+Division of labour: devcontainer = what's in the environment (toolchain, features,
+reproducibility); Coop = running an untrusted agent in it safely (secret shadowing,
 the container boundary, the queue + foreman). Don't lean on the devcontainer as the
 security boundary — by itself it mounts your whole workspace (`.env` included), and a
 malicious project under `--dangerously-skip-permissions` can exfiltrate `~/.claude`. The
@@ -780,7 +780,7 @@ the base back to the `node:24` tag and rebuilds with `--pull --no-cache`, so the
 the agent CLIs + ACP adapters all jump to latest (they ship features often). To move the
 pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 
-For a **fully reproducible** image, also pin the tool versions: set
+For a fully reproducible image, also pin the tool versions: set
 `COOP_AGENT_PACKAGES` to exact specs and `coop build`, e.g.
 `COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@1.2.3 @openai/codex@1.0.0 …"` (the full
 list is in `internal/agent/*.go`).
@@ -788,7 +788,7 @@ list is in `internal/agent/*.go`).
 ## Configuration
 
 Set via environment variables, or `~/.config/coop/coop.conf` (`KEY=VALUE` lines, same
-names — the environment wins over the file). Toggles default **on**; set `0`/`false` to
+names — the environment wins over the file). Toggles default on; set `0`/`false` to
 turn them off.
 
 **Box & runtime**
@@ -811,7 +811,7 @@ turn them off.
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
-`COOP_NO_NEW_PRIVILEGES`) apply on **docker and podman**; Apple's `container` CLI differs,
+`COOP_NO_NEW_PRIVILEGES`) apply on docker and podman; Apple's `container` CLI differs,
 so they're skipped there for now.
 
 **Agents & config**
@@ -834,8 +834,8 @@ so they're skipped there for now.
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
 
 Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the
-`COOP_<AGENT>_CMD` overrides — are split into `argv` with **shell quoting** (single/double
-quotes group, `\` escapes), but **no shell runs** them (no globbing or `$VAR`). So quotes
+`COOP_<AGENT>_CMD` overrides — are split into `argv` with shell quoting (single/double
+quotes group, `\` escapes), but no shell runs them (no globbing or `$VAR`). So quotes
 group as you'd expect — `COOP_GATE='bash -lc "make check && make lint"'` is three args, not
 five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -lc "…"`.
 (`COOP_REVIEW_CMD` is the exception — it *is* run via `sh -c`.)
