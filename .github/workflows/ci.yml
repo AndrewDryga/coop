@@ -36,3 +36,34 @@ jobs:
         run: go build ./...
       - name: shellcheck
         run: shellcheck install.sh
+
+  # Exercise the real container boundary (coop doctor) per runtime, so a change that
+  # breaks isolation or a runtime's run-args fails CI. (The fork-merge hardening test
+  # already runs in `check` via `go test`.) docker is blocking and locally verified;
+  # podman runs rootless on the runner and is best-effort for now — promote it to
+  # blocking once a green run proves it. Apple's `container` needs macOS 26+ runners,
+  # so it isn't covered here yet.
+  doctor:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [docker, podman]
+    continue-on-error: ${{ matrix.runtime == 'podman' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: install podman
+        if: matrix.runtime == 'podman'
+        run: sudo apt-get update && sudo apt-get install -y podman
+      - name: build
+        run: go build -o coop .
+      - name: doctor
+        run: ./coop doctor
+        env:
+          COOP_RUNTIME: ${{ matrix.runtime }}
