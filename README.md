@@ -280,6 +280,14 @@ back-compat alias). The agent defaults to `claude`; pass `codex` or `gemini` to 
 the model. A fork inherits your git identity, signing key, and global gitignore from
 the parent — so the agent can commit *as you* and ignores the same noise you do.
 
+**Loop one unattended.** Hand a fork a tasks file and it works the queue on its own:
+
+```bash
+coop fork api codex --loop -d --tasks .agent/TASKS.md   # -d detaches; tail it with coop fork logs api -f
+```
+
+See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to run several at once.
+
 ### Re-entry resumes the session
 
 A fork **remembers the agent it was created with**, so `coop fork perf` after

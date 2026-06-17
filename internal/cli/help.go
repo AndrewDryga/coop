@@ -37,7 +37,7 @@ func helpText(cfg *config.Config) string {
 		fmt.Fprintf(&b, "  %s%s%s\n", cmd, strings.Repeat(" ", gap), desc)
 	}
 
-	fmt.Fprintf(&b, "%s %s — run a coding agent in a box it can't escape.\n", ui.Bold("coop"), resolveVersion())
+	fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", ui.Bold("coop"), resolveVersion())
 	fmt.Fprint(&b, "Usage: coop <command> [args]\n")
 
 	group("AGENTS")
@@ -50,6 +50,7 @@ func helpText(cfg *config.Config) string {
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
+	fmt.Fprintln(&b, "      coop fork api codex --loop -d --tasks .agent/TASKS.md   # or loop it overnight, detached")
 	row("coop fork ls", "list this repo's forks")
 	row("coop fork review <name>", "show a fork's brief + diff")
 	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
@@ -75,9 +76,6 @@ func helpText(cfg *config.Config) string {
 	row("coop check-secrets", "scan the working tree for committed secrets")
 	row("coop help", "this help")
 	row("coop version", "print the version")
-
-	fmt.Fprint(&b, "\nExample — loop a fork on its own tasks file, in the background:\n")
-	fmt.Fprint(&b, "    coop fork api codex --loop -d --tasks .agent/TASKS.md\n")
 
 	fmt.Fprint(&b, "\nRun 'coop <command> --help' for any command's flags and details.\n")
 	fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://github.com/AndrewDryga/coop\n",
