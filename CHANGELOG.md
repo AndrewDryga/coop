@@ -107,6 +107,63 @@
   `--help` to the agent, so `coop claude --help` shows Claude's help.) Every short flag
   has a long form too (`-c`/`--continue`, `-d`/`--detach`, `-f`/`--force`/`--follow`),
   now shown in `coop fork --help`.
+- **Host-side git in a fork can't be hijacked by the agent.** A fork is agent-writable
+  down to its `.git/`, yet `coop fork merge`/`review`/`ls`/`rm` run host git in it. Those
+  calls now disable hooks (`core.hooksPath=/dev/null`) and blank every config knob that
+  shells out (`core.fsmonitor`, a forced `commit.gpgsign` + `gpg.program`, …), so a
+  planted `.git/hooks/*` or malicious `.git/config` can't execute on your host. Signing on
+  land reads your *parent* repo's signing config, never the fork's.
+- **`.coopignore` hides repo-specific secrets.** Secret shadowing matched a built-in
+  denylist by basename, so a committed `config/credentials.yaml` stayed visible to the
+  agent. Add a repo-root `.coopignore` — basename patterns (any depth) or repo-relative
+  path patterns — to shadow anything else. The defaults also grew (`*.keystore`, `*.p8`,
+  `*.ppk`, `*.kdbx`, `*.ovpn`, `id_dsa*`, `.htpasswd`, `.dockercfg`, `.pgpass`); prove your
+  setup with `coop doctor`.
+- **`coop fork merge` won't land non-interactively without `--yes`.** `confirm()` returned
+  its default with no TTY, so in CI or a pipe a merge would land work and delete the fork
+  unprompted. It now refuses unless you pass `--yes` (which also skips the prompts
+  interactively); `--all` is covered too.
+- **`install.sh` verifies the release *signature*, not just the checksum.** When `cosign`
+  is on `PATH` it verifies the Sigstore signature on `checksums.txt` (via
+  `checksums.txt.bundle`) and fails closed before trusting it — so swapping both the
+  archive and its checksum file is caught. Without cosign it keeps the SHA-256 check and
+  says the signature wasn't verified; the README documents manual verification.
+- **`coop build` is reproducible; `coop update` stays fresh.** The base image `FROM` is
+  pinned to a specific `node:24` digest, so a `coop build` gets the same OS/runtime every
+  time; `coop update` floats it back to the tag and rebuilds `--pull --no-cache` for the
+  latest. Pin the agent CLI / ACP npm versions too with `COOP_AGENT_PACKAGES`.
+- **The box ships `ripgrep`, `fd`, `jq`, and `tree`.** The search/inspect tools agents
+  reach for constantly are baked into the base image (`fd` is symlinked from Debian's
+  `fdfind`). Run `coop update` to pick them up.
+- **The shared cache volume is writable by the agent.** `coop-cache` mounts at
+  `/home/node/.cache`, but the path wasn't pre-created in the image, so a fresh volume came
+  up root-owned and Go/npm/pip builds hit `permission denied`. The base and scaffolded
+  images now pre-create it `node`-owned. Repair an existing volume with
+  `docker volume rm coop-cache`, then rebuild.
+- **The loop waits out Claude's *weekly* limit too.** `coop loop` already parsed
+  `usage limit reached|<epoch>` and `retry-after` delays; it now also recognizes the
+  current notice — `You've hit your weekly limit · resets Jun 18, 8pm (UTC)` — parses that
+  reset and sleeps until it (a multi-day wait if need be), instead of mistaking it for a
+  plain failure and stopping after a few retries.
+- **`coop loop` detects an empty queue correctly.** Its todo scan matched any `[ ]`
+  substring, so the legend line in `.agent/TASKS.md` always counted as work — the loop
+  could never reach "queue empty" and the Stop-hook saw a phantom item on a finished queue.
+  It now counts only real `- [ ]` task lines.
+- **`coop login` re-opens the sign-in flow when you're already logged in.** It runs
+  `claude auth login` (was a bare `claude`, a no-op once authenticated), so you can
+  re-authenticate or switch accounts — e.g. off a rate-limited one. `coop <agent> login`
+  works as well as `coop login <agent>`.
+- **Command settings honor shell quoting.** `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`,
+  and the `COOP_<AGENT>_CMD` overrides split with shell quoting (quotes group, `\` escapes)
+  — without running a shell — so `COOP_GATE='bash -lc "make check && make lint"'` is three
+  args, not five.
+- **`coop init` scaffolding refinements.** Workflow skills now live once in
+  `.agent/skills/`, with `.claude`/`.codex`/`.gemini` each symlinking to it (replacing
+  three drifting copies and an orphaned root `skills/`). The scaffolded `.agent/` files
+  model their own shape with an `## Example`, `TASKS.md` starts with an empty queue, and
+  the `AGENTS.md` contract gains rules: tasks must be self-contained (workable from the
+  BOOT files alone), don't create git branches unless asked, and `IDEAS.md`/`BACKLOG.md`
+  hold a dump of your current thinking (spec included), not triage notes.
 
 ## 2.3.1
 
