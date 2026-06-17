@@ -118,7 +118,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// carries the trust entry on the very first run.
 	if spec.Homes {
 		for _, name := range agents.Names() {
-			os.MkdirAll(cfg.AgentDir(name), 0o755)
+			os.MkdirAll(cfg.AgentDir(name), 0o700) // a credential vault — owner-only
 			if ag, ok := agents.Get(name); ok {
 				ag.EnsureDefaults(cfg, workdir)
 			}

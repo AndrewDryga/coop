@@ -140,10 +140,10 @@ func (c *Config) EnvFile() string { return filepath.Join(c.ConfigDir, "env") }
 // Instructions is the optional shared instruction file wired into each agent.
 func (c *Config) Instructions() string { return filepath.Join(c.ConfigDir, "INSTRUCTIONS.md") }
 
-// defaultProfile is the credential profile used when none is selected; profilesSubdir
+// DefaultProfile is the credential profile used when none is selected; profilesSubdir
 // is the folder under an agent dir that holds the named profiles.
 const (
-	defaultProfile = "default"
+	DefaultProfile = "default"
 	profilesSubdir = "profiles"
 )
 
@@ -153,12 +153,12 @@ func (c *Config) AgentDir(agent string) string {
 	return c.AgentProfileDir(agent, c.activeProfile(agent))
 }
 
-// activeProfile returns the profile currently selected for agent, or defaultProfile.
+// activeProfile returns the profile currently selected for agent, or DefaultProfile.
 func (c *Config) activeProfile(agent string) string {
 	if p := c.activeProfiles[agent]; p != "" {
 		return p
 	}
-	return defaultProfile
+	return DefaultProfile
 }
 
 // SetActiveProfile selects which credential profile of agent AgentDir resolves to —
@@ -177,10 +177,10 @@ func (c *Config) SetActiveProfile(agent, name string) {
 // <ConfigDir>/<agent>/ — so an existing single login keeps working without a file move.
 func (c *Config) AgentProfileDir(agent, name string) string {
 	if name == "" {
-		name = defaultProfile
+		name = DefaultProfile
 	}
 	base := filepath.Join(c.ConfigDir, agent)
-	if name == defaultProfile && !dirExists(filepath.Join(base, profilesSubdir)) {
+	if name == DefaultProfile && !dirExists(filepath.Join(base, profilesSubdir)) {
 		return base // legacy flat layout: the agent dir itself is the default profile
 	}
 	return filepath.Join(base, profilesSubdir, name)
@@ -193,7 +193,7 @@ func (c *Config) Profiles(agent string) []string {
 	entries, err := os.ReadDir(filepath.Join(c.ConfigDir, agent, profilesSubdir))
 	if err != nil {
 		if dirExists(filepath.Join(c.ConfigDir, agent)) {
-			return []string{defaultProfile}
+			return []string{DefaultProfile}
 		}
 		return nil
 	}

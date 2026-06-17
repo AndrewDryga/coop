@@ -11,6 +11,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -62,9 +63,13 @@ func (a *app) cmdRun(args []string) (int, error) {
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	consult, args := extractConsult(args)
 	// `coop claude login` reads as "log in to claude", not "prompt claude with the
-	// word login" — route it to the sign-in flow like `coop login claude`.
-	if len(args) == 1 && args[0] == "login" {
-		return a.loginTo(tool)
+	// word login" — route it to the sign-in flow like `coop login claude` (honoring
+	// `--profile`, e.g. `coop claude login --profile work`). Only the login path reads
+	// --profile; an interactive run forwards args untouched so codex's own --profile
+	// (a config.toml profile) still reaches codex.
+	if len(args) >= 1 && args[0] == "login" {
+		profile, _ := extractProfile(args[1:])
+		return a.loginTo(tool, profile)
 	}
 	lead := "" // ConsultLead is set only with --consult, so the directive is opt-in
 	if consult {
@@ -98,21 +103,57 @@ func (a *app) defaultCmd(tool string) []string {
 }
 
 func (a *app) cmdLogin(args []string) (int, error) {
+	profile, rest := extractProfile(args)
 	tool := agents.Default()
-	if len(args) > 0 {
-		tool = args[0]
+	if len(rest) > 0 {
+		tool = rest[0]
 	}
-	return a.loginTo(tool)
+	return a.loginTo(tool, profile)
 }
 
-// loginTo runs an agent's sign-in flow in the box; its token persists in the
-// agent's config dir. Shared by `coop login [agent]` and `coop <agent> login`.
-func (a *app) loginTo(tool string) (int, error) {
+// extractProfile pulls coop's own `--profile <name>` (or `--profile=<name>`) flag out of
+// args, returning the chosen credential profile (config.DefaultProfile if absent) and the
+// remaining args. It lets a login target one of several stored subscriptions.
+func extractProfile(args []string) (profile string, rest []string) {
+	profile = config.DefaultProfile
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--profile" && i+1 < len(args):
+			profile = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--profile="):
+			profile = strings.TrimPrefix(args[i], "--profile=")
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return profile, rest
+}
+
+// loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
+// config dir for the chosen profile. Shared by `coop login [agent] [--profile p]` and
+// `coop <agent> login [--profile p]`.
+func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {
 		return 2, fmt.Errorf("unknown agent %q — use %s", tool, strings.Join(agents.Names(), ", "))
 	}
-	ui.Info("logging in to %s — credentials persist in %s/", tool, a.cfg.AgentDir(tool))
+	if profile == "" {
+		profile = config.DefaultProfile
+	}
+	// A named profile needs the profiles/ layout; EnsureProfilesDir also migrates a
+	// pre-existing flat login into profiles/default the first time, so it isn't orphaned.
+	if profile != config.DefaultProfile {
+		if err := box.EnsureProfilesDir(a.cfg, tool); err != nil {
+			return -1, err
+		}
+	}
+	a.cfg.SetActiveProfile(tool, profile)
+	where := ""
+	if profile != config.DefaultProfile {
+		where = fmt.Sprintf(" (profile %s)", profile)
+	}
+	ui.Info("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
 	return a.runInBox(ag.Login(a.cfg), "") // logging in, not an agent session
 }
 

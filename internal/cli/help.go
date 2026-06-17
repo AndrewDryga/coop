@@ -96,10 +96,15 @@ var commandHelp = map[string]string{
 
 	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
 
-  Usage: coop login <claude|codex|gemini>
+  Usage: coop login <claude|codex|gemini> [--profile <name>]
 
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
-  refresh or switch accounts — e.g. after a usage limit.`,
+  refresh or switch accounts — e.g. after a usage limit.
+
+  --profile <name> signs in a second (or third) account into a named profile, so
+  one agent can hold several subscriptions. The unattended loop rotates across a
+  repo's profiles when one is rate limited (see 'coop pool'). Without --profile
+  the sign-in targets the default profile.`,
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
