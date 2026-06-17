@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -183,4 +184,54 @@ func removeProfiles(cur, rm []string) []string {
 		}
 	}
 	return out
+}
+
+// profilePool is the loop's view of a repo+agent's rotation pool: an ordered set of
+// signed-in profiles and which ones are rate-limited, with a sticky cursor that stays on
+// one profile until it's limited, then advances. It is pure (the clock is injected) so the
+// rotation policy is unit-tested without sleeping.
+type profilePool struct {
+	profiles []string             // ordered, signed-in members; len >= 1
+	limited  map[string]time.Time // profile -> when its limit resets
+	idx      int                  // sticky cursor: advances only on a limit
+}
+
+func newProfilePool(profiles []string) *profilePool {
+	return &profilePool{profiles: profiles, limited: map[string]time.Time{}}
+}
+
+func (p *profilePool) active() string { return p.profiles[p.idx] }
+
+// rotates reports whether there's more than one profile to switch between.
+func (p *profilePool) rotates() bool { return len(p.profiles) > 1 }
+
+// onLimit records that the active profile is rate-limited until resetAt (a zero resetAt
+// means "unknown", so it backs off by attempt), then advances to the next usable profile.
+// It returns how long to sleep before the next iteration — 0 when another profile is free
+// now (switch and retry immediately) — and, when sleeping, the time it's waiting until.
+func (p *profilePool) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep time.Duration, until time.Time) {
+	if resetAt.IsZero() {
+		resetAt = now.Add(limitWait(limitHint{limited: true}, attempt, now))
+	}
+	p.limited[p.profiles[p.idx]] = resetAt
+	// Sticky rotation: scan the profiles after the current one (wrapping) for the first
+	// that isn't limited as of now — a profile becomes usable again once its reset passes.
+	n := len(p.profiles)
+	for i := 1; i <= n; i++ {
+		cand := (p.idx + i) % n
+		if t, ok := p.limited[p.profiles[cand]]; !ok || !t.After(now) {
+			p.idx = cand
+			return 0, time.Time{}
+		}
+	}
+	// Every profile is limited: move to the soonest-resetting one and wait for it.
+	earliest := 0
+	for i := range p.profiles {
+		if p.limited[p.profiles[i]].Before(p.limited[p.profiles[earliest]]) {
+			earliest = i
+		}
+	}
+	p.idx = earliest
+	until = p.limited[p.profiles[earliest]]
+	return limitWait(limitHint{limited: true, resetAt: until}, attempt, now), until
 }
