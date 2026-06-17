@@ -11,7 +11,7 @@ import (
 
 func TestAuthedAgents(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir, Agents: []string{"claude", "codex", "gemini"}}
+	cfg := &config.Config{ConfigDir: dir}
 
 	// codex authed via its credential file; gemini via an env-file API key; claude
 	// has neither → not authed. A commented or empty key must not count.
@@ -27,7 +27,10 @@ func TestAuthedAgents(t *testing.T) {
 	}
 
 	// With only the lead authed there are no peers → nothing to consult.
-	solo := &config.Config{ConfigDir: dir, Agents: []string{"codex"}}
+	soloDir := t.TempDir()
+	os.MkdirAll(filepath.Join(soloDir, "codex"), 0o755)
+	os.WriteFile(filepath.Join(soloDir, "codex", "auth.json"), []byte("{}"), 0o644)
+	solo := &config.Config{ConfigDir: soloDir}
 	if got := authedPeers(solo, "codex"); len(got) != 0 {
 		t.Errorf("authedPeers with only the lead authed = %v, want none", got)
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -107,7 +108,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// MCP configs, so a fresh box is ready to work and the generated Codex config
 	// carries the trust entry on the very first run.
 	if spec.Homes {
-		for _, agent := range cfg.Agents {
+		for _, agent := range agents.Names() {
 			os.MkdirAll(cfg.AgentDir(agent), 0o755)
 		}
 		ensureClaudeDefaults(cfg, workdir)
@@ -151,7 +152,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if spec.Homes && spec.FusionGovernor != "" {
 		if file := agentInstructionFile[spec.FusionGovernor]; file != "" {
 			base := governorBaseInstructions(cfg, spec.FusionGovernor, file)
-			content := fusion.GovernorInstructions(base, spec.FusionGovernor, cfg.Agents)
+			content := fusion.GovernorInstructions(base, spec.FusionGovernor, agents.Names())
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("fusion: skipped instruction wiring: %v", err)
 			} else {
@@ -280,7 +281,7 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 	args = append(args, RenderMounts(mounts, decoy)...)
 
 	if spec.Homes {
-		for _, agent := range cfg.Agents {
+		for _, agent := range agents.Names() {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
 		}
 		// Claude keeps its account + onboarding state in $CLAUDE_CONFIG_DIR — by
@@ -301,7 +302,7 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 		// unless that agent has its own override. The lead is skipped
 		// here (fusion governor or consult lead) — its augmented file is below.
 		if ins := cfg.Instructions(); fileExists(ins) {
-			for _, agent := range cfg.Agents {
+			for _, agent := range agents.Names() {
 				if agent == spec.FusionGovernor || agent == spec.ConsultLead {
 					continue
 				}

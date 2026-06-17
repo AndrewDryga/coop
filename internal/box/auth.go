@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -24,7 +25,7 @@ var authMarker = map[string]struct{ file, envKey string }{
 func AuthedAgents(cfg *config.Config) []string {
 	keys := envFileKeys(cfg.EnvFile())
 	var authed []string
-	for _, a := range cfg.Agents {
+	for _, a := range agents.Names() {
 		m, ok := authMarker[a]
 		if !ok {
 			continue
@@ -38,7 +39,7 @@ func AuthedAgents(cfg *config.Config) []string {
 
 // authedPeers returns the authenticated agents other than lead, preserving order.
 func authedPeers(cfg *config.Config, lead string) []string {
-	peers := make([]string, 0, len(cfg.Agents))
+	peers := make([]string, 0, len(agents.Names()))
 	for _, a := range AuthedAgents(cfg) {
 		if a != lead {
 			peers = append(peers, a)

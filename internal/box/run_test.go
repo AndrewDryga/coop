@@ -54,7 +54,6 @@ func TestResolveWorkdir(t *testing.T) {
 func TestAssembleArgsMinimal(t *testing.T) {
 	cfg := &config.Config{
 		HomeInBox: "/home/node",
-		Agents:    []string{"claude", "codex", "gemini"},
 		ConfigDir: t.TempDir(), // empty: no env/instructions/mcp
 	}
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Homes: true}
@@ -95,7 +94,6 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "mcp.json"), []byte("{}"), 0o644)
 	cfg := &config.Config{
 		HomeInBox: "/home/node",
-		Agents:    []string{"claude", "codex", "gemini"},
 		ConfigDir: dir,
 		MCPFile:   filepath.Join(dir, "mcp.json"),
 		MCPInBox:  "/home/node/.mcp.json",
@@ -145,7 +143,7 @@ func TestInstructionOverrideSkipsClaude(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("hi"), 0o644)
 	os.MkdirAll(filepath.Join(dir, "claude"), 0o755)
 	os.WriteFile(filepath.Join(dir, "claude", "CLAUDE.md"), []byte("override"), 0o644)
-	cfg := &config.Config{HomeInBox: "/home/node", Agents: []string{"claude", "codex", "gemini"}, ConfigDir: dir}
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true},
 		[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}, "/d", "/workspace", ttyNone, false, nil, nil, nil, "")
@@ -167,7 +165,7 @@ func TestAssembleArgsFusionGovernorScoped(t *testing.T) {
 	dir := t.TempDir()
 	ins := filepath.Join(dir, "INSTRUCTIONS.md")
 	os.WriteFile(ins, []byte("shared"), 0o644)
-	cfg := &config.Config{HomeInBox: "/home/node", Agents: []string{"claude", "codex", "gemini"}, ConfigDir: dir}
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}
 	fusionMounts := []extraMount{{"/tmp/fusion", "/home/node/.codex/AGENTS.md"}}
 
@@ -196,7 +194,7 @@ func TestAssembleArgsConsultLeadScoped(t *testing.T) {
 	dir := t.TempDir()
 	ins := filepath.Join(dir, "INSTRUCTIONS.md")
 	os.WriteFile(ins, []byte("shared"), 0o644)
-	cfg := &config.Config{HomeInBox: "/home/node", Agents: []string{"claude", "codex", "gemini"}, ConfigDir: dir}
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, ConsultLead: "claude"}
 	consultMount := []extraMount{{"/tmp/consult", "/home/node/.claude/CLAUDE.md"}}
 
@@ -243,7 +241,7 @@ func TestBuildArgs(t *testing.T) {
 // TestAssembleArgsAsdfVolume: the base image mounts the persistent ~/.asdf volume
 // (for runtime .tool-versions installs); a per-project image does not.
 func TestAssembleArgsAsdfVolume(t *testing.T) {
-	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box", Agents: []string{"claude"}, ConfigDir: t.TempDir()}
+	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	asdf := []string{"-v", "coop-asdf:/home/node/.asdf"}
 

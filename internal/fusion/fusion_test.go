@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-var agents = []string{"claude", "codex", "gemini"}
+var allAgents = []string{"claude", "codex", "gemini"}
 
 func TestValid(t *testing.T) {
-	for _, ok := range agents {
-		if !Valid(ok, agents) {
+	for _, ok := range allAgents {
+		if !Valid(ok, allAgents) {
 			t.Errorf("Valid(%q) = false, want true", ok)
 		}
 	}
-	if Valid("gpt", agents) {
+	if Valid("gpt", allAgents) {
 		t.Error("Valid(\"gpt\") = true, want false")
 	}
 }
@@ -26,7 +26,7 @@ func TestPeers(t *testing.T) {
 		"gemini": {"claude", "codex"},
 	}
 	for governor, want := range cases {
-		if got := Peers(governor, agents); !slices.Equal(got, want) {
+		if got := Peers(governor, allAgents); !slices.Equal(got, want) {
 			t.Errorf("Peers(%q) = %v, want %v", governor, got, want)
 		}
 	}
@@ -49,7 +49,7 @@ func TestPeerCmd(t *testing.T) {
 }
 
 func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
-	ins := Instruction("codex", Peers("codex", agents))
+	ins := Instruction("codex", Peers("codex", allAgents))
 	// Names both peers' read-only commands.
 	for _, want := range []string{
 		"claude -p --permission-mode plan",
@@ -73,7 +73,7 @@ func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
 
 func TestGovernorInstructionsPreservesBase(t *testing.T) {
 	base := "# Project rules\nAlways run the gate."
-	out := GovernorInstructions(base, "codex", agents)
+	out := GovernorInstructions(base, "codex", allAgents)
 	if !strings.Contains(out, base) {
 		t.Error("base instructions were dropped")
 	}
@@ -82,7 +82,7 @@ func TestGovernorInstructionsPreservesBase(t *testing.T) {
 		t.Errorf("expected fusion block before base: fusion@%d base@%d", i, j)
 	}
 	// Empty base → just the block, no trailing junk.
-	if out := GovernorInstructions("  \n ", "claude", agents); !strings.HasPrefix(out, "# Fusion mode") {
+	if out := GovernorInstructions("  \n ", "claude", allAgents); !strings.HasPrefix(out, "# Fusion mode") {
 		t.Errorf("empty base should yield just the block, got prefix %q", out[:min(20, len(out))])
 	}
 }

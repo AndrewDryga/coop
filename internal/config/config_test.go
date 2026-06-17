@@ -40,9 +40,6 @@ func TestDefaults(t *testing.T) {
 	if c.ConfigDir != wantDir {
 		t.Errorf("ConfigDir = %q, want %q", c.ConfigDir, wantDir)
 	}
-	if want := []string{"claude", "--dangerously-skip-permissions"}; !slices.Equal(c.ClaudeCmd, want) {
-		t.Errorf("ClaudeCmd = %v, want %v (no --mcp-config when mcp.json absent)", c.ClaudeCmd, want)
-	}
 	if !c.Homes || !c.Network || !c.Cache {
 		t.Errorf("toggles default on: Homes=%v Network=%v Cache=%v", c.Homes, c.Network, c.Cache)
 	}
@@ -69,9 +66,6 @@ func TestEnvOverrides(t *testing.T) {
 	c := Load()
 	if c.BaseImage != "custom-box" || c.Workdir != "/code" {
 		t.Errorf("env overrides not applied: %q %q", c.BaseImage, c.Workdir)
-	}
-	if want := []string{"claude", "--foo", "bar"}; !slices.Equal(c.ClaudeCmd, want) {
-		t.Errorf("ClaudeCmd = %v, want %v", c.ClaudeCmd, want)
 	}
 	if c.Cache || c.Network {
 		t.Errorf("toggles should be off: Cache=%v Network=%v", c.Cache, c.Network)
@@ -123,15 +117,18 @@ func TestCmd(t *testing.T) {
 	}
 }
 
-func TestMCPFlagInjected(t *testing.T) {
+// MCPActive flips on when an mcp.json exists (the claude adapter turns it into
+// --mcp-config; gemini/codex get generated config files in box.Run).
+func TestMCPActive(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if Load().MCPActive() {
+		t.Error("MCPActive should be false with no mcp.json")
+	}
 	mcp := filepath.Join(t.TempDir(), "mcp.json")
 	os.WriteFile(mcp, []byte(`{"mcpServers":{}}`), 0o644)
 	t.Setenv("COOP_MCP_FILE", mcp)
-
-	c := Load()
-	if got := strings.Join(c.ClaudeCmd, " "); !strings.HasSuffix(got, "--mcp-config /home/node/.mcp.json") {
-		t.Errorf("ClaudeCmd should carry --mcp-config, got %q", got)
+	if !Load().MCPActive() {
+		t.Error("MCPActive should be true with an mcp.json")
 	}
 }

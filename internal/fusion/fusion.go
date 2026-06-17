@@ -9,6 +9,8 @@ package fusion
 import (
 	"fmt"
 	"strings"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 // Valid reports whether tool is one of the known agents.
@@ -32,20 +34,11 @@ func Peers(governor string, all []string) []string {
 	return peers
 }
 
-// peerCmd is the read-only, non-interactive command to consult a peer with a
-// question — the single source of truth for how a peer is invoked. Each flag is
-// verified to keep the peer read-only: it returns analysis/approach and never
-// edits files.
+// peerCmd is the read-only, non-interactive command to consult a peer with a question.
+// Each agent owns its own consult command in its adapter; nil for an unknown tool.
 func peerCmd(tool, question string) []string {
-	switch tool {
-	case "claude":
-		return []string{"claude", "-p", "--permission-mode", "plan", question}
-	case "gemini":
-		// -p takes the prompt as its value, so it must come last (right before the
-		// question); otherwise -p swallows --approval-mode and gemini prints help.
-		return []string{"gemini", "--approval-mode", "plan", "-p", question}
-	case "codex":
-		return []string{"codex", "exec", "-s", "read-only", question}
+	if ag, ok := agents.Get(tool); ok {
+		return ag.ConsultCmd(question)
 	}
 	return nil
 }

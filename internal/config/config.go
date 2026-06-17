@@ -18,12 +18,7 @@ type Config struct {
 	HomeInBox string // COOP_HOME_IN_BOX — the box user's home
 	Shell     string // COOP_SHELL — `coop shell`'s shell
 
-	ConfigDir string   // COOP_CONFIG_DIR — per-agent auth + settings folder
-	Agents    []string // the agents whose homes are mounted: claude codex gemini
-
-	ClaudeCmd []string // COOP_CLAUDE_CMD (+ --mcp-config when mcp.json exists)
-	CodexCmd  []string // COOP_CODEX_CMD
-	GeminiCmd []string // COOP_GEMINI_CMD
+	ConfigDir string // COOP_CONFIG_DIR — per-agent auth + settings folder
 
 	MCPFile  string // COOP_MCP_FILE — the one MCP source of truth
 	MCPInBox string // where MCPFile mounts in the box (Claude's --mcp-config)
@@ -96,10 +91,6 @@ func Load() *Config {
 		HomeInBox: get("COOP_HOME_IN_BOX", "/home/node"),
 		Shell:     get("COOP_SHELL", "bash"),
 		ConfigDir: get("COOP_CONFIG_DIR", filepath.Join(boxHome, "agents")),
-		Agents:    []string{"claude", "codex", "gemini"},
-		ClaudeCmd: fields(get("COOP_CLAUDE_CMD", "claude --dangerously-skip-permissions")),
-		CodexCmd:  fields(get("COOP_CODEX_CMD", "codex --dangerously-bypass-approvals-and-sandbox")),
-		GeminiCmd: fields(get("COOP_GEMINI_CMD", "gemini --yolo")),
 
 		RuntimeName:   get("COOP_RUNTIME", ""),
 		RepoOverride:  get("COOP_REPO", ""),
@@ -125,11 +116,6 @@ func Load() *Config {
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
-	// One file, every agent: when mcp.json exists, Claude reads it directly via
-	// --mcp-config (Gemini/Codex get generated configs at run time, in box.Run).
-	if fileExists(c.MCPFile) {
-		c.ClaudeCmd = append(c.ClaudeCmd, "--mcp-config", c.MCPInBox)
-	}
 	return c
 }
 

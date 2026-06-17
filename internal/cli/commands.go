@@ -49,7 +49,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 		args = args[1:]
 	}
 	if len(args) == 0 {
-		args = a.cfg.ClaudeCmd
+		args = a.defaultCmd("claude") // bare `coop run` opens claude
 	}
 	return a.runInBox(args, "") // raw command runner — not an agent session
 }
@@ -134,7 +134,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if len(args) > 1 {
 			governor = args[1]
 		}
-		if !fusion.Valid(governor, a.cfg.Agents) {
+		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
 		}
 		tool = governor
@@ -172,7 +172,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
 	governor, rest := a.parseGovernor(args)
-	if !fusion.Valid(governor, a.cfg.Agents) {
+	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
 	}
 	repo, img, err := a.resolveImage()
@@ -182,7 +182,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	// The governor's autonomous default command, plus any extra args you pass through.
 	cmd := append(append([]string{}, a.defaultCmd(governor)...), rest...)
 	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
-		strings.Join(fusion.Peers(governor, a.cfg.Agents), " + "))
+		strings.Join(fusion.Peers(governor, agents.Names()), " + "))
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, FusionGovernor: governor,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
