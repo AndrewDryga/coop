@@ -70,6 +70,35 @@ func TestPolicyScan(t *testing.T) {
 
 // The legend line and the ## Example block both contain "[ ]"/"[E]" but aren't real
 // tasks; fleet split must not turn them into phantom slice entries.
+// A real token in an ordinary (non-secret-named) file passes a filename check but must
+// be caught by policyScan's content scan.
+func TestPolicyScanContent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "leak")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "config", "prod.yml"),
+		[]byte("host: db\ntoken: ghp_abcdefghijklmnopqrstuvwxyz0123456789\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "config")
+	if err := gitFetchInto(repo, ws, "leak"); err != nil {
+		t.Fatal(err)
+	}
+	warns := strings.Join(policyScan(repo, "review/leak"), "\n")
+	if !strings.Contains(warns, "config/prod.yml") || !strings.Contains(warns, "GitHub token") {
+		t.Errorf("policyScan missed the token in config/prod.yml: %q", warns)
+	}
+}
+
 func TestFleetSplitIgnoresLegendAndExample(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "r")
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

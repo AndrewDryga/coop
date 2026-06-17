@@ -353,8 +353,11 @@ the only step the agents can't do.
 
 Set **`COOP_GATE`** (e.g. `COOP_GATE="make check"`) and every merge re-runs that gate in
 the box on the *rebased* tree, rolling back if it goes red — the machine gate behind
-your human review. A **policy check** also blocks secret-looking or oversized files from
-sneaking in (override with `--force`). Merge refuses if your own tree is dirty.
+your human review. A **policy check** also flags secret-looking or oversized files and
+**scans each changed file's content** for real credentials (provider token shapes —
+AWS/OpenAI/Anthropic/GitHub/Slack/… — plus high-entropy values on secret-named keys), so
+a token committed inside an ordinary file is caught even though its filename is innocuous
+(override with `--force`). Merge refuses if your own tree is dirty.
 
 Merging lands work and then offers to delete the fork, so it asks first. In a
 **non-interactive** shell (CI, a pipe) there's no one to answer, and merge refuses

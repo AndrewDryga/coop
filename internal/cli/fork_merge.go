@@ -17,7 +17,9 @@ import (
 var secretRe = regexp.MustCompile(`(?i)(^|/)(\.env(\.|$)|[^/]*\.(pem|key|p12|pfx)$|id_rsa|id_ed25519|credentials(\.|$)|[^/]*secret[^/]*)`)
 
 // policyScan returns human-readable concerns about a fork's added/changed files:
-// secret-looking files and large blobs. Empty means nothing flagged.
+// secret-looking filenames, large blobs, and — by scanning each changed blob's
+// content — real tokens sitting in ordinary files (which a filename check can't see).
+// Empty means nothing flagged.
 func policyScan(repo, ref string) []string {
 	out := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
 	if out == "" {
@@ -35,6 +37,14 @@ func policyScan(repo, ref string) []string {
 		}
 		if size := gitBlobSize(repo, ref, path); size > 5<<20 {
 			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
+			continue // don't read a huge blob's content
+		}
+		content := gitOut(repo, "show", ref+":"+path)
+		if strings.IndexByte(content, 0) >= 0 { // skip binaries
+			continue
+		}
+		for _, s := range box.ScanSecrets(content) {
+			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — remove it or add the file to .coopignore", path, s.Line, s.Kind))
 		}
 	}
 	return warns

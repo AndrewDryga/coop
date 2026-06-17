@@ -2,6 +2,11 @@
 
 ## 2.6.0
 
+- **`coop fork merge` scans changed content for secrets, not just filenames.** The
+  policy check now reads each changed blob and flags real credentials — provider token
+  shapes (AWS/OpenAI/Anthropic/GitHub/Slack/Google/Stripe, private keys) and high-entropy
+  values on secret-named keys — so a token committed inside an ordinary `config/prod.yml`
+  is caught even though its filename is innocuous (override with `--force`).
 - **The box caps a runaway agent.** Runs now set a `--pids-limit` (default 4096, a
   fork-bomb cap) and `--security-opt no-new-privileges`, with optional `--memory` /
   `--cpus`, so an agent in a loop can't fork-bomb or starve the host. Tunable via
