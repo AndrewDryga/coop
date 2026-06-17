@@ -41,6 +41,8 @@ ARG AGENT_PACKAGES="%s"
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
+# ~/.asdf and ~/.cache are pre-created node-owned so their named volumes inherit that
+# owner — a fresh volume on a path absent from the image would mount root-owned.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
@@ -51,7 +53,7 @@ RUN apt-get update \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*' \
- && mkdir -p /home/node/.asdf && chown node:node /home/node/.asdf
+ && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache
 
 # Entrypoint: install whatever a repo's .tool-versions (or ~/.tool-versions) pins
 # via asdf, then run the requested command. A no-op when there is no .tool-versions.

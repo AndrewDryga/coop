@@ -21,7 +21,8 @@ RUN apt-get update \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*' \
- && useradd -m -u 1000 -s /bin/bash node
+ && useradd -m -u 1000 -s /bin/bash node \
+ && mkdir -p /home/node/.cache && chown node:node /home/node/.cache
 
 ENV ASDF_DATA_DIR=/home/node/.asdf \
     PATH="/home/node/.asdf/shims:${PATH}" \

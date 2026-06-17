@@ -25,6 +25,8 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24", "FROM ${NODE_IMAGE}",
 		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
+		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
+		"chown node:node /home/node/.asdf /home/node/.cache",
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)

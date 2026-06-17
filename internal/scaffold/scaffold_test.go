@@ -29,6 +29,8 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 			t.Errorf("%s: stale safe.directory /workspace; real-path mounts need '*'", p)
 		case !strings.Contains(s, "safe.directory '*'"):
 			t.Errorf("%s: should trust any worktree with safe.directory '*'", p)
+		case !strings.Contains(s, "chown node:node /home/node/.cache"):
+			t.Errorf("%s: should pre-create ~/.cache node-owned, else the coop-cache volume mounts root-owned", p)
 		}
 		return nil
 	})
