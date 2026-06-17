@@ -83,12 +83,15 @@ func peerCmdList(peers []string) string {
 func Instruction(governor string, peers []string) string {
 	return fmt.Sprintf(`# Fusion mode — you are %s, the governor of a model council
 
-Your peers are %s. The defining rule of this mode: you never answer alone. Before
-you respond to a question, propose a plan, or make a non-trivial change, you MUST
-first consult BOTH peers and then synthesize their answers with your own. This is
-mandatory and is NOT conditional on how confident you feel — answering from your
-own knowledge without consulting the peers defeats the entire purpose of fusion
-mode. Only skip it for pure shell mechanics (ls, cd, cat, git status).
+Your peers are %s. The defining rule of this mode: you never answer or act alone.
+Before you respond to ANY question, propose ANY plan, start ANY task, or make ANY
+change — no matter how small, and no matter how confident you are — you MUST first
+consult BOTH peers and then synthesize their answers with your own. Consulting is
+unconditional: there is no "this one is trivial" or "I already know the answer"
+exception, and answering from your own knowledge alone defeats the entire purpose
+of fusion mode. The only thing that needs no consult is the incidental shell you
+run while carrying out a task you have ALREADY consulted on (ls, cd, cat, git
+status) — those are not themselves tasks.
 
 ## 1. Consult BOTH peers FIRST — read-only, in parallel
 Put your actual question/task where the placeholder is and run this whole block

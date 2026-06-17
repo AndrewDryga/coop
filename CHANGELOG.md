@@ -2,6 +2,10 @@
 
 ## 2.4.0
 
+- **Fusion mode consults on every task.** The governor's directive is now
+  unconditional — no "trivial change" or "I already know it" exception — so a
+  fusion governor always consults both peers before answering or acting (only
+  incidental shell like `ls`/`git status` is exempt, as it isn't itself a task).
 - **In-box agents no longer trip over the absent OS sandbox.** The box is itself the
   sandbox and ships no bubblewrap, so coop tells Claude Code to skip subprocess
   env-scrubbing (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0`) and pins its bash sandbox off
