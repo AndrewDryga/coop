@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.6.0
+## 2.5.0
 
 - **`coop check-secrets` — content secret scan of the visible tree.** Shadowing hides
   secrets by filename; this catches a token hiding *inside* an ordinary file. It walks the
@@ -78,7 +78,7 @@
   task lines (the same anchored rule the loop uses), so the TASKS.md legend or an
   `## Example` block can't become a fake item in a fork's queue.
 
-## 2.5.0
+## 2.4.0
 
 - **Fusion mode consults on every task.** The governor's directive is now
   unconditional — no "trivial change" or "I already know it" exception — so a
