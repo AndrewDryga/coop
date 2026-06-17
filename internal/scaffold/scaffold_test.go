@@ -77,8 +77,10 @@ func TestInit(t *testing.T) {
 	}
 
 	// Skills were copied.
-	if _, err := os.Stat(filepath.Join(repo, ".claude/skills/spec/SKILL.md")); err != nil {
-		t.Errorf("skill not copied: %v", err)
+	for _, s := range []string{"spec", "investigate"} {
+		if _, err := os.Stat(filepath.Join(repo, ".claude/skills", s, "SKILL.md")); err != nil {
+			t.Errorf("skill %s not copied: %v", s, err)
+		}
 	}
 
 	// .gitignore carries the working-state rule.

@@ -42,8 +42,9 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
 ## Skills
 Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
 change, `/work` to execute a plan step by step against the gate, `/sweep` to
-drain `.agent/TASKS.md` unattended, `/verify-api` before calling anything you're
-not sure exists. They live in `.claude/skills/` (Codex shares them).
+drain `.agent/TASKS.md` unattended, `/investigate` to root-cause a failure before
+fixing, `/verify-api` before calling anything you're not sure exists. They live in
+`.claude/skills/` (Codex shares them).
 
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it in

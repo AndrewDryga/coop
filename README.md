@@ -502,8 +502,9 @@ through the daily cap instead of burning retries against it.
 
 `init` also installs generic **workflow skills** into `.claude/skills/` (shared with
 Codex): `/spec` a multi-file change, `/work` it step-by-step against the gate, `/sweep`
-to drain `.agent/TASKS.md`, and `/verify-api` before calling anything you're unsure of.
-Edit them freely — `init` won't overwrite a skill you've changed.
+to drain `.agent/TASKS.md`, `/investigate` to root-cause a failure, and `/verify-api`
+before calling anything you're unsure of. Edit them freely — `init` won't overwrite a
+skill you've changed.
 
 ### The `.agent/` working folder
 
@@ -729,7 +730,7 @@ internal/scaffold/  `coop init` templates + the workflow skills (embedded in the
 internal/cli/       command dispatch, grouped help, the fork lifecycle, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
 agents/             example config (env.example, mcp.json.example); copied to ~/.config/coop on install
-skills/             the workflow skills (spec · work · sweep · verify-api), also embedded
+skills/             the workflow skills (spec · work · sweep · investigate · verify-api), also embedded
 install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 
