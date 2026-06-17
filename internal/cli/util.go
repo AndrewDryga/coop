@@ -20,13 +20,21 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-// queueHasTodo reports whether a TASKS.md file still has an unclaimed "[ ]" item.
+// queueHasTodo reports whether a TASKS.md file still has an unclaimed task: a list
+// item that begins a line with "- [ ]". It matches at line start so the "[ ]" in the
+// legend/comment header, in prose, or in an "# Example" block (which uses "[E]") is
+// never mistaken for real work.
 func queueHasTodo(queue string) bool {
 	data, err := os.ReadFile(queue)
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), "[ ]")
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "- [ ]") {
+			return true
+		}
+	}
+	return false
 }
 
 func copyFile(src, dst string) error {
