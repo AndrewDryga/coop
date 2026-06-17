@@ -4,7 +4,8 @@
 
 ## Example
 
-- <what you found> — why it matters and where it lives; your recommended fix. A line or
-  two, enough for a human to triage it later.
+- <what you found> — dump what you already know so it survives a clean start: what it
+  is, why it matters, where it lives, and any approach or spec you've already worked
+  out. Whatever's in your head, not a headline — but don't go plan it further.
 
 ## Backlog

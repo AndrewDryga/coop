@@ -1,9 +1,10 @@
-# .agent/IDEAS.md — product ideas as short sketches. Never auto-implemented;
-# a human approves and moves an idea into .agent/TASKS.md first.
+# .agent/IDEAS.md — product ideas: dump your current thinking, a sketch or a full spec
+# if you already have one. Never auto-implemented; a human moves one into .agent/TASKS.md.
 
 ## Example
 
-- <idea title> — the outcome for the user in a sentence; why it would help; the rough
-  shape; the biggest unknown. A sketch, not a spec.
+- <the idea> — dump what you already know so it survives a clean start: what it is, why
+  it'd help, and any shape, approach, or spec you've already worked out. Whatever's in
+  your head, not a headline — but don't go plan it further.
 
 ## Ideas

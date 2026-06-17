@@ -30,7 +30,7 @@
 Durable working memory the BOOT protocol reads back. Only `rules/` is committed;
 the rest is local (git-ignored) so it never creates commit noise or merge churn.
 - `TASKS.md` — the work queue (the four states above).
-- `BACKLOG.md` — work you discover *outside* the current task: capture it, stay on
+- `BACKLOG.md` — work you discover *outside* the current task: dump what you already know about it, stay on
   task, keep going. Not auto-worked, not scanned by the Stop hook; a human
   promotes an item into TASKS.md when it's time.
 - `LOG.md` — your chain-of-thought: what you did and *why*, so intent survives a
@@ -41,7 +41,8 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
   when it must happen.
 - `PENDING_DECISIONS.md` — anything needing a human call: the decision, the
   options, your recommendation. Mark the task `[B]`. Never guess on a one-way door.
-- `IDEAS.md` — product ideas as short sketches. Never auto-implemented; a human
+- `IDEAS.md` — product ideas: dump your current thinking, a sketch or a full spec if you
+  have one. Never auto-implemented; a human
   approves and moves one into TASKS.md. The loop reads TASKS.md only.
 - `rules/` — the taste knowledge base (the one committed part).
 
