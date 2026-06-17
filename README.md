@@ -146,7 +146,7 @@ any of them.
 | `coop fork <name> <agent> --loop --tasks <path> [-d]` | loop a tasks file unattended in the fork (`-d`/`--detach` backgrounds it) |
 | `coop fork ls` | list this repo's forks: agent, branch, change size, state, last activity |
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
-| `coop fork merge <name> [--all]` | rebase the fork onto your branch and land it (`--all` = the whole fleet) |
+| `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
 | `coop fork rm <name> [--force]` | discard a fork (refuses unmerged/dirty work without `--force`) |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
 | `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-a-fork-from-zed-acp) over ACP |
@@ -335,6 +335,11 @@ Set **`COOP_GATE`** (e.g. `COOP_GATE="make check"`) and every merge re-runs that
 the box on the *rebased* tree, rolling back if it goes red — the machine gate behind
 your human review. A **policy check** also blocks secret-looking or oversized files from
 sneaking in (override with `--force`). Merge refuses if your own tree is dirty.
+
+Merging lands work and then offers to delete the fork, so it asks first. In a
+**non-interactive** shell (CI, a pipe) there's no one to answer, and merge refuses
+rather than landing on the default — pass **`--yes`** (`-y`) to confirm landing and
+removal up front. `--yes` also skips the prompts interactively.
 
 ### Drive a fork from Zed (ACP)
 

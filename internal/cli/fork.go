@@ -64,7 +64,7 @@ func forkHelp() (int, error) {
 		{"coop fork logs [name] [-f|--follow]", "tail a fork's loop log (no name tails every fork, prefixed)"},
 		{"coop fork review <name> [--stat|--tool|--open]", "brief + diff; --tool = git difftool, --open = your editor"},
 		{"coop fork <name> acp [agent]", "front the fork as an ACP agent over stdio (drive it from Zed)"},
-		{"coop fork merge <name> [--all] [-f|--force]", "rebase the fork onto your branch and land it (--all = queue)"},
+		{"coop fork merge <name> [--all] [-f|--force] [-y|--yes]", "rebase the fork onto your branch and land it (--all = queue)"},
 		{"coop fork rm <name> [-f|--force]", "discard a fork (refuses unmerged/dirty work without --force)"},
 		{"coop fork open <name>", "open the fork in your editor ($COOP_EDITOR / git core.editor / …)"},
 		{"coop fork path <name>", "print the fork's filesystem path"},
@@ -77,6 +77,7 @@ func forkHelp() (int, error) {
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, path to the tasks file that seeds the queue (required)"},
 		{"-f, --force", "merge / rm: override the gate, policy, or unmerged-or-dirty guard"},
+		{"-y, --yes", "merge: confirm landing + fork removal (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
 	}
 	var b strings.Builder

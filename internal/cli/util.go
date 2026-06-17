@@ -161,6 +161,21 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// approve reports whether a destructive step is approved. --yes approves without
+// asking; otherwise it prompts interactively. In a non-interactive run (no TTY)
+// without --yes it refuses rather than silently taking the default — so a pipe or CI
+// job can't land work and delete a fork on its own. Callers gate the whole command on
+// this up front (with a clear "pass --yes" error); this is also the safe fallback.
+func approve(prompt string, yes bool) bool {
+	if yes {
+		return true
+	}
+	if !ui.IsTerminal(os.Stdin) {
+		return false
+	}
+	return confirm(prompt, true)
+}
+
 // confirm asks a yes/no question, returning def with no tty (batch runs) or on a
 // bare Enter.
 func confirm(prompt string, def bool) bool {

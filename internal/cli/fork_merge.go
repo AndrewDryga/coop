@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -175,13 +176,15 @@ func (a *app) landFork(repo, ws, name string) error {
 }
 
 func (a *app) forkMerge(args []string) (int, error) {
-	all, force, name := false, false, ""
+	all, force, yes, name := false, false, false, ""
 	for _, x := range args {
 		switch x {
 		case "--all":
 			all = true
 		case "--force", "-f":
 			force = true
+		case "--yes", "-y":
+			yes = true
 		default:
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork merge: unknown flag %q", x)
@@ -196,6 +199,12 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if gitDirty(repo) {
 		return 1, errors.New("your working tree has uncommitted changes — commit or stash before merging")
 	}
+	// Merging lands work and (by default) deletes the fork. A non-interactive run has
+	// no one to answer the prompts, so refuse rather than proceed on the default —
+	// pass --yes to opt in explicitly.
+	if !yes && !ui.IsTerminal(os.Stdin) {
+		return 1, errors.New("coop fork merge: refusing to land in a non-interactive shell — pass --yes to confirm")
+	}
 	img, err := a.mergeGate(repo)
 	if err != nil {
 		return -1, err
@@ -204,7 +213,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return a.forkMergeAll(repo, img, force)
 	}
 	if name == "" {
-		return 2, errors.New("usage: coop fork merge <name> [--all]")
+		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
 	}
 	ws := forkWorkspace(repo, name)
 	if !pathExists(ws) {
@@ -217,7 +226,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	ui.Info("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
-	if !confirm("rebase and land?", true) {
+	if !approve("rebase and land?", yes) {
 		return 0, nil
 	}
 	landed, err := a.mergeOne(repo, img, name, force)
@@ -229,7 +238,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return 1, nil
 	}
 	ui.Info("%s", ui.Green("✓ landed "+name))
-	if confirm("remove the fork?", true) {
+	if approve("remove the fork?", yes) {
 		if err := destroyFork(repo, name); err != nil {
 			return -1, err
 		}

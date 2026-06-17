@@ -204,6 +204,58 @@ func TestMergeOneIgnoresForkBooby(t *testing.T) {
 	}
 }
 
+// A non-interactive `coop fork merge` must refuse without --yes (it lands work and
+// deletes the fork), and proceed with it.
+func TestForkMergeNonTTYRequiresYes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	// Force a non-interactive stdin regardless of how the suite is run — a real TTY
+	// would send the un-gated path into an interactive prompt and block.
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	saved := os.Stdin
+	os.Stdin = devnull
+	defer func() { os.Stdin = saved }()
+
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{RepoOverride: repo}} // no gate → no box
+	ws, err := setupFork(repo, "a")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "a.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "work")
+
+	// Without --yes: refuse, before landing, fork intact.
+	if code, err := a.forkMerge([]string{"a"}); err == nil || code == 0 {
+		t.Fatalf("forkMerge(no --yes) = (%d, %v), want a refusal", code, err)
+	}
+	if pathExists(filepath.Join(repo, "a.txt")) {
+		t.Error("a.txt landed despite the non-interactive refusal")
+	}
+	if !pathExists(ws) {
+		t.Error("fork was removed despite the refusal")
+	}
+
+	// With --yes: lands and removes the fork.
+	if code, err := a.forkMerge([]string{"a", "--yes"}); err != nil || code != 0 {
+		t.Fatalf("forkMerge(--yes) = (%d, %v), want (0, nil)", code, err)
+	}
+	if !pathExists(filepath.Join(repo, "a.txt")) {
+		t.Error("a.txt did not land with --yes")
+	}
+	if pathExists(ws) {
+		t.Error("fork not removed after a --yes land")
+	}
+}
+
 func TestForkMergeQueue(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
