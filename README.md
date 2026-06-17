@@ -568,7 +568,11 @@ model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration co
 you need something custom. When the queue empties, a fresh auditor
 re-checks every `[x]` against the git log and reopens anything that doesn't hold up.
 `init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
-fast commit-gate hook.
+fast Claude commit-gate hook. Because those are Claude-only, `init` *also* installs a
+tracked git **pre-commit** gate (`.githooks/pre-commit`) and points `core.hooksPath` at
+it, so the format check runs for *every* committer — Codex, Gemini, and a plain
+`git commit` — and rides along on a fresh clone. A custom `core.hooksPath` is left
+untouched; skip the gate once with `git commit --no-verify`.
 
 If the model hits a **rate or usage limit** mid-run, the loop doesn't treat it as a
 failure: it reads the reset time from the agent's own output, waits it out with a

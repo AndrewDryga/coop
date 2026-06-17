@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -74,6 +75,9 @@ func Init(repo, stack string) error {
 		return err
 	}
 	if err := s.updateGitignore(); err != nil {
+		return err
+	}
+	if err := s.installGitHooks(); err != nil {
 		return err
 	}
 
@@ -181,6 +185,50 @@ func (s *scaffolder) copySkills() error {
 		ui.Info("added skill /%s", name)
 	}
 	return nil
+}
+
+// installGitHooks writes a tracked .githooks/pre-commit gate and points git at it via
+// core.hooksPath, so the format gate runs for every committer — Codex, Gemini, and a
+// plain `git commit` — not just Claude's hooks. Tracked + core.hooksPath means a fresh
+// clone gets it with no .git/hooks copying. A user's custom hooksPath is never clobbered.
+func (s *scaffolder) installGitHooks() error {
+	hook := filepath.Join(s.repo, ".githooks", "pre-commit")
+	if err := s.writeIfAbsent(hook, "templates/githooks/pre-commit", 0o755); err != nil {
+		return err
+	}
+	if !gitRepo(s.repo) {
+		ui.Info("not a git repo yet — after 'git init', run: git config core.hooksPath .githooks")
+		return nil
+	}
+	switch current := gitConfigGet(s.repo, "core.hooksPath"); current {
+	case "", ".githooks":
+		if err := gitConfigSet(s.repo, "core.hooksPath", ".githooks"); err != nil {
+			return err
+		}
+		ui.Info("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
+	default:
+		ui.Info("kept your core.hooksPath=%q; coop's gate is in .githooks/pre-commit", current)
+	}
+	return nil
+}
+
+// gitRepo reports whether repo is inside a git work tree.
+func gitRepo(repo string) bool {
+	return exec.Command("git", "-C", repo, "rev-parse", "--git-dir").Run() == nil
+}
+
+// gitConfigGet returns the effective (local or global) value of a git config key, or "".
+func gitConfigGet(repo, key string) string {
+	out, err := exec.Command("git", "-C", repo, "config", "--get", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitConfigSet sets a git config key in repo's local config.
+func gitConfigSet(repo, key, value string) error {
+	return exec.Command("git", "-C", repo, "config", "--local", key, value).Run()
 }
 
 func (s *scaffolder) updateGitignore() error {

@@ -2,6 +2,12 @@
 
 ## 2.6.0
 
+- **`coop init` installs a git pre-commit gate for every committer.** The scaffolded
+  `.claude/hooks` only fire for Claude, so Codex/Gemini and plain `git commit` bypassed
+  the format gate. `init` now also writes a tracked `.githooks/pre-commit` (gofmt-checks
+  staged files, fails closed) and sets `core.hooksPath=.githooks`, so the gate runs for
+  everyone and travels with a fresh clone. A custom `core.hooksPath` is never clobbered;
+  `git commit --no-verify` skips it.
 - **Stale-image warning.** A per-project image (built from `Dockerfile.agent`) bakes the
   repo's toolchain at build time, so it can drift from the files that define it. `coop`
   now records a hash of `Dockerfile.agent` + `.tool-versions` at `coop build` time and, on

@@ -1,0 +1,21 @@
+#!/bin/bash
+# coop pre-commit gate — runs for every committer (agent or human) via
+# core.hooksPath=.githooks, so Codex/Gemini and a plain `git commit` can't bypass
+# the format check the way they bypass Claude-only hooks. Fast by design; add your
+# own quick checks below. To skip once: git commit --no-verify.
+staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
+
+# Go: block the commit if any staged .go file isn't gofmt-clean.
+go_files=$(echo "$staged" | grep '\.go$' || true)
+if [ -n "$go_files" ] && command -v gofmt >/dev/null 2>&1; then
+  bad=$(gofmt -l $go_files 2>/dev/null || true)
+  if [ -n "$bad" ]; then
+    echo "pre-commit blocked — these staged files need gofmt:" >&2
+    echo "$bad" | sed 's/^/  /' >&2
+    echo "fix with: gofmt -w <files>   (or: git commit --no-verify to skip)" >&2
+    exit 1
+  fi
+fi
+
+# Add your own fast checks here (e.g. mix format --check-formatted).
+exit 0

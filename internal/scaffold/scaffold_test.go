@@ -3,6 +3,7 @@ package scaffold
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,6 +51,7 @@ func TestInit(t *testing.T) {
 		"AGENTS.md", ".agent/TASKS.md", ".agent/LOG.md", ".agent/BACKLOG.md",
 		".agent/IDEAS.md", ".agent/PENDING_DECISIONS.md",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
+		".githooks/pre-commit",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
 		if err != nil {
@@ -64,6 +66,9 @@ func TestInit(t *testing.T) {
 	// Hooks are executable.
 	if fi, _ := os.Stat(filepath.Join(repo, ".claude/hooks/stop-guard.sh")); fi != nil && fi.Mode()&0o100 == 0 {
 		t.Error("stop-guard.sh is not executable")
+	}
+	if fi, _ := os.Stat(filepath.Join(repo, ".githooks/pre-commit")); fi != nil && fi.Mode()&0o100 == 0 {
+		t.Error(".githooks/pre-commit is not executable")
 	}
 
 	// CLAUDE.md / GEMINI.md are symlinks to AGENTS.md.
@@ -93,6 +98,46 @@ func TestInit(t *testing.T) {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}
+	}
+}
+
+func TestInitGitHooks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	gitInit := func(dir string) {
+		t.Helper()
+		if out, err := exec.Command("git", "-C", dir, "init").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+	}
+
+	// A fresh repo gets core.hooksPath pointed at the tracked, executable hook.
+	repo := t.TempDir()
+	gitInit(repo)
+	if err := Init(repo, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitConfigGet(repo, "core.hooksPath"); got != ".githooks" {
+		t.Errorf("core.hooksPath = %q, want .githooks", got)
+	}
+	if fi, err := os.Stat(filepath.Join(repo, ".githooks/pre-commit")); err != nil {
+		t.Fatalf("pre-commit hook missing: %v", err)
+	} else if fi.Mode()&0o100 == 0 {
+		t.Error("pre-commit hook is not executable")
+	}
+
+	// A user's custom hooksPath is left untouched (re-init is non-destructive).
+	repo2 := t.TempDir()
+	gitInit(repo2)
+	if err := gitConfigSet(repo2, "core.hooksPath", ".my-hooks"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(repo2, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitConfigGet(repo2, "core.hooksPath"); got != ".my-hooks" {
+		t.Errorf("custom core.hooksPath was clobbered: got %q, want .my-hooks", got)
 	}
 }
 
