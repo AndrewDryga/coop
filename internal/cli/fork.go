@@ -407,36 +407,20 @@ func (a *app) forkLs(_ []string) (int, error) {
 		ui.Info("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
 	}
-	fmt.Printf("  %-16s %-8s %-12s %-9s %-15s %s\n",
-		ui.Bold("NAME"), ui.Bold("AGENT"), ui.Bold("BRANCH"), ui.Bold("STATE"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
+	const format = "  %-16s %-8s %-12s %-9s %-8s %-15s %s\n"
+	fmt.Printf(format, ui.Bold("NAME"), ui.Bold("AGENT"), ui.Bold("BRANCH"),
+		ui.Bold("STATE"), ui.Bold("TASKS"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
 	for _, n := range names {
-		ws := forkWorkspace(repo, n)
-		agent := readForkAgent(ws)
-		if agent == "" {
-			agent = "?" // a fork made before agents were remembered
-		}
-		state := "idle"
-		if forkRunningPid(repo, n) != 0 {
-			state = "running"
-		}
-		fmt.Printf("  %-16s %-8s %-12s %-9s %-15s %s\n", n, agent, forkBranch(ws), state, forkChanges(ws), forkUpdated(ws))
+		s := gatherForkStatus(repo, n)
+		fmt.Printf(format, s.Name, s.Agent, s.Branch, s.stateCell(), s.tasksCell(), s.changesCell(), s.Updated)
 	}
 	return 0, nil
 }
 
-// forkBranch / forkChanges / forkUpdated read a fork's state for `coop fork ls`. They
-// run against an agent-controlled tree (post-work), so they use the hardened helpers —
-// `status`/`diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
+// forkBranch / forkUpdated read a fork's state (for `coop fork ls` and `coop status`).
+// They run against an agent-controlled tree (post-work), so they use the hardened
+// helpers — `diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
 func forkBranch(ws string) string { return gitOutFork(ws, "rev-parse", "--abbrev-ref", "HEAD") }
-
-func forkChanges(ws string) string {
-	ins, del := parseShortstat(gitOutFork(ws, "diff", "--shortstat", "origin/HEAD"))
-	out := fmt.Sprintf("+%d -%d", ins, del)
-	if forkDirty(ws) {
-		out += " ⚑"
-	}
-	return out
-}
 
 func forkUpdated(ws string) string {
 	if rel := gitOutFork(ws, "log", "-1", "--format=%cr"); rel != "" {

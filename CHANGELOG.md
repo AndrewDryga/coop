@@ -2,6 +2,12 @@
 
 ## 2.6.0
 
+- **`coop status` + a richer `coop fork ls`.** Watching a fleet loop overnight meant
+  tailing N logs. `coop status` now rolls the fleet up at a glance — per fork: running or
+  idle, tasks done/total, blockers, diff size, and the task it's on — plus fleet totals.
+  `coop fork ls` gains a tasks-progress column. Both read existing sources (the fork's
+  queue, git, the loop pidfile); no daemon. The anchored TASKS.md parser is shared, so the
+  loop, fleet split, and status can't drift apart.
 - **`coop init` installs a git pre-commit gate for every committer.** The scaffolded
   `.claude/hooks` only fire for Claude, so Codex/Gemini and plain `git commit` bypassed
   the format gate. `init` now also writes a tracked `.githooks/pre-commit` (gofmt-checks

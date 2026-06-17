@@ -65,7 +65,7 @@ func Main(argv []string) int {
 		case "fork", "clone":
 			code, _ := forkHelp()
 			return code
-		case "loop", "fleet", "up", "down", "init", "doctor", "build", "update":
+		case "loop", "fleet", "status", "up", "down", "init", "doctor", "build", "update":
 			printHelp(config.Load())
 			return 0
 		}
@@ -115,6 +115,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdFork(rest)
 	case "fleet":
 		return a.cmdFleet(rest)
+	case "status":
+		return a.cmdStatus(rest)
 	case "loop":
 		return a.cmdLoop(rest)
 	case "up":

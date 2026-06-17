@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -38,6 +39,73 @@ func queueHasTodo(queue string) bool {
 		}
 	}
 	return false
+}
+
+// taskLineRe matches an anchored task line and captures its state marker. Like
+// isOpenTask it only matches list items at the line start, so the legend, prose, and
+// the [E] example block are never counted. (E is deliberately not a state here.)
+var taskLineRe = regexp.MustCompile(`^- \[([ wxB])\] `)
+
+// taskCounts tallies a TASKS.md queue by state.
+type taskCounts struct{ Todo, Doing, Done, Blocked int }
+
+func (c taskCounts) total() int { return c.Todo + c.Doing + c.Done + c.Blocked }
+
+// scanTasks tallies task states in a TASKS.md body and returns the "active" task — the
+// first claimed (`[w]`) task, or failing that the first unclaimed (`[ ]`) one — so a
+// status view can show what each fork is on. The shared anchored parser keeps the loop,
+// fleet split, status, and `coop tasks` from drifting apart.
+func scanTasks(content string) (taskCounts, string) {
+	var c taskCounts
+	active, firstTodo := "", ""
+	for _, line := range strings.Split(content, "\n") {
+		m := taskLineRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		title := strings.TrimSpace(line[len(m[0]):])
+		switch m[1] {
+		case " ":
+			c.Todo++
+			if firstTodo == "" {
+				firstTodo = title
+			}
+		case "w":
+			c.Doing++
+			if active == "" {
+				active = title
+			}
+		case "x":
+			c.Done++
+		case "B":
+			c.Blocked++
+		}
+	}
+	if active == "" {
+		active = firstTodo
+	}
+	return c, active
+}
+
+// readFileString returns a file's contents, or "" if it can't be read.
+func readFileString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// truncate shortens s to n runes, marking elision with an ellipsis.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:n])
+	}
+	return string(r[:n-1]) + "…"
 }
 
 func copyFile(src, dst string) error {

@@ -164,7 +164,7 @@ any of them.
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
 | `coop fork <name> <agent> --loop --tasks <path> [-d]` | loop a tasks file unattended in the fork (`-d`/`--detach` backgrounds it) |
-| `coop fork ls` | list this repo's forks: agent, branch, change size, state, last activity |
+| `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
 | `coop fork rm <name> [--force]` | discard a fork (refuses unmerged/dirty work without `--force`) |
@@ -179,6 +179,7 @@ any of them.
 | `coop loop [agent] [--debug-on-fail]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
 | `coop fleet up` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` (list with `coop fork ls`) |
+| `coop status` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on |
 
 **Set up & maintain**
 
@@ -610,9 +611,10 @@ coop fork perf codex  --loop -d --tasks .agent/TASKS.perf.md   # codex loops the
 coop fork deps gemini --loop -d --tasks .agent/TASKS.deps.md   # gemini takes the deps file
 coop fork docs claude --loop -d --tasks .agent/TASKS.docs.md   # claude takes the docs
 
-coop fork ls            # who's running, how big the diff, last activity
-coop fork logs -f       # tail every fork at once (compose-style, prefixed)
-coop fork stop perf     # halt one; coop fork logs perf -f to watch just it
+coop status            # fleet at a glance: progress (done/total), blockers, the task each is on
+coop fork ls           # who's running, how big the diff, last activity
+coop fork logs -f      # tail every fork at once (compose-style, prefixed)
+coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
 ```
 
 `--loop` needs `--tasks <path>` — the file is **explicit**, never inferred from the
