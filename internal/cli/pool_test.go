@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -133,5 +134,67 @@ func TestProfilePoolReusesAfterReset(t *testing.T) {
 	later := now.Add(2 * time.Hour)
 	if sleep, _ := p.onLimit(later.Add(time.Hour), 2, later); sleep != 0 || p.active() != "a" {
 		t.Errorf("a's reset passed: sleep=%v active=%q, want 0 + a", sleep, p.active())
+	}
+}
+
+func TestBuildPool(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	repo := "/abs/repo"
+	signIn := func(profile string) {
+		t.Helper()
+		p := cfg.AgentProfileDir("claude", profile)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, ".credentials.json"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// No signed-in profile → error (the loop can't run unauthenticated).
+	if _, err := buildPool(cfg, repo, "claude"); err == nil {
+		t.Error("no signed-in profile should error")
+	}
+	// Default (no pool configured): every signed-in profile rotates.
+	signIn("work")
+	signIn("personal")
+	pool, err := buildPool(cfg, repo, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := append([]string{}, pool.profiles...)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"personal", "work"}) {
+		t.Errorf("default pool = %v, want both signed-in profiles", pool.profiles)
+	}
+	// A configured pool narrows it, and the authed filter drops a member not signed in.
+	if err := setRepoPool(cfg, repo, "claude", []string{"work", "ghost"}); err != nil {
+		t.Fatal(err)
+	}
+	pool, err = buildPool(cfg, repo, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(pool.profiles, []string{"work"}) {
+		t.Errorf("configured pool = %v, want [work] (ghost isn't signed in)", pool.profiles)
+	}
+}
+
+func TestRotateOnLimitSwitchesProfile(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	a := &app{cfg: cfg}
+	pool := newProfilePool([]string{"work", "personal"})
+	waits := 3
+	// work is limited (resets far ahead) while personal is free → switch now, don't sleep,
+	// reset the wait counter, and point cfg at the new profile for the next iteration.
+	a.rotateOnLimit("claude", pool, time.Now().Add(time.Hour), &waits)
+	if pool.active() != "personal" {
+		t.Errorf("pool active = %q, want personal", pool.active())
+	}
+	if got, want := cfg.AgentDir("claude"), cfg.AgentProfileDir("claude", "personal"); got != want {
+		t.Errorf("cfg points at %q, want %q", got, want)
+	}
+	if waits != 0 {
+		t.Errorf("waits = %d, want 0 after a free rotation", waits)
 	}
 }

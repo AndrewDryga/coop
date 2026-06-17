@@ -83,7 +83,11 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 			}
 		}
 	}
-	code, err := a.loop(ws, img, agent, sink, false) // detached/fork loops aren't interactive
+	pool, err := buildPool(a.cfg, repo, agent) // forks rotate the parent (origin) repo's pool
+	if err != nil {
+		return -1, err
+	}
+	code, err := a.loop(ws, img, agent, pool, sink, false) // detached/fork loops aren't interactive
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}

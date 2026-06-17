@@ -390,8 +390,12 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	pool, err := buildPool(a.cfg, repo, agent)
+	if err != nil {
+		return -1, err
+	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, nil, debugOnFail)
+	return a.loop(repo, img, agent, pool, nil, debugOnFail)
 }
 
 // parseLoopArgs pulls the --debug-on-fail flag (alias --debug) out of `coop loop` args;
@@ -420,7 +424,7 @@ const (
 // model rate/usage limit is not a failure: the loop waits for the reset — parsed
 // from the agent's own output when possible — and resumes the same iteration, so
 // a long run survives hitting the limit and continues once it clears.
-func (a *app) loop(repo, img, agent string, sink io.Writer, debugOnFail bool) (int, error) {
+func (a *app) loop(repo, img, agent string, pool *profilePool, sink io.Writer, debugOnFail bool) (int, error) {
 	queue := filepath.Join(repo, ".agent", "TASKS.md")
 	if !fileExists(queue) {
 		return -1, errors.New("no .agent/TASKS.md found — run 'coop init' first")
@@ -444,7 +448,14 @@ func (a *app) loop(repo, img, agent string, sink io.Writer, debugOnFail bool) (i
 	}
 	fails, waits := 0, 0
 	for n := 1; queueHasTodo(queue); {
-		ui.Info("iteration %d", n)
+		// Run this iteration on the pool's active subscription; the mount and the agent
+		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
+		a.cfg.SetActiveProfile(agent, pool.active())
+		if pool.rotates() {
+			ui.Info("iteration %d (profile %s)", n, pool.active())
+		} else {
+			ui.Info("iteration %d", n)
+		}
 		code, out, err := a.runIteration(repo, img, iterCmd(loopWork), sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
@@ -459,9 +470,14 @@ func (a *app) loop(repo, img, agent string, sink io.Writer, debugOnFail bool) (i
 		case actContinue:
 			n++
 		case actWait:
-			// A rate/usage limit is expected on long runs: wait for the reset,
-			// then retry this same iteration rather than burning it.
-			sleepForLimit(wait, resetAt)
+			// A rate/usage limit is expected on long runs. With more than one profile in
+			// the pool, switch to another subscription and retry immediately; otherwise wait
+			// for the reset. Either way the same iteration is retried, not burned.
+			if pool.rotates() {
+				a.rotateOnLimit(agent, pool, resetAt, &waits)
+			} else {
+				sleepForLimit(wait, resetAt)
+			}
 		case actRetry:
 			ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
 			time.Sleep(10 * time.Second)

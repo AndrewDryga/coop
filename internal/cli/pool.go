@@ -200,6 +200,51 @@ func newProfilePool(profiles []string) *profilePool {
 	return &profilePool{profiles: profiles, limited: map[string]time.Time{}}
 }
 
+// buildPool resolves the rotation pool for repo+agent: the repo's configured pool if set,
+// otherwise every profile (so two logins rotate with zero config). It keeps only signed-in
+// profiles, preserving order, and errors if none are — the loop can't run unauthenticated.
+func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
+	if len(cfg.LoopCmd) > 0 {
+		// A custom COOP_LOOP_CMD may not be an agent at all — keep today's behavior: the
+		// default profile, no rotation, no auth gate.
+		return newProfilePool([]string{config.DefaultProfile}), nil
+	}
+	names, err := repoPool(cfg, repo, agent)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		names = cfg.Profiles(agent)
+	}
+	var authed []string
+	for _, p := range names {
+		if box.ProfileAuthed(cfg, agent, p) {
+			authed = append(authed, p)
+		}
+	}
+	if len(authed) == 0 {
+		return nil, fmt.Errorf("%s has no signed-in profile — run: coop login %s [--profile <name>]", agent, agent)
+	}
+	return newProfilePool(authed), nil
+}
+
+// rotateOnLimit handles a rate limit when the pool has more than one profile: it advances
+// the pool, points cfg at the new active profile (so the next iteration mounts and runs it),
+// and either switches immediately (resetting the wait counter, since a free rotation is
+// progress) or, when every profile is limited, sleeps until the soonest reset.
+func (a *app) rotateOnLimit(agent string, pool *profilePool, resetAt time.Time, waits *int) {
+	prev := pool.active()
+	sleep, until := pool.onLimit(resetAt, *waits, time.Now())
+	a.cfg.SetActiveProfile(agent, pool.active())
+	if sleep > 0 {
+		ui.Info("all %d %s profiles are rate limited — waiting for the soonest reset", len(pool.profiles), agent)
+		sleepForLimit(sleep, until)
+		return
+	}
+	ui.Info("%s profile %q rate limited — switching to %q", agent, prev, pool.active())
+	*waits = 0 // only consecutive all-limited waits count toward the stop cap
+}
+
 func (p *profilePool) active() string { return p.profiles[p.idx] }
 
 // rotates reports whether there's more than one profile to switch between.
