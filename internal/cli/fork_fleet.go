@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -36,12 +37,9 @@ func parseFleet(data string) ([]fleetEntry, error) {
 		e := fleetEntry{name: f[0], agent: "claude"}
 		rest := f[1:]
 		// An optional agent token may precede the required tasks path.
-		if len(rest) > 0 {
-			switch rest[0] {
-			case "claude", "codex", "gemini":
-				e.agent = rest[0]
-				rest = rest[1:]
-			}
+		if len(rest) > 0 && agents.Valid(rest[0]) {
+			e.agent = rest[0]
+			rest = rest[1:]
 		}
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("fleet: %q needs a tasks path — %q", e.name, "<name> [agent] <tasks-path>")

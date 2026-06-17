@@ -2,11 +2,9 @@ package cli
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,104 +14,18 @@ import (
 	"syscall"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// agentLoopCmd builds the headless, autonomous command for one loop iteration of
-// the given agent, carrying prompt. Each CLI has its own non-interactive form:
-//
-//	claude --dangerously-skip-permissions -p <prompt>
-//	gemini --yolo -p <prompt>
-//	codex  exec --dangerously-bypass-approvals-and-sandbox <prompt>
+// agentLoopCmd builds the headless, autonomous command for one loop iteration of the
+// given agent, carrying prompt (each agent's non-interactive form lives in its adapter).
 func (a *app) agentLoopCmd(agent, prompt string) []string {
-	switch agent {
-	case "codex":
-		// codex runs headless via an `exec` subcommand; the prompt is positional.
-		base := a.cfg.CodexCmd
-		if len(base) == 0 {
-			base = []string{"codex"}
-		}
-		out := append([]string{base[0], "exec"}, base[1:]...)
-		return append(out, prompt)
-	case "gemini":
-		return append(append([]string{}, a.cfg.GeminiCmd...), "-p", prompt)
-	default: // claude
-		return append(append([]string{}, a.cfg.ClaudeCmd...), "-p", prompt)
+	if ag, ok := agents.Get(agent); ok {
+		return ag.Headless(a.cfg, prompt)
 	}
-}
-
-// forkResume returns the command to run agent in a fork being re-entered: if a prior
-// session for THIS fork exists, the agent's cwd-scoped resume command; otherwise the
-// normal command. The bool reports whether it resumed (for the status line). The
-// fork's cwd is stable and ~/.<agent> persists, so the session is right there — each
-// CLI just resumes its own way, and we scope to this fork so we never pick up an
-// unrelated session.
-func (a *app) forkResume(ws, agent string) ([]string, bool) {
-	switch agent {
-	case "codex":
-		// `codex resume --last` is GLOBAL, so find this fork's most recent session by
-		// the cwd recorded in its session files and resume that one by id.
-		if id := latestCodexSession(a.cfg.AgentDir("codex"), ws); id != "" {
-			base := a.cfg.CodexCmd
-			if len(base) == 0 {
-				base = []string{"codex"}
-			}
-			return append([]string{base[0], "resume", id}, base[1:]...), true
-		}
-	case "gemini":
-		// gemini keys sessions by project basename under ~/.gemini/tmp/<base>/chats.
-		if hasEntries(filepath.Join(a.cfg.AgentDir("gemini"), "tmp", filepath.Base(ws), "chats")) {
-			return append(append([]string{}, a.cfg.GeminiCmd...), "--resume", "latest"), true
-		}
-	default: // claude
-		if hasEntries(filepath.Join(a.cfg.AgentDir("claude"), "projects", claudeProjectKey(ws))) {
-			return append(append([]string{}, a.cfg.ClaudeCmd...), "--continue"), true
-		}
-	}
-	return a.defaultCmd(agent), false
-}
-
-// claudeProjectKey is how Claude Code names a project's session dir: the absolute cwd
-// with path separators turned into dashes.
-func claudeProjectKey(ws string) string { return strings.ReplaceAll(ws, "/", "-") }
-
-// hasEntries reports whether dir exists and holds at least one entry.
-func hasEntries(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	return err == nil && len(entries) > 0
-}
-
-// latestCodexSession returns the id of the most recent codex session recorded for
-// cwd, or "" if none. Codex stores sessions flat by date as JSONL whose first line is
-// a session_meta carrying {id, cwd}.
-func latestCodexSession(codexDir, cwd string) string {
-	var bestID string
-	var bestTime time.Time
-	_ = filepath.WalkDir(filepath.Join(codexDir, "sessions"), func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".jsonl") {
-			return nil
-		}
-		f, openErr := os.Open(p)
-		if openErr != nil {
-			return nil
-		}
-		defer f.Close()
-		line, _ := bufio.NewReader(f).ReadString('\n')
-		var m struct {
-			Payload struct {
-				ID, Cwd string
-			} `json:"payload"`
-		}
-		if json.Unmarshal([]byte(line), &m) != nil || m.Payload.Cwd != cwd || m.Payload.ID == "" {
-			return nil
-		}
-		if info, err := d.Info(); err == nil && info.ModTime().After(bestTime) {
-			bestTime, bestID = info.ModTime(), m.Payload.ID
-		}
-		return nil
-	})
-	return bestID
+	return append([]string{agent}, prompt)
 }
 
 // Per-fork process state (logs + pidfiles) lives in <repo>-forks/.coop/.

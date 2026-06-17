@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"runtime/debug"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -98,8 +99,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 	}
 	sub, rest := argv[0], argv[1:]
 	switch sub {
-	case "claude", "codex", "gemini":
-		return a.launchAgent(sub, rest)
 	case "run":
 		return a.cmdRun(rest)
 	case "shell":
@@ -131,6 +130,9 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "update":
 		return a.cmdUpdate(rest)
 	default:
+		if agents.Valid(sub) { // coop claude|codex|gemini|… — run the agent
+			return a.launchAgent(sub, rest)
+		}
 		return a.cmdRun(argv) // e.g. `coop npm test`
 	}
 }

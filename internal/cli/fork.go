@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -149,7 +150,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	for i := 0; i < len(rest); i++ {
 		x := rest[i]
 		switch {
-		case x == "claude", x == "codex", x == "gemini":
+		case agents.Valid(x):
 			fa.agent = x
 			fa.agentSet = true
 		case x == "--fresh":
@@ -254,9 +255,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// run when no session for this fork exists.
 	cmd := a.defaultCmd(fa.agent)
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
-		if rc, ok := a.forkResume(ws, fa.agent); ok {
-			cmd = rc
-			ui.Info("continuing your last %s session in this fork", fa.agent)
+		if ag, ok := agents.Get(fa.agent); ok {
+			if rc, resumed := ag.Resume(a.cfg, ws); resumed {
+				cmd = rc
+				ui.Info("continuing your last %s session in this fork", fa.agent)
+			}
 		}
 	}
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
@@ -330,8 +333,7 @@ func readForkAgent(ws string) string {
 	if err != nil {
 		return ""
 	}
-	switch a := strings.TrimSpace(string(data)); a {
-	case "claude", "codex", "gemini":
+	if a := strings.TrimSpace(string(data)); agents.Valid(a) {
 		return a
 	}
 	return ""
@@ -539,11 +541,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	consult, rest := extractConsult(rest)
 	agent := "claude"
 	for _, x := range rest {
-		switch x {
-		case "claude", "codex", "gemini":
+		switch {
+		case agents.Valid(x):
 			agent = x
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [claude|codex|gemini]", name)
+			return 2, fmt.Errorf("usage: coop fork %s acp [%s]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
 	cmd, ok := acpCommand(agent)

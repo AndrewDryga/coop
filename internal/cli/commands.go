@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -82,17 +83,13 @@ func extractConsult(args []string) (consult bool, rest []string) {
 	return consult, rest
 }
 
+// defaultCmd is the agent's autonomous interactive command; an unknown name runs as a
+// raw passthrough (so `coop npm test` still works).
 func (a *app) defaultCmd(tool string) []string {
-	switch tool {
-	case "claude":
-		return a.cfg.ClaudeCmd
-	case "codex":
-		return a.cfg.CodexCmd
-	case "gemini":
-		return a.cfg.GeminiCmd
-	default:
-		return []string{tool}
+	if ag, ok := agents.Get(tool); ok {
+		return ag.Interactive(a.cfg)
 	}
+	return []string{tool}
 }
 
 func (a *app) cmdLogin(args []string) (int, error) {
@@ -100,26 +97,18 @@ func (a *app) cmdLogin(args []string) (int, error) {
 	if len(args) > 0 {
 		tool = args[0]
 	}
-	ui.Info("logging in to %s — credentials persist in %s/", tool, a.cfg.AgentDir(tool))
-	cmd := []string{tool} // claude/gemini authenticate on first interactive run
-	if tool == "codex" {
-		// Device-code flow: the box has no browser and codex's default localhost
-		// OAuth redirect can't reach the host, so browser login hangs. --device-auth
-		// prints a URL + code to open on any device instead.
-		cmd = []string{"codex", "login", "--device-auth"}
+	ag, ok := agents.Get(tool)
+	if !ok {
+		return 2, fmt.Errorf("unknown agent %q — use %s", tool, strings.Join(agents.Names(), ", "))
 	}
-	return a.runInBox(cmd, "") // logging in, not an agent session
+	ui.Info("logging in to %s — credentials persist in %s/", tool, a.cfg.AgentDir(tool))
+	return a.runInBox(ag.Login(a.cfg), "") // logging in, not an agent session
 }
 
 // acpCommand maps an agent to its ACP adapter command inside the box.
 func acpCommand(tool string) ([]string, bool) {
-	switch tool {
-	case "claude":
-		return []string{"claude-agent-acp"}, true
-	case "codex":
-		return []string{"codex-acp"}, true
-	case "gemini":
-		return []string{"gemini", "--acp"}, true
+	if ag, ok := agents.Get(tool); ok {
+		return ag.ACP(), true
 	}
 	return nil, false
 }
@@ -327,12 +316,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 func loopAgent(args []string) (string, error) {
 	agent := "claude"
 	for _, x := range args {
-		switch x {
-		case "claude", "codex", "gemini":
-			agent = x
-		default:
-			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [claude|codex|gemini])", x)
+		if !agents.Valid(x) {
+			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s])", x, strings.Join(agents.Names(), "|"))
 		}
+		agent = x
 	}
 	return agent, nil
 }
