@@ -59,7 +59,7 @@ func forkHelp() (int, error) {
 	rows := []struct{ cmd, desc string }{
 		{"coop fork <name> [agent]", "open or re-enter a fork + run an agent (re-entry continues the last session)"},
 		{"coop fork <name> <agent> --loop --tasks <path>", "loop a tasks file unattended in the fork (add -d to detach)"},
-		{"coop fork ls", "list this repo's forks: branch, changes, state, last activity"},
+		{"coop fork ls", "list this repo's forks: agent, branch, changes, state, last activity"},
 		{"coop fork logs [name] [-f|--follow]", "tail a fork's loop log (no name tails every fork, prefixed)"},
 		{"coop fork review <name> [--stat|--tool|--open]", "brief + diff; --tool = git difftool, --open = your editor"},
 		{"coop fork <name> acp [agent]", "front the fork as an ACP agent over stdio (drive it from Zed)"},
@@ -129,6 +129,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 type forkArgs struct {
 	name       string
 	agent      string
+	agentSet   bool // an agent was given explicitly (vs defaulted / remembered from the fork)
 	fresh      bool
 	cont       bool // -c/--continue: force-resume the prior session (now the default on re-entry)
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
@@ -150,6 +151,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 		switch {
 		case x == "claude", x == "codex", x == "gemini":
 			fa.agent = x
+			fa.agentSet = true
 		case x == "--fresh":
 			fa.fresh = true
 		case x == "--continue", x == "-c":
@@ -225,6 +227,18 @@ func (a *app) forkCreate(args []string) (int, error) {
 	} else if !fa.worker {
 		ui.Info("resuming fork %s (%s)", fa.name, ws)
 	}
+	// A fork remembers its agent: an explicit one wins (and updates the memory);
+	// otherwise re-entry uses the agent the fork was created with, so resume-by-default
+	// finds the right session instead of silently falling back to claude.
+	if !fa.agentSet {
+		if remembered := readForkAgent(ws); remembered != "" {
+			if existed && !fa.worker && remembered != fa.agent {
+				ui.Info("using this fork's agent: %s (pass an agent to switch)", remembered)
+			}
+			fa.agent = remembered
+		}
+	}
+	saveForkAgent(ws, fa.agent)
 	if fa.loop {
 		switch {
 		case fa.worker:
@@ -307,6 +321,52 @@ func propagateGitEnv(repo, ws string) {
 	}
 }
 
+// forkAgentFile records which agent a fork was created/last run with — inside the fork,
+// but git-excluded so it never lands. Re-entry without an explicit agent reads it back.
+func forkAgentFile(ws string) string { return filepath.Join(ws, ".coop", "agent") }
+
+func readForkAgent(ws string) string {
+	data, err := os.ReadFile(forkAgentFile(ws))
+	if err != nil {
+		return ""
+	}
+	switch a := strings.TrimSpace(string(data)); a {
+	case "claude", "codex", "gemini":
+		return a
+	}
+	return ""
+}
+
+func saveForkAgent(ws, agent string) {
+	if agent == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(forkAgentFile(ws)), 0o755); err != nil {
+		return
+	}
+	if os.WriteFile(forkAgentFile(ws), []byte(agent+"\n"), 0o644) == nil {
+		excludeFork(ws, ".coop/")
+	}
+}
+
+// excludeFork appends a pattern to the fork's local .git/info/exclude (git's uncommitted
+// ignore file) if absent, so coop's per-fork bookkeeping never shows in a review diff or
+// lands on merge.
+func excludeFork(ws, pattern string) {
+	excl := filepath.Join(ws, ".git", "info", "exclude")
+	if data, err := os.ReadFile(excl); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.TrimSpace(line) == pattern {
+				return
+			}
+		}
+	}
+	if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		_, _ = f.WriteString("\n# coop: per-fork state, never committed\n" + pattern + "\n")
+		_ = f.Close()
+	}
+}
+
 // destroyFork removes a fork's workspace and its review/<name> ref, then prunes an
 // empty forks home. Best-effort on the ref so it works for partially-built forks.
 func destroyFork(repo, name string) error {
@@ -344,15 +404,19 @@ func (a *app) forkLs(_ []string) (int, error) {
 		ui.Info("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
 	}
-	fmt.Printf("  %-16s %-12s %-9s %-15s %s\n",
-		ui.Bold("NAME"), ui.Bold("BRANCH"), ui.Bold("STATE"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
+	fmt.Printf("  %-16s %-8s %-12s %-9s %-15s %s\n",
+		ui.Bold("NAME"), ui.Bold("AGENT"), ui.Bold("BRANCH"), ui.Bold("STATE"), ui.Bold("CHANGES"), ui.Bold("UPDATED"))
 	for _, n := range names {
 		ws := forkWorkspace(repo, n)
+		agent := readForkAgent(ws)
+		if agent == "" {
+			agent = "?" // a fork made before agents were remembered
+		}
 		state := "idle"
 		if forkRunningPid(repo, n) != 0 {
 			state = "running"
 		}
-		fmt.Printf("  %-16s %-12s %-9s %-15s %s\n", n, gitBranch(ws), state, forkChanges(ws), forkUpdated(ws))
+		fmt.Printf("  %-16s %-8s %-12s %-9s %-15s %s\n", n, agent, gitBranch(ws), state, forkChanges(ws), forkUpdated(ws))
 	}
 	return 0, nil
 }

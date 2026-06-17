@@ -33,6 +33,51 @@ func TestValidForkName(t *testing.T) {
 	}
 }
 
+func TestForkAgentMemory(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A fork with no memory yet.
+	if got := readForkAgent(ws); got != "" {
+		t.Errorf("readForkAgent(fresh) = %q, want empty", got)
+	}
+	// Persist, read back, and confirm it's git-excluded so it never lands.
+	saveForkAgent(ws, "codex")
+	if got := readForkAgent(ws); got != "codex" {
+		t.Errorf("readForkAgent after save = %q, want codex", got)
+	}
+	excl, _ := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+	if !strings.Contains(string(excl), ".coop/") {
+		t.Errorf(".git/info/exclude missing .coop/: %q", excl)
+	}
+	// An explicit switch updates the memory; the exclude isn't duplicated.
+	saveForkAgent(ws, "gemini")
+	if got := readForkAgent(ws); got != "gemini" {
+		t.Errorf("readForkAgent after switch = %q, want gemini", got)
+	}
+	excl2, _ := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+	if strings.Count(string(excl2), ".coop/") != 1 {
+		t.Errorf("exclude duplicated .coop/: %q", excl2)
+	}
+	// A garbage value is ignored (not a known agent).
+	if err := os.WriteFile(forkAgentFile(ws), []byte("bogus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readForkAgent(ws); got != "" {
+		t.Errorf("readForkAgent(bogus) = %q, want empty", got)
+	}
+}
+
+func TestParseForkCreateAgentSet(t *testing.T) {
+	if fa, _ := parseForkCreate([]string{"perf"}); fa.agentSet {
+		t.Error("parseForkCreate(perf): agentSet should be false (defaulted)")
+	}
+	if fa, _ := parseForkCreate([]string{"perf", "codex"}); !fa.agentSet || fa.agent != "codex" {
+		t.Errorf("parseForkCreate(perf codex): agentSet=%v agent=%q, want true/codex", fa.agentSet, fa.agent)
+	}
+}
+
 func TestParseForkCreate(t *testing.T) {
 	tests := []struct {
 		args      []string

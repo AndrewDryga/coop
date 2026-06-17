@@ -6,12 +6,14 @@
   handoff.** A fork is a throwaway local clone (own `origin`, nowhere to push, no
   gitignored secrets); treat it like a contractor's PR — open, review, merge, close:
   - `coop fork <name> [claude|codex|gemini]` — open or re-enter a fork and run the
-    chosen agent. **Re-entering continues your last session by default** (the fork's
-    history persists): claude `--continue`, gemini `--resume latest`, and codex by the
-    session whose recorded `cwd` is that fork — each **scoped to this fork** so it never
-    resumes an unrelated session. Falls back to fresh when none exists; `--new` forces a
-    fresh session.
-  - `coop fork ls` — list this repo's forks with branch, change size, last activity;
+    chosen agent. **A fork remembers its agent** (persisted git-excluded inside the
+    fork), so re-entering without one continues with the model it was created with, not a
+    silent fallback to claude. **Re-entering also continues your last session by default**
+    (the fork's history persists): claude `--continue`, gemini `--resume latest`, and
+    codex by the session whose recorded `cwd` is that fork — each **scoped to this fork**
+    so it never resumes an unrelated session. Falls back to fresh when none exists;
+    `--new` forces a fresh session.
+  - `coop fork ls` — list this repo's forks with agent, branch, change size, last activity;
     `coop fork open <name>` opens it in your editor, `coop fork path <name>` prints its path.
   - `coop fork review <name>` — fetch the fork's branch into `review/<name>` and show
     the diff (no more hand-typed `git fetch … && git diff`).

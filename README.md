@@ -118,7 +118,7 @@ any of them.
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
 | `coop fork <name> <agent> --loop --tasks <path> [-d]` | loop a tasks file unattended in the fork (`-d`/`--detach` backgrounds it) |
-| `coop fork ls` | list this repo's forks: branch, change size, state, last activity |
+| `coop fork ls` | list this repo's forks: agent, branch, change size, state, last activity |
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
 | `coop fork merge <name> [--all]` | rebase the fork onto your branch and land it (`--all` = the whole fleet) |
 | `coop fork rm <name> [--force]` | discard a fork (refuses unmerged/dirty work without `--force`) |
@@ -204,11 +204,13 @@ the parent — so the agent can commit *as you* and ignores the same noise you d
 
 ### Re-entry resumes the session
 
-A fork's session history persists, so `coop fork <name>` **continues the agent's last
-conversation** instead of starting fresh — scoped to that fork (claude `--continue`,
-gemini `--resume latest`, and codex by the session whose recorded cwd is the fork). It
-falls back to a fresh session when none exists. Force one with `--new`; `--fresh`
-recreates the whole fork.
+A fork **remembers the agent it was created with**, so `coop fork perf` after
+`coop fork perf codex` re-enters with *codex*, not a silent fallback to claude (pass an
+agent to switch; `coop fork ls` shows each fork's agent). The agent's session history
+persists too, so re-entry **continues its last conversation** instead of starting fresh
+— scoped to that fork (claude `--continue`, gemini `--resume latest`, and codex by the
+session whose recorded cwd is the fork). It falls back to a fresh session when none
+exists. Force one with `--new`; `--fresh` recreates the whole fork.
 
 ### Review — in your terminal or your IDE
 
