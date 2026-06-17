@@ -45,7 +45,7 @@ func printHelp(cfg *config.Config) {
 	group("run unattended")
 	row("coop loop [agent]", "work .agent/TASKS.md until done, then audit (default claude)")
 	row("coop fork <name> <agent> --loop --tasks <p>", "loop one fork on a tasks file (-d detaches)")
-	row("coop fleet up|ls|down|split", "drive a fleet declared in .agent/fleet")
+	row("coop fleet up|down|split", "drive a fleet declared in .agent/fleet")
 
 	group("set up & maintain")
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills (+ toolchain)")

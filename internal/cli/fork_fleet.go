@@ -65,7 +65,7 @@ func (a *app) loadFleet(repo string) ([]fleetEntry, error) {
 
 // cmdFleet manages a declarative fleet of forks from .agent/fleet.
 func (a *app) cmdFleet(args []string) (int, error) {
-	sub := "ls"
+	sub := ""
 	if len(args) > 0 {
 		sub = args[0]
 	}
@@ -74,12 +74,11 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		return a.fleetUp()
 	case "down":
 		return a.fleetDown()
-	case "ls":
-		return a.forkLs(nil)
 	case "split":
 		return a.fleetSplit(args[1:])
 	default:
-		return 2, errors.New("usage: coop fleet up|ls|down|split")
+		// `ls` was a pure alias for `coop fork ls`; point there instead of duplicating.
+		return 2, errors.New("usage: coop fleet up|down|split   (list forks with 'coop fork ls')")
 	}
 }
 

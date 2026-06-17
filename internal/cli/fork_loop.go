@@ -153,6 +153,10 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 		if err := copyFile(tasks, dst); err != nil {
 			return -1, err
 		}
+	} else if tasks != "" {
+		// The fork already has a queue (a resumed loop keeps its progress), so the
+		// tasks file isn't re-seeded — say so instead of silently ignoring it.
+		ui.Info("%s already has a queue — keeping its progress; --tasks not re-applied (use --fresh to reseed)", name)
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	var sink io.Writer

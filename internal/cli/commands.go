@@ -162,6 +162,13 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if consult {
 		lead = tool
 	}
+	// Surface the model when it was defaulted, so ACP never silently picks one. ui.Info
+	// writes to stderr, so it doesn't corrupt the ACP protocol stream on stdout.
+	if governor != "" {
+		ui.Info("acp: fusion — %s governs (override with the governor arg or COOP_FUSION_GOVERNOR)", governor)
+	} else if len(args) == 0 {
+		ui.Info("acp: defaulting to claude (pass codex/gemini/fusion to choose)")
+	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
 		FusionGovernor: governor, ConsultLead: lead,

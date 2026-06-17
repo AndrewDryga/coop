@@ -83,6 +83,13 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if warns := policyScan(repo, ref); len(warns) > 0 && !force {
 		return false, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
+	// Say which branch we're landing onto — merge rebases onto your *current* branch,
+	// so this is your chance to notice you're on the wrong one.
+	target := gitOut(repo, "rev-parse", "--abbrev-ref", "HEAD")
+	if target == "" || target == "HEAD" {
+		target = "the current commit (detached HEAD)"
+	}
+	ui.Info("landing %s onto %s", name, target)
 	pre := gitOut(repo, "rev-parse", "HEAD")
 	if err := a.landFork(repo, ws, name); err != nil {
 		return false, err

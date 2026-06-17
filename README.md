@@ -132,7 +132,7 @@ any of them.
 |---|---|
 | `coop loop [agent]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too) |
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
-| `coop fleet up` · `ls` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` |
+| `coop fleet up` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` (list with `coop fork ls`) |
 
 **Set up & maintain**
 
@@ -558,7 +558,7 @@ deps  gemini .agent/TASKS.deps.md
 docs         .agent/TASKS.docs.md
 ```
 
-Then `coop fleet up` starts them all detached, `coop fleet ls` shows the board, and
+Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
 `coop fleet down` stops them. To bootstrap that file, `coop fleet split <n>` mechanically
 round-robins your `.agent/TASKS.md` into `.agent/TASKS.slice<n>.md` files **and writes a
 matching `.agent/fleet`** with each slice's explicit path (use an agent for *semantic*

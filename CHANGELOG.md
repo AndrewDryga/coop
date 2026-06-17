@@ -39,6 +39,11 @@
 - **`coop loop` takes a model.** `coop loop [claude|codex|gemini]` runs the main
   unattended loop with the agent you pick (default `claude`), instead of always claude;
   `COOP_LOOP_CMD` still overrides the iteration command outright.
+- **Fewer silent defaults.** `coop fork merge` prints which branch it's landing onto (it
+  rebases onto your *current* branch); a fork `--loop` that already has a queue says
+  `--tasks` isn't being re-applied (use `--fresh` to reseed) instead of dropping it
+  silently; `coop acp` names the model it defaulted to / which governor leads under
+  fusion. `coop fleet ls` is gone — it was a pure alias for `coop fork ls`.
 - **Forks land by rebasing, and revalidate before they land.** `coop fork merge`
   rebases the fork onto your current branch (in the fork) and fast-forwards — linear
   history, no merge commits. Set `COOP_GATE` (e.g. `make check`) and it re-runs that
@@ -58,8 +63,8 @@
   detected `code`/`cursor`/`zed`/`idea`), or override it entirely with `COOP_REVIEW_CMD`. `coop fork merge` runs a *policy check* that blocks
   secret-looking (`.env`, `*.pem`, `id_rsa`, …) or oversized files unless `--force`.
   Declare a fleet once in `.agent/fleet` (`<name> [agent] <tasks-path>` per line) and
-  drive it with `coop fleet up | ls | down`; `coop fleet split <n>` round-robins
-  `.agent/TASKS.md` into per-fork slices and writes a matching `.agent/fleet`.
+  drive it with `coop fleet up | down` (list with `coop fork ls`); `coop fleet split <n>`
+  round-robins `.agent/TASKS.md` into per-fork slices and writes a matching `.agent/fleet`.
 - **Drive a fork (or the project) from Zed (ACP).** `coop fork <name> acp [agent]` fronts
   a fork as an ACP agent over stdio (pinned to the fork's path and the parent's image);
   `coop acp [agent]` does the same for the project in your cwd. Register them once in your
