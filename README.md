@@ -190,6 +190,7 @@ any of them.
 | `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
+| `coop check-secrets` | scan the [visible working tree](#secrets-never-enter-the-box) for committed secrets by content (exit 1 on a hit) |
 | `coop help` · `version` | print help · print the version |
 
 ## The sandbox
@@ -226,6 +227,14 @@ sub-teams can keep folder-local rules next to their code. A denylist can never b
 exhaustive, so prefer gitignoring real secrets (gitignored files never enter a
 [fork](#forks-hand-off-work-like-a-pr) either) and use `.coopignore` for anything that
 must live in the working tree. Prove your setup with [`coop doctor`](#prove-it-coop-doctor).
+
+Shadowing hides secrets by **filename**, but a token can hide *inside* an ordinary file.
+`coop check-secrets` scans the files the box can actually see (everything not shadowed)
+for secret-looking **content** — provider token shapes and high-entropy values — and
+reports each as `file:line`, exiting non-zero on a hit so it works as a pre-flight or CI
+check. It deliberately ignores already-shadowed files (the box never sees them) — if it
+flags something you keep on purpose, hide that file with a `.coopignore` entry. Forks land
+through the same content scan ([`coop fork merge`](#forks-hand-off-work-like-a-pr)).
 
 ### Your git identity, not the box's
 

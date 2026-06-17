@@ -2,6 +2,12 @@
 
 ## 2.6.0
 
+- **`coop check-secrets` — content secret scan of the visible tree.** Shadowing hides
+  secrets by filename; this catches a token hiding *inside* an ordinary file. It walks the
+  non-shadowed working tree (exactly what the box can see), runs the same content scanner
+  the fork-merge policy uses, and reports each as `file:line`, exiting non-zero on a hit
+  (pre-flight / CI). The shadow rule is now one shared `box.NewShadowDecider`, so the
+  scanner and the mount plan can't disagree about what the box sees.
 - **`coop tasks` — `.agent/TASKS.md` as a validated surface.** `list` shows states and
   titles, `lint` flags stale `[w]` claims / tasks missing the self-contained five-part
   shape / unchecked tasks stranded in `## Example` / malformed markers (exit 1 on

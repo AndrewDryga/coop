@@ -54,6 +54,7 @@ func printHelp(cfg *config.Config) {
 	row("coop up | down [-v]", "start/stop sibling services (db, redis)")
 	row("coop build | update", "build the box image | rebuild it fresh")
 	row("coop doctor", "prove isolation — attack the box, check it holds")
+	row("coop check-secrets", "scan the visible tree for committed secrets (content, not just names)")
 	row("coop help | version", "this help · the version")
 	p("\n")
 

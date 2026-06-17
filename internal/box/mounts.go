@@ -41,15 +41,7 @@ type Mount struct {
 // runtime, no temp files), so it can be exhaustively unit-tested — this is the
 // function that must never let a secret leak.
 func ComputeMounts(repo, workdir string) ([]Mount, error) {
-	cache := map[string]UserGlobs{} // dir (slash-rel, "" = root) → its .coopignore, loaded once
-	loadDir := func(dirRel string) UserGlobs {
-		if g, ok := cache[dirRel]; ok {
-			return g
-		}
-		g := LoadUserGlobs(filepath.Join(repo, filepath.FromSlash(dirRel)))
-		cache[dirRel] = g
-		return g
-	}
+	shadowed := NewShadowDecider(repo)
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
 	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -58,8 +50,7 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		if p == repo {
 			return nil // never shadow the repo root itself
 		}
-		name := d.Name()
-		if d.IsDir() && name == ".git" {
+		if d.IsDir() && d.Name() == ".git" {
 			return fs.SkipDir
 		}
 		rel, err := filepath.Rel(repo, p)
@@ -67,8 +58,7 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 			return err
 		}
 		relSlash := filepath.ToSlash(rel)
-		secret := matchesAny(name, SecretGlobs) || shadowedByCoopignore(relSlash, loadDir)
-		if !secret || matchesAny(name, AllowGlobs) {
+		if !shadowed(relSlash) {
 			return nil
 		}
 		target := workdir + "/" + relSlash
@@ -83,6 +73,33 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		return nil, err
 	}
 	return mounts, nil
+}
+
+// NewShadowDecider returns a predicate reporting whether a repo-relative slash path is
+// shadowed from the box: its basename matches SecretGlobs, or a .coopignore in the root
+// or an ancestor directory matches it, and AllowGlobs (templates) doesn't override. Each
+// directory's .coopignore is loaded once into the closure's cache. ComputeMounts (the
+// mount plan) and `coop check-secrets` (the scanner) share this single rule so "what the
+// box can see" can never drift between them — scanning a path the box hides is pointless,
+// and a secret that IS shadowed is already protected.
+func NewShadowDecider(repo string) func(relSlash string) bool {
+	cache := map[string]UserGlobs{} // dir (slash-rel, "" = root) → its .coopignore, loaded once
+	loadDir := func(dirRel string) UserGlobs {
+		if g, ok := cache[dirRel]; ok {
+			return g
+		}
+		g := LoadUserGlobs(filepath.Join(repo, filepath.FromSlash(dirRel)))
+		cache[dirRel] = g
+		return g
+	}
+	return func(relSlash string) bool {
+		name := relSlash
+		if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
+			name = relSlash[i+1:]
+		}
+		secret := matchesAny(name, SecretGlobs) || shadowedByCoopignore(relSlash, loadDir)
+		return secret && !matchesAny(name, AllowGlobs)
+	}
 }
 
 // shadowedByCoopignore reports whether the repo-relative slash path is shadowed by a

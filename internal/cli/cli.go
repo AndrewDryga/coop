@@ -65,7 +65,7 @@ func Main(argv []string) int {
 		case "fork", "clone":
 			code, _ := forkHelp()
 			return code
-		case "loop", "fleet", "status", "tasks", "up", "down", "init", "doctor", "build", "update":
+		case "loop", "fleet", "status", "tasks", "check-secrets", "up", "down", "init", "doctor", "build", "update":
 			printHelp(config.Load())
 			return 0
 		}
@@ -129,6 +129,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdInit(rest)
 	case "doctor":
 		return a.cmdDoctor(rest)
+	case "check-secrets":
+		return a.cmdCheckSecrets(rest)
 	case "build":
 		return a.cmdBuild(rest)
 	case "update":
