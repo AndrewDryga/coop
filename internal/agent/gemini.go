@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -54,4 +57,46 @@ func (geminiAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 		return nil, err
 	}
 	return []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, nil
+}
+
+// EnsureDefaults guarantees a valid settings.json (an empty/missing one makes gemini
+// fail at launch) and turns off its folder-trust prompt — the box is the sandbox. An
+// existing choice is kept; a non-blank but unparseable file is left for the user.
+func (a geminiAgent) EnsureDefaults(cfg *config.Config, _ string) {
+	dir := cfg.AgentDir(a.Name())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(dir, "settings.json")
+	data, _ := os.ReadFile(path)
+	blank := strings.TrimSpace(string(data)) == ""
+	m := map[string]any{}
+	if !blank {
+		if json.Unmarshal(data, &m) != nil {
+			return // non-blank but unparseable — don't clobber it
+		}
+	}
+	if disableGeminiFolderTrust(m) || blank {
+		writeJSONFile(path, m, 0o644)
+	}
+}
+
+// disableGeminiFolderTrust sets security.folderTrust.enabled=false unless the user
+// already chose a value, reporting whether it changed m.
+func disableGeminiFolderTrust(m map[string]any) bool {
+	security, _ := m["security"].(map[string]any)
+	if security == nil {
+		security = map[string]any{}
+		m["security"] = security
+	}
+	ft, _ := security["folderTrust"].(map[string]any)
+	if ft == nil {
+		ft = map[string]any{}
+		security["folderTrust"] = ft
+	}
+	if _, ok := ft["enabled"]; ok {
+		return false // user already chose — respect it
+	}
+	ft["enabled"] = false
+	return true
 }

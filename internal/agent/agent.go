@@ -39,6 +39,10 @@ type Agent interface {
 	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
 	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
 	MCP(cfg *config.Config) ([]MCPMount, error)
+	// EnsureDefaults pre-answers the agent's first-run prompts (theme, folder-trust,
+	// sandbox) in its config dir so a fresh box goes straight to work. Best-effort; an
+	// agent that needs nothing leaves it empty. workdir is the resolved box cwd.
+	EnsureDefaults(cfg *config.Config, workdir string)
 }
 
 // MCPMount is one generated config file an agent needs to see the shared mcp.json: its

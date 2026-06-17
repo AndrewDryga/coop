@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -70,6 +71,34 @@ func (codexAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 		return nil, err
 	}
 	return []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}, nil
+}
+
+// EnsureDefaults pre-trusts the workdir in codex's config.toml so a fresh box doesn't
+// stop at "Do you trust this directory?". Codex records trust as
+// [projects."<dir>"] trust_level = "trusted"; we append it idempotently. The box is the
+// sandbox, so trusting the one mounted repo is the intended posture.
+func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) {
+	if workdir == "" {
+		return
+	}
+	dir := cfg.AgentDir(a.Name())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(dir, "config.toml")
+	data, _ := os.ReadFile(path) // missing file → empty, which is fine
+	if strings.Contains(string(data), fmt.Sprintf("projects.%q", workdir)) {
+		return // leave any existing entry for this dir untouched
+	}
+	out := string(data)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	if out != "" {
+		out += "\n"
+	}
+	out += fmt.Sprintf("[projects.%q]\ntrust_level = \"trusted\"\n", workdir)
+	os.WriteFile(path, []byte(out), 0o644)
 }
 
 // latestCodexSession returns the id of the most recent codex session recorded for cwd,

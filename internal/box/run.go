@@ -108,12 +108,12 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// MCP configs, so a fresh box is ready to work and the generated Codex config
 	// carries the trust entry on the very first run.
 	if spec.Homes {
-		for _, agent := range agents.Names() {
-			os.MkdirAll(cfg.AgentDir(agent), 0o755)
+		for _, name := range agents.Names() {
+			os.MkdirAll(cfg.AgentDir(name), 0o755)
+			if ag, ok := agents.Get(name); ok {
+				ag.EnsureDefaults(cfg, workdir)
+			}
 		}
-		ensureClaudeDefaults(cfg, workdir)
-		ensureCodexDefaults(cfg, workdir)
-		ensureGeminiDefaults(cfg)
 	}
 
 	// Generate MCP configs into temp files that live for the container's run.

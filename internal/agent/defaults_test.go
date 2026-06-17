@@ -1,4 +1,4 @@
-package box
+package agent
 
 import (
 	"bytes"
@@ -24,10 +24,19 @@ func readJSONMap(t *testing.T, path string) map[string]any {
 	return m
 }
 
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
 func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	ensureClaudeDefaults(cfg, "/workspace")
+	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
 
 	s := readJSONMap(t, filepath.Join(dir, "claude", "settings.json"))
 	if s["theme"] != "dark" {
@@ -65,7 +74,7 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 	os.WriteFile(filepath.Join(cdir, "settings.json"), []byte(`{"theme":"light"}`), 0o644)
 	cfg := &config.Config{ConfigDir: dir}
 
-	ensureClaudeDefaults(cfg, "/workspace")
+	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
 
 	c := readJSONMap(t, filepath.Join(cdir, ".claude.json"))
 	if c["oauthAccount"] == nil {
@@ -84,7 +93,7 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 
 	// Idempotent: a second call must not rewrite the file.
 	before, _ := os.ReadFile(filepath.Join(cdir, ".claude.json"))
-	ensureClaudeDefaults(cfg, "/workspace")
+	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
 	after, _ := os.ReadFile(filepath.Join(cdir, ".claude.json"))
 	if !bytes.Equal(before, after) {
 		t.Error("second call rewrote .claude.json (not idempotent)")
@@ -97,7 +106,7 @@ func TestEnsureCodexDefaults(t *testing.T) {
 	cfgPath := filepath.Join(dir, "codex", "config.toml")
 
 	// Fresh: appends a trust entry for the workdir.
-	ensureCodexDefaults(cfg, "/Users/x/proj")
+	codexAgent{}.EnsureDefaults(cfg, "/Users/x/proj")
 	got := readFile(t, cfgPath)
 	if !strings.Contains(got, `[projects."/Users/x/proj"]`) || !strings.Contains(got, `trust_level = "trusted"`) {
 		t.Errorf("config.toml missing trust entry:\n%s", got)
@@ -105,13 +114,13 @@ func TestEnsureCodexDefaults(t *testing.T) {
 
 	// Idempotent: a second call must not duplicate or rewrite.
 	before := readFile(t, cfgPath)
-	ensureCodexDefaults(cfg, "/Users/x/proj")
+	codexAgent{}.EnsureDefaults(cfg, "/Users/x/proj")
 	if after := readFile(t, cfgPath); after != before {
 		t.Error("second call changed config.toml (not idempotent)")
 	}
 
 	// A different workdir adds a second entry; the first survives.
-	ensureCodexDefaults(cfg, "/Users/x/other")
+	codexAgent{}.EnsureDefaults(cfg, "/Users/x/other")
 	got = readFile(t, cfgPath)
 	if !strings.Contains(got, `[projects."/Users/x/proj"]`) || !strings.Contains(got, `[projects."/Users/x/other"]`) {
 		t.Errorf("expected both project entries:\n%s", got)
@@ -124,7 +133,7 @@ func TestEnsureCodexDefaultsPreservesExisting(t *testing.T) {
 	os.MkdirAll(cdir, 0o755)
 	os.WriteFile(filepath.Join(cdir, "config.toml"), []byte("model = \"o3\"\n"), 0o644)
 
-	ensureCodexDefaults(&config.Config{ConfigDir: dir}, "/w")
+	codexAgent{}.EnsureDefaults(&config.Config{ConfigDir: dir}, "/w")
 	got := readFile(t, filepath.Join(cdir, "config.toml"))
 	if !strings.Contains(got, `model = "o3"`) {
 		t.Error("existing config was dropped")
@@ -149,21 +158,21 @@ func TestEnsureGeminiDefaults(t *testing.T) {
 	}
 
 	// Missing → valid JSON with the folder-trust prompt disabled.
-	ensureGeminiDefaults(cfg)
+	geminiAgent{}.EnsureDefaults(cfg, "")
 	if v, ok := folderTrust(t); !ok || v != false {
 		t.Errorf("missing settings: folderTrust.enabled = %v (present=%v), want false", v, ok)
 	}
 
 	// Empty file (the launch crash) → same.
 	os.WriteFile(path, []byte(""), 0o644)
-	ensureGeminiDefaults(cfg)
+	geminiAgent{}.EnsureDefaults(cfg, "")
 	if v, ok := folderTrust(t); !ok || v != false {
 		t.Errorf("empty settings: folderTrust.enabled = %v (present=%v), want false", v, ok)
 	}
 
 	// Existing settings preserved; the folder-trust disable is added alongside.
 	os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o644)
-	ensureGeminiDefaults(cfg)
+	geminiAgent{}.EnsureDefaults(cfg, "")
 	if m := readJSONMap(t, path); m["theme"] != "dark" {
 		t.Errorf("existing theme dropped: %v", m["theme"])
 	}
@@ -173,17 +182,8 @@ func TestEnsureGeminiDefaults(t *testing.T) {
 
 	// A user's explicit folderTrust choice is respected, not overridden.
 	os.WriteFile(path, []byte(`{"security":{"folderTrust":{"enabled":true}}}`), 0o644)
-	ensureGeminiDefaults(cfg)
+	geminiAgent{}.EnsureDefaults(cfg, "")
 	if v, _ := folderTrust(t); v != true {
 		t.Errorf("user's folderTrust=true should be respected, got %v", v)
 	}
-}
-
-func readFile(t *testing.T, path string) string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(data)
 }
