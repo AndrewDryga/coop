@@ -20,75 +20,62 @@ func helpRequested(args []string) bool {
 	return false
 }
 
-func printHelp(cfg *config.Config) {
-	var b strings.Builder
-	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
-	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %-33s%s\n", cmd, desc) }
-	group := func(label string) { fmt.Fprintf(&b, "\n  %s\n", ui.Bold(label)) }
+func printHelp(cfg *config.Config) { fmt.Print(helpText(cfg)) }
 
-	p("%s %s — run a coding agent in a box it can't escape.\n\n", ui.Bold("coop"), resolveVersion())
-	p("%s\n", ui.Bold("usage"))
+// helpText renders the top-level command reference: one command per line, grouped, with a
+// pointer to per-command help. Flags, sub-verbs, and examples live in `coop <cmd> --help`
+// and the README, so this stays a clean, scannable overview.
+func helpText(cfg *config.Config) string {
+	var b strings.Builder
+	group := func(label string) { fmt.Fprintf(&b, "\n%s\n", ui.Bold(label)) }
+	// row keeps a column gap even when a command is long, so a description never glues to it.
+	row := func(cmd, desc string) {
+		gap := 34 - len(cmd)
+		if gap < 2 {
+			gap = 2
+		}
+		fmt.Fprintf(&b, "  %s%s%s\n", cmd, strings.Repeat(" ", gap), desc)
+	}
+
+	fmt.Fprintf(&b, "%s %s — run a coding agent in a box it can't escape.\n", ui.Bold("coop"), resolveVersion())
+	fmt.Fprint(&b, "usage: coop <command> [args]   ·   'coop <command> --help' for a command's flags and details\n")
 
 	group("agents")
-	row("coop claude|codex|gemini [args]", "a sandboxed agent — its autonomous flags, plus your args")
-	row("coop fusion [agent]", "a council: that agent leads, the other two advise, it synthesizes")
-	row("coop <agent> --consult", "opt-in: may ask authenticated peers on hard calls")
-	row("coop run -- <cmd...>", "run any command in the box (raw)")
-	row("coop shell", "a shell in the box")
+	row("coop claude|codex|gemini [args]", "a sandboxed agent (its autonomous flags + your args)")
+	row("coop fusion [agent]", "a council: one agent leads, the others advise, it synthesizes")
+	row("coop run -- <cmd...>", "run a raw command in the box")
+	row("coop shell", "an interactive shell in the box")
 	row("coop login <agent>", "authenticate an agent (token persists in the config dir)")
-	row("coop acp [agent|fusion]", "run as an ACP agent over stdio (point Zed at this)")
+	row("coop acp [agent|fusion]", "serve as an ACP agent over stdio (for editors like Zed)")
 
 	group("forks — review and land work like a PR")
-	row("coop fork <name> [agent]", "open/re-enter a fork (re-entry resumes; --new resets)")
-	row("coop fork <verb> <name>", "ls · logs · review · merge · rm · stop · open · path")
+	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
+	row("coop fork ls", "list this repo's forks")
+	row("coop fork review <name>", "show a fork's brief + diff")
+	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
+	row("coop fork logs [name]", "tail a fork's loop log (no name: every fork)")
+	row("coop fork rm <name>", "discard a fork")
+	row("coop fork stop <name>", "stop a detached loop")
+	row("coop fork open|path <name>", "open the fork in your editor · print its path")
 
-	group("run unattended")
-	row("coop loop [agent] [--debug-on-fail]", "work .agent/TASKS.md until done, then audit (--debug-on-fail: box shell on a failure)")
-	row("coop fork <name> <agent> --loop --tasks <p>", "loop one fork on a tasks file (-d detaches)")
-	row("coop fleet up|down|split", "drive a fleet declared in .agent/fleet")
-	row("coop status", "fleet roll-up — per-fork progress, running/idle, blockers")
-	row("coop tasks list|lint|add|split", "inspect/validate .agent/TASKS.md (lint flags stale/unshaped tasks)")
+	group("unattended")
+	row("coop loop [agent]", "work .agent/TASKS.md until done, then audit")
+	row("coop fleet up|down|split", "drive a fleet of forks from .agent/fleet")
+	row("coop status", "fleet roll-up: per-fork progress, running/idle, blockers")
+	row("coop tasks list|lint|add|split", "inspect and validate .agent/TASKS.md")
 
-	group("set up & maintain")
-	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills (+ toolchain)")
-	row("coop up | down [-v]", "start/stop sibling services (db, redis)")
-	row("coop build | update", "build the box image | rebuild it fresh")
+	group("setup & maintenance")
+	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
+	row("coop build|update", "build the box image · rebuild it fresh")
+	row("coop up|down", "start/stop sibling services (db, redis)")
 	row("coop doctor", "prove isolation — attack the box, check it holds")
-	row("coop check-secrets", "scan the visible tree for committed secrets (content, not just names)")
-	row("coop help | version", "this help · the version")
-	p("\n")
+	row("coop check-secrets", "scan the working tree for committed secrets")
+	row("coop help|version", "this help · the version")
 
-	p("%s\n", ui.Bold("per-project environment"))
-	p("  coop init                  # a repo with .tool-versions → an asdf box at those exact versions\n")
-	p("  coop init --stack asdf     # force a baked asdf Dockerfile.agent + compose.agent.yml\n")
-	p("  coop build && coop up      # build the image, start db/redis\n")
-	p("  coop claude                # the box has the toolchain + reaches db/redis by name\n\n")
+	fmt.Fprintf(&b, "\nconfig: COOP_* or %s   ·   auth: %s   ·   docs: the README\n",
+		tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
 
-	p("%s  give each model its own fork, branch, and tasks file, looping detached:\n", ui.Bold("a fleet"))
-	p("  coop fork perf codex  --loop -d --tasks .agent/TASKS.perf.md\n")
-	p("  coop fork deps gemini --loop -d --tasks .agent/TASKS.deps.md\n")
-	p("  coop fork ls  ·  coop fork logs -f  ·  coop fork stop perf  ·  coop fork merge perf\n\n")
-
-	p("%s  one model leads, the other two advise read-only, the leader synthesizes:\n", ui.Bold("fusion"))
-	p("  coop fusion                     # the default governor leads (COOP_FUSION_GOVERNOR); peers advise\n")
-	p("  coop fusion claude              # claude leads instead\n")
-	p("  coop <agent> --consult          # lighter & opt-in: may ask authed peers on hard calls\n\n")
-
-	p("%s  add to Zed settings.json, then pick it in the agent panel:\n", ui.Bold("drive from Zed (ACP)"))
-	p("  \"agent_servers\": { \"coop\": { \"type\": \"custom\",\n")
-	p("      \"command\": \"coop\", \"args\": [\"acp\", \"claude\"], \"env\": {} } }\n")
-	p("  one entry per governor for fusion, e.g. args [\"acp\", \"fusion\", \"codex\"]\n\n")
-
-	p("%s  per-agent, in %s\n", ui.Bold("auth & settings"), tildeify(cfg.ConfigDir))
-	p("  claude/ codex/ gemini/  ->  mounted at ~/.claude ~/.codex ~/.gemini in the box\n")
-	p("  env                     ->  API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...)\n")
-	p("  INSTRUCTIONS.md         ->  one instruction file, wired into all three agents\n")
-	p("  mcp.json                ->  MCP servers, defined once for all three agents\n\n")
-
-	p("%s  COOP_* env vars or %s — full list in the README\n", ui.Bold("config"), tildeify(filepath.Join(cfg.BoxHome, "coop.conf")))
-	p("  common: COOP_RUNTIME · COOP_IMAGE · COOP_GATE · COOP_FUSION_GOVERNOR · COOP_EDITOR\n")
-
-	fmt.Print(b.String())
+	return b.String()
 }
 
 // commandHelp is the focused text for `coop <cmd> --help`, per subcommand. fork has its

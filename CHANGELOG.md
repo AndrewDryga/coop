@@ -33,6 +33,10 @@
   used to print the generic usage; now it prints focused help — synopsis, what it does,
   and its flags/subcommands. (`coop fork` keeps its fuller help; `coop run` and the agents
   still forward `--help` to the underlying command.)
+- **`coop help` is a clean command reference.** Reworked into one-command-per-line groups
+  (fork verbs are listed individually, not collapsed into `<verb>`), fixed long commands
+  gluing onto their descriptions, and dropped the verbose prose tutorials — each command's
+  flags and examples now live in its own `coop <cmd> --help`.
 - **`coop init` installs a git pre-commit gate for every committer.** The scaffolded
   `.claude/hooks` only fire for Claude, so Codex/Gemini and plain `git commit` bypassed
   the format gate. `init` now also writes a tracked `.githooks/pre-commit` (gofmt-checks
