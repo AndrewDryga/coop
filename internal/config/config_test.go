@@ -175,3 +175,68 @@ func TestMCPActive(t *testing.T) {
 		t.Error("MCPActive should be true with an mcp.json")
 	}
 }
+
+func TestAgentProfileResolution(t *testing.T) {
+	dir := t.TempDir()
+	c := &Config{ConfigDir: dir}
+	claudeDir := filepath.Join(dir, "claude")
+
+	// Legacy flat layout: no profiles/ dir yet → "default" IS the agent dir itself,
+	// so an existing single login keeps resolving to today's path (no file move).
+	if got := c.AgentProfileDir("claude", "default"); got != claudeDir {
+		t.Errorf("legacy default = %q, want %q", got, claudeDir)
+	}
+	if got := c.AgentDir("claude"); got != claudeDir {
+		t.Errorf("AgentDir (legacy) = %q, want %q", got, claudeDir)
+	}
+	// A named profile always lives under profiles/, even before migration.
+	if got, want := c.AgentProfileDir("claude", "work"), filepath.Join(claudeDir, "profiles", "work"); got != want {
+		t.Errorf("named profile = %q, want %q", got, want)
+	}
+
+	// Once profiles/ exists, the default moves under it too (post-migration invariant).
+	if err := os.MkdirAll(filepath.Join(claudeDir, "profiles", "default"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := c.AgentProfileDir("claude", "default"), filepath.Join(claudeDir, "profiles", "default"); got != want {
+		t.Errorf("migrated default = %q, want %q", got, want)
+	}
+
+	// SetActiveProfile changes what AgentDir resolves to; empty resets to default.
+	c.SetActiveProfile("claude", "work")
+	if got, want := c.AgentDir("claude"), filepath.Join(claudeDir, "profiles", "work"); got != want {
+		t.Errorf("AgentDir after SetActiveProfile = %q, want %q", got, want)
+	}
+	c.SetActiveProfile("claude", "")
+	if got, want := c.AgentDir("claude"), filepath.Join(claudeDir, "profiles", "default"); got != want {
+		t.Errorf("AgentDir after reset = %q, want %q", got, want)
+	}
+}
+
+func TestProfilesListing(t *testing.T) {
+	dir := t.TempDir()
+	c := &Config{ConfigDir: dir}
+
+	// Never used → no profiles.
+	if got := c.Profiles("codex"); got != nil {
+		t.Errorf("unused agent Profiles = %v, want nil", got)
+	}
+	// Legacy flat (agent dir exists, no profiles/) → a single "default".
+	if err := os.MkdirAll(filepath.Join(dir, "codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Profiles("codex"); !slices.Equal(got, []string{"default"}) {
+		t.Errorf("legacy Profiles = %v, want [default]", got)
+	}
+	// Migrated → the profiles/ subdirs.
+	for _, p := range []string{"default", "work", "personal"} {
+		if err := os.MkdirAll(filepath.Join(dir, "codex", "profiles", p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := c.Profiles("codex")
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"default", "personal", "work"}) {
+		t.Errorf("migrated Profiles = %v", got)
+	}
+}

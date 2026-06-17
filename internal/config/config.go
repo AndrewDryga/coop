@@ -52,6 +52,8 @@ type Config struct {
 	BoxHome string
 
 	conf map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
+
+	activeProfiles map[string]string // per-agent selected credential profile; AgentDir resolves to it
 }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
@@ -138,8 +140,71 @@ func (c *Config) EnvFile() string { return filepath.Join(c.ConfigDir, "env") }
 // Instructions is the optional shared instruction file wired into each agent.
 func (c *Config) Instructions() string { return filepath.Join(c.ConfigDir, "INSTRUCTIONS.md") }
 
-// AgentDir is the host folder mounted at the box's ~/.<agent>.
-func (c *Config) AgentDir(agent string) string { return filepath.Join(c.ConfigDir, agent) }
+// defaultProfile is the credential profile used when none is selected; profilesSubdir
+// is the folder under an agent dir that holds the named profiles.
+const (
+	defaultProfile = "default"
+	profilesSubdir = "profiles"
+)
+
+// AgentDir is the host folder mounted at the box's ~/.<agent>: the active profile's
+// credential + session dir (see AgentProfileDir). Defaults to the "default" profile.
+func (c *Config) AgentDir(agent string) string {
+	return c.AgentProfileDir(agent, c.activeProfile(agent))
+}
+
+// activeProfile returns the profile currently selected for agent, or defaultProfile.
+func (c *Config) activeProfile(agent string) string {
+	if p := c.activeProfiles[agent]; p != "" {
+		return p
+	}
+	return defaultProfile
+}
+
+// SetActiveProfile selects which credential profile of agent AgentDir resolves to —
+// and therefore which one the box mounts and the adapters read. The loop calls this to
+// rotate between subscriptions; an empty name resets to the default.
+func (c *Config) SetActiveProfile(agent, name string) {
+	if c.activeProfiles == nil {
+		c.activeProfiles = map[string]string{}
+	}
+	c.activeProfiles[agent] = name
+}
+
+// AgentProfileDir is the host folder for one named credential profile of an agent.
+// Profiles live at <ConfigDir>/<agent>/profiles/<name>/. For back-compat, until a named
+// profile exists (no profiles/ dir yet) the "default" profile IS the legacy flat
+// <ConfigDir>/<agent>/ — so an existing single login keeps working without a file move.
+func (c *Config) AgentProfileDir(agent, name string) string {
+	if name == "" {
+		name = defaultProfile
+	}
+	base := filepath.Join(c.ConfigDir, agent)
+	if name == defaultProfile && !dirExists(filepath.Join(base, profilesSubdir)) {
+		return base // legacy flat layout: the agent dir itself is the default profile
+	}
+	return filepath.Join(base, profilesSubdir, name)
+}
+
+// Profiles lists agent's credential profile names. In the migrated layout it reads the
+// profiles/ dir; in the legacy flat layout it reports a single "default" when the agent
+// dir exists, and nothing when the agent has never been used.
+func (c *Config) Profiles(agent string) []string {
+	entries, err := os.ReadDir(filepath.Join(c.ConfigDir, agent, profilesSubdir))
+	if err != nil {
+		if dirExists(filepath.Join(c.ConfigDir, agent)) {
+			return []string{defaultProfile}
+		}
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
 
 // MCPActive reports whether a shared mcp.json exists, so an agent should be wired to it.
 func (c *Config) MCPActive() bool { return fileExists(c.MCPFile) }
@@ -237,6 +302,11 @@ func fileExists(path string) bool {
 	}
 	fi, err := os.Stat(path)
 	return err == nil && !fi.IsDir()
+}
+
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // loadConfFile parses a simple KEY=VALUE file: blank lines and #-comments are
