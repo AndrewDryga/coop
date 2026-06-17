@@ -73,6 +73,55 @@ func gitInteractive(dir string, args ...string) error {
 	return cmd.Run()
 }
 
+// forkGitHardening are -c overrides applied to every git command we run *inside* an
+// agent-controlled fork. A fork's .git/ is agent-writable, so its hooks and local
+// config could otherwise execute arbitrary host commands the moment we fetch, rebase,
+// or even `status` it on review/merge — defeating the whole point of the box. We turn
+// hooks off and blank every config knob that shells out. Verified host-exec vectors:
+// .git/hooks/* (and core.hooksPath), core.fsmonitor, and a forced commit.gpgsign with
+// a planted gpg.program; the rest are defense in depth. Signing on land is re-enabled
+// with trusted *parent* values (see trustedSignArgs), never the fork's.
+//
+// Residual (can't be closed with -c, since the driver names are arbitrary): an in-tree
+// .gitattributes assigning a filter to a path plus a fork-local filter.<name>.smudge
+// can run on checkout during the land rebase. policyScan surfaces a fork's changed
+// files for review before that point, which is the backstop for this one.
+var forkGitHardening = []string{
+	"-c", "core.hooksPath=/dev/null",
+	"-c", "core.fsmonitor=",
+	"-c", "core.sshCommand=",
+	"-c", "core.pager=cat",
+	"-c", "core.editor=true",
+	"-c", "sequence.editor=true",
+	"-c", "diff.external=",
+	"-c", "uploadpack.packObjectsHook=",
+	"-c", "protocol.ext.allow=never",
+	"-c", "commit.gpgsign=false",
+	"-c", "gpg.program=false",
+	"-c", "gpg.ssh.program=false",
+	"-c", "gpg.x509.program=false",
+}
+
+// hardenedFork prepends forkGitHardening to a fork-side git argument list. Any extra
+// -c flags a caller appends after these (e.g. trustedSignArgs) win, since git's last
+// -c for a key takes effect.
+func hardenedFork(args []string) []string {
+	return append(append([]string{}, forkGitHardening...), args...)
+}
+
+// gitRunFork / gitOutFork / gitInteractiveFork mirror gitRun / gitOut / gitInteractive
+// but harden the invocation for an agent-controlled fork. Use these for every git
+// command run with -C <fork>; the plain forms are for the trusted parent repo.
+func gitRunFork(dir string, args ...string) error  { return gitRun(dir, hardenedFork(args)...) }
+func gitOutFork(dir string, args ...string) string { return gitOut(dir, hardenedFork(args)...) }
+func gitInteractiveFork(dir string, args ...string) error {
+	return gitInteractive(dir, hardenedFork(args)...)
+}
+
+// forkDirty reports whether a fork's working tree has uncommitted changes, hardened
+// (plain gitDirty runs `status`, which would fire a fork's core.fsmonitor on the host).
+func forkDirty(ws string) bool { return gitOutFork(ws, "status", "--porcelain") != "" }
+
 func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }

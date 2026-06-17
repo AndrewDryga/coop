@@ -418,24 +418,27 @@ func (a *app) forkLs(_ []string) (int, error) {
 		if forkRunningPid(repo, n) != 0 {
 			state = "running"
 		}
-		fmt.Printf("  %-16s %-8s %-12s %-9s %-15s %s\n", n, agent, gitBranch(ws), state, forkChanges(ws), forkUpdated(ws))
+		fmt.Printf("  %-16s %-8s %-12s %-9s %-15s %s\n", n, agent, forkBranch(ws), state, forkChanges(ws), forkUpdated(ws))
 	}
 	return 0, nil
 }
 
-// forkChanges summarizes a fork's diff against the point it forked from, plus a
-// flag when it has uncommitted work.
+// forkBranch / forkChanges / forkUpdated read a fork's state for `coop fork ls`. They
+// run against an agent-controlled tree (post-work), so they use the hardened helpers —
+// `status`/`diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
+func forkBranch(ws string) string { return gitOutFork(ws, "rev-parse", "--abbrev-ref", "HEAD") }
+
 func forkChanges(ws string) string {
-	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
+	ins, del := parseShortstat(gitOutFork(ws, "diff", "--shortstat", "origin/HEAD"))
 	out := fmt.Sprintf("+%d -%d", ins, del)
-	if gitDirty(ws) {
+	if forkDirty(ws) {
 		out += " ⚑"
 	}
 	return out
 }
 
 func forkUpdated(ws string) string {
-	if rel := gitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
+	if rel := gitOutFork(ws, "log", "-1", "--format=%cr"); rel != "" {
 		return rel
 	}
 	return "—"
@@ -644,7 +647,7 @@ func forkRmSafe(unmerged, dirty, force bool) error {
 // forkUnmerged reports whether the fork's branch tip is NOT yet an ancestor of the
 // parent repo's HEAD (unknown-to-parent counts as unmerged, which is the safe side).
 func forkUnmerged(repo, ws string) bool {
-	sha := gitOut(ws, "rev-parse", "HEAD")
+	sha := gitOutFork(ws, "rev-parse", "HEAD")
 	if sha == "" {
 		return false
 	}
@@ -675,7 +678,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
+	if err := forkRmSafe(forkUnmerged(repo, ws), forkDirty(ws), force); err != nil {
 		return 1, err
 	}
 	if err := destroyFork(repo, name); err != nil {
