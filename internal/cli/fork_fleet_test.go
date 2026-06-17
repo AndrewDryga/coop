@@ -68,6 +68,40 @@ func TestPolicyScan(t *testing.T) {
 	}
 }
 
+// The legend line and the ## Example block both contain "[ ]"/"[E]" but aren't real
+// tasks; fleet split must not turn them into phantom slice entries.
+func TestFleetSplitIgnoresLegendAndExample(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "r")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tasks := "# .agent/TASKS.md — the work queue.\n" +
+		"# [ ] todo   [w] claimed   [x] done   [B] blocked\n\n" +
+		"## Example\n\n- [E] sample task\n\n" +
+		"## Active\n\n- [ ] a\n- [ ] b\n- [ ] c\n"
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "TASKS.md"), []byte(tasks), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.fleetSplit([]string{"2"}); err != nil || code != 0 {
+		t.Fatalf("fleetSplit = (%d, %v), want (0, nil)", code, err)
+	}
+	s1, _ := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.slice1.md"))
+	s2, _ := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.slice2.md"))
+	all := string(s1) + string(s2)
+	for _, want := range []string{"[ ] a", "[ ] b", "[ ] c"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("real task %q missing from slices:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "[ ] todo") {
+		t.Errorf("legend line leaked into a slice as a task:\n%s", all)
+	}
+	if strings.Contains(all, "[E]") {
+		t.Errorf("Example block leaked into a slice:\n%s", all)
+	}
+}
+
 func TestFleetSplit(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "r")
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

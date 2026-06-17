@@ -158,7 +158,7 @@ func (a *app) fleetSplit(args []string) (int, error) {
 	}
 	var todos []string
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, "[ ]") {
+		if isOpenTask(line) { // anchored: the legend/Example "[ ]" is not a real task
 			todos = append(todos, line)
 		}
 	}

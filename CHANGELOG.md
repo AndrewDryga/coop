@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.0
+
+- **`coop fleet split` no longer creates phantom tasks.** It slices only real `- [ ]`
+  task lines (the same anchored rule the loop uses), so the TASKS.md legend or an
+  `## Example` block can't become a fake item in a fork's queue.
+
 ## 2.5.0
 
 - **Fusion mode consults on every task.** The governor's directive is now

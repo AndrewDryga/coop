@@ -20,17 +20,20 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-// queueHasTodo reports whether a TASKS.md file still has an unclaimed task: a list
-// item that begins a line with "- [ ]". It matches at line start so the "[ ]" in the
-// legend/comment header, in prose, or in an Example section (which uses "[E]") is
-// never mistaken for real work.
+// isOpenTask reports whether a line is an unclaimed task: a list item beginning
+// "- [ ]". Anchoring to the line start keeps the "[ ]" in the legend/comment header,
+// in prose, or in an Example block from being read as work. The loop, fleet split,
+// and any other TASKS.md reader share this so they can't drift apart.
+func isOpenTask(line string) bool { return strings.HasPrefix(line, "- [ ]") }
+
+// queueHasTodo reports whether a TASKS.md file still has an unclaimed task.
 func queueHasTodo(queue string) bool {
 	data, err := os.ReadFile(queue)
 	if err != nil {
 		return false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "- [ ]") {
+		if isOpenTask(line) {
 			return true
 		}
 	}
