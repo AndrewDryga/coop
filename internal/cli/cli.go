@@ -1,6 +1,6 @@
 // Package cli is the command-line surface: it parses argv, resolves the config
-// and runtime, and dispatches to the box engine and scaffolder. The routing
-// mirrors the original tool: bare `coop` runs Claude, `coop <agent>` runs a
+// and runtime, and dispatches to the box engine and scaffolder. The routing:
+// bare `coop` prints help (running an agent is explicit), `coop <agent>` runs a
 // named agent, known subcommands run their command, and anything else is run as
 // a command inside the box (so `coop npm test` just works).
 package cli

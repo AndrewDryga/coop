@@ -59,7 +59,7 @@ func printHelp(cfg *config.Config) {
 	p("  coop init                  # a repo with .tool-versions → an asdf box at those exact versions\n")
 	p("  coop init --stack asdf     # force a baked asdf Dockerfile.agent + compose.agent.yml\n")
 	p("  coop build && coop up      # build the image, start db/redis\n")
-	p("  coop                       # the box has the toolchain + reaches db/redis by name\n\n")
+	p("  coop claude                # the box has the toolchain + reaches db/redis by name\n\n")
 
 	p("%s  give each model its own fork, branch, and tasks file, looping detached:\n", ui.Bold("a fleet"))
 	p("  coop fork perf codex  --loop -d --tasks .agent/TASKS.perf.md\n")
