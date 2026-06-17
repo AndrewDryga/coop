@@ -4,7 +4,7 @@
 
 <img src=".github/assets/coop.png" alt="Coop" width="180">
 
-**Run a coding agent on your real repos every day — in a box it can't escape, with your secrets out of its reach.**
+**Run a coding agent on your real repos every day — in a box it can't escape, with your secrets out of its reach, and with a whip that will make them work all night.**
 
 [![CI](https://github.com/AndrewDryga/coop/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewDryga/coop/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/AndrewDryga/coop?sort=semver)](https://github.com/AndrewDryga/coop/releases/latest)
