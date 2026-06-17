@@ -142,6 +142,9 @@ func (c *Config) Instructions() string { return filepath.Join(c.ConfigDir, "INST
 // AgentDir is the host folder mounted at the box's ~/.<agent>.
 func (c *Config) AgentDir(agent string) string { return filepath.Join(c.ConfigDir, agent) }
 
+// MCPActive reports whether a shared mcp.json exists, so an agent should be wired to it.
+func (c *Config) MCPActive() bool { return fileExists(c.MCPFile) }
+
 func xdgConfigHome() string {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
 		return v
