@@ -182,7 +182,8 @@ var commandHelp = map[string]string{
   Usage: coop loop [claude|codex|gemini] [--debug-on-fail]
 
   A fresh agent per iteration works the [ ] items; when the queue empties, an
-  auditor re-checks every [x]. Waits out rate limits and resumes.
+  auditor re-checks every [x]. On a rate limit it switches to another signed-in
+  profile (see 'coop pool'), or waits out the reset when there's only one.
 
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.0
+
+- **Multi-subscription failover for the loop.** One agent can now hold several accounts
+  as named profiles — `coop login claude --profile work` — and when the unattended loop
+  hits a rate/usage limit it switches to another signed-in profile and keeps going, only
+  waiting once every profile is limited. So a long run rides through a (multi-day)
+  subscription cap instead of parking on it. With no setup it rotates across all of an
+  agent's signed-in profiles; `coop pool add <agent> <profile…>` narrows a repo to a
+  chosen set, and `coop profiles` lists what you have. Profiles live in the vault
+  (`~/.config/coop/agents/<agent>/profiles/`), never in the repo, and only the active one
+  is mounted into the box — a running agent sees just the account it's using, not the
+  whole vault. Existing single logins are untouched: they become the "default" profile in
+  place, with no migration, and behave exactly as before.
+
 ## 2.5.2
 
 - **`coop acp` runs quiet.** ACP speaks to an editor over stdio, so coop's progress lines

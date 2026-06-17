@@ -439,6 +439,32 @@ theme/folder-trust/bypass warnings, Codex's "trust this directory?", and Gemini'
 folder-trust — so a fresh install goes straight from login to work. (The box is the
 sandbox, so trusting the one mounted repo is the intended posture.)
 
+### Multiple subscriptions, with failover
+
+One agent can hold several accounts as named **profiles**, so a long unattended run can
+ride through a subscription's rate cap instead of parking on it:
+
+```bash
+coop login claude --profile work       # a second account…
+coop login claude --profile personal   # …and a third
+coop profiles                          # list them and which are signed in
+```
+
+When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to another
+signed-in profile and keeps going, only waiting once every profile is limited. With no
+extra setup it rotates across all of an agent's signed-in profiles; to narrow a repo to a
+chosen set, give it a pool:
+
+```bash
+coop pool add claude work personal     # this repo's loop rotates just these two
+coop pool                              # show the pool (coop pool clear claude to reset)
+```
+
+Profiles live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
+the repo, and only the active one is mounted into the box — so a running agent sees just
+the account it's using, not your whole vault. Switching accounts loses no work: each loop
+iteration is a fresh run, and the queue plus git carry the progress.
+
 ### Instructions, one source of truth
 
 `coop init` wires a tool-neutral setup so every agent reads the same instructions:
