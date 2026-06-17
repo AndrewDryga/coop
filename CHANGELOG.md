@@ -6,6 +6,9 @@
   (the secret-shadow count, the fusion-governor note) and the box's toolchain-provisioning
   chatter were just noise in the editor's log. ACP now suppresses them — the toolchain
   still provisions, silently (`COOP_QUIET`). Other modes are unchanged.
+- **Consistent `coop:` log prefix.** coop's progress/error lines used a dimmed `agent:`
+  prefix while the box's provisioning printed `coop:` — now both are a dimmed `coop:` (the
+  tool's own name), so output reads as one voice.
 
 ## 2.5.1
 

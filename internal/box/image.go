@@ -76,7 +76,8 @@ if [ -z "$COOP_NO_ASDF" ] && command -v asdf >/dev/null 2>&1; then
     if [ -n "$COOP_QUIET" ]; then
       log=/dev/null
     else
-      echo "coop: provisioning toolchain from $f (first run may compile; cached after)" >&2
+      if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
+      echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
     fi
     for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
       asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true

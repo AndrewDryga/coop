@@ -1,4 +1,4 @@
-// Package ui handles human-facing terminal output: the dimmed "agent:" progress
+// Package ui handles human-facing terminal output: the dimmed "coop:" progress
 // lines, red errors, and the colored check/cross marks doctor prints. Colors
 // auto-disable when stderr is not a terminal, so logs and pipes stay clean.
 package ui
@@ -35,14 +35,14 @@ func IsTerminal(f *os.File) bool {
 	return isTerminalFd(f.Fd())
 }
 
-// Info prints a dimmed "agent:" progress line to stderr.
+// Info prints a dimmed "coop:" progress line to stderr.
 func Info(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%sagent:%s %s\n", cDim, cReset, fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, "%scoop:%s %s\n", cDim, cReset, fmt.Sprintf(format, a...))
 }
 
-// Error prints a red "agent:" error line to stderr. It does not exit.
+// Error prints a red "coop:" error line to stderr. It does not exit.
 func Error(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%sagent: %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
+	fmt.Fprintf(os.Stderr, "%scoop: %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
 }
 
 // Color wrappers, used to compose richer output (e.g. the doctor report).

@@ -29,7 +29,7 @@ func TestDetectLimit(t *testing.T) {
 		{"http 429, no reset",
 			"HTTP 429 Too Many Requests", true, time.Time{}},
 		{"weekly subscription limit with stated reset",
-			"agent: shadowed 4 secret path(s)\nYou've hit your weekly limit · resets Oct 18, 8pm (UTC)\n",
+			"coop: shadowed 4 secret path(s)\nYou've hit your weekly limit · resets Oct 18, 8pm (UTC)\n",
 			true, time.Date(now.Year(), time.October, 18, 20, 0, 0, 0, time.UTC)},
 		{"subscription limit with no reset clause",
 			"You've hit your weekly limit.", true, time.Time{}},
