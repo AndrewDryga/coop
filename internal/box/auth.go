@@ -9,29 +9,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// authMarker is, per agent, the credential file it writes under its config dir on
-// login and the env-file key it reads an API key from. Either one present means the
-// agent is set up — and therefore worth offering as a consult peer.
-var authMarker = map[string]struct{ file, envKey string }{
-	"claude": {".credentials.json", "ANTHROPIC_API_KEY"},
-	"codex":  {"auth.json", "OPENAI_API_KEY"},
-	"gemini": {"gemini-credentials.json", "GEMINI_API_KEY"},
-}
-
-// AuthedAgents returns the configured agents that look authenticated: a credential
-// file in their config dir, or their API key set in the env file. It's a presence
-// heuristic — not a validity check, which would mean running each CLI — but enough
-// to decide whether a peer is worth consulting.
+// AuthedAgents returns the agents that look authenticated: a credential file in their
+// config dir, or their API key set in the env file (each adapter names its own marker).
+// It's a presence heuristic — not a validity check, which would mean running each CLI —
+// but enough to decide whether a peer is worth consulting.
 func AuthedAgents(cfg *config.Config) []string {
 	keys := envFileKeys(cfg.EnvFile())
 	var authed []string
-	for _, a := range agents.Names() {
-		m, ok := authMarker[a]
-		if !ok {
-			continue
-		}
-		if keys[m.envKey] || fileExists(filepath.Join(cfg.AgentDir(a), m.file)) {
-			authed = append(authed, a)
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		file, envKey := ag.AuthMarker()
+		if keys[envKey] || fileExists(filepath.Join(cfg.AgentDir(name), file)) {
+			authed = append(authed, name)
 		}
 	}
 	return authed

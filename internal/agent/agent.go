@@ -29,6 +29,23 @@ type Agent interface {
 	// ConsultCmd is the read-only, non-interactive command to ask this agent a
 	// question as a fusion peer — it returns analysis and never edits files.
 	ConsultCmd(question string) []string
+	// InstructionFile is the agent's native global instruction filename, e.g.
+	// "CLAUDE.md" — where coop writes the shared INSTRUCTIONS.md and fusion directive.
+	InstructionFile() string
+	// AuthMarker is the credential file (under the agent's config dir) it writes on
+	// login, and the env-file key it reads an API key from — either present means it's
+	// set up and worth offering as a consult peer.
+	AuthMarker() (file, envKey string)
+	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
+	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
+	MCP(cfg *config.Config) ([]MCPMount, error)
+}
+
+// MCPMount is one generated config file an agent needs to see the shared mcp.json: its
+// content and where it mounts inside the box.
+type MCPMount struct {
+	Content string
+	BoxPath string
 }
 
 var registry = map[string]Agent{}

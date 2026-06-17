@@ -8,7 +8,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
-	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -55,13 +54,14 @@ const (
 // extraMount is a generated host file mounted read-only at a box path.
 type extraMount struct{ host, box string }
 
-// agentInstructionFile is each agent's native global instruction filename — where
-// coop mounts the shared INSTRUCTIONS.md (and, in fusion mode, the governor's
-// fusion-augmented instruction).
-var agentInstructionFile = map[string]string{
-	"claude": "CLAUDE.md",
-	"codex":  "AGENTS.md",
-	"gemini": "GEMINI.md",
+// instructionFile is the agent's native global instruction filename — where coop
+// mounts the shared INSTRUCTIONS.md (and, in fusion mode, the governor's augmented
+// instruction) — or "" for an unknown agent. Owned by each adapter.
+func instructionFile(name string) string {
+	if ag, ok := agents.Get(name); ok {
+		return ag.InstructionFile()
+	}
+	return ""
 }
 
 // Run assembles and executes one container run, shadowing secrets and wiring up
@@ -126,23 +126,25 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	var mcpMounts []extraMount
 	mcpPresent := spec.Homes && fileExists(cfg.MCPFile)
 	if mcpPresent {
-		wire := func(label, content string, genErr error, boxPath string) {
+		// Each agent's adapter says how it consumes the shared mcp.json (a generated
+		// config to mount, or none — claude reads it raw via --mcp-config, below).
+		for _, name := range agents.Names() {
+			ag, _ := agents.Get(name)
+			gen, genErr := ag.MCP(cfg)
 			if genErr != nil {
-				ui.Info("mcp.json: skipped %s wiring: %v", label, genErr)
-				return
+				ui.Info("mcp.json: skipped %s wiring: %v", name, genErr)
+				continue
 			}
-			p, err := writeTempFile(content)
-			if err != nil {
-				ui.Info("mcp.json: skipped %s wiring: %v", label, err)
-				return
+			for _, m := range gen {
+				p, err := writeTempFile(m.Content)
+				if err != nil {
+					ui.Info("mcp.json: skipped %s wiring: %v", name, err)
+					continue
+				}
+				tmpFiles = append(tmpFiles, p)
+				mcpMounts = append(mcpMounts, extraMount{p, m.BoxPath})
 			}
-			tmpFiles = append(tmpFiles, p)
-			mcpMounts = append(mcpMounts, extraMount{p, boxPath})
 		}
-		gm, gerr := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
-		wire("Gemini", gm, gerr, cfg.HomeInBox+"/.gemini/settings.json")
-		cx, cerr := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
-		wire("Codex", cx, cerr, cfg.HomeInBox+"/.codex/config.toml")
 	}
 
 	// Fusion: the governor gets the fusion instruction (consult peers + synthesize)
@@ -150,7 +152,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// spawns read their normal instructions and never recurse into a council.
 	var fusionMounts []extraMount
 	if spec.Homes && spec.FusionGovernor != "" {
-		if file := agentInstructionFile[spec.FusionGovernor]; file != "" {
+		if file := instructionFile(spec.FusionGovernor); file != "" {
 			base := governorBaseInstructions(cfg, spec.FusionGovernor, file)
 			content := fusion.GovernorInstructions(base, spec.FusionGovernor, agents.Names())
 			if p, err := writeTempFile(content); err != nil {
@@ -170,7 +172,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// FusionGovernor is set, so the two never both apply.)
 	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
 		if peers := authedPeers(cfg, spec.ConsultLead); len(peers) > 0 {
-			if file := agentInstructionFile[spec.ConsultLead]; file != "" {
+			if file := instructionFile(spec.ConsultLead); file != "" {
 				base := governorBaseInstructions(cfg, spec.ConsultLead, file)
 				content := fusion.LeadInstructions(base, peers)
 				if p, err := writeTempFile(content); err != nil {
@@ -306,7 +308,7 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 				if agent == spec.FusionGovernor || agent == spec.ConsultLead {
 					continue
 				}
-				file := agentInstructionFile[agent]
+				file := instructionFile(agent)
 				if !fileExists(filepath.Join(cfg.AgentDir(agent), file)) {
 					args = append(args, "-v", ins+":"+cfg.HomeInBox+"/."+agent+"/"+file+":ro")
 				}

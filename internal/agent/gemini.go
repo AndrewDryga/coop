@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
 type geminiAgent struct{}
@@ -38,4 +39,19 @@ func (geminiAgent) ConsultCmd(question string) []string {
 	// -p takes the prompt as its value, so it must come last (right before the
 	// question); otherwise -p swallows --approval-mode and gemini prints help.
 	return []string{"gemini", "--approval-mode", "plan", "-p", question}
+}
+
+func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
+
+func (geminiAgent) AuthMarker() (file, envKey string) {
+	return "gemini-credentials.json", "GEMINI_API_KEY"
+}
+
+// MCP merges the shared servers into gemini's settings.json.
+func (geminiAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
+	gm, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
+	if err != nil {
+		return nil, err
+	}
+	return []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, nil
 }

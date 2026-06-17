@@ -197,7 +197,7 @@ func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 		switch {
 		case args[i] == "--":
 			return governor, append(rest, args[i+1:]...) // everything after passes through
-		case len(rest) == 0 && (args[i] == "claude" || args[i] == "codex" || args[i] == "gemini"):
+		case len(rest) == 0 && agents.Valid(args[i]):
 			// A leading agent name is the governor: `coop fusion claude` (matches
 			// `coop acp fusion claude`); otherwise the default / COOP_FUSION_GOVERNOR.
 			governor = args[i]

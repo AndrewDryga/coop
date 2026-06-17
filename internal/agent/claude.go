@@ -44,6 +44,15 @@ func (claudeAgent) ConsultCmd(question string) []string {
 	return []string{"claude", "-p", "--permission-mode", "plan", question}
 }
 
+func (claudeAgent) InstructionFile() string { return "CLAUDE.md" }
+
+func (claudeAgent) AuthMarker() (file, envKey string) {
+	return ".credentials.json", "ANTHROPIC_API_KEY"
+}
+
+// MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).
+func (claudeAgent) MCP(*config.Config) ([]MCPMount, error) { return nil, nil }
+
 // claudeProjectKey is how Claude Code names a project's session dir: the absolute cwd
 // with path separators turned into dashes.
 func claudeProjectKey(ws string) string { return strings.ReplaceAll(ws, "/", "-") }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
 type codexAgent struct{}
@@ -56,6 +57,19 @@ func (codexAgent) Login(*config.Config) []string {
 
 func (codexAgent) ConsultCmd(question string) []string {
 	return []string{"codex", "exec", "-s", "read-only", question}
+}
+
+func (codexAgent) InstructionFile() string { return "AGENTS.md" }
+
+func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
+
+// MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
+func (codexAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
+	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
+	if err != nil {
+		return nil, err
+	}
+	return []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}, nil
 }
 
 // latestCodexSession returns the id of the most recent codex session recorded for cwd,

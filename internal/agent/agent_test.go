@@ -139,6 +139,47 @@ func TestResume(t *testing.T) {
 	}
 }
 
+func TestMetadata(t *testing.T) {
+	cases := []struct{ name, instr, authFile, authEnv string }{
+		{"claude", "CLAUDE.md", ".credentials.json", "ANTHROPIC_API_KEY"},
+		{"codex", "AGENTS.md", "auth.json", "OPENAI_API_KEY"},
+		{"gemini", "GEMINI.md", "gemini-credentials.json", "GEMINI_API_KEY"},
+	}
+	for _, c := range cases {
+		a, _ := Get(c.name)
+		if a.InstructionFile() != c.instr {
+			t.Errorf("%s InstructionFile = %q, want %q", c.name, a.InstructionFile(), c.instr)
+		}
+		if f, e := a.AuthMarker(); f != c.authFile || e != c.authEnv {
+			t.Errorf("%s AuthMarker = (%q,%q), want (%q,%q)", c.name, f, e, c.authFile, c.authEnv)
+		}
+	}
+}
+
+func TestMCP(t *testing.T) {
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, "mcp.json")
+	mustWrite(t, mcpFile, `{"mcpServers":{"x":{"command":"y"}}}`)
+	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
+
+	// claude reads mcp.json raw (--mcp-config) → no generated mounts.
+	claude, _ := Get("claude")
+	if m, err := claude.MCP(cfg); err != nil || len(m) != 0 {
+		t.Errorf("claude MCP = %v, %v; want none (reads mcp.json directly)", m, err)
+	}
+	// gemini/codex generate a config file at their native path.
+	for name, boxPath := range map[string]string{
+		"gemini": "/home/node/.gemini/settings.json",
+		"codex":  "/home/node/.codex/config.toml",
+	} {
+		ag, _ := Get(name)
+		m, err := ag.MCP(cfg)
+		if err != nil || len(m) != 1 || m[0].BoxPath != boxPath || m[0].Content == "" {
+			t.Errorf("%s MCP = %v, %v; want one non-empty mount at %s", name, m, err, boxPath)
+		}
+	}
+}
+
 func TestLogin(t *testing.T) {
 	cfg := &config.Config{}
 	for name, want := range map[string][]string{
