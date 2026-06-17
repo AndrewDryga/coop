@@ -50,7 +50,7 @@ func helpText(cfg *config.Config) string {
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
-	fmt.Fprintln(&b, "      coop fork api codex --loop -d --tasks .agent/TASKS.md   # or loop it overnight, detached")
+	fmt.Fprintln(&b, "  coop fork <name> [agent] --loop -d --tasks .agent/TASKS.md   # or loop it overnight, detached")
 	row("coop fork ls", "list this repo's forks")
 	row("coop fork review <name>", "show a fork's brief + diff")
 	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
