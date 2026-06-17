@@ -156,6 +156,50 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 	}
 }
 
+// A .coopignore in a subdirectory shadows only within its own subtree: its basename
+// patterns apply at any depth under it, its path patterns are relative to it, and it
+// has no effect on siblings or the repo root.
+func TestComputeMountsSubdirCoopIgnore(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("sub/"+CoopIgnoreFile, "creds.yaml\nlocal/secret.txt\n") // basename + a sub-relative path
+	write("sub/creds.yaml", "s")                                   // basename → shadow
+	write("sub/deep/creds.yaml", "s")                              // basename, deeper → shadow
+	write("sub/local/secret.txt", "s")                             // path relative to sub → shadow
+	write("sub/local/other.txt", "ok")                             // not matched → visible
+	write("creds.yaml", "ok")                                      // repo root: sub's rule doesn't reach here → visible
+	write("other/creds.yaml", "ok")                                // a sibling subtree → visible
+
+	mounts, err := ComputeMounts(root, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowed := func(target string) bool { return find(mounts, target) != nil }
+
+	for _, target := range []string{
+		"/workspace/sub/creds.yaml", "/workspace/sub/deep/creds.yaml", "/workspace/sub/local/secret.txt",
+	} {
+		if !shadowed(target) {
+			t.Errorf("%s should be shadowed by sub/.coopignore", target)
+		}
+	}
+	for _, target := range []string{
+		"/workspace/sub/local/other.txt", "/workspace/creds.yaml", "/workspace/other/creds.yaml",
+	} {
+		if shadowed(target) {
+			t.Errorf("%s must stay visible (sub/.coopignore is scoped to sub/)", target)
+		}
+	}
+}
+
 func TestRenderMounts(t *testing.T) {
 	mounts := []Mount{
 		{Kind: Bind, Source: "/repo", Target: "/workspace"},

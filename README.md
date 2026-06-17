@@ -217,8 +217,11 @@ vault/                   # a directory — its contents are hidden whole
 ```
 
 Patterns extend the defaults; they never un-hide. Templates (`*.example` and friends)
-always stay visible, even if a `.coopignore` line would match them. A denylist can
-never be exhaustive, so prefer gitignoring real secrets (gitignored files never enter a
+always stay visible, even if a `.coopignore` line would match them. A `.coopignore` also
+works in any **subdirectory** (like `.gitignore`): it's scoped to that subtree — basename
+patterns match at any depth under it, path patterns are relative to it — so a monorepo's
+sub-teams can keep folder-local rules next to their code. A denylist can never be
+exhaustive, so prefer gitignoring real secrets (gitignored files never enter a
 [fork](#forks-hand-off-work-like-a-pr) either) and use `.coopignore` for anything that
 must live in the working tree. Prove your setup with [`coop doctor`](#prove-it-coop-doctor).
 

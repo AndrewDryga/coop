@@ -2,6 +2,10 @@
 
 ## 2.6.0
 
+- **`.coopignore` works in subdirectories.** Like `.gitignore`, a `.coopignore` in any
+  directory is scoped to that subtree (basename patterns at any depth under it, path
+  patterns relative to it), so a monorepo's sub-teams can keep folder-local shadow rules
+  next to their code instead of all in the repo root.
 - **`coop fork merge` scans changed content for secrets, not just filenames.** The
   policy check now reads each changed blob and flags real credentials — provider token
   shapes (AWS/OpenAI/Anthropic/GitHub/Slack/Google/Stripe, private keys) and high-entropy

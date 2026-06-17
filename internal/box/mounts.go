@@ -3,6 +3,7 @@ package box
 import (
 	"io/fs"
 	"path/filepath"
+	"strings"
 )
 
 // MountKind distinguishes the three ways a path enters (or is blocked from) the box.
@@ -31,33 +32,42 @@ type Mount struct {
 // directory, Decoy for a file). Secret directories are not descended into, so a
 // shadowed dir hides all of its contents at once. The repo's .git is skipped.
 //
-// A path is shadowed when its basename matches SecretGlobs or the repo's .coopignore
-// basename patterns, or its repo-relative path matches a .coopignore path pattern —
-// unless its basename matches AllowGlobs (templates always stay visible).
+// A path is shadowed when its basename matches SecretGlobs, or a .coopignore — in the
+// repo root or any ancestor directory of the path — matches it (its basename patterns
+// apply anywhere in that directory's subtree; its path patterns are relative to that
+// directory), unless its basename matches AllowGlobs (templates always stay visible).
 //
-// Its only input is the repo tree plus that one .coopignore file (no container
+// Its only input is the repo tree plus the .coopignore files in it (no container
 // runtime, no temp files), so it can be exhaustively unit-tested — this is the
 // function that must never let a secret leak.
 func ComputeMounts(repo, workdir string) ([]Mount, error) {
-	user := LoadUserGlobs(repo)
+	cache := map[string]UserGlobs{} // dir (slash-rel, "" = root) → its .coopignore, loaded once
+	loadDir := func(dirRel string) UserGlobs {
+		if g, ok := cache[dirRel]; ok {
+			return g
+		}
+		g := LoadUserGlobs(filepath.Join(repo, filepath.FromSlash(dirRel)))
+		cache[dirRel] = g
+		return g
+	}
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
-	err := filepath.WalkDir(repo, func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if path == repo {
+		if p == repo {
 			return nil // never shadow the repo root itself
 		}
 		name := d.Name()
 		if d.IsDir() && name == ".git" {
 			return fs.SkipDir
 		}
-		rel, err := filepath.Rel(repo, path)
+		rel, err := filepath.Rel(repo, p)
 		if err != nil {
 			return err
 		}
 		relSlash := filepath.ToSlash(rel)
-		secret := matchesAny(name, SecretGlobs) || matchesAny(name, user.Base) || matchesPath(relSlash, user.Path)
+		secret := matchesAny(name, SecretGlobs) || shadowedByCoopignore(relSlash, loadDir)
 		if !secret || matchesAny(name, AllowGlobs) {
 			return nil
 		}
@@ -73,6 +83,35 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		return nil, err
 	}
 	return mounts, nil
+}
+
+// shadowedByCoopignore reports whether the repo-relative slash path is shadowed by a
+// .coopignore in the root or any ancestor directory of the path: each directory's
+// basename patterns match anywhere in its subtree, and its path patterns are matched
+// against the path relative to that directory (so sub/.coopignore's "config/x" means
+// sub/config/x). loadDir caches the per-directory globs.
+func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool {
+	base := relSlash
+	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
+		base = relSlash[i+1:]
+	}
+	dir, remaining := "", relSlash
+	for {
+		g := loadDir(dir)
+		if matchesAny(base, g.Base) || matchesPath(remaining, g.Path) {
+			return true
+		}
+		i := strings.IndexByte(remaining, '/')
+		if i < 0 {
+			return false
+		}
+		if dir == "" {
+			dir = remaining[:i]
+		} else {
+			dir += "/" + remaining[:i]
+		}
+		remaining = remaining[i+1:]
+	}
 }
 
 // ShadowCount is the number of secret paths shadowed (everything but the bind).
