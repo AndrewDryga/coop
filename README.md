@@ -840,6 +840,9 @@ make check     # gofmt + vet + staticcheck + unit tests (what CI runs; no Docker
 make doctor    # the integration check — proves isolation, needs a runtime
 ```
 
+`.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
+own box — gets the right `go`/`gofmt` automatically.
+
 The security-critical logic — secret enumeration (`internal/box/mounts.go`) and run-arg
 assembly (`internal/box/run.go`) — is pure and unit-tested without a runtime; `coop
 doctor` proves the whole thing end-to-end against the real box.
