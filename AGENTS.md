@@ -6,6 +6,13 @@
 2. .agent/LOG.md      (what was done and why)
 3. .agent/TASKS.md    (what's left)
 
+## How we build (the creed)
+- **Boring first.** Reach for the dull, proven shape; clever earns its place only when boring can't do the job — and you can say *why* in one sentence.
+- **Wear the hats** before coding: PM (the right, smallest thing?), UX (obvious path; empty/error states handled?), Security (what's the abuse case?), Maintainer (clear in six months?).
+- **Done means verified, not done-once** — formatted, gated green, tested including the failure path. Never "should work": show the gate, or say what you couldn't check.
+- **Readable, no bloat.** Match the surrounding style; delete more than you add; no knobs nobody asked for; comments say *why*, not *what*.
+- **Boy-scout rule.** Fix small, safe messes as you pass through; backlog the big ones — never smuggle an unrelated refactor into the commit.
+
 ## The gate (adapt to this repo)
 `<format-check> && <build --warnings-as-errors> && <tests>`
 
