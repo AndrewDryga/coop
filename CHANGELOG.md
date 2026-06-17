@@ -24,6 +24,11 @@
 - **Aligned `coop fork ls` / `coop status` tables.** Bold column headers no longer count
   their (invisible) ANSI escape bytes toward the `%-Ns` column width, so on a terminal the
   header lines up with the rows beneath it instead of drifting left.
+- **Unknown commands fail fast instead of being run in the box.** `coop <typo>` used to be
+  shipped into the box and die with a cryptic `exec: …: not found` after a slow toolchain
+  spin-up. An unrecognized command now errors immediately with a "did you mean …?"
+  suggestion and a reminder that raw box commands are explicit. This drops the implicit
+  `coop npm test` passthrough — run raw commands with `coop run -- npm test`.
 - **`coop init` installs a git pre-commit gate for every committer.** The scaffolded
   `.claude/hooks` only fire for Claude, so Codex/Gemini and plain `git commit` bypassed
   the format gate. `init` now also writes a tracked `.githooks/pre-commit` (gofmt-checks

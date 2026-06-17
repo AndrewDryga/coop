@@ -1,13 +1,14 @@
 // Package cli is the command-line surface: it parses argv, resolves the config
 // and runtime, and dispatches to the box engine and scaffolder. The routing:
 // bare `coop` prints help (running an agent is explicit), `coop <agent>` runs a
-// named agent, known subcommands run their command, and anything else is run as
-// a command inside the box (so `coop npm test` just works).
+// named agent, known subcommands run their command, and an unrecognized command is
+// an error — raw commands run in the box explicitly, via `coop run -- <cmd>`.
 package cli
 
 import (
 	"fmt"
 	"runtime/debug"
+	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -139,6 +140,29 @@ func (a *app) dispatch(argv []string) (int, error) {
 		if agents.Valid(sub) { // coop claude|codex|gemini|… — run the agent
 			return a.launchAgent(sub, rest)
 		}
-		return a.cmdRun(argv) // e.g. `coop npm test`
+		// Don't ship an unrecognized command to the box to exec and fail with a cryptic
+		// "not found" after a slow toolchain spin-up — a typo'd subcommand should fail
+		// fast here. Raw box commands are explicit (`coop run -- <cmd>`).
+		return 2, unknownCommandErr(argv)
 	}
+}
+
+// topLevelCommands is coop's own subcommands, used only to suggest a correction on a
+// mistyped one. Keep in sync with the dispatch switch above.
+var topLevelCommands = []string{
+	"run", "shell", "login", "acp", "fusion", "fork", "fleet", "status", "tasks",
+	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "help", "version",
+}
+
+// unknownCommandErr explains an unrecognized command: a "did you mean" for a likely typo,
+// and how to run an actual command in the box (which is no longer implicit).
+func unknownCommandErr(argv []string) error {
+	sub := argv[0]
+	msg := fmt.Sprintf("unknown command %q", sub)
+	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
+	if guess, ok := nearestCommand(sub, candidates); ok {
+		msg += fmt.Sprintf("; did you mean %q?", guess)
+	}
+	return fmt.Errorf("%s\n  run it in the box:  coop run -- %s\n  see all commands:   coop help",
+		msg, strings.Join(argv, " "))
 }

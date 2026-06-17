@@ -109,6 +109,47 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
+// levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
+}
+
+// nearestCommand suggests the candidate closest to a mistyped command (within 2 edits).
+// Inputs shorter than 4 runes get no suggestion — fuzzy matches on `ls`/`go`/`cp` are
+// mostly noise, and the caller's "run it in the box" hint already covers them.
+func nearestCommand(input string, candidates []string) (string, bool) {
+	if len([]rune(input)) < 4 {
+		return "", false
+	}
+	best, bestDist := "", -1
+	for _, c := range candidates {
+		if d := levenshtein(input, c); bestDist < 0 || d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	if bestDist >= 0 && bestDist <= 2 {
+		return best, true
+	}
+	return "", false
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
