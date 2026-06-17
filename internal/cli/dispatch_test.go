@@ -29,6 +29,30 @@ func TestNearestCommand(t *testing.T) {
 	}
 }
 
+func TestCommandHelpCoversSubcommands(t *testing.T) {
+	// `coop <cmd> --help` routes to focused help. `run` forwards --help to the box command,
+	// `fork` has its own forkHelp, and help/version are the global help — every other
+	// top-level command must carry a commandHelp entry whose synopsis names it.
+	exempt := map[string]bool{"run": true, "fork": true, "help": true, "version": true}
+	for _, name := range topLevelCommands {
+		if exempt[name] {
+			continue
+		}
+		h, ok := commandHelp[name]
+		if !ok {
+			t.Errorf("no commandHelp for subcommand %q (add focused help, or exempt it)", name)
+			continue
+		}
+		first := h
+		if i := strings.IndexByte(h, '\n'); i >= 0 {
+			first = h[:i]
+		}
+		if !strings.Contains(first, "coop "+name) {
+			t.Errorf("commandHelp[%q] synopsis %q should name the command", name, first)
+		}
+	}
+}
+
 func TestUnknownCommandErr(t *testing.T) {
 	// A typo gets a suggestion plus the box hint carrying the full command line.
 	s := unknownCommandErr([]string{"check-secret", "--all"}).Error()

@@ -29,6 +29,10 @@
   spin-up. An unrecognized command now errors immediately with a "did you mean …?"
   suggestion and a reminder that raw box commands are explicit. This drops the implicit
   `coop npm test` passthrough — run raw commands with `coop run -- npm test`.
+- **`coop <command> --help` shows that command's own help.** Every subcommand's `--help`
+  used to print the generic usage; now it prints focused help — synopsis, what it does,
+  and its flags/subcommands. (`coop fork` keeps its fuller help; `coop run` and the agents
+  still forward `--help` to the underlying command.)
 - **`coop init` installs a git pre-commit gate for every committer.** The scaffolded
   `.claude/hooks` only fire for Claude, so Codex/Gemini and plain `git commit` bypassed
   the format gate. `init` now also writes a tracked `.githooks/pre-commit` (gofmt-checks

@@ -62,12 +62,12 @@ func Main(argv []string) int {
 	// commands (claude/codex/gemini/run/…) instead forward --help to the underlying CLI,
 	// so they're left to fall through to the box below.
 	if helpRequested(argv[1:]) {
-		switch argv[0] {
-		case "fork", "clone":
+		if argv[0] == "fork" || argv[0] == "clone" {
 			code, _ := forkHelp()
 			return code
-		case "loop", "fleet", "status", "tasks", "check-secrets", "up", "down", "init", "doctor", "build", "update":
-			printHelp(config.Load())
+		}
+		if h, ok := commandHelp[argv[0]]; ok {
+			printCommandHelp(h)
 			return 0
 		}
 	}
