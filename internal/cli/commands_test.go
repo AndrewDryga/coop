@@ -32,11 +32,9 @@ func TestParseGovernor(t *testing.T) {
 		{"default governor, no args", nil, "codex", nil},
 		{"positional governor", []string{"claude"}, "claude", nil},
 		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", []string{"exec"}},
-		{"--governor flag", []string{"--governor", "claude"}, "claude", nil},
-		{"--governor=value", []string{"--governor=gemini"}, "gemini", nil},
 		{"passthrough args keep order", []string{"exec", "foo"}, "codex", []string{"exec", "foo"}},
-		{"governor + passthrough", []string{"--governor", "claude", "exec", "foo"}, "claude", []string{"exec", "foo"}},
-		{"-- passes the rest through verbatim", []string{"--governor=claude", "--", "-p", "hi"}, "claude", []string{"-p", "hi"}},
+		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", []string{"-p", "hi"}},
+		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "codex", []string{"--governor", "claude"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

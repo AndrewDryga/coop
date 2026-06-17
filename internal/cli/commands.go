@@ -176,11 +176,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 	})
 }
 
-// cmdFusion runs a council: the governor agent (default COOP_FUSION_GOVERNOR, or
-// --governor) runs normally — it edits and does the real work — while a fusion
-// instruction injected into its instruction file tells it to consult its two
-// peers read-only and synthesize. It behaves like `coop <agent>`: `coop fusion`
-// opens the governor interactively; `coop fusion <args>` passes args through.
+// cmdFusion runs a council: the governor agent (a leading `claude|codex|gemini`, else
+// COOP_FUSION_GOVERNOR) runs normally — it edits and does the real work — while a fusion
+// instruction injected into its instruction file tells it to consult its two peers
+// read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
+// claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
 	governor, rest := a.parseGovernor(args)
 	if !fusion.Valid(governor, a.cfg.Agents) {
@@ -200,22 +200,17 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	})
 }
 
-// parseGovernor pulls an optional `--governor <agent>` (or `--governor=<agent>`)
-// from args, defaulting to COOP_FUSION_GOVERNOR; everything else passes through.
+// parseGovernor takes a leading `claude|codex|gemini` token as the governor (else
+// COOP_FUSION_GOVERNOR); everything else passes through to the governor.
 func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 	governor = a.cfg.FusionGovernor
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":
 			return governor, append(rest, args[i+1:]...) // everything after passes through
-		case args[i] == "--governor" && i+1 < len(args):
-			governor = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--governor="):
-			governor = strings.TrimPrefix(args[i], "--governor=")
 		case len(rest) == 0 && (args[i] == "claude" || args[i] == "codex" || args[i] == "gemini"):
 			// A leading agent name is the governor: `coop fusion claude` (matches
-			// `coop acp fusion claude`). `--governor` stays as an alias.
+			// `coop acp fusion claude`); otherwise the default / COOP_FUSION_GOVERNOR.
 			governor = args[i]
 		default:
 			rest = append(rest, args[i])

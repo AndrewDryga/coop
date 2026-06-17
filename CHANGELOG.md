@@ -44,6 +44,9 @@
   `--tasks` isn't being re-applied (use `--fresh` to reseed) instead of dropping it
   silently; `coop acp` names the model it defaulted to / which governor leads under
   fusion. `coop fleet ls` is gone — it was a pure alias for `coop fork ls`.
+- **`coop fusion <agent>` picks the governor positionally** — `coop fusion claude`, to
+  match `coop acp fusion claude`. The `--governor` flag is removed (use the positional
+  form or `COOP_FUSION_GOVERNOR`).
 - **Forks land by rebasing, and revalidate before they land.** `coop fork merge`
   rebases the fork onto your current branch (in the fork) and fast-forwards — linear
   history, no merge commits. Set `COOP_GATE` (e.g. `make check`) and it re-runs that

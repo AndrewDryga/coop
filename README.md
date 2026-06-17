@@ -379,7 +379,7 @@ interactive, headless, or in Zed:
 
 ```bash
 coop fusion                    # the default governor leads (COOP_FUSION_GOVERNOR); the others advise
-coop fusion claude             # claude leads instead (--governor claude also works)
+coop fusion claude             # claude leads instead
 coop fusion claude -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
 ```
 
