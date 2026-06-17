@@ -12,8 +12,8 @@ type MountKind int
 const (
 	// Bind binds a host path to a box path (the repo at the workdir).
 	Bind MountKind = iota
-	// Tmpfs overlays an empty in-memory dir, shadowing a secret directory.
-	Tmpfs
+	// DirDecoy overlays an empty read-only directory, shadowing a secret directory.
+	DirDecoy
 	// Decoy overlays an empty read-only file, shadowing a secret file.
 	Decoy
 )
@@ -28,7 +28,7 @@ type Mount struct {
 
 // ComputeMounts is the security core: it returns the mounts that bind the repo
 // into the box at workdir and shadow every secret path beneath it. The first
-// mount is always the repo bind; each later mount shadows a secret (Tmpfs for a
+// mount is always the repo bind; each later mount shadows a secret (DirDecoy for a
 // directory, Decoy for a file). Secret directories are not descended into, so a
 // shadowed dir hides all of its contents at once. The repo's .git is skipped.
 //
@@ -63,7 +63,7 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		}
 		target := workdir + "/" + relSlash
 		if d.IsDir() {
-			mounts = append(mounts, Mount{Kind: Tmpfs, Target: target})
+			mounts = append(mounts, Mount{Kind: DirDecoy, Target: target, RO: true})
 			return fs.SkipDir // prune: a shadowed dir hides everything within it
 		}
 		mounts = append(mounts, Mount{Kind: Decoy, Target: target, RO: true})
@@ -142,9 +142,9 @@ func ShadowCount(mounts []Mount) int {
 	return n
 }
 
-// RenderMounts turns a mount plan into container-runtime arguments. decoy is the
-// shared empty read-only file used to shadow secret files.
-func RenderMounts(mounts []Mount, decoy string) []string {
+// RenderMounts turns a mount plan into container-runtime arguments. decoyFile and decoyDir
+// are the shared empty read-only file and directory used to shadow secret files and dirs.
+func RenderMounts(mounts []Mount, decoyFile, decoyDir string) []string {
 	var args []string
 	for _, m := range mounts {
 		switch m.Kind {
@@ -154,10 +154,13 @@ func RenderMounts(mounts []Mount, decoy string) []string {
 				spec += ":ro"
 			}
 			args = append(args, "-v", spec)
-		case Tmpfs:
-			args = append(args, "--tmpfs", m.Target)
+		case DirDecoy:
+			// A read-only empty-dir bind, not --tmpfs: as a -v mount it sorts with the
+			// repo bind by destination on every runtime, so the repo bind can't re-cover
+			// it. (podman applies --tmpfs in a separate pass, which re-exposed the dir.)
+			args = append(args, "-v", decoyDir+":"+m.Target+":ro")
 		case Decoy:
-			args = append(args, "-v", decoy+":"+m.Target+":ro")
+			args = append(args, "-v", decoyFile+":"+m.Target+":ro")
 		}
 	}
 	return args

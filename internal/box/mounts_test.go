@@ -66,10 +66,10 @@ func TestComputeMounts(t *testing.T) {
 		t.Errorf("deploy.pem not shadowed: %+v", m)
 	}
 	// Secret directories become a tmpfs.
-	if m := find(mounts, "/workspace/secrets"); m == nil || m.Kind != Tmpfs {
+	if m := find(mounts, "/workspace/secrets"); m == nil || m.Kind != DirDecoy {
 		t.Errorf("secrets/ not shadowed by tmpfs: %+v", m)
 	}
-	if m := find(mounts, "/workspace/.ssh"); m == nil || m.Kind != Tmpfs {
+	if m := find(mounts, "/workspace/.ssh"); m == nil || m.Kind != DirDecoy {
 		t.Errorf(".ssh/ not shadowed by tmpfs: %+v", m)
 	}
 
@@ -138,7 +138,7 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 			t.Errorf("%s should be shadowed by .coopignore", target)
 		}
 	}
-	if m := find(mounts, "/workspace/vault"); m == nil || m.Kind != Tmpfs {
+	if m := find(mounts, "/workspace/vault"); m == nil || m.Kind != DirDecoy {
 		t.Errorf("vault/ should be a tmpfs: %+v", m)
 	}
 	if shadowed("/workspace/vault/key") {
@@ -204,13 +204,13 @@ func TestRenderMounts(t *testing.T) {
 	mounts := []Mount{
 		{Kind: Bind, Source: "/repo", Target: "/workspace"},
 		{Kind: Decoy, Target: "/workspace/.env", RO: true},
-		{Kind: Tmpfs, Target: "/workspace/secrets"},
+		{Kind: DirDecoy, Target: "/workspace/secrets", RO: true},
 	}
-	got := RenderMounts(mounts, "/tmp/decoy")
+	got := RenderMounts(mounts, "/tmp/decoy", "/tmp/decoydir")
 	want := []string{
 		"-v", "/repo:/workspace",
 		"-v", "/tmp/decoy:/workspace/.env:ro",
-		"--tmpfs", "/workspace/secrets",
+		"-v", "/tmp/decoydir:/workspace/secrets:ro",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("RenderMounts = %v, want %v", got, want)

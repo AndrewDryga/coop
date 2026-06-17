@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.1
+
+- **Secret directories are now shadowed on Podman too.** Directory shadowing used
+  `--tmpfs`, which Podman applies in a separate pass from `-v` binds — so the repo bind
+  re-covered it and `secrets/`-style directories were re-exposed inside the box (file
+  shadowing via the read-only decoy was unaffected, and Docker was unaffected because it
+  sorts all mounts by destination). Now a directory is shadowed by a read-only empty-dir
+  bind, which sorts with the repo bind on every runtime. `coop doctor` passes on Podman.
+
 ## 2.5.0
 
 - **`coop check-secrets` — content secret scan of the visible tree.** Shadowing hides

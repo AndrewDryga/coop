@@ -84,13 +84,19 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		ui.Info("box image is stale — Dockerfile.agent/.tool-versions changed since it was built; run 'coop build'")
 	}
 
-	// A single empty read-only file shadows every secret file.
+	// A single empty read-only file shadows every secret file; a single empty read-only
+	// dir shadows every secret directory (an RO bind, not --tmpfs, so it holds on podman).
 	decoy, err := os.CreateTemp("", "coop-decoy-")
 	if err != nil {
 		return -1, err
 	}
 	decoy.Close()
 	defer os.Remove(decoy.Name())
+	decoyDir, err := os.MkdirTemp("", "coop-decoy-dir-")
+	if err != nil {
+		return -1, err
+	}
+	defer os.RemoveAll(decoyDir)
 
 	mode := decideTTY(spec, ui.IsTerminal(os.Stdin))
 	var stdin io.Reader
@@ -217,7 +223,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	limits := boxLimits(cfg, rt.Name)
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, networkName, limits...)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, networkName, limits...)
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
@@ -302,7 +308,7 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
 // resource/privilege caps (see boxLimits).
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts []extraMount, networkName string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts []extraMount, networkName string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
 	switch mode {
 	case ttyInteractive:
@@ -314,7 +320,7 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 		args = append(args, "-i")
 	}
 	args = append(args, limits...) // resource/privilege caps (docker/podman; nil elsewhere)
-	args = append(args, RenderMounts(mounts, decoy)...)
+	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
 
 	if spec.Homes {
 		for _, agent := range agents.Names() {
