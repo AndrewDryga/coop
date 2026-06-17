@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -226,7 +225,6 @@ func (a *app) forkCreate(args []string) (int, error) {
 	} else if !fa.worker {
 		ui.Info("resuming fork %s (%s)", fa.name, ws)
 	}
-	_ = writeForkEditorConfig(ws, fa.name, img) // so opening the fork in Zed surfaces its coop agents
 	if fa.loop {
 		switch {
 		case fa.worker:
@@ -457,11 +455,6 @@ func (a *app) openInEditor(repo, ws string) (int, error) {
 	}
 	parts := append(strings.Fields(editor), ws)
 	ui.Info("opening %s in %s", ws, parts[0])
-	if strings.Contains(parts[0], "zed") {
-		// The fork carries a .zed/settings.json registering its coop ACP agents, but Zed
-		// won't launch them until you trust the worktree (secure-by-default).
-		ui.Info("  first time? click the Restricted-Mode shield in Zed's title bar to trust this fork — then its coop agents appear in the agent panel")
-	}
 	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	if err := cmd.Run(); err != nil {
@@ -501,7 +494,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
-	_ = writeForkEditorConfig(ws, name, img) // keep .zed in sync if you also open it
 	lead := ""
 	if consult {
 		lead = agent
@@ -510,67 +502,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, ConsultLead: lead,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
-}
-
-// writeForkEditorConfig drops a .zed/settings.json into the fork that registers its
-// coop ACP agents (one per model), so opening the fork in Zed surfaces them in the
-// agent panel — scoped to that project, nothing global. Each entry is pinned to the
-// fork via COOP_REPO and to the parent's image via COOP_IMAGE, so it resolves the
-// right box no matter what cwd Zed launches it in. The file is added to the fork's
-// local git excludes so it never shows in a review diff or lands on merge. Written
-// only when absent — it's a throwaway fork's editor glue, not something you hand-edit.
-func writeForkEditorConfig(ws, name, img string) error {
-	dst := filepath.Join(ws, ".zed", "settings.json")
-	if pathExists(dst) {
-		return nil
-	}
-	self, err := os.Executable()
-	if err != nil || self == "" {
-		self = "coop" // fall back to PATH lookup
-	}
-	type entry struct {
-		Type    string            `json:"type"`
-		Command string            `json:"command"`
-		Args    []string          `json:"args"`
-		Env     map[string]string `json:"env"`
-	}
-	servers := map[string]entry{}
-	for _, ag := range []string{"claude", "codex", "gemini"} {
-		servers[fmt.Sprintf("coop %s · %s", name, ag)] = entry{
-			Type: "custom", Command: self, Args: []string{"acp", ag},
-			Env: map[string]string{"COOP_REPO": ws, "COOP_IMAGE": img},
-		}
-	}
-	data, err := json.MarshalIndent(map[string]any{"agent_servers": servers}, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(dst, append(data, '\n'), 0o644); err != nil {
-		return err
-	}
-	excludeFork(ws, ".zed/")
-	return nil
-}
-
-// excludeFork appends a pattern to the fork's local .git/info/exclude (git's
-// uncommitted ignore file) if it isn't already there, so coop-generated files stay out
-// of the review diff and any commit.
-func excludeFork(ws, pattern string) {
-	excl := filepath.Join(ws, ".git", "info", "exclude")
-	if data, err := os.ReadFile(excl); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == pattern {
-				return
-			}
-		}
-	}
-	if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-		_, _ = f.WriteString("\n# coop: generated editor config, never committed\n" + pattern + "\n")
-		_ = f.Close()
-	}
 }
 
 // detectEditor finds a GUI editor on PATH (for opening a fork as a folder), falling
@@ -708,9 +639,8 @@ func (a *app) forkPath(args []string) (int, error) {
 }
 
 // forkOpenEditor opens a fork in your editor (see resolveEditor for how it's chosen) so
-// you can work in or eyeball it on the host. It also (re)writes the fork's
-// .zed/settings.json so Zed surfaces its coop agents. It doesn't need the box image
-// built — opening is a host-side action.
+// you can work in or eyeball it on the host. Opening is a host-side action, so it
+// doesn't need the box image built.
 func (a *app) forkOpenEditor(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
 		return 2, errors.New("usage: coop fork open <name>")
@@ -724,7 +654,5 @@ func (a *app) forkOpenEditor(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	_ = writeForkEditorConfig(ws, name, img)
 	return a.openInEditor(repo, ws)
 }

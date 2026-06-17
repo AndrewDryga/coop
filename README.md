@@ -138,7 +138,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, Zed agents (and optionally a toolchain) |
+| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (and optionally a toolchain) |
 | `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
@@ -292,29 +292,29 @@ sneaking in (override with `--force`). Merge refuses if your own tree is dirty.
 
 ### Drive a fork from Zed (ACP)
 
-`coop fork <name> acp [agent]` fronts the fork as an [ACP](#drive-it-from-zed-acp) agent
-over stdio — so an editor can drive the fork's agent, sandboxed, like any other ACP
-agent. And every fork carries a **`.zed/settings.json`** (written by coop, kept out of
-the diff via the fork's local git excludes) that registers its coop agents — `claude`,
-`codex`, `gemini` — pinned to that fork. So when you `coop fork review --open` a fork in
-Zed, those agents show up in the **agent panel, scoped to that project** — nothing
-global, nothing to hand-edit.
+`coop fork <name> acp [agent]` fronts a fork as an [ACP](#drive-it-from-zed-acp) agent
+over stdio; `coop acp [agent]` does the same for the project in your current directory.
 
-Two things to know:
+To get coop agents into Zed's **agent panel**, register them **once in your Zed user
+settings** — `agent_servers` is a *user-level* setting, so Zed rejects it in a project's
+`.zed/settings.json`. Because `coop acp` resolves the repo from its working directory,
+**one set of entries covers every coop project you open, forks included**: open a fork
+with `coop fork open <name>` and the same agents resolve to it.
 
-- **Trust the worktree once.** Zed is secure-by-default: it won't launch a command from
-  a project's `.zed/settings.json` until you trust the worktree. The first time you open
-  a fork, click the Restricted-Mode shield in the title bar (coop reminds you), and the
-  fork's coop agents go live.
-- **Resuming the conversation is Zed's call.** Picking up a fork's prior agent session
-  rides on ACP's (still-stabilizing) `session/load`, which the *editor* drives — coop
-  pins the fork so its session history is there to load, but can't force the resume from
-  its side.
+```jsonc
+// ~/.config/zed/settings.json
+{
+  "agent_servers": {
+    "coop · claude": { "command": "coop", "args": ["acp", "claude"] },
+    "coop · codex":  { "command": "coop", "args": ["acp", "codex"] },
+    "coop · gemini": { "command": "coop", "args": ["acp", "gemini"] }
+  }
+}
+```
 
-`coop init` sets the same thing up for the **main project**: it writes a portable
-`.zed/settings.json` (one `coop acp` agent per model, command `coop` — no machine paths,
-safe to commit) so opening the repo in Zed gives you the same in-panel agents. It won't
-overwrite a `.zed/settings.json` you already have.
+Zed's secure-by-default **Worktree Trust** still applies: click the Restricted-Mode
+shield once to trust a project before its agents launch. Resuming a prior conversation
+rides on ACP's (still-stabilizing) `session/load`, which the editor drives.
 
 ## Agents & config
 

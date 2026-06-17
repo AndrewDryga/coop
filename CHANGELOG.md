@@ -58,14 +58,14 @@
   Declare a fleet once in `.agent/fleet` (`<name> [agent] <tasks-path>` per line) and
   drive it with `coop fleet up | ls | down`; `coop fleet split <n>` round-robins
   `.agent/TASKS.md` into per-fork slices and writes a matching `.agent/fleet`.
-- **Drive a fork from your editor (Zed).** `coop fork <name> acp [agent]` fronts a fork
-  as an ACP agent over stdio, pinned to the fork's path and the parent's image. And every
-  fork now carries a `.zed/settings.json` (git-excluded, so it never lands) that registers
-  its coop agents — claude/codex/gemini — so opening the fork in Zed (`coop fork review
-  --open`) surfaces them in the agent panel, scoped to that project. `coop init` writes the
-  same thing for the main project (a portable `.zed/settings.json`, command `coop`, safe to
-  commit). Trust the worktree once (Zed's secure-by-default gate); resuming a prior session
-  rides on ACP `session/load`, which the editor drives.
+- **Drive a fork (or the project) from Zed (ACP).** `coop fork <name> acp [agent]` fronts
+  a fork as an ACP agent over stdio (pinned to the fork's path and the parent's image);
+  `coop acp [agent]` does the same for the project in your cwd. Register them once in your
+  *Zed user settings* (`agent_servers` is user-level — Zed rejects it in a project's
+  `.zed/settings.json`); since `coop acp` resolves the repo from its cwd, one set of entries
+  covers every coop project you open, forks included (`coop fork open <name>` opens a fork
+  in your editor). Worktree Trust still applies; resuming a prior session rides on ACP
+  `session/load`, which the editor drives.
 - **Every box run gets your git environment.** The box has no ambient `~/.gitconfig`,
   so an agent would otherwise commit with no author ("Author identity unknown") and
   ignore none of your global ignores. coop now mounts a curated `~/.gitconfig` into

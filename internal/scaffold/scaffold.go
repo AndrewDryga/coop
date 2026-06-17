@@ -46,8 +46,6 @@ func Init(repo, stack string) error {
 		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
 		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
 		{filepath.Join(repo, ".claude", "hooks", "commit-gate.sh"), "templates/claude/hooks/commit-gate.sh", 0o755},
-		// Zed agent panel: one coop ACP agent per model, scoped to this project.
-		{filepath.Join(repo, ".zed", "settings.json"), "templates/zed/settings.json", 0o644},
 	}
 	for _, f := range files {
 		if err := s.writeIfAbsent(f.dest, f.src, f.perm); err != nil {
@@ -105,11 +103,11 @@ func Init(repo, stack string) error {
 		ui.Info("asdf stack: review Dockerfile.agent, then 'coop build' and 'coop up'")
 	}
 
-	ui.Info("scaffolded AGENTS.md, .agent/, .claude/ hooks, workflow skills, and .zed/ agents into %s", repo)
+	ui.Info("scaffolded AGENTS.md, .agent/, .claude/ hooks, and workflow skills into %s", repo)
 	if stack != "" {
 		ui.Info("then: coop up && agent   (db/redis reachable in the box)")
 	}
-	ui.Info("edit .agent/TASKS.md, then run 'coop loop'  ·  open in Zed to drive coop agents from the panel")
+	ui.Info("edit .agent/TASKS.md, then run 'coop loop'")
 	return nil
 }
 
