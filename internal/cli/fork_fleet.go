@@ -156,19 +156,18 @@ func (a *app) fleetSplit(args []string) (int, error) {
 	if err != nil {
 		return -1, errors.New("no .agent/TASKS.md — run 'coop init'")
 	}
-	var todos []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if isOpenTask(line) { // anchored: the legend/Example "[ ]" is not a real task
-			todos = append(todos, line)
+	// Slice whole task blocks (title + five-part body), not bare title lines, so each
+	// fork's queue stays self-contained. Shares the anchored splitter with `coop tasks`.
+	buckets := splitOpenTaskBlocks(string(data), len(targets))
+	empty := true
+	for _, b := range buckets {
+		if len(b) > 0 {
+			empty = false
 		}
 	}
-	if len(todos) == 0 {
+	if empty {
 		ui.Info("no unchecked [ ] items to split")
 		return 0, nil
-	}
-	buckets := make([][]string, len(targets))
-	for i, t := range todos {
-		buckets[i%len(targets)] = append(buckets[i%len(targets)], t)
 	}
 	var fleetLines []string
 	for i, t := range targets {
@@ -176,7 +175,7 @@ func (a *app) fleetSplit(args []string) (int, error) {
 			continue
 		}
 		rel := filepath.Join(".agent", "TASKS."+t.name+".md")
-		body := fmt.Sprintf("# %s — slice for fork %s\n\n%s\n", rel, t.name, strings.Join(buckets[i], "\n"))
+		body := fmt.Sprintf("# %s — slice for fork %s\n\n%s\n", rel, t.name, strings.Join(buckets[i], "\n\n"))
 		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
 			return -1, err
 		}

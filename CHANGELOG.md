@@ -2,6 +2,13 @@
 
 ## 2.6.0
 
+- **`coop tasks` — `.agent/TASKS.md` as a validated surface.** `list` shows states and
+  titles, `lint` flags stale `[w]` claims / tasks missing the self-contained five-part
+  shape / unchecked tasks stranded in `## Example` / malformed markers (exit 1 on
+  findings, for pre-flight or CI), `add "<title>"` appends a well-shaped stub, and
+  `split <n>` carves the queue into slices. All run through one anchored parser shared
+  with the loop, fleet split, and status — so `coop fleet split` now carries each task's
+  whole body into its slice (slices stay self-contained) instead of bare title lines.
 - **`coop status` + a richer `coop fork ls`.** Watching a fleet loop overnight meant
   tailing N logs. `coop status` now rolls the fleet up at a glance — per fork: running or
   idle, tasks done/total, blockers, diff size, and the task it's on — plus fleet totals.

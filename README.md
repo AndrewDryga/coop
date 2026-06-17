@@ -180,6 +180,7 @@ any of them.
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
 | `coop fleet up` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` (list with `coop fork ls`) |
 | `coop status` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on |
+| `coop tasks list` · `lint` · `add "<title>"` · `split <n>` | inspect/validate `.agent/TASKS.md` — `lint` flags stale `[w]` claims and tasks that aren't [self-contained](#the-loop); `split` carves it into self-contained slices |
 
 **Set up & maintain**
 

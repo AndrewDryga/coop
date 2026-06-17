@@ -41,10 +41,11 @@ func queueHasTodo(queue string) bool {
 	return false
 }
 
-// taskLineRe matches an anchored task line and captures its state marker. Like
-// isOpenTask it only matches list items at the line start, so the legend, prose, and
-// the [E] example block are never counted. (E is deliberately not a state here.)
-var taskLineRe = regexp.MustCompile(`^- \[([ wxB])\] `)
+// taskLineRe matches an anchored task line and captures its state marker. It only matches
+// list items at the line start, so the legend, prose, and indented sub-bullets are never
+// read as tasks. [E] is the example marker — matched so a parser can see it, but it counts
+// as no work.
+var taskLineRe = regexp.MustCompile(`^- \[([ wxBE])\] `)
 
 // taskCounts tallies a TASKS.md queue by state.
 type taskCounts struct{ Todo, Doing, Done, Blocked int }
