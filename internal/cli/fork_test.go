@@ -78,7 +78,7 @@ func TestValidForkName(t *testing.T) {
 			t.Errorf("validForkName(%q) = false, want true", n)
 		}
 	}
-	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "a/b", `a\b`, "..", ".", "-x"} {
+	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "a/b", `a\b`, "..", ".", "-x"} {
 		if validForkName(n) {
 			t.Errorf("validForkName(%q) = true, want false", n)
 		}

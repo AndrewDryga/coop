@@ -122,7 +122,9 @@ any of them.
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
 | `coop fork merge <name> [--all]` | rebase the fork onto your branch and land it (`--all` = the whole fleet) |
 | `coop fork rm <name> [--force]` | discard a fork (refuses unmerged/dirty work without `--force`) |
-| `coop fork logs [name] [-f]` · `stop <name>` · `open <name>` | tail a loop log (no name = all) · stop a detached loop · print a fork's path |
+| `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
+| `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-a-fork-from-zed-acp) over ACP |
+| `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 
 **Run unattended** ([details](#run-it-unattended))
 

@@ -40,7 +40,7 @@ func printHelp(cfg *config.Config) {
 
 	group("forks — review and land work like a PR")
 	row("coop fork <name> [agent]", "open/re-enter a fork (re-entry resumes; --new resets)")
-	row("coop fork <verb> <name>", "ls · logs · review · merge · rm · stop · open")
+	row("coop fork <verb> <name>", "ls · logs · review · merge · rm · stop · open · path")
 
 	group("run unattended")
 	row("coop loop [agent]", "work .agent/TASKS.md until done, then audit (default claude)")

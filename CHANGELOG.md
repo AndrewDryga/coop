@@ -12,7 +12,7 @@
     resumes an unrelated session. Falls back to fresh when none exists; `--new` forces a
     fresh session.
   - `coop fork ls` — list this repo's forks with branch, change size, last activity;
-    `coop fork open <name>` prints its path.
+    `coop fork open <name>` opens it in your editor, `coop fork path <name>` prints its path.
   - `coop fork review <name>` — fetch the fork's branch into `review/<name>` and show
     the diff (no more hand-typed `git fetch … && git diff`).
   - `coop fork merge <name>` — land it by **rebasing** the fork onto your branch

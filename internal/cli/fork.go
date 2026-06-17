@@ -31,7 +31,7 @@ const forkSuffix = "-forks"
 // forkVerbs are the reserved subcommands of `coop fork`; a fork can't be named one.
 var forkVerbs = map[string]bool{
 	"ls": true, "review": true, "merge": true, "rm": true, "open": true,
-	"logs": true, "stop": true,
+	"logs": true, "stop": true, "path": true,
 }
 
 // forkHome is the sibling directory that holds every fork of repo.
@@ -66,7 +66,8 @@ func forkHelp() (int, error) {
 		{"coop fork <name> acp [agent]", "front the fork as an ACP agent over stdio (drive it from Zed)"},
 		{"coop fork merge <name> [--all] [-f|--force]", "rebase the fork onto your branch and land it (--all = queue)"},
 		{"coop fork rm <name> [-f|--force]", "discard a fork (refuses unmerged/dirty work without --force)"},
-		{"coop fork open <name>", "print the fork's path"},
+		{"coop fork open <name>", "open the fork in your editor ($COOP_EDITOR / git core.editor / …)"},
+		{"coop fork path <name>", "print the fork's filesystem path"},
 		{"coop fork stop <name>", "stop a detached loop"},
 	}
 	flags := []struct{ flag, desc string }{
@@ -109,7 +110,9 @@ func (a *app) cmdFork(args []string) (int, error) {
 	case "rm":
 		return a.forkRm(args[1:])
 	case "open":
-		return a.forkOpen(args[1:])
+		return a.forkOpenEditor(args[1:])
+	case "path":
+		return a.forkPath(args[1:])
 	case "logs":
 		return a.forkLogs(args[1:])
 	case "stop":
@@ -686,9 +689,11 @@ func (a *app) forkRm(args []string) (int, error) {
 }
 
 // forkOpen prints a fork's path (for `cd "$(coop fork open <name>)"`).
-func (a *app) forkOpen(args []string) (int, error) {
+// forkPath prints a fork's filesystem path (for `cd "$(coop fork path <name>)"` and the
+// like). It's the plumbing companion to `coop fork open`, which opens it in your editor.
+func (a *app) forkPath(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop fork open <name>")
+		return 2, errors.New("usage: coop fork path <name>")
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -700,4 +705,26 @@ func (a *app) forkOpen(args []string) (int, error) {
 	}
 	fmt.Println(ws)
 	return 0, nil
+}
+
+// forkOpenEditor opens a fork in your editor (see resolveEditor for how it's chosen) so
+// you can work in or eyeball it on the host. It also (re)writes the fork's
+// .zed/settings.json so Zed surfaces its coop agents. It doesn't need the box image
+// built — opening is a host-side action.
+func (a *app) forkOpenEditor(args []string) (int, error) {
+	if len(args) == 0 || args[0] == "" {
+		return 2, errors.New("usage: coop fork open <name>")
+	}
+	name := args[0]
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
+	}
+	ws := forkWorkspace(repo, name)
+	if !pathExists(ws) {
+		return -1, fmt.Errorf("no such fork: %s", name)
+	}
+	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	_ = writeForkEditorConfig(ws, name, img)
+	return a.openInEditor(repo, ws)
 }
