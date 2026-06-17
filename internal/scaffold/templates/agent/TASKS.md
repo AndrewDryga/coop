@@ -3,10 +3,10 @@
 #
 # Tasks are self-contained: a fresh agent with only the BOOT files (this queue,
 # AGENTS.md, LOG.md) and the repo must be able to do each one — no prior chat, no
-# remembered review. Give every task the five-part shape in the # Example below.
+# remembered review. Give every task the five-part shape in the ## Example below.
 # The loop works only `- [ ]` items under ## Active; [E] and comments are ignored.
 
-# Example
+## Example
 
 - [E] <one-line outcome — the smallest right thing>
   - **Context:** the problem, why it matters, and where it lives in the code.
