@@ -26,9 +26,10 @@ func Init(repo, stack string) error {
 	s := &scaffolder{repo: repo}
 	if err := mkdirs(
 		filepath.Join(repo, ".agent", "rules"),
+		filepath.Join(repo, ".agent", "skills"),
 		filepath.Join(repo, ".claude", "hooks"),
-		filepath.Join(repo, ".claude", "skills"),
 		filepath.Join(repo, ".codex"),
+		filepath.Join(repo, ".gemini"),
 	); err != nil {
 		return err
 	}
@@ -53,17 +54,20 @@ func Init(repo, stack string) error {
 		}
 	}
 
-	// One brain, every agent: AGENTS.md is canonical; CLAUDE.md and GEMINI.md
-	// symlink to it, and Codex shares Claude's skills directory. A real
-	// (non-symlink) instruction file is never clobbered.
+	// One brain, every agent: AGENTS.md is canonical and CLAUDE.md / GEMINI.md
+	// symlink to it. The workflow skills likewise live once, in .agent/skills, and
+	// each agent's skills dir (.claude / .codex / .gemini) symlinks to it. A real
+	// (non-symlink) instruction file or skills dir is never clobbered.
 	if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "CLAUDE.md")); err != nil {
 		return err
 	}
 	if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "GEMINI.md")); err != nil {
 		return err
 	}
-	if err := s.linkIfAbsent("../.claude/skills", filepath.Join(repo, ".codex", "skills")); err != nil {
-		return err
+	for _, dir := range []string{".claude", ".codex", ".gemini"} {
+		if err := s.linkIfAbsent("../.agent/skills", filepath.Join(repo, dir, "skills")); err != nil {
+			return err
+		}
 	}
 
 	if err := s.copySkills(); err != nil {
@@ -166,7 +170,7 @@ func (s *scaffolder) copySkills() error {
 			continue
 		}
 		name := e.Name()
-		dest := filepath.Join(s.repo, ".claude", "skills", name)
+		dest := filepath.Join(s.repo, ".agent", "skills", name)
 		if _, err := os.Stat(dest); err == nil {
 			ui.Info("kept existing skill %s", name)
 			continue
@@ -193,10 +197,12 @@ func (s *scaffolder) updateGitignore() error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString("\n# coop working state (commit knowledge, ignore state)\n.agent/*\n!.agent/rules/\n"); err != nil {
+	const block = "\n# coop working state (commit knowledge, ignore state)\n.agent/*\n!.agent/rules/\n!.agent/skills/\n" +
+		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
+	if _, err := f.WriteString(block); err != nil {
 		return err
 	}
-	ui.Info("updated .gitignore (.agent state ignored, rules/ tracked)")
+	ui.Info("updated .gitignore (.agent state ignored; rules/ + skills/ tracked)")
 	return nil
 }
 

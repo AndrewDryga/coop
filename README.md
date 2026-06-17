@@ -830,7 +830,6 @@ internal/scaffold/  `coop init` templates + the workflow skills (embedded in the
 internal/cli/       command dispatch, grouped help, the fork lifecycle, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
 agents/             example config (env.example, mcp.json.example); copied to ~/.config/coop on install
-skills/             the workflow skills (spec · work · sweep · investigate · verify-api), also embedded
 install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 

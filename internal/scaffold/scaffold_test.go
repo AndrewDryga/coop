@@ -73,22 +73,26 @@ func TestInit(t *testing.T) {
 			t.Errorf("%s should symlink to AGENTS.md, got %q (%v)", rel, target, err)
 		}
 	}
-	// Codex shares Claude's skills dir.
-	if target, err := os.Readlink(filepath.Join(repo, ".codex/skills")); err != nil || target != "../.claude/skills" {
-		t.Errorf(".codex/skills should symlink to ../.claude/skills, got %q (%v)", target, err)
+	// Every agent's skills dir symlinks to the one canonical .agent/skills.
+	for _, rel := range []string{".claude/skills", ".codex/skills", ".gemini/skills"} {
+		if target, err := os.Readlink(filepath.Join(repo, rel)); err != nil || target != "../.agent/skills" {
+			t.Errorf("%s should symlink to ../.agent/skills, got %q (%v)", rel, target, err)
+		}
 	}
 
-	// Skills were copied.
+	// Skills were copied into the canonical dir.
 	for _, s := range []string{"spec", "investigate"} {
-		if _, err := os.Stat(filepath.Join(repo, ".claude/skills", s, "SKILL.md")); err != nil {
+		if _, err := os.Stat(filepath.Join(repo, ".agent/skills", s, "SKILL.md")); err != nil {
 			t.Errorf("skill %s not copied: %v", s, err)
 		}
 	}
 
-	// .gitignore carries the working-state rule.
+	// .gitignore carries the working-state rule (skills + rules tracked).
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	if !strings.Contains(string(gi), ".agent/*") || !strings.Contains(string(gi), "!.agent/rules/") {
-		t.Errorf(".gitignore missing working-state rules:\n%s", gi)
+	for _, want := range []string{".agent/*", "!.agent/rules/", "!.agent/skills/", "!.gemini/skills"} {
+		if !strings.Contains(string(gi), want) {
+			t.Errorf(".gitignore missing %q:\n%s", want, gi)
+		}
 	}
 }
 

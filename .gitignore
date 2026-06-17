@@ -10,3 +10,9 @@
 # coop working state (commit knowledge, ignore state)
 .agent/*
 !.agent/rules/
+!.agent/skills/
+
+# .gemini holds local Gemini state (often globally ignored); keep just the skills symlink
+!.gemini/
+.gemini/*
+!.gemini/skills
