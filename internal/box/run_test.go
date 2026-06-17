@@ -215,6 +215,31 @@ func TestAssembleArgsConsultLeadScoped(t *testing.T) {
 	}
 }
 
+func TestBoxLimits(t *testing.T) {
+	// docker/podman get the caps; values come from config.
+	cfg := &config.Config{Pids: "4096", Memory: "4g", CPUs: "2", NoNewPrivileges: true}
+	for _, rt := range []string{"docker", "podman"} {
+		got := boxLimits(cfg, rt)
+		for _, want := range [][]string{
+			{"--security-opt", "no-new-privileges"}, {"--pids-limit", "4096"},
+			{"--memory", "4g"}, {"--cpus", "2"},
+		} {
+			if !containsSeq(got, want) {
+				t.Errorf("%s: boxLimits missing %v in %v", rt, want, got)
+			}
+		}
+	}
+	// Apple `container` (and any non-OCI/unknown runtime) gets none — its CLI differs.
+	if got := boxLimits(cfg, "container"); got != nil {
+		t.Errorf("container runtime should get no docker flags, got %v", got)
+	}
+	// Off switches: empty/unlimited pids and disabled no-new-privileges drop their flags.
+	off := &config.Config{Pids: "unlimited", NoNewPrivileges: false}
+	if got := boxLimits(off, "docker"); len(got) != 0 {
+		t.Errorf("pids off + no-new-privileges off should yield no flags, got %v", got)
+	}
+}
+
 func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
 	repo := t.TempDir() // no Dockerfile.agent → shared base

@@ -2,6 +2,11 @@
 
 ## 2.6.0
 
+- **The box caps a runaway agent.** Runs now set a `--pids-limit` (default 4096, a
+  fork-bomb cap) and `--security-opt no-new-privileges`, with optional `--memory` /
+  `--cpus`, so an agent in a loop can't fork-bomb or starve the host. Tunable via
+  `COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` / `COOP_NO_NEW_PRIVILEGES`. Applied on docker
+  and podman; Apple's `container` CLI differs, so it's skipped there for now.
 - **`coop fleet split` no longer creates phantom tasks.** It slices only real `- [ ]`
   task lines (the same anchored rule the loop uses), so the TASKS.md legend or an
   `## Example` block can't become a fake item in a fork's queue.

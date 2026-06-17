@@ -771,9 +771,16 @@ turn them off.
 | `COOP_WORKDIR` | (real path) | where the repo mounts in the box |
 | `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |
 | `COOP_RUN_ARGS` | — | extra args passed straight to the container runtime |
+| `COOP_PIDS` | `4096` | box pids-limit (fork-bomb cap); `0`/`unlimited`/empty turns it off |
+| `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |
+| `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
+
+The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
+`COOP_NO_NEW_PRIVILEGES`) apply on **docker and podman**; Apple's `container` CLI differs,
+so they're skipped there for now.
 
 **Agents & config**
 

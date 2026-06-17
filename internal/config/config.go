@@ -37,6 +37,12 @@ type Config struct {
 	Gate         []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
+	// Box resource/privilege caps (docker & podman; skipped on Apple `container`).
+	Memory          string // COOP_MEMORY — memory cap, e.g. "4g" (empty = unset)
+	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
+	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off
+	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
+
 	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
 
 	Editor    string // COOP_EDITOR — editor for `coop fork review --open` (else $VISUAL/$EDITOR or a detected GUI editor)
@@ -106,6 +112,11 @@ func Load() *Config {
 		LoopCmd:      shellSplit(get("COOP_LOOP_CMD", "")),
 		Gate:         shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs: shellSplit(get("COOP_RUN_ARGS", "")),
+
+		Memory:          get("COOP_MEMORY", ""),
+		CPUs:            get("COOP_CPUS", ""),
+		Pids:            get("COOP_PIDS", "4096"),
+		NoNewPrivileges: flag("COOP_NO_NEW_PRIVILEGES"),
 
 		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),
 

@@ -213,7 +213,8 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, networkName)
+	limits := boxLimits(cfg, rt.Name)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, networkName, limits...)
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
@@ -266,10 +267,39 @@ func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
 	}
 }
 
+// boxLimits returns the resource + privilege caps that keep a runaway agent from
+// harming the host: a pids cap (fork bombs), optional memory/cpu caps, and
+// no-new-privileges. These are OCI-runtime flags applied for docker and podman;
+// Apple's `container` CLI differs, so they're skipped there (its hardening is
+// tracked separately). All are config-driven (COOP_PIDS/MEMORY/CPUS,
+// COOP_NO_NEW_PRIVILEGES).
+func boxLimits(cfg *config.Config, runtimeName string) []string {
+	if runtimeName != "docker" && runtimeName != "podman" {
+		return nil
+	}
+	var a []string
+	if cfg.NoNewPrivileges {
+		a = append(a, "--security-opt", "no-new-privileges")
+	}
+	switch cfg.Pids {
+	case "", "0", "-1", "unlimited": // pids cap off
+	default:
+		a = append(a, "--pids-limit", cfg.Pids)
+	}
+	if cfg.Memory != "" {
+		a = append(a, "--memory", cfg.Memory)
+	}
+	if cfg.CPUs != "" {
+		a = append(a, "--cpus", cfg.CPUs)
+	}
+	return a
+}
+
 // assembleArgs builds the full container-runtime argument list. It is pure given
 // its inputs and the on-disk presence of the env/instruction files, so the whole
-// run plan can be unit-tested without a container daemon.
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts []extraMount, networkName string) []string {
+// run plan can be unit-tested without a container daemon. limits is the runtime's
+// resource/privilege caps (see boxLimits).
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts []extraMount, networkName string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
 	switch mode {
 	case ttyInteractive:
@@ -280,6 +310,7 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, workd
 	case ttyStdinOnly:
 		args = append(args, "-i")
 	}
+	args = append(args, limits...) // resource/privilege caps (docker/podman; nil elsewhere)
 	args = append(args, RenderMounts(mounts, decoy)...)
 
 	if spec.Homes {
