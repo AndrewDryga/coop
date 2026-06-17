@@ -27,6 +27,8 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
 		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
 		"chown node:node /home/node/.asdf /home/node/.cache",
+		// agent search/inspect tools, with fd symlinked from Debian's fdfind.
+		"ripgrep fd-find jq tree", `ln -s "$(command -v fdfind)" /usr/local/bin/fd`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)

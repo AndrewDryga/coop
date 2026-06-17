@@ -41,13 +41,17 @@ ARG AGENT_PACKAGES="%s"
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
-# ~/.asdf and ~/.cache are pre-created node-owned so their named volumes inherit that
-# owner — a fresh volume on a path absent from the image would mount root-owned.
+# ripgrep/fd/jq/tree are the search + inspect tools agents reach for constantly
+# (Debian ships fd as "fdfind", so it's symlinked to "fd"). ~/.asdf and ~/.cache are
+# pre-created node-owned so their named volumes inherit that owner — a fresh volume on
+# a path absent from the image would mount root-owned.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
       postgresql-client procps inotify-tools \
+      ripgrep fd-find jq tree \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
+ && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
  && npm install -g ${AGENT_PACKAGES} \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
