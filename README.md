@@ -181,8 +181,26 @@ your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 `.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are **shadowed**: an empty
 `tmpfs` over secret directories, a read-only empty file over secret files. Templates
 (`*.example`, `*.sample`, `*.template`) stay visible so the agent can still see the
-shape of your config. The shadow / keep-visible patterns are compiled in (see
+shape of your config. The default patterns are compiled in (see
 `internal/box/secrets.go`).
+
+That default list is a **denylist of well-known names** — it can't know your repo holds
+a `config/credentials.yaml` or a committed `prod.yml` full of secrets. Hide those by
+adding a **`.coopignore`** at the repo root, one pattern per line (`#` comments and
+blank lines ignored):
+
+```gitignore
+prod.yml                 # basename — matched at any depth
+config/credentials.yaml  # a slash makes it a repo-relative path
+data/*.csv               # path globs work (filepath.Match; no **)
+vault/                   # a directory — its contents are hidden whole
+```
+
+Patterns extend the defaults; they never un-hide. Templates (`*.example` and friends)
+always stay visible, even if a `.coopignore` line would match them. A denylist can
+never be exhaustive, so prefer gitignoring real secrets (gitignored files never enter a
+[fork](#forks-hand-off-work-like-a-pr) either) and use `.coopignore` for anything that
+must live in the working tree. Prove your setup with [`coop doctor`](#prove-it-coop-doctor).
 
 ### Your git identity, not the box's
 

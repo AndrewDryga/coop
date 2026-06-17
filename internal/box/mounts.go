@@ -31,9 +31,15 @@ type Mount struct {
 // directory, Decoy for a file). Secret directories are not descended into, so a
 // shadowed dir hides all of its contents at once. The repo's .git is skipped.
 //
-// It is pure (no container runtime, no temp files) so it can be exhaustively
-// unit-tested — this is the function that must never let a secret leak.
+// A path is shadowed when its basename matches SecretGlobs or the repo's .coopignore
+// basename patterns, or its repo-relative path matches a .coopignore path pattern —
+// unless its basename matches AllowGlobs (templates always stay visible).
+//
+// Its only input is the repo tree plus that one .coopignore file (no container
+// runtime, no temp files), so it can be exhaustively unit-tested — this is the
+// function that must never let a secret leak.
 func ComputeMounts(repo, workdir string) ([]Mount, error) {
+	user := LoadUserGlobs(repo)
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
 	err := filepath.WalkDir(repo, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -46,14 +52,16 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 		if d.IsDir() && name == ".git" {
 			return fs.SkipDir
 		}
-		if !matchesAny(name, SecretGlobs) || matchesAny(name, AllowGlobs) {
-			return nil
-		}
 		rel, err := filepath.Rel(repo, path)
 		if err != nil {
 			return err
 		}
-		target := workdir + "/" + filepath.ToSlash(rel)
+		relSlash := filepath.ToSlash(rel)
+		secret := matchesAny(name, SecretGlobs) || matchesAny(name, user.Base) || matchesPath(relSlash, user.Path)
+		if !secret || matchesAny(name, AllowGlobs) {
+			return nil
+		}
+		target := workdir + "/" + relSlash
 		if d.IsDir() {
 			mounts = append(mounts, Mount{Kind: Tmpfs, Target: target})
 			return fs.SkipDir // prune: a shadowed dir hides everything within it
@@ -102,6 +110,17 @@ func RenderMounts(mounts []Mount, decoy string) []string {
 func matchesAny(name string, globs []string) bool {
 	for _, g := range globs {
 		if ok, _ := filepath.Match(g, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesPath reports whether a repo-relative slash path matches any of the path
+// patterns (filepath.Match semantics: `*` does not cross `/`, no `**`).
+func matchesPath(relSlash string, globs []string) bool {
+	for _, g := range globs {
+		if ok, _ := filepath.Match(g, relSlash); ok {
 			return true
 		}
 	}

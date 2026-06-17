@@ -19,8 +19,9 @@ import (
 const doctorProbe = `#!/bin/sh
 cd /workspace 2>/dev/null || { echo "RESULT FAIL workspace was not mounted"; exit 1; }
 empty() { [ -f "$1" ] && [ ! -s "$1" ]; }
-empty .env               && echo "RESULT PASS .env is shadowed (empty in the VM)"     || echo "RESULT FAIL .env is READABLE in the VM"
-empty config/prod.tfvars && echo "RESULT PASS *.tfvars in a subdir is shadowed"       || echo "RESULT FAIL config/prod.tfvars is READABLE"
+empty .env                   && echo "RESULT PASS .env is shadowed (empty in the VM)"     || echo "RESULT FAIL .env is READABLE in the VM"
+empty config/prod.tfvars     && echo "RESULT PASS *.tfvars in a subdir is shadowed"       || echo "RESULT FAIL config/prod.tfvars is READABLE"
+empty config/credentials.yaml && echo "RESULT PASS .coopignore shadows a custom path"     || echo "RESULT FAIL config/credentials.yaml is READABLE"
 if [ -d secrets ] && [ -z "$(ls -A secrets 2>/dev/null)" ]; then echo "RESULT PASS secrets/ is shadowed (empty)"; else echo "RESULT FAIL secrets/ exposes files"; fi
 if echo x >> .env 2>/dev/null; then echo "RESULT FAIL the .env decoy is writable"; else echo "RESULT PASS writing the .env decoy is blocked"; fi
 [ -s .env.example ] && echo "RESULT PASS .env.example template stays readable" || echo "RESULT FAIL .env.example was hidden"
@@ -127,9 +128,13 @@ func buildFixture() (string, error) {
 		".env":               "SECRET=hunter2\n",
 		".env.example":       "KEY=put-your-key-here\n",
 		"config/prod.tfvars": "x = \"hunter2\"\n",
-		"secrets/api-token":  "tok-hunter2\n",
-		"src/app.js":         "console.log(1)\n",
-		".gitignore":         ".env\n*.tfvars\nsecrets/\n",
+		// A repo-specific secret the default denylist can't know about, hidden via
+		// .coopignore — proves the user-extensible path, not just the built-ins.
+		".coopignore":             "config/credentials.yaml\n",
+		"config/credentials.yaml": "token: hunter2\n",
+		"secrets/api-token":       "tok-hunter2\n",
+		"src/app.js":              "console.log(1)\n",
+		".gitignore":              ".env\n*.tfvars\nsecrets/\nconfig/credentials.yaml\n",
 	}
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)

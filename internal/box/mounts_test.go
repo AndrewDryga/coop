@@ -100,6 +100,62 @@ func TestComputeMounts(t *testing.T) {
 	}
 }
 
+// TestComputeMountsCoopIgnore covers the repo-local .coopignore extension: basename
+// patterns (any depth), repo-relative path patterns (exact + glob, not matched
+// elsewhere), a directory entry, comments/blanks, and that a template still wins.
+func TestComputeMountsCoopIgnore(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(CoopIgnoreFile, "# project secrets\nprod.yml\n/config/creds.yaml\ndata/*.csv\nvault/\n\n")
+	write("prod.yml", "s")                    // basename → shadow
+	write("nested/prod.yml", "s")             // basename at depth → shadow
+	write("config/creds.yaml", "s")           // exact path → shadow
+	write("config/creds.yaml.example", "tpl") // template wins → visible
+	write("other/creds.yaml", "ok")           // same name, different path → visible
+	write("data/big.csv", "s")                // path glob → shadow
+	write("vault/key", "s")                   // dir → tmpfs, pruned
+	write("src/app.js", "ok")                 // ordinary source → visible
+
+	mounts, err := ComputeMounts(root, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowed := func(target string) bool { return find(mounts, target) != nil }
+
+	for _, target := range []string{
+		"/workspace/prod.yml", "/workspace/nested/prod.yml",
+		"/workspace/config/creds.yaml", "/workspace/data/big.csv",
+	} {
+		if !shadowed(target) {
+			t.Errorf("%s should be shadowed by .coopignore", target)
+		}
+	}
+	if m := find(mounts, "/workspace/vault"); m == nil || m.Kind != Tmpfs {
+		t.Errorf("vault/ should be a tmpfs: %+v", m)
+	}
+	if shadowed("/workspace/vault/key") {
+		t.Error("vault/ contents must not be enumerated (dir is pruned)")
+	}
+	for _, target := range []string{
+		"/workspace/other/creds.yaml",          // path pattern is config/creds.yaml only
+		"/workspace/config/creds.yaml.example", // template stays visible
+		"/workspace/src/app.js",
+		"/workspace/" + CoopIgnoreFile, // the ignore file itself is not a secret
+	} {
+		if shadowed(target) {
+			t.Errorf("%s must stay visible", target)
+		}
+	}
+}
+
 func TestRenderMounts(t *testing.T) {
 	mounts := []Mount{
 		{Kind: Bind, Source: "/repo", Target: "/workspace"},
@@ -124,7 +180,10 @@ func TestMatchesAny(t *testing.T) {
 	}{
 		{".env", true}, {".env.local", true}, {"id_ed25519", true}, {"id_ed25519.pub", true},
 		{"prod.tfvars", true}, {"secrets", true}, {".ssh", true},
-		{"app.js", false}, {"README.md", false}, {"env", false}, {"app.env", false},
+		// expanded defaults
+		{"release.keystore", true}, {"AuthKey.p8", true}, {"vault.kdbx", true}, {"id_dsa", true},
+		{".pgpass", true}, {"home.ovpn", true}, {".dockercfg", true}, {".htpasswd", true}, {"server.ppk", true},
+		{"app.js", false}, {"README.md", false}, {"env", false}, {"app.env", false}, {"cert.crt", false},
 	}
 	for _, c := range cases {
 		if got := matchesAny(c.name, SecretGlobs); got != c.want {
