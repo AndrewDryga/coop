@@ -100,6 +100,29 @@ func TestConfFilePrecedence(t *testing.T) {
 	}
 }
 
+func TestCmd(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	os.WriteFile(conf, []byte("COOP_FOO_CMD=foo --from-conf\n"), 0o644)
+	t.Setenv("COOP_CONF", conf)
+	c := Load()
+
+	// default → split into words
+	if got := c.Cmd("COOP_BAR_CMD", "bar --baz"); !slices.Equal(got, []string{"bar", "--baz"}) {
+		t.Errorf("default: Cmd = %v", got)
+	}
+	// conf file → split
+	if got := c.Cmd("COOP_FOO_CMD", "ignored"); !slices.Equal(got, []string{"foo", "--from-conf"}) {
+		t.Errorf("conf: Cmd = %v", got)
+	}
+	// env beats conf
+	t.Setenv("COOP_FOO_CMD", "foo --from-env")
+	if got := Load().Cmd("COOP_FOO_CMD", "ignored"); !slices.Equal(got, []string{"foo", "--from-env"}) {
+		t.Errorf("env: Cmd = %v", got)
+	}
+}
+
 func TestMCPFlagInjected(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

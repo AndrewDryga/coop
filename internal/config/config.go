@@ -48,6 +48,22 @@ type Config struct {
 
 	// BoxHome is ~/.config/coop: the home for conf, mcp.json, and agents/.
 	BoxHome string
+
+	conf map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
+}
+
+// Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
+// other: environment variable, then conf file, then the built-in default — then splits
+// it into words. It lets an agent adapter own its own default command without config
+// knowing the agent set.
+func (c *Config) Cmd(env, def string) []string {
+	if v, ok := os.LookupEnv(env); ok {
+		return fields(v)
+	}
+	if v, ok := c.conf[env]; ok {
+		return fields(v)
+	}
+	return fields(def)
 }
 
 // Load resolves the configuration from the environment and conf file.
@@ -104,6 +120,7 @@ func Load() *Config {
 		ReviewCmd: get("COOP_REVIEW_CMD", ""),
 
 		BoxHome: boxHome,
+		conf:    conf,
 	}
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
