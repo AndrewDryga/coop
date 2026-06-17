@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -41,47 +43,65 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	return 1, nil
 }
 
-// scanVisibleTree walks repo, skipping .git and every path the box shadows, and runs the
-// content secret scanner on each visible text file. It shares box.ScanSecrets with the
-// fork-merge policy and box.NewShadowDecider with the mount plan, so it flags exactly the
-// secrets an agent would see — never one already hidden, never missing one that isn't.
+// scanVisibleTree runs the content scanner on each candidate file the box can see (see
+// candidateFiles), skipping any path the box shadows. It shares box.ScanSecrets with the
+// fork-merge policy and box.NewShadowDecider with the mount plan, so it flags the secrets
+// an agent would see — never one already hidden.
 func scanVisibleTree(repo string) ([]string, error) {
+	rels, err := candidateFiles(repo)
+	if err != nil {
+		return nil, err
+	}
 	shadowed := box.NewShadowDecider(repo)
 	var findings []string
+	for _, rel := range rels {
+		if shadowed(rel) {
+			continue // hidden from the box → already protected
+		}
+		content, ok := readScannable(filepath.Join(repo, filepath.FromSlash(rel)))
+		if !ok {
+			continue // binary, oversized, or unreadable
+		}
+		for _, s := range box.ScanSecrets(content) {
+			findings = append(findings, fmt.Sprintf("possible secret in %s:%d (%s)", rel, s.Line, s.Kind))
+		}
+	}
+	return findings, nil
+}
+
+// candidateFiles lists the repo-relative paths worth scanning: tracked plus untracked
+// files, with gitignored ones excluded — so check-secrets covers what you'd commit (and
+// what a fork sees), not vendored deps or build output (node_modules, .build, dist, …).
+// Falls back to a filesystem walk (skipping .git) when repo isn't a git work tree.
+func candidateFiles(repo string) ([]string, error) {
+	if out, err := exec.Command("git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output(); err == nil {
+		var rels []string
+		for _, p := range strings.Split(string(out), "\x00") {
+			if p != "" {
+				rels = append(rels, p)
+			}
+		}
+		return rels, nil
+	}
+	var rels []string
 	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if p == repo {
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
 			return nil
-		}
-		if d.IsDir() && d.Name() == ".git" {
-			return fs.SkipDir
 		}
 		rel, err := filepath.Rel(repo, p)
 		if err != nil {
 			return err
 		}
-		relSlash := filepath.ToSlash(rel)
-		if shadowed(relSlash) {
-			if d.IsDir() {
-				return fs.SkipDir // the box can't see this dir, so skip it whole
-			}
-			return nil // already shadowed: hidden from the box, already protected
-		}
-		if d.IsDir() {
-			return nil
-		}
-		content, ok := readScannable(p)
-		if !ok {
-			return nil // binary, oversized, or unreadable
-		}
-		for _, s := range box.ScanSecrets(content) {
-			findings = append(findings, fmt.Sprintf("possible secret in %s:%d (%s)", relSlash, s.Line, s.Kind))
-		}
+		rels = append(rels, filepath.ToSlash(rel))
 		return nil
 	})
-	return findings, err
+	return rels, err
 }
 
 // readScannable returns a file's text for scanning, or ok=false if it's oversized,

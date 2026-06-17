@@ -2,10 +2,47 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	token := `api_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`
+	mk := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".gitignore", "dist/\n")
+	mk("dist/bundle.js", token) // gitignored build output → must NOT be scanned
+	mk("config.tf", token)      // tracked-able source → must be scanned
+
+	findings, err := scanVisibleTree(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(findings, "\n")
+	if strings.Contains(joined, "dist/bundle.js") {
+		t.Errorf("scanned a gitignored file:\n%s", joined)
+	}
+	if !strings.Contains(joined, "config.tf") {
+		t.Errorf("missed the secret in the tracked file:\n%s", joined)
+	}
+}
 
 func TestScanVisibleTree(t *testing.T) {
 	repo := t.TempDir()

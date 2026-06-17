@@ -14,11 +14,20 @@
   launch even when every pinned tool was already present — pure noise. The entrypoint now
   checks `.tool-versions` against what's installed and stays silent unless a tool is
   missing.
-- **Fewer secret-scan false positives on code.** The content scanner's entropy check
-  flagged code *expressions* assigned to secret-named keys — `api_key =
-  var.blitz_databricks_api_key`, `${var.x}`, `config.db.password`, `getSecret()`. It now
-  skips values that are variable/config references, interpolations, or function calls, so
-  `coop check-secrets` and the fork-merge policy stop crying wolf on ordinary IaC/config.
+- **`coop check-secrets` no longer scans vendored or gitignored files.** It enumerates the
+  working tree the way git does — tracked plus untracked, gitignored paths excluded —
+  instead of walking everything. Build output and dependencies (`node_modules/`, `dist/`,
+  `_build/`) are skipped, which is where the bulk of the false noise lived: across the
+  author's projects one app dropped from ~1,900 hits to a handful.
+- **The secret scanner flags literal credentials, not references to them.** The entropy
+  heuristic was tripping on ordinary code and config, not just secrets. It now requires the
+  key to *end* in a credential word (so `authenticator`, `token_url`, `allocate_tokens`
+  no longer match) and skips values that are references rather than literals: variable and
+  config refs, `${…}`/`{{…}}` interpolations, function calls, Rust generics/namespaces,
+  Elixir module attributes, `SCREAMING_SNAKE` constants, comments, URLs and paths, and
+  obvious placeholders or fixtures (AWS `…EXAMPLE` keys, `"very-long-password-1234"`). A
+  real random token contains none of these, so a genuinely committed secret still surfaces.
+  Shared by `coop check-secrets` and the `coop fork merge` policy.
 
 ## 2.5.1
 

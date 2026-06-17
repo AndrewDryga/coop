@@ -29,37 +29,72 @@ var secretPatterns = []struct {
 	{"Stripe key", regexp.MustCompile(`\b[sr]k_live_[0-9a-zA-Z]{24,}\b`)},
 }
 
-// secretAssignRe matches an assignment whose KEY name looks secret-bearing, capturing
-// the key (1) and a long contiguous value (2) for an entropy check. The key-name gate
-// keeps random-looking-but-innocent tokens (hashes, IDs, base64 blobs) from flagging
-// unless they're actually assigned to something secret-shaped.
-var secretAssignRe = regexp.MustCompile(`(?i)(\w*(?:secret|token|password|passwd|api[_-]?key|access[_-]?key|auth|credential)\w*)\s*[:=]\s*["']?([^\s"']{20,})`)
+// secretAssignRe matches an assignment whose KEY name ENDS in a credential word —
+// password, secret, token, api_key, access_key, client_secret, auth_token, credentials
+// (with an optional encoding suffix like _b64/_value) — capturing the key (1) and a long
+// value (2) for an entropy check. Anchoring the word at the END of the key (not anywhere
+// in it) is what keeps config keys that merely contain "auth"/"token" from matching —
+// authenticator, auth_proxy_headers, allocate_tokens, token_url — a big FP source.
+var secretAssignRe = regexp.MustCompile(`(?i)([\w-]*(?:password|passwd|secret[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|authorization|secret|token|credentials?)(?:[_-](?:b64|base64|encoded|value|json|pem))?)\s*[:=]\s*["']?([^\s"']{20,})`)
 
 // entropyThreshold flags a value as likely-random above this many bits/char (Shannon).
 // Real base64/hex tokens sit ~3.5–6; English/placeholder text sits lower.
 const entropyThreshold = 3.5
 
-// codeRefRe matches a dotted identifier path with a short leading segment — var.x,
-// data.y.z, process.env.API_KEY, config.databricks_api_key — i.e. a code reference, not a
-// literal secret. The ≤16-char first segment keeps it from matching dotted base64 blobs
-// like JWTs, whose segments are long.
-var codeRefRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$-]{0,15}(\.[A-Za-z_$][A-Za-z0-9_$-]*)+$`)
+// codeRefRe matches a dotted identifier path — var.x, data.y.z, process.env.API_KEY,
+// google_storage_hmac_key.s3.access_id — i.e. a code reference, not a literal secret.
+var codeRefRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$-]*(\.[A-Za-z_$][A-Za-z0-9_$-]*)+$`)
 
 // looksLikeCodeRef reports whether a value is a code expression — a variable/config
-// reference, a template interpolation, or a function call — rather than a literal secret.
-// It keeps the entropy heuristic from flagging innocent code, e.g. the common
-// `databricks_api_key = var.blitz_databricks_api_key`.
+// reference, an interpolation, a shell substitution, a call, or an array — rather than a
+// literal secret, so the entropy heuristic doesn't flag innocent code like
+// `api_key = var.databricks_api_key` or `token = $(get-token …)`. (The value is captured
+// up to the first space/quote, so a call may arrive without its closing paren.)
 func looksLikeCodeRef(v string) bool {
+	v = strings.TrimRight(v, ",;)]}|") // drop trailing code punctuation: x, x; f(x), #{x}, [x], ~S|x|
 	switch {
-	case strings.Contains(v, "${"), strings.Contains(v, "{{"):
-		return true // interpolation: ${var.x}, {{ .Secret }}
-	case strings.IndexByte(v, '(') >= 0 && strings.IndexByte(v, ')') >= 0:
-		return true // a call: generateKey(), os.getenv("X")
+	case strings.ContainsAny(v, "$([{<@"):
+		return true // var/call/index/interp/generic/annotation: $X, ${x}, $(cmd, f(x, [ref], {x}, #{x}, T<U>, @attr
+	case strings.Contains(v, "::"):
+		return true // a namespace path: snownet::Credentials, Foo::Bar (Rust/Ruby/C++/PHP)
+	case strings.Contains(v, "{{"):
+		return true // a Go/Helm template: {{ .Secret }}
 	case codeRefRe.MatchString(v):
-		return true // a dotted reference: var.x, process.env.API_KEY, config.token
+		return true // a dotted reference: var.x, google_storage_hmac_key.s3.access_id
+	case bareIdentRe.MatchString(v):
+		return true // a bare snake_case variable: gateway_group_token, braintree_private_key
 	default:
 		return false
 	}
+}
+
+// bareIdentRe matches an all-lowercase snake_case variable (gateway_group_token) or an
+// all-uppercase SCREAMING_SNAKE constant (PUBLIC_ACCESS_TOKEN) — a reference, not a literal
+// secret. It deliberately does NOT match mixed-case joined words, so a real token that uses
+// underscores as separators (sk_test_b3iJGZ3i…) still gets flagged.
+var bareIdentRe = regexp.MustCompile(`^([a-z][a-z0-9]*(_[a-z0-9]+)+|[A-Z][A-Z0-9]*(_[A-Z0-9]+)+)$`)
+
+// placeholderRe matches a value that isn't a live credential: a placeholder/redaction
+// marker (your-…, changeme, placeholder, redacted, xxxxxx) or example/fixture vocabulary a
+// random token never contains — including the credential words themselves, since a real
+// secret value isn't the literal word "password"/"secret". Applied to both the entropy
+// value and the matched provider token, so AKIA…EXAMPLE, password = "very-long-password-1"
+// and payment_method_token = "fake-payment-method-token" are all skipped.
+var placeholderRe = regexp.MustCompile(`(?i)(example|placeholder|redacted|change[-_]?me|x{6,})|\b(password|passwd|secret|fake|dummy|sample)\b|your[-_]`)
+
+// commentRe matches a line whose content is a comment (#, ;, //). Comments hold examples
+// and placeholders, not live secrets — so the fuzzy entropy heuristic skips them. (The
+// precise provider patterns still scan every line, comments included.)
+var commentRe = regexp.MustCompile(`^\s*(#|;|//)`)
+
+// looksLikeURLOrPath reports whether a value is a URL or filesystem path rather than a
+// literal secret — e.g. token_url = https://…/oauth, or CREDENTIALS = /secrets/x.json.
+func looksLikeURLOrPath(v string) bool {
+	if strings.Contains(v, "://") {
+		return true
+	}
+	return strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") ||
+		strings.HasPrefix(v, "../") || strings.HasPrefix(v, "~/")
 }
 
 // ScanSecrets reports likely secrets in content: the provider patterns on every line,
@@ -71,14 +106,20 @@ func ScanSecrets(content string) []SecretFinding {
 		n := i + 1
 		matched := false
 		for _, p := range secretPatterns {
-			if p.re.MatchString(line) {
+			// Skip a token that is an obvious example/placeholder (AKIA…EXAMPLE) — a real
+			// provider token never contains "example"/"secret"/etc.
+			if tok := p.re.FindString(line); tok != "" && !placeholderRe.MatchString(tok) {
 				out = append(out, SecretFinding{n, p.kind})
 				matched = true
 			}
 		}
-		// Don't double-report a line a pattern already flagged.
-		if !matched {
-			if m := secretAssignRe.FindStringSubmatch(line); m != nil && !looksLikeCodeRef(m[2]) && shannonEntropy(m[2]) >= entropyThreshold {
+		// The fuzzy entropy heuristic only fires on a plausible literal credential: not a
+		// line a pattern already flagged, not a comment, and a value that isn't a code
+		// reference, URL, or filesystem path.
+		if !matched && !commentRe.MatchString(line) {
+			if m := secretAssignRe.FindStringSubmatch(line); m != nil &&
+				!looksLikeCodeRef(m[2]) && !looksLikeURLOrPath(m[2]) && !placeholderRe.MatchString(m[2]) &&
+				shannonEntropy(m[2]) >= entropyThreshold {
 				out = append(out, SecretFinding{n, "high-entropy value assigned to '" + m[1] + "'"})
 			}
 		}
