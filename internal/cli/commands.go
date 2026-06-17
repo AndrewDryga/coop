@@ -316,13 +316,32 @@ func (a *app) cmdInit(args []string) (int, error) {
 	return 0, scaffold.Init(repo, stack)
 }
 
+// loopAgent picks the model for `coop loop [claude|codex|gemini]` (default claude),
+// erroring on any unexpected token.
+func loopAgent(args []string) (string, error) {
+	agent := "claude"
+	for _, x := range args {
+		switch x {
+		case "claude", "codex", "gemini":
+			agent = x
+		default:
+			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [claude|codex|gemini])", x)
+		}
+	}
+	return agent, nil
+}
+
 func (a *app) cmdLoop(args []string) (int, error) {
+	agent, err := loopAgent(args)
+	if err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, "claude", nil)
+	return a.loop(repo, img, agent, nil)
 }
 
 const (
@@ -352,7 +371,11 @@ func (a *app) loop(repo, img, agent string, sink io.Writer) (int, error) {
 		}
 		return a.agentLoopCmd(agent, prompt)
 	}
-	ui.Info("starting unattended loop on %s (Ctrl-C to stop)", queue)
+	if len(custom) == 0 {
+		ui.Info("starting unattended loop on %s with %s (Ctrl-C to stop)", queue, agent)
+	} else {
+		ui.Info("starting unattended loop on %s (Ctrl-C to stop)", queue)
+	}
 	fails, waits := 0, 0
 	for n := 1; queueHasTodo(queue); {
 		ui.Info("iteration %d", n)

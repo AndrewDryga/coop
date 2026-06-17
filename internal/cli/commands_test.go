@@ -7,6 +7,20 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+func TestLoopAgent(t *testing.T) {
+	if got, err := loopAgent(nil); err != nil || got != "claude" {
+		t.Errorf("loopAgent(nil) = (%q, %v), want claude", got, err)
+	}
+	for _, ag := range []string{"claude", "codex", "gemini"} {
+		if got, err := loopAgent([]string{ag}); err != nil || got != ag {
+			t.Errorf("loopAgent(%q) = (%q, %v), want %q", ag, got, err, ag)
+		}
+	}
+	if _, err := loopAgent([]string{"bogus"}); err == nil {
+		t.Error("loopAgent(bogus): want error")
+	}
+}
+
 func TestParseGovernor(t *testing.T) {
 	a := &app{cfg: &config.Config{FusionGovernor: "codex"}}
 	cases := []struct {

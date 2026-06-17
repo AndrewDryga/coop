@@ -128,7 +128,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit the results |
+| `coop loop [agent]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too) |
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
 | `coop fleet up` · `ls` · `down` · `split <n>` | drive a [declared fleet](#a-fleet) from `.agent/fleet` |
 
@@ -480,10 +480,13 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 coop init             # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 # ...fill in .agent/TASKS.md with checkbox tasks...
 coop loop             # disposable agents work the queue until it's done, then audit
+coop loop codex       # …or pick the model: claude (default), codex, or gemini
 ```
 
 `loop` starts a **fresh agent per iteration** (no context rot), works unchecked `[ ]`
-items, and won't quit while any remain. When the queue empties, a fresh auditor
+items, and won't quit while any remain. Pass `claude`/`codex`/`gemini` to choose the
+model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration command if
+you need something custom. When the queue empties, a fresh auditor
 re-checks every `[x]` against the git log and reopens anything that doesn't hold up.
 `init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
 fast commit-gate hook.

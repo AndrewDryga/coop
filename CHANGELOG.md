@@ -34,6 +34,9 @@
   (no name = every fork at once, prefixed), `coop fork stop <name>`, and a running/idle
   column in `coop fork ls`. Declare a fleet in `.agent/fleet` as
   `<name> [agent] <tasks-path>` per line — `coop fleet split` writes that file for you.
+- **`coop loop` takes a model.** `coop loop [claude|codex|gemini]` runs the main
+  unattended loop with the agent you pick (default `claude`), instead of always claude;
+  `COOP_LOOP_CMD` still overrides the iteration command outright.
 - **Forks land by rebasing, and revalidate before they land.** `coop fork merge`
   rebases the fork onto your current branch (in the fork) and fast-forwards — linear
   history, no merge commits. Set `COOP_GATE` (e.g. `make check`) and it re-runs that
