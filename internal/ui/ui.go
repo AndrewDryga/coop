@@ -13,6 +13,7 @@ var (
 	cGreen  string
 	cRed    string
 	cYellow string
+	cCyan   string
 	cDim    string
 	cBold   string
 	cReset  string
@@ -20,7 +21,7 @@ var (
 
 func init() {
 	if IsTerminal(os.Stderr) {
-		cGreen, cRed, cYellow = "\033[32m", "\033[31m", "\033[33m"
+		cGreen, cRed, cYellow, cCyan = "\033[32m", "\033[31m", "\033[33m", "\033[36m"
 		cDim, cBold, cReset = "\033[2m", "\033[1m", "\033[0m"
 	}
 }
@@ -53,6 +54,7 @@ func Dim(s string) string    { return cDim + s + cReset }
 func Green(s string) string  { return cGreen + s + cReset }
 func Red(s string) string    { return cRed + s + cReset }
 func Yellow(s string) string { return cYellow + s + cReset }
+func Cyan(s string) string   { return cCyan + s + cReset }
 
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }

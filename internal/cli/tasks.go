@@ -176,7 +176,7 @@ func runPerFile(repo string, rels []string, fn func(string) (int, error)) (int, 
 			if i > 0 {
 				fmt.Print("\n\n") // two blank lines between files
 			}
-			fmt.Println(ui.Bold(rel))
+			fmt.Printf("%s\n\n", ui.Cyan(ui.Bold(rel))) // colored path header, then a blank line
 		}
 		code, err := fn(filepath.Join(repo, rel))
 		if err != nil {
