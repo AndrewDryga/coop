@@ -171,8 +171,11 @@ func (a *app) cmdTasks(args []string) (int, error) {
 // fails if any file has findings.
 func runPerFile(repo string, rels []string, fn func(string) (int, error)) (int, error) {
 	worst := 0
-	for _, rel := range rels {
+	for i, rel := range rels {
 		if len(rels) > 1 {
+			if i > 0 {
+				fmt.Println() // a blank line between files
+			}
 			fmt.Println(ui.Bold(rel))
 		}
 		code, err := fn(filepath.Join(repo, rel))
@@ -197,7 +200,7 @@ func tasksList(path string) (int, error) {
 		if t.State == "E" {
 			continue // the example, not work
 		}
-		fmt.Printf("  %s %s\n", taskGlyph[t.State], t.Title)
+		fmt.Printf("  - %s %s\n", taskGlyph[t.State], t.Title) // echo the source's "- [ ]" marker
 	}
 	c, _ := scanTasks(content)
 	fmt.Printf("\n  %d task(s) · %d done · %d in progress · %d todo · %d blocked\n",
