@@ -460,6 +460,13 @@ coop pool add claude work personal     # this repo's loop rotates just these two
 coop pool                              # show the pool (coop pool clear claude to reset)
 ```
 
+Which profile a plain interactive `coop claude` uses is a mark you set, not a magic
+name — so you can name them all meaningfully:
+
+```bash
+coop profiles default claude personal  # `coop claude` now runs on the personal account
+```
+
 Profiles live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
 the repo, and only the active one is mounted into the box — so a running agent sees just
 the account it's using, not your whole vault. Switching accounts loses no work: each loop

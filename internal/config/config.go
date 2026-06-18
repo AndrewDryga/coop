@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -53,7 +54,8 @@ type Config struct {
 
 	conf map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
 
-	activeProfiles map[string]string // per-agent selected credential profile; AgentDir resolves to it
+	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
+	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
 }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
@@ -131,6 +133,7 @@ func Load() *Config {
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
+	c.defaultProfiles = loadConfFile(c.DefaultsFile())
 	return c
 }
 
@@ -153,12 +156,58 @@ func (c *Config) AgentDir(agent string) string {
 	return c.AgentProfileDir(agent, c.activeProfile(agent))
 }
 
-// activeProfile returns the profile currently selected for agent, or DefaultProfile.
+// activeProfile resolves which profile AgentDir uses for agent: a per-run selection wins
+// (a --profile login, or the loop's rotation), then the agent's marked default, then the
+// built-in DefaultProfile (so an unmarked single login still resolves to the legacy slot).
 func (c *Config) activeProfile(agent string) string {
 	if p := c.activeProfiles[agent]; p != "" {
 		return p
 	}
+	return c.DefaultProfileOf(agent)
+}
+
+// DefaultsFile marks each agent's default profile (KEY=VALUE, agent=profile): the profile
+// an interactive run uses when none is given on the CLI. Managed by `coop profiles default`.
+func (c *Config) DefaultsFile() string { return filepath.Join(c.ConfigDir, "defaults") }
+
+// DefaultProfileOf returns the profile marked default for agent, or the built-in
+// DefaultProfile when none is marked.
+func (c *Config) DefaultProfileOf(agent string) string {
+	if p := c.defaultProfiles[agent]; p != "" {
+		return p
+	}
 	return DefaultProfile
+}
+
+// SetDefaultProfile marks name as agent's default profile, persisting it to DefaultsFile
+// (atomic temp+rename) and updating the in-memory view.
+func (c *Config) SetDefaultProfile(agent, name string) error {
+	m := loadConfFile(c.DefaultsFile())
+	m[agent] = name
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k + "=" + m[k] + "\n")
+	}
+	if err := os.MkdirAll(c.ConfigDir, 0o700); err != nil {
+		return err
+	}
+	tmp := c.DefaultsFile() + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, c.DefaultsFile()); err != nil {
+		return err
+	}
+	if c.defaultProfiles == nil {
+		c.defaultProfiles = map[string]string{}
+	}
+	c.defaultProfiles[agent] = name
+	return nil
 }
 
 // SetActiveProfile selects which credential profile of agent AgentDir resolves to —

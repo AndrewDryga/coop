@@ -240,3 +240,32 @@ func TestProfilesListing(t *testing.T) {
 		t.Errorf("migrated Profiles = %v", got)
 	}
 }
+
+func TestDefaultProfileMark(t *testing.T) {
+	dir := t.TempDir()
+	c := &Config{ConfigDir: dir}
+
+	// No mark → the built-in default, for both the getter and AgentDir resolution.
+	if got := c.DefaultProfileOf("claude"); got != DefaultProfile {
+		t.Errorf("unmarked default = %q, want %q", got, DefaultProfile)
+	}
+	// Mark a profile → it becomes the default and AgentDir resolves to it.
+	if err := c.SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.DefaultProfileOf("claude"); got != "personal" {
+		t.Errorf("marked default = %q, want personal", got)
+	}
+	if got, want := c.AgentDir("claude"), c.AgentProfileDir("claude", "personal"); got != want {
+		t.Errorf("AgentDir = %q, want the marked default's dir %q", got, want)
+	}
+	// A per-run override (a --profile login, or the loop's rotation) still wins.
+	c.SetActiveProfile("claude", "work")
+	if got, want := c.AgentDir("claude"), c.AgentProfileDir("claude", "work"); got != want {
+		t.Errorf("AgentDir = %q, want the override's dir %q", got, want)
+	}
+	// The mark is persisted to DefaultsFile (read back by a fresh load).
+	if m := loadConfFile(c.DefaultsFile()); m["claude"] != "personal" {
+		t.Errorf("DefaultsFile not persisted: %v", m)
+	}
+}

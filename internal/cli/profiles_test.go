@@ -49,3 +49,41 @@ func TestCmdProfilesUnknownAgent(t *testing.T) {
 		t.Errorf("unknown agent: code=%d err=%v, want 2 + error", code, err)
 	}
 }
+
+func TestCmdProfilesDefault(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	for _, p := range []string{"work", "personal"} {
+		if err := os.MkdirAll(cfg.AgentProfileDir("claude", p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &app{cfg: cfg}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"bad arity", []string{"default", "claude"}},
+		{"unknown agent", []string{"default", "nope", "work"}},
+		{"unknown profile", []string{"default", "claude", "ghost"}},
+	} {
+		if code, err := a.cmdProfiles(tc.args); code != 2 || err == nil {
+			t.Errorf("%s: code=%d err=%v, want 2 + error", tc.name, code, err)
+		}
+	}
+
+	// Set the default (discard the confirmation listing on stdout).
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, err := a.cmdProfiles([]string{"default", "claude", "personal"})
+	_ = w.Close()
+	os.Stdout = old
+	_, _ = io.ReadAll(r)
+	if code != 0 || err != nil {
+		t.Fatalf("set default: code=%d err=%v", code, err)
+	}
+	if got := cfg.DefaultProfileOf("claude"); got != "personal" {
+		t.Errorf("default = %q, want personal", got)
+	}
+}

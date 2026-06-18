@@ -111,10 +111,15 @@ var commandHelp = map[string]string{
 	"profiles": `coop profiles [agent] — list stored credential profiles.
 
   Usage: coop profiles [claude|codex|gemini]
+         coop profiles default <agent> <profile>
 
   Shows each agent's profiles and whether they're signed in. A profile is one
   subscription; add more with 'coop login <agent> --profile <name>', then let the
-  loop rotate across them on a rate limit ('coop pool').`,
+  loop rotate across them on a rate limit ('coop pool').
+
+  'coop profiles default <agent> <profile>' marks which profile an interactive run
+  (plain 'coop claude') uses — so the default is a mark you set, not whichever one
+  happens to be named "default".`,
 
 	"pool": `coop pool — which credential profiles this repo's loop rotates.
 
