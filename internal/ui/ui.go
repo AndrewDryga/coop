@@ -10,16 +10,18 @@ import (
 
 // ANSI codes, blanked when stderr is not a terminal.
 var (
-	cGreen string
-	cRed   string
-	cDim   string
-	cBold  string
-	cReset string
+	cGreen  string
+	cRed    string
+	cYellow string
+	cDim    string
+	cBold   string
+	cReset  string
 )
 
 func init() {
 	if IsTerminal(os.Stderr) {
-		cGreen, cRed, cDim, cBold, cReset = "\033[32m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
+		cGreen, cRed, cYellow = "\033[32m", "\033[31m", "\033[33m"
+		cDim, cBold, cReset = "\033[2m", "\033[1m", "\033[0m"
 	}
 }
 
@@ -46,10 +48,11 @@ func Error(format string, a ...any) {
 }
 
 // Color wrappers, used to compose richer output (e.g. the doctor report).
-func Bold(s string) string  { return cBold + s + cReset }
-func Dim(s string) string   { return cDim + s + cReset }
-func Green(s string) string { return cGreen + s + cReset }
-func Red(s string) string   { return cRed + s + cReset }
+func Bold(s string) string   { return cBold + s + cReset }
+func Dim(s string) string    { return cDim + s + cReset }
+func Green(s string) string  { return cGreen + s + cReset }
+func Red(s string) string    { return cRed + s + cReset }
+func Yellow(s string) string { return cYellow + s + cReset }
 
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }

@@ -200,11 +200,28 @@ func tasksList(path string) (int, error) {
 		if t.State == "E" {
 			continue // the example, not work
 		}
-		fmt.Printf("  - %s %s\n", taskGlyph[t.State], t.Title) // echo the source's "- [ ]" marker
+		// Color the state marker (and recede a done task's title), echoing the source's
+		// "- [ ]". The verbs aren't width-padded, so coloring is safe here.
+		glyph, title := taskGlyph[t.State], t.Title
+		switch t.State {
+		case "x":
+			glyph, title = ui.Green(glyph), ui.Dim(title)
+		case "w":
+			glyph = ui.Yellow(glyph)
+		case "B":
+			glyph = ui.Red(glyph)
+		}
+		fmt.Printf("  - %s %s\n", glyph, title)
 	}
 	c, _ := scanTasks(content)
-	fmt.Printf("\n  %d task(s) · %d done · %d in progress · %d todo · %d blocked\n",
-		c.total(), c.Done, c.Doing, c.Todo, c.Blocked)
+	color := func(v int, paint func(string) string) string {
+		if v > 0 {
+			return paint(strconv.Itoa(v))
+		}
+		return strconv.Itoa(v) // a zero stays plain, so "0 blocked" doesn't read as an alarm
+	}
+	fmt.Printf("\n  %d task(s) · %s done · %s in progress · %d todo · %s blocked\n",
+		c.total(), color(c.Done, ui.Green), color(c.Doing, ui.Yellow), c.Todo, color(c.Blocked, ui.Red))
 	return 0, nil
 }
 
