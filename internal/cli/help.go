@@ -61,11 +61,11 @@ func helpText(cfg *config.Config) string {
 	row("coop fork path <name>", "print the fork's filesystem path")
 
 	group("UNATTENDED")
-	row("coop loop [agent]", "work .agent/TASKS.md until done, then audit")
+	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
 	row("coop pool add <agent> <profile…>", "pick which subscriptions the loop rotates on a rate limit")
 	row("coop fleet init|up|down|split", "drive a fleet of forks from .agent/fleet")
 	row("coop status", "fleet roll-up: per-fork progress, running/idle, blockers")
-	row("coop tasks list|lint|add|split", "inspect and validate .agent/TASKS.md")
+	row("coop tasks list|lint|add|split", "inspect/validate the queue(s) (--tasks, COOP_TASKS)")
 
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
@@ -165,14 +165,19 @@ var commandHelp = map[string]string{
   Per fork: running/idle, tasks done/total, blockers, diff size, and the task
   it's on — plus fleet totals. Reads queues, git, and loop state; no daemon.`,
 
-	"tasks": `coop tasks — inspect and validate .agent/TASKS.md.
+	"tasks": `coop tasks — inspect and validate the task queue(s).
 
-  Usage: coop tasks <list|lint|add|split>
+  Usage: coop tasks [--tasks <path>]... <list|lint|add|split>
 
   list        list tasks by state, with a count
   lint        flag stale claims, unshaped or malformed tasks (exits 1 if any)
   add "..."   append a new task stub
-  split <n>   split the open tasks into n files`,
+  split <n>   split the open tasks into n files
+
+  Defaults to .agent/TASKS.md. Repeat --tasks to span several queues (a monorepo's
+  per-component files, e.g. --tasks portal/.agent/TASKS.md --tasks runner/.agent/
+  TASKS.md) — list and lint cover them all; add and split target a single one. Or set
+  COOP_TASKS to a space-separated list. Paths are relative to the repo root.`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 
@@ -182,13 +187,17 @@ var commandHelp = map[string]string{
   high-entropy values, reporting file:line. Exits non-zero on a hit, for use
   as a pre-flight or CI check. Hide a flagged file with .coopignore.`,
 
-	"loop": `coop loop [agent] — work .agent/TASKS.md until done, then audit.
+	"loop": `coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--debug-on-fail]
 
   A fresh agent per iteration works the [ ] items; when the queue empties, an
   auditor re-checks every [x]. On a rate limit it switches to another signed-in
   profile (see 'coop pool'), or waits out the reset when there's only one.
+
+  Defaults to .agent/TASKS.md. Repeat --tasks (or set COOP_TASKS) to drain several
+  queues at once — the loop keeps going while any of them has a [ ], so one loop can
+  cover a monorepo's components. The whole repo is still mounted.
 
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)

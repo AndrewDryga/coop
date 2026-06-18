@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -81,29 +82,108 @@ func splitOpenTaskBlocks(content string, n int) [][]string {
 	return buckets
 }
 
-// cmdTasks treats .agent/TASKS.md as a validated surface: list, lint, add, and split.
+// extractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
+// returning the collected paths and the remaining args. Shared by `coop tasks` and
+// `coop loop` so they accept the same repeatable flag.
+func extractTasksFlags(args []string) (tasks []string, rest []string) {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--tasks" && i+1 < len(args):
+			tasks = append(tasks, args[i+1])
+			i++
+		case strings.HasPrefix(args[i], "--tasks="):
+			tasks = append(tasks, strings.TrimPrefix(args[i], "--tasks="))
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return tasks, rest
+}
+
+// taskQueues resolves the task-file paths for a command — the repeated --tasks flags if
+// any, else COOP_TASKS (cfg.TasksFiles) — into repo-relative paths. A relative path is
+// taken relative to the repo root (where the box runs); an absolute one must live inside
+// the repo. The repo-relative form is what the loop's prompt names and the host joins with
+// the repo to read.
+func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, error) {
+	given := flags
+	if len(given) == 0 {
+		given = cfg.TasksFiles
+	}
+	var rels []string
+	for _, g := range given {
+		rel := g
+		if filepath.IsAbs(g) {
+			r, err := filepath.Rel(repo, g)
+			if err != nil {
+				return nil, err
+			}
+			rel = r
+		}
+		rel = filepath.Clean(rel)
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("tasks path %q is outside the repo", g)
+		}
+		rels = append(rels, rel)
+	}
+	return rels, nil
+}
+
+// cmdTasks treats the task queue(s) as a validated surface: list, lint, add, and split.
+// list and lint span every --tasks/COOP_TASKS file; add and split target exactly one.
 func (a *app) cmdTasks(args []string) (int, error) {
+	flags, rest := extractTasksFlags(args)
 	sub := ""
-	if len(args) > 0 {
-		sub = args[0]
+	if len(rest) > 0 {
+		sub = rest[0]
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	path := filepath.Join(repo, ".agent", "TASKS.md")
+	rels, err := taskQueues(a.cfg, repo, flags)
+	if err != nil {
+		return 2, err
+	}
 	switch sub {
 	case "list", "ls":
-		return tasksList(path)
+		return runPerFile(repo, rels, tasksList)
 	case "lint":
-		return tasksLint(path)
+		return runPerFile(repo, rels, tasksLint)
 	case "add":
-		return tasksAdd(path, args[1:])
+		if len(rels) != 1 {
+			return 2, errors.New("coop tasks add targets one file — give a single --tasks")
+		}
+		return tasksAdd(filepath.Join(repo, rels[0]), rest[1:])
 	case "split":
-		return tasksSplit(repo, path, args[1:])
+		if len(rels) != 1 {
+			return 2, errors.New("coop tasks split targets one file — give a single --tasks")
+		}
+		return tasksSplit(repo, filepath.Join(repo, rels[0]), rest[1:])
 	default:
-		return 2, errors.New(`usage: coop tasks list | lint | add "<title>" | split <n>`)
+		return 2, errors.New(`usage: coop tasks [--tasks <path>]... list | lint | add "<title>" | split <n>`)
 	}
+}
+
+// runPerFile applies a per-file task command across each queue (repo-relative rels read
+// under repo), printing the queue's path as a header when there's more than one. It stops
+// at the first error and returns the worst (nonzero) exit code, so `lint` across files
+// fails if any file has findings.
+func runPerFile(repo string, rels []string, fn func(string) (int, error)) (int, error) {
+	worst := 0
+	for _, rel := range rels {
+		if len(rels) > 1 {
+			fmt.Println(ui.Bold(rel))
+		}
+		code, err := fn(filepath.Join(repo, rel))
+		if err != nil {
+			return code, err
+		}
+		if code != 0 {
+			worst = code
+		}
+	}
+	return worst, nil
 }
 
 var taskGlyph = map[string]string{" ": "[ ]", "w": "[w]", "x": "[x]", "B": "[B]"}

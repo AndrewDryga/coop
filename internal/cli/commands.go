@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -382,7 +383,8 @@ func loopAgent(args []string) (string, error) {
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
-	agent, debugOnFail, err := parseLoopArgs(args)
+	flags, rest := extractTasksFlags(args)
+	agent, debugOnFail, err := parseLoopArgs(rest)
 	if err != nil {
 		return 2, err
 	}
@@ -390,12 +392,16 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	queues, err := taskQueues(a.cfg, repo, flags)
+	if err != nil {
+		return 2, err
+	}
 	pool, err := buildPool(a.cfg, repo, agent)
 	if err != nil {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, pool, nil, debugOnFail)
+	return a.loop(repo, img, agent, pool, queues, nil, debugOnFail)
 }
 
 // parseLoopArgs pulls the --debug-on-fail flag (alias --debug) out of `coop loop` args;
@@ -414,25 +420,43 @@ func parseLoopArgs(args []string) (agent string, debugOnFail bool, err error) {
 	return agent, debugOnFail, err
 }
 
-const (
-	loopWork  = "Read .agent/TASKS.md and AGENTS.md, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains."
-	loopAudit = "Audit: for every [x] in .agent/TASKS.md, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself."
-)
+// loopWorkPrompt and loopAuditPrompt name the queue file(s) the iteration works. With a
+// single .agent/TASKS.md they read exactly as before; with several (a monorepo's
+// per-component queues) they list them so the agent works the union.
+func loopWorkPrompt(queues []string) string {
+	return fmt.Sprintf("Read %s and AGENTS.md, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains.", strings.Join(queues, ", "))
+}
+
+func loopAuditPrompt(queues []string) string {
+	return fmt.Sprintf("Audit: for every [x] in %s, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.", strings.Join(queues, ", "))
+}
 
 // loop works .agent/TASKS.md unattended until no "[ ]" remains, then (unless a
 // custom COOP_LOOP_CMD is set) runs a one-shot audit pass over the results. A
 // model rate/usage limit is not a failure: the loop waits for the reset — parsed
 // from the agent's own output when possible — and resumes the same iteration, so
 // a long run survives hitting the limit and continues once it clears.
-func (a *app) loop(repo, img, agent string, pool *profilePool, sink io.Writer, debugOnFail bool) (int, error) {
-	queue := filepath.Join(repo, ".agent", "TASKS.md")
-	if !fileExists(queue) {
-		return -1, errors.New("no .agent/TASKS.md found — run 'coop init' first")
+func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, sink io.Writer, debugOnFail bool) (int, error) {
+	hosts := make([]string, len(queues)) // the queues' absolute host paths
+	for i, q := range queues {
+		hosts[i] = filepath.Join(repo, q)
+	}
+	anyTodo := func() bool {
+		for _, h := range hosts {
+			if queueHasTodo(h) {
+				return true
+			}
+		}
+		return false
+	}
+	if !slices.ContainsFunc(hosts, fileExists) {
+		return -1, fmt.Errorf("no task file found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	if !box.ImageExists(a.rt, img) {
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
 	custom := a.cfg.LoopCmd
+	work, audit := loopWorkPrompt(queues), loopAuditPrompt(queues)
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/audit prompt.
 	iterCmd := func(prompt string) []string {
@@ -441,13 +465,14 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, sink io.Writer, d
 		}
 		return a.agentLoopCmd(agent, prompt)
 	}
+	label := strings.Join(queues, ", ")
 	if len(custom) == 0 {
-		ui.Info("starting unattended loop on %s with %s (Ctrl-C to stop)", queue, agent)
+		ui.Info("starting unattended loop on %s with %s (Ctrl-C to stop)", label, agent)
 	} else {
-		ui.Info("starting unattended loop on %s (Ctrl-C to stop)", queue)
+		ui.Info("starting unattended loop on %s (Ctrl-C to stop)", label)
 	}
 	fails, waits := 0, 0
-	for n := 1; queueHasTodo(queue); {
+	for n := 1; anyTodo(); {
 		// Run this iteration on the pool's active subscription; the mount and the agent
 		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
 		a.cfg.SetActiveProfile(agent, pool.active())
@@ -456,7 +481,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, sink io.Writer, d
 		} else {
 			ui.Info("iteration %d", n)
 		}
-		code, out, err := a.runIteration(repo, img, iterCmd(loopWork), sink)
+		code, out, err := a.runIteration(repo, img, iterCmd(work), sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
@@ -490,9 +515,9 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, sink io.Writer, d
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(repo, img, iterCmd(loopAudit), sink)
+		_, _, _ = a.runIteration(repo, img, iterCmd(audit), sink)
 	}
-	if queueHasTodo(queue) {
+	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
 	} else {
 		fmt.Fprintln(os.Stderr, ui.Bold(ui.Green("✓ queue verified done")))

@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 const sampleQueue = `# .agent/TASKS.md — the work queue.
@@ -125,5 +129,81 @@ func TestTasksAdd(t *testing.T) {
 	// The appended task is well-shaped, so it lints clean.
 	if code, _ := tasksLint(path); code != 0 {
 		t.Errorf("freshly added task does not lint clean (exit %d):\n%s", code, got)
+	}
+}
+
+func TestExtractTasksFlags(t *testing.T) {
+	flags, rest := extractTasksFlags([]string{"--tasks", "a", "list", "--tasks=b", "--debug"})
+	if !slices.Equal(flags, []string{"a", "b"}) {
+		t.Errorf("flags = %v, want [a b]", flags)
+	}
+	if !slices.Equal(rest, []string{"list", "--debug"}) {
+		t.Errorf("rest = %v, want [list --debug]", rest)
+	}
+}
+
+func TestTaskQueues(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &config.Config{TasksFiles: []string{".agent/TASKS.md"}}
+
+	// No flags → the configured default.
+	if got, err := taskQueues(cfg, repo, nil); err != nil || !slices.Equal(got, []string{".agent/TASKS.md"}) {
+		t.Fatalf("default = %v err %v", got, err)
+	}
+	// Relative flags → repo-relative, untouched.
+	got, err := taskQueues(cfg, repo, []string{"portal/.agent/TASKS.md", "runner/.agent/TASKS.md"})
+	if err != nil || !slices.Equal(got, []string{"portal/.agent/TASKS.md", "runner/.agent/TASKS.md"}) {
+		t.Fatalf("relative = %v err %v", got, err)
+	}
+	// An absolute path inside the repo is relativized.
+	abs := filepath.Join(repo, "mcp", ".agent", "TASKS.md")
+	if got, err := taskQueues(cfg, repo, []string{abs}); err != nil || !slices.Equal(got, []string{filepath.Join("mcp", ".agent", "TASKS.md")}) {
+		t.Fatalf("absolute = %v err %v", got, err)
+	}
+	// A path escaping the repo is rejected.
+	if _, err := taskQueues(cfg, repo, []string{"../outside/TASKS.md"}); err == nil {
+		t.Error("a path escaping the repo should error")
+	}
+}
+
+func TestCmdTasksMultiAndArity(t *testing.T) {
+	repo := t.TempDir()
+	mk := func(rel string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(sampleQueue), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("portal/.agent/TASKS.md")
+	mk("runner/.agent/TASKS.md")
+	a := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{".agent/TASKS.md"}}}
+
+	// add and split target a single file — reject more than one --tasks.
+	for _, sub := range []string{"add", "split"} {
+		args := []string{"--tasks", "portal/.agent/TASKS.md", "--tasks", "runner/.agent/TASKS.md", sub, "x"}
+		if code, err := a.cmdTasks(args); code != 2 || err == nil {
+			t.Errorf("%s with two --tasks: code=%d err=%v, want 2 + error", sub, code, err)
+		}
+	}
+
+	// list spans both files, each under its path header.
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, err := a.cmdTasks([]string{"--tasks", "portal/.agent/TASKS.md", "--tasks", "runner/.agent/TASKS.md", "list"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if code != 0 || err != nil {
+		t.Fatalf("list: code=%d err=%v", code, err)
+	}
+	for _, want := range []string{"portal/.agent/TASKS.md", "runner/.agent/TASKS.md"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("list output missing header %q:\n%s", want, out)
+		}
 	}
 }

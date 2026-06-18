@@ -16,6 +16,14 @@
   is mounted into the box — a running agent sees just the account it's using, not the
   whole vault. Existing single logins are untouched: they become the "default" profile in
   place, with no migration, and behave exactly as before.
+- **Configurable, multi-file task queues.** `coop tasks` and `coop loop` take a repeatable
+  `--tasks <path>` (or `COOP_TASKS`, space-separated), defaulting to `.agent/TASKS.md`. A
+  monorepo with a queue per component can now inspect or drain several at once: `coop tasks
+  list --tasks portal/.agent/TASKS.md --tasks runner/.agent/TASKS.md` aggregates them under
+  per-file headers, and `coop loop --tasks portal/.agent/TASKS.md --tasks runner/.agent/
+  TASKS.md` works the union until every file is drained — one loop covering several
+  components, with the whole repo still mounted. list and lint span all the files; add and
+  split target a single one. Paths are relative to the repo root.
 
 ## 2.5.2
 
