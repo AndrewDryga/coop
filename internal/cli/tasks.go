@@ -174,7 +174,7 @@ func runPerFile(repo string, rels []string, fn func(string) (int, error)) (int, 
 	for i, rel := range rels {
 		if len(rels) > 1 {
 			if i > 0 {
-				fmt.Println() // a blank line between files
+				fmt.Print("\n\n") // two blank lines between files
 			}
 			fmt.Println(ui.Bold(rel))
 		}

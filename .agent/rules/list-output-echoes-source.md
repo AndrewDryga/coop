@@ -14,8 +14,9 @@ between task files and some - or * before [ ]."
 **How to apply:**
 - Echoing on-disk items (tasks, diffs, config entries) → keep their native markers/leading
   syntax; don't strip them to a coop-only form.
-- Multi-section output (per file, per agent) → a blank line *between* sections, while the
-  section header stays tight to its own items.
+- Multi-section output (per file, per agent) → clear vertical space *between* sections (two
+  blank lines reads better than one for file groups), while the section header stays tight
+  to its own items.
 - Siblings to keep consistent: `coop tasks list` (done); `coop profiles` groups by agent —
   give it the same inter-section blank line if it's ever touched.
 - Pairs with [[help-output-style]] (the help reference's scannability) and
