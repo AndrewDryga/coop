@@ -27,6 +27,12 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			fmt.Printf("  no profiles — run: coop login %s [--profile <name>]\n", agent)
 			continue
 		}
+		width := 0 // widest name, so the status column lines up for any-length profiles
+		for _, p := range profiles {
+			if len(p) > width {
+				width = len(p)
+			}
+		}
 		for _, p := range profiles {
 			status := ui.Dim("not signed in")
 			if box.ProfileAuthed(a.cfg, agent, p) {
@@ -37,7 +43,7 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 				tag = ui.Dim("  (default)")
 			}
 			// Pad the plain name, then style the status — never color inside the width verb.
-			fmt.Printf("  %-14s %s%s\n", p, status, tag)
+			fmt.Printf("  %-*s  %s%s\n", width, p, status, tag)
 		}
 	}
 	return 0, nil
