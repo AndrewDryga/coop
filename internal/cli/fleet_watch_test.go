@@ -27,7 +27,7 @@ func TestFleetDashboard(t *testing.T) {
 			t.Errorf("dashboard missing %q\n%s", want, joined)
 		}
 	}
-	// state glyphs: running → spinner frame "⠋", all-done → ✓ done, empty queue → (no queue), idle → ⏸.
+	// state glyphs: running → spinner frame "⠋", all-done → ✓ done, empty queue → (no queue), idle → ◦.
 	if !strings.Contains(joined, "⠋") {
 		t.Errorf("running fork should show a spinner:\n%s", joined)
 	}
@@ -37,8 +37,8 @@ func TestFleetDashboard(t *testing.T) {
 	if !strings.Contains(joined, "(no queue)") {
 		t.Errorf("empty fork should show (no queue):\n%s", joined)
 	}
-	if !strings.Contains(joined, "⏸") {
-		t.Errorf("idle fork should show ⏸:\n%s", joined)
+	if !strings.Contains(joined, "◦") {
+		t.Errorf("idle fork should show the ◦ glyph:\n%s", joined)
 	}
 }
 
@@ -53,6 +53,10 @@ func TestLastLogLine(t *testing.T) {
 	// The last non-empty line, ignoring trailing blank/whitespace lines.
 	if got := lastLogLine(write("first line\nsecond line\n\n  \n")); got != "second line" {
 		t.Errorf("lastLogLine = %q, want %q", got, "second line")
+	}
+	// coop's own banner lines are skipped — they'd just echo what the bar/task name already show.
+	if got := lastLogLine(write("agent did a thing\ncoop: iteration 1 · 0/20 done · now: Task 1\ncoop: shadowed 4 secret path(s)\n")); got != "agent did a thing" {
+		t.Errorf("lastLogLine should skip coop: lines, got %q", got)
 	}
 	// Missing or empty logs are empty, not an error.
 	if got := lastLogLine(filepath.Join(t.TempDir(), "nope.log")); got != "" {

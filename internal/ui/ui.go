@@ -6,6 +6,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // ANSI codes, blanked when stderr is not a terminal.
@@ -69,6 +70,15 @@ func Red(s string) string     { return cRed + s + cReset }
 func Yellow(s string) string  { return cYellow + s + cReset }
 func Cyan(s string) string    { return cCyan + s + cReset }
 func Magenta(s string) string { return cMagenta + s + cReset }
+
+// DimLine renders the whole of s faint, re-applying the dim after any internal reset so colored
+// spans inside it (e.g. a progress bar) are dimmed too instead of snapping back to full color.
+func DimLine(s string) string {
+	if cDim == "" {
+		return s
+	}
+	return cDim + strings.ReplaceAll(s, cReset, cReset+cDim) + cReset
+}
 
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }

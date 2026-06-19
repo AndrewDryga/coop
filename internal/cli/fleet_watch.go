@@ -113,21 +113,24 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 // fleetRowLine renders one fork's row: a state glyph (spinner running / ⏸ idle / ✓ done), a
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
 func fleetRowLine(r fleetRow, spin int) string {
-	glyph := ui.Dim("⏸")
+	done := !r.running && r.counts.total() > 0 && r.counts.Done == r.counts.total()
+	var glyph string
 	switch {
 	case r.running:
 		glyph = ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)])
-	case r.counts.total() > 0 && r.counts.Done == r.counts.total():
+	case done:
 		glyph = ui.Green("✓")
+	default:
+		glyph = "◦" // idle/stopped — a 1-cell glyph (⏸ rendered 2 wide and misaligned the bars)
 	}
 	frac := 0.0
 	if t := r.counts.total(); t > 0 {
 		frac = float64(r.counts.Done) / float64(t)
 	}
-	doing := truncate(r.active, 32) // the active task is plain text; color the empty cases below
+	doing := truncate(r.active, 32) // the active task is plain; the empty cases are colored
 	if r.active == "" {
 		if r.counts.total() == 0 {
-			doing = ui.Dim("(no queue)")
+			doing = "(no queue)"
 		} else {
 			doing = ui.Green("✓ done")
 		}
@@ -136,6 +139,9 @@ func fleetRowLine(r fleetRow, spin int) string {
 		glyph, truncate(r.name, 14), ui.ProgressBar(frac, 10), fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
+	}
+	if !r.running && !done {
+		line = ui.DimLine(line) // an idle/stopped fork recedes so the working ones stand out
 	}
 	return line
 }
@@ -155,9 +161,11 @@ func lastLogLine(path string) string {
 	data, _ := io.ReadAll(f)
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if s := strings.TrimSpace(lines[i]); s != "" {
-			return s
+		s := strings.TrimSpace(lines[i])
+		if s == "" || strings.HasPrefix(s, "coop:") {
+			continue // skip blanks and coop's own banners — the bar and task name already show those
 		}
+		return s
 	}
 	return ""
 }
