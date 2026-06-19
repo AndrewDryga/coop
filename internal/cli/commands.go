@@ -209,7 +209,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
 	// own progress lines, and COOP_QUIET tells the box to provision the toolchain silently.
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
+		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, ACP: true,
 		FusionGovernor: governor, ConsultLead: lead, Quiet: true,
 		ExtraArgs: []string{"-e", "COOP_QUIET=1"},
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
@@ -294,8 +294,15 @@ func parseRestart(cmd string, args []string) (bool, error) {
 // drop a live editor ACP session (exit 137). --restart opts into recycling them.
 func (a *app) recycleBoxes(cmd string, restart bool) {
 	if restart {
-		if n := a.rt.KillByLabel("coop", "box"); n > 0 {
-			ui.Info("recycled %d running container(s) onto the new image", n)
+		// Recycle running boxes onto the new image, but spare editor (ACP) sessions —
+		// SIGKILLing one makes the editor trip ("Server exited 137"). The editor picks
+		// up the new image when you start a fresh thread.
+		killed, spared := a.rt.KillByLabelExcept("coop", "box", "coop.role", "acp")
+		if killed > 0 {
+			ui.Info("recycled %d running container(s) onto the new image", killed)
+		}
+		if spared > 0 {
+			ui.Info("kept %d editor (ACP) session(s) running — start a new thread to pick up the new image", spared)
 		}
 		return
 	}

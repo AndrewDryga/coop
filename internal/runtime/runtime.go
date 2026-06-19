@@ -65,31 +65,59 @@ func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
 }
 
-// CountByLabel returns how many running containers carry the label key=value.
-func (r Runtime) CountByLabel(key, value string) int {
-	out, err := exec.Command(r.Name, "ps", "-q", "--filter", "label="+key+"="+value).Output()
+// psIDs returns the ids of running containers matching all the given ps --filter
+// expressions (e.g. "label=coop=box"). Nil on error or no match.
+func (r Runtime) psIDs(filters ...string) []string {
+	args := []string{"ps", "-q"}
+	for _, f := range filters {
+		args = append(args, "--filter", f)
+	}
+	out, err := exec.Command(r.Name, args...).Output()
 	if err != nil {
-		return 0
+		return nil
 	}
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" {
-		return 0
+		return nil
 	}
-	return len(strings.Split(trimmed, "\n"))
+	return strings.Split(trimmed, "\n")
+}
+
+// CountByLabel returns how many running containers carry the label key=value.
+func (r Runtime) CountByLabel(key, value string) int {
+	return len(r.psIDs("label=" + key + "=" + value))
 }
 
 // KillByLabel sends SIGKILL to every running container whose label matches
 // key=value. Returns the number of containers killed.
 func (r Runtime) KillByLabel(key, value string) int {
-	out, err := exec.Command(r.Name, "ps", "-q", "--filter", "label="+key+"="+value).Output()
-	if err != nil || len(out) == 0 {
-		return 0
-	}
 	n := 0
-	for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if id != "" && exec.Command(r.Name, "kill", id).Run() == nil {
+	for _, id := range r.psIDs("label=" + key + "=" + value) {
+		if r.kill(id) {
 			n++
 		}
 	}
 	return n
+}
+
+// KillByLabelExcept SIGKILLs running containers labelled key=value, skipping any
+// that also carry spareKey=spareValue (e.g. an editor's ACP session). Returns the
+// counts killed and spared.
+func (r Runtime) KillByLabelExcept(key, value, spareKey, spareValue string) (killed, spared int) {
+	spare := map[string]bool{}
+	for _, id := range r.psIDs("label="+key+"="+value, "label="+spareKey+"="+spareValue) {
+		spare[id] = true
+	}
+	for _, id := range r.psIDs("label=" + key + "=" + value) {
+		if spare[id] {
+			spared++
+		} else if r.kill(id) {
+			killed++
+		}
+	}
+	return killed, spared
+}
+
+func (r Runtime) kill(id string) bool {
+	return id != "" && exec.Command(r.Name, "kill", id).Run() == nil
 }

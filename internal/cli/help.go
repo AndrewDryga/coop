@@ -257,9 +257,9 @@ var commandHelp = map[string]string{
   Dockerfile.agent — pinning versions for reproducibility. Re-run after
   changing Dockerfile.agent or .tool-versions. For the latest, use coop update.
 
-  New runs use the fresh image automatically. Already-running boxes (a loop, a
-  fork, an editor ACP session) keep the old image until restarted; --restart
-  recycles them now (SIGKILL — it will drop a live ACP session).`,
+  New runs use the fresh image automatically. Already-running boxes keep the old
+  image until restarted; --restart recycles them now (SIGKILL) but spares a live
+  editor (ACP) session — start a new thread there to pick up the new image.`,
 
 	"update": `coop update — rebuild the box image fresh, to the latest base + agents.
 
