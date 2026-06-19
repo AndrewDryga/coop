@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -29,8 +30,9 @@ func helpText(cfg *config.Config) string {
 	var b strings.Builder
 	group := func(label string) { fmt.Fprintf(&b, "\n%s\n", ui.Bold(label)) }
 	// row keeps a column gap even when a command is long, so a description never glues to it.
+	// Width is counted in runes, not bytes, so a command with a "…" doesn't shift its column.
 	row := func(cmd, desc string) {
-		gap := 34 - len(cmd)
+		gap := 34 - utf8.RuneCountInString(cmd)
 		if gap < 2 {
 			gap = 2
 		}
@@ -63,7 +65,7 @@ func helpText(cfg *config.Config) string {
 	group("UNATTENDED")
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
 	row("coop pool add <agent> <profile…>", "pick which subscriptions the loop rotates on a rate limit")
-	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
+	row("coop fleet up|down|watch|prune", "drive a fleet of forks from .agent/fleet")
 	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
 	row("coop tasks list|lint|add|split", "inspect/validate the queue(s) (--tasks, COOP_TASKS)")
 
