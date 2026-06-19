@@ -262,7 +262,7 @@ func (a *app) pruneFleet(repo string, force bool) error {
 			continue
 		}
 		ws := forkWorkspace(repo, n)
-		if err := forkRmSafe(forkUnmerged(repo, ws), forkDirty(ws), force); err != nil {
+		if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
 			ui.Info("kept %s — %s", n, err)
 			kept++
 			continue

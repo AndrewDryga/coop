@@ -233,8 +233,42 @@ func gitCheckoutNewBranch(repo, branch string) error {
 	return exec.Command("git", "-C", repo, "checkout", "--quiet", "-b", branch).Run()
 }
 
-// gitOut runs `git -C dir <args>` and returns trimmed stdout, or "" on error.
+// gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
+// trailing -c flags (e.g. trustedSignArgs) still win — git's last -c for a key takes effect.
+func gitArgs(dir string, args []string) []string {
+	return append(append([]string{"-C", dir}, gitHardening...), args...)
+}
+
+// gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
+// coop runs git against is agent-writable, so hardening is the default; use gitTrustedOut only to
+// read a config value (which executes nothing) the hardening would otherwise shadow.
 func gitOut(dir string, args ...string) string {
+	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
+func gitRun(dir string, args ...string) error {
+	return exec.Command("git", gitArgs(dir, args)...).Run()
+}
+
+// gitInteractive runs a hardened git command wired to the real stdio (a diff to the terminal, a
+// signing pinentry prompt, etc).
+func gitInteractive(dir string, args ...string) error {
+	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+	return cmd.Run()
+}
+
+// gitTrustedOut runs `git -C dir <args>` WITHOUT the hardening — the escape hatch for reading a
+// config value coop must act on (whether you sign commits, your core.editor), since the hardening's
+// `-c key=blank` would shadow the repo's real value. Safe because a `git config` read executes
+// nothing; use it ONLY for such reads, never for an operation that touches the working tree. The
+// value is still agent-writable, so acting on an exec-bearing one safely is a separate concern.
+func gitTrustedOut(dir string, args ...string) string {
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
 	if err != nil {
 		return ""
@@ -242,32 +276,25 @@ func gitOut(dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// gitRun runs `git -C dir <args>` for effect, returning its error.
-func gitRun(dir string, args ...string) error {
-	return exec.Command("git", append([]string{"-C", dir}, args...)...).Run()
-}
-
-// gitInteractive runs a git command wired to the real stdio (diff in a pager, etc).
-func gitInteractive(dir string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
-	return cmd.Run()
-}
-
-// forkGitHardening are -c overrides applied to every git command we run *inside* an
-// agent-controlled fork. A fork's .git/ is agent-writable, so its hooks and local
-// config could otherwise execute arbitrary host commands the moment we fetch, rebase,
-// or even `status` it on review/merge — defeating the whole point of the box. We turn
-// hooks off and blank every config knob that shells out. Verified host-exec vectors:
-// .git/hooks/* (and core.hooksPath), core.fsmonitor, and a forced commit.gpgsign with
-// a planted gpg.program; the rest are defense in depth. Signing on land is re-enabled
-// with trusted *parent* values (see trustedSignArgs), never the fork's.
+// gitHardening are -c overrides applied to EVERY git command coop runs for effect on a working
+// tree, because every repo coop touches is agent-writable: the box binds the repo (its .git
+// included) read-write on a normal run, so an agent can plant hooks or local config that execute
+// host commands the moment coop fetches, rebases, merges, diffs, or even `status`es it — whether
+// that's a fork's workspace OR the parent repo. We turn hooks off and blank every config knob that
+// shells out. Verified host-exec vectors: .git/hooks/* (and core.hooksPath), core.fsmonitor,
+// core.pager, diff.external, and a forced commit.gpgsign with a planted gpg.program; the rest are
+// defense in depth. Signing on land is re-enabled with trusted values appended after these (git's
+// last -c for a key wins; see trustedSignArgs).
+//
+// Reading a config VALUE is different — it executes nothing, and a `-c key=blank` here would shadow
+// the repo's real value — so the few places that must read an agent-writable knob to act on it use
+// gitTrustedOut, never these helpers.
 //
 // Residual (can't be closed with -c, since the driver names are arbitrary): an in-tree
-// .gitattributes assigning a filter to a path plus a fork-local filter.<name>.smudge
-// can run on checkout during the land rebase. policyScan surfaces a fork's changed
-// files for review before that point, which is the backstop for this one.
-var forkGitHardening = []string{
+// .gitattributes assigning a filter to a path plus a fork-local filter.<name>.smudge can run on
+// checkout during the land rebase. policyScan surfaces a fork's changed files for review before
+// that point, which is the backstop for this one.
+var gitHardening = []string{
 	"-c", "core.hooksPath=/dev/null",
 	"-c", "core.fsmonitor=",
 	"-c", "core.sshCommand=",
@@ -282,26 +309,6 @@ var forkGitHardening = []string{
 	"-c", "gpg.ssh.program=false",
 	"-c", "gpg.x509.program=false",
 }
-
-// hardenedFork prepends forkGitHardening to a fork-side git argument list. Any extra
-// -c flags a caller appends after these (e.g. trustedSignArgs) win, since git's last
-// -c for a key takes effect.
-func hardenedFork(args []string) []string {
-	return append(append([]string{}, forkGitHardening...), args...)
-}
-
-// gitRunFork / gitOutFork / gitInteractiveFork mirror gitRun / gitOut / gitInteractive
-// but harden the invocation for an agent-controlled fork. Use these for every git
-// command run with -C <fork>; the plain forms are for the trusted parent repo.
-func gitRunFork(dir string, args ...string) error  { return gitRun(dir, hardenedFork(args)...) }
-func gitOutFork(dir string, args ...string) string { return gitOut(dir, hardenedFork(args)...) }
-func gitInteractiveFork(dir string, args ...string) error {
-	return gitInteractive(dir, hardenedFork(args)...)
-}
-
-// forkDirty reports whether a fork's working tree has uncommitted changes, hardened
-// (plain gitDirty runs `status`, which would fire a fork's core.fsmonitor on the host).
-func forkDirty(ws string) bool { return gitOutFork(ws, "status", "--porcelain") != "" }
 
 func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
 

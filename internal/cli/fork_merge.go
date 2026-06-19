@@ -117,17 +117,22 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 // wantsSigning reports whether you sign commits (commit.gpgsign=true in your git
 // config), so a fork's unsigned box commits can be signed with your key on land.
 func wantsSigning(repo string) bool {
-	return gitOut(repo, "config", "--bool", "--get", "commit.gpgsign") == "true"
+	// gitTrustedOut, not gitOut: the hardening blanks commit.gpgsign, which would shadow the
+	// real value and make coop never sign. Reading it executes nothing.
+	return gitTrustedOut(repo, "config", "--bool", "--get", "commit.gpgsign") == "true"
 }
 
 // trustedSignArgs returns the -c flags to sign the rebased commits with the host's
 // key, every value read from the *parent* repo (trusted) so a fork's local signing
 // config can't point gpg.program at a planted binary. They are appended after
-// forkGitHardening — which turns signing off by default — so these re-enable it with
+// gitHardening — which turns signing off by default — so these re-enable it with
 // vetted values. The program key tracks gpg.format (openpgp/ssh/x509).
 func trustedSignArgs(repo string) []string {
+	// gitTrustedOut throughout: the hardening blanks gpg.program/format/sign, so a plain read
+	// would return those blanks instead of your real signing config. The read executes nothing;
+	// the value is re-applied (after the hardening, so it wins) only on the signed rebase.
 	args := []string{"-c", "commit.gpgsign=true"}
-	format := gitOut(repo, "config", "--get", "gpg.format")
+	format := gitTrustedOut(repo, "config", "--get", "gpg.format")
 	progKey, def := "gpg.program", "gpg"
 	switch format {
 	case "ssh":
@@ -138,12 +143,12 @@ func trustedSignArgs(repo string) []string {
 	if format != "" {
 		args = append(args, "-c", "gpg.format="+format)
 	}
-	prog := gitOut(repo, "config", "--get", progKey)
+	prog := gitTrustedOut(repo, "config", "--get", progKey)
 	if prog == "" {
 		prog = def // git's built-in default — set explicitly so the hardening's "=false" loses
 	}
 	args = append(args, "-c", progKey+"="+prog)
-	if key := gitOut(repo, "config", "--get", "user.signingkey"); key != "" {
+	if key := gitTrustedOut(repo, "config", "--get", "user.signingkey"); key != "" {
 		args = append(args, "-c", "user.signingkey="+key)
 	}
 	return args
@@ -155,10 +160,10 @@ func trustedSignArgs(repo string) []string {
 // leaves the fork untouched and points at where to resolve.
 func (a *app) landFork(repo, ws, name string) error {
 	head := gitOut(repo, "rev-parse", "HEAD")
-	// Every git command here runs with -C ws, an agent-controlled tree, so it goes
-	// through the hardened helpers — a planted .git/hooks/* or malicious .git/config
-	// must not execute on the host (see forkGitHardening).
-	if err := gitRunFork(ws, "fetch", "--quiet", repo); err != nil {
+	// Every git command here runs on an agent-controlled tree (the fork ws AND the parent repo,
+	// whose .git the agent could have poisoned), so all go through the hardened helpers — a
+	// planted .git/hooks/* or malicious .git/config must not execute on the host (see gitHardening).
+	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
 		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
 	}
 	// Box commits are unsigned (the box holds no key). If you sign your commits, sign
@@ -168,12 +173,12 @@ func (a *app) landFork(repo, ws, name string) error {
 	// can prompt.
 	var rebaseErr error
 	if wantsSigning(repo) {
-		rebaseErr = gitInteractiveFork(ws, append(trustedSignArgs(repo), "rebase", "-f", "--gpg-sign", head)...)
+		rebaseErr = gitInteractive(ws, append(trustedSignArgs(repo), "rebase", "-f", "--gpg-sign", head)...)
 	} else {
-		rebaseErr = gitRunFork(ws, "rebase", head)
+		rebaseErr = gitRun(ws, "rebase", head)
 	}
 	if rebaseErr != nil {
-		_ = gitRunFork(ws, "rebase", "--abort")
+		_ = gitRun(ws, "rebase", "--abort")
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s), then re-run", name, gitBranch(repo), ws, head)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {

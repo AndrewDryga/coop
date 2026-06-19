@@ -427,10 +427,10 @@ func (a *app) forkLs(_ []string) (int, error) {
 // forkBranch / forkUpdated read a fork's state (for `coop fork ls` and `coop status`).
 // They run against an agent-controlled tree (post-work), so they use the hardened
 // helpers — `diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
-func forkBranch(ws string) string { return gitOutFork(ws, "rev-parse", "--abbrev-ref", "HEAD") }
+func forkBranch(ws string) string { return gitOut(ws, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func forkUpdated(ws string) string {
-	if rel := gitOutFork(ws, "log", "-1", "--format=%cr"); rel != "" {
+	if rel := gitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
 		return rel
 	}
 	return "—"
@@ -501,8 +501,9 @@ func resolveEditor(cfgEditor, repo string) string {
 	if cfgEditor != "" {
 		return cfgEditor
 	}
-	if e := gitOut(repo, "config", "core.editor"); e != "" {
-		return e // honor `git config core.editor`, e.g. "zed --wait"
+	if e := gitTrustedOut(repo, "config", "core.editor"); e != "" {
+		return e // honor `git config core.editor`, e.g. "zed --wait" (the hardening blanks it,
+		// so read it trusted; task 2 moves this to global so a poisoned repo value isn't exec'd)
 	}
 	return detectEditor()
 }
@@ -639,7 +640,7 @@ func forkRmSafe(unmerged, dirty, force bool) error {
 // forkUnmerged reports whether the fork's branch tip is NOT yet an ancestor of the
 // parent repo's HEAD (unknown-to-parent counts as unmerged, which is the safe side).
 func forkUnmerged(repo, ws string) bool {
-	sha := gitOutFork(ws, "rev-parse", "HEAD")
+	sha := gitOut(ws, "rev-parse", "HEAD")
 	if sha == "" {
 		return false
 	}
@@ -670,7 +671,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	if err := forkRmSafe(forkUnmerged(repo, ws), forkDirty(ws), force); err != nil {
+	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
 		return 1, err
 	}
 	if err := destroyFork(repo, name); err != nil {

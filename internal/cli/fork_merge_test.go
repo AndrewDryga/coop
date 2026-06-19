@@ -196,9 +196,10 @@ func TestMergeOneIgnoresForkBooby(t *testing.T) {
 	if !pathExists(filepath.Join(repo, "feature.txt")) {
 		t.Error("merge did not land the fork's work")
 	}
-	// Positive control: the trap is live — an *unhardened* fork git command fires it,
-	// so the clean run above is the hardening working, not a no-op test.
-	_ = gitDirty(ws) // raw `git -C ws status` → runs the planted core.fsmonitor
+	// Positive control: the trap is live — a genuinely *raw* git command (bypassing coop's now-
+	// hardened helpers entirely) fires it, so the clean run above is the hardening working, not a
+	// no-op test. (gitDirty itself is hardened now, so it can't be the control any more.)
+	_ = exec.Command("git", "-C", ws, "status", "--porcelain").Run() // raw → runs the planted core.fsmonitor
 	if !pathExists(marker) {
 		t.Fatal("positive control failed: raw fork git did not trigger the booby trap, so the test proves nothing")
 	}
@@ -287,4 +288,90 @@ func TestForkMergeQueue(t *testing.T) {
 	if merges := gitOut(repo, "rev-list", "--merges", "HEAD"); merges != "" {
 		t.Errorf("rebase queue produced merge commits (history not linear):\n%s", merges)
 	}
+}
+
+// Task (security 1): every host-side git command coop runs against the PARENT repo must be
+// hardened too — the parent's .git (config + hooks) is agent-writable on a normal box run, so a
+// poisoned knob must not execute host code when coop status/merges/diffs it. Each case fires a
+// positive control with genuinely raw git, so a green test means the hardening works, not a dead
+// trap. (Forks were already covered by TestMergeOneIgnoresForkBooby; this guards the parent.)
+func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	markerScript := func(t *testing.T, path, marker string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho pwned >> "+marker+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// (a) a poisoned core.fsmonitor must not fire when coop runs `git status` (gitDirty).
+	t.Run("fsmonitor on status", func(t *testing.T) {
+		repo := initRepo(t)
+		marker := filepath.Join(t.TempDir(), "PWNED")
+		evil := filepath.Join(repo, ".git", "evil.sh")
+		markerScript(t, evil, marker)
+		git(t, repo, "config", "core.fsmonitor", evil)
+		_ = gitDirty(repo) // hardened — must not run fsmonitor
+		if pathExists(marker) {
+			t.Fatal("gitDirty ran the parent's core.fsmonitor on the host")
+		}
+		_ = exec.Command("git", "-C", repo, "status", "--porcelain").Run() // raw control
+		if !pathExists(marker) {
+			t.Fatal("positive control failed: raw git status did not fire the planted fsmonitor")
+		}
+	})
+
+	// (b) a planted post-merge hook must not fire through the merge helper (landFork ff's the parent).
+	t.Run("post-merge hook on merge", func(t *testing.T) {
+		repo := initRepo(t)
+		marker := filepath.Join(t.TempDir(), "PWNED")
+		hooks := filepath.Join(repo, ".git", "hooks")
+		if err := os.MkdirAll(hooks, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		markerScript(t, filepath.Join(hooks, "post-merge"), marker)
+		ahead := func(branch string) { // a branch one commit ahead of main, so --ff-only fast-forwards
+			git(t, repo, "checkout", "-q", "-b", branch)
+			if err := os.WriteFile(filepath.Join(repo, branch+".txt"), []byte("x\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git(t, repo, "add", "-A")
+			git(t, repo, "commit", "-qm", branch)
+			git(t, repo, "checkout", "-q", "main")
+		}
+		ahead("a1")
+		if err := gitRun(repo, "merge", "--ff-only", "a1"); err != nil { // hardened
+			t.Fatalf("merge a1: %v", err)
+		}
+		if pathExists(marker) {
+			t.Fatal("the parent's post-merge hook fired through the hardened merge helper")
+		}
+		ahead("a2")
+		_ = exec.Command("git", "-C", repo, "merge", "--ff-only", "a2").Run() // raw control
+		if !pathExists(marker) {
+			t.Fatal("positive control failed: raw git merge did not fire the planted post-merge hook")
+		}
+	})
+
+	// (c) a poisoned diff.external must not run when coop diffs the parent.
+	t.Run("diff.external on diff", func(t *testing.T) {
+		repo := initRepo(t)
+		marker := filepath.Join(t.TempDir(), "PWNED")
+		evil := filepath.Join(repo, ".git", "evil.sh")
+		markerScript(t, evil, marker)
+		git(t, repo, "config", "diff.external", evil)
+		if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = gitOut(repo, "diff") // hardened — diff.external blanked
+		if pathExists(marker) {
+			t.Fatal("gitOut diff ran the parent's diff.external on the host")
+		}
+		_ = exec.Command("git", "-C", repo, "diff").Run() // raw control
+		if !pathExists(marker) {
+			t.Fatal("positive control failed: raw git diff did not run the planted diff.external")
+		}
+	})
 }
