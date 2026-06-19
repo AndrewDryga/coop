@@ -38,6 +38,17 @@ func IsTerminal(f *os.File) bool {
 	return isTerminalFd(f.Fd())
 }
 
+// TermWidth returns f's terminal column count, or 80 when it can't be determined (not a
+// terminal, or the ioctl is unavailable) so callers always have a usable width.
+func TermWidth(f *os.File) int {
+	if f != nil {
+		if w := termWidthFd(f.Fd()); w > 0 {
+			return w
+		}
+	}
+	return 80
+}
+
 // Info prints a dimmed "coop:" progress line to stderr.
 func Info(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%scoop:%s %s\n", cDim, cReset, fmt.Sprintf(format, a...))

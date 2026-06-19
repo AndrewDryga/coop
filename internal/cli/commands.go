@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -459,7 +460,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
 	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. The
 	// stream-json marker in the command is what runIteration keys the decoder off.
-	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout)
+	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	work, audit := loopWorkPrompt(queues), loopAuditPrompt(queues)
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/audit prompt.
@@ -553,73 +554,89 @@ func (a *app) debugShell(repo, img string) {
 	})
 }
 
-const (
-	progressPoll  = 2 * time.Second  // how often the monitor re-reads the queue while an iteration runs
-	heartbeatIdle = 30 * time.Second // no output and no task change for this long → a "still working" tick
-)
+const progressPoll = 2 * time.Second // how often the live bar re-reads the queue while an iteration runs
 
-// runIteration runs one boxed command in batch mode, teeing its output to the
-// terminal while capturing the tail so a rate-limit notice can be detected. hosts are the
-// queue files to watch for live task progress while the agent works.
+// runIteration runs one boxed command in batch mode, teeing its output to the terminal while
+// capturing the tail so a rate-limit notice can be detected. hosts are the queue files the
+// live bar watches for task progress. In a fully interactive run the agent's output is funneled
+// into the scroll history above a sticky progress bar (a Docker-build-style live view);
+// otherwise it goes straight to the terminal unchanged.
 func (a *app) runIteration(repo, img string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
-	tail := &tailWriter{max: 64 << 10, last: time.Now()}
-	term := []io.Writer{os.Stdout} // visible terminal, plus the fork log when present
-	errW := []io.Writer{os.Stderr, tail}
+	tail := &tailWriter{max: 64 << 10}
+	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
+
+	termOut, termErr := io.Writer(os.Stdout), io.Writer(os.Stderr)
+	var bar *loopBar
+	var funnel *lineWriter
+	if live {
+		region := ui.NewRegion(os.Stderr, func() int { return ui.TermWidth(os.Stderr) })
+		c0, a0 := queueProgress(hosts)
+		bar = newLoopBar(region, time.Now(), c0, a0)
+		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
+		termOut, termErr = funnel, funnel
+	}
+
+	outWs := []io.Writer{termOut}
+	errWs := []io.Writer{termErr, tail}
 	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
-		term = append(term, sink)
-		errW = append(errW, sink)
+		outWs = append(outWs, sink)
+		errWs = append(errWs, sink)
 	}
 	// Claude's loop command (set by iterCmd on a TTY) emits stream-json; decode it into human
 	// activity lines, feeding only the human text to tail so rate-limit detection still works.
-	// Otherwise the agent's stdout goes straight to the terminal and the tail (today's path).
 	var stdoutW io.Writer
 	var dec *streamDecoder
 	if slices.Contains(cmd, "stream-json") {
-		dec = newStreamDecoder(io.MultiWriter(term...), tail)
+		dec = newStreamDecoder(io.MultiWriter(outWs...), tail)
 		stdoutW = dec
 	} else {
-		stdoutW = io.MultiWriter(append(term, tail)...)
+		stdoutW = io.MultiWriter(append(outWs, tail)...)
 	}
-	// On a TTY, watch the queue while the agent works so task progress shows live, with a
-	// "still working" fallback when it goes quiet.
-	if ui.IsTerminal(os.Stderr) {
-		stop := make(chan struct{})
-		defer close(stop)
-		go monitorProgress(tail, hosts, time.Now(), stop)
+
+	var wg sync.WaitGroup
+	var stop chan struct{}
+	if live {
+		stop = make(chan struct{})
+		wg.Add(2)
+		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
+		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
-		Stderr: io.MultiWriter(errW...),
+		Stderr: io.MultiWriter(errWs...),
 	})
+	if live {
+		close(stop)
+		wg.Wait() // no goroutine repaints the region after this, so the teardown below is clean
+	}
 	if dec != nil {
-		dec.flush()
+		dec.flush() // before tail.String(): the last events must reach the rate-limit tail
+	}
+	if live {
+		funnel.flush()
+		bar.stop()
 	}
 	return code, tail.String(), err
 }
 
-// monitorProgress watches the queue while an iteration runs and prints a line the moment a
-// task changes state — the agent rewrites TASKS.md as it works, so the count moves live even
-// though the agent itself stays silent until its final message. When nothing has moved and
-// the agent has gone quiet it falls back to a "still working" heartbeat, so a long step never
-// looks hung. It returns when the iteration closes stop.
-func monitorProgress(tail *tailWriter, hosts []string, start time.Time, stop <-chan struct{}) {
+// monitorProgress watches the queue while an iteration runs and pushes each task state change
+// into the live bar — the agent rewrites TASKS.md as it works and the host sees those writes
+// through the bind mount, so the bar's count and active task move live even while the agent's
+// own output is still buffered. It returns when stop is closed.
+func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 	t := time.NewTicker(progressPoll)
 	defer t.Stop()
-	last, _ := queueProgress(hosts) // the iteration banner already printed this baseline
-	lastEvent := start
+	last, _ := queueProgress(hosts) // the bar was built with this baseline
 	for {
 		select {
 		case <-stop:
 			return
-		case now := <-t.C:
+		case <-t.C:
 			if c, active := queueProgress(hosts); c != last {
-				ui.Info("%s", progressLine(c, active))
-				last, lastEvent = c, now
-			} else if now.Sub(tail.lastWrite()) >= heartbeatIdle && now.Sub(lastEvent) >= heartbeatIdle {
-				ui.Info("…still working (%s elapsed)", now.Sub(start).Round(time.Second))
-				lastEvent = now
+				bar.setProgress(c, active)
+				last = c
 			}
 		}
 	}

@@ -2,12 +2,11 @@
 
 ## 2.6.0
 
-- **The loop shows progress.** `coop loop` folds the queue's done/total count and the task
-  it's working into each iteration line (`iteration 3 · 4/14 done · now: …`) and brackets the
-  run with starting and finishing tallies. While an iteration runs it watches the queue and
-  prints an updated line the moment a task changes state — so progress moves live as the agent
-  works through the file — with a "still working" heartbeat as a fallback when it goes quiet.
-  Terminal only; piped or CI output stays plain.
+- **A live progress bar.** On a terminal, `coop loop` pins a Docker-build-style status bar to
+  the bottom of the screen while it runs — a spinner, a progress bar, the done/total task count,
+  the task in flight, and elapsed time — and the agent's activity scrolls above it. The bar
+  tracks the queue as the agent rewrites it, so progress moves live within an iteration, and the
+  run is bracketed with starting and finishing tallies. Piped or CI output stays plain.
 - **Watch the agent work.** On a terminal, `coop loop` with Claude renders the agent's activity
   live instead of going dark until the iteration ends — each tool call (`✎ Edit`, `⚙ Bash`,
   `▸ Read`), the agent's own narration, and a closing `· N turns · time · $cost` — by decoding

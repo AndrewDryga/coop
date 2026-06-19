@@ -194,13 +194,4 @@ func TestTailWriter(t *testing.T) {
 	if len(cw.String()) > cw.max {
 		t.Errorf("tail grew past max: %d > %d", len(cw.String()), cw.max)
 	}
-
-	// Each Write stamps the last-write time, so the loop heartbeat can tell when the
-	// agent went quiet.
-	lw := &tailWriter{max: 16, last: time.Now().Add(-time.Hour)}
-	old := lw.lastWrite()
-	lw.Write([]byte("hi"))
-	if !lw.lastWrite().After(old) {
-		t.Errorf("Write should advance lastWrite: %v not after %v", lw.lastWrite(), old)
-	}
 }

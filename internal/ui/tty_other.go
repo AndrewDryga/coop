@@ -5,3 +5,6 @@ package ui
 // isTerminalFd is conservatively false on platforms without a container runtime
 // coop supports; the tool targets Linux and macOS hosts.
 func isTerminalFd(uintptr) bool { return false }
+
+// termWidthFd is unknown off the supported platforms; callers fall back to a default.
+func termWidthFd(uintptr) int { return 0 }

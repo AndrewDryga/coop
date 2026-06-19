@@ -229,10 +229,9 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 // be scanned for a rate-limit notice without buffering all of it. It is safe for
 // the concurrent stdout/stderr copy goroutines os/exec uses.
 type tailWriter struct {
-	mu   sync.Mutex
-	max  int
-	buf  []byte
-	last time.Time // when the last Write landed, for the loop's "still working" heartbeat
+	mu  sync.Mutex
+	max int
+	buf []byte
 }
 
 func (w *tailWriter) Write(p []byte) (int, error) {
@@ -242,7 +241,6 @@ func (w *tailWriter) Write(p []byte) (int, error) {
 	if len(w.buf) > w.max {
 		w.buf = w.buf[len(w.buf)-w.max:]
 	}
-	w.last = time.Now()
 	return len(p), nil
 }
 
@@ -250,12 +248,4 @@ func (w *tailWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return string(w.buf)
-}
-
-// lastWrite reports when the last Write landed (zero if none yet), so the loop's
-// heartbeat can tell whether the agent has gone quiet.
-func (w *tailWriter) lastWrite() time.Time {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.last
 }
