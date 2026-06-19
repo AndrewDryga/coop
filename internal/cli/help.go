@@ -231,7 +231,9 @@ var commandHelp = map[string]string{
   terraform fmt, mix format, cargo fmt). With nothing detected the gate is left
   neutral (it imposes no checks); at a terminal it asks which gate to add. A
   .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent +
-  compose.agent.yml. Never clobbers existing files.`,
+  compose.agent.yml; if the repo already has its own Docker (a Dockerfile or
+  compose) and no Dockerfile.agent yet, it suggests how to build the box on it.
+  Never clobbers existing files.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 

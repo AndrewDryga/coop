@@ -117,6 +117,9 @@ func Init(repo, stack string, gateLangs []string) error {
 		ui.Info("then: coop up && agent   (db/redis reachable in the box)")
 	}
 	ui.Info("edit .agent/TASKS.md, then run 'coop loop'")
+	// If the repo already has Docker and no Dockerfile.agent yet, suggest (docs only)
+	// basing the box on it + reusing its services.
+	suggestDocker(repo)
 	return nil
 }
 

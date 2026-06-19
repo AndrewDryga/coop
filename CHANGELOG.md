@@ -10,6 +10,12 @@
   `cargo fmt` — each `command -v`-guarded so it runs in the box and skips where the tool
   is absent. If it can't detect anything it leaves the gate **neutral** (no checks
   imposed) rather than guessing; at a terminal it asks which gate to add.
+- **`coop init` suggests building the box on the repo's existing Docker.** When the repo
+  already has a Dockerfile or compose file (and no `Dockerfile.agent` yet), `coop init`
+  prints how to base the agent box on your image — the coop agent layer (node + the agent
+  CLIs + a `node` user) to add on top — and how to reuse the compose services for `coop
+  up`. Docs only: it lists the Dockerfiles, the compose services it found, and a ready
+  snippet, but writes nothing.
 
 - **A live progress bar.** On a terminal, `coop loop` pins a Docker-build-style status bar to
   the bottom of the screen while it runs — a spinner, a progress bar, the done/total task count,
