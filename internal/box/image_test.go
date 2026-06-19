@@ -31,6 +31,8 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		"ripgrep fd-find jq tree", `ln -s "$(command -v fdfind)" /usr/local/bin/fd`,
 		// bare python + pip so an agent reaching for them doesn't self-debug a missing tool.
 		"python3 python-is-python3 python3-pip", `ln -s "$(command -v pip3)" /usr/local/bin/pip`,
+		// Playwright's Chromium system libs baked in as root so a browser launches in the box.
+		"npx -y playwright install-deps chromium",
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)

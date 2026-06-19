@@ -270,6 +270,10 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 - Installed and ready: node, npm, yarn, python (= python3), pip, git, gcc/make, jq, rg, fd,
   curl, wget, perl, psql. Other toolchains (go, ruby, erlang, …) exist only if the repo pins
   them in .tool-versions, which is provisioned automatically on start.
+- Playwright's Chromium system libraries are preinstalled. The browser binary downloads on
+  first use (cached in ~/.cache, so once per machine): run "npx playwright install chromium"
+  if it's missing. Launch headless and pass args: ['--no-sandbox'] — Chromium's own sandbox
+  can't run here (the box already is the sandbox), so without it the launch fails.
 - Write inside the repo (your working directory) — that's where your changes belong and your
   file-write tools work. Paths outside the repo may be refused; for scratch, write in-repo or
   use a shell command.

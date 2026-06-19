@@ -46,8 +46,12 @@ ARG AGENT_PACKAGES="%s"
 # "python"/"pip" (python-is-python3 plus a pip symlink) so an agent that reaches for
 # python or pip just runs, instead of burning a turn self-debugging, when a repo hasn't
 # pinned python in .tool-versions (an asdf-pinned python still shims ahead of these on
-# PATH). ~/.asdf and ~/.cache are pre-created node-owned so their named volumes inherit
-# that owner — a fresh volume on a path absent from the image would mount root-owned.
+# PATH). Playwright's Chromium system libraries are baked in as root (the part an agent,
+# running as non-root node, can't apt-get) so the bundled @playwright/mcp server — or any
+# Playwright script — gets a browser that launches; the browser binary itself downloads on
+# first use into the cached ~/.cache volume, and Chromium runs --no-sandbox (the box already
+# IS the sandbox). ~/.asdf and ~/.cache are pre-created node-owned so their named volumes
+# inherit that owner — a fresh volume on a path absent from the image would mount root-owned.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
@@ -58,6 +62,7 @@ RUN apt-get update \
  && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
  && ln -s "$(command -v pip3)" /usr/local/bin/pip \
  && npm install -g ${AGENT_PACKAGES} \
+ && npx -y playwright install-deps chromium \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \

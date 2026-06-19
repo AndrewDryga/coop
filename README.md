@@ -499,6 +499,10 @@ cp agents/mcp.json.example ~/.config/coop/agents/mcp.json   # …or start from t
 read-only on top of your existing config (pure Go, no extra tooling) — your own files
 are never touched, and servers from `mcp.json` win on a name clash.
 
+The example's **Playwright** server works in the box out of the box: Chromium's system
+libraries are baked into the image, the browser binary downloads to the cache volume on
+first use, and the server runs `--headless --no-sandbox` (the box is already the sandbox).
+
 ## Fusion: a governed council
 
 One model leads (the *governor*) and does the real work; the other two advise
