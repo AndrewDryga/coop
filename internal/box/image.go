@@ -42,16 +42,21 @@ ARG AGENT_PACKAGES="%s"
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
 # ripgrep/fd/jq/tree are the search + inspect tools agents reach for constantly
-# (Debian ships fd as "fdfind", so it's symlinked to "fd"). ~/.asdf and ~/.cache are
-# pre-created node-owned so their named volumes inherit that owner — a fresh volume on
-# a path absent from the image would mount root-owned.
+# (Debian ships fd as "fdfind", so it's symlinked to "fd"). python3 + pip with a bare
+# "python"/"pip" (python-is-python3 plus a pip symlink) so an agent that reaches for
+# python or pip just runs, instead of burning a turn self-debugging, when a repo hasn't
+# pinned python in .tool-versions (an asdf-pinned python still shims ahead of these on
+# PATH). ~/.asdf and ~/.cache are pre-created node-owned so their named volumes inherit
+# that owner — a fresh volume on a path absent from the image would mount root-owned.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
       postgresql-client procps inotify-tools \
+      python3 python-is-python3 python3-pip \
       ripgrep fd-find jq tree \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
  && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
+ && ln -s "$(command -v pip3)" /usr/local/bin/pip \
  && npm install -g ${AGENT_PACKAGES} \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
