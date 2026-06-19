@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -86,6 +87,49 @@ func scanTasks(content string) (taskCounts, string) {
 		active = firstTodo
 	}
 	return c, active
+}
+
+// queueProgress sums task counts across every queue file and returns the first active
+// task (the first [w], else the first [ ]). It's the loop's at-a-glance progress, built
+// from the same scanTasks the status and `coop tasks` views use so they can't disagree.
+func queueProgress(hosts []string) (taskCounts, string) {
+	var total taskCounts
+	active := ""
+	for _, h := range hosts {
+		c, a := scanTasks(readFileString(h))
+		total.Todo += c.Todo
+		total.Doing += c.Doing
+		total.Done += c.Done
+		total.Blocked += c.Blocked
+		if active == "" {
+			active = a
+		}
+	}
+	return total, active
+}
+
+// progressBanner is the loop's per-iteration status line: the iteration number, the
+// done/total task count (done greened when nonzero), a blocked tally only when there is
+// one, and the task being worked. Reusing the queue counts keeps it honest.
+func progressBanner(n int, c taskCounts, active string) string {
+	s := fmt.Sprintf("iteration %d · %s/%d done", n, paintCount(c.Done, ui.Green), c.total())
+	if c.Blocked > 0 {
+		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
+	}
+	if active != "" {
+		s += " · now: " + truncate(active, 48)
+	}
+	return s
+}
+
+// paintCount renders a count, applying paint only when it's nonzero so a zero stays
+// plain — a "0 blocked" shouldn't read as an alarm. Shared by the `coop tasks` summary
+// and the loop banner.
+func paintCount(v int, paint func(string) string) string {
+	if v > 0 {
+		return paint(strconv.Itoa(v))
+	}
+	return strconv.Itoa(v)
 }
 
 // readFileString returns a file's contents, or "" if it can't be read.

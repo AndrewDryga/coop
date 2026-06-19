@@ -466,21 +466,25 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		return a.agentLoopCmd(agent, prompt)
 	}
 	label := strings.Join(queues, ", ")
+	c0, _ := queueProgress(hosts)
 	if len(custom) == 0 {
-		ui.Info("starting unattended loop on %s with %s (Ctrl-C to stop)", label, agent)
+		ui.Info("starting unattended loop on %s with %s — %d/%d done (Ctrl-C to stop)", label, agent, c0.Done, c0.total())
 	} else {
-		ui.Info("starting unattended loop on %s (Ctrl-C to stop)", label)
+		ui.Info("starting unattended loop on %s — %d/%d done (Ctrl-C to stop)", label, c0.Done, c0.total())
 	}
-	fails, waits := 0, 0
+	fails, waits, completed := 0, 0, 0
 	for n := 1; anyTodo(); {
 		// Run this iteration on the pool's active subscription; the mount and the agent
 		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
 		a.cfg.SetActiveProfile(agent, pool.active())
+		// Surface queue progress + the task being worked, so a long run shows movement
+		// instead of a bare counter (the same scanTasks `coop status`/`coop tasks` use).
+		c, active := queueProgress(hosts)
+		banner := progressBanner(n, c, active)
 		if pool.rotates() {
-			ui.Info("iteration %d (profile %s)", n, pool.active())
-		} else {
-			ui.Info("iteration %d", n)
+			banner += fmt.Sprintf(" · profile %s", pool.active())
 		}
+		ui.Info("%s", banner)
 		code, out, err := a.runIteration(repo, img, iterCmd(work), sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
@@ -493,6 +497,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		}
 		switch action {
 		case actContinue:
+			completed++
 			n++
 		case actWait:
 			// A rate/usage limit is expected on long runs. With more than one profile in
@@ -520,7 +525,12 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
 	} else {
-		fmt.Fprintln(os.Stderr, ui.Bold(ui.Green("✓ queue verified done")))
+		cf, _ := queueProgress(hosts)
+		msg := fmt.Sprintf("✓ queue verified done — %d/%d", cf.Done, cf.total())
+		if completed > 0 {
+			msg += fmt.Sprintf(" in %d iterations", completed)
+		}
+		fmt.Fprintln(os.Stderr, ui.Bold(ui.Green(msg)))
 	}
 	return 0, nil
 }
@@ -535,15 +545,27 @@ func (a *app) debugShell(repo, img string) {
 	})
 }
 
+const (
+	heartbeatTick = 15 * time.Second // how often to check whether the agent has gone quiet
+	heartbeatIdle = 30 * time.Second // silence longer than this prints a "still working" tick
+)
+
 // runIteration runs one boxed command in batch mode, teeing its output to the
 // terminal while capturing the tail so a rate-limit notice can be detected.
 func (a *app) runIteration(repo, img string, cmd []string, sink io.Writer) (code int, output string, err error) {
-	tail := &tailWriter{max: 64 << 10}
+	tail := &tailWriter{max: 64 << 10, last: time.Now()}
 	outW := []io.Writer{os.Stdout, tail}
 	errW := []io.Writer{os.Stderr, tail}
 	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
 		outW = append(outW, sink)
 		errW = append(errW, sink)
+	}
+	// On a TTY, tick a "still working" heartbeat whenever the agent goes quiet, so a long
+	// silent iteration (claude -p prints only its final message) never looks hung.
+	if ui.IsTerminal(os.Stderr) {
+		stop := make(chan struct{})
+		defer close(stop)
+		go heartbeat(tail, time.Now(), stop)
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Batch: true,
@@ -552,4 +574,22 @@ func (a *app) runIteration(repo, img string, cmd []string, sink io.Writer) (code
 		Stderr: io.MultiWriter(errW...),
 	})
 	return code, tail.String(), err
+}
+
+// heartbeat prints a dimmed "still working" line whenever the agent has been silent for
+// longer than heartbeatIdle, so a quiet iteration shows liveness instead of a frozen
+// screen. It returns when the iteration closes stop.
+func heartbeat(tail *tailWriter, start time.Time, stop <-chan struct{}) {
+	t := time.NewTicker(heartbeatTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-t.C:
+			if now.Sub(tail.lastWrite()) >= heartbeatIdle {
+				ui.Info("…still working (%s elapsed)", now.Sub(start).Round(time.Second))
+			}
+		}
+	}
 }

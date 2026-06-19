@@ -2,6 +2,11 @@
 
 ## 2.6.0
 
+- **The loop shows progress.** `coop loop` now folds the queue's done/total count and the
+  task it's working into each iteration line (`iteration 3 · 4/14 done · now: …`), brackets
+  the run with the starting and finishing tallies, and — on a terminal — prints a periodic
+  "still working" heartbeat whenever the agent goes quiet, so a long unattended run shows
+  movement instead of a silent cursor. Piped or CI output stays plain.
 - **Multi-subscription failover for the loop.** One agent can now hold several accounts
   as named profiles — `coop login claude --profile work` — and when the unattended loop
   hits a rate/usage limit it switches to another signed-in profile and keeps going, only

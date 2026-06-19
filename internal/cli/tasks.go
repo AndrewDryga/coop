@@ -214,14 +214,8 @@ func tasksList(path string) (int, error) {
 		fmt.Printf("  - %s %s\n", glyph, title)
 	}
 	c, _ := scanTasks(content)
-	color := func(v int, paint func(string) string) string {
-		if v > 0 {
-			return paint(strconv.Itoa(v))
-		}
-		return strconv.Itoa(v) // a zero stays plain, so "0 blocked" doesn't read as an alarm
-	}
 	fmt.Printf("\n  %d task(s) · %s done · %s in progress · %d todo · %s blocked\n",
-		c.total(), color(c.Done, ui.Green), color(c.Doing, ui.Yellow), c.Todo, color(c.Blocked, ui.Red))
+		c.total(), paintCount(c.Done, ui.Green), paintCount(c.Doing, ui.Yellow), c.Todo, paintCount(c.Blocked, ui.Red))
 	return 0, nil
 }
 
