@@ -160,3 +160,24 @@ func TestWriteMCPStub(t *testing.T) {
 		t.Errorf("empty MCPFile should be a no-op, got %v", err)
 	}
 }
+
+func TestInitNextSteps(t *testing.T) {
+	// Bare repo (no Dockerfile.agent, no services) → just the edit-then-loop step.
+	repo := t.TempDir()
+	if got := initNextSteps(repo, nil); len(got) != 1 || !strings.Contains(got[0], "coop loop") {
+		t.Errorf("bare repo steps = %v, want only the loop step", got)
+	}
+	// A scaffolded Dockerfile.agent + sibling services → build, up (naming the services), loop.
+	if err := os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := initNextSteps(repo, []string{"postgres", "redis"})
+	if len(got) != 3 {
+		t.Fatalf("want 3 steps, got %v", got)
+	}
+	if !strings.Contains(got[0], "coop build") ||
+		!strings.Contains(got[1], "coop up") || !strings.Contains(got[1], "postgres + redis") ||
+		!strings.Contains(got[2], "coop loop") {
+		t.Errorf("steps wrong or out of order: %v", got)
+	}
+}

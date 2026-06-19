@@ -392,7 +392,30 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err := scaffold.WriteCompose(repo, services); err != nil {
 		return 0, err
 	}
-	return 0, a.writeMCPStub()
+	if err := a.writeMCPStub(); err != nil {
+		return 0, err
+	}
+	// One "coop:" anchor closes the dim per-file log, then the actions you need to take next
+	// stand on their own — derived from what actually landed, not a fixed script.
+	ui.Info("scaffolded into %s", repo)
+	ui.Steps(initNextSteps(repo, services)...)
+	return 0, nil
+}
+
+// initNextSteps is the short list of actions to run after scaffolding, built from what landed: a
+// build step when there's a Dockerfile.agent, a `coop up` when sibling services were added, and
+// always the edit-then-loop step. Assembled here (not in scaffold) so the whole list is shown in
+// one block.
+func initNextSteps(repo string, services []string) []string {
+	var steps []string
+	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
+		steps = append(steps, "review Dockerfile.agent, then `coop build`")
+	}
+	if len(services) > 0 {
+		steps = append(steps, fmt.Sprintf("`coop up`  (starts %s for the box)", strings.Join(services, " + ")))
+	}
+	steps = append(steps, "edit .agent/TASKS.md, then `coop loop`")
+	return steps
 }
 
 // writeMCPStub seeds an empty shared mcp.json — coop's one MCP source of truth, translated to
@@ -410,7 +433,7 @@ func (a *app) writeMCPStub() error {
 	if err := os.WriteFile(path, []byte("{\n  \"mcpServers\": {}\n}\n"), 0o600); err != nil {
 		return err
 	}
-	ui.Info("wrote %s — add MCP servers under \"mcpServers\" (shared across every agent)", path)
+	ui.Detail("wrote %s — add MCP servers under \"mcpServers\" to share them with every agent", path)
 	return nil
 }
 

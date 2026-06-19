@@ -26,6 +26,11 @@
   empty (no-server) `mcp.json` is now **inactive**, so the stub is a pure no-op until you
   add a server: an existing config is never touched, and runs are unchanged until you fill
   it in.
+- **`coop init` output reads as a log plus next steps, not a wall of `coop:`.** The per-file
+  progress (wrote/linked/added/gate) is now faint and unprefixed, a single `coop:` line
+  summarizes, and the actions you take next — `coop build`, `coop up`, `coop loop`, each shown
+  only when it applies — stand in their own spaced, colored "next steps" block. No more hunting
+  for the three lines that matter among the twenty-five that don't.
 
 - **A live progress bar.** On a terminal, `coop loop` pins a Docker-build-style status bar to
   the bottom of the screen while it runs — a spinner, a progress bar, the done/total task count,

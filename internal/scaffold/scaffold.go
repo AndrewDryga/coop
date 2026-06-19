@@ -21,9 +21,10 @@ var templates embed.FS
 
 // Init scaffolds the working set into repo. The toolchain is driven by
 // .tool-versions: with no --stack a present .tool-versions auto-scaffolds the asdf
-// Dockerfile.agent (+ compose file); `--stack asdf` forces it. gateLangs are the stacks
-// the commit hooks check (from DetectStacks, or the caller's interactive prompt); empty
-// means a neutral gate. Existing files are never clobbered.
+// Dockerfile.agent; `--stack asdf` forces it. gateLangs are the stacks the commit hooks
+// check (from DetectStacks, or the caller's interactive prompt); empty means a neutral gate.
+// Per-file progress prints as faint ui.Detail lines; the caller prints the summary and the
+// next-step actions. Existing files are never clobbered.
 func Init(repo, stack string, gateLangs []string) error {
 	s := &scaffolder{repo: repo}
 	if err := mkdirs(
@@ -90,7 +91,7 @@ func Init(repo, stack string, gateLangs []string) error {
 	case "":
 		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err == nil {
 			stack = "asdf"
-			ui.Info("detected .tool-versions — scaffolding an asdf-driven Dockerfile.agent")
+			ui.Detail("detected .tool-versions — scaffolding an asdf-driven Dockerfile.agent")
 		}
 	case "asdf":
 		// scaffolded below
@@ -106,11 +107,10 @@ func Init(repo, stack string, gateLangs []string) error {
 		if err := s.writeIfAbsent(filepath.Join(repo, "Dockerfile.agent"), "templates/dockerfile/asdf", 0o644); err != nil {
 			return err
 		}
-		ui.Info("asdf stack: review Dockerfile.agent, then 'coop build'")
 	}
 
-	ui.Info("scaffolded AGENTS.md, .agent/, .claude/ hooks, and workflow skills into %s", repo)
-	ui.Info("edit .agent/TASKS.md, then run 'coop loop'")
+	// The "scaffolded into …" summary and the next-step actions are printed by the caller
+	// (cmdInit), which has the full picture (services, mcp) and groups them into one block.
 	// If the repo already has Docker and no Dockerfile.agent yet, suggest (docs only)
 	// basing the box on it + reusing its services.
 	suggestDocker(repo)
@@ -128,7 +128,7 @@ func (s *scaffolder) rel(p string) string {
 
 func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
-		ui.Info("kept existing %s", filepath.Base(dest))
+		ui.Detail("kept existing %s", filepath.Base(dest))
 		return nil
 	}
 	data, err := templates.ReadFile(embedPath)
@@ -141,7 +141,7 @@ func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) err
 	if err := os.WriteFile(dest, data, perm); err != nil {
 		return err
 	}
-	ui.Info("wrote %s", s.rel(dest))
+	ui.Detail("wrote %s", s.rel(dest))
 	return nil
 }
 
@@ -149,7 +149,7 @@ func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) err
 // string rather than an embedded template), never clobbering an existing file.
 func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
-		ui.Info("kept existing %s", filepath.Base(dest))
+		ui.Detail("kept existing %s", filepath.Base(dest))
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -158,7 +158,7 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 	if err := os.WriteFile(dest, []byte(content), perm); err != nil {
 		return err
 	}
-	ui.Info("wrote %s", s.rel(dest))
+	ui.Detail("wrote %s", s.rel(dest))
 	return nil
 }
 
@@ -172,9 +172,9 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 		if err := os.Symlink(target, link); err != nil {
 			return err
 		}
-		ui.Info("linked %s -> %s", s.rel(link), target)
+		ui.Detail("linked %s -> %s", s.rel(link), target)
 	default:
-		ui.Info("kept existing %s (real file, not a symlink)", filepath.Base(link))
+		ui.Detail("kept existing %s (real file, not a symlink)", filepath.Base(link))
 	}
 	return nil
 }
@@ -191,13 +191,13 @@ func (s *scaffolder) copySkills() error {
 		name := e.Name()
 		dest := filepath.Join(s.repo, ".agent", "skills", name)
 		if _, err := os.Stat(dest); err == nil {
-			ui.Info("kept existing skill %s", name)
+			ui.Detail("kept existing skill %s", name)
 			continue
 		}
 		if err := copyEmbedDir("templates/skills/"+name, dest); err != nil {
 			return err
 		}
-		ui.Info("added skill /%s", name)
+		ui.Detail("added skill /%s", name)
 	}
 	return nil
 }
@@ -209,9 +209,9 @@ func (s *scaffolder) copySkills() error {
 // check it doesn't use. A user's custom hooksPath is never clobbered.
 func (s *scaffolder) installGitHooks(langs []string) error {
 	if len(langs) > 0 {
-		ui.Info("commit gate: %s", strings.Join(langs, ", "))
+		ui.Detail("commit gate: %s", strings.Join(langs, ", "))
 	} else {
-		ui.Info("commit gate: no language detected — left neutral (edit .githooks/pre-commit to add checks)")
+		ui.Detail("commit gate: no language detected — left neutral (edit .githooks/pre-commit to add checks)")
 	}
 	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".githooks", "pre-commit"), preCommitHook(langs), 0o755); err != nil {
 		return err
@@ -220,7 +220,7 @@ func (s *scaffolder) installGitHooks(langs []string) error {
 		return err
 	}
 	if !gitRepo(s.repo) {
-		ui.Info("not a git repo yet — after 'git init', run: git config core.hooksPath .githooks")
+		ui.Detail("not a git repo yet — after 'git init', run: git config core.hooksPath .githooks")
 		return nil
 	}
 	switch current := gitConfigGet(s.repo, "core.hooksPath"); current {
@@ -228,9 +228,9 @@ func (s *scaffolder) installGitHooks(langs []string) error {
 		if err := gitConfigSet(s.repo, "core.hooksPath", ".githooks"); err != nil {
 			return err
 		}
-		ui.Info("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
+		ui.Detail("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
 	default:
-		ui.Info("kept your core.hooksPath=%q; coop's gate is in .githooks/pre-commit", current)
+		ui.Detail("kept your core.hooksPath=%q; coop's gate is in .githooks/pre-commit", current)
 	}
 	return nil
 }
@@ -273,7 +273,7 @@ func (s *scaffolder) updateGitignore() error {
 	if _, err := f.WriteString(block); err != nil {
 		return err
 	}
-	ui.Info("updated .gitignore (.agent state ignored; rules/ + skills/ tracked)")
+	ui.Detail("updated .gitignore (.agent state ignored; rules/ + skills/ tracked)")
 	return nil
 }
 

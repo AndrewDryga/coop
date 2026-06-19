@@ -62,6 +62,26 @@ func Error(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%scoop: %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
 }
 
+// Detail prints an indented, faint sub-step (no "coop:" prefix) — the routine per-file progress
+// under a command like `coop init`, so a long run reads as one quiet block instead of repeating
+// the prefix on every line. The faint log recedes behind the Info anchors and Steps that matter.
+func Detail(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "  %s%s%s\n", cDim, fmt.Sprintf(format, a...), cReset)
+}
+
+// Steps prints a blank line, a bold "next steps:" header, then each action on its own cyan-arrow
+// line — so what you need to do next stands clear of the log of what just happened. No-op when
+// there are no steps.
+func Steps(steps ...string) {
+	if len(steps) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%snext steps:%s\n", cBold, cReset)
+	for _, s := range steps {
+		fmt.Fprintf(os.Stderr, "  %s→%s %s\n", cCyan, cReset, s)
+	}
+}
+
 // Color wrappers, used to compose richer output (e.g. the doctor report).
 func Bold(s string) string    { return cBold + s + cReset }
 func Dim(s string) string     { return cDim + s + cReset }
