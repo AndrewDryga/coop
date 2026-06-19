@@ -55,7 +55,7 @@ func TestSuggestDocker(t *testing.T) {
 		old := os.Stderr
 		r, w, _ := os.Pipe()
 		os.Stderr = w
-		suggestDocker(repo)
+		SuggestDocker(repo)
 		_ = w.Close()
 		os.Stderr = old
 		out, _ := io.ReadAll(r)

@@ -109,11 +109,9 @@ func Init(repo, stack string, gateLangs []string) error {
 		}
 	}
 
-	// The "scaffolded into …" summary and the next-step actions are printed by the caller
-	// (cmdInit), which has the full picture (services, mcp) and groups them into one block.
-	// If the repo already has Docker and no Dockerfile.agent yet, suggest (docs only)
-	// basing the box on it + reusing its services.
-	suggestDocker(repo)
+	// The "scaffolded into …" summary, the optional Docker-box suggestion, and the next-step
+	// actions are all printed by the caller (cmdInit), which has the full picture (services,
+	// mcp) and orders them as one block after the faint per-file log.
 	return nil
 }
 

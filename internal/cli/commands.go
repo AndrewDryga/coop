@@ -395,9 +395,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err := a.writeMCPStub(); err != nil {
 		return 0, err
 	}
-	// One "coop:" anchor closes the dim per-file log, then the actions you need to take next
-	// stand on their own — derived from what actually landed, not a fixed script.
+	// One "coop:" anchor closes the dim per-file log; then the optional Docker-box guidance
+	// (only when the repo has its own Docker and no Dockerfile.agent yet); then the actions you
+	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
+	scaffold.SuggestDocker(repo)
 	ui.Steps(initNextSteps(repo, services)...)
 	return 0, nil
 }

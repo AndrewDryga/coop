@@ -138,10 +138,11 @@ const dockerfileSuggestion = `
     # (apt shown — swap for apk/etc. if your base isn't Debian/Ubuntu)
 `
 
-// suggestDocker prints (docs only, never writes) how to build the agent box on the repo's
+// SuggestDocker prints (docs only, never writes) how to build the agent box on the repo's
 // existing Docker. It runs only when the box isn't set up yet — a Dockerized repo with no
-// Dockerfile.agent is the gap it fills; it never nags an already-configured one.
-func suggestDocker(repo string) {
+// Dockerfile.agent is the gap it fills; it never nags an already-configured one. The caller
+// (cmdInit) runs it after the summary anchor so it reads as box-setup guidance before the steps.
+func SuggestDocker(repo string) {
 	if _, err := os.Stat(filepath.Join(repo, "Dockerfile.agent")); err == nil {
 		return
 	}
