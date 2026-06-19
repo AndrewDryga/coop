@@ -139,7 +139,9 @@ Point it at a repo and go. Each agent launches with its own "don't stop to ask" 
 trash one repo you can restore from git.
 
 Anything after the agent name is passed through to it, on top of those flags — so
-`coop claude --continue` resumes Claude's last session, still sandboxed.
+`coop claude --continue` resumes Claude's last session, still sandboxed. (Codex is the
+exception: its `-p` is `--profile`, not a prompt, so run a one-shot prompt with
+`coop codex exec "…"` and use `-p` only to pick a profile.)
 
 ## Command reference
 
