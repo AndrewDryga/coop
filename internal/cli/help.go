@@ -63,7 +63,7 @@ func helpText(cfg *config.Config) string {
 	group("UNATTENDED")
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
 	row("coop pool add <agent> <profile…>", "pick which subscriptions the loop rotates on a rate limit")
-	row("coop fleet init|up|down|split|watch", "drive a fleet of forks from .agent/fleet")
+	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
 	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
 	row("coop tasks list|lint|add|split", "inspect/validate the queue(s) (--tasks, COOP_TASKS)")
 
@@ -149,13 +149,15 @@ var commandHelp = map[string]string{
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
 
-  Usage: coop fleet <init|up|down|split|watch>
+  Usage: coop fleet <init|up|down|split|watch|prune>
 
-  init       write a .agent/fleet template
-  up         start every fork in the fleet, looping its tasks, detached
-  down       stop the fleet's running loops
-  split <n>  split .agent/TASKS.md into n fork slices, then write .agent/fleet
-  watch      live dashboard: every fork's progress, refreshing (Ctrl-C to exit)
+  init           write a .agent/fleet template
+  up             start every fork in the fleet, looping its tasks, detached
+  down           stop the fleet's running loops
+  split <n>      split .agent/TASKS.md into n fork slices, then write .agent/fleet
+  watch          live dashboard: every fork's progress, refreshing (Ctrl-C to exit)
+  prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
+                 unmerged — pass --force to remove those too)
 
   List forks: coop fork ls`,
 

@@ -78,9 +78,11 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		return a.fleetSplit(args[1:])
 	case "watch":
 		return a.fleetWatch()
+	case "prune":
+		return a.fleetPrune(args[1:])
 	default:
 		// `ls` was a pure alias for `coop fork ls`; point there instead of duplicating.
-		return 2, errors.New("usage: coop fleet init|up|down|split|watch   (list forks with 'coop fork ls')")
+		return 2, errors.New("usage: coop fleet init|up|down|split|watch|prune   (list forks with 'coop fork ls')")
 	}
 }
 
@@ -158,6 +160,82 @@ func (a *app) fleetDown() (int, error) {
 		}
 	}
 	ui.Info("fleet down: stopped %d", stopped)
+	return 0, nil
+}
+
+// fleetOrphans returns the forks not named in the fleet — the cleanup candidates for prune.
+func fleetOrphans(fleetNames, forkNames []string) []string {
+	inFleet := make(map[string]bool, len(fleetNames))
+	for _, n := range fleetNames {
+		inFleet[n] = true
+	}
+	var orphans []string
+	for _, n := range forkNames {
+		if !inFleet[n] {
+			orphans = append(orphans, n)
+		}
+	}
+	return orphans
+}
+
+// fleetPrune removes forks no longer listed in .agent/fleet — the cleanup for after you edit
+// the fleet file. It honors the same guard as `coop fork rm`: a fork with uncommitted or
+// unmerged work is kept unless --force, and a running fork is always kept (stop it first). So
+// the safe path can never silently drop an agent's work.
+func (a *app) fleetPrune(args []string) (int, error) {
+	force := false
+	for _, x := range args {
+		switch x {
+		case "--force", "-f":
+			force = true
+		default:
+			return 2, fmt.Errorf("coop fleet prune: unknown flag %q (usage: coop fleet prune [--force])", x)
+		}
+	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
+	}
+	fleet, err := a.loadFleet(repo) // prune needs the fleet file to know which forks to keep
+	if err != nil {
+		return -1, err
+	}
+	names := make([]string, len(fleet))
+	for i, e := range fleet {
+		names[i] = e.name
+	}
+	orphans := fleetOrphans(names, forkNames(repo))
+	if len(orphans) == 0 {
+		ui.Info("nothing to prune — every fork is in .agent/fleet")
+		return 0, nil
+	}
+
+	removed, kept := 0, 0
+	for _, n := range orphans {
+		if forkRunningPid(repo, n) != 0 {
+			ui.Info("kept %s — still running (coop fork stop %s first)", n, n)
+			kept++
+			continue
+		}
+		ws := forkWorkspace(repo, n)
+		if err := forkRmSafe(forkUnmerged(repo, ws), forkDirty(ws), force); err != nil {
+			ui.Info("kept %s — %s", n, err)
+			kept++
+			continue
+		}
+		if err := destroyFork(repo, n); err != nil {
+			ui.Error("prune %s: %v", n, err)
+			kept++
+			continue
+		}
+		ui.Info("removed %s", n)
+		removed++
+	}
+	if kept > 0 {
+		ui.Info("pruned %d fork(s), kept %d", removed, kept)
+	} else {
+		ui.Info("pruned %d fork(s)", removed)
+	}
 	return 0, nil
 }
 

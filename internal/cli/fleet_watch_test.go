@@ -81,3 +81,18 @@ func TestLastLogLine(t *testing.T) {
 		t.Errorf("empty log = %q, want empty", got)
 	}
 }
+
+func TestFleetOrphans(t *testing.T) {
+	// Forks not named in the fleet are the prune candidates, in forkNames order.
+	if got := fleetOrphans([]string{"api", "deps"}, []string{"api", "deps", "old1", "old2"}); len(got) != 2 || got[0] != "old1" || got[1] != "old2" {
+		t.Errorf("orphans = %v, want [old1 old2]", got)
+	}
+	// Everything is in the fleet → nothing to prune.
+	if got := fleetOrphans([]string{"api", "deps"}, []string{"api", "deps"}); len(got) != 0 {
+		t.Errorf("orphans = %v, want none", got)
+	}
+	// An empty fleet → every fork is an orphan.
+	if got := fleetOrphans(nil, []string{"a", "b"}); len(got) != 2 {
+		t.Errorf("orphans = %v, want [a b]", got)
+	}
+}
