@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -59,7 +61,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Homes: true}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}}
 
-	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, "")
+	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, "")
 	want := []string{
 		"run", "--rm", "--label", "coop=box",
 		"-v", "/repo:/workspace",
@@ -78,7 +80,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyInteractive, false, nil, nil, nil, "")
+		"/d", "/dd", "/workspace", ttyInteractive, false, nil, nil, nil, nil, "")
 	if !slices.Contains(got, "-it") {
 		t.Errorf("interactive run should pass -it: %v", got)
 	}
@@ -101,9 +103,10 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, Network: true, Cache: true}
 	mcpMounts := []extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}
 	gitMounts := []extraMount{{"/tmp/gc", "/home/node/.gitconfig"}}
+	instructionMounts := []extraMount{{filepath.Join(dir, "INSTRUCTIONS.md"), "/home/node/.claude/CLAUDE.md"}}
 
 	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyNone, true, mcpMounts, nil, gitMounts, "coop-r_default")
+		"/d", "/dd", "/workspace", ttyNone, true, mcpMounts, nil, gitMounts, instructionMounts, "coop-r_default")
 	joined := slices.Clone(got)
 
 	mustContain := func(seq ...string) {
@@ -136,82 +139,88 @@ func containsSeq(s, want []string) bool {
 	return false
 }
 
-// TestInstructionOverrideSkipsClaude verifies a per-agent override suppresses the
-// shared INSTRUCTIONS mount for that agent only.
-func TestInstructionOverrideSkipsClaude(t *testing.T) {
+// TestInstructionOverrideUsed: an agent with a per-agent override gets it (after the box
+// note); an agent without one gets the shared INSTRUCTIONS.md.
+func TestInstructionOverrideUsed(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("hi"), 0o644)
+	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("SHARED"), 0o644)
 	os.MkdirAll(filepath.Join(dir, "claude"), 0o755)
-	os.WriteFile(filepath.Join(dir, "claude", "CLAUDE.md"), []byte("override"), 0o644)
+	os.WriteFile(filepath.Join(dir, "claude", "CLAUDE.md"), []byte("OVERRIDE"), 0o644)
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 
-	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true},
-		[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, "")
-	for _, a := range got {
-		if a == filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro" {
-			t.Error("claude override should suppress the shared CLAUDE.md mount")
+	if c := agentBaseInstructions(cfg, "claude", "CLAUDE.md"); !strings.Contains(c, "OVERRIDE") || strings.Contains(c, "SHARED") {
+		t.Errorf("claude should use its per-agent override, not the shared file:\n%s", c)
+	}
+	if x := agentBaseInstructions(cfg, "codex", "AGENTS.md"); !strings.Contains(x, "SHARED") {
+		t.Errorf("codex (no override) should use the shared file:\n%s", x)
+	}
+}
+
+// TestAssembleArgsMountsInstructions: assembleArgs read-only-mounts the per-agent instruction
+// mounts and the fusion/consult augmented mount it is given. The selection (which agents, lead
+// excluded) and the content live in instructionPlan/agentBaseInstructions, tested below.
+func TestAssembleArgsMountsInstructions(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node"}
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+	fusionMounts := []extraMount{{"/tmp/fusion", "/home/node/.codex/AGENTS.md"}}
+	instructionMounts := []extraMount{
+		{"/tmp/claude-ins", "/home/node/.claude/CLAUDE.md"},
+		{"/tmp/gemini-ins", "/home/node/.gemini/GEMINI.md"},
+	}
+	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}, mounts,
+		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, "")
+	for _, want := range [][]string{
+		{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"},
+		{"-v", "/tmp/claude-ins:/home/node/.claude/CLAUDE.md:ro"},
+		{"-v", "/tmp/gemini-ins:/home/node/.gemini/GEMINI.md:ro"},
+	} {
+		if !containsSeq(got, want) {
+			t.Errorf("assembleArgs missing instruction mount %v", want)
 		}
 	}
-	// codex/gemini still get the shared instructions.
-	if !containsSeq(got, []string{"-v", filepath.Join(dir, "INSTRUCTIONS.md") + ":/home/node/.codex/AGENTS.md:ro"}) {
-		t.Error("codex should still get the shared instructions")
+}
+
+// TestInstructionPlan: every non-lead agent gets a plan item carrying the box env note; the
+// fusion governor and consult lead are excluded (they get their augmented file instead).
+func TestInstructionPlan(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	if got := instructionPlan(cfg, RunSpec{}); got != nil {
+		t.Errorf("no homes → no plan, got %v", got)
+	}
+	plan := instructionPlan(cfg, RunSpec{Homes: true})
+	if len(plan) != len(agents.Names()) {
+		t.Fatalf("plan has %d items, want one per agent (%d)", len(plan), len(agents.Names()))
+	}
+	for _, it := range plan {
+		if !strings.Contains(it.content, "Environment (coop box)") {
+			t.Errorf("%s plan content missing the box env note", it.agent)
+		}
+	}
+	for _, it := range instructionPlan(cfg, RunSpec{Homes: true, FusionGovernor: "codex"}) {
+		if it.agent == "codex" {
+			t.Error("fusion governor must be excluded from instructionPlan")
+		}
+	}
+	for _, it := range instructionPlan(cfg, RunSpec{Homes: true, ConsultLead: "claude"}) {
+		if it.agent == "claude" {
+			t.Error("consult lead must be excluded from instructionPlan")
+		}
 	}
 }
 
-// TestAssembleArgsFusionGovernorScoped verifies fusion mode mounts the augmented
-// instruction at the governor's path and skips the governor in the shared mounts,
-// while peers still get the shared instructions (so a peer can't recurse).
-func TestAssembleArgsFusionGovernorScoped(t *testing.T) {
+// TestAgentBaseInstructions: the box env note is always present and comes first; the user's
+// shared INSTRUCTIONS.md, when present, follows it.
+func TestAgentBaseInstructions(t *testing.T) {
 	dir := t.TempDir()
-	ins := filepath.Join(dir, "INSTRUCTIONS.md")
-	os.WriteFile(ins, []byte("shared"), 0o644)
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
-	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}
-	fusionMounts := []extraMount{{"/tmp/fusion", "/home/node/.codex/AGENTS.md"}}
-
-	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, "")
-
-	if !containsSeq(got, []string{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"}) {
-		t.Error("governor should get the fusion-augmented instruction mount")
+	got := agentBaseInstructions(cfg, "claude", "CLAUDE.md")
+	if !strings.Contains(got, "Environment (coop box)") || !strings.Contains(got, "python (= python3)") {
+		t.Errorf("box note missing/incomplete with no user file:\n%s", got)
 	}
-	if containsSeq(got, []string{"-v", ins + ":/home/node/.codex/AGENTS.md:ro"}) {
-		t.Error("governor should be skipped in the shared-instruction mounts (no double mount)")
-	}
-	if !containsSeq(got, []string{"-v", ins + ":/home/node/.claude/CLAUDE.md:ro"}) {
-		t.Error("claude peer should still get the shared instructions")
-	}
-	if !containsSeq(got, []string{"-v", ins + ":/home/node/.gemini/GEMINI.md:ro"}) {
-		t.Error("gemini peer should still get the shared instructions")
-	}
-}
-
-// TestAssembleArgsConsultLeadScoped: the consult lead's augmented instruction is
-// mounted at its path and the lead is skipped in the shared-instruction mounts (no
-// double mount), while peers still get the shared instructions (so they don't
-// inherit the consult directive and recurse).
-func TestAssembleArgsConsultLeadScoped(t *testing.T) {
-	dir := t.TempDir()
-	ins := filepath.Join(dir, "INSTRUCTIONS.md")
-	os.WriteFile(ins, []byte("shared"), 0o644)
-	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
-	spec := RunSpec{Image: "i", Repo: "/r", Homes: true, ConsultLead: "claude"}
-	consultMount := []extraMount{{"/tmp/consult", "/home/node/.claude/CLAUDE.md"}}
-
-	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyInteractive, false, nil, consultMount, nil, "")
-
-	if !containsSeq(got, []string{"-v", "/tmp/consult:/home/node/.claude/CLAUDE.md:ro"}) {
-		t.Error("consult lead should get the augmented instruction mount")
-	}
-	if containsSeq(got, []string{"-v", ins + ":/home/node/.claude/CLAUDE.md:ro"}) {
-		t.Error("consult lead should be skipped in the shared-instruction mounts (no double mount)")
-	}
-	if !containsSeq(got, []string{"-v", ins + ":/home/node/.codex/AGENTS.md:ro"}) {
-		t.Error("codex peer should still get the shared instructions")
-	}
-	if !containsSeq(got, []string{"-v", ins + ":/home/node/.gemini/GEMINI.md:ro"}) {
-		t.Error("gemini peer should still get the shared instructions")
+	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("MY RULE"), 0o644)
+	got = agentBaseInstructions(cfg, "claude", "CLAUDE.md")
+	if i, j := strings.Index(got, "Environment (coop box)"), strings.Index(got, "MY RULE"); i < 0 || j < 0 || i > j {
+		t.Errorf("want box note then the user rule, got:\n%s", got)
 	}
 }
 
@@ -277,13 +286,13 @@ func TestAssembleArgsAsdfVolume(t *testing.T) {
 	asdf := []string{"-v", "coop-asdf:/home/node/.asdf"}
 
 	base := assembleArgs(cfg, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, "")
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "")
 	if !containsSeq(base, asdf) {
 		t.Errorf("base image should mount the asdf volume:\n%v", base)
 	}
 
 	custom := assembleArgs(cfg, RunSpec{Image: "coop-myrepo", Repo: "/r", Homes: true}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, "")
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "")
 	if containsSeq(custom, asdf) {
 		t.Errorf("a per-project image should not mount the asdf volume:\n%v", custom)
 	}

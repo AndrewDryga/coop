@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -162,7 +163,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	var fusionMounts []extraMount
 	if spec.Homes && spec.FusionGovernor != "" {
 		if file := instructionFile(spec.FusionGovernor); file != "" {
-			base := governorBaseInstructions(cfg, spec.FusionGovernor, file)
+			base := agentBaseInstructions(cfg, spec.FusionGovernor, file)
 			content := fusion.GovernorInstructions(base, spec.FusionGovernor, agents.Names())
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("fusion: skipped instruction wiring: %v", err)
@@ -182,7 +183,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
 		if peers := authedPeers(cfg, spec.ConsultLead); len(peers) > 0 {
 			if file := instructionFile(spec.ConsultLead); file != "" {
-				base := governorBaseInstructions(cfg, spec.ConsultLead, file)
+				base := agentBaseInstructions(cfg, spec.ConsultLead, file)
 				content := fusion.LeadInstructions(base, peers)
 				if p, err := writeTempFile(content); err != nil {
 					ui.Info("consult: skipped instruction wiring: %v", err)
@@ -191,6 +192,18 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 					fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
 				}
 			}
+		}
+	}
+
+	// Every agent gets the box environment note, then the user's instructions (a per-agent
+	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
+	// — so it never burns a turn rediscovering the box. The lead (fusion governor / consult
+	// lead) is handled above, with its augmented file.
+	var instructionMounts []extraMount
+	for _, it := range instructionPlan(cfg, spec) {
+		if p, err := writeTempFile(it.content); err == nil {
+			tmpFiles = append(tmpFiles, p)
+			instructionMounts = append(instructionMounts, extraMount{p, cfg.HomeInBox + "/." + it.agent + "/" + it.file})
 		}
 	}
 
@@ -223,7 +236,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	limits := boxLimits(cfg, rt.Name)
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, networkName, limits...)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, limits...)
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
@@ -245,19 +258,64 @@ func resolveWorkdir(spec RunSpec, cfg *config.Config) string {
 	}
 }
 
-// governorBaseInstructions returns the instructions the governor would normally
-// receive (its own per-agent override if present, else the shared INSTRUCTIONS.md),
-// so fusion augments rather than replaces what the user wrote.
-func governorBaseInstructions(cfg *config.Config, governor, file string) string {
-	if data, err := os.ReadFile(filepath.Join(cfg.AgentDir(governor), file)); err == nil {
-		return string(data)
-	}
-	if ins := cfg.Instructions(); fileExists(ins) {
+// boxEnvNote is the always-present environment briefing every agent receives up front, so it
+// doesn't burn a turn rediscovering the box (the user's INSTRUCTIONS.md, if any, follows it).
+// It states the ground truth the agents most often probe or trip over: the missing OS sandbox,
+// what's installed (now that the image carries bare python/pip), where it may write, and that
+// secrets are read-only decoys.
+const boxEnvNote = `# Environment (coop box) — ground truth, don't reprobe it
+You run inside a coop container: a Debian box that IS your sandbox and security boundary.
+- OS-level sandboxing (bubblewrap) is intentionally absent. A "bubblewrap is required" notice
+  is expected, not a bug — don't investigate or work around it, just proceed.
+- Installed and ready: node, npm, yarn, python (= python3), pip, git, gcc/make, jq, rg, fd,
+  curl, wget, perl, psql. Other toolchains (go, ruby, erlang, …) exist only if the repo pins
+  them in .tool-versions, which is provisioned automatically on start.
+- Write inside the repo (your working directory) — that's where your changes belong and your
+  file-write tools work. Paths outside the repo may be refused; for scratch, write in-repo or
+  use a shell command.
+- Files that look like secrets (.env*, *.key, *.pem, id_rsa*, .ssh, …) are shadowed with empty
+  read-only decoys. You can't read or write them, by design — don't try to bypass it.
+`
+
+// agentBaseInstructions is what an agent receives as its global instructions: the always-on
+// box environment note, followed by the user's instructions — a per-agent override if present,
+// else the shared INSTRUCTIONS.md. Fusion/consult augment this (they don't replace it).
+func agentBaseInstructions(cfg *config.Config, agent, file string) string {
+	user := ""
+	if data, err := os.ReadFile(filepath.Join(cfg.AgentDir(agent), file)); err == nil {
+		user = string(data)
+	} else if ins := cfg.Instructions(); fileExists(ins) {
 		if data, err := os.ReadFile(ins); err == nil {
-			return string(data)
+			user = string(data)
 		}
 	}
-	return ""
+	if strings.TrimSpace(user) == "" {
+		return boxEnvNote
+	}
+	return boxEnvNote + "\n" + user
+}
+
+// instructionItem is one agent's global instruction file and the content it should hold.
+type instructionItem struct{ agent, file, content string }
+
+// instructionPlan is the global instruction each non-lead agent should receive: the box env
+// note plus the user's instructions (per agentBaseInstructions). The lead (fusion governor /
+// consult lead) is excluded — it gets its augmented file instead. Pure (no temp files / mounts),
+// so the selection and content are unit-testable; Run writes + mounts the result.
+func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
+	if !spec.Homes {
+		return nil
+	}
+	var out []instructionItem
+	for _, agent := range agents.Names() {
+		if agent == spec.FusionGovernor || agent == spec.ConsultLead {
+			continue
+		}
+		if file := instructionFile(agent); file != "" {
+			out = append(out, instructionItem{agent, file, agentBaseInstructions(cfg, agent, file)})
+		}
+	}
+	return out
 }
 
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an
@@ -308,7 +366,7 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
 // resource/privilege caps (see boxLimits).
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts []extraMount, networkName string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
 	switch mode {
 	case ttyInteractive:
@@ -340,19 +398,11 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		if fileExists(cfg.EnvFile()) {
 			args = append(args, "--env-file", cfg.EnvFile())
 		}
-		// One canonical instruction file → each agent's native global path,
-		// unless that agent has its own override. The lead is skipped
-		// here (fusion governor or consult lead) — its augmented file is below.
-		if ins := cfg.Instructions(); fileExists(ins) {
-			for _, agent := range agents.Names() {
-				if agent == spec.FusionGovernor || agent == spec.ConsultLead {
-					continue
-				}
-				file := instructionFile(agent)
-				if !fileExists(filepath.Join(cfg.AgentDir(agent), file)) {
-					args = append(args, "-v", ins+":"+cfg.HomeInBox+"/."+agent+"/"+file+":ro")
-				}
-			}
+		// Per-agent global instructions (the box env note + the user's, built in Run) at each
+		// agent's native path. The lead (fusion governor / consult lead) is excluded there; its
+		// augmented file is the fusion/consult mount just below.
+		for _, m := range instructionMounts {
+			args = append(args, "-v", m.host+":"+m.box+":ro")
 		}
 		// Fusion: the governor's augmented instruction file (peers + synthesis).
 		for _, m := range fusionMounts {
