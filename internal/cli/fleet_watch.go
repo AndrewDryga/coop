@@ -114,7 +114,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
 	bar := fmt.Sprintf("%s %s %*s tasks · %d running · %s blocked",
-		ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)]), ui.ProgressBar(frac, fleetTotalBarW), fleetCountW, fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
+		stateGlyph(running > 0, done, total, spin), ui.ProgressBar(frac, fleetTotalBarW), fleetCountW, fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
 
 	out := make([]string, 0, len(body)+4)
 	out = append(out, header, "")
@@ -123,19 +123,26 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	return out
 }
 
+// stateGlyph is the 1-cell status mark shared by the per-fork rows and the roll-up bar: an
+// animated spinner only while something is running, a green ✓ when every task is done, else the
+// idle/paused mark. Keeping it shared means a still fleet shows no spinner anywhere — the spinner
+// implies motion, so it must not run next to a "0 running" bar.
+func stateGlyph(running bool, done, total, spin int) string {
+	switch {
+	case running:
+		return ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)])
+	case total > 0 && done == total:
+		return ui.Green("✓")
+	default:
+		return "‖" // idle/paused — a 1-cell pause mark (⏸ rendered 2 wide and misaligned the bars)
+	}
+}
+
 // fleetRowLine renders one fork's row: a state glyph (spinner running / ‖ idle / ✓ done), a
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
 func fleetRowLine(r fleetRow, spin int) string {
 	done := !r.running && r.counts.total() > 0 && r.counts.Done == r.counts.total()
-	var glyph string
-	switch {
-	case r.running:
-		glyph = ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)])
-	case done:
-		glyph = ui.Green("✓")
-	default:
-		glyph = "‖" // idle/paused — a 1-cell pause mark (⏸ rendered 2 wide and misaligned the bars)
-	}
+	glyph := stateGlyph(r.running, r.counts.Done, r.counts.total(), spin)
 	frac := 0.0
 	if t := r.counts.total(); t > 0 {
 		frac = float64(r.counts.Done) / float64(t)

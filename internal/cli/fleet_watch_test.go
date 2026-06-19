@@ -77,6 +77,36 @@ func TestFleetDashboard(t *testing.T) {
 	}
 }
 
+// When nothing is running, the roll-up bar must not animate a spinner — the spinner implies
+// motion, so a still fleet leads with the idle ‖ (or ✓ when all done), matching the per-fork rows.
+func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
+	const spin0 = "⠋" // ui.SpinFrames[0] — what a running bar shows at spin=0
+	bar := func(rows []fleetRow) string {
+		out := fleetDashboard("repo", rows, 0)
+		return out[len(out)-1] // out = [header, "", rows…, "", bar]
+	}
+
+	// Idle with work left → ‖, no spinner (the reported case: 0 running, tasks remaining).
+	idle := bar([]fleetRow{
+		{name: "a", agent: "claude", running: false, counts: taskCounts{Done: 1, Todo: 1}},
+		{name: "b", agent: "gemini", running: false, counts: taskCounts{Todo: 5}},
+	})
+	if strings.Contains(idle, spin0) || !strings.HasPrefix(idle, "‖") {
+		t.Errorf("idle fleet bar should lead with ‖ and never spin:\n%q", idle)
+	}
+
+	// Everything done → ✓, still no spinner.
+	allDone := bar([]fleetRow{{name: "a", running: false, counts: taskCounts{Done: 3}}})
+	if strings.Contains(allDone, spin0) || !strings.HasPrefix(allDone, "✓") {
+		t.Errorf("all-done fleet bar should lead with ✓ and never spin:\n%q", allDone)
+	}
+
+	// At least one running → the spinner is back; suppression is only for a still fleet.
+	if busy := bar([]fleetRow{{name: "a", running: true, counts: taskCounts{Todo: 2}}}); !strings.Contains(busy, spin0) {
+		t.Errorf("a running fleet bar should spin:\n%q", busy)
+	}
+}
+
 func TestLastLogLine(t *testing.T) {
 	write := func(body string) string {
 		p := filepath.Join(t.TempDir(), "f.log")
