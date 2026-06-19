@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -54,6 +55,25 @@ func TestFleetDashboard(t *testing.T) {
 	forkRow, global := out[2], out[len(out)-1] // out = [header, "", rows…, "", bar]
 	if a, b := barEnd(forkRow), barEnd(global); a < 0 || a != b {
 		t.Errorf("bar right-edges misaligned: fork ] at col %d, global ] at col %d\n%q\n%q", a, b, forkRow, global)
+	}
+
+	// done/total counts right-align in one column — the per-fork rows AND the global roll-up.
+	// Take each count token's right edge (rune column); require a single shared column.
+	countRe := regexp.MustCompile(`[0-9]+/[0-9]+`)
+	countEnd := func(line string) int {
+		if m := countRe.FindStringIndex(line); m != nil {
+			return len([]rune(line[:m[1]]))
+		}
+		return -1
+	}
+	ends := map[int]bool{}
+	for _, l := range out {
+		if e := countEnd(l); e >= 0 {
+			ends[e] = true
+		}
+	}
+	if len(ends) != 1 {
+		t.Errorf("done/total counts not right-aligned to one column: ends=%v\n%s", ends, joined)
 	}
 }
 

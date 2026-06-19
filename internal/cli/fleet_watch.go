@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	fleetPoll  = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
-	fleetNameW = 14                     // fork-name column width
-	fleetBarW  = 10                     // per-fork progress bar width
+	fleetPoll   = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
+	fleetNameW  = 14                     // fork-name column width
+	fleetBarW   = 10                     // per-fork progress bar width
+	fleetCountW = 7                      // done/total column — room for three digits each side (999/999)
 )
 
 // fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
@@ -112,8 +113,8 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 		frac = float64(done) / float64(total)
 	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
-	bar := fmt.Sprintf("%s %s  %d/%d tasks · %d running · %s blocked",
-		ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)]), ui.ProgressBar(frac, fleetTotalBarW), done, total, running, paintCount(blocked, ui.Red))
+	bar := fmt.Sprintf("%s %s %*s tasks · %d running · %s blocked",
+		ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)]), ui.ProgressBar(frac, fleetTotalBarW), fleetCountW, fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
 
 	out := make([]string, 0, len(body)+4)
 	out = append(out, header, "")
@@ -147,8 +148,8 @@ func fleetRowLine(r fleetRow, spin int) string {
 			doing = ui.Green("✓ done")
 		}
 	}
-	line := fmt.Sprintf("%s %s %-*s %s %5s  %s",
-		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
+	line := fmt.Sprintf("%s %s %-*s %s %*s  %s",
+		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fleetCountW, fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}
