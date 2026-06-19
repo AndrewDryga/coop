@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -35,6 +37,11 @@ func policyScan(repo, ref string) []string {
 		if secretRe.MatchString(path) {
 			warns = append(warns, "secret-like file: "+path)
 		}
+		// Files that run host code the moment a human touches the merged tree (cd, open the
+		// folder, `make`) — path-based, so a huge/binary blob can't dodge it below.
+		if w := interactionRiskPath(f[0], path); w != "" {
+			warns = append(warns, w)
+		}
 		if size := gitBlobSize(repo, ref, path); size > 5<<20 {
 			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
 			continue // don't read a huge blob's content
@@ -42,6 +49,11 @@ func policyScan(repo, ref string) []string {
 		content := gitOut(repo, "show", ref+":"+path)
 		if strings.IndexByte(content, 0) >= 0 { // skip binaries
 			continue
+		}
+		if filepath.Base(path) == "package.json" {
+			if k := addedLifecycleScript(repo, ref, path, content); k != "" {
+				warns = append(warns, path+" adds a "+k+" script — npm runs it automatically on `npm install`")
+			}
 		}
 		for _, s := range box.ScanSecrets(content) {
 			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — remove it or add the file to .coopignore", path, s.Line, s.Kind))
@@ -53,6 +65,51 @@ func policyScan(repo, ref string) []string {
 func gitBlobSize(repo, ref, path string) int64 {
 	n, _ := strconv.ParseInt(gitOut(repo, "cat-file", "-s", ref+":"+path), 10, 64)
 	return n
+}
+
+// interactionRiskPath flags an added/changed file that runs host code the moment a human
+// interacts with the merged tree — direnv's .envrc on `cd`, a VS Code tasks.json on folder-open,
+// a Makefile on `make`. It's a review aid (these block a merge like a secret hit unless you pass
+// --force), not a sandbox: it names high-signal files, it doesn't try to prove them safe. status
+// is the `git diff --name-status` code (A/M/R…); "" means not flagged.
+func interactionRiskPath(status, path string) string {
+	base := filepath.Base(path)
+	added := status != "" && (status[0] == 'A' || status[0] == 'R') // R = rename → new path here
+	switch {
+	case base == ".envrc":
+		return path + " runs on `cd` into the dir (direnv) — review it before entering"
+	case base == "tasks.json" && strings.Contains(path, ".vscode/"):
+		return path + " can auto-run a task when the folder opens (VS Code)"
+	case (base == "Makefile" || base == "GNUmakefile") && added:
+		return path + " runs host commands on `make` — review the new Makefile"
+	}
+	return ""
+}
+
+// addedLifecycleScript returns the name of an npm install/prepare lifecycle script the fork ADDS
+// or changes in package.json (preinstall/install/postinstall/prepare) — npm runs these
+// automatically on `npm install`, so a fork can plant one to execute host code post-merge — or ""
+// when the change touches no such script (an ordinary dependency bump isn't flagged).
+func addedLifecycleScript(repo, ref, path, newContent string) string {
+	newS := pkgScripts(newContent)
+	oldS := pkgScripts(gitOut(repo, "show", "HEAD:"+path)) // "" → nil when the file is new
+	for _, k := range []string{"preinstall", "install", "postinstall", "prepare"} {
+		if v := newS[k]; v != "" && v != oldS[k] {
+			return k
+		}
+	}
+	return ""
+}
+
+// pkgScripts parses a package.json's "scripts" map, or nil if it doesn't parse.
+func pkgScripts(content string) map[string]string {
+	var p struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal([]byte(content), &p) != nil {
+		return nil
+	}
+	return p.Scripts
 }
 
 // mergeGate resolves the box image when COOP_GATE is set (so a merge can be

