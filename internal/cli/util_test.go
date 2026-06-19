@@ -81,6 +81,17 @@ func TestProgressBanner(t *testing.T) {
 	}
 }
 
+func TestProgressLine(t *testing.T) {
+	// The mid-iteration line the monitor prints live: done/total, blocked only when there
+	// is some, and the active task — no "iteration N" prefix.
+	if got := progressLine(taskCounts{Done: 8, Blocked: 1, Todo: 11}, "Task 9"); got != "8/20 done · 1 blocked · now: Task 9" {
+		t.Errorf("progressLine = %q", got)
+	}
+	if got := progressLine(taskCounts{Done: 20}, ""); got != "20/20 done" {
+		t.Errorf("done-only progressLine = %q", got)
+	}
+}
+
 func TestPaintCount(t *testing.T) {
 	paint := func(s string) string { return "<" + s + ">" }
 	if got := paintCount(0, paint); got != "0" {

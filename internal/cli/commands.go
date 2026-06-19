@@ -485,7 +485,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 			banner += fmt.Sprintf(" · profile %s", pool.active())
 		}
 		ui.Info("%s", banner)
-		code, out, err := a.runIteration(repo, img, iterCmd(work), sink)
+		code, out, err := a.runIteration(repo, img, iterCmd(work), hosts, sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
@@ -520,7 +520,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(repo, img, iterCmd(audit), sink)
+		_, _, _ = a.runIteration(repo, img, iterCmd(audit), hosts, sink)
 	}
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -546,13 +546,14 @@ func (a *app) debugShell(repo, img string) {
 }
 
 const (
-	heartbeatTick = 15 * time.Second // how often to check whether the agent has gone quiet
-	heartbeatIdle = 30 * time.Second // silence longer than this prints a "still working" tick
+	progressPoll  = 2 * time.Second  // how often the monitor re-reads the queue while an iteration runs
+	heartbeatIdle = 30 * time.Second // no output and no task change for this long → a "still working" tick
 )
 
 // runIteration runs one boxed command in batch mode, teeing its output to the
-// terminal while capturing the tail so a rate-limit notice can be detected.
-func (a *app) runIteration(repo, img string, cmd []string, sink io.Writer) (code int, output string, err error) {
+// terminal while capturing the tail so a rate-limit notice can be detected. hosts are the
+// queue files to watch for live task progress while the agent works.
+func (a *app) runIteration(repo, img string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10, last: time.Now()}
 	outW := []io.Writer{os.Stdout, tail}
 	errW := []io.Writer{os.Stderr, tail}
@@ -560,12 +561,12 @@ func (a *app) runIteration(repo, img string, cmd []string, sink io.Writer) (code
 		outW = append(outW, sink)
 		errW = append(errW, sink)
 	}
-	// On a TTY, tick a "still working" heartbeat whenever the agent goes quiet, so a long
-	// silent iteration (claude -p prints only its final message) never looks hung.
+	// On a TTY, watch the queue while the agent works so task progress shows live, with a
+	// "still working" fallback when it goes quiet (claude -p prints only its final message).
 	if ui.IsTerminal(os.Stderr) {
 		stop := make(chan struct{})
 		defer close(stop)
-		go heartbeat(tail, time.Now(), stop)
+		go monitorProgress(tail, hosts, time.Now(), stop)
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Batch: true,
@@ -576,19 +577,27 @@ func (a *app) runIteration(repo, img string, cmd []string, sink io.Writer) (code
 	return code, tail.String(), err
 }
 
-// heartbeat prints a dimmed "still working" line whenever the agent has been silent for
-// longer than heartbeatIdle, so a quiet iteration shows liveness instead of a frozen
-// screen. It returns when the iteration closes stop.
-func heartbeat(tail *tailWriter, start time.Time, stop <-chan struct{}) {
-	t := time.NewTicker(heartbeatTick)
+// monitorProgress watches the queue while an iteration runs and prints a line the moment a
+// task changes state — the agent rewrites TASKS.md as it works, so the count moves live even
+// though the agent itself stays silent until its final message. When nothing has moved and
+// the agent has gone quiet it falls back to a "still working" heartbeat, so a long step never
+// looks hung. It returns when the iteration closes stop.
+func monitorProgress(tail *tailWriter, hosts []string, start time.Time, stop <-chan struct{}) {
+	t := time.NewTicker(progressPoll)
 	defer t.Stop()
+	last, _ := queueProgress(hosts) // the iteration banner already printed this baseline
+	lastEvent := start
 	for {
 		select {
 		case <-stop:
 			return
 		case now := <-t.C:
-			if now.Sub(tail.lastWrite()) >= heartbeatIdle {
+			if c, active := queueProgress(hosts); c != last {
+				ui.Info("%s", progressLine(c, active))
+				last, lastEvent = c, now
+			} else if now.Sub(tail.lastWrite()) >= heartbeatIdle && now.Sub(lastEvent) >= heartbeatIdle {
 				ui.Info("…still working (%s elapsed)", now.Sub(start).Round(time.Second))
+				lastEvent = now
 			}
 		}
 	}

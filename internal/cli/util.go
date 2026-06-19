@@ -108,11 +108,11 @@ func queueProgress(hosts []string) (taskCounts, string) {
 	return total, active
 }
 
-// progressBanner is the loop's per-iteration status line: the iteration number, the
-// done/total task count (done greened when nonzero), a blocked tally only when there is
-// one, and the task being worked. Reusing the queue counts keeps it honest.
-func progressBanner(n int, c taskCounts, active string) string {
-	s := fmt.Sprintf("iteration %d · %s/%d done", n, paintCount(c.Done, ui.Green), c.total())
+// progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a
+// blocked tally only when there is one, and the task being worked. The loop prints it both
+// in the per-iteration banner and live, on its own, whenever a task changes state mid-run.
+func progressLine(c taskCounts, active string) string {
+	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.total())
 	if c.Blocked > 0 {
 		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
 	}
@@ -120,6 +120,12 @@ func progressBanner(n int, c taskCounts, active string) string {
 		s += " · now: " + truncate(active, 48)
 	}
 	return s
+}
+
+// progressBanner is progressLine prefixed with the iteration number, printed at the top of
+// each loop iteration.
+func progressBanner(n int, c taskCounts, active string) string {
+	return fmt.Sprintf("iteration %d · %s", n, progressLine(c, active))
 }
 
 // paintCount renders a count, applying paint only when it's nonzero so a zero stays
