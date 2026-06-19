@@ -96,7 +96,7 @@ func TestClaudeMCPConfig(t *testing.T) {
 	cleanCmdEnv(t)
 	dir := t.TempDir()
 	mcp := filepath.Join(dir, "mcp.json")
-	mustWrite(t, mcp, "{}")
+	mustWrite(t, mcp, `{"mcpServers":{"fs":{"command":"npx","args":["-y","server"]}}}`) // a declared server → MCP active
 	cfg := &config.Config{MCPFile: mcp, MCPInBox: "/home/node/.mcp.json"}
 	a, _ := Get("claude")
 	want := []string{"claude", "--dangerously-skip-permissions", "--mcp-config", "/home/node/.mcp.json"}

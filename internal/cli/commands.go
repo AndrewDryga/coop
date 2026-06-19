@@ -389,7 +389,29 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err := scaffold.Init(repo, stack, langs); err != nil {
 		return 0, err
 	}
-	return 0, scaffold.WriteCompose(repo, services)
+	if err := scaffold.WriteCompose(repo, services); err != nil {
+		return 0, err
+	}
+	return 0, a.writeMCPStub()
+}
+
+// writeMCPStub seeds an empty shared mcp.json — coop's one MCP source of truth, translated to
+// each agent — at the global config path if absent, so there's an obvious, correctly-shaped file
+// to drop servers into. An empty (no-server) file is inactive (see Config.MCPActive), so the stub
+// changes no run until you add a server. Never clobbers an existing config.
+func (a *app) writeMCPStub() error {
+	path := a.cfg.MCPFile
+	if path == "" || fileExists(path) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte("{\n  \"mcpServers\": {}\n}\n"), 0o600); err != nil {
+		return err
+	}
+	ui.Info("wrote %s — add MCP servers under \"mcpServers\" (shared across every agent)", path)
+	return nil
 }
 
 // parseServices reads a --services value (comma/space-separated) into known service names,

@@ -134,7 +134,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}()
 	var mcpMounts []extraMount
-	mcpPresent := spec.Homes && fileExists(cfg.MCPFile)
+	mcpPresent := spec.Homes && cfg.MCPActive()
 	if mcpPresent {
 		// Each agent's adapter says how it consumes the shared mcp.json (a generated
 		// config to mount, or none — claude reads it raw via --mcp-config, below).

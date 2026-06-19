@@ -20,6 +20,12 @@
   (Postgres + Redis) into every `.tool-versions` repo. At a terminal it asks which to add
   — none by default — or pass `--services postgres,redis`; a project that doesn't want a
   database isn't handed one. The file it writes carries only the services you picked.
+- **`coop init` seeds an empty `mcp.json`.** It writes an empty
+  `~/.config/coop/agents/mcp.json` (the shared MCP source of truth) so there's an obvious,
+  correctly-shaped file to declare servers in — no more hunting for the path or format. An
+  empty (no-server) `mcp.json` is now **inactive**, so the stub is a pure no-op until you
+  add a server: an existing config is never touched, and runs are unchanged until you fill
+  it in.
 
 - **A live progress bar.** On a terminal, `coop loop` pins a Docker-build-style status bar to
   the bottom of the screen while it runs — a spinner, a progress bar, the done/total task count,

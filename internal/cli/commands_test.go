@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -113,5 +117,46 @@ func TestParseServices(t *testing.T) {
 		if got := parseServices(c.in); !slices.Equal(got, c.want) {
 			t.Errorf("parseServices(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestWriteMCPStub(t *testing.T) {
+	mcp := filepath.Join(t.TempDir(), "agents", "mcp.json") // parent dir doesn't exist yet
+	a := &app{cfg: &config.Config{MCPFile: mcp}}
+
+	// Seeds an empty, well-shaped stub (creating the config dir) when absent.
+	if err := a.writeMCPStub(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(mcp)
+	if err != nil {
+		t.Fatalf("stub not written: %v", err)
+	}
+	var f struct {
+		MCPServers map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("stub is not valid JSON: %v\n%s", err, data)
+	}
+	if f.MCPServers == nil || len(f.MCPServers) != 0 {
+		t.Errorf("stub should carry an empty mcpServers object, got %v", f.MCPServers)
+	}
+	// The stub is inactive end-to-end — it must not flip MCP on for runs.
+	if a.cfg.MCPActive() {
+		t.Error("the empty stub must leave MCPActive false")
+	}
+
+	// Idempotent: a user's filled-in config is never clobbered.
+	os.WriteFile(mcp, []byte(`{"mcpServers":{"fs":{"command":"x"}}}`), 0o600)
+	if err := a.writeMCPStub(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(mcp); !strings.Contains(string(b), `"fs"`) {
+		t.Error("writeMCPStub clobbered an existing mcp.json")
+	}
+
+	// No MCPFile configured → a harmless no-op (tests build cfgs without one).
+	if err := (&app{cfg: &config.Config{}}).writeMCPStub(); err != nil {
+		t.Errorf("empty MCPFile should be a no-op, got %v", err)
 	}
 }

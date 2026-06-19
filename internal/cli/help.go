@@ -238,6 +238,8 @@ var commandHelp = map[string]string{
   Sibling services (db/redis) are opt-in: at a terminal it asks which to add as a
   compose.agent.yml — none by default, or pass --services. If the repo already has
   its own Docker and no Dockerfile.agent yet, it suggests how to build the box on it.
+  Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
+  inert until you add a server) so there's an obvious place to declare MCP servers.
   Never clobbers existing files.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.

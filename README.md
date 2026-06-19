@@ -482,11 +482,13 @@ agent's global instruction path.
 
 ### MCP servers, defined once
 
-Drop your MCP servers into `~/.config/coop/agents/mcp.json` (the standard
-`{ "mcpServers": { ... } }` shape) and all three agents pick them up:
+`coop init` seeds an empty `~/.config/coop/agents/mcp.json` (the standard
+`{ "mcpServers": { ... } }` shape). An empty one wires up nothing, so drop your servers
+in and all three agents pick them up:
 
 ```bash
-cp agents/mcp.json.example ~/.config/coop/agents/mcp.json   # then edit
+$EDITOR ~/.config/coop/agents/mcp.json                      # the stub coop init wrote
+cp agents/mcp.json.example ~/.config/coop/agents/mcp.json   # …or start from the example
 ```
 
 `coop` wires that one file into each agent's native mechanism on launch: Claude via

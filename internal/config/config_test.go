@@ -160,8 +160,9 @@ func TestCommandQuoting(t *testing.T) {
 	}
 }
 
-// MCPActive flips on when an mcp.json exists (the claude adapter turns it into
-// --mcp-config; gemini/codex get generated config files in box.Run).
+// MCPActive flips on only when mcp.json declares at least one server (the claude adapter turns
+// it into --mcp-config; gemini/codex get generated config files in box.Run). An absent, empty,
+// or malformed file is inactive — so the empty stub `coop init` scaffolds is a pure no-op.
 func TestMCPActive(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -169,10 +170,22 @@ func TestMCPActive(t *testing.T) {
 		t.Error("MCPActive should be false with no mcp.json")
 	}
 	mcp := filepath.Join(t.TempDir(), "mcp.json")
-	os.WriteFile(mcp, []byte(`{"mcpServers":{}}`), 0o644)
 	t.Setenv("COOP_MCP_FILE", mcp)
+
+	// The scaffolded stub (no servers) must stay inactive.
+	os.WriteFile(mcp, []byte("{\n  \"mcpServers\": {}\n}\n"), 0o644)
+	if Load().MCPActive() {
+		t.Error("an empty (no-server) mcp.json must be inactive")
+	}
+	// Malformed → inactive (a broken file never trips MCP wiring).
+	os.WriteFile(mcp, []byte("{ not json"), 0o644)
+	if Load().MCPActive() {
+		t.Error("a malformed mcp.json must be inactive")
+	}
+	// At least one server → active.
+	os.WriteFile(mcp, []byte(`{"mcpServers":{"fs":{"command":"npx","args":["-y","server"]}}}`), 0o644)
 	if !Load().MCPActive() {
-		t.Error("MCPActive should be true with an mcp.json")
+		t.Error("MCPActive should be true once a server is declared")
 	}
 }
 

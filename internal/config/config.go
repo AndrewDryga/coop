@@ -5,6 +5,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -257,8 +258,22 @@ func (c *Config) Profiles(agent string) []string {
 	return names
 }
 
-// MCPActive reports whether a shared mcp.json exists, so an agent should be wired to it.
-func (c *Config) MCPActive() bool { return fileExists(c.MCPFile) }
+// MCPActive reports whether the shared mcp.json declares at least one server, so an agent
+// should be wired to it. An absent, unparseable, or empty (no-server) file is inactive — so a
+// scaffolded stub stays a pure no-op until you add a server.
+func (c *Config) MCPActive() bool {
+	data, err := os.ReadFile(c.MCPFile)
+	if err != nil {
+		return false
+	}
+	var f struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		return false
+	}
+	return len(f.MCPServers) > 0
+}
 
 func xdgConfigHome() string {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
@@ -345,14 +360,6 @@ func shellSplit(s string) []string {
 		return nil
 	}
 	return args
-}
-
-func fileExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
 }
 
 func dirExists(path string) bool {
