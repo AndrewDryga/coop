@@ -355,6 +355,8 @@ func (a *app) cmdDown(args []string) (int, error) {
 
 func (a *app) cmdInit(args []string) (int, error) {
 	stack := ""
+	var services []string
+	servicesSet := false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--stack" && i+1 < len(args):
@@ -362,6 +364,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 			i++
 		case strings.HasPrefix(args[i], "--stack="):
 			stack = strings.TrimPrefix(args[i], "--stack=")
+		case args[i] == "--services" && i+1 < len(args):
+			services, servicesSet = parseServices(args[i+1]), true
+			i++
+		case strings.HasPrefix(args[i], "--services="):
+			services, servicesSet = parseServices(strings.TrimPrefix(args[i], "--services=")), true
 		}
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -374,7 +381,45 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if len(langs) == 0 && ui.IsTerminal(os.Stdin) {
 		langs = promptGateLangs(os.Stdin)
 	}
-	return 0, scaffold.Init(repo, stack, langs)
+	// Sibling services (db/redis) are opt-in — coop doesn't add a compose file a project may
+	// not want. Ask at a terminal unless --services already said.
+	if !servicesSet && ui.IsTerminal(os.Stdin) {
+		services = promptServices(os.Stdin)
+	}
+	if err := scaffold.Init(repo, stack, langs); err != nil {
+		return 0, err
+	}
+	return 0, scaffold.WriteCompose(repo, services)
+}
+
+// parseServices reads a --services value (comma/space-separated) into known service names,
+// dropping blanks, "none", and unknowns.
+func parseServices(s string) []string {
+	var out []string
+	for _, tok := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return r == ',' || r == ' ' }) {
+		if tok != "none" && slices.Contains(scaffold.ComposeServices, tok) && !slices.Contains(out, tok) {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// promptServices asks (on a tty) which sibling services to scaffold into compose.agent.yml.
+// Blank → none (coop adds no db/redis you didn't ask for); unknown tokens are ignored.
+func promptServices(in io.Reader) []string {
+	fmt.Fprintf(os.Stderr, "add sibling services for the box? [%s] (space-separated, blank for none): ",
+		strings.Join(scaffold.ComposeServices, " "))
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return nil
+	}
+	var chosen []string
+	for _, tok := range strings.Fields(strings.ToLower(sc.Text())) {
+		if slices.Contains(scaffold.ComposeServices, tok) && !slices.Contains(chosen, tok) {
+			chosen = append(chosen, tok)
+		}
+	}
+	return chosen
 }
 
 // promptGateLangs asks (on a tty) which commit format gate(s) to scaffold when coop couldn't

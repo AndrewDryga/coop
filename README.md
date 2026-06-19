@@ -726,7 +726,7 @@ baked, fully-reproducible image instead, `coop init --stack asdf` scaffolds an a
 ### `Dockerfile.agent` — a per-project image
 
 ```bash
-coop init --stack asdf   # writes an asdf Dockerfile.agent (from .tool-versions) + compose.agent.yml
+coop init --stack asdf   # writes an asdf Dockerfile.agent (from .tool-versions)
 coop build               # builds it, tagged coop-<repo-name> — its own image
 ```
 
@@ -787,6 +787,9 @@ shadowing and the box are what Coop adds on top.
 </details>
 
 ### Services
+
+Sibling services are opt-in: `coop init` asks which to add (or pass
+`--services postgres,redis`), scaffolding a `compose.agent.yml` — none by default.
 
 ```bash
 coop up        # starts Postgres + Redis from compose.agent.yml, waits until healthy

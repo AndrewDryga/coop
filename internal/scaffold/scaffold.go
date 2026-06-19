@@ -106,16 +106,10 @@ func Init(repo, stack string, gateLangs []string) error {
 		if err := s.writeIfAbsent(filepath.Join(repo, "Dockerfile.agent"), "templates/dockerfile/asdf", 0o644); err != nil {
 			return err
 		}
-		if err := s.writeIfAbsent(filepath.Join(repo, "compose.agent.yml"), "templates/compose.agent.yml", 0o644); err != nil {
-			return err
-		}
-		ui.Info("asdf stack: review Dockerfile.agent, then 'coop build' and 'coop up'")
+		ui.Info("asdf stack: review Dockerfile.agent, then 'coop build'")
 	}
 
 	ui.Info("scaffolded AGENTS.md, .agent/, .claude/ hooks, and workflow skills into %s", repo)
-	if stack != "" {
-		ui.Info("then: coop up && agent   (db/redis reachable in the box)")
-	}
 	ui.Info("edit .agent/TASKS.md, then run 'coop loop'")
 	// If the repo already has Docker and no Dockerfile.agent yet, suggest (docs only)
 	// basing the box on it + reusing its services.

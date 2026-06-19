@@ -227,16 +227,17 @@ var commandHelp = map[string]string{
 
 	"init": `coop init [--stack asdf] — scaffold coop's working set into the repo.
 
-  Usage: coop init [--stack asdf]
+  Usage: coop init [--stack asdf] [--services postgres,redis]
 
   Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, and the
   workflow skills. The commit hooks' format gate matches the repo's stack —
   detected from go.mod / *.tf / mix.exs / Cargo.toml or .tool-versions (gofmt,
   terraform fmt, mix format, cargo fmt). With nothing detected the gate is left
   neutral (it imposes no checks); at a terminal it asks which gate to add. A
-  .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent +
-  compose.agent.yml; if the repo already has its own Docker (a Dockerfile or
-  compose) and no Dockerfile.agent yet, it suggests how to build the box on it.
+  .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent.
+  Sibling services (db/redis) are opt-in: at a terminal it asks which to add as a
+  compose.agent.yml — none by default, or pass --services. If the repo already has
+  its own Docker and no Dockerfile.agent yet, it suggests how to build the box on it.
   Never clobbers existing files.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.

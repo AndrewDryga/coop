@@ -179,7 +179,8 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 }
 
 func TestInitStack(t *testing.T) {
-	// --stack asdf with a .tool-versions → the asdf Dockerfile.agent + compose.
+	// --stack asdf with a .tool-versions → the asdf Dockerfile.agent (NOT compose: sibling
+	// services are opt-in via `coop init`'s prompt / --services, so Init never adds db/redis).
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("golang 1.26.4\n"), 0o644)
 	if err := Init(repo, "asdf", nil); err != nil {
@@ -189,8 +190,8 @@ func TestInitStack(t *testing.T) {
 	if err != nil || !strings.Contains(string(df), "asdf install") {
 		t.Errorf("asdf stack Dockerfile.agent missing or wrong:\n%s", df)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "compose.agent.yml")); err != nil {
-		t.Errorf("compose.agent.yml missing: %v", err)
+	if _, err := os.Stat(filepath.Join(repo, "compose.agent.yml")); err == nil {
+		t.Error("Init must not scaffold compose.agent.yml — sibling services are opt-in")
 	}
 
 	// A removed per-language stack is now an error pointing at .tool-versions.

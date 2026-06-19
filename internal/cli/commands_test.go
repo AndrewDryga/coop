@@ -94,3 +94,24 @@ func TestExtractConsult(t *testing.T) {
 		}
 	}
 }
+
+func TestParseServices(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"none", nil},
+		{"postgres", []string{"postgres"}},
+		{"postgres,redis", []string{"postgres", "redis"}},
+		{"redis postgres", []string{"redis", "postgres"}}, // input order preserved
+		{"postgres,postgres", []string{"postgres"}},       // de-duped
+		{"mongo", nil}, // unknown dropped
+		{"postgres,mongo", []string{"postgres"}},
+	}
+	for _, c := range cases {
+		if got := parseServices(c.in); !slices.Equal(got, c.want) {
+			t.Errorf("parseServices(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

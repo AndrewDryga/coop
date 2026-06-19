@@ -16,6 +16,10 @@
   CLIs + a `node` user) to add on top — and how to reuse the compose services for `coop
   up`. Docs only: it lists the Dockerfiles, the compose services it found, and a ready
   snippet, but writes nothing.
+- **Sibling services are opt-in.** `coop init` no longer drops a `compose.agent.yml`
+  (Postgres + Redis) into every `.tool-versions` repo. At a terminal it asks which to add
+  — none by default — or pass `--services postgres,redis`; a project that doesn't want a
+  database isn't handed one. The file it writes carries only the services you picked.
 
 - **A live progress bar.** On a terminal, `coop loop` pins a Docker-build-style status bar to
   the bottom of the screen while it runs — a spinner, a progress bar, the done/total task count,
