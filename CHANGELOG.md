@@ -2,6 +2,15 @@
 
 ## 2.6.0
 
+- **`coop init` scaffolds a commit gate that matches the repo's stack.** The pre-commit
+  hook (and the Claude commit gate) used to hardcode a `gofmt` check — so a Terraform or
+  Elixir repo got a dead Go gate and no gate for the language it actually uses. Now `coop
+  init` detects the stack from go.mod / `*.tf` / mix.exs / Cargo.toml (or `.tool-versions`)
+  and generates the matching format check: `gofmt`, `terraform fmt`, `mix format`, or
+  `cargo fmt` — each `command -v`-guarded so it runs in the box and skips where the tool
+  is absent. If it can't detect anything it leaves the gate **neutral** (no checks
+  imposed) rather than guessing; at a terminal it asks which gate to add.
+
 - **A live progress bar.** On a terminal, `coop loop` pins a Docker-build-style status bar to
   the bottom of the screen while it runs — a spinner, a progress bar, the done/total task count,
   the task in flight, and elapsed time — and the agent's activity scrolls above it. The bar

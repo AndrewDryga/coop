@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -367,7 +368,31 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	return 0, scaffold.Init(repo, stack)
+	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
+	// terminal, ask rather than guess — coop never imposes a check the repo doesn't use.
+	langs := scaffold.DetectStacks(repo)
+	if len(langs) == 0 && ui.IsTerminal(os.Stdin) {
+		langs = promptGateLangs(os.Stdin)
+	}
+	return 0, scaffold.Init(repo, stack, langs)
+}
+
+// promptGateLangs asks (on a tty) which commit format gate(s) to scaffold when coop couldn't
+// detect a stack. Blank → none; unknown tokens are ignored. Reads one line from in.
+func promptGateLangs(in io.Reader) []string {
+	fmt.Fprintf(os.Stderr, "no stack detected — add a commit format gate? [%s] (space-separated, blank for none): ",
+		strings.Join(scaffold.GateLangs, " "))
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return nil
+	}
+	var chosen []string
+	for _, tok := range strings.Fields(strings.ToLower(sc.Text())) {
+		if slices.Contains(scaffold.GateLangs, tok) && !slices.Contains(chosen, tok) {
+			chosen = append(chosen, tok)
+		}
+	}
+	return chosen
 }
 
 // loopAgent picks the model for `coop loop [claude|codex|gemini]` (default claude),

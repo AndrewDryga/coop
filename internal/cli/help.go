@@ -226,8 +226,12 @@ var commandHelp = map[string]string{
   Usage: coop init [--stack asdf]
 
   Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, and the
-  workflow skills. A .tool-versions (or --stack asdf) also scaffolds an asdf
-  Dockerfile.agent + compose.agent.yml. Never clobbers existing files.`,
+  workflow skills. The commit hooks' format gate matches the repo's stack —
+  detected from go.mod / *.tf / mix.exs / Cargo.toml or .tool-versions (gofmt,
+  terraform fmt, mix format, cargo fmt). With nothing detected the gate is left
+  neutral (it imposes no checks); at a terminal it asks which gate to add. A
+  .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent +
+  compose.agent.yml. Never clobbers existing files.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 

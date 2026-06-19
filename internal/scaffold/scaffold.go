@@ -21,9 +21,10 @@ var templates embed.FS
 
 // Init scaffolds the working set into repo. The toolchain is driven by
 // .tool-versions: with no --stack a present .tool-versions auto-scaffolds the asdf
-// Dockerfile.agent (+ compose file); `--stack asdf` forces it. Existing files are
-// never clobbered.
-func Init(repo, stack string) error {
+// Dockerfile.agent (+ compose file); `--stack asdf` forces it. gateLangs are the stacks
+// the commit hooks check (from DetectStacks, or the caller's interactive prompt); empty
+// means a neutral gate. Existing files are never clobbered.
+func Init(repo, stack string, gateLangs []string) error {
 	s := &scaffolder{repo: repo}
 	if err := mkdirs(
 		filepath.Join(repo, ".agent", "rules"),
@@ -47,7 +48,7 @@ func Init(repo, stack string) error {
 		{filepath.Join(repo, ".agent", "IDEAS.md"), "templates/agent/IDEAS.md", 0o644},
 		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
 		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
-		{filepath.Join(repo, ".claude", "hooks", "commit-gate.sh"), "templates/claude/hooks/commit-gate.sh", 0o755},
+		// commit-gate.sh is generated per-stack in installGitHooks, not copied verbatim.
 	}
 	for _, f := range files {
 		if err := s.writeIfAbsent(f.dest, f.src, f.perm); err != nil {
@@ -77,7 +78,7 @@ func Init(repo, stack string) error {
 	if err := s.updateGitignore(); err != nil {
 		return err
 	}
-	if err := s.installGitHooks(); err != nil {
+	if err := s.installGitHooks(gateLangs); err != nil {
 		return err
 	}
 
@@ -147,6 +148,23 @@ func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) err
 	return nil
 }
 
+// writeContentIfAbsent writes generated content to dest (like writeIfAbsent, but from a
+// string rather than an embedded template), never clobbering an existing file.
+func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode) error {
+	if _, err := os.Lstat(dest); err == nil {
+		ui.Info("kept existing %s", filepath.Base(dest))
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, []byte(content), perm); err != nil {
+		return err
+	}
+	ui.Info("wrote %s", s.rel(dest))
+	return nil
+}
+
 // linkIfAbsent creates a symlink, replacing an existing symlink but never a real
 // file (which usually holds content a symlink would silently destroy).
 func (s *scaffolder) linkIfAbsent(target, link string) error {
@@ -187,13 +205,21 @@ func (s *scaffolder) copySkills() error {
 	return nil
 }
 
-// installGitHooks writes a tracked .githooks/pre-commit gate and points git at it via
-// core.hooksPath, so the format gate runs for every committer — Codex, Gemini, and a
-// plain `git commit` — not just Claude's hooks. Tracked + core.hooksPath means a fresh
-// clone gets it with no .git/hooks copying. A user's custom hooksPath is never clobbered.
-func (s *scaffolder) installGitHooks() error {
-	hook := filepath.Join(s.repo, ".githooks", "pre-commit")
-	if err := s.writeIfAbsent(hook, "templates/githooks/pre-commit", 0o755); err != nil {
+// installGitHooks generates the tracked .githooks/pre-commit gate (every committer — Codex,
+// Gemini, a plain `git commit`) and the .claude/hooks/commit-gate.sh (Claude), each carrying
+// the format checks for the repo's detected stacks (langs), then points git at .githooks via
+// core.hooksPath. A repo with no detected stack gets a neutral gate — coop never imposes a
+// check it doesn't use. A user's custom hooksPath is never clobbered.
+func (s *scaffolder) installGitHooks(langs []string) error {
+	if len(langs) > 0 {
+		ui.Info("commit gate: %s", strings.Join(langs, ", "))
+	} else {
+		ui.Info("commit gate: no language detected — left neutral (edit .githooks/pre-commit to add checks)")
+	}
+	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".githooks", "pre-commit"), preCommitHook(langs), 0o755); err != nil {
+		return err
+	}
+	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".claude", "hooks", "commit-gate.sh"), claudeCommitGate(langs), 0o755); err != nil {
 		return err
 	}
 	if !gitRepo(s.repo) {

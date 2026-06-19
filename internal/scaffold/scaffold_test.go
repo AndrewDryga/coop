@@ -42,7 +42,7 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	repo := t.TempDir()
-	if err := Init(repo, ""); err != nil {
+	if err := Init(repo, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,7 +115,7 @@ func TestInitGitHooks(t *testing.T) {
 	// A fresh repo gets core.hooksPath pointed at the tracked, executable hook.
 	repo := t.TempDir()
 	gitInit(repo)
-	if err := Init(repo, ""); err != nil {
+	if err := Init(repo, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := gitConfigGet(repo, "core.hooksPath"); got != ".githooks" {
@@ -133,7 +133,7 @@ func TestInitGitHooks(t *testing.T) {
 	if err := gitConfigSet(repo2, "core.hooksPath", ".my-hooks"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Init(repo2, ""); err != nil {
+	if err := Init(repo2, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := gitConfigGet(repo2, "core.hooksPath"); got != ".my-hooks" {
@@ -143,13 +143,13 @@ func TestInitGitHooks(t *testing.T) {
 
 func TestInitIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	if err := Init(repo, ""); err != nil {
+	if err := Init(repo, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// Edit a file, then re-init: it must be kept, not overwritten.
 	tasks := filepath.Join(repo, ".agent/TASKS.md")
 	os.WriteFile(tasks, []byte("MY EDITS"), 0o644)
-	if err := Init(repo, ""); err != nil {
+	if err := Init(repo, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(tasks); string(b) != "MY EDITS" {
@@ -167,7 +167,7 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 	// A real CLAUDE.md (not a symlink) must survive init untouched.
 	real := filepath.Join(repo, "CLAUDE.md")
 	os.WriteFile(real, []byte("# my project rules"), 0o644)
-	if err := Init(repo, ""); err != nil {
+	if err := Init(repo, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Readlink(real); err == nil {
@@ -182,7 +182,7 @@ func TestInitStack(t *testing.T) {
 	// --stack asdf with a .tool-versions → the asdf Dockerfile.agent + compose.
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("golang 1.26.4\n"), 0o644)
-	if err := Init(repo, "asdf"); err != nil {
+	if err := Init(repo, "asdf", nil); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
@@ -194,12 +194,12 @@ func TestInitStack(t *testing.T) {
 	}
 
 	// A removed per-language stack is now an error pointing at .tool-versions.
-	if err := Init(t.TempDir(), "go"); err == nil {
+	if err := Init(t.TempDir(), "go", nil); err == nil {
 		t.Error("--stack go should error now that language stacks are gone")
 	}
 
 	// --stack asdf without a .tool-versions is an error (nothing to install from).
-	if err := Init(t.TempDir(), "asdf"); err == nil {
+	if err := Init(t.TempDir(), "asdf", nil); err == nil {
 		t.Error("--stack asdf without a .tool-versions should error")
 	}
 }
@@ -209,7 +209,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	// installs straight from it.
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("erlang 29.0.1\nelixir 1.20.0-otp-29\ngolang 1.26.4\n"), 0o644)
-	if err := Init(repo, ""); err != nil {
+	if err := Init(repo, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
@@ -224,7 +224,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 
 	// No --stack and no .tool-versions → no Dockerfile is scaffolded.
 	repo2 := t.TempDir()
-	if err := Init(repo2, ""); err != nil {
+	if err := Init(repo2, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(repo2, "Dockerfile.agent")); !os.IsNotExist(err) {
@@ -235,7 +235,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	// the bad flag is surfaced rather than silently using .tool-versions.
 	repo3 := t.TempDir()
 	os.WriteFile(filepath.Join(repo3, ".tool-versions"), []byte("elixir 1.20.0-otp-29\n"), 0o644)
-	if err := Init(repo3, "python"); err == nil {
+	if err := Init(repo3, "python", nil); err == nil {
 		t.Error("--stack python should error regardless of .tool-versions")
 	}
 }
