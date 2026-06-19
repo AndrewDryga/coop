@@ -63,8 +63,8 @@ func helpText(cfg *config.Config) string {
 	group("UNATTENDED")
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
 	row("coop pool add <agent> <profile…>", "pick which subscriptions the loop rotates on a rate limit")
-	row("coop fleet init|up|down|split", "drive a fleet of forks from .agent/fleet")
-	row("coop status", "fleet roll-up: per-fork progress, running/idle, blockers")
+	row("coop fleet init|up|down|split|watch", "drive a fleet of forks from .agent/fleet")
+	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
 	row("coop tasks list|lint|add|split", "inspect/validate the queue(s) (--tasks, COOP_TASKS)")
 
 	group("SETUP & MAINTENANCE")
@@ -149,21 +149,23 @@ var commandHelp = map[string]string{
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
 
-  Usage: coop fleet <init|up|down|split>
+  Usage: coop fleet <init|up|down|split|watch>
 
   init       write a .agent/fleet template
   up         start every fork in the fleet, looping its tasks, detached
   down       stop the fleet's running loops
   split <n>  split .agent/TASKS.md into n fork slices, then write .agent/fleet
+  watch      live dashboard: every fork's progress, refreshing (Ctrl-C to exit)
 
-  List forks: coop fork ls    Watch: coop status`,
+  List forks: coop fork ls`,
 
 	"status": `coop status — fleet roll-up: where every fork stands, without tailing N logs.
 
-  Usage: coop status
+  Usage: coop status [--watch]
 
   Per fork: running/idle, tasks done/total, blockers, diff size, and the task
-  it's on — plus fleet totals. Reads queues, git, and loop state; no daemon.`,
+  it's on — plus fleet totals. Reads queues, git, and loop state; no daemon.
+  --watch (-w) refreshes it live as a dashboard (same as 'coop fleet watch').`,
 
 	"tasks": `coop tasks — inspect and validate the task queue(s).
 

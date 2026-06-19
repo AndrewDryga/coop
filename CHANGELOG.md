@@ -13,6 +13,11 @@
   Claude's stream-json output. Multi-subscription failover keeps working underneath (the
   structured rate-limit signal is translated for the detector). Other agents, a custom
   `COOP_LOOP_CMD`, and piped/CI runs keep plain text output.
+- **Watch the whole fleet.** `coop fleet watch` (or `coop status --watch`) turns the fleet
+  roll-up into a live dashboard — one row per fork with a spinner, a progress bar, the task in
+  flight, and its last log line, plus a global progress bar across every fork's tasks — refreshing
+  in place. It polls the same queue/log/pidfiles `coop status` reads (no daemon); Ctrl-C exits.
+  A non-terminal falls back to a single `coop status` snapshot.
 - **Multi-subscription failover for the loop.** One agent can now hold several accounts
   as named profiles — `coop login claude --profile work` — and when the unattended loop
   hits a rate/usage limit it switches to another signed-in profile and keeps going, only

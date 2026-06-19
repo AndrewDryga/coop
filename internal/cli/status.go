@@ -86,6 +86,11 @@ func (s forkStatus) activeCell() string {
 // cmdStatus rolls up the fleet: one progress line per fork plus totals, so an overnight
 // run can be checked at a glance without tailing N logs.
 func (a *app) cmdStatus(args []string) (int, error) {
+	for _, x := range args {
+		if x == "--watch" || x == "-w" {
+			return a.fleetWatch() // live, refreshing dashboard (alias for `coop fleet watch`)
+		}
+	}
 	if err := rejectArgs("status", args); err != nil {
 		return 2, err
 	}

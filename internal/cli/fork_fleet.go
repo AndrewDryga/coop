@@ -76,9 +76,11 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		return a.fleetDown()
 	case "split":
 		return a.fleetSplit(args[1:])
+	case "watch":
+		return a.fleetWatch()
 	default:
 		// `ls` was a pure alias for `coop fork ls`; point there instead of duplicating.
-		return 2, errors.New("usage: coop fleet init|up|down|split   (list forks with 'coop fork ls')")
+		return 2, errors.New("usage: coop fleet init|up|down|split|watch   (list forks with 'coop fork ls')")
 	}
 }
 
