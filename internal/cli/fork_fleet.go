@@ -71,9 +71,9 @@ func (a *app) cmdFleet(args []string) (int, error) {
 	case "init":
 		return a.fleetInit()
 	case "up":
-		return a.fleetUp()
+		return a.fleetUp(args[1:])
 	case "down":
-		return a.fleetDown()
+		return a.fleetDown(args[1:])
 	case "split":
 		return a.fleetSplit(args[1:])
 	case "watch":
@@ -119,7 +119,11 @@ func (a *app) fleetInit() (int, error) {
 	return 0, nil
 }
 
-func (a *app) fleetUp() (int, error) {
+func (a *app) fleetUp(args []string) (int, error) {
+	prune, force, err := parseFleetActionFlags("up", args)
+	if err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -139,10 +143,19 @@ func (a *app) fleetUp() (int, error) {
 		}
 	}
 	ui.Info("fleet up: %d fork(s) detached — coop fork ls · coop fork logs -f", len(fleet))
+	if prune {
+		if err := a.pruneFleet(repo, force); err != nil {
+			return -1, err
+		}
+	}
 	return 0, nil
 }
 
-func (a *app) fleetDown() (int, error) {
+func (a *app) fleetDown(args []string) (int, error) {
+	prune, force, err := parseFleetActionFlags("down", args)
+	if err != nil {
+		return 2, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -160,7 +173,31 @@ func (a *app) fleetDown() (int, error) {
 		}
 	}
 	ui.Info("fleet down: stopped %d", stopped)
+	if prune {
+		if err := a.pruneFleet(repo, force); err != nil {
+			return -1, err
+		}
+	}
 	return 0, nil
+}
+
+// parseFleetActionFlags parses the optional --prune (and --force, which applies to that prune)
+// on `coop fleet up`/`down`. cmd is "up"/"down", for the usage message.
+func parseFleetActionFlags(cmd string, args []string) (prune, force bool, err error) {
+	for _, x := range args {
+		switch x {
+		case "--prune":
+			prune = true
+		case "--force", "-f":
+			force = true
+		default:
+			return false, false, fmt.Errorf("coop fleet %s: unknown flag %q (usage: coop fleet %s [--prune [--force]])", cmd, x, cmd)
+		}
+	}
+	if force && !prune {
+		return false, false, fmt.Errorf("coop fleet %s: --force only applies with --prune", cmd)
+	}
+	return prune, force, nil
 }
 
 // fleetOrphans returns the forks not named in the fleet — the cleanup candidates for prune.
@@ -178,10 +215,7 @@ func fleetOrphans(fleetNames, forkNames []string) []string {
 	return orphans
 }
 
-// fleetPrune removes forks no longer listed in .agent/fleet — the cleanup for after you edit
-// the fleet file. It honors the same guard as `coop fork rm`: a fork with uncommitted or
-// unmerged work is kept unless --force, and a running fork is always kept (stop it first). So
-// the safe path can never silently drop an agent's work.
+// fleetPrune is `coop fleet prune [--force]` — the cleanup for after you edit .agent/fleet.
 func (a *app) fleetPrune(args []string) (int, error) {
 	force := false
 	for _, x := range args {
@@ -196,9 +230,20 @@ func (a *app) fleetPrune(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	fleet, err := a.loadFleet(repo) // prune needs the fleet file to know which forks to keep
-	if err != nil {
+	if err := a.pruneFleet(repo, force); err != nil {
 		return -1, err
+	}
+	return 0, nil
+}
+
+// pruneFleet removes forks no longer listed in .agent/fleet. It honors the same guard as `coop
+// fork rm`: a fork with uncommitted or unmerged work is kept unless force, and a running fork is
+// always kept (stop it first), so the safe path can never silently drop an agent's work. Shared
+// by `coop fleet prune` and the --prune flag on `coop fleet up`/`down`.
+func (a *app) pruneFleet(repo string, force bool) error {
+	fleet, err := a.loadFleet(repo) // need the fleet file to know which forks to keep
+	if err != nil {
+		return err
 	}
 	names := make([]string, len(fleet))
 	for i, e := range fleet {
@@ -207,9 +252,8 @@ func (a *app) fleetPrune(args []string) (int, error) {
 	orphans := fleetOrphans(names, forkNames(repo))
 	if len(orphans) == 0 {
 		ui.Info("nothing to prune — every fork is in .agent/fleet")
-		return 0, nil
+		return nil
 	}
-
 	removed, kept := 0, 0
 	for _, n := range orphans {
 		if forkRunningPid(repo, n) != 0 {
@@ -236,7 +280,7 @@ func (a *app) fleetPrune(args []string) (int, error) {
 	} else {
 		ui.Info("pruned %d fork(s)", removed)
 	}
-	return 0, nil
+	return nil
 }
 
 // fleetSplit mechanically round-robins the unchecked items in .agent/TASKS.md into

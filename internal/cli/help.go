@@ -161,6 +161,8 @@ var commandHelp = map[string]string{
   prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
                  unmerged — pass --force to remove those too)
 
+  up and down take --prune (with optional --force) to prune in the same step.
+
   List forks: coop fork ls`,
 
 	"status": `coop status — fleet roll-up: where every fork stands, without tailing N logs.

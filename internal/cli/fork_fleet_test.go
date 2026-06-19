@@ -191,3 +191,28 @@ func TestFleetSplit(t *testing.T) {
 		t.Errorf("written .agent/fleet does not parse back: %v (%d entries)", err, len(parsed))
 	}
 }
+
+func TestParseFleetActionFlags(t *testing.T) {
+	cases := []struct {
+		args         []string
+		prune, force bool
+		err          bool
+	}{
+		{nil, false, false, false},
+		{[]string{"--prune"}, true, false, false},
+		{[]string{"--prune", "--force"}, true, true, false},
+		{[]string{"--prune", "-f"}, true, true, false},
+		{[]string{"--force"}, false, false, true}, // --force is meaningless without --prune
+		{[]string{"--bogus"}, false, false, true}, // unknown flag
+	}
+	for _, c := range cases {
+		prune, force, err := parseFleetActionFlags("up", c.args)
+		if (err != nil) != c.err {
+			t.Errorf("%v: err=%v, want err=%v", c.args, err, c.err)
+			continue
+		}
+		if err == nil && (prune != c.prune || force != c.force) {
+			t.Errorf("%v: prune=%v force=%v, want %v/%v", c.args, prune, force, c.prune, c.force)
+		}
+	}
+}
