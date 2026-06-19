@@ -65,6 +65,19 @@ func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
 }
 
+// CountByLabel returns how many running containers carry the label key=value.
+func (r Runtime) CountByLabel(key, value string) int {
+	out, err := exec.Command(r.Name, "ps", "-q", "--filter", "label="+key+"="+value).Output()
+	if err != nil {
+		return 0
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return 0
+	}
+	return len(strings.Split(trimmed, "\n"))
+}
+
 // KillByLabel sends SIGKILL to every running container whose label matches
 // key=value. Returns the number of containers killed.
 func (r Runtime) KillByLabel(key, value string) int {

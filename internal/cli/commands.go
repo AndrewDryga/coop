@@ -260,7 +260,8 @@ func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
-	if err := rejectArgs("build", args); err != nil {
+	restart, err := parseRestart("build", args)
+	if err != nil {
 		return 2, err
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -270,17 +271,45 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, false); err != nil {
 		return -1, err
 	}
-	if n := a.rt.KillByLabel("coop", "box"); n > 0 {
-		ui.Info("killed %d running container(s) — new sessions will use the updated image", n)
-	}
+	a.recycleBoxes("build", restart)
 	return 0, nil
+}
+
+// parseRestart accepts only an optional --restart flag for build/update.
+func parseRestart(cmd string, args []string) (bool, error) {
+	restart := false
+	for _, arg := range args {
+		if arg == "--restart" {
+			restart = true
+			continue
+		}
+		return false, fmt.Errorf("coop %s: unexpected argument %q — see 'coop %s --help'", cmd, arg, cmd)
+	}
+	return restart, nil
+}
+
+// recycleBoxes handles already-running boxes after a rebuild. New runs always use
+// the freshly-built image (containers are anonymous, so nothing collides), so by
+// default we leave running sessions alone — SIGKILLing them would, for example,
+// drop a live editor ACP session (exit 137). --restart opts into recycling them.
+func (a *app) recycleBoxes(cmd string, restart bool) {
+	if restart {
+		if n := a.rt.KillByLabel("coop", "box"); n > 0 {
+			ui.Info("recycled %d running container(s) onto the new image", n)
+		}
+		return
+	}
+	if n := a.rt.CountByLabel("coop", "box"); n > 0 {
+		ui.Info("%d running container(s) still use the previous image — they switch on next start (run `coop %s --restart` to recycle now)", n, cmd)
+	}
 }
 
 // cmdUpdate force-rebuilds the box image (--pull --no-cache) so the base image
 // and the npm-installed agent CLIs + ACP adapters refresh to their latest, then
 // reports the versions it landed on. ACP/agent packages ship features often.
 func (a *app) cmdUpdate(args []string) (int, error) {
-	if err := rejectArgs("update", args); err != nil {
+	restart, err := parseRestart("update", args)
+	if err != nil {
 		return 2, err
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -291,9 +320,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, true); err != nil {
 		return -1, err
 	}
-	if n := a.rt.KillByLabel("coop", "box"); n > 0 {
-		ui.Info("killed %d running container(s) — new sessions use the updated image", n)
-	}
+	a.recycleBoxes("update", restart)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	ui.Info("installed versions:")
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{

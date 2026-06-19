@@ -251,18 +251,23 @@ var commandHelp = map[string]string{
 
 	"build": `coop build — build the box image (stable, pinned).
 
-  Usage: coop build
+  Usage: coop build [--restart]
 
   Builds the shared base, or a per-project image if the repo has a
   Dockerfile.agent — pinning versions for reproducibility. Re-run after
-  changing Dockerfile.agent or .tool-versions. For the latest, use coop update.`,
+  changing Dockerfile.agent or .tool-versions. For the latest, use coop update.
+
+  New runs use the fresh image automatically. Already-running boxes (a loop, a
+  fork, an editor ACP session) keep the old image until restarted; --restart
+  recycles them now (SIGKILL — it will drop a live ACP session).`,
 
 	"update": `coop update — rebuild the box image fresh, to the latest base + agents.
 
-  Usage: coop update
+  Usage: coop update [--restart]
 
   Like coop build but --pull --no-cache and unpinned, so you get the newest
-  node base and agent CLIs. Use coop build for a reproducible image.`,
+  node base and agent CLIs. Use coop build for a reproducible image.
+  --restart recycles already-running boxes onto the new image (see coop build).`,
 }
 
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,

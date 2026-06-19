@@ -2,6 +2,11 @@
 
 ## 2.6.0
 
+- **`coop build` / `coop update` no longer SIGKILL running boxes by default.** They used to
+  kill every running box after rebuilding — which dropped a live editor ACP session (Zed
+  showed "Server exited with status 137"). New runs already use the fresh image (boxes are
+  anonymous, nothing collides), so running sessions are now left alone with a note; pass
+  `--restart` to recycle them onto the new image (the old behavior, still a SIGKILL).
 - **`coop init` scaffolds a commit gate that matches the repo's stack.** The pre-commit
   hook (and the Claude commit gate) used to hardcode a `gofmt` check — so a Terraform or
   Elixir repo got a dead Go gate and no gate for the language it actually uses. Now `coop

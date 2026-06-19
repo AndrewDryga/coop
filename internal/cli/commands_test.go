@@ -181,3 +181,21 @@ func TestInitNextSteps(t *testing.T) {
 		t.Errorf("steps wrong or out of order: %v", got)
 	}
 }
+
+func TestParseRestart(t *testing.T) {
+	// No flag → no restart, no error (the new default leaves running boxes alone).
+	if got, err := parseRestart("build", nil); err != nil || got {
+		t.Fatalf("no args: got restart=%v err=%v, want false/nil", got, err)
+	}
+	// --restart opts into recycling.
+	if got, err := parseRestart("build", []string{"--restart"}); err != nil || !got {
+		t.Fatalf("--restart: got restart=%v err=%v, want true/nil", got, err)
+	}
+	// Anything else is rejected (it used to take no args at all).
+	if _, err := parseRestart("update", []string{"--bogus"}); err == nil {
+		t.Fatal("unexpected arg should error")
+	}
+	if _, err := parseRestart("build", []string{"--restart", "extra"}); err == nil {
+		t.Fatal("trailing arg should error")
+	}
+}
