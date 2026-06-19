@@ -14,7 +14,15 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-const fleetPoll = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
+const (
+	fleetPoll  = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
+	fleetNameW = 14                     // fork-name column width
+	fleetBarW  = 10                     // per-fork progress bar width
+)
+
+// fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
+// bars above it (the per-fork bars sit one glyph + space + name + space further right).
+const fleetTotalBarW = fleetNameW + fleetBarW + 1
 
 // fleetRow is one fork's fast-changing state for the live dashboard. It reads only the cheap
 // sources (the queue file, the pidfile, the log tail) so the dashboard can refresh several
@@ -101,7 +109,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
 	bar := fmt.Sprintf("%s %s  %d/%d tasks · %d running · %s blocked",
-		ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)]), ui.ProgressBar(frac, 24), done, total, running, paintCount(blocked, ui.Red))
+		ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)]), ui.ProgressBar(frac, fleetTotalBarW), done, total, running, paintCount(blocked, ui.Red))
 
 	out := make([]string, 0, len(body)+4)
 	out = append(out, header, "")
@@ -110,7 +118,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	return out
 }
 
-// fleetRowLine renders one fork's row: a state glyph (spinner running / ⏸ idle / ✓ done), a
+// fleetRowLine renders one fork's row: a state glyph (spinner running / ‖ idle / ✓ done), a
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
 func fleetRowLine(r fleetRow, spin int) string {
 	done := !r.running && r.counts.total() > 0 && r.counts.Done == r.counts.total()
@@ -121,7 +129,7 @@ func fleetRowLine(r fleetRow, spin int) string {
 	case done:
 		glyph = ui.Green("✓")
 	default:
-		glyph = "◦" // idle/stopped — a 1-cell glyph (⏸ rendered 2 wide and misaligned the bars)
+		glyph = "‖" // idle/paused — a 1-cell pause mark (⏸ rendered 2 wide and misaligned the bars)
 	}
 	frac := 0.0
 	if t := r.counts.total(); t > 0 {
@@ -135,8 +143,8 @@ func fleetRowLine(r fleetRow, spin int) string {
 			doing = ui.Green("✓ done")
 		}
 	}
-	line := fmt.Sprintf("%s %-14s %s %5s  %s",
-		glyph, truncate(r.name, 14), ui.ProgressBar(frac, 10), fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
+	line := fmt.Sprintf("%s %-*s %s %5s  %s",
+		glyph, fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}

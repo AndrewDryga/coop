@@ -37,8 +37,23 @@ func TestFleetDashboard(t *testing.T) {
 	if !strings.Contains(joined, "(no queue)") {
 		t.Errorf("empty fork should show (no queue):\n%s", joined)
 	}
-	if !strings.Contains(joined, "◦") {
-		t.Errorf("idle fork should show the ◦ glyph:\n%s", joined)
+	if !strings.Contains(joined, "‖") {
+		t.Errorf("idle fork should show the ‖ pause glyph:\n%s", joined)
+	}
+
+	// The bottom roll-up bar's right edge lines up with the per-fork bars' right edge. Colors
+	// are off under `go test`, so columns are plain runes — compare the ] of each bar.
+	barEnd := func(line string) int {
+		for i, r := range []rune(line) {
+			if r == ']' {
+				return i
+			}
+		}
+		return -1
+	}
+	forkRow, global := out[2], out[len(out)-1] // out = [header, "", rows…, "", bar]
+	if a, b := barEnd(forkRow), barEnd(global); a < 0 || a != b {
+		t.Errorf("bar right-edges misaligned: fork ] at col %d, global ] at col %d\n%q\n%q", a, b, forkRow, global)
 	}
 }
 
