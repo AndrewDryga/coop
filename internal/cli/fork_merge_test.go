@@ -10,28 +10,33 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// trustedSignArgs must read signing config from the parent (so a fork can't redirect
-// the program) and track gpg.format to the matching program key.
+// trustedSignArgs must read signing config from your GLOBAL git config — so neither a fork nor the
+// agent-writable parent repo can point gpg.program at a planted binary — and track gpg.format to
+// the matching program key. (`git config --global` ignores -C, writing the GIT_CONFIG_GLOBAL file.)
 func TestTrustedSignArgs(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	t.Run("openpgp default", func(t *testing.T) {
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	t.Run("openpgp default ignores a repo-local poison", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
 		repo := initRepo(t)
-		git(t, repo, "config", "commit.gpgsign", "true")
-		git(t, repo, "config", "user.signingkey", "ABCD1234")
+		git(t, repo, "config", "--global", "commit.gpgsign", "true")
+		git(t, repo, "config", "--global", "user.signingkey", "ABCD1234")
+		git(t, repo, "config", "gpg.program", "/tmp/evil") // repo-local: must be ignored
 		want := []string{"-c", "commit.gpgsign=true", "-c", "gpg.program=gpg", "-c", "user.signingkey=ABCD1234"}
-		if got := trustedSignArgs(repo); !slices.Equal(got, want) {
-			t.Errorf("trustedSignArgs = %v, want %v", got, want)
+		if got := trustedSignArgs(); !slices.Equal(got, want) {
+			t.Errorf("trustedSignArgs = %v, want %v (gpg.program must come from global, not the repo)", got, want)
 		}
 	})
 	t.Run("ssh format picks gpg.ssh.program", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
 		repo := initRepo(t)
-		git(t, repo, "config", "commit.gpgsign", "true")
-		git(t, repo, "config", "gpg.format", "ssh")
-		git(t, repo, "config", "user.signingkey", "/k.pub")
+		git(t, repo, "config", "--global", "commit.gpgsign", "true")
+		git(t, repo, "config", "--global", "gpg.format", "ssh")
+		git(t, repo, "config", "--global", "user.signingkey", "/k.pub")
 		want := []string{"-c", "commit.gpgsign=true", "-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", "user.signingkey=/k.pub"}
-		if got := trustedSignArgs(repo); !slices.Equal(got, want) {
+		if got := trustedSignArgs(); !slices.Equal(got, want) {
 			t.Errorf("trustedSignArgs = %v, want %v", got, want)
 		}
 	})

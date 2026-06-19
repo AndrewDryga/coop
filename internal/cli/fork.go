@@ -96,7 +96,7 @@ func forkHelp() (int, error) {
 	for _, f := range flags {
 		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
-	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else git core.editor); --tool uses git diff.tool.\n", ui.Bold("REVIEW"))
+	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", ui.Bold("REVIEW"))
 	fmt.Print(b.String())
 	return 0, nil
 }
@@ -318,8 +318,10 @@ func propagateGitEnv(repo, ws string) {
 			_ = gitRun(ws, "config", k, v)
 		}
 	}
-	// `--path` expands a leading ~ in the configured excludesfile.
-	if gi := gitOut(repo, "config", "--path", "core.excludesfile"); gi != "" {
+	// Read core.excludesfile from your GLOBAL config, never the agent-writable repo: a poisoned
+	// repo could otherwise point it at a host secret (e.g. ~/.ssh/id_rsa) and we'd copy that file's
+	// content into the fork the agent reads. `--path` expands a leading ~ in the configured path.
+	if gi := gitGlobalOut("--path", "core.excludesfile"); gi != "" {
 		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
 			excl := filepath.Join(ws, ".git", "info", "exclude")
 			if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
@@ -479,9 +481,19 @@ func (a *app) forkReview(args []string) (int, error) {
 
 	switch {
 	case open: // open the fork in your IDE; review via its SCM panel
-		return a.openInEditor(repo, ws)
-	case tool: // hand the diff to your configured GUI difftool (git config diff.tool)
-		_ = gitInteractive(repo, "difftool", "HEAD..."+ref)
+		return a.openInEditor(ws)
+	case tool: // hand the diff to your GLOBAL git difftool (diff.tool), forced via -c so a
+		// repo-poisoned diff.tool / difftool.<tool>.cmd can't run on `coop fork review --tool`.
+		if t := gitGlobalOut("diff.tool"); t != "" {
+			cargs := []string{"-c", "diff.tool=" + t}
+			// Pin the tool's command from global too (empty neutralizes any repo override and lets
+			// git use the built-in for a known tool), so the repo can't redirect even a named tool.
+			cargs = append(cargs, "-c", "difftool."+t+".cmd="+gitGlobalOut("difftool."+t+".cmd"))
+			_ = gitInteractive(repo, append(cargs, "difftool", "HEAD..."+ref)...)
+		} else {
+			ui.Info("no global git diff.tool set — showing the diff (--tool ignores repo config, for safety)")
+			_ = gitInteractive(repo, "diff", "HEAD..."+ref)
+		}
 		return 0, nil
 	case stat:
 		return 0, nil // the brief already lists the files
@@ -494,24 +506,24 @@ func (a *app) forkReview(args []string) (int, error) {
 }
 
 // resolveEditor picks the command used to open a fork for review, in order:
-// $COOP_EDITOR, then git's own core.editor (your explicit choice — local config
-// beats global), then a detected GUI editor, then $VISUAL/$EDITOR. Returns "" if
-// nothing is configured or found.
-func resolveEditor(cfgEditor, repo string) string {
+// $COOP_EDITOR, then your GLOBAL git core.editor, then a detected GUI editor, then
+// $VISUAL/$EDITOR. Returns "" if nothing is configured or found. The editor is read from
+// GLOBAL config only — never the agent-writable repo, which could otherwise point core.editor
+// at a planted binary that runs on `coop fork review --open`.
+func resolveEditor(cfgEditor string) string {
 	if cfgEditor != "" {
 		return cfgEditor
 	}
-	if e := gitTrustedOut(repo, "config", "core.editor"); e != "" {
-		return e // honor `git config core.editor`, e.g. "zed --wait" (the hardening blanks it,
-		// so read it trusted; task 2 moves this to global so a poisoned repo value isn't exec'd)
+	if e := gitGlobalOut("core.editor"); e != "" {
+		return e // honor your global `git config core.editor`, e.g. "zed --wait"
 	}
 	return detectEditor()
 }
 
 // openInEditor opens the fork directory in an editor so you can review via its SCM
 // panel. See resolveEditor for how the editor is chosen.
-func (a *app) openInEditor(repo, ws string) (int, error) {
-	editor := resolveEditor(a.cfg.Editor, repo)
+func (a *app) openInEditor(ws string) (int, error) {
+	editor := resolveEditor(a.cfg.Editor)
 	if editor == "" {
 		return 1, errors.New("no editor found — set $COOP_EDITOR, git config core.editor, or $VISUAL/$EDITOR (or install code/cursor/zed/idea)")
 	}
@@ -716,5 +728,5 @@ func (a *app) forkOpenEditor(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	return a.openInEditor(repo, ws)
+	return a.openInEditor(ws)
 }

@@ -116,23 +116,20 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 
 // wantsSigning reports whether you sign commits (commit.gpgsign=true in your git
 // config), so a fork's unsigned box commits can be signed with your key on land.
-func wantsSigning(repo string) bool {
-	// gitTrustedOut, not gitOut: the hardening blanks commit.gpgsign, which would shadow the
-	// real value and make coop never sign. Reading it executes nothing.
-	return gitTrustedOut(repo, "config", "--bool", "--get", "commit.gpgsign") == "true"
+func wantsSigning() bool {
+	// Read from your GLOBAL config, never the agent-writable repo: a poisoned repo could otherwise
+	// force signing on so its planted gpg.program runs — and your signing preference is global anyway.
+	return gitGlobalOut("--bool", "--get", "commit.gpgsign") == "true"
 }
 
-// trustedSignArgs returns the -c flags to sign the rebased commits with the host's
-// key, every value read from the *parent* repo (trusted) so a fork's local signing
-// config can't point gpg.program at a planted binary. They are appended after
-// gitHardening — which turns signing off by default — so these re-enable it with
-// vetted values. The program key tracks gpg.format (openpgp/ssh/x509).
-func trustedSignArgs(repo string) []string {
-	// gitTrustedOut throughout: the hardening blanks gpg.program/format/sign, so a plain read
-	// would return those blanks instead of your real signing config. The read executes nothing;
-	// the value is re-applied (after the hardening, so it wins) only on the signed rebase.
+// trustedSignArgs returns the -c flags to sign the rebased commits with the host's key, every
+// value read from your GLOBAL git config so neither the fork NOR the agent-writable parent repo can
+// point gpg.program at a planted binary. They are appended after gitHardening — which turns signing
+// off by default — so these re-enable it with vetted values. The program key tracks gpg.format
+// (openpgp/ssh/x509).
+func trustedSignArgs() []string {
 	args := []string{"-c", "commit.gpgsign=true"}
-	format := gitTrustedOut(repo, "config", "--get", "gpg.format")
+	format := gitGlobalOut("--get", "gpg.format")
 	progKey, def := "gpg.program", "gpg"
 	switch format {
 	case "ssh":
@@ -143,12 +140,12 @@ func trustedSignArgs(repo string) []string {
 	if format != "" {
 		args = append(args, "-c", "gpg.format="+format)
 	}
-	prog := gitTrustedOut(repo, "config", "--get", progKey)
+	prog := gitGlobalOut("--get", progKey)
 	if prog == "" {
 		prog = def // git's built-in default — set explicitly so the hardening's "=false" loses
 	}
 	args = append(args, "-c", progKey+"="+prog)
-	if key := gitTrustedOut(repo, "config", "--get", "user.signingkey"); key != "" {
+	if key := gitGlobalOut("--get", "user.signingkey"); key != "" {
 		args = append(args, "-c", "user.signingkey="+key)
 	}
 	return args
@@ -172,8 +169,8 @@ func (a *app) landFork(repo, ws, name string) error {
 	// via trustedSignArgs, not the fork. Run with real stdio so a passphrase pinentry
 	// can prompt.
 	var rebaseErr error
-	if wantsSigning(repo) {
-		rebaseErr = gitInteractive(ws, append(trustedSignArgs(repo), "rebase", "-f", "--gpg-sign", head)...)
+	if wantsSigning() {
+		rebaseErr = gitInteractive(ws, append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head)...)
 	} else {
 		rebaseErr = gitRun(ws, "rebase", head)
 	}

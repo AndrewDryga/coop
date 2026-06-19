@@ -240,8 +240,8 @@ func gitArgs(dir string, args []string) []string {
 }
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
-// coop runs git against is agent-writable, so hardening is the default; use gitTrustedOut only to
-// read a config value (which executes nothing) the hardening would otherwise shadow.
+// coop runs git against is agent-writable, so hardening is the default; to read a value coop will
+// execute or read a host file from, use gitGlobalOut (the trusted global scope), never the repo.
 func gitOut(dir string, args ...string) string {
 	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
 	if err != nil {
@@ -263,13 +263,15 @@ func gitInteractive(dir string, args ...string) error {
 	return cmd.Run()
 }
 
-// gitTrustedOut runs `git -C dir <args>` WITHOUT the hardening — the escape hatch for reading a
-// config value coop must act on (whether you sign commits, your core.editor), since the hardening's
-// `-c key=blank` would shadow the repo's real value. Safe because a `git config` read executes
-// nothing; use it ONLY for such reads, never for an operation that touches the working tree. The
-// value is still agent-writable, so acting on an exec-bearing one safely is a separate concern.
-func gitTrustedOut(dir string, args ...string) string {
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+// gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the
+// trusted scope an agent can't write — for any value coop reads then EXECUTES or reads a host file
+// from: your core.editor, your signing program, your global core.excludesfile. The repo's own
+// .git/config is agent-writable, so reading these from it would let a poisoned repo redirect coop
+// to run or exfiltrate whatever it names. They're all user-identity settings that live in your
+// global config anyway; a value only in repo config is treated as unset (fail closed). Returns ""
+// when unset or git is unavailable.
+func gitGlobalOut(args ...string) string {
+	out, err := exec.Command("git", append([]string{"config", "--global"}, args...)...).Output()
 	if err != nil {
 		return ""
 	}
@@ -286,9 +288,9 @@ func gitTrustedOut(dir string, args ...string) string {
 // defense in depth. Signing on land is re-enabled with trusted values appended after these (git's
 // last -c for a key wins; see trustedSignArgs).
 //
-// Reading a config VALUE is different — it executes nothing, and a `-c key=blank` here would shadow
-// the repo's real value — so the few places that must read an agent-writable knob to act on it use
-// gitTrustedOut, never these helpers.
+// A value coop reads then EXECUTES (or reads a host file from) — your editor, signing program,
+// global excludesfile — must not come from the agent-writable repo at all: those use gitGlobalOut
+// to read your trusted global config, never these helpers.
 //
 // Residual (can't be closed with -c, since the driver names are arbitrary): an in-tree
 // .gitattributes assigning a filter to a path plus a fork-local filter.<name>.smudge can run on

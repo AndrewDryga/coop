@@ -245,13 +245,22 @@ func TestForkCarriesGlobalIgnore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo := initRepo(t)
-	// Stand in for the user's global gitignore via a (repo-local) core.excludesfile.
+	// Your real GLOBAL gitignore is carried into the fork; a repo-local core.excludesfile is
+	// IGNORED — it's agent-writable, so reading it would let a poisoned repo point us at a host
+	// secret (e.g. ~/.ssh/id_rsa) and copy its content into the fork. (`--global` ignores -C.)
 	ignore := filepath.Join(t.TempDir(), "ignore")
 	if err := os.WriteFile(ignore, []byte("*.tmp\n.DS_Store\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git(t, repo, "config", "core.excludesfile", ignore)
+	git(t, repo, "config", "--global", "core.excludesfile", ignore)
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("SECRET_TOKEN_xyz\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "config", "core.excludesfile", secret) // repo-local poison: must NOT be read
 
 	ws, err := setupFork(repo, "ig")
 	if err != nil {
@@ -263,6 +272,9 @@ func TestForkCarriesGlobalIgnore(t *testing.T) {
 	}
 	if !strings.Contains(string(excl), "*.tmp") || !strings.Contains(string(excl), ".DS_Store") {
 		t.Errorf("global ignore not carried into the fork's .git/info/exclude:\n%s", excl)
+	}
+	if strings.Contains(string(excl), "SECRET_TOKEN") {
+		t.Fatalf("a repo-local core.excludesfile (a host secret) was read and copied into the fork:\n%s", excl)
 	}
 }
 
@@ -336,25 +348,29 @@ func TestResolveEditor(t *testing.T) {
 		t.Skip("git not available")
 	}
 	// Isolate from the host's global/system git config so core.editor is only what we set.
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo := initRepo(t)
-	git(t, repo, "config", "core.editor", "zed --wait")
+	// Your GLOBAL core.editor is honored; a repo-local one is IGNORED — the repo is agent-writable,
+	// so reading core.editor from it would let a poisoned repo point the editor at a planted binary
+	// that runs on `coop fork review --open`. (`git config --global` ignores -C, writing the env file.)
+	git(t, repo, "config", "--global", "core.editor", "zed --wait")
+	git(t, repo, "config", "core.editor", "/tmp/evil --pwn") // repo-local: must NEVER be used
 
 	// $COOP_EDITOR wins over everything.
-	if got := resolveEditor("nvim", repo); got != "nvim" {
+	if got := resolveEditor("nvim"); got != "nvim" {
 		t.Errorf("resolveEditor(COOP_EDITOR) = %q, want %q", got, "nvim")
 	}
-	// With no $COOP_EDITOR, git's core.editor is honored — the reported bug.
-	if got := resolveEditor("", repo); got != "zed --wait" {
-		t.Errorf("resolveEditor(core.editor) = %q, want %q", got, "zed --wait")
+	// With no $COOP_EDITOR, the GLOBAL core.editor is honored — never the repo-local one.
+	if got := resolveEditor(""); got != "zed --wait" {
+		t.Errorf("resolveEditor = %q, want %q (must ignore the repo-local editor)", got, "zed --wait")
 	}
 	// With neither set, fall through to detection ($VISUAL; PATH has no GUI editor).
-	git(t, repo, "config", "--unset", "core.editor")
+	git(t, repo, "config", "--global", "--unset", "core.editor")
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("EDITOR", "")
 	t.Setenv("VISUAL", "myvisual")
-	if got := resolveEditor("", repo); got != "myvisual" {
+	if got := resolveEditor(""); got != "myvisual" {
 		t.Errorf("resolveEditor(fallback) = %q, want %q", got, "myvisual")
 	}
 }
