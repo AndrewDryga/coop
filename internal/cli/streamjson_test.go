@@ -31,7 +31,7 @@ func TestStreamDecoder(t *testing.T) {
 	d.flush()
 
 	o := out.String()
-	for _, want := range []string{"⚙ Bash", "echo hi", "working on task 9", "✎ Edit", ".agent/TASKS.test.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
+	for _, want := range []string{"⚙ Bash", "echo hi", "✦ working on task 9", "✎ Edit", ".agent/TASKS.test.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("rendered output missing %q\n--- got ---\n%s", want, o)
 		}

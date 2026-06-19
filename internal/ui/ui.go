@@ -10,19 +10,20 @@ import (
 
 // ANSI codes, blanked when stderr is not a terminal.
 var (
-	cGreen  string
-	cRed    string
-	cYellow string
-	cCyan   string
-	cDim    string
-	cBold   string
-	cReset  string
+	cGreen   string
+	cRed     string
+	cYellow  string
+	cCyan    string
+	cMagenta string
+	cDim     string
+	cBold    string
+	cReset   string
 )
 
 func init() {
 	if IsTerminal(os.Stderr) {
 		cGreen, cRed, cYellow, cCyan = "\033[32m", "\033[31m", "\033[33m", "\033[36m"
-		cDim, cBold, cReset = "\033[2m", "\033[1m", "\033[0m"
+		cMagenta, cDim, cBold, cReset = "\033[35m", "\033[2m", "\033[1m", "\033[0m"
 	}
 }
 
@@ -49,9 +50,10 @@ func TermWidth(f *os.File) int {
 	return 80
 }
 
-// Info prints a dimmed "coop:" progress line to stderr.
+// Info prints a "coop:" progress line to stderr, the prefix bold cyan so coop's own voice
+// stands out from the agent's output in a busy live view.
 func Info(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%scoop:%s %s\n", cDim, cReset, fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, "%s%scoop:%s %s\n", cBold, cCyan, cReset, fmt.Sprintf(format, a...))
 }
 
 // Error prints a red "coop:" error line to stderr. It does not exit.
@@ -60,12 +62,13 @@ func Error(format string, a ...any) {
 }
 
 // Color wrappers, used to compose richer output (e.g. the doctor report).
-func Bold(s string) string   { return cBold + s + cReset }
-func Dim(s string) string    { return cDim + s + cReset }
-func Green(s string) string  { return cGreen + s + cReset }
-func Red(s string) string    { return cRed + s + cReset }
-func Yellow(s string) string { return cYellow + s + cReset }
-func Cyan(s string) string   { return cCyan + s + cReset }
+func Bold(s string) string    { return cBold + s + cReset }
+func Dim(s string) string     { return cDim + s + cReset }
+func Green(s string) string   { return cGreen + s + cReset }
+func Red(s string) string     { return cRed + s + cReset }
+func Yellow(s string) string  { return cYellow + s + cReset }
+func Cyan(s string) string    { return cCyan + s + cReset }
+func Magenta(s string) string { return cMagenta + s + cReset }
 
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }

@@ -11,6 +11,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+// llmIcon marks a line of the agent's own narration (vs a tool call or coop's own output).
+const llmIcon = "✦"
+
 // streamDecoder renders Claude Code's `--output-format stream-json` NDJSON into compact,
 // human-readable activity lines as the agent works, so a loop iteration shows what it is
 // doing instead of going silent until the final message. It implements io.Writer to sit
@@ -101,8 +104,8 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 		switch b.Type {
 		case "text":
 			if t := strings.TrimSpace(b.Text); t != "" {
-				d.emit(t)
-				d.toTail(t)
+				d.emit(ui.Magenta(llmIcon) + " " + t) // mark the agent's own voice
+				d.toTail(t)                           // the tail (limit detection) gets the plain text
 			}
 		case "tool_use":
 			glyph, label := toolDisplay(b.Name, b.Input)

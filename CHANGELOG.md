@@ -9,8 +9,9 @@
   run is bracketed with starting and finishing tallies. Piped or CI output stays plain.
 - **Watch the agent work.** On a terminal, `coop loop` with Claude renders the agent's activity
   live instead of going dark until the iteration ends — each tool call (`✎ Edit`, `⚙ Bash`,
-  `▸ Read`), the agent's own narration, and a closing `· N turns · time · $cost` — by decoding
-  Claude's stream-json output. Multi-subscription failover keeps working underneath (the
+  `▸ Read`), the agent's own narration (marked `✦`), and a closing `· N turns · time · $cost` —
+  by decoding Claude's stream-json output. coop's own lines wear a bold-cyan `coop:` so its
+  voice stays distinct from the agent's in the scroll. Multi-subscription failover keeps working underneath (the
   structured rate-limit signal is translated for the detector). Other agents, a custom
   `COOP_LOOP_CMD`, and piped/CI runs keep plain text output.
 - **Watch the whole fleet.** `coop fleet watch` (or `coop status --watch`) turns the fleet
