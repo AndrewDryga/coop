@@ -9,11 +9,11 @@ import (
 
 func TestFleetDashboard(t *testing.T) {
 	rows := []fleetRow{
-		{name: "api", running: true, counts: taskCounts{Done: 4, Todo: 6}, active: "refresh-token rotation", lastLog: "⚙ Bash go test"},
-		{name: "deps", running: false, counts: taskCounts{Done: 6, Todo: 3, Blocked: 1}, active: "bump axios"},
-		{name: "web", running: false, counts: taskCounts{Done: 1, Todo: 11}, active: "fix hydration"},
-		{name: "infra", running: false, counts: taskCounts{Done: 8}, active: ""}, // all done
-		{name: "fresh", running: false, counts: taskCounts{}, active: ""},        // no queue
+		{name: "api", agent: "claude", running: true, counts: taskCounts{Done: 4, Todo: 6}, active: "refresh-token rotation", lastLog: "⚙ Bash go test"},
+		{name: "deps", agent: "codex", running: false, counts: taskCounts{Done: 6, Todo: 3, Blocked: 1}, active: "bump axios"},
+		{name: "web", agent: "gemini", running: false, counts: taskCounts{Done: 1, Todo: 11}, active: "fix hydration"},
+		{name: "infra", agent: "claude", running: false, counts: taskCounts{Done: 8}, active: ""}, // all done
+		{name: "fresh", running: false, counts: taskCounts{}, active: ""},                         // no queue
 	}
 	out := fleetDashboard("myrepo", rows, 0)
 	joined := strings.Join(out, "\n")
@@ -94,5 +94,17 @@ func TestFleetOrphans(t *testing.T) {
 	// An empty fleet → every fork is an orphan.
 	if got := fleetOrphans(nil, []string{"a", "b"}); len(got) != 2 {
 		t.Errorf("orphans = %v, want [a b]", got)
+	}
+}
+
+func TestAgentBadge(t *testing.T) {
+	// Colors are off under `go test`, so the badge is just its letter.
+	for agent, want := range map[string]string{"claude": "c", "codex": "x", "gemini": "g", "": "?"} {
+		if got := agentBadge(agent); got != want {
+			t.Errorf("agentBadge(%q) = %q, want %q", agent, got, want)
+		}
+	}
+	if got := agentBadge("mistral"); got != "m" { // unknown agent → its first letter
+		t.Errorf("agentBadge(mistral) = %q, want %q", got, "m")
 	}
 }

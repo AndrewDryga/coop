@@ -21,14 +21,17 @@ const (
 )
 
 // fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
-// bars above it (the per-fork bars sit one glyph + space + name + space further right).
-const fleetTotalBarW = fleetNameW + fleetBarW + 1
+// bars above it. A per-fork bar sits behind: state glyph + space + agent badge + space + name
+// + space (one glyph, one badge, two spaces, the name, one space = nameW + 3 more than the
+// roll-up bar's "spinner + space" prefix).
+const fleetTotalBarW = fleetNameW + fleetBarW + 3
 
 // fleetRow is one fork's fast-changing state for the live dashboard. It reads only the cheap
 // sources (the queue file, the pidfile, the log tail) so the dashboard can refresh several
 // times a second without the per-tick git subprocesses `coop status` runs for its snapshot.
 type fleetRow struct {
 	name    string
+	agent   string
 	running bool
 	counts  taskCounts
 	active  string
@@ -40,6 +43,7 @@ func gatherFleetRow(repo, name string) fleetRow {
 	counts, active := scanTasks(readFileString(filepath.Join(ws, ".agent", "TASKS.md")))
 	return fleetRow{
 		name:    name,
+		agent:   readForkAgent(ws),
 		running: forkRunningPid(repo, name) != 0,
 		counts:  counts,
 		active:  active,
@@ -143,8 +147,8 @@ func fleetRowLine(r fleetRow, spin int) string {
 			doing = ui.Green("✓ done")
 		}
 	}
-	line := fmt.Sprintf("%s %-*s %s %5s  %s",
-		glyph, fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
+	line := fmt.Sprintf("%s %s %-*s %s %5s  %s",
+		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}
@@ -152,6 +156,23 @@ func fleetRowLine(r fleetRow, spin int) string {
 		line = ui.DimLine(line) // an idle/stopped fork recedes so the working ones stand out
 	}
 	return line
+}
+
+// agentBadge is a 1-cell colored letter naming a fork's agent (c=claude, x=codex, g=gemini),
+// so the dashboard shows who runs each fork without spending the name column on it.
+func agentBadge(agent string) string {
+	switch agent {
+	case "claude":
+		return ui.Magenta("c")
+	case "codex":
+		return ui.Green("x")
+	case "gemini":
+		return ui.Yellow("g")
+	case "":
+		return ui.Dim("?")
+	default:
+		return ui.Dim(string([]rune(agent)[0]))
+	}
 }
 
 // lastLogLine returns the last non-empty line of a fork's log (reading only the tail, since the
