@@ -456,6 +456,10 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
 	custom := a.cfg.LoopCmd
+	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
+	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. The
+	// stream-json marker in the command is what runIteration keys the decoder off.
+	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout)
 	work, audit := loopWorkPrompt(queues), loopAuditPrompt(queues)
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/audit prompt.
@@ -463,7 +467,11 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		if len(custom) > 0 {
 			return custom
 		}
-		return a.agentLoopCmd(agent, prompt)
+		cmd := a.agentLoopCmd(agent, prompt)
+		if stream {
+			cmd = append(cmd, "--output-format", "stream-json", "--verbose")
+		}
+		return cmd
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -555,14 +563,25 @@ const (
 // queue files to watch for live task progress while the agent works.
 func (a *app) runIteration(repo, img string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10, last: time.Now()}
-	outW := []io.Writer{os.Stdout, tail}
+	term := []io.Writer{os.Stdout} // visible terminal, plus the fork log when present
 	errW := []io.Writer{os.Stderr, tail}
 	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
-		outW = append(outW, sink)
+		term = append(term, sink)
 		errW = append(errW, sink)
 	}
+	// Claude's loop command (set by iterCmd on a TTY) emits stream-json; decode it into human
+	// activity lines, feeding only the human text to tail so rate-limit detection still works.
+	// Otherwise the agent's stdout goes straight to the terminal and the tail (today's path).
+	var stdoutW io.Writer
+	var dec *streamDecoder
+	if slices.Contains(cmd, "stream-json") {
+		dec = newStreamDecoder(io.MultiWriter(term...), tail)
+		stdoutW = dec
+	} else {
+		stdoutW = io.MultiWriter(append(term, tail)...)
+	}
 	// On a TTY, watch the queue while the agent works so task progress shows live, with a
-	// "still working" fallback when it goes quiet (claude -p prints only its final message).
+	// "still working" fallback when it goes quiet.
 	if ui.IsTerminal(os.Stderr) {
 		stop := make(chan struct{})
 		defer close(stop)
@@ -571,9 +590,12 @@ func (a *app) runIteration(repo, img string, cmd, hosts []string, sink io.Writer
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-		Stdout: io.MultiWriter(outW...),
+		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errW...),
 	})
+	if dec != nil {
+		dec.flush()
+	}
 	return code, tail.String(), err
 }
 
