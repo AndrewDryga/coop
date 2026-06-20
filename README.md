@@ -425,7 +425,17 @@ rides on ACP's (still-stabilizing) `session/load`, which the editor drives.
 One box, three agents. Each reads its config and credentials from
 `~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`, `~/.codex`, and
 `~/.gemini`. That directory lives outside any repo, so credentials never land in git —
-edit those files on the host and they take effect in the box.
+edit those files on the host and they take effect in the box. Only the *active* profile
+is mounted, so a running agent sees just the account it's using, not the whole vault.
+
+> **Blast radius.** That profile dir is mounted read-write — the agent must write its
+> session history, and OAuth refresh rewrites the token in place. So a prompt-injected
+> agent can (a) read its own credentials and try to exfiltrate them — set
+> `COOP_EGRESS=none` to cut the box off the network — and (b) write config its CLI
+> auto-loads next launch (e.g. a `settings.json` hook), which then runs in future boxes
+> for that profile. (b) stays *inside* the container — not a host escape — but it's a
+> durable foothold. A fuller fix (copy credentials into an ephemeral in-box location,
+> persist nothing host-side) is planned; for now, `COOP_EGRESS=none` covers the exfil half.
 
 ### Authentication
 
