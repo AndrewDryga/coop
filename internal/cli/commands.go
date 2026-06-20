@@ -221,7 +221,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
 	// own progress lines, and COOP_QUIET tells the box to provision the toolchain silently.
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, ACP: true,
+		// Mark the box supervised only when it's the inner of a supervisor (which
+		// reconnects it), so build/update can safely restart it onto a new image.
+		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
+		Supervised:     os.Getenv("COOP_ACP_INNER") != "",
 		FusionGovernor: governor, ConsultLead: lead, Quiet: true,
 		ExtraArgs: []string{"-e", "COOP_QUIET=1"},
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
@@ -342,8 +345,7 @@ func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
-	restart, err := parseRestart("build", args)
-	if err != nil {
+	if err := rejectArgs("build", args); err != nil {
 		return 2, err
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -353,43 +355,23 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, false); err != nil {
 		return -1, err
 	}
-	a.recycleBoxes("build", restart)
+	a.recycleBoxes()
 	return 0, nil
 }
 
-// parseRestart accepts only an optional --restart flag for build/update.
-func parseRestart(cmd string, args []string) (bool, error) {
-	restart := false
-	for _, arg := range args {
-		if arg == "--restart" {
-			restart = true
-			continue
-		}
-		return false, fmt.Errorf("coop %s: unexpected argument %q — see 'coop %s --help'", cmd, arg, cmd)
+// recycleBoxes restarts supervised boxes after a rebuild so they reconnect on the new
+// image — a coop acp supervisor replays the ACP handshake, so the editor doesn't
+// notice. New runs use the fresh image anyway (containers are anonymous). Other
+// running boxes (loops, forks, an un-supervised session) are left alone; SIGKILLing
+// them would lose work, and they pick up the new image when they next start.
+func (a *app) recycleBoxes() {
+	total := a.rt.CountByLabel("coop", "box")
+	supervised := a.rt.CountByLabel("coop.supervised", "1")
+	if n := a.rt.KillByLabel("coop.supervised", "1"); n > 0 {
+		ui.Info("restarted %d supervised session(s) onto the new image", n)
 	}
-	return restart, nil
-}
-
-// recycleBoxes handles already-running boxes after a rebuild. New runs always use
-// the freshly-built image (containers are anonymous, so nothing collides), so by
-// default we leave running sessions alone — SIGKILLing them would, for example,
-// drop a live editor ACP session (exit 137). --restart opts into recycling them.
-func (a *app) recycleBoxes(cmd string, restart bool) {
-	if restart {
-		// Recycle running boxes onto the new image, but spare editor (ACP) sessions —
-		// SIGKILLing one makes the editor trip ("Server exited 137"). The editor picks
-		// up the new image when you start a fresh thread.
-		killed, spared := a.rt.KillByLabelExcept("coop", "box", "coop.role", "acp")
-		if killed > 0 {
-			ui.Info("recycled %d running container(s) onto the new image", killed)
-		}
-		if spared > 0 {
-			ui.Info("kept %d editor (ACP) session(s) running — start a new thread to pick up the new image", spared)
-		}
-		return
-	}
-	if n := a.rt.CountByLabel("coop", "box"); n > 0 {
-		ui.Info("%d running container(s) still use the previous image — they switch on next start (run `coop %s --restart` to recycle now)", n, cmd)
+	if others := total - supervised; others > 0 {
+		ui.Info("%d other running container(s) keep the old image until they restart", others)
 	}
 }
 
@@ -397,8 +379,7 @@ func (a *app) recycleBoxes(cmd string, restart bool) {
 // and the npm-installed agent CLIs + ACP adapters refresh to their latest, then
 // reports the versions it landed on. ACP/agent packages ship features often.
 func (a *app) cmdUpdate(args []string) (int, error) {
-	restart, err := parseRestart("update", args)
-	if err != nil {
+	if err := rejectArgs("update", args); err != nil {
 		return 2, err
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -409,7 +390,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, true); err != nil {
 		return -1, err
 	}
-	a.recycleBoxes("update", restart)
+	a.recycleBoxes()
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	ui.Info("installed versions:")
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{

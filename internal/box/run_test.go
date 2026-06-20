@@ -299,20 +299,20 @@ func TestAssembleArgsAsdfVolume(t *testing.T) {
 	}
 }
 
-func TestAssembleArgsACPLabel(t *testing.T) {
+func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 
-	acp := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", ACP: true}, mounts,
+	sup := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Supervised: true}, mounts,
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, "")
-	if !containsSeq(acp, []string{"--label", "coop.role=acp"}) {
-		t.Errorf("ACP run should be tagged coop.role=acp so --restart spares it: %v", acp)
+	if !containsSeq(sup, []string{"--label", "coop.supervised=1"}) {
+		t.Errorf("supervised run should be tagged coop.supervised=1 so build/update restart it: %v", sup)
 	}
 
 	plain := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, mounts,
 		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "")
-	if slices.Contains(plain, "coop.role=acp") {
-		t.Errorf("non-ACP run must not carry the acp label: %v", plain)
+	if slices.Contains(plain, "coop.supervised=1") {
+		t.Errorf("non-supervised run must not carry the supervised label: %v", plain)
 	}
 }
 

@@ -25,7 +25,7 @@ type RunSpec struct {
 	Cache   bool // mount the shared dependency cache volume
 
 	ForceNoTTY bool      // ACP: attach stdin (-i) but never allocate a tty
-	ACP        bool      // tag the box coop.role=acp so `coop build --restart` spares it
+	Supervised bool      // tag the box coop.supervised so build/update restart it (it reconnects)
 	Batch      bool      // loop/doctor: no tty, stdin from /dev/null
 	Quiet      bool      // suppress the "shadowed N secret path(s)" line (doctor)
 	Stdout     io.Writer // capture output (doctor); nil means inherit os.Stdout
@@ -380,10 +380,10 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 // resource/privilege caps (see boxLimits).
 func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
-	if spec.ACP {
-		// Tag editor (ACP) sessions so `coop build/update --restart` can recycle other
-		// boxes onto a new image without SIGKILLing a live editor connection.
-		args = append(args, "--label", "coop.role=acp")
+	if spec.Supervised {
+		// A supervised inner box: a coop acp supervisor watches it, so build/update can
+		// restart it onto a new image and the editor reconnects transparently.
+		args = append(args, "--label", "coop.supervised=1")
 	}
 	switch mode {
 	case ttyInteractive:

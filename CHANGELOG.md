@@ -2,13 +2,14 @@
 
 ## 2.6.0
 
-- **`coop build` / `coop update` no longer SIGKILL running boxes by default.** They used to
-  kill every running box after rebuilding — which dropped a live editor ACP session (Zed
-  showed "Server exited with status 137"). New runs already use the fresh image (boxes are
-  anonymous, nothing collides), so running sessions are now left alone with a note. Pass
-  `--restart` to recycle running boxes onto the new image — it SIGKILLs loops/forks but
-  **spares editor (ACP) sessions** (tagged `coop.role=acp`), so your editor never trips;
-  start a new thread there to pick up the new image.
+- **`coop build` / `coop update` transparently restart supervised editor sessions.** They
+  used to SIGKILL every running box (dropping a live editor session — Zed showed "Server
+  exited with status 137"). Now they restart only **supervised** sessions (`coop acp
+  --supervise`, tagged `coop.supervised`) onto the new image — the supervisor reconnects and
+  replays the ACP handshake, so the editor doesn't notice — and leave everything else (a
+  loop, a fork, an un-supervised session) running on the old image until it next starts.
+  So after you edit `Dockerfile.agent` or `.tool-versions`, `coop build` moves your editor
+  onto the rebuilt box without resetting the session. (The old `--restart` flag is gone.)
 - **`coop acp --supervise` survives a box restart without the editor noticing.** Editors
   keep one ACP server process per agent and don't respawn a crashed one until you restart
   the whole editor. With `--supervise`, `coop acp` runs the agent in a child and proxies
