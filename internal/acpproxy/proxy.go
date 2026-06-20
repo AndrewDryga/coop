@@ -1,0 +1,339 @@
+// Package acpproxy keeps an editor's ACP (Agent Client Protocol) connection alive
+// across a restart of the agent's container.
+//
+// `coop acp` normally runs the agent adapter in a box and ties its own lifetime to
+// the box: when the container dies (a rebuild, an OOM, Docker restarting), the
+// adapter's stdio hits EOF, `coop acp` exits, and the editor reports the server as
+// crashed — and editors keep one server process per agent, so it stays dead until
+// the whole editor restarts.
+//
+// The proxy sits between the editor (clientIn/clientOut) and a Child produced by a
+// Factory. It speaks just enough ACP — newline-delimited JSON-RPC 2.0 — to record
+// the editor's `initialize` request and which sessions are live. If the child exits
+// while the editor is still connected, it starts a new child, replays `initialize`
+// and a `session/load` for each live session (the conversation persists on the
+// mounted home, exactly as on an editor restart), fails any in-flight request so the
+// editor isn't left hanging, and resumes forwarding. The editor never sees EOF.
+package acpproxy
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"io"
+	"sync"
+)
+
+// Child is one run of the agent adapter (one container). The proxy writes ACP to In
+// and reads ACP from Out; Stop force-terminates it.
+type Child struct {
+	In   io.WriteCloser
+	Out  io.Reader
+	Stop func()
+}
+
+// Factory starts a fresh child. ctx is cancelled when the proxy is shutting down.
+type Factory func(ctx context.Context) (*Child, error)
+
+const replayPrefix = "coop-acp-" // id namespace for our synthetic replay requests
+
+const readBuf = 1 << 20 // ACP messages can carry file contents; read generously.
+
+// Run proxies ACP between the editor and children from factory until the editor
+// closes clientIn (clean shutdown) or ctx is cancelled. A child that exits while the
+// editor is still connected is transparently replaced.
+func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory) error {
+	p := &proxy{
+		out:      clientOut,
+		sessions: map[string]json.RawMessage{},
+		newReqs:  map[string]json.RawMessage{},
+		pending:  map[string]bool{},
+	}
+
+	child, err := factory(ctx)
+	if err != nil {
+		return err
+	}
+	reader := bufio.NewReaderSize(child.Out, readBuf)
+	p.setChild(child)
+
+	clientGone := make(chan struct{})
+	go func() {
+		defer close(clientGone)
+		// Editor → child. On EOF, stop the current child so the supervisor loop wakes
+		// and shuts down rather than respawning.
+		_ = readLines(bufio.NewReaderSize(clientIn, readBuf), func(line []byte) error {
+			p.fromClient(line)
+			return nil
+		})
+		p.shutdownChild()
+	}()
+
+	for {
+		p.pumpChild(reader) // returns when this child's Out closes
+		select {
+		case <-clientGone:
+			child.Stop()
+			return nil
+		case <-ctx.Done():
+			child.Stop()
+			return ctx.Err()
+		default:
+		}
+		// The child died while the editor is still here: replace it transparently.
+		next, err := factory(ctx)
+		if err != nil {
+			p.failAllPending()
+			return err
+		}
+		nr := bufio.NewReaderSize(next.Out, readBuf)
+		p.replay(next, nr)
+		p.setChild(next)
+		child, reader = next, nr
+	}
+}
+
+type proxy struct {
+	out io.Writer
+
+	mu       sync.Mutex
+	child    *Child
+	initLine []byte                     // editor's initialize request, verbatim
+	sessions map[string]json.RawMessage // sessionId -> session/new params (for session/load)
+	newReqs  map[string]json.RawMessage // pending session/new request id -> its params
+	pending  map[string]bool            // editor request id -> awaiting a response
+}
+
+func (p *proxy) setChild(c *Child) {
+	p.mu.Lock()
+	p.child = c
+	p.mu.Unlock()
+}
+
+func (p *proxy) shutdownChild() {
+	p.mu.Lock()
+	c := p.child
+	p.mu.Unlock()
+	if c != nil {
+		c.Stop()
+	}
+}
+
+// fromClient records replay-relevant state, then forwards the line to the current
+// child. A write to a momentarily-dead child during a swap is dropped; that request
+// is covered by failAllPending on the swap.
+func (p *proxy) fromClient(line []byte) {
+	h := parse(line)
+	p.mu.Lock()
+	if h.isRequest() {
+		switch h.Method {
+		case "initialize":
+			p.initLine = clone(line)
+		case "session/new":
+			p.newReqs[string(h.ID)] = h.Params
+		case "session/load":
+			if sid := sessionID(h.Params); sid != "" {
+				p.sessions[sid] = h.Params
+			}
+		}
+		p.pending[string(h.ID)] = true
+	}
+	var w io.Writer
+	if p.child != nil {
+		w = p.child.In
+	}
+	p.mu.Unlock()
+	if w != nil {
+		_, _ = w.Write(line)
+	}
+}
+
+// pumpChild forwards child→editor for one child generation, learning session ids from
+// session/new responses and clearing pending requests. Returns on the child's EOF.
+func (p *proxy) pumpChild(br *bufio.Reader) {
+	_ = readLines(br, func(line []byte) error {
+		h := parse(line)
+		if h.isResponse() {
+			id := string(h.ID)
+			p.mu.Lock()
+			if params, ok := p.newReqs[id]; ok {
+				delete(p.newReqs, id)
+				if sid := sessionID(h.Result); sid != "" {
+					p.sessions[sid] = params
+				}
+			}
+			delete(p.pending, id)
+			p.mu.Unlock()
+		}
+		_, _ = p.out.Write(line)
+		return nil
+	})
+}
+
+// replay brings a freshly-started child up to the editor's current view: re-send
+// initialize and a session/load for each live session, consuming their responses
+// (and any chatter emitted while loading) so the editor doesn't see them; then fail
+// any requests that were in flight when the old child died.
+func (p *proxy) replay(c *Child, br *bufio.Reader) {
+	p.mu.Lock()
+	initLine := p.initLine
+	sessions := make(map[string]json.RawMessage, len(p.sessions))
+	for k, v := range p.sessions {
+		sessions[k] = v
+	}
+	p.mu.Unlock()
+
+	var msgs [][]byte
+	expect := map[string]bool{}
+	if initLine != nil {
+		id := replayPrefix + "init"
+		if msg := withID(initLine, id); msg != nil {
+			msgs = append(msgs, msg)
+			expect[id] = true
+		}
+	}
+	for sid, params := range sessions {
+		id := replayPrefix + "load-" + sid
+		if msg := loadRequest(id, sid, params); msg != nil {
+			msgs = append(msgs, msg)
+			expect[id] = true
+		}
+	}
+
+	// Write the synthetic requests concurrently with reading their responses, so a
+	// full stdin buffer can't deadlock against the child's pending replies.
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		for _, m := range msgs {
+			if _, err := c.In.Write(m); err != nil {
+				return
+			}
+		}
+	}()
+	for len(expect) > 0 {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			if h := parse(line); h.isResponse() {
+				delete(expect, string(trimQuotes(h.ID)))
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	<-sent
+	p.failAllPending()
+}
+
+// failAllPending answers every in-flight editor request with a JSON-RPC error so the
+// editor retries instead of hanging on a response the dead child will never send.
+func (p *proxy) failAllPending() {
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.pending))
+	for id := range p.pending {
+		ids = append(ids, id)
+	}
+	p.pending = map[string]bool{}
+	p.mu.Unlock()
+	for _, id := range ids {
+		_, _ = p.out.Write(errorResponse(id))
+	}
+}
+
+// --- JSON-RPC helpers --------------------------------------------------------
+
+type header struct {
+	ID     json.RawMessage `json:"id,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+func parse(line []byte) header {
+	var h header
+	_ = json.Unmarshal(line, &h)
+	return h
+}
+
+func (h header) isRequest() bool  { return h.Method != "" && len(h.ID) > 0 }
+func (h header) isResponse() bool { return h.Method == "" && len(h.ID) > 0 }
+
+func sessionID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var v struct {
+		SessionID string `json:"sessionId"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	return v.SessionID
+}
+
+// withID re-stamps a request line with a new (string) id.
+func withID(line []byte, id string) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(line, &m) != nil {
+		return nil
+	}
+	idJSON, _ := json.Marshal(id)
+	m["id"] = idJSON
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return append(out, '\n')
+}
+
+// loadRequest builds a session/load request reusing the original session/new params
+// (cwd, mcpServers, …) with the sessionId set.
+func loadRequest(id, sid string, params json.RawMessage) []byte {
+	p := map[string]json.RawMessage{}
+	if len(params) > 0 {
+		_ = json.Unmarshal(params, &p)
+	}
+	sidJSON, _ := json.Marshal(sid)
+	p["sessionId"] = sidJSON
+	paramsJSON, _ := json.Marshal(p)
+	idJSON, _ := json.Marshal(id)
+	msg := map[string]json.RawMessage{
+		"jsonrpc": json.RawMessage(`"2.0"`),
+		"id":      idJSON,
+		"method":  json.RawMessage(`"session/load"`),
+		"params":  paramsJSON,
+	}
+	out, err := json.Marshal(msg)
+	if err != nil {
+		return nil
+	}
+	return append(out, '\n')
+}
+
+func errorResponse(id string) []byte {
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"coop: agent restarted, please retry"}}` + "\n")
+}
+
+func trimQuotes(raw json.RawMessage) []byte {
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		return raw[1 : len(raw)-1]
+	}
+	return raw
+}
+
+func clone(b []byte) []byte { return append([]byte(nil), b...) }
+
+// readLines calls fn for each newline-terminated message read from br.
+func readLines(br *bufio.Reader, fn func([]byte) error) error {
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			if e := fn(clone(line)); e != nil {
+				return e
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
