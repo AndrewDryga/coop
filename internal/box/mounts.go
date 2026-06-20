@@ -32,10 +32,11 @@ type Mount struct {
 // directory, Decoy for a file). Secret directories are not descended into, so a
 // shadowed dir hides all of its contents at once. The repo's .git is skipped.
 //
-// A path is shadowed when its basename matches SecretGlobs, or a .coopignore — in the
-// repo root or any ancestor directory of the path — matches it (its basename patterns
-// apply anywhere in that directory's subtree; its path patterns are relative to that
-// directory), unless its basename matches AllowGlobs (templates always stay visible).
+// A path is shadowed when its basename matches SecretGlobs (unless AllowGlobs whitelists
+// it — templates and public CA bundles stay visible by default), OR a .coopignore — in the
+// repo root or any ancestor directory of the path — matches it (its basename patterns apply
+// anywhere in that directory's subtree; its path patterns are relative to that directory). An
+// explicit .coopignore match is authoritative: it re-hides even an AllowGlobs-whitelisted name.
 //
 // Its only input is the repo tree plus the .coopignore files in it (no container
 // runtime, no temp files), so it can be exhaustively unit-tested — this is the
@@ -76,9 +77,10 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 }
 
 // NewShadowDecider returns a predicate reporting whether a repo-relative slash path is
-// shadowed from the box: its basename matches SecretGlobs, or a .coopignore in the root
-// or an ancestor directory matches it, and AllowGlobs (templates) doesn't override. Each
-// directory's .coopignore is loaded once into the closure's cache. ComputeMounts (the
+// shadowed from the box: its basename matches SecretGlobs (and AllowGlobs doesn't whitelist
+// it), or a .coopignore in the root or an ancestor directory matches it (AllowGlobs does NOT
+// override an explicit .coopignore — it's the user's final say). Each directory's .coopignore
+// is loaded once into the closure's cache. ComputeMounts (the
 // mount plan) and `coop check-secrets` (the scanner) share this single rule so "what the
 // box can see" can never drift between them — scanning a path the box hides is pointless,
 // and a secret that IS shadowed is already protected.
@@ -97,8 +99,12 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 		if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 			name = relSlash[i+1:]
 		}
-		secret := matchesAny(name, SecretGlobs) || shadowedByCoopignore(relSlash, loadDir)
-		return secret && !matchesAny(name, AllowGlobs)
+		// AllowGlobs (templates, public CA bundles) override only the built-in SecretGlobs
+		// false positives — never an explicit .coopignore, which is the user's authoritative
+		// hide rule. So a name like ca-bundle.crt or .env.example stays visible by default but
+		// can still be re-hidden by listing it in .coopignore.
+		byDefault := matchesAny(name, SecretGlobs) && !matchesAny(name, AllowGlobs)
+		return byDefault || shadowedByCoopignore(relSlash, loadDir)
 	}
 }
 

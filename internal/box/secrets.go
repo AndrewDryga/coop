@@ -32,8 +32,9 @@ var SecretGlobs = []string{
 // PUBLIC CA bundles (cacerts.pem and friends) that `*.pem`/`*.crt` would otherwise shadow —
 // emptying a trusted CA bundle breaks TLS verification inside the box (e.g. Elixir's castore at
 // deps/castore/priv/cacerts.pem). A real private key is never named one of these, and the content
-// scanner still catches a secret hiding in an oddly-named file. AllowGlobs win over both
-// SecretGlobs and a repo's .coopignore, so these are never hidden.
+// scanner still catches a secret hiding in an oddly-named file. AllowGlobs override only the
+// built-in SecretGlobs false positives — NOT an explicit .coopignore entry, which is the user's
+// authoritative hide rule, so a template/CA-bundle name can still be re-hidden by listing it there.
 var AllowGlobs = []string{
 	"*.example", "*.sample", "*.template",
 	"cacerts.pem", "cacert.pem", "ca-bundle.pem", "ca-bundle.crt", "ca-certificates.crt", "ca-cert.pem",

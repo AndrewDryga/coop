@@ -221,11 +221,13 @@ data/*.csv               # path globs work (filepath.Match; no **)
 vault/                   # a directory — its contents are hidden whole
 ```
 
-Patterns extend the defaults; they never un-hide. Templates (`*.example` and friends)
-always stay visible, even if a `.coopignore` line would match them. A `.coopignore` also
-works in any subdirectory (like `.gitignore`): it's scoped to that subtree — basename
-patterns match at any depth under it, path patterns are relative to it — so a monorepo's
-sub-teams can keep folder-local rules next to their code.
+Patterns extend the defaults; they never un-hide. Templates and public CA bundles
+(`*.example`, `*.sample`, `*.template`, `cacerts.pem` and friends) stay visible by
+default — they're whitelisted so the defaults don't shadow them — but `.coopignore` is
+the user's final say: list one of those names explicitly and it's re-hidden. A
+`.coopignore` also works in any subdirectory (like `.gitignore`): it's scoped to that
+subtree — basename patterns match at any depth under it, path patterns are relative to it
+— so a monorepo's sub-teams can keep folder-local rules next to their code.
 
 A denylist can never be exhaustive, and **`.coopignore` is the boundary — not
 `.gitignore`.** A normal `coop run` / `coop loop` / `coop shell` binds your whole working

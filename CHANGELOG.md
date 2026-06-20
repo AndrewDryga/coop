@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`.coopignore` can re-hide a whitelisted template / CA-bundle name.** AllowGlobs (`*.example`,
+  `*.sample`, `*.template`, `cacerts.pem` and friends) used to win over *both* the built-in secret
+  patterns and an explicit `.coopignore`, so a name like `cacerts.pem` or `.env.example` stayed
+  visible even when you listed it in `.coopignore`. AllowGlobs now overrides only the built-in
+  false positives; an explicit `.coopignore` entry is authoritative and re-hides the file. Defaults
+  are unchanged — templates and public CA bundles still stay visible unless you opt to hide one.
+
 - **Value-bearing CLI flags reject a missing value or stray argument instead of silently doing the
   wrong thing.** `coop login claude --profile` (no name) used to fall back to the default profile;
   `coop login claude extra`, `coop init --bogus`, and a trailing `coop tasks --tasks` were silently

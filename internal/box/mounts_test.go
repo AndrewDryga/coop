@@ -257,6 +257,45 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 	}
 }
 
+// TestCoopIgnoreOverridesAllowGlobs: an AllowGlobs name (public CA bundle, .env.example) stays
+// visible by default, but an explicit .coopignore entry re-hides it — .coopignore is the user's
+// final say. Ordinary secrets stay shadowed regardless.
+func TestCoopIgnoreOverridesAllowGlobs(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The user explicitly hides two otherwise-allowed names.
+	write(CoopIgnoreFile, "cacerts.pem\n.env.example\n")
+	write("cacerts.pem", "bundle")
+	write(".env.example", "KEY=placeholder")
+	write("ca-bundle.crt", "bundle") // allowed AND not in .coopignore → stays visible
+	write("src/app.js", "ok")
+
+	mounts, err := ComputeMounts(root, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowed := func(target string) bool { return find(mounts, target) != nil }
+
+	for _, target := range []string{"/workspace/cacerts.pem", "/workspace/.env.example"} {
+		if !shadowed(target) {
+			t.Errorf("%s is in .coopignore and must be re-hidden despite AllowGlobs", target)
+		}
+	}
+	for _, target := range []string{"/workspace/ca-bundle.crt", "/workspace/src/app.js"} {
+		if shadowed(target) {
+			t.Errorf("%s must stay visible (allowed, not in .coopignore)", target)
+		}
+	}
+}
+
 // Public CA bundles must stay visible — emptying a trusted bundle breaks in-box TLS verification —
 // while genuine keys/secrets still shadow.
 func TestPublicCABundlesNotShadowed(t *testing.T) {
