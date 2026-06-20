@@ -89,6 +89,7 @@ func forkHelp() (int, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", ui.Bold("coop fork"))
+	fmt.Fprint(&b, "  Usage: coop fork <name> [agent] | ls | review | merge | logs | rm | stop | open | path\n\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
 	}
@@ -97,6 +98,7 @@ func forkHelp() (int, error) {
 		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
 	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", ui.Bold("REVIEW"))
+	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
 	fmt.Print(b.String())
 	return 0, nil
 }

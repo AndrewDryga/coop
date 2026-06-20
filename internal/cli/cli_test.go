@@ -101,3 +101,25 @@ func TestUnknownErr(t *testing.T) {
 		t.Errorf("expected a suggestion in: %q", got)
 	}
 }
+
+// `coop fork --help` must match every other command's template: a Usage line under the title and
+// the standard footer (it used to have neither).
+func TestForkHelpTemplate(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, _ := forkHelp()
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	s := string(out)
+	if code != 0 {
+		t.Errorf("forkHelp exit = %d, want 0", code)
+	}
+	if !strings.Contains(s, "  Usage: coop fork ") {
+		t.Errorf("fork help missing a Usage line:\n%s", s)
+	}
+	if !strings.HasSuffix(strings.TrimRight(s, "\n"), "Run 'coop help' for all commands.") {
+		t.Errorf("fork help should end with the standard footer:\n%s", s)
+	}
+}
