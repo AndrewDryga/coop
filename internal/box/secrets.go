@@ -20,6 +20,11 @@ var SecretGlobs = []string{
 	"id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*",
 	".netrc", ".npmrc", ".pypirc", ".git-credentials", ".htpasswd", ".dockercfg", ".pgpass",
 	"secrets", ".secrets", "credentials", ".aws", ".kube", ".ssh", ".gnupg",
+	// High-confidence service-credential filenames the list missed: GCP service-account keys, a
+	// literal kubeconfig (only the .kube dir was caught before), and Rails DB creds. NOT added:
+	// *.crt/*.cer (usually PUBLIC certs — shadowing them breaks in-box TLS, cf. the cacerts task)
+	// nor application*.yml / settings.local.json (commonly non-secret app config — too false-positive).
+	"credentials.json", "service_account.json", "*-sa.json", "kubeconfig", "database.yml",
 }
 
 // AllowGlobs are template/sample files the agent should still see, even when

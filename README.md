@@ -225,10 +225,16 @@ Patterns extend the defaults; they never un-hide. Templates (`*.example` and fri
 always stay visible, even if a `.coopignore` line would match them. A `.coopignore` also
 works in any subdirectory (like `.gitignore`): it's scoped to that subtree — basename
 patterns match at any depth under it, path patterns are relative to it — so a monorepo's
-sub-teams can keep folder-local rules next to their code. A denylist can never be
-exhaustive, so prefer gitignoring real secrets (gitignored files never enter a
-[fork](#forks-hand-off-work-like-a-pr) either) and use `.coopignore` for anything that
-must live in the working tree. Prove your setup with [`coop doctor`](#prove-it-coop-doctor).
+sub-teams can keep folder-local rules next to their code.
+
+A denylist can never be exhaustive, and **`.coopignore` is the boundary — not
+`.gitignore`.** A normal `coop run` / `coop loop` / `coop shell` binds your whole working
+tree, so a secret that's merely gitignored-but-present (a real `.env.local` is caught by the
+defaults, but a gitignored `serviceAccount.json` is not) is **fully visible to the agent** —
+gitignoring it does not hide it. Shadow anything that must live in the working tree with
+`.coopignore`. (A [fork](#forks-hand-off-work-like-a-pr) is the exception: it's a clone of
+committed content, so a gitignored file never comes along.) Prove your setup with
+[`coop doctor`](#prove-it-coop-doctor).
 
 Shadowing hides secrets by filename, but a token can hide *inside* an ordinary file.
 `coop check-secrets` scans the files the box can actually see (everything not shadowed)

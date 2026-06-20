@@ -235,3 +235,24 @@ func TestMatchesAny(t *testing.T) {
 		}
 	}
 }
+
+// The broadened denylist catches high-confidence service-credential filenames the basename list
+// missed (task: strengthen secret-shadowing), without adding public-cert / ordinary-config
+// patterns that would break in-box TLS or hide config the agent needs.
+func TestSecretGlobsServiceCredentials(t *testing.T) {
+	shadowed := NewShadowDecider(t.TempDir()) // no .coopignore → just SecretGlobs/AllowGlobs
+	for _, p := range []string{
+		"credentials.json", "service_account.json", "gcp-sa.json", "config/app-sa.json",
+		"kubeconfig", "config/database.yml",
+	} {
+		if !shadowed(p) {
+			t.Errorf("%s should be shadowed by the broadened denylist", p)
+		}
+	}
+	// Deliberately NOT added — public certs (break in-box TLS) and ordinary app config.
+	for _, p := range []string{"server.crt", "ca.cer", "application.yml", "src/main.go", "package.json"} {
+		if shadowed(p) {
+			t.Errorf("%s must NOT be shadowed (public cert / ordinary config)", p)
+		}
+	}
+}
