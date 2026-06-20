@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A crashed fork whose PID gets reused is no longer mistaken for "still running".** Liveness only
+  checked that the recorded PID existed, so after a worker crashed and the OS reused its PID for an
+  unrelated process, the fork read as running — blocking `coop fleet up` / `coop fork merge` /
+  `coop fleet prune` on it. The pidfile now records the worker's start time, and a PID whose start
+  time no longer matches is treated as dead (a missing/uncheckable start time stays "alive", so a
+  genuinely live loop is never wrongly double-started). Old pid-only pidfiles still work.
+
 ## 2.7.1
 
 - **`coop fleet up` is loud when it aborts partway.** It still fails fast on the first fork that

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -87,6 +88,49 @@ func TestForkRunningPid(t *testing.T) {
 	}
 	if pathExists(forkPid(repo, "dead")) {
 		t.Error("stale pidfile not removed")
+	}
+}
+
+func TestParsePidfile(t *testing.T) {
+	if pid, tok := parsePidfile("123\n"); pid != 123 || tok != "" { // legacy, pid-only
+		t.Errorf("parsePidfile(legacy) = %d,%q want 123,\"\"", pid, tok)
+	}
+	// the start-time token is a date string and may contain spaces (an lstart value)
+	if pid, tok := parsePidfile("456\nWed Jun 18 10:00:00 2026\n"); pid != 456 || tok != "Wed Jun 18 10:00:00 2026" {
+		t.Errorf("parsePidfile(with token) = %d,%q", pid, tok)
+	}
+	if pid, _ := parsePidfile("nonsense"); pid != 0 {
+		t.Errorf("parsePidfile(junk) pid = %d, want 0", pid)
+	}
+}
+
+// A pidfile whose start-time token no longer matches the pid's process means the pid was reused by
+// an unrelated process after the worker crashed → not running (and cleaned up), not the old false
+// "still running". A matching token (a genuinely live worker) is still reported running.
+func TestForkRunningPidReusedPid(t *testing.T) {
+	if procStartToken(os.Getpid()) == "" {
+		t.Skip("ps -o lstart unavailable — can't test start-time corroboration")
+	}
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Our own (live) pid, but recorded with a start time from a different process → reused → 0.
+	if err := os.WriteFile(forkPid(repo, "reused"), []byte(fmt.Sprintf("%d\nNOT THE REAL START\n", os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := forkRunningPid(repo, "reused"); got != 0 {
+		t.Errorf("forkRunningPid(reused pid) = %d, want 0", got)
+	}
+	if pathExists(forkPid(repo, "reused")) {
+		t.Error("reused-pid pidfile not cleaned up")
+	}
+	// The same pid recorded with its real start time (writeForkPid round-trip) → genuinely running.
+	if err := writeForkPid(repo, "live", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	if got := forkRunningPid(repo, "live"); got != os.Getpid() {
+		t.Errorf("forkRunningPid(live, matching token) = %d, want %d", got, os.Getpid())
 	}
 }
 

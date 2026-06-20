@@ -33,22 +33,65 @@ func forkStateDir(repo string) string  { return filepath.Join(forkHome(repo), ".
 func forkLog(repo, name string) string { return filepath.Join(forkStateDir(repo), name+".log") }
 func forkPid(repo, name string) string { return filepath.Join(forkStateDir(repo), name+".pid") }
 
-// forkRunningPid returns the live pid of a detached loop for name, or 0. A stale
-// pidfile (process gone) is cleaned up.
+// forkRunningPid returns the live pid of a detached loop for name, or 0. A stale pidfile is cleaned
+// up — whether the process is gone, or its pid was reused by an unrelated (same-user) process after
+// the worker crashed (caught by the start-time token).
 func forkRunningPid(repo, name string) int {
 	data, err := os.ReadFile(forkPid(repo, name))
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
+	pid, token := parsePidfile(string(data))
+	if pid <= 0 {
 		return 0
 	}
 	if syscall.Kill(pid, 0) != nil {
-		_ = os.Remove(forkPid(repo, name))
+		_ = os.Remove(forkPid(repo, name)) // process gone
 		return 0
 	}
+	// The pid exists — but after a crash the OS may have handed it to an unrelated process. If we
+	// recorded the worker's start time, a different start time now proves it's a different process.
+	// Only a DEFINITE mismatch counts as dead: an empty/failed reading is treated as still-alive, so
+	// a ps hiccup can never make us wrongly double-start a live loop.
+	if token != "" {
+		if cur := procStartToken(pid); cur != "" && cur != token {
+			_ = os.Remove(forkPid(repo, name)) // pid reused by another process
+			return 0
+		}
+	}
 	return pid
+}
+
+// parsePidfile reads a fork pidfile's "<pid>\n<start-token>" form. The token is optional, so an
+// older pid-only file still parses (without start-time corroboration). pid 0 means unparseable.
+func parsePidfile(s string) (int, string) {
+	lines := strings.SplitN(strings.TrimSpace(s), "\n", 2)
+	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil {
+		return 0, ""
+	}
+	if len(lines) == 2 {
+		return pid, strings.TrimSpace(lines[1])
+	}
+	return pid, ""
+}
+
+// writeForkPid records the worker's pid plus a start-time token, so forkRunningPid can later tell a
+// live worker from an unrelated process that reused the pid after a crash.
+func writeForkPid(repo, name string, pid int) error {
+	return os.WriteFile(forkPid(repo, name), []byte(fmt.Sprintf("%d\n%s\n", pid, procStartToken(pid))), 0o644)
+}
+
+// procStartToken returns an opaque identity for pid that's fixed for the process's lifetime — its
+// start time, via ps(1) (portable across macOS and Linux). A pid reused by a later process reports a
+// different start time. Empty if it can't be read (then liveness falls back to existence only). It
+// only runs for a pid that already passed the existence check, i.e. a genuinely-running fork.
+func procStartToken(pid int) string {
+	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // runningForkNames returns the subset of names whose detached loop is still alive, in order — the
@@ -139,7 +182,7 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string) (int, error) {
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
-	_ = os.WriteFile(forkPid(repo, name), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
+	_ = writeForkPid(repo, name, cmd.Process.Pid)
 	ui.Info("started fork %s (%s) in the background", name, agent)
 	ui.Info("  coop fork logs %s -f   ·   coop fork stop %s", name, name)
 	return 0, nil
