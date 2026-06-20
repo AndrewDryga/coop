@@ -28,6 +28,7 @@ func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet
 
 func parseFleet(data string) ([]fleetEntry, error) {
 	var out []fleetEntry
+	seen := map[string]bool{}
 	for _, line := range strings.Split(data, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -44,10 +45,21 @@ func parseFleet(data string) ([]fleetEntry, error) {
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("fleet: %q needs a tasks path — %q", e.name, "<name> [agent] <tasks-path>")
 		}
+		// Exactly one token may remain — the path. Leftovers mean a misspelled middle agent (which
+		// was NOT consumed above, so the real path got dropped) or whitespace in the path. Rejecting
+		// here turns a baffling later "no such file" into a clear error at parse time.
+		if len(rest) > 1 {
+			return nil, fmt.Errorf("fleet: %q — expected %q but got extra tokens %q; a middle token must be a known agent (%s) and the path can't contain spaces",
+				e.name, "<name> [agent] <tasks-path>", strings.Join(rest, " "), strings.Join(agents.Names(), ", "))
+		}
 		e.tasks = rest[0]
 		if !validForkName(e.name) {
 			return nil, fmt.Errorf("fleet: invalid fork name %q", e.name)
 		}
+		if seen[e.name] {
+			return nil, fmt.Errorf("fleet: duplicate fork name %q — each fork shares one workspace/branch, so a name can appear once", e.name)
+		}
+		seen[e.name] = true
 		out = append(out, e)
 	}
 	return out, nil

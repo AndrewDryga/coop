@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`.agent/fleet` rejects a misspelled agent, a path with spaces, and duplicate fork names.** A line
+  like `api borg .agent/TASKS.api.md` silently treated `borg` as the path (dropping the real one),
+  surfacing later as a baffling "no such file: borg"; a path with spaces was truncated to its first
+  word; and a repeated fork name was accepted, silently dropping the second. These are now parse-time
+  errors that name the problem.
+
 - **The loop names the task queue (and `AGENTS.md`) as absolute paths, so Gemini/Codex fleet forks
   can read it.** Each iteration told the agent to `Read .agent/TASKS.md …` — a repo-relative path.
   Claude/Codex resolve it against the box's working dir, but Gemini's `read_file` rejects a relative

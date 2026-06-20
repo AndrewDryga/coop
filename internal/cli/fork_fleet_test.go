@@ -37,6 +37,19 @@ func TestParseFleet(t *testing.T) {
 	if _, err := parseFleet("ls codex q.md"); err == nil {
 		t.Error("parseFleet: want error for reserved name")
 	}
+	// A misspelled middle agent must not be swallowed as the path (dropping the real path) — it's an
+	// error naming the agents, not a silent "no such file: borg" later.
+	if _, err := parseFleet("api borg .agent/TASKS.api.md"); err == nil {
+		t.Error("parseFleet: want error for an unknown middle agent token")
+	}
+	// A path with spaces is rejected, not truncated to its first word.
+	if _, err := parseFleet("api codex tasks with spaces.md"); err == nil {
+		t.Error("parseFleet: want error for a tasks path containing spaces")
+	}
+	// Duplicate fork names are rejected — two lines for one name silently dropped the second before.
+	if _, err := parseFleet("api codex a.md\napi gemini b.md"); err == nil {
+		t.Error("parseFleet: want error for a duplicate fork name")
+	}
 }
 
 func TestPolicyScan(t *testing.T) {
