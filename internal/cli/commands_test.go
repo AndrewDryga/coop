@@ -12,6 +12,32 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+// The loop work/audit prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
+// read_file rejects a relative path, so a relative ".agent/TASKS.md" left gemini/codex fleet forks
+// unable to read their own queue (claude resolved it against cwd and was fine).
+func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
+	repo := "/home/node/proj"
+	work := loopWorkPrompt(repo, []string{".agent/TASKS.md"})
+	for _, want := range []string{"/home/node/proj/.agent/TASKS.md", "/home/node/proj/AGENTS.md"} {
+		if !strings.Contains(work, want) {
+			t.Errorf("work prompt missing absolute %q:\n%s", want, work)
+		}
+	}
+	if strings.Contains(work, " .agent/TASKS.md") || strings.Contains(work, "and AGENTS.md") {
+		t.Errorf("work prompt still names a relative path:\n%s", work)
+	}
+	// Several queues are all listed, each absolute.
+	multi := loopWorkPrompt(repo, []string{"portal/.agent/TASKS.md", "runner/.agent/TASKS.md"})
+	for _, want := range []string{"/home/node/proj/portal/.agent/TASKS.md", "/home/node/proj/runner/.agent/TASKS.md"} {
+		if !strings.Contains(multi, want) {
+			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
+		}
+	}
+	if audit := loopAuditPrompt(repo, []string{".agent/TASKS.md"}); !strings.Contains(audit, "/home/node/proj/.agent/TASKS.md") {
+		t.Errorf("audit prompt should name the absolute queue:\n%s", audit)
+	}
+}
+
 func TestLoopAgent(t *testing.T) {
 	if got, err := loopAgent(nil); err != nil || got != "claude" {
 		t.Errorf("loopAgent(nil) = (%q, %v), want claude", got, err)

@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop names the task queue (and `AGENTS.md`) as absolute paths, so Gemini/Codex fleet forks
+  can read it.** Each iteration told the agent to `Read .agent/TASKS.md …` — a repo-relative path.
+  Claude/Codex resolve it against the box's working dir, but Gemini's `read_file` rejects a relative
+  path outright, so a Gemini (or Codex) fork in a fleet couldn't read its own queue and stalled at
+  0/N. The prompt now names absolute in-box paths.
+
 - **`coop fleet watch`: a fork with only blocked tasks left reads as "blocked", not "✓ done".** The
   row used "no actionable task" as the done signal, but `scanTasks` reports that for an all-`[B]`
   queue exactly as for an all-done one — so a fork at 2/5 with 3 blocked (even while still running)

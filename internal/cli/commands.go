@@ -751,15 +751,27 @@ func parseLoopArgs(args []string) (agent string, debugOnFail bool, err error) {
 	return agent, debugOnFail, err
 }
 
-// loopWorkPrompt and loopAuditPrompt name the queue file(s) the iteration works. With a
-// single .agent/TASKS.md they read exactly as before; with several (a monorepo's
-// per-component queues) they list them so the agent works the union.
-func loopWorkPrompt(queues []string) string {
-	return fmt.Sprintf("Read %s and AGENTS.md, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains.", strings.Join(queues, ", "))
+// loopWorkPrompt and loopAuditPrompt name the queue file(s) the iteration works as ABSOLUTE
+// in-box paths (the box's working dir is repo, bind-mounted at its real path). A relative
+// ".agent/TASKS.md" resolves fine for claude/codex, which take it against the cwd, but gemini's
+// read_file rejects a relative path outright — so the queues (and AGENTS.md) are named absolute
+// for every agent. With several queues (a monorepo's per-component files) they're all listed so
+// the agent works the union.
+func loopWorkPrompt(repo string, queues []string) string {
+	return fmt.Sprintf("Read %s and %s, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains.", absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
 }
 
-func loopAuditPrompt(queues []string) string {
-	return fmt.Sprintf("Audit: for every [x] in %s, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.", strings.Join(queues, ", "))
+func loopAuditPrompt(repo string, queues []string) string {
+	return fmt.Sprintf("Audit: for every [x] in %s, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.", absJoin(repo, queues))
+}
+
+// absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
+func absJoin(repo string, queues []string) string {
+	abs := make([]string, len(queues))
+	for i, q := range queues {
+		abs[i] = filepath.Join(repo, q)
+	}
+	return strings.Join(abs, ", ")
 }
 
 // loop works .agent/TASKS.md unattended until no "[ ]" remains, then (unless a
@@ -791,7 +803,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. The
 	// stream-json marker in the command is what runIteration keys the decoder off.
 	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
-	work, audit := loopWorkPrompt(queues), loopAuditPrompt(queues)
+	work, audit := loopWorkPrompt(repo, queues), loopAuditPrompt(repo, queues)
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/audit prompt.
 	iterCmd := func(prompt string) []string {
