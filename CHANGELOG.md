@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop acp --supervise` no longer drops a request when the box restarts.** On a restart the
+  proxy failed the in-flight requests (telling the editor to retry) a beat *before* it repointed
+  to the new child, so a retry that arrived in that window was written to the dead child and
+  silently dropped (a tight timing race; it also surfaced as an intermittently deadlocking test).
+  The new child is now published before the retry signal, so the retry lands on it.
+
 ## 2.6.1
 
 - **`coop doctor` works on rootful Linux Docker.** Its self-test probe was created mode 0600 and

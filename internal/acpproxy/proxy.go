@@ -117,8 +117,7 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 			return err
 		}
 		nr := bufio.NewReaderSize(next.Out, readBuf)
-		p.replay(next, nr)
-		p.setChild(next)
+		p.replay(next, nr) // publishes next as the live child (setChild) before failing pending
 		child, reader = next, nr
 	}
 }
@@ -257,6 +256,12 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) {
 		}
 	}
 	<-sent
+	// Publish the new child as live BEFORE failing the in-flight requests. failAllPending tells the
+	// editor to retry, and editors retry at once; if p.child still pointed at the dead child, that
+	// retry would be written to it and silently dropped (the swap-window race). Setting it here —
+	// after <-sent, so the replay writer is done and there's no concurrent write to c.In — means the
+	// retry lands on the live child. (The initial child is published by Run; only swaps come here.)
+	p.setChild(c)
 	p.failAllPending()
 }
 
