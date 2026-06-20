@@ -9,6 +9,13 @@
   `--restart` to recycle running boxes onto the new image — it SIGKILLs loops/forks but
   **spares editor (ACP) sessions** (tagged `coop.role=acp`), so your editor never trips;
   start a new thread there to pick up the new image.
+- **`coop acp --supervise` survives a box restart without the editor noticing.** Editors
+  keep one ACP server process per agent and don't respawn a crashed one until you restart
+  the whole editor. With `--supervise`, `coop acp` runs the agent in a child and proxies
+  the connection; if the container dies (a rebuild, OOM, Docker restart), it starts a new
+  one and replays the ACP handshake (`initialize` + `session/load`), so the editor stays
+  connected and the conversation resumes from the mounted home. Opt-in; set it in your
+  editor's args, e.g. `["acp","claude","--supervise"]`.
 - **`coop init` scaffolds a commit gate that matches the repo's stack.** The pre-commit
   hook (and the Claude commit gate) used to hardcode a `gofmt` check — so a Terraform or
   Elixir repo got a dead Go gate and no gate for the language it actually uses. Now `coop

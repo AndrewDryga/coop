@@ -159,3 +159,28 @@ func idStr(t *testing.T, line []byte) string {
 	}
 	return string(m.ID)
 }
+
+func TestProxyGivesUpOnRapidFailures(t *testing.T) {
+	clientInR, _ := io.Pipe() // editor never sends or closes; the children just die
+	spawns := 0
+	factory := func(context.Context) (*Child, error) {
+		spawns++
+		pr, pw := io.Pipe()
+		pw.Close() // Out is immediately EOF: the child "dies" instantly
+		_, inW := io.Pipe()
+		return &Child{In: inW, Out: pr, Stop: func() { inW.Close() }}, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, io.Discard, factory) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a give-up error after rapid failures")
+		}
+		if spawns < maxRapidFails {
+			t.Fatalf("gave up after %d spawns, want >= %d", spawns, maxRapidFails)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not give up on rapidly-failing children")
+	}
+}

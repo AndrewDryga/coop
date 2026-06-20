@@ -199,3 +199,14 @@ func TestParseRestart(t *testing.T) {
 		t.Fatal("trailing arg should error")
 	}
 }
+
+func TestExtractSupervise(t *testing.T) {
+	got, rest := extractSupervise([]string{"claude", "--supervise"})
+	if !got || len(rest) != 1 || rest[0] != "claude" {
+		t.Fatalf("with flag: supervise=%v rest=%v", got, rest)
+	}
+	got, rest = extractSupervise([]string{"fusion", "claude"})
+	if got || len(rest) != 2 {
+		t.Fatalf("without flag: supervise=%v rest=%v", got, rest)
+	}
+}

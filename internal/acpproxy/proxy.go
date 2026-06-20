@@ -20,8 +20,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // Child is one run of the agent adapter (one container). The proxy writes ACP to In
@@ -38,6 +40,11 @@ type Factory func(ctx context.Context) (*Child, error)
 const replayPrefix = "coop-acp-" // id namespace for our synthetic replay requests
 
 const readBuf = 1 << 20 // ACP messages can carry file contents; read generously.
+
+const (
+	minHealthy    = 2 * time.Second // a child living less than this counts as a rapid failure
+	maxRapidFails = 5               // give up after this many rapid failures in a row
+)
 
 // Run proxies ACP between the editor and children from factory until the editor
 // closes clientIn (clean shutdown) or ctx is cancelled. A child that exits while the
@@ -69,7 +76,9 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 		p.shutdownChild()
 	}()
 
+	rapid := 0
 	for {
+		start := time.Now()
 		p.pumpChild(reader) // returns when this child's Out closes
 		select {
 		case <-clientGone:
@@ -79,6 +88,20 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 			child.Stop()
 			return ctx.Err()
 		default:
+		}
+		// A child that dies almost immediately is broken (no runtime, bad auth, a
+		// failing image) — respawning in a tight loop would be a fork bomb, so back
+		// off and eventually give up, letting the editor see the failure.
+		if time.Since(start) < minHealthy {
+			rapid++
+			if rapid >= maxRapidFails {
+				child.Stop()
+				p.failAllPending()
+				return fmt.Errorf("acpproxy: agent exited %d times within %s of starting; giving up", rapid, minHealthy)
+			}
+			time.Sleep(time.Duration(rapid) * 200 * time.Millisecond)
+		} else {
+			rapid = 0
 		}
 		// The child died while the editor is still here: replace it transparently.
 		next, err := factory(ctx)

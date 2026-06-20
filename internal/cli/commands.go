@@ -2,16 +2,21 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -178,6 +183,13 @@ func acpCommand(tool string) ([]string, bool) {
 // peers read-only and synthesizes (see cmdFusion). Add one Zed agent_servers
 // entry per governor to switch which model leads.
 func (a *app) cmdACP(args []string) (int, error) {
+	// --supervise keeps the editor's connection alive across a container restart by
+	// running the normal `coop acp` as a child and proxying ACP through acpproxy. The
+	// COOP_ACP_INNER guard makes the child run the box directly (no recursion).
+	supervise, args := extractSupervise(args)
+	if supervise && os.Getenv("COOP_ACP_INNER") == "" {
+		return a.cmdACPSupervise(args)
+	}
 	consult, args := extractConsult(args)
 	tool := agents.Default()
 	if len(args) > 0 {
@@ -214,6 +226,68 @@ func (a *app) cmdACP(args []string) (int, error) {
 		ExtraArgs: []string{"-e", "COOP_QUIET=1"},
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
+}
+
+func extractSupervise(args []string) (supervise bool, rest []string) {
+	for _, a := range args {
+		if a == "--supervise" {
+			supervise = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return supervise, rest
+}
+
+// cmdACPSupervise serves the editor on stdio and runs the real `coop acp <rest>` as a
+// child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
+// the child's container dies, acpproxy starts a new child and replays the ACP
+// handshake, so the editor never sees a disconnect (see internal/acpproxy).
+func (a *app) cmdACPSupervise(rest []string) (int, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return 1, fmt.Errorf("acp --supervise: %w", err)
+	}
+	inner := append([]string{"acp"}, rest...)
+
+	factory := func(ctx context.Context) (*acpproxy.Child, error) {
+		inR, inW, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		outR, outW, err := os.Pipe()
+		if err != nil {
+			inR.Close()
+			inW.Close()
+			return nil, err
+		}
+		cmd := exec.CommandContext(ctx, self, inner...)
+		cmd.Env = append(os.Environ(), "COOP_ACP_INNER=1")
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
+		if err := cmd.Start(); err != nil {
+			inR.Close()
+			inW.Close()
+			outR.Close()
+			outW.Close()
+			return nil, err
+		}
+		inR.Close()  // the child holds the read end now
+		outW.Close() // ...and the write end; outR sees EOF when the child exits
+		go func() { _ = cmd.Wait() }()
+		stop := func() {
+			_ = cmd.Process.Kill()
+			inW.Close()
+			outR.Close()
+		}
+		return &acpproxy.Child{In: inW, Out: outR, Stop: stop}, nil
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	if err := acpproxy.Run(ctx, os.Stdin, os.Stdout, factory); err != nil && !errors.Is(err, context.Canceled) {
+		return 1, err
+	}
+	return 0, nil
 }
 
 // cmdFusion runs a council: the governor agent (a leading `claude|codex|gemini`, else

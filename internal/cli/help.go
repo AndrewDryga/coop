@@ -137,10 +137,15 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--supervise]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
-  command at e.g. ["acp","claude"] — one entry per agent or governor.`,
+  command at e.g. ["acp","claude"] — one entry per agent or governor.
+
+  --supervise keeps the editor connected across a box restart: it runs the agent
+  in a child and, if the container dies, starts a new one and replays the ACP
+  handshake (initialize + session/load) so the editor doesn't see a crash. Set it
+  in your editor's args, e.g. ["acp","claude","--supervise"].`,
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
