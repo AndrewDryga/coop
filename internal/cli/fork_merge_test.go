@@ -380,6 +380,27 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 			t.Fatal("positive control failed: raw git diff did not run the planted diff.external")
 		}
 	})
+
+	// (d) a poisoned core.fsmonitor must not fire when `coop check-secrets` enumerates files —
+	// candidateFiles runs `git ls-files`, which refreshes the index and so executes fsmonitor. The
+	// repo's .git is agent-writable, so this is a host-RCE vector if the call isn't hardened.
+	t.Run("fsmonitor on check-secrets ls-files", func(t *testing.T) {
+		repo := initRepo(t)
+		marker := filepath.Join(t.TempDir(), "PWNED")
+		evil := filepath.Join(repo, ".git", "evil.sh")
+		markerScript(t, evil, marker)
+		git(t, repo, "config", "core.fsmonitor", evil)
+		if _, err := candidateFiles(repo); err != nil { // hardened — must not run fsmonitor
+			t.Fatalf("candidateFiles: %v", err)
+		}
+		if pathExists(marker) {
+			t.Fatal("candidateFiles ran the parent's core.fsmonitor on the host")
+		}
+		_ = exec.Command("git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard").Run() // raw control
+		if !pathExists(marker) {
+			t.Fatal("positive control failed: raw git ls-files did not fire the planted fsmonitor")
+		}
+	})
 }
 
 func TestInteractionRiskPath(t *testing.T) {

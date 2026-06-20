@@ -74,7 +74,13 @@ func scanVisibleTree(repo string) ([]string, error) {
 // what a fork sees), not vendored deps or build output (node_modules, .build, dist, …).
 // Falls back to a filesystem walk (skipping .git) when repo isn't a git work tree.
 func candidateFiles(repo string) ([]string, error) {
-	if out, err := exec.Command("git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output(); err == nil {
+	// Build the args through gitArgs so the hardening (-c core.fsmonitor=, core.hooksPath=/dev/null,
+	// …) applies: ls-files refreshes the index, which would otherwise EXECUTE a poisoned repo's
+	// core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box run can plant
+	// it. Keep the raw .Output() (not gitOut): gitOut trims and would eat the -z NUL separators, and
+	// we need to tell "git failed" (→ filesystem fallback) apart from "git succeeded, empty list".
+	args := gitArgs(repo, []string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"})
+	if out, err := exec.Command("git", args...).Output(); err == nil {
 		var rels []string
 		for _, p := range strings.Split(string(out), "\x00") {
 			if p != "" {
