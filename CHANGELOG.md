@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task-queue contract now matches the parser: every top-level `[ ]` is live.** The docs said
+  the loop works `[ ]` items "under `## Active`", but the loop/split/status act on every
+  unchecked top-level task wherever it sits. AGENTS.md, the scaffolded `coop init` templates,
+  README, and `coop tasks lint`'s wording now state the real rule — `## Active` is convention,
+  the example uses `[E]`, and anything not ready to work belongs in `BACKLOG.md`/`IDEAS.md`.
+
 - **`install.sh` fails closed when `checksums.txt` lacks the selected asset.** Previously, if
   the checksum file was fetched but had no line for `coop_<ver>_<os>_<arch>.tar.gz`, the
   extracted checksum was empty and the mismatch check was skipped — an unverified binary

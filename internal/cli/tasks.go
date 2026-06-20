@@ -249,7 +249,7 @@ func tasksLint(path string) (int, error) {
 			add(t.LineNo, fmt.Sprintf("stale claim? %q is [w] (claimed) but not done — finish it, reset to [ ], or remove", short(t.Title)))
 		}
 		if t.State == " " && strings.EqualFold(t.Section, "Example") {
-			add(t.LineNo, fmt.Sprintf("unchecked task %q is under ## Example — the loop would pick it up; move it to ## Active or mark it [E]", short(t.Title)))
+			add(t.LineNo, fmt.Sprintf("unchecked task %q is under ## Example — every top-level [ ] is live, so the loop would pick it up; mark the example [E] (or move it out of ## Example)", short(t.Title)))
 		}
 		if t.State == " " || t.State == "w" || t.State == "B" {
 			if missing := missingSections(t); len(missing) > 0 {
@@ -333,7 +333,8 @@ func tasksAdd(path string, args []string) (int, error) {
 		"  - **Likely files:** \n"+
 		"  - **Implementation direction:** \n"+
 		"  - **Acceptance checks:** \n", title)
-	// ## Active is conventionally the last section, so appending keeps the new task in it.
+	// Append at the end — every top-level [ ] is live regardless of section, so where it
+	// lands doesn't change whether it's worked; the trailing ## Active is just convention.
 	updated := strings.TrimRight(content, "\n") + "\n" + stub
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return -1, err

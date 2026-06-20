@@ -18,6 +18,7 @@
 
 ## The contract
 - States: `[ ]` todo · `[w]` claimed · `[x]` done+gated+committed · `[B]` blocked.
+- **Every top-level `[ ]` is live.** The loop, split, and status act on every unchecked top-level task in a queue file, wherever it sits — there is no special "active" section (a `## Active` heading is just convention). The example uses `[E]` so it's skipped; anything not ready to be worked belongs in `BACKLOG.md`/`IDEAS.md` or as plain prose, never as a `[ ]`.
 - Claim a task by flipping it to `[w]` BEFORE you start it.
 - `[x]` only when the gate is green, the change is committed, and LOG.md has an entry.
 - Blocked? `[B]` + a .agent/PENDING_DECISIONS.md entry. There is no fifth state.

@@ -656,8 +656,9 @@ coop loop             # disposable agents work the queue until it's done, then a
 coop loop codex       # …or pick the model: claude (default), codex, or gemini
 ```
 
-`loop` starts a fresh agent per iteration (no context rot), works unchecked `[ ]`
-items, and won't quit while any remain. Pass `claude`/`codex`/`gemini` to choose the
+`loop` starts a fresh agent per iteration (no context rot), works every unchecked
+top-level `[ ]` in the queue file (wherever it sits — there's no special "active"
+section; the example is marked `[E]` so it's skipped), and won't quit while any remain. Pass `claude`/`codex`/`gemini` to choose the
 model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration command if
 you need something custom. When the queue empties, a fresh auditor
 re-checks every `[x]` against the git log and reopens anything that doesn't hold up.

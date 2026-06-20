@@ -4,7 +4,9 @@
 # Tasks are self-contained: a fresh agent with only the BOOT files (this queue,
 # AGENTS.md, LOG.md) and the repo must be able to do each one — no prior chat, no
 # remembered review. Give every task the five-part shape in the ## Example below.
-# The loop works only `- [ ]` items under ## Active; [E] and comments are ignored.
+# EVERY top-level `- [ ]` here is live work, wherever it sits — `## Active` is just a
+# convention, not a fence. The example uses [E] so it's skipped; `#` comments are too.
+# Anything not ready to work belongs in BACKLOG.md / IDEAS.md, never as a `- [ ]`.
 
 ## Example
 
