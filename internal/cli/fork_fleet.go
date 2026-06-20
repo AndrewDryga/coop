@@ -131,6 +131,16 @@ func (a *app) fleetInit() (int, error) {
 	return 0, nil
 }
 
+// fleetAbortErr formats the error when `fleet up` fails fast partway through. Failing fast (over a
+// silent partial fleet) is the intended behavior — but when forks already started, the error must
+// be loud about it and name the cleanup, so a half-started fleet isn't discovered hours later.
+func fleetAbortErr(name string, err error, started int) error {
+	if started > 0 {
+		return fmt.Errorf("fleet up: %q failed to start (%v) — aborted with %d fork(s) already running; stop them with 'coop fleet down' (or inspect via 'coop fork ls')", name, err, started)
+	}
+	return fmt.Errorf("fleet up: %q failed to start: %v", name, err)
+}
+
 func (a *app) fleetUp(args []string) (int, error) {
 	prune, force, err := parseFleetActionFlags("up", args)
 	if err != nil {
@@ -155,8 +165,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 			tasks = filepath.Join(repo, tasks)
 		}
 		if code, err := a.cmdFork([]string{e.name, e.agent, "--loop", "-d", "--tasks", tasks}); err != nil {
-			ui.Error("fleet: %s failed: %v", e.name, err)
-			return code, err
+			return code, fleetAbortErr(e.name, err, started)
 		}
 		started++
 	}

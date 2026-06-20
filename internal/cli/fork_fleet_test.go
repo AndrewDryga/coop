@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,24 @@ func TestParseFleet(t *testing.T) {
 	// Duplicate fork names are rejected — two lines for one name silently dropped the second before.
 	if _, err := parseFleet("api codex a.md\napi gemini b.md"); err == nil {
 		t.Error("parseFleet: want error for a duplicate fork name")
+	}
+}
+
+// fleet up fails fast, but when forks already started the error must be loud about the partial fleet
+// and name the cleanup, so a half-started fleet isn't discovered later.
+func TestFleetAbortErr(t *testing.T) {
+	none := fleetAbortErr("api", errors.New("boom"), 0).Error()
+	if !strings.Contains(none, "api") || !strings.Contains(none, "boom") {
+		t.Errorf("abort err (none started) should name the fork and cause: %q", none)
+	}
+	if strings.Contains(none, "fleet down") {
+		t.Errorf("abort err with nothing started shouldn't mention cleanup: %q", none)
+	}
+	some := fleetAbortErr("web", errors.New("boom"), 2).Error()
+	for _, want := range []string{"web", "2 fork", "coop fleet down"} {
+		if !strings.Contains(some, want) {
+			t.Errorf("abort err (2 started) missing %q: %q", want, some)
+		}
 	}
 }
 
