@@ -405,7 +405,10 @@ func forkNames(repo string) []string {
 	return names
 }
 
-func (a *app) forkLs(_ []string) (int, error) {
+func (a *app) forkLs(args []string) (int, error) {
+	if err := rejectArgs("fork ls", args); err != nil {
+		return 2, err // a stray token should fail, not be silently ignored
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

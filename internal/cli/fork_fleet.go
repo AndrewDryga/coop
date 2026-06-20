@@ -81,8 +81,8 @@ func (a *app) cmdFleet(args []string) (int, error) {
 	case "prune":
 		return a.fleetPrune(args[1:])
 	default:
-		// `ls` was a pure alias for `coop fork ls`; point there instead of duplicating.
-		return 2, errors.New("usage: coop fleet init|up|down|split|watch|prune   (list forks with 'coop fork ls')")
+		// `ls` lives on `coop fork ls`, not here.
+		return 2, unknownErr("fleet command", sub, []string{"init", "up", "down", "split", "watch", "prune"})
 	}
 }
 

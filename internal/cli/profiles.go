@@ -20,7 +20,7 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 	names := agents.Names()
 	if len(args) > 0 {
 		if _, ok := agents.Get(args[0]); !ok {
-			return 2, fmt.Errorf("unknown agent %q — use %s", args[0], strings.Join(agents.Names(), ", "))
+			return 2, unknownErr("agent", args[0], agents.Names())
 		}
 		names = []string{args[0]}
 	}
@@ -62,7 +62,7 @@ func (a *app) setProfileDefault(args []string) (int, error) {
 	}
 	agent, name := args[0], args[1]
 	if _, ok := agents.Get(agent); !ok {
-		return 2, fmt.Errorf("unknown agent %q — use %s", agent, strings.Join(agents.Names(), ", "))
+		return 2, unknownErr("agent", agent, agents.Names())
 	}
 	have := a.cfg.Profiles(agent)
 	if !slices.Contains(have, name) {

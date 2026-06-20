@@ -107,7 +107,7 @@ func (a *app) cmdPool(args []string) (int, error) {
 		}
 		agent, profiles := rest[0], rest[1:]
 		if _, ok := agents.Get(agent); !ok {
-			return 2, fmt.Errorf("unknown agent %q — use %s", agent, strings.Join(agents.Names(), ", "))
+			return 2, unknownErr("agent", agent, agents.Names())
 		}
 		cur, err := repoPool(a.cfg, repo, agent)
 		if err != nil {
@@ -133,14 +133,14 @@ func (a *app) cmdPool(args []string) (int, error) {
 			return 2, errors.New("usage: coop pool clear <agent>")
 		}
 		if _, ok := agents.Get(rest[0]); !ok {
-			return 2, fmt.Errorf("unknown agent %q — use %s", rest[0], strings.Join(agents.Names(), ", "))
+			return 2, unknownErr("agent", rest[0], agents.Names())
 		}
 		if err := setRepoPool(a.cfg, repo, rest[0], nil); err != nil {
 			return -1, err
 		}
 		return a.showPool(repo)
 	default:
-		return 2, fmt.Errorf("unknown pool command %q — use: add, rm, clear", verb)
+		return 2, unknownErr("pool command", verb, []string{"add", "rm", "clear"})
 	}
 }
 

@@ -162,7 +162,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		}
 		return tasksSplit(repo, filepath.Join(repo, rels[0]), rest[1:])
 	default:
-		return 2, errors.New(`usage: coop tasks [--tasks <path>]... list | lint | add "<title>" | split <n>`)
+		return 2, unknownErr("tasks command", sub, []string{"list", "lint", "add", "split"})
 	}
 }
 

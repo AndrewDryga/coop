@@ -202,12 +202,23 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 
 // rejectArgs returns a usage error when a command that takes no arguments is given some,
 // so a stray token fails clearly instead of being silently ignored. (A `help`/`--help`
-// arg is intercepted earlier, so it never reaches here.)
+// arg is intercepted earlier, so it never reaches here.) No leading "coop " — ui.Error already
+// prefixes "coop:", so this would otherwise double it ("coop: coop status …").
 func rejectArgs(cmd string, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return fmt.Errorf("coop %s takes no arguments (got %q) — see 'coop %s --help'", cmd, strings.Join(args, " "), cmd)
+	return fmt.Errorf("%s takes no arguments (got %q) — see 'coop %s --help'", cmd, strings.Join(args, " "), cmd)
+}
+
+// unknownErr is the one shape for a rejected subcommand / agent / value: `unknown <noun>
+// "<token>" — use: a, b, c`, with a "did you mean X?" when the token is a near-miss. Shared by the
+// sub-command groups (tasks/fleet/pool/profiles) so a bad input reads the same everywhere.
+func unknownErr(noun, token string, valid []string) error {
+	if guess, ok := nearestCommand(token, valid); ok {
+		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)
+	}
+	return fmt.Errorf("unknown %s %q — use: %s", noun, token, strings.Join(valid, ", "))
 }
 
 func copyFile(src, dst string) error {

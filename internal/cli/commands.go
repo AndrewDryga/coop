@@ -154,7 +154,7 @@ func extractProfile(args []string) (profile string, rest []string) {
 func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {
-		return 2, fmt.Errorf("unknown agent %q — use %s", tool, strings.Join(agents.Names(), ", "))
+		return 2, unknownErr("agent", tool, agents.Names())
 	}
 	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
 	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
@@ -451,6 +451,15 @@ func (a *app) cmdUp(args []string) (int, error) {
 }
 
 func (a *app) cmdDown(args []string) (int, error) {
+	// Validate flags before any runtime/compose work, so a typo fails clearly here instead of
+	// later as an unrelated "no compose.agent.yml" — `coop down` takes only -v/--volumes.
+	volumes := false
+	for _, x := range args {
+		if x != "-v" && x != "--volumes" {
+			return 2, fmt.Errorf("unknown flag %q — coop down takes only -v/--volumes", x)
+		}
+		volumes = true
+	}
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
@@ -464,7 +473,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	}
 	proj := box.ServicesProject(repo)
 	cargs := []string{"compose", "-p", proj, "-f", file, "down"}
-	if len(args) > 0 && (args[0] == "--volumes" || args[0] == "-v") {
+	if volumes {
 		cargs = append(cargs, "--volumes")
 	}
 	return a.rt.Run(os.Stdin, os.Stdout, os.Stderr, cargs...)

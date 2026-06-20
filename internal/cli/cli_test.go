@@ -89,3 +89,15 @@ func TestMainHelpSubcommand(t *testing.T) {
 		t.Errorf("helpForCommand(bogus) = %d, want 2 (unknown command)", codeBogus)
 	}
 }
+
+// unknownErr is the one shape for a rejected subcommand/agent/value, with a typo hint for a
+// near-miss. The sub-command groups (tasks/fleet/pool/profiles) all use it.
+func TestUnknownErr(t *testing.T) {
+	if got := unknownErr("tasks command", "bogus", []string{"list", "lint"}).Error(); got != `unknown tasks command "bogus" — use: list, lint` {
+		t.Errorf("unknownErr = %q", got)
+	}
+	// A ≥4-char near-miss gets a "did you mean".
+	if got := unknownErr("fleet command", "prnue", []string{"prune", "up"}).Error(); !strings.Contains(got, `did you mean "prune"`) {
+		t.Errorf("expected a suggestion in: %q", got)
+	}
+}
