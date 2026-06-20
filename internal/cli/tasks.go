@@ -85,20 +85,21 @@ func splitOpenTaskBlocks(content string, n int) [][]string {
 
 // extractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
-// `coop loop` so they accept the same repeatable flag.
-func extractTasksFlags(args []string) (tasks []string, rest []string) {
+// `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path
+// is an error, not a silently-dropped flag.
+func extractTasksFlags(args []string) (tasks []string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--tasks" && i+1 < len(args):
-			tasks = append(tasks, args[i+1])
-			i++
-		case strings.HasPrefix(args[i], "--tasks="):
-			tasks = append(tasks, strings.TrimPrefix(args[i], "--tasks="))
-		default:
-			rest = append(rest, args[i])
+		if v, n, ok, e := flagValue(args, i, "--tasks"); ok {
+			if e != nil {
+				return nil, nil, e
+			}
+			tasks = append(tasks, v)
+			i += n - 1
+			continue
 		}
+		rest = append(rest, args[i])
 	}
-	return tasks, rest
+	return tasks, rest, nil
 }
 
 // taskQueues resolves the task-file paths for a command — the repeated --tasks flags if
@@ -133,7 +134,10 @@ func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 // cmdTasks treats the task queue(s) as a validated surface: list, lint, add, and split.
 // list and lint span every --tasks/COOP_TASKS file; add and split target exactly one.
 func (a *app) cmdTasks(args []string) (int, error) {
-	flags, rest := extractTasksFlags(args)
+	flags, rest, err := extractTasksFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]

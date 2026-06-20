@@ -174,13 +174,15 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.detach = true
 			fa.loop = true
 		case x == "--tasks", x == "-t":
-			if i+1 >= len(rest) {
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks file")
 			}
 			i++
 			fa.tasks = rest[i]
 		case strings.HasPrefix(x, "--tasks="):
-			fa.tasks = strings.TrimPrefix(x, "--tasks=")
+			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
+				return fa, errors.New("coop fork --tasks needs a path to a tasks file")
+			}
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true

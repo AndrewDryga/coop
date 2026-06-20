@@ -246,6 +246,28 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 	}
 }
 
+// TestStrictFlagParsing: value-bearing coop flags reject a missing value or a stray arg up
+// front (exit 2) instead of silently falling back to a default or ignoring the typo. These all
+// return before any runtime/scaffold work, so a bare app suffices.
+func TestStrictFlagParsing(t *testing.T) {
+	a := &app{cfg: &config.Config{}}
+	cases := []struct {
+		name string
+		fn   func() (int, error)
+	}{
+		{"login --profile no value", func() (int, error) { return a.cmdLogin([]string{"claude", "--profile"}) }},
+		{"login stray arg", func() (int, error) { return a.cmdLogin([]string{"claude", "extra"}) }},
+		{"init --stack no value", func() (int, error) { return a.cmdInit([]string{"--stack"}) }},
+		{"init --services no value", func() (int, error) { return a.cmdInit([]string{"--services"}) }},
+		{"init unknown flag", func() (int, error) { return a.cmdInit([]string{"--bogus"}) }},
+	}
+	for _, c := range cases {
+		if code, err := c.fn(); code != 2 || err == nil {
+			t.Errorf("%s = (%d, %v), want (2, error)", c.name, code, err)
+		}
+	}
+}
+
 // The top-level help documents coop's --consult wrapper flag and stops claiming `coop <agent>
 // --help` shows coop's flags (it forwards to the agent).
 func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {

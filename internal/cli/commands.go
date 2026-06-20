@@ -91,7 +91,13 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 	// --profile; an interactive run forwards args untouched so codex's own --profile
 	// (a config.toml profile) still reaches codex.
 	if len(args) >= 1 && args[0] == "login" {
-		profile, _ := extractProfile(args[1:])
+		profile, rest, err := extractProfile(args[1:])
+		if err != nil {
+			return 2, err
+		}
+		if len(rest) > 0 {
+			return 2, fmt.Errorf("unexpected argument %q after 'coop %s login'", rest[0], tool)
+		}
 		return a.loginTo(tool, profile)
 	}
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), tool, consult)
@@ -122,32 +128,62 @@ func (a *app) defaultCmd(tool string) []string {
 }
 
 func (a *app) cmdLogin(args []string) (int, error) {
-	profile, rest := extractProfile(args)
+	profile, rest, err := extractProfile(args)
+	if err != nil {
+		return 2, err
+	}
 	// The agent is required — bare `coop login` must not silently default to one (it would open a
-	// browser and block); name it explicitly, like the help shows.
+	// browser and block); name it explicitly, like the help shows. A stray extra arg is a typo,
+	// not a second target, so reject it rather than silently ignore.
 	if len(rest) == 0 {
 		return 2, fmt.Errorf("usage: coop login <%s> [--profile <name>]", strings.Join(agents.Names(), "|"))
+	}
+	if len(rest) > 1 {
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s> [--profile <name>])", rest[1], strings.Join(agents.Names(), "|"))
 	}
 	return a.loginTo(rest[0], profile)
 }
 
+// flagValue extracts the value of a value-bearing flag at args[i], handling both
+// `--flag value` and `--flag=value`. ok reports whether args[i] is this flag at all;
+// consumed is how many tokens it spans (1 or 2). It errors when the value is missing — the
+// flag is the last token, its value is another flag (a leading '-'), or `--flag=` is empty —
+// so a typo'd flag fails loudly instead of silently falling back to a default. Values for
+// coop's own flags never start with '-', so treating a '-' next token as "missing" is safe.
+func flagValue(args []string, i int, flag string) (val string, consumed int, ok bool, err error) {
+	switch a := args[i]; {
+	case a == flag:
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+			return "", 0, true, fmt.Errorf("%s needs a value", flag)
+		}
+		return args[i+1], 2, true, nil
+	case strings.HasPrefix(a, flag+"="):
+		if v := strings.TrimPrefix(a, flag+"="); v != "" {
+			return v, 1, true, nil
+		}
+		return "", 0, true, fmt.Errorf("%s needs a value", flag)
+	}
+	return "", 0, false, nil
+}
+
 // extractProfile pulls coop's own `--profile <name>` (or `--profile=<name>`) flag out of
 // args, returning the chosen credential profile (config.DefaultProfile if absent) and the
-// remaining args. It lets a login target one of several stored subscriptions.
-func extractProfile(args []string) (profile string, rest []string) {
+// remaining args. It lets a login target one of several stored subscriptions. A `--profile`
+// with no value is an error, not a silent fall-back to the default.
+func extractProfile(args []string) (profile string, rest []string, err error) {
 	profile = config.DefaultProfile
 	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--profile" && i+1 < len(args):
-			profile = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--profile="):
-			profile = strings.TrimPrefix(args[i], "--profile=")
-		default:
-			rest = append(rest, args[i])
+		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
+			if e != nil {
+				return "", nil, e
+			}
+			profile = v
+			i += n - 1
+			continue
 		}
+		rest = append(rest, args[i])
 	}
-	return profile, rest
+	return profile, rest, nil
 }
 
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
@@ -519,18 +555,25 @@ func (a *app) cmdInit(args []string) (int, error) {
 	var services []string
 	servicesSet := false
 	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--stack" && i+1 < len(args):
-			stack = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--stack="):
-			stack = strings.TrimPrefix(args[i], "--stack=")
-		case args[i] == "--services" && i+1 < len(args):
-			services, servicesSet = parseServices(args[i+1]), true
-			i++
-		case strings.HasPrefix(args[i], "--services="):
-			services, servicesSet = parseServices(strings.TrimPrefix(args[i], "--services=")), true
+		if v, n, ok, e := flagValue(args, i, "--stack"); ok {
+			if e != nil {
+				return 2, e
+			}
+			stack = v
+			i += n - 1
+			continue
 		}
+		if v, n, ok, e := flagValue(args, i, "--services"); ok {
+			if e != nil {
+				return 2, e
+			}
+			services, servicesSet = parseServices(v), true
+			i += n - 1
+			continue
+		}
+		// An unknown token is a typo — error before doing any scaffold work, rather than
+		// silently ignoring it and acting as if a flag were never passed.
+		return 2, unknownErr("init flag", args[i], []string{"--stack", "--services"})
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -668,7 +711,10 @@ func loopAgent(args []string) (string, error) {
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
-	flags, rest := extractTasksFlags(args)
+	flags, rest, err := extractTasksFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	agent, debugOnFail, err := parseLoopArgs(rest)
 	if err != nil {
 		return 2, err

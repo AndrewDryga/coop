@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Value-bearing CLI flags reject a missing value or stray argument instead of silently doing the
+  wrong thing.** `coop login claude --profile` (no name) used to fall back to the default profile;
+  `coop login claude extra`, `coop init --bogus`, and a trailing `coop tasks --tasks` were silently
+  ignored. They now exit 2 with a message naming the missing value or unknown flag. A shared
+  `flagValue` parser handles `--flag value` and `--flag=value` for `--profile`, `--stack`,
+  `--services`, and `--tasks`; agent pass-through flags are unaffected.
+
 - **`coop acp --supervise` teardown and replay are hardened.** Three narrow lifecycle bugs in the
   supervise/restart path are fixed: (1) tearing down during the startup window (after `docker run`
   begins but before the box is labelled) could orphan the container — the inner `coop acp` now runs
