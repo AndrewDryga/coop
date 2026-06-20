@@ -123,24 +123,6 @@ func (r Runtime) KillByLabel(key, value string) int {
 	return n
 }
 
-// KillByLabelExcept SIGKILLs running containers labelled key=value, skipping any
-// that also carry spareKey=spareValue (e.g. an editor's ACP session). Returns the
-// counts killed and spared.
-func (r Runtime) KillByLabelExcept(key, value, spareKey, spareValue string) (killed, spared int) {
-	spare := map[string]bool{}
-	for _, id := range r.psIDs("label="+key+"="+value, "label="+spareKey+"="+spareValue) {
-		spare[id] = true
-	}
-	for _, id := range r.psIDs("label=" + key + "=" + value) {
-		if spare[id] {
-			spared++
-		} else if r.kill(id) {
-			killed++
-		}
-	}
-	return killed, spared
-}
-
 func (r Runtime) kill(id string) bool {
 	return id != "" && exec.Command(r.Name, "kill", id).Run() == nil
 }
