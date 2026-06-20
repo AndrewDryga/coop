@@ -18,8 +18,8 @@
   editor stays connected and the conversation resumes from the mounted home (verified
   end-to-end against the real claude + codex adapters: kill the box mid-session and the
   next prompt succeeds, still authenticated). Each supervisor tags its box `coop.sup=<id>`
-  and kills exactly its own box on teardown, so nothing is orphaned. Opt-in; set it in
-  your editor's args, e.g. `["acp","claude","--supervise"]`.
+  and kills exactly its own box on teardown — not other agents' supervised boxes. Opt-in; set
+  it in your editor's args, e.g. `["acp","claude","--supervise"]`.
 - **`coop init` scaffolds a commit gate that matches the repo's stack.** The pre-commit
   hook (and the Claude commit gate) used to hardcode a `gofmt` check — so a Terraform or
   Elixir repo got a dead Go gate and no gate for the language it actually uses. Now `coop
@@ -95,6 +95,40 @@
   TASKS.md` works the union until every file is drained — one loop covering several
   components, with the whole repo still mounted. list and lint span all the files; add and
   split target a single one. Paths are relative to the repo root.
+- **Host-side git is hardened against a poisoned repo.** coop bind-mounts your repo into the
+  box with its `.git` writable, so a prompt-injected agent could plant git config that runs a
+  command on *your* host the next time coop touches the repo — a `core.fsmonitor`, a hook,
+  `diff.external`, a `gpg.program`, a filter/merge/diff driver. Every host-side git call coop
+  makes now blanks those exec-bearing knobs, and any config coop reads then executes or reads a
+  host file from (your editor, signing program, excludesfile) is read from your **global** git
+  config, never the agent-writable repo. `coop check-secrets`, `coop fork merge`/`review`, and
+  `coop status` are all covered, each with a poisoned-config test that fires a raw-git positive
+  control so the guard can't silently rot.
+- **The box drops privileges and can run fully offline.** Every box now starts with `--cap-drop
+  ALL` and `no-new-privileges` (an agent needs neither), so a repo `Dockerfile.agent` that does
+  `USER root` can't regain `NET_RAW`/`MKNOD`/etc. New opt-in `COOP_EGRESS=none` runs the box
+  with no network at all — for a run you don't trust. The secret-shadow denylist gained common
+  service-credential names, and the README now states plainly that **`.coopignore`, not
+  `.gitignore`, is the boundary** for what the agent can read on a bind-mounted run.
+- **`coop fork merge` defends the host on land.** Landing a fork runs git on your machine, so a
+  fork that planted an execution-on-interaction file (`.envrc`, `.vscode/tasks.json`, a new
+  `Makefile`, a `package.json` that adds an install script) or neutralized its `.gitattributes`
+  drivers is flagged and blocked without `--force`; an untracked `Dockerfile.agent` (which
+  defines the box an agent could author) is flagged before `coop build`. And `coop fork merge
+  --all` now asks before it lands and **deletes** every fork — it used to do that with no
+  confirmation at a terminal.
+- **CLI papercuts, fixed.** `coop run --help` and bare `coop run` print usage instead of
+  crashing the box; `coop login` requires the agent and refuses a non-interactive stdin; `coop
+  help <cmd>` shows that command's page; every command has a real `--help`; a bad
+  subcommand/agent/flag is rejected the same way everywhere, with a "did you mean…?";
+  `$COOP_RUNTIME` is validated up front (a clear "runtime not found", not a misleading "image
+  not built"); and the `coop status` / `coop fork ls` / `coop profiles` tables size their
+  columns to the data, so a long fork name no longer breaks the alignment.
+- **Safer fork loops.** `coop fork` refuses to start a second loop on a fork that's already
+  looping (it was overwriting the pidfile, orphaning the first worker and leaving two loops
+  racing the same worktree), and `coop fleet up` skips already-running forks so a re-run is
+  idempotent. An empty `COOP_CLAUDE_CMD` / `COOP_GEMINI_CMD` override now degrades to the bare
+  CLI instead of producing a command with no executable.
 
 ## 2.5.2
 
