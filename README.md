@@ -1,6 +1,6 @@
 <div align="center">
 
-# Coop
+# co:op
 
 <img src=".github/assets/coop.png" alt="Coop" width="180">
 
