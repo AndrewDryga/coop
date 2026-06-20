@@ -132,7 +132,12 @@ func (a *app) fleetUp(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	started := 0
 	for _, e := range fleet {
+		if pid := forkRunningPid(repo, e.name); pid != 0 {
+			ui.Info("fork %s already running (pid %d) — skipping", e.name, pid)
+			continue // idempotent: re-running `fleet up` leaves live loops alone
+		}
 		tasks := e.tasks // fleet paths are repo-relative; make them absolute for the fork
 		if !filepath.IsAbs(tasks) {
 			tasks = filepath.Join(repo, tasks)
@@ -141,8 +146,9 @@ func (a *app) fleetUp(args []string) (int, error) {
 			ui.Error("fleet: %s failed: %v", e.name, err)
 			return code, err
 		}
+		started++
 	}
-	ui.Info("fleet up: %d fork(s) detached — coop fork ls · coop fork logs -f", len(fleet))
+	ui.Info("fleet up: %d fork(s) detached — coop fork ls · coop fork logs -f", started)
 	if prune {
 		if err := a.pruneFleet(repo, force); err != nil {
 			return -1, err

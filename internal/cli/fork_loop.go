@@ -101,6 +101,12 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 // the fork's log, records its pid, and returns immediately. tasks is an absolute path
 // (resolved by the caller) forwarded so the worker seeds the same queue.
 func (a *app) detachForkLoop(repo, name, agent, tasks string) (int, error) {
+	// Refuse to start a second worker for a fork that's already looping: the pidfile write below
+	// would overwrite the first worker's pid, orphaning it untracked, and two loops would then race
+	// the same worktree's queue and branch. (fleetUp skips running forks before reaching here.)
+	if pid := forkRunningPid(repo, name); pid != 0 {
+		return 1, fmt.Errorf("fork %s already has a loop running (pid %d) — stop it first: coop fork stop %s", name, pid, name)
+	}
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestParseForkCreateLoopFlags(t *testing.T) {
@@ -85,6 +87,29 @@ func TestForkRunningPid(t *testing.T) {
 	}
 	if pathExists(forkPid(repo, "dead")) {
 		t.Error("stale pidfile not removed")
+	}
+}
+
+func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A live pidfile (our own pid) stands in for a worker already looping this fork.
+	if err := os.WriteFile(forkPid(repo, "perf"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{}}
+	code, err := a.detachForkLoop(repo, "perf", "claude", "")
+	if err == nil {
+		t.Fatal("detachForkLoop started a second worker for an already-running fork")
+	}
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	// The original pid must survive — overwriting it is exactly the orphan bug.
+	if got := forkRunningPid(repo, "perf"); got != os.Getpid() {
+		t.Errorf("pidfile clobbered: forkRunningPid = %d, want %d", got, os.Getpid())
 	}
 }
 
