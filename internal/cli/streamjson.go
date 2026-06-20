@@ -84,12 +84,14 @@ func (d *streamDecoder) event(raw []byte) {
 		d.assistant(ev.Message)
 	case "user":
 		d.toolResult(ev.Message)
+	case "system":
+		d.system(&ev)
 	case "rate_limit_event":
 		d.rateLimit(ev.RateLimit)
 	case "result":
 		d.result(&ev)
 	default:
-		// system/init, session_state_changed, and any future type: nothing to show.
+		// session_state_changed and any future type: nothing to show.
 	}
 }
 
@@ -138,6 +140,16 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 			line += ": " + truncate(first, 60)
 		}
 		d.emit(line)
+	}
+}
+
+// system renders the init event's model line, so each loop iteration shows which model is
+// actually working — the agent's default, a --model override, or whatever the account tier
+// resolves to. coop doesn't pick the model, so the agent's own init report is the one
+// reliable source; it lands right after the iteration banner, before the agent's first move.
+func (d *streamDecoder) system(ev *streamEvent) {
+	if ev.Subtype == "init" && ev.Model != "" {
+		d.emit(ui.Dim("· model " + ev.Model))
 	}
 }
 
@@ -238,6 +250,8 @@ func rawText(raw json.RawMessage) string {
 
 type streamEvent struct {
 	Type         string          `json:"type"`
+	Subtype      string          `json:"subtype"`
+	Model        string          `json:"model"`
 	Message      json.RawMessage `json:"message"`
 	RateLimit    *rateLimitInfo  `json:"rate_limit_info"`
 	IsError      bool            `json:"is_error"`

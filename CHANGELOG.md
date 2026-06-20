@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop check-secrets` is honest about gitignored files, and `--include-ignored` scans them.**
+  The default scan covers the commit-candidate files (tracked + untracked, gitignored excluded)
+  — but a `coop run`/`shell`/`loop` bind-mounts the *whole* working tree, so a
+  gitignored-but-not-shadowed file (a stray `serviceAccount.json`, say) is still visible to the
+  agent even though the old docs implied the scan saw "everything not shadowed". The output now
+  names which scope ran, and `coop check-secrets --include-ignored` walks the full visible tree
+  (still skipping shadowed files, dependency/build dirs, and binaries). README + help updated.
+
 - **A run now mounts only the launched agent's credentials, not every agent's.** A plain
   `coop claude` used to bind-mount `~/.claude`, `~/.codex`, *and* `~/.gemini` (and pass the
   whole `agents/env` with every API key) into the box, so the Claude process could read the

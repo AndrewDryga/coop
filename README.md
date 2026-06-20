@@ -192,7 +192,7 @@ any of them.
 | `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
-| `coop check-secrets` | scan the [visible working tree](#secrets-never-enter-the-box) for committed secrets by content (exit 1 on a hit) |
+| `coop check-secrets` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
 | `coop help` · `version` | print help · print the version |
 
 ## The sandbox
@@ -237,12 +237,17 @@ committed content, so a gitignored file never comes along.) Prove your setup wit
 [`coop doctor`](#prove-it-coop-doctor).
 
 Shadowing hides secrets by filename, but a token can hide *inside* an ordinary file.
-`coop check-secrets` scans the files the box can actually see (everything not shadowed)
-for secret-looking content — provider token shapes and high-entropy values — and
-reports each as `file:line`, exiting non-zero on a hit so it works as a pre-flight or CI
-check. It deliberately ignores already-shadowed files (the box never sees them) — if it
-flags something you keep on purpose, hide that file with a `.coopignore` entry. Forks land
-through the same content scan ([`coop fork merge`](#forks-hand-off-work-like-a-pr)).
+`coop check-secrets` scans for secret-looking content — provider token shapes and
+high-entropy values — and reports each as `file:line`, exiting non-zero on a hit so it
+works as a pre-flight or CI check. By default it scans the commit-candidate files
+(tracked + untracked, with gitignored ones excluded) — the noise you'd actually commit.
+But a `coop run`/`shell`/`loop` bind-mounts the *whole* working tree, so a
+gitignored-but-not-shadowed file is still visible to the agent; pass
+`coop check-secrets --include-ignored` to scan that full visible tree too (dependency/build
+dirs and shadowed files are still skipped). Either way it ignores already-shadowed files
+(the box never sees them) — if it flags something you keep on purpose, hide that file with a
+`.coopignore` entry. Forks land through the same content scan
+([`coop fork merge`](#forks-hand-off-work-like-a-pr)).
 
 ### Your git identity, not the box's
 

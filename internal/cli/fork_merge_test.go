@@ -390,7 +390,7 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 		evil := filepath.Join(repo, ".git", "evil.sh")
 		markerScript(t, evil, marker)
 		git(t, repo, "config", "core.fsmonitor", evil)
-		if _, err := candidateFiles(repo); err != nil { // hardened — must not run fsmonitor
+		if _, err := candidateFiles(repo, false); err != nil { // hardened — must not run fsmonitor
 			t.Fatalf("candidateFiles: %v", err)
 		}
 		if pathExists(marker) {

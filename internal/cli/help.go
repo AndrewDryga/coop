@@ -207,11 +207,17 @@ var commandHelp = map[string]string{
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 
-  Usage: coop check-secrets
+  Usage: coop check-secrets [--include-ignored]
 
-  Scans every file the box can see (not shadowed) for token shapes and
-  high-entropy values, reporting file:line. Exits non-zero on a hit, for use
-  as a pre-flight or CI check. Hide a flagged file with .coopignore.`,
+  Scans for token shapes and high-entropy values, reporting file:line. Exits
+  non-zero on a hit, for use as a pre-flight or CI check. Hide a flagged file
+  with .coopignore.
+
+  By default it scans the commit-candidate files (tracked + untracked; gitignored
+  excluded). A 'coop run'/'shell'/'loop' mounts the WHOLE tree, though, so a
+  gitignored-but-not-shadowed file is still visible to the agent — pass
+  --include-ignored to scan the full visible tree too (deps/build dirs and
+  shadowed files are still skipped).`,
 
 	"loop": `coop loop [agent] — work the task queue until done, then audit.
 

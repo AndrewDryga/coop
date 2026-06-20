@@ -31,7 +31,7 @@ func TestStreamDecoder(t *testing.T) {
 	d.flush()
 
 	o := out.String()
-	for _, want := range []string{"⚙ Bash", "echo hi", "✦ working on task 9", "✎ Edit", ".agent/TASKS.test.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
+	for _, want := range []string{"· model claude-opus-4-8", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ Edit", ".agent/TASKS.test.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("rendered output missing %q\n--- got ---\n%s", want, o)
 		}
@@ -83,6 +83,36 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 		if detectLimit(tl.String(), now).limited {
 			t.Errorf("status %q should not trip the limit detector (tail=%q)", st, tl.String())
 		}
+	}
+}
+
+func TestStreamDecoderModel(t *testing.T) {
+	// The init event names the running model — rendered once, so a loop iteration shows
+	// what's actually working. It never reaches the rate-limit tail (it's not human text).
+	cases := []struct {
+		name, line, want string
+	}{
+		{"init with model", `{"type":"system","subtype":"init","model":"claude-opus-4-8"}`, "· model claude-opus-4-8"},
+		{"init without model", `{"type":"system","subtype":"init"}`, ""},
+		{"non-init system", `{"type":"system","subtype":"compact_boundary","model":"x"}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			d := newStreamDecoder(&out, &tail)
+			_, _ = d.Write([]byte(c.line + "\n"))
+			d.flush()
+			if c.want == "" {
+				if strings.TrimSpace(out.String()) != "" {
+					t.Errorf("expected no output, got %q", out.String())
+				}
+			} else if !strings.Contains(out.String(), c.want) {
+				t.Errorf("output %q missing %q", out.String(), c.want)
+			}
+			if tail.Len() != 0 {
+				t.Errorf("system event leaked into rate-limit tail: %q", tail.String())
+			}
+		})
 	}
 }
 
