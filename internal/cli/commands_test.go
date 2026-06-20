@@ -257,3 +257,15 @@ func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {
 		t.Error("footer should note that for an agent, --help is the agent's own")
 	}
 }
+
+// The top-level fleet/pool summary lines must list every verb (init/split for fleet and rm/clear
+// for pool were omitted, hiding `coop fleet init` etc. from the main help).
+func TestTopLevelListsAllGroupVerbs(t *testing.T) {
+	h := helpText(&config.Config{})
+	if !strings.Contains(h, "coop fleet init|up|down|split|watch|prune") {
+		t.Error("top-level fleet row should list every fleet verb (init/split were missing)")
+	}
+	if !strings.Contains(h, "coop pool add|rm|clear") {
+		t.Error("top-level pool row should list every pool verb (rm/clear were missing)")
+	}
+}

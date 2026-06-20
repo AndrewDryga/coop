@@ -65,8 +65,8 @@ func helpText(cfg *config.Config) string {
 
 	group("UNATTENDED")
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
-	row("coop pool add <agent> <profile…>", "pick which subscriptions the loop rotates on a rate limit")
-	row("coop fleet up|down|watch|prune", "drive a fleet of forks from .agent/fleet")
+	row("coop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
+	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
 	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
 	row("coop tasks list|lint|add|split", "inspect/validate the queue(s) (--tasks, COOP_TASKS)")
 
