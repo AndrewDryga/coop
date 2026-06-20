@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 2.7.0
 
 - **`.coopignore` can re-hide a whitelisted template / CA-bundle name.** AllowGlobs (`*.example`,
   `*.sample`, `*.template`, `cacerts.pem` and friends) used to win over *both* the built-in secret
