@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -62,20 +61,38 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	if err := os.WriteFile(probe, []byte(doctorProbe), 0o644); err != nil {
 		return -1, err
 	}
+	// CreateTemp made the file 0600 and WriteFile won't widen an existing file's mode. The box runs
+	// the probe as a uid that may not own it and, under --cap-drop ALL, without CAP_DAC_OVERRIDE to
+	// bypass the read check (alpine-as-root on rootful Linux Docker is exactly this) — so `sh
+	// /probe.sh` would silently read nothing. Make it world-readable.
+	if err := os.Chmod(probe, 0o644); err != nil {
+		return -1, err
+	}
 
 	rep := &report{}
 	fmt.Printf("%s  %s\n", ui.Bold("== coop doctor =="), ui.Dim("(runtime: "+a.rt.Name+")"))
 
 	// --- inside the sandbox ---
 	fmt.Printf("\n%s\n", ui.Bold("inside the sandbox"))
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	_, runErr := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: "alpine", Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe.sh"},
-		Batch: true, Quiet: true, Stdout: &out, Stderr: io.Discard,
+		Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
 		ExtraArgs: []string{"-v", probe + ":/probe.sh:ro"},
 	})
 	if runErr != nil || out.Len() == 0 {
-		rep.no("the sandbox produced no output (the container failed to run)")
+		// Surface WHY: an opaque "failed to run" sent us hunting through CI logs for the cause once
+		// already. Show the runtime's own complaint (its last stderr line), or the run error.
+		why := strings.TrimSpace(errOut.String())
+		if why == "" && runErr != nil {
+			why = runErr.Error()
+		}
+		msg := "the sandbox produced no output (the container failed to run)"
+		if why != "" {
+			lines := strings.Split(why, "\n")
+			msg += ": " + strings.TrimSpace(lines[len(lines)-1])
+		}
+		rep.no(msg)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
 		switch {
@@ -125,6 +142,12 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 func buildFixture() (string, error) {
 	dir, err := os.MkdirTemp("", "coop-doctor-")
 	if err != nil {
+		return "", err
+	}
+	// MkdirTemp makes the root 0700; the box mounts it at /workspace and the probe must cd into and
+	// stat it as a uid that may not own it (and, under --cap-drop ALL, can't bypass the check). Make
+	// the root world-traversable — the seeded files are already 0644 / subdirs 0755.
+	if err := os.Chmod(dir, 0o755); err != nil {
 		return "", err
 	}
 	files := map[string]string{
