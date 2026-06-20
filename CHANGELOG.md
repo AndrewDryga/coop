@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 2.6.0
 
 - **`coop build` / `coop update` transparently restart supervised editor sessions.** They
