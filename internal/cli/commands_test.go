@@ -245,3 +245,15 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 		t.Errorf("loginTo(bogus) = (%d, %v), want (2, unknown agent — before the tty check)", code, err)
 	}
 }
+
+// The top-level help documents coop's --consult wrapper flag and stops claiming `coop <agent>
+// --help` shows coop's flags (it forwards to the agent).
+func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {
+	h := helpText(&config.Config{})
+	if !strings.Contains(h, "--consult") {
+		t.Error("top-level help should document the --consult wrapper flag")
+	}
+	if !strings.Contains(h, "--help is the agent's own") {
+		t.Error("footer should note that for an agent, --help is the agent's own")
+	}
+}

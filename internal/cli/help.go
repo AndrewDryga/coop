@@ -50,6 +50,7 @@ func helpText(cfg *config.Config) string {
 	row("coop login <agent> [--profile p]", "authenticate an agent (a profile = one subscription)")
 	row("coop profiles [agent]", "list stored credential profiles and which are signed in")
 	row("coop acp [agent|fusion]", "serve as an ACP agent over stdio (for editors like Zed)")
+	row("coop <agent> --consult", "add a read-only second opinion from the other agents on a hard call")
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
@@ -80,7 +81,8 @@ func helpText(cfg *config.Config) string {
 	row("coop help", "this help")
 	row("coop version", "print the version")
 
-	fmt.Fprint(&b, "\nRun 'coop <command> --help' for any command's flags and details.\n")
+	fmt.Fprint(&b, "\nRun 'coop help <command>' or 'coop <command> --help' for a command's details —\n"+
+		"for an agent (claude/codex/gemini), --help is the agent's own.\n")
 	fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://github.com/AndrewDryga/coop\n",
 		tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
 
