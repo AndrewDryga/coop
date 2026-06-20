@@ -69,7 +69,13 @@ func (a *app) fleetWatch() (int, error) {
 		return 0, nil
 	}
 
-	region := ui.NewRegion(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
+	// Render on the alternate screen (like top/htop). A bottom-pinned region repaints by counting
+	// lines up from the bottom, so once the dashboard is taller than the terminal pane each refresh
+	// scrolls the top line ("coop fleet — N running") into scrollback — the reported spam. The alt
+	// buffer has no scrollback to pollute and is restored on exit.
+	screen := ui.NewAltScreen(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
+	screen.Enter()
+	defer screen.Leave()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -83,12 +89,10 @@ func (a *app) fleetWatch() (int, error) {
 		for i, n := range names {
 			rows[i] = gatherFleetRow(repo, n)
 		}
-		region.Update("", fleetDashboard(name, rows, spin))
+		screen.Frame(fleetDashboard(name, rows, spin))
 		select {
 		case <-sig:
-			region.Clear()
-			fmt.Fprintln(os.Stdout) // leave the cursor on a fresh line
-			return 0, nil
+			return 0, nil // defer screen.Leave() restores the prior screen
 		case <-t.C:
 		}
 	}

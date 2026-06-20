@@ -71,6 +71,47 @@ func (r *Region) eraseLocked() {
 	r.shown = 0
 }
 
+// AltScreen drives a full-screen live view on the terminal's alternate buffer — the model
+// behind `coop fleet watch`. A bottom-pinned Region scrolls its top lines into scrollback on
+// every repaint once the content is taller than the window (the "coop fleet — N running" spam);
+// the alternate buffer has no scrollback to pollute, and Frame repaints from the top-left rather
+// than doing cursor-up math from the bottom, so an over-tall dashboard degrades to "shows what
+// fits" instead of orphaning its header. Enter switches to the alt buffer and hides the cursor;
+// Leave restores the prior screen. Build one only when the target is a real terminal.
+type AltScreen struct {
+	w     io.Writer
+	width func() int
+}
+
+// NewAltScreen writes to w, sizing each frame's lines with width (called per repaint, so a
+// resized terminal is picked up).
+func NewAltScreen(w io.Writer, width func() int) *AltScreen {
+	return &AltScreen{w: w, width: width}
+}
+
+// Enter switches to the alternate screen buffer and hides the cursor.
+func (s *AltScreen) Enter() { fmt.Fprint(s.w, "\033[?1049h\033[?25l") }
+
+// Frame repaints the whole view from the top-left: the cursor homes, each line is cleared to the
+// end of line and clipped to the width so it never wraps, and a final erase-to-end wipes any
+// lines left over from a taller previous frame.
+func (s *AltScreen) Frame(lines []string) {
+	w := s.width()
+	var b strings.Builder
+	b.WriteString("\033[H") // cursor home
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("\033[K" + clip(line, w-1))
+	}
+	b.WriteString("\033[J") // clear anything below — a frame shorter than the last
+	fmt.Fprint(s.w, b.String())
+}
+
+// Leave shows the cursor and restores the screen that was active before Enter.
+func (s *AltScreen) Leave() { fmt.Fprint(s.w, "\033[?25h\033[?1049l") }
+
 // ProgressBar renders a width-cell bar filled to frac (0..1), the filled cells cyan.
 func ProgressBar(frac float64, width int) string {
 	if frac < 0 {

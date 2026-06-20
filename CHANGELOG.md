@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fleet watch` no longer spams its header into scrollback.** The live dashboard repainted a
+  bottom-pinned region, which redraws in place by counting lines up from the bottom — but once the
+  dashboard was taller than the terminal pane, every refresh scrolled the top line (`coop fleet — N
+  running…`) into scrollback instead of overwriting it, leaving a growing wall of repeated headers.
+  It now renders on the alternate screen buffer (like `top`/`htop`): each frame repaints from the
+  top-left and the prior screen is restored on exit, so it never pollutes scrollback regardless of
+  window size.
+
 ## 2.7.0
 
 - **`.coopignore` can re-hide a whitelisted template / CA-bundle name.** AllowGlobs (`*.example`,

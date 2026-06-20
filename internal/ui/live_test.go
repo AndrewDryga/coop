@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -98,5 +99,49 @@ func TestRegion(t *testing.T) {
 	r.Clear()
 	if !strings.Contains(buf.String(), "\033[J") {
 		t.Errorf("clear should erase the region: %q", buf.String())
+	}
+}
+
+func TestAltScreen(t *testing.T) {
+	var buf strings.Builder
+	s := NewAltScreen(&buf, func() int { return 40 })
+
+	s.Enter()
+	if !strings.Contains(buf.String(), "\033[?1049h") {
+		t.Errorf("Enter should switch to the alternate buffer: %q", buf.String())
+	}
+
+	// A frame homes the cursor, draws each line top-down, and clears below — no cursor-up math, so
+	// it can't orphan the header into scrollback the way a bottom-pinned region does when too tall.
+	buf.Reset()
+	s.Frame([]string{"HEADER", "row one", "BAR"})
+	out := buf.String()
+	if !strings.HasPrefix(out, "\033[H") {
+		t.Errorf("frame should home the cursor first: %q", out)
+	}
+	if !strings.HasSuffix(out, "\033[J") {
+		t.Errorf("frame should clear leftover lines below: %q", out)
+	}
+	if regexp.MustCompile("\033\\[[0-9]*A").MatchString(out) { // never a cursor-up (\033[<n>A) — that's the orphaning the alt screen avoids
+		t.Errorf("frame should not use cursor-up: %q", out)
+	}
+	for _, want := range []string{"HEADER", "row one", "BAR"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("frame missing %q: %q", want, out)
+		}
+	}
+
+	// Lines are clipped to the width so they never wrap and desync the repaint.
+	buf.Reset()
+	s.Frame([]string{strings.Repeat("x", 100)})
+	if got := visible(buf.String()); got > 40 {
+		t.Errorf("frame line not clipped to width: visible=%d (%q)", got, buf.String())
+	}
+
+	// Leave restores the main buffer (and the cursor).
+	buf.Reset()
+	s.Leave()
+	if !strings.Contains(buf.String(), "\033[?1049l") {
+		t.Errorf("Leave should restore the main buffer: %q", buf.String())
 	}
 }
