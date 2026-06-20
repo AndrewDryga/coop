@@ -13,9 +13,11 @@
   keep one ACP server process per agent and don't respawn a crashed one until you restart
   the whole editor. With `--supervise`, `coop acp` runs the agent in a child and proxies
   the connection; if the container dies (a rebuild, OOM, Docker restart), it starts a new
-  one and replays the ACP handshake (`initialize` + `session/load`), so the editor stays
-  connected and the conversation resumes from the mounted home. Opt-in; set it in your
-  editor's args, e.g. `["acp","claude","--supervise"]`.
+  one and replays the ACP handshake (`initialize`, `authenticate`, `session/load`), so the
+  editor stays connected, the agent re-authenticates from the on-disk token, and the
+  conversation resumes from the mounted home. The child runs in its own process group so
+  the restart tears the old container down (no orphans). Opt-in; set it in your editor's
+  args, e.g. `["acp","claude","--supervise"]`.
 - **`coop init` scaffolds a commit gate that matches the repo's stack.** The pre-commit
   hook (and the Claude commit gate) used to hardcode a `gofmt` check — so a Terraform or
   Elixir repo got a dead Go gate and no gate for the language it actually uses. Now `coop

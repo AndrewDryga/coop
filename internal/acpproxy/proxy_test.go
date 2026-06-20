@@ -82,6 +82,14 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 		t.Fatalf("client got id %q, want 1", id)
 	}
 
+	// authenticate → part of the setup handshake that must be replayed on a restart.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":"a","method":"authenticate","params":{"methodId":"x"}}`)
+	if m := method(t, readLine(t, childIn1)); m != "authenticate" {
+		t.Fatalf("child1 frame = %q, want authenticate", m)
+	}
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":"a","result":{}}`)
+	readLine(t, clientOut) // authenticate response forwarded
+
 	// session/new → learn sessionId S1 from the response.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w","mcpServers":[]}}`)
 	if m := method(t, readLine(t, childIn1)); m != "session/new" {
@@ -101,13 +109,15 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 
 	// The proxy respawns child2 and replays initialize + session/load(S1).
 	childIn2 := bufio.NewReader(c2.inR)
-	var sawInit, sawLoad bool
-	for i := 0; i < 2; i++ {
+	var sawInit, sawAuth, sawLoad bool
+	for i := 0; i < 3; i++ {
 		line := readLine(t, childIn2)
 		h := parse(line)
 		switch h.Method {
 		case "initialize":
 			sawInit = true
+		case "authenticate":
+			sawAuth = true
 		case "session/load":
 			if sid := sessionID(h.Params); sid != "S1" {
 				t.Fatalf("session/load sessionId = %q, want S1", sid)
@@ -119,8 +129,8 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 		// Answer the synthetic request so replay completes.
 		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
 	}
-	if !sawInit || !sawLoad {
-		t.Fatalf("replay missing init=%v load=%v", sawInit, sawLoad)
+	if !sawInit || !sawAuth || !sawLoad {
+		t.Fatalf("replay missing init=%v auth=%v load=%v", sawInit, sawAuth, sawLoad)
 	}
 
 	// The in-flight request (id 3) is failed back to the client so it isn't hung.

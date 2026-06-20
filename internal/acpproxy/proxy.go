@@ -9,11 +9,12 @@
 //
 // The proxy sits between the editor (clientIn/clientOut) and a Child produced by a
 // Factory. It speaks just enough ACP — newline-delimited JSON-RPC 2.0 — to record
-// the editor's `initialize` request and which sessions are live. If the child exits
-// while the editor is still connected, it starts a new child, replays `initialize`
-// and a `session/load` for each live session (the conversation persists on the
-// mounted home, exactly as on an editor restart), fails any in-flight request so the
-// editor isn't left hanging, and resumes forwarding. The editor never sees EOF.
+// the editor's setup handshake (initialize, authenticate) and which sessions are
+// live. If the child exits while the editor is still connected, it starts a new
+// child, replays that setup handshake and a `session/load` for each live session
+// (the conversation persists on the mounted home, and authenticate reloads the
+// on-disk token, exactly as on an editor restart), fails any in-flight request so
+// the editor isn't left hanging, and resumes forwarding. The editor never sees EOF.
 package acpproxy
 
 import (
@@ -121,7 +122,7 @@ type proxy struct {
 
 	mu       sync.Mutex
 	child    *Child
-	initLine []byte                     // editor's initialize request, verbatim
+	setup    [][]byte                   // editor's pre-session setup (initialize, authenticate), in order
 	sessions map[string]json.RawMessage // sessionId -> session/new params (for session/load)
 	newReqs  map[string]json.RawMessage // pending session/new request id -> its params
 	pending  map[string]bool            // editor request id -> awaiting a response
@@ -150,8 +151,11 @@ func (p *proxy) fromClient(line []byte) {
 	p.mu.Lock()
 	if h.isRequest() {
 		switch h.Method {
-		case "initialize":
-			p.initLine = clone(line)
+		case "initialize", "authenticate":
+			// The pre-session handshake the editor ran to bring the agent up. A fresh
+			// agent needs the same — notably authenticate, which loads the on-disk
+			// token (without it the new agent reports "authentication required").
+			p.setup = append(p.setup, clone(line))
 		case "session/new":
 			p.newReqs[string(h.ID)] = h.Params
 		case "session/load":
@@ -199,7 +203,8 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 // any requests that were in flight when the old child died.
 func (p *proxy) replay(c *Child, br *bufio.Reader) {
 	p.mu.Lock()
-	initLine := p.initLine
+	setup := make([][]byte, len(p.setup))
+	copy(setup, p.setup)
 	sessions := make(map[string]json.RawMessage, len(p.sessions))
 	for k, v := range p.sessions {
 		sessions[k] = v
@@ -208,9 +213,9 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) {
 
 	var msgs [][]byte
 	expect := map[string]bool{}
-	if initLine != nil {
-		id := replayPrefix + "init"
-		if msg := withID(initLine, id); msg != nil {
+	for i, line := range setup {
+		id := fmt.Sprintf("%ssetup-%d", replayPrefix, i)
+		if msg := withID(line, id); msg != nil {
 			msgs = append(msgs, msg)
 			expect[id] = true
 		}

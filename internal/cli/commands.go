@@ -264,6 +264,12 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 		cmd := exec.CommandContext(ctx, self, inner...)
 		cmd.Env = append(os.Environ(), "COOP_ACP_INNER=1")
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
+		// Run the child in its own process group so we can signal `docker run` (which
+		// stops the container, --rm cleans it) — killing only the coop parent would
+		// orphan the container. SIGTERM (not SIGKILL) so docker run can tear it down.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+		cmd.WaitDelay = 5 * time.Second
 		if err := cmd.Start(); err != nil {
 			inR.Close()
 			inW.Close()
@@ -275,7 +281,9 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 		outW.Close() // ...and the write end; outR sees EOF when the child exits
 		go func() { _ = cmd.Wait() }()
 		stop := func() {
-			_ = cmd.Process.Kill()
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+			}
 			inW.Close()
 			outR.Close()
 		}
