@@ -67,13 +67,15 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 
 	clientGone := make(chan struct{})
 	go func() {
-		defer close(clientGone)
-		// Editor → child. On EOF, stop the current child so the supervisor loop wakes
-		// and shuts down rather than respawning.
+		// Editor → child.
 		_ = readLines(bufio.NewReaderSize(clientIn, readBuf), func(line []byte) error {
 			p.fromClient(line)
 			return nil
 		})
+		// Mark shutdown BEFORE killing the child: otherwise the child's death unblocks
+		// pumpChild, the loop hits its default branch and respawns a box that then has
+		// no client and leaks. With clientGone already closed, the loop exits instead.
+		close(clientGone)
 		p.shutdownChild()
 	}()
 

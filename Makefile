@@ -30,11 +30,14 @@ doctor: ## Integration check: prove isolation holds (needs a runtime)
 
 check: lint test ## What CI runs: lint + unit tests
 
+acp-e2e: install ## ACP supervise resume e2e (needs Docker + a built box + signed-in claude)
+	@go test -tags acpe2e -run TestSuperviseResume -count=1 -v ./internal/acpproxy/
+
 clean: ## Remove build artifacts
 	@rm -f coop
 	@rm -rf dist
 
 help: ## List targets
-	@grep -hE '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
+	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor check clean help
+.PHONY: build install test cover lint snapshot doctor check acp-e2e clean help
