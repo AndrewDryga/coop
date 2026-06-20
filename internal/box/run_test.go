@@ -314,3 +314,23 @@ func TestAssembleArgsACPLabel(t *testing.T) {
 		t.Errorf("non-ACP run must not carry the acp label: %v", plain)
 	}
 }
+
+func TestAssembleArgsEgress(t *testing.T) {
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+	args := func(egress, networkName string) []string {
+		c := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
+		return assembleArgs(c, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, networkName)
+	}
+	// COOP_EGRESS=none → --network none, overriding any services-net join.
+	if got := args("none", "coop-x_default"); !containsSeq(got, []string{"--network", "none"}) {
+		t.Errorf("COOP_EGRESS=none should force --network none:\n%v", got)
+	}
+	// Default (open) with no services net → no --network flag (runtime default bridge, full outbound).
+	if got := args("open", ""); containsSeq(got, []string{"--network"}) {
+		t.Errorf("default egress + no services net should add no --network:\n%v", got)
+	}
+	// Default (open) WITH a services net → joins it.
+	if got := args("open", "coop-x_default"); !containsSeq(got, []string{"--network", "coop-x_default"}) {
+		t.Errorf("default egress should join the services net:\n%v", got)
+	}
+}

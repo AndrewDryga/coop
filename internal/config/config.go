@@ -45,6 +45,7 @@ type Config struct {
 	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
 	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off
 	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
+	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline)
 
 	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
 
@@ -124,6 +125,7 @@ func Load() *Config {
 		CPUs:            get("COOP_CPUS", ""),
 		Pids:            get("COOP_PIDS", "4096"),
 		NoNewPrivileges: flag("COOP_NO_NEW_PRIVILEGES"),
+		Egress:          get("COOP_EGRESS", "open"),
 
 		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),
 

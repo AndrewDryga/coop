@@ -226,7 +226,9 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	networkName := ""
-	if spec.Network {
+	// COOP_EGRESS=none → a fully offline box (assembleArgs forces --network none); skip the
+	// services-net join, there's nothing to reach.
+	if cfg.Egress != "none" && spec.Network {
 		net := cfg.ServicesNet
 		if net == "" {
 			net = ServicesProject(spec.Repo) + "_default"
@@ -432,8 +434,15 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 
 	args = append(args, cfg.ExtraRunArgs...)
 	args = append(args, spec.ExtraArgs...)
-	if networkName != "" {
-		args = append(args, "--network", networkName)
+	// COOP_EGRESS=none cuts the box off the network entirely (no exfiltration of the repo, visible
+	// secrets, or mounted credentials), overriding any services-net join. Default "open" keeps the
+	// runtime's bridge (full outbound) — the agent needs npm/the model API, so this is opt-in.
+	net := networkName
+	if cfg.Egress == "none" {
+		net = "none"
+	}
+	if net != "" {
+		args = append(args, "--network", net)
 	}
 	if spec.Cache {
 		args = append(args, "-v", "coop-cache:"+cfg.HomeInBox+"/.cache")
