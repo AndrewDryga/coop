@@ -150,6 +150,9 @@ func readFileString(path string) string {
 
 // truncate shortens s to n runes, marking elision with an ellipsis.
 func truncate(s string, n int) string {
+	if n <= 0 {
+		return "" // guards the r[:n-1] / r[:n] negative-index panic on a non-positive width
+	}
 	r := []rune(s)
 	if len(r) <= n {
 		return s

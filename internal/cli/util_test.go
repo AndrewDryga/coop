@@ -7,6 +7,21 @@ import (
 	"testing"
 )
 
+func TestTruncate(t *testing.T) {
+	if got := truncate("hello", 10); got != "hello" {
+		t.Errorf("truncate(short) = %q, want %q", got, "hello")
+	}
+	if got := truncate("hello world", 5); got != "hell…" {
+		t.Errorf("truncate(long) = %q, want %q", got, "hell…")
+	}
+	// A non-positive width must not panic on the negative slice index — return empty.
+	for _, n := range []int{0, -1, -5} {
+		if got := truncate("hello", n); got != "" {
+			t.Errorf("truncate(%q, %d) = %q, want empty", "hello", n, got)
+		}
+	}
+}
+
 func TestQueueHasTodo(t *testing.T) {
 	write := func(body string) string {
 		p := filepath.Join(t.TempDir(), "TASKS.md")

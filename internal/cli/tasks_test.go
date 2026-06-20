@@ -60,6 +60,15 @@ func TestParseTasksBlocksAndSections(t *testing.T) {
 	}
 }
 
+// A non-positive bucket count must not panic (make([],n<0) / the i%n divide-by-zero) — return nil.
+func TestSplitOpenTaskBlocksNonPositive(t *testing.T) {
+	for _, n := range []int{0, -1} {
+		if got := splitOpenTaskBlocks("- [ ] a\n- [ ] b\n", n); got != nil {
+			t.Errorf("splitOpenTaskBlocks(n=%d) = %v, want nil", n, got)
+		}
+	}
+}
+
 func TestSplitOpenTaskBlocksCarriesBodies(t *testing.T) {
 	buckets := splitOpenTaskBlocks(sampleQueue, 2)
 	// Two open [ ] tasks → one per bucket (round-robin), each a whole block.

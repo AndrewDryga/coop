@@ -71,6 +71,9 @@ func parseTasks(content string) []task {
 // TASKS.md into n buckets — the anchored, body-preserving slice that `coop tasks split`
 // and `coop fleet split` share. The legend, prose, and [E] example are excluded.
 func splitOpenTaskBlocks(content string, n int) [][]string {
+	if n <= 0 {
+		return nil // n buckets is meaningless; guards make([],n<0) and the i%n divide-by-zero
+	}
 	buckets := make([][]string, n)
 	i := 0
 	for _, t := range parseTasks(content) {
