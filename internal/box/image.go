@@ -3,6 +3,7 @@ package box
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -152,6 +153,13 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) erro
 		return buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, args...))
 	}
 	img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
+	// Dockerfile.agent defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent with
+	// write access to the repo can author one. The build is always an explicit human action, but an
+	// untracked box definition is exactly the agent-authored case — surface it so a moved/planted
+	// file isn't built silently. Cheap visibility, not a gate.
+	if dockerfileAgentUntracked(repo) {
+		ui.Info("note: Dockerfile.agent is untracked in git — it defines this box, and an agent can author one; review it before building")
+	}
 	ui.Info("building %s from Dockerfile.agent (this project's toolchain)", img)
 	err := buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
 	if err == nil {
@@ -195,4 +203,17 @@ func buildErr(code int, err error) error {
 		return fmt.Errorf("image build failed (exit %d)", code)
 	}
 	return nil
+}
+
+// dockerfileAgentUntracked reports whether repo is a git repo in which Dockerfile.agent is NOT
+// tracked (committed or staged) — the agent-authored case worth surfacing before a build. It uses
+// read-only `ls-files` (hardened: no fsmonitor/hooks fire on the agent-writable repo) and returns
+// false for a non-git repo, where "untracked" isn't a meaningful signal.
+func dockerfileAgentUntracked(repo string) bool {
+	if exec.Command("git", "-C", repo, "rev-parse", "--git-dir").Run() != nil {
+		return false // not a git repo — nothing to compare against
+	}
+	tracked := exec.Command("git", "-C", repo, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
+		"ls-files", "--error-unmatch", "--", "Dockerfile.agent").Run()
+	return tracked != nil // non-zero exit → the file isn't tracked
 }
