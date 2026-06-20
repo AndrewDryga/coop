@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`install.sh` fails closed when `checksums.txt` lacks the selected asset.** Previously, if
+  the checksum file was fetched but had no line for `coop_<ver>_<os>_<arch>.tar.gz`, the
+  extracted checksum was empty and the mismatch check was skipped — an unverified binary
+  installed silently. A missing entry is now treated as a release-integrity failure and aborts.
+  The verification is factored into a `verify_checksum` helper (unit-tested without network);
+  cosign signature verification is unchanged.
+
 - **`coop check-secrets` is honest about gitignored files, and `--include-ignored` scans them.**
   The default scan covers the commit-candidate files (tracked + untracked, gitignored excluded)
   — but a `coop run`/`shell`/`loop` bind-mounts the *whole* working tree, so a

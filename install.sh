@@ -8,6 +8,42 @@ set -eu
 repo="AndrewDryga/coop"
 bindir="${COOP_BIN_DIR:-$HOME/.local/bin}"
 
+# verify_checksum ASSET CHECKSUMS_FILE ARCHIVE — verify ARCHIVE against the sha256 entry for
+# ASSET in CHECKSUMS_FILE. Returns non-zero (and aborts the install) on a release-integrity
+# failure: a *missing* entry for ASSET is treated as a failure, not as "unverified" — a
+# fetched-but-incomplete checksums.txt must never let an unchecked binary through. Returns 0
+# with a warning only when an entry exists but no sha256 tool is available to check it. Pure
+# (no network), so it's unit-testable by sourcing this script with COOP_INSTALL_LIB=1.
+verify_checksum() {
+  vc_asset=$1
+  vc_sums=$2
+  vc_archive=$3
+  vc_want=$(awk -v f="$vc_asset" '$2 == f {print $1}' "$vc_sums")
+  if [ -z "$vc_want" ]; then
+    echo "coop: checksums.txt has no entry for $vc_asset — aborting (release integrity check failed)" >&2
+    return 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    vc_got=$(sha256sum "$vc_archive" | cut -d ' ' -f 1)
+  elif command -v shasum >/dev/null 2>&1; then
+    vc_got=$(shasum -a 256 "$vc_archive" | cut -d ' ' -f 1)
+  else
+    echo "coop: no sha256 tool found; skipping checksum verification" >&2
+    return 0
+  fi
+  if [ "$vc_want" != "$vc_got" ]; then
+    echo "coop: checksum mismatch for $vc_asset — aborting (expected $vc_want, got $vc_got)" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Tests source this file (COOP_INSTALL_LIB=1) to reach the functions above without running
+# the installer — stop here before any uname probing or network access.
+if [ "${COOP_INSTALL_LIB:-}" = 1 ]; then
+  return 0 2>/dev/null
+fi
+
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
 case "$arch" in
@@ -36,7 +72,8 @@ echo "coop: downloading $asset ($ver)…"
 curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" >&2; exit 1; }
 
 # Verify the download against the release's published checksums — defends against a
-# tampered or MITM'd asset. Fails closed on a mismatch; best-effort if no sha tool.
+# tampered or MITM'd asset. Fails closed on a mismatch or a missing entry; best-effort
+# (warn, continue) only when an entry exists but no sha256 tool is available to check it.
 # When cosign is present we first verify checksums.txt's Sigstore signature, so the
 # checksum file itself is trusted (not just internally consistent) — an attacker who
 # swapped both the archive and checksums.txt would be caught here. Without cosign we
@@ -60,19 +97,7 @@ if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o
   else
     echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2
   fi
-  want=$(awk -v f="$asset" '$2 == f {print $1}' "$tmp/checksums.txt")
-  if command -v sha256sum >/dev/null 2>&1; then
-    got=$(sha256sum "$tmp/coop.tar.gz" | cut -d ' ' -f 1)
-  elif command -v shasum >/dev/null 2>&1; then
-    got=$(shasum -a 256 "$tmp/coop.tar.gz" | cut -d ' ' -f 1)
-  else
-    got=""
-  fi
-  if [ -n "$want" ] && [ -n "$got" ] && [ "$want" != "$got" ]; then
-    echo "coop: checksum mismatch for $asset — aborting (expected $want, got $got)" >&2
-    exit 1
-  fi
-  [ -z "$got" ] && echo "coop: no sha256 tool found; skipping checksum verification" >&2
+  verify_checksum "$asset" "$tmp/checksums.txt" "$tmp/coop.tar.gz" || exit 1
 else
   echo "coop: could not fetch checksums.txt; skipping verification" >&2
 fi
