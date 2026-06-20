@@ -1,11 +1,37 @@
 package runtime
 
-import "testing"
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
 
+// Detect validates a COOP_RUNTIME override up front, so a bogus value fails clearly here instead
+// of later as a misleading "image not built".
 func TestDetectOverride(t *testing.T) {
-	r, err := Detect("podman")
-	if err != nil || r.Name != "podman" {
-		t.Fatalf("Detect(podman) = %+v, %v", r, err)
+	// A known runtime that's actually installed is accepted on PATH alone.
+	accepted := false
+	for _, rt := range []string{"docker", "podman", "container"} {
+		if _, err := exec.LookPath(rt); err == nil {
+			if got, err := Detect(rt); err != nil || got.Name != rt {
+				t.Errorf("Detect(%q) = (%+v, %v), want it accepted", rt, got, err)
+			}
+			accepted = true
+			break
+		}
+	}
+	if !accepted {
+		t.Skip("no container runtime installed to test the accept path")
+	}
+	// A name that doesn't resolve on PATH → a clear "not found".
+	if _, err := Detect("definitely-not-a-runtime-xyz"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("a bogus override should be 'not found', got %v", err)
+	}
+	// An executable that resolves but isn't a runtime (fails --version) → "not usable".
+	if _, err := exec.LookPath("false"); err == nil {
+		if _, err := Detect("false"); err == nil || !strings.Contains(err.Error(), "usable") {
+			t.Errorf("a non-runtime override (`false`) should be 'not usable', got %v", err)
+		}
 	}
 }
 

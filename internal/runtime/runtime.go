@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,6 +20,18 @@ type Runtime struct {
 // container, docker, podman found on PATH.
 func Detect(override string) (Runtime, error) {
 	if override != "" {
+		// Validate the COOP_RUNTIME override here, not later with a misleading "image not built":
+		// it must resolve on PATH, and an UNRECOGNIZED override (a typo'd path, /bin/false) must
+		// also answer `--version`, so a non-runtime fails clearly. A known runtime (docker/podman/
+		// container) is trusted on PATH alone, matching the auto-detect path below.
+		if _, err := exec.LookPath(override); err != nil {
+			return Runtime{}, fmt.Errorf("runtime %q not found (from COOP_RUNTIME) — install it, or unset COOP_RUNTIME to auto-detect", override)
+		}
+		if !isKnownRuntime(override) {
+			if err := exec.Command(override, "--version").Run(); err != nil {
+				return Runtime{}, fmt.Errorf("COOP_RUNTIME=%q isn't a usable container runtime (it didn't answer --version) — set docker, podman, or container", override)
+			}
+		}
 		return Runtime{Name: override}, nil
 	}
 	for _, name := range []string{"container", "docker", "podman"} {
@@ -27,6 +40,16 @@ func Detect(override string) (Runtime, error) {
 		}
 	}
 	return Runtime{}, errors.New("no container runtime found — install Apple 'container' (macOS 26), Docker, or Podman")
+}
+
+// isKnownRuntime reports whether name is one of the container runtimes coop drives, by its base
+// name (so an absolute path like /usr/bin/docker still counts).
+func isKnownRuntime(name string) bool {
+	switch filepath.Base(name) {
+	case "docker", "podman", "container":
+		return true
+	}
+	return false
 }
 
 // EnsureDaemon verifies the daemon is reachable. Only Docker exposes a daemon we
