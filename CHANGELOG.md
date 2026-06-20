@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 2.6.1
 
 - **`coop doctor` works on rootful Linux Docker.** Its self-test probe was created mode 0600 and
