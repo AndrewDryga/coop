@@ -281,7 +281,7 @@ func TestForkMergeQueue(t *testing.T) {
 		git(t, ws, "add", "-A")
 		git(t, ws, "commit", "-qm", n)
 	}
-	if code, err := a.forkMergeAll(repo, "", false); err != nil || code != 0 {
+	if code, err := a.forkMergeAll(repo, "", false, true); err != nil || code != 0 { // yes=true: approve the bulk land
 		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
 	}
 	if !pathExists(filepath.Join(repo, "a.txt")) || !pathExists(filepath.Join(repo, "b.txt")) {
@@ -401,6 +401,29 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 			t.Fatal("positive control failed: raw git ls-files did not fire the planted fsmonitor")
 		}
 	})
+}
+
+func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
+	repo := initRepo(t)
+	// Stage two fork workspaces so forkNames lists them; their mere existence is enough — the
+	// approval gate fires before any fetch/land/destroy.
+	for _, n := range []string{"a", "b"} {
+		if err := os.MkdirAll(forkWorkspace(repo, n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &app{cfg: &config.Config{}}
+	// Non-interactive stdin (go test) with yes=false → approve() returns false → bulk land is a
+	// no-op. Without the gate this path would fetch, land, and DELETE every fork unattended.
+	code, err := a.forkMergeAll(repo, "", false, false)
+	if err != nil || code != 0 {
+		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
+	}
+	for _, n := range []string{"a", "b"} {
+		if !pathExists(forkWorkspace(repo, n)) {
+			t.Errorf("fork %s was destroyed without approval", n)
+		}
+	}
 }
 
 func TestInteractionRiskPath(t *testing.T) {

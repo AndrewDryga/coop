@@ -284,7 +284,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return -1, err
 	}
 	if all {
-		return a.forkMergeAll(repo, img, force)
+		return a.forkMergeAll(repo, img, force, yes)
 	}
 	if name == "" {
 		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
@@ -325,10 +325,16 @@ func (a *app) forkMerge(args []string) (int, error) {
 // the result of the previous one and re-gated, so a later fork can't ride in green
 // against a base that an earlier landing already changed. It stops at the first
 // conflict or gate failure, leaving the remaining forks untouched.
-func (a *app) forkMergeAll(repo, img string, force bool) (int, error) {
+func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	names := forkNames(repo)
 	if len(names) == 0 {
 		ui.Info("no forks to merge")
+		return 0, nil
+	}
+	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
+	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
+	// non-interactive run) skips the prompt.
+	if !approve(fmt.Sprintf("rebase and land all %d fork(s)? each lands then is deleted", len(names)), yes) {
 		return 0, nil
 	}
 	var landed []string
