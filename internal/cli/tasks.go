@@ -354,8 +354,13 @@ func tasksSplit(repo, path string, args []string) (int, error) {
 	if content == "" {
 		return -1, fmt.Errorf("no tasks at %s — run 'coop init'", path)
 	}
-	wrote := 0
+	src := path
+	if rel, err := filepath.Rel(repo, path); err == nil {
+		src = rel
+	}
+	wrote, open := 0, 0
 	for i, blocks := range splitOpenTaskBlocks(content, n) {
+		open += len(blocks)
 		if len(blocks) == 0 {
 			continue
 		}
@@ -364,11 +369,20 @@ func tasksSplit(repo, path string, args []string) (int, error) {
 		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
 			return -1, err
 		}
-		ui.Info("wrote %s (%d task[s])", rel, len(blocks))
+		ui.Info("wrote %s (%d task(s))", rel, len(blocks))
 		wrote++
 	}
 	if wrote == 0 {
 		ui.Info("no unchecked [ ] tasks to split")
+		return 0, nil
 	}
+	// Asked for n slices but had fewer open tasks — say so, don't under-produce silently.
+	if wrote < n {
+		ui.Info("only %d open task(s) — wrote %d slice(s), not the %d requested", open, wrote, n)
+	}
+	// The slices are COPIES; the source is untouched and still holds the same tasks. Say which to
+	// run so a later loop doesn't process every task twice.
+	ui.Info("%s is unchanged — the slice(s) above are copies of its open tasks", src)
+	ui.Info("loop one fork per slice (e.g. coop fork s1 --loop -t .agent/TASKS.1.md); don't also loop %s, or each task runs twice", src)
 	return 0, nil
 }

@@ -239,3 +239,36 @@ func TestEmptySectionsAcceptanceLabel(t *testing.T) {
 		t.Errorf("emptySections = %v, want [Acceptance] (the label word 'checks' is not content)", got)
 	}
 }
+
+// `coop tasks split N` says the source is unchanged (so the loop isn't pointed at both source and
+// slices, double-running tasks) and warns when there are fewer open tasks than requested slices.
+func TestTasksSplitMessages(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, ".agent", "TASKS.md")
+	if err := os.WriteFile(path, []byte("## Active\n\n- [ ] only one\n  - **Context:** c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	code, err := tasksSplit(repo, path, []string{"2"}) // 1 open task, asked for 2 slices
+	_ = w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	if code != 0 || err != nil {
+		t.Fatalf("tasksSplit = (%d, %v)", code, err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "only 1 open task") || !strings.Contains(s, "not the 2 requested") {
+		t.Errorf("missing under-split warning:\n%s", s)
+	}
+	if !strings.Contains(s, "is unchanged") || !strings.Contains(s, "runs twice") {
+		t.Errorf("missing original-vs-slices guidance:\n%s", s)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "- [ ] only one") {
+		t.Error("source TASKS.md must be left unchanged")
+	}
+}
