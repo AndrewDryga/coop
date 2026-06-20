@@ -129,6 +129,34 @@ func TestFleetRowStopped(t *testing.T) {
 	}
 }
 
+// A fork that is unfinished but has no actionable task left (the remainder is all [B] blocked) must
+// read as "blocked", never "✓ done" — scanTasks returns active=="" for an all-blocked queue exactly
+// as it does for an all-done one, so the row can't use that as the done signal. Regression for the
+// watch flashing "✓ done" at e.g. 2/5 with 3 blocked (even while still running).
+func TestFleetRowBlockedNotDone(t *testing.T) {
+	cases := []struct {
+		desc string
+		row  fleetRow
+	}{
+		{"running, only blocked left", fleetRow{name: "a", agent: "claude", running: true, counts: taskCounts{Done: 2, Blocked: 3}, active: ""}},
+		{"stopped with blocked left", fleetRow{name: "b", agent: "codex", running: false, ran: true, counts: taskCounts{Done: 2, Blocked: 3}, active: ""}},
+		{"never-ran, all blocked", fleetRow{name: "c", agent: "gemini", running: false, ran: false, counts: taskCounts{Blocked: 5}, active: ""}},
+	}
+	for _, c := range cases {
+		got := fleetRowLine(c.row, 0)
+		if strings.Contains(got, "✓ done") {
+			t.Errorf("%s: a fork at %d/%d must not show ✓ done:\n%q", c.desc, c.row.counts.Done, c.row.counts.total(), got)
+		}
+		if !strings.Contains(got, "blocked") && !strings.Contains(got, "stopped") {
+			t.Errorf("%s: an unfinished, non-actionable fork should read blocked/stopped:\n%q", c.desc, got)
+		}
+	}
+	// Only a fork where every task is [x] is "done".
+	if got := fleetRowLine(fleetRow{name: "d", running: false, ran: true, counts: taskCounts{Done: 5}}, 0); !strings.Contains(got, "✓ done") {
+		t.Errorf("a fully-done fork should show ✓ done:\n%q", got)
+	}
+}
+
 func TestLastLogLine(t *testing.T) {
 	write := func(body string) string {
 		p := filepath.Join(t.TempDir(), "f.log")

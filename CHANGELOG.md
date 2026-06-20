@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fleet watch`: a fork with only blocked tasks left reads as "blocked", not "✓ done".** The
+  row used "no actionable task" as the done signal, but `scanTasks` reports that for an all-`[B]`
+  queue exactly as for an all-done one — so a fork at 2/5 with 3 blocked (even while still running)
+  flashed "✓ done". "✓ done" now requires every task to be `[x]`; an unfinished fork with nothing
+  actionable shows "blocked".
+
 - **`coop fleet watch` shows a stopped fork as "stopped", not "paused".** A fork whose loop had
   exited with tasks still unchecked was painted with the idle `‖` glyph and its *next* task name, so
   a fork that quit at 0/20 read as "paused, working on Task 1". Such a fork now shows a yellow mark
