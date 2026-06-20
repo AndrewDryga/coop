@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -221,10 +223,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
 	// own progress lines, and COOP_QUIET tells the box to provision the toolchain silently.
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		// Mark the box supervised only when it's the inner of a supervisor (which
-		// reconnects it), so build/update can safely restart it onto a new image.
+		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
+		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
-		Supervised:     os.Getenv("COOP_ACP_INNER") != "",
+		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
 		FusionGovernor: governor, ConsultLead: lead, Quiet: true,
 		ExtraArgs: []string{"-e", "COOP_QUIET=1"},
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
@@ -252,8 +254,15 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 		return 1, fmt.Errorf("acp --supervise: %w", err)
 	}
 	inner := append([]string{"acp"}, rest...)
+	// A per-supervisor id, stamped on this supervisor's boxes (coop.sup=<id>) so it can
+	// kill exactly its own box(es) on teardown — not other agents' supervised boxes.
+	idbuf := make([]byte, 8)
+	if _, err := rand.Read(idbuf); err != nil {
+		return 1, err
+	}
+	superID := hex.EncodeToString(idbuf)
 
-	factory := func(ctx context.Context) (*acpproxy.Child, error) {
+	factory := func(_ context.Context) (*acpproxy.Child, error) {
 		inR, inW, err := os.Pipe()
 		if err != nil {
 			return nil, err
@@ -264,15 +273,9 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 			inW.Close()
 			return nil, err
 		}
-		cmd := exec.CommandContext(ctx, self, inner...)
-		cmd.Env = append(os.Environ(), "COOP_ACP_INNER=1")
+		cmd := exec.Command(self, inner...)
+		cmd.Env = append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
-		// Run the child in its own process group so we can signal `docker run` (which
-		// stops the container, --rm cleans it) — killing only the coop parent would
-		// orphan the container. SIGTERM (not SIGKILL) so docker run can tear it down.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-		cmd.WaitDelay = 5 * time.Second
 		if err := cmd.Start(); err != nil {
 			inR.Close()
 			inW.Close()
@@ -284,8 +287,12 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 		outW.Close() // ...and the write end; outR sees EOF when the child exits
 		go func() { _ = cmd.Wait() }()
 		stop := func() {
+			// Kill exactly this supervisor's box(es) by label — reliable however the
+			// agent handles signals; --rm then removes them. Then drop the coop parent
+			// (its docker run exits with the container) and the pipes.
+			a.rt.KillByLabel("coop.sup", superID)
 			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+				_ = cmd.Process.Kill()
 			}
 			inW.Close()
 			outR.Close()

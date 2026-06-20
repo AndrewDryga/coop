@@ -303,10 +303,13 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 
-	sup := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Supervised: true}, mounts,
+	sup := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", SupervisorID: "abc123"}, mounts,
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, "")
 	if !containsSeq(sup, []string{"--label", "coop.supervised=1"}) {
 		t.Errorf("supervised run should be tagged coop.supervised=1 so build/update restart it: %v", sup)
+	}
+	if !containsSeq(sup, []string{"--label", "coop.sup=abc123"}) {
+		t.Errorf("supervised run should carry coop.sup=<id> for precise teardown: %v", sup)
 	}
 
 	plain := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, mounts,

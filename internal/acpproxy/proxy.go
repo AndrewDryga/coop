@@ -77,6 +77,10 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 		p.shutdownChild()
 	}()
 
+	// On shutdown (signal / ctx cancel) stop the current child, so pumpChild unblocks,
+	// the loop exits, and the box is torn down even without a client stdin EOF.
+	go func() { <-ctx.Done(); p.shutdownChild() }()
+
 	rapid := 0
 	for {
 		start := time.Now()

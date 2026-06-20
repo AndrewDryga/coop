@@ -24,13 +24,14 @@ type RunSpec struct {
 	Network bool // join the sibling-services network if `coop up` created one
 	Cache   bool // mount the shared dependency cache volume
 
-	ForceNoTTY bool      // ACP: attach stdin (-i) but never allocate a tty
-	Supervised bool      // tag the box coop.supervised so build/update restart it (it reconnects)
-	Batch      bool      // loop/doctor: no tty, stdin from /dev/null
-	Quiet      bool      // suppress the "shadowed N secret path(s)" line (doctor)
-	Stdout     io.Writer // capture output (doctor); nil means inherit os.Stdout
-	Stderr     io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
-	ExtraArgs  []string  // extra runtime args for this run (e.g. doctor's probe mount)
+	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
+	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
+	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
+	Batch     bool      // loop/doctor: no tty, stdin from /dev/null
+	Quiet     bool      // suppress the "shadowed N secret path(s)" line (doctor)
+	Stdout    io.Writer // capture output (doctor); nil means inherit os.Stdout
+	Stderr    io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
+	ExtraArgs []string  // extra runtime args for this run (e.g. doctor's probe mount)
 
 	// FusionGovernor, when set, marks this run as fusion mode: the named agent
 	// governs (fronts the session) and gets the fusion instruction merged into its
@@ -380,10 +381,11 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 // resource/privilege caps (see boxLimits).
 func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
-	if spec.Supervised {
-		// A supervised inner box: a coop acp supervisor watches it, so build/update can
-		// restart it onto a new image and the editor reconnects transparently.
-		args = append(args, "--label", "coop.supervised=1")
+	if spec.SupervisorID != "" {
+		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
+		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its
+		// box(es) on teardown, so nothing is orphaned.
+		args = append(args, "--label", "coop.supervised=1", "--label", "coop.sup="+spec.SupervisorID)
 	}
 	switch mode {
 	case ttyInteractive:
