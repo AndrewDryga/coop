@@ -61,3 +61,31 @@ func TestMainBarePrintsHelp(t *testing.T) {
 		t.Errorf("bare coop should print help listing `coop claude`; got:\n%s", s)
 	}
 }
+
+// `coop help <cmd>` shows that command's help (≡ `coop <cmd> --help`), and `coop help <unknown>`
+// is a usage error (exit 2) — the help arg used to be ignored, always printing the top-level help.
+func TestMainHelpSubcommand(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	codeBuild := Main([]string{"help", "build"}) // == coop build --help, no runtime needed
+	codeFork := helpForCommand("fork")           // the fork family help
+	codeClaude := helpForCommand("claude")       // a known agent → points at its own --help
+	codeBogus := helpForCommand("bogus")         // unknown → usage error (to stderr)
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	if codeBuild != 0 || !strings.Contains(string(out), "Usage: coop build") {
+		t.Errorf("`coop help build` = %d; want 0 + build's help, got:\n%s", codeBuild, out)
+	}
+	if codeFork != 0 {
+		t.Errorf("helpForCommand(fork) = %d, want 0", codeFork)
+	}
+	if codeClaude != 0 {
+		t.Errorf("helpForCommand(claude) = %d, want 0", codeClaude)
+	}
+	if codeBogus != 2 {
+		t.Errorf("helpForCommand(bogus) = %d, want 2 (unknown command)", codeBogus)
+	}
+}

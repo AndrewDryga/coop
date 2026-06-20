@@ -50,6 +50,11 @@ func Main(argv []string) int {
 	}
 	switch argv[0] {
 	case "help", "-h", "--help":
+		// `coop help <cmd>` shows that command's help — same as `coop <cmd> --help`. Bare `coop
+		// help` (or -h/--help) is the top-level reference.
+		if argv[0] == "help" && len(argv) > 1 {
+			return helpForCommand(argv[1])
+		}
 		printHelp(config.Load())
 		return 0
 	case "version", "-v", "--version":
@@ -159,6 +164,43 @@ func (a *app) dispatch(argv []string) (int, error) {
 var topLevelCommands = []string{
 	"run", "shell", "login", "profiles", "pool", "acp", "fusion", "fork", "fleet", "status", "tasks",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "help", "version",
+}
+
+// helpForCommand prints one command's help for `coop help <cmd>`, matching `coop <cmd> --help`:
+// fork's family help, a static commandHelp entry, a pointer for the agent/raw commands whose
+// --help forwards to the underlying CLI, or an unknown-command error (exit 2) for anything else.
+func helpForCommand(cmd string) int {
+	switch {
+	case cmd == "fork" || cmd == "clone":
+		code, _ := forkHelp()
+		return code
+	case commandHelp[cmd] != "":
+		printCommandHelp(commandHelp[cmd])
+		return 0
+	case isKnownCommand(cmd):
+		// run + the agents (claude/codex/gemini) forward --help to the underlying CLI, so coop
+		// keeps no static page — point there instead of inventing one.
+		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
+		return 0
+	default:
+		candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
+		msg := fmt.Sprintf("unknown command %q", cmd)
+		if guess, ok := nearestCommand(cmd, candidates); ok {
+			msg += fmt.Sprintf("; did you mean %q?", guess)
+		}
+		ui.Error("%s — run 'coop help' for the list", msg)
+		return 2
+	}
+}
+
+// isKnownCommand reports whether cmd is one of coop's own subcommands or a coding agent.
+func isKnownCommand(cmd string) bool {
+	for _, c := range topLevelCommands {
+		if c == cmd {
+			return true
+		}
+	}
+	return agents.Valid(cmd)
 }
 
 // unknownCommandErr explains an unrecognized command: a "did you mean" for a likely typo,
