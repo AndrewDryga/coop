@@ -145,6 +145,9 @@ func (a *app) forkLogs(args []string) (int, error) {
 	}
 	var mu sync.Mutex
 	if name != "" {
+		if !pathExists(forkWorkspace(repo, name)) {
+			return -1, fmt.Errorf("no such fork: %s", name) // match fork path/review, not a silent exit 0
+		}
 		return 0, streamLog(forkLog(repo, name), "", follow, os.Stdout, &mu)
 	}
 	names := forkNames(repo)

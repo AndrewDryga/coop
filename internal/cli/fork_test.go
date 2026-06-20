@@ -387,3 +387,19 @@ func TestRunReviewCmd(t *testing.T) {
 		t.Errorf("COOP_REVIEW_CMD env not passed: got %q, want %q", data, "demo|/the/fork")
 	}
 }
+
+// `coop fork logs <unknown>` must error like `fork path`/`fork review`, not exit 0 silently.
+func TestForkLogsUnknownErrors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkLogs([]string{"nope"})
+	if err == nil || code == 0 {
+		t.Fatalf("forkLogs(unknown) = (%d, %v), want a no-such-fork error", code, err)
+	}
+	if !strings.Contains(err.Error(), "no such fork") {
+		t.Errorf("error = %q, want it to mention 'no such fork'", err)
+	}
+}
