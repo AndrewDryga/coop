@@ -126,9 +126,10 @@ func TestTasksAdd(t *testing.T) {
 	if !strings.Contains(got, "- [ ] do a new thing") {
 		t.Errorf("added task missing:\n%s", got)
 	}
-	// The appended task is well-shaped, so it lints clean.
-	if code, _ := tasksLint(path); code != 0 {
-		t.Errorf("freshly added task does not lint clean (exit %d):\n%s", code, got)
+	// The appended task is an empty skeleton, so lint now flags it unshaped (exit 1) — the nudge
+	// to fill it in, matching what `coop tasks add` tells you to do.
+	if code, _ := tasksLint(path); code != 1 {
+		t.Errorf("freshly added empty stub should lint unshaped (exit 1), got %d:\n%s", code, got)
 	}
 }
 
@@ -205,5 +206,36 @@ func TestCmdTasksMultiAndArity(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("list output missing header %q:\n%s", want, out)
 		}
+	}
+}
+
+// lint must flag a task whose required sections are present but empty (the `coop tasks add` stub),
+// while a filled task lints clean and the [E] example is exempt.
+func TestTasksLintEmptySections(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "TASKS.md")
+	stub := "## Active\n\n- [ ] do a thing\n  - **Context:**\n  - **Likely files:**\n  - **Implementation direction:**\n  - **Acceptance checks:**\n"
+	if err := os.WriteFile(path, []byte(stub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := tasksLint(path); code != 1 {
+		t.Errorf("empty stub: tasksLint = %d, want 1 (unshaped)", code)
+	}
+	filled := "## Active\n\n- [ ] do a thing\n  - **Context:** the problem and where it lives.\n  - **Likely files:** foo.go\n  - **Implementation direction:** the boring approach; what to avoid.\n  - **Acceptance checks:** make check green; a test proves it.\n"
+	if err := os.WriteFile(path, []byte(filled), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksLint(path); code != 0 || err != nil {
+		t.Errorf("filled task: tasksLint = (%d, %v), want (0, nil)", code, err)
+	}
+}
+
+// emptySections must not be fooled by the multi-word "Acceptance checks:" label (the word
+// "checks" sits before the colon, so it isn't content).
+func TestEmptySectionsAcceptanceLabel(t *testing.T) {
+	tk := task{Lines: strings.Split("- [ ] x\n  - **Context:** c\n  - **Likely files:** f\n  - **Implementation direction:** d\n  - **Acceptance checks:**", "\n")}
+	got := emptySections(tk)
+	if len(got) != 1 || got[0] != "Acceptance" {
+		t.Errorf("emptySections = %v, want [Acceptance] (the label word 'checks' is not content)", got)
 	}
 }

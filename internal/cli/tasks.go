@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -253,6 +254,8 @@ func tasksLint(path string) (int, error) {
 		if t.State == " " || t.State == "w" || t.State == "B" {
 			if missing := missingSections(t); len(missing) > 0 {
 				add(t.LineNo, fmt.Sprintf("not self-contained: %q is missing %s", short(t.Title), strings.Join(missing, ", ")))
+			} else if empty := emptySections(t); len(empty) > 0 {
+				add(t.LineNo, fmt.Sprintf("not self-contained: %q has empty %s — fill them in", short(t.Title), strings.Join(empty, ", ")))
 			}
 		}
 	}
@@ -279,6 +282,39 @@ func missingSections(t task) []string {
 		}
 	}
 	return missing
+}
+
+// emptySections reports which required sections are present as a label but carry no content —
+// the all-empty skeleton `coop tasks add` writes. For each label it scans from just past its
+// closing ":" to the next required label (or end of task) and flags the section when nothing in
+// that span is a letter or digit. Complements missingSections (which catches an absent label).
+func emptySections(t task) []string {
+	body := t.block()
+	lower := strings.ToLower(body)
+	isAlnum := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	var empty []string
+	for i, s := range requiredSections {
+		start := strings.Index(lower, strings.ToLower(s))
+		if start < 0 {
+			continue // absent → missingSections reports it instead
+		}
+		colon := strings.IndexByte(body[start:], ':') // skip past the whole "**Label:**", incl. multi-word labels
+		if colon < 0 {
+			continue
+		}
+		from := start + colon + 1
+		end := len(body)
+		for _, next := range requiredSections[i+1:] {
+			if j := strings.Index(lower[from:], strings.ToLower(next)); j >= 0 {
+				end = from + j
+				break
+			}
+		}
+		if from <= end && !strings.ContainsFunc(body[from:end], isAlnum) {
+			empty = append(empty, s)
+		}
+	}
+	return empty
 }
 
 func short(s string) string { return truncate(s, 50) }
