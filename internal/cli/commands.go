@@ -552,7 +552,13 @@ func initNextSteps(repo string, services []string) []string {
 // changes no run until you add a server. Never clobbers an existing config.
 func (a *app) writeMCPStub() error {
 	path := a.cfg.MCPFile
-	if path == "" || fileExists(path) {
+	if path == "" {
+		return nil
+	}
+	if fileExists(path) {
+		// init --help promises it seeds mcp.json; on a re-run say we kept it, so the file gets a
+		// line like every other scaffolded path instead of silently vanishing from the output.
+		ui.Detail("kept existing %s", filepath.Base(path))
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -149,9 +150,31 @@ func TestInitIdempotent(t *testing.T) {
 	// Edit a file, then re-init: it must be kept, not overwritten.
 	tasks := filepath.Join(repo, ".agent/TASKS.md")
 	os.WriteFile(tasks, []byte("MY EDITS"), 0o644)
-	if err := Init(repo, "", nil); err != nil {
+
+	// Capture the re-run's log. An unchanged symlink must read as "kept existing", not the action
+	// verb "linked" (which looks like a rewrite on every subsequent init); and a kept skill must
+	// carry the same leading slash the added branch prints, so the wording can't flip run-to-run.
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	err := Init(repo, "", nil)
+	_ = w.Close()
+	os.Stderr = old
+	logged, _ := io.ReadAll(r)
+	out := string(logged)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(out, "linked CLAUDE.md") {
+		t.Errorf("re-run reported an unchanged symlink as freshly linked, want 'kept existing':\n%s", out)
+	}
+	if !strings.Contains(out, "kept existing CLAUDE.md") {
+		t.Errorf("re-run should report the unchanged CLAUDE.md symlink as kept existing:\n%s", out)
+	}
+	if !strings.Contains(out, "kept existing skill /") {
+		t.Errorf("re-run should render a kept skill with the same leading slash as the added branch:\n%s", out)
+	}
+
 	if b, _ := os.ReadFile(tasks); string(b) != "MY EDITS" {
 		t.Error("re-init clobbered an edited TASKS.md")
 	}

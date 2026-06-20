@@ -164,8 +164,17 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 // file (which usually holds content a symlink would silently destroy).
 func (s *scaffolder) linkIfAbsent(target, link string) error {
 	fi, err := os.Lstat(link)
+	isLink := err == nil && fi.Mode()&os.ModeSymlink != 0
+	current := ""
+	if isLink {
+		current, _ = os.Readlink(link)
+	}
 	switch {
-	case os.IsNotExist(err), err == nil && fi.Mode()&os.ModeSymlink != 0:
+	case isLink && current == target:
+		// Already the symlink we'd create — a re-run is a no-op, so say so rather than report
+		// "linked" (an action verb that reads like a rewrite) on every subsequent init.
+		ui.Detail("kept existing %s", filepath.Base(link))
+	case os.IsNotExist(err), isLink:
 		_ = os.Remove(link)
 		if err := os.Symlink(target, link); err != nil {
 			return err
@@ -189,7 +198,7 @@ func (s *scaffolder) copySkills() error {
 		name := e.Name()
 		dest := filepath.Join(s.repo, ".agent", "skills", name)
 		if _, err := os.Stat(dest); err == nil {
-			ui.Detail("kept existing skill %s", name)
+			ui.Detail("kept existing skill /%s", name)
 			continue
 		}
 		if err := copyEmbedDir("templates/skills/"+name, dest); err != nil {
