@@ -27,10 +27,17 @@ var SecretGlobs = []string{
 	"credentials.json", "service_account.json", "*-sa.json", "kubeconfig", "database.yml",
 }
 
-// AllowGlobs are template/sample files the agent should still see, even when
-// their name would otherwise match a secret pattern (e.g. .env.example). They win
-// over both SecretGlobs and a repo's .coopignore, so a template is never hidden.
-var AllowGlobs = []string{"*.example", "*.sample", "*.template"}
+// AllowGlobs are files the agent should still see even though their name matches a secret
+// pattern, because they aren't secret: template/sample files (e.g. .env.example) and well-known
+// PUBLIC CA bundles (cacerts.pem and friends) that `*.pem`/`*.crt` would otherwise shadow —
+// emptying a trusted CA bundle breaks TLS verification inside the box (e.g. Elixir's castore at
+// deps/castore/priv/cacerts.pem). A real private key is never named one of these, and the content
+// scanner still catches a secret hiding in an oddly-named file. AllowGlobs win over both
+// SecretGlobs and a repo's .coopignore, so these are never hidden.
+var AllowGlobs = []string{
+	"*.example", "*.sample", "*.template",
+	"cacerts.pem", "cacert.pem", "ca-bundle.pem", "ca-bundle.crt", "ca-certificates.crt", "ca-cert.pem",
+}
 
 // CoopIgnoreFile is the repo-local file listing extra paths to shadow, one per line
 // (# comments and blank lines ignored). It extends the SecretGlobs denylist with

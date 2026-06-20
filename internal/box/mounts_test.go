@@ -256,3 +256,21 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 		}
 	}
 }
+
+// Public CA bundles must stay visible — emptying a trusted bundle breaks in-box TLS verification —
+// while genuine keys/secrets still shadow.
+func TestPublicCABundlesNotShadowed(t *testing.T) {
+	shadowed := NewShadowDecider(t.TempDir())
+	for _, p := range []string{
+		"cacerts.pem", "server/deps/castore/priv/cacerts.pem", "ca-bundle.crt", "ca-certificates.crt", "cacert.pem",
+	} {
+		if shadowed(p) {
+			t.Errorf("%s is a public CA bundle and must NOT be shadowed (breaks in-box TLS)", p)
+		}
+	}
+	for _, p := range []string{"deploy.pem", "tls.key", "config/id_rsa", ".env"} {
+		if !shadowed(p) {
+			t.Errorf("%s is a secret and must still be shadowed", p)
+		}
+	}
+}
