@@ -225,14 +225,19 @@ func (a *app) landFork(repo, ws, name string) error {
 	// so even a fast-forward land gets signed. The signing config comes from the parent
 	// via trustedSignArgs, not the fork. Run with real stdio so a passphrase pinentry
 	// can prompt.
+	// Blank any filter/merge/diff driver the fork's .git/config defines before the rebase checks
+	// the tree out — an in-tree .gitattributes + a fork-local driver would otherwise run host code
+	// on checkout/merge/diff (the residual gitHardening can't close, since the names are arbitrary).
+	neut := forkDriverNeutralizer(ws)
+	withNeut := func(args ...string) []string { return append(append([]string{}, neut...), args...) }
 	var rebaseErr error
 	if wantsSigning() {
-		rebaseErr = gitInteractive(ws, append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head)...)
+		rebaseErr = gitInteractive(ws, withNeut(append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head)...)...)
 	} else {
-		rebaseErr = gitRun(ws, "rebase", head)
+		rebaseErr = gitRun(ws, withNeut("rebase", head)...)
 	}
 	if rebaseErr != nil {
-		_ = gitRun(ws, "rebase", "--abort")
+		_ = gitRun(ws, withNeut("rebase", "--abort")...)
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s), then re-run", name, gitBranch(repo), ws, head)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {

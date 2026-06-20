@@ -452,3 +452,82 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 		t.Errorf("a benign package.json edit was wrongly flagged:\n%s", w)
 	}
 }
+
+func TestForkDriverNeutralizer(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	ws := initRepo(t)
+	// A legit clone has no local filter/merge/diff config → nothing to neutralize.
+	if got := forkDriverNeutralizer(ws); len(got) != 0 {
+		t.Errorf("clean repo should yield no neutralizer flags, got %v", got)
+	}
+	// Plant all three driver kinds locally (what an agent would do alongside an in-tree .gitattributes).
+	git(t, ws, "config", "filter.x.smudge", "/evil")
+	git(t, ws, "config", "filter.x.clean", "/evil")
+	git(t, ws, "config", "merge.y.driver", "/evil %O %A %B")
+	git(t, ws, "config", "diff.z.command", "/evil")
+	got := forkDriverNeutralizer(ws)
+	if len(got)%2 != 0 {
+		t.Fatalf("neutralizer must be -c/value pairs, got odd count: %v", got)
+	}
+	joined := strings.Join(got, " ")
+	for _, want := range []string{
+		"filter.x.smudge=", "filter.x.clean=", "filter.x.process=", "filter.x.required=false",
+		"merge.y.driver=", "diff.z.command=", "diff.z.textconv=",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("neutralizer missing blank for %q:\n%v", want, got)
+		}
+	}
+}
+
+// A fork's in-tree .gitattributes + a fork-local smudge filter must not run on the land rebase's
+// checkout. Includes a positive control (a raw re-checkout fires the smudge) so a green test means
+// the neutralizer worked, not that the filter is dead.
+func TestMergeNeutralizesForkDrivers(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	ws, err := setupFork(repo, "drv")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "PWNED")
+	smudge := "sh -c 'echo pwned >> " + marker + "; cat'"
+	if err := os.WriteFile(filepath.Join(ws, ".gitattributes"), []byte("data.txt filter=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "data.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "config", "filter.x.smudge", smudge)
+	git(t, ws, "config", "filter.x.clean", "cat")
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "work")
+	// Advance the parent so landing must rebase (a checkout) rather than fast-forward.
+	if err := os.WriteFile(filepath.Join(repo, "other.txt"), []byte("p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "parent moves")
+
+	// Positive control: a raw re-checkout of data.txt fires the smudge — the trap is live.
+	_ = os.Remove(filepath.Join(ws, "data.txt"))
+	_ = exec.Command("git", "-C", ws, "checkout", "--", "data.txt").Run()
+	if !pathExists(marker) {
+		t.Skip("the smudge filter did not fire on this git version — can't prove the neutralizer here")
+	}
+	_ = os.Remove(marker)
+
+	// The land rebase must NOT fire it.
+	landed, err := a.mergeOne(repo, "", "drv", false)
+	if err != nil || !landed {
+		t.Fatalf("mergeOne = (%v, %v), want landed", landed, err)
+	}
+	if pathExists(marker) {
+		t.Fatal("the fork's smudge filter executed on the host during the land rebase")
+	}
+}
