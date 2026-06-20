@@ -92,6 +92,27 @@ func TestCommands(t *testing.T) {
 	}
 }
 
+func TestEmptyCmdOverrideStillRunnable(t *testing.T) {
+	cfg := &config.Config{} // no mcp.json → no --mcp-config trailing claude's base
+	// An explicitly-empty override (COOP_<AGENT>_CMD="") must still produce a runnable command:
+	// base()[0] is the executable, and the headless/exec forms index it — an empty argv would
+	// otherwise try to exec the first flag (or run the image with no command).
+	for _, c := range []struct{ name, env, want string }{
+		{"claude", "COOP_CLAUDE_CMD", "claude"},
+		{"codex", "COOP_CODEX_CMD", "codex"},
+		{"gemini", "COOP_GEMINI_CMD", "gemini"},
+	} {
+		t.Setenv(c.env, "")
+		a, _ := Get(c.name)
+		if got := a.Interactive(cfg); len(got) == 0 || got[0] != c.want {
+			t.Errorf("%s Interactive with empty override = %v, want it to start with %q", c.name, got, c.want)
+		}
+		if got := a.Headless(cfg, "go"); len(got) == 0 || got[0] != c.want {
+			t.Errorf("%s Headless with empty override = %v, want it to start with %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestClaudeMCPConfig(t *testing.T) {
 	cleanCmdEnv(t)
 	dir := t.TempDir()

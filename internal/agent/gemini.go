@@ -17,7 +17,11 @@ func init() { register(geminiAgent{}) }
 func (geminiAgent) Name() string { return "gemini" }
 
 func (geminiAgent) base(cfg *config.Config) []string {
-	return cfg.Cmd("COOP_GEMINI_CMD", "gemini --yolo")
+	b := cfg.Cmd("COOP_GEMINI_CMD", "gemini --yolo")
+	if len(b) == 0 { // match codex's guard: an empty override must still yield a runnable command
+		b = []string{"gemini"}
+	}
+	return b
 }
 
 func (a geminiAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }

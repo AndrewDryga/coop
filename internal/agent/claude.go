@@ -19,6 +19,9 @@ func (claudeAgent) Name() string { return "claude" }
 // reads it directly, where gemini/codex get generated config files.
 func (claudeAgent) base(cfg *config.Config) []string {
 	cmd := cfg.Cmd("COOP_CLAUDE_CMD", "claude --dangerously-skip-permissions")
+	if len(cmd) == 0 { // an explicitly-empty override would otherwise yield a no-executable argv
+		cmd = []string{"claude"}
+	}
 	if cfg.MCPActive() {
 		cmd = append(cmd, "--mcp-config", cfg.MCPInBox)
 	}
