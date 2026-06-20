@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop doctor` works on rootful Linux Docker.** Its self-test probe was created mode 0600 and
+  its fixture 0700; 2.6.0's new `--cap-drop ALL` strips `CAP_DAC_OVERRIDE` from the probe's
+  root (alpine) container, so on rootful Docker it could no longer read its own probe and
+  reported "the sandbox produced no output" (rootless podman and Docker Desktop remap ownership,
+  so they were fine). The probe and fixture are now world-readable, and the check surfaces the
+  container's actual error on failure. Real `coop run` was never affected — the box runs as
+  non-root `node`, which never holds the capability either way.
+
 ## 2.6.0
 
 - **`coop build` / `coop update` transparently restart supervised editor sessions.** They
