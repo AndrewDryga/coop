@@ -62,6 +62,18 @@ func forkRan(repo, name string) bool {
 	return err == nil && fi.Size() > 0
 }
 
+// keepLastGood rides out a torn read of a fork's TASKS.md (the agent rewrites it as it works; a
+// read that lands mid-rewrite can come back empty). A populated queue never legitimately drops to
+// zero tasks, so when the fresh read shows none but the last one had some, keep the previous
+// counts/active. Everything not derived from TASKS.md (running, lastLog, ran) stays fresh.
+func keepLastGood(fresh, prev fleetRow) fleetRow {
+	if fresh.counts.total() == 0 && prev.counts.total() > 0 {
+		fresh.counts = prev.counts
+		fresh.active = prev.active
+	}
+	return fresh
+}
+
 // fleetWatch renders a live dashboard of every fork's progress, refreshed by polling the same
 // per-fork queue/pidfiles `coop status` reads plus the tail of each fork's log — a live `coop
 // status`. It is read-only: Ctrl-C clears the display and exits 0. Without a terminal it prints
@@ -93,11 +105,14 @@ func (a *app) fleetWatch() (int, error) {
 	defer t.Stop()
 
 	name := filepath.Base(repo)
+	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn TASKS.md read
 	for spin := 0; ; spin++ {
 		names := forkNames(repo) // re-read so a fork added/removed mid-watch shows up
 		rows := make([]fleetRow, len(names))
 		for i, n := range names {
-			rows[i] = gatherFleetRow(repo, n)
+			row := keepLastGood(gatherFleetRow(repo, n), prev[n])
+			prev[n] = row
+			rows[i] = row
 		}
 		screen.Frame(fleetDashboard(name, rows, spin))
 		select {
@@ -211,7 +226,12 @@ func agentBadge(agent string) string {
 	case "":
 		return ui.Dim("?")
 	default:
-		return ui.Dim(string([]rune(agent)[0]))
+		// An unknown agent's initial, but only if it's a 1-cell ASCII letter — a wide (e.g. CJK)
+		// rune would render 2 cells and shove the whole row out of column. Fall back to "?".
+		if r := []rune(agent)[0]; r < 128 {
+			return ui.Dim(string(r))
+		}
+		return ui.Dim("?")
 	}
 }
 

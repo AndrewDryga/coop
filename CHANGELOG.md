@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fleet up` is loud when it aborts partway.** It still fails fast on the first fork that
+  can't start (a silent partial fleet discovered hours later is worse), but the error now says how
+  many forks already started and how to clean them up (`coop fleet down`), instead of only naming the
+  fork that failed.
+
+- **`coop fleet watch` and the loop progress bar ride out a torn `TASKS.md` read.** The agent
+  rewrites its queue as it works; a refresh landing mid-rewrite could read the file empty for an
+  instant and flash a wrong "0/0" / "(no queue)". A populated queue never legitimately empties, so a
+  zero-task read now keeps the last good counts.
+
 - **`coop fork merge` refuses to land a fork whose loop is still running.** Merging rebases inside
   the fork's worktree and then deletes it; doing that to a fork whose detached loop is mid-iteration
   corrupted the in-flight work and orphaned the worker. `coop fork merge <name>` now errors if that

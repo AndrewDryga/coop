@@ -976,7 +976,9 @@ func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 		case <-stop:
 			return
 		case <-t.C:
-			if c, active := queueProgress(hosts); c != last {
+			// c.total()==0 while we had a baseline is a torn read (TASKS.md caught mid-rewrite) — a
+			// running loop always has tasks; keep the last good counts rather than blink to 0/0.
+			if c, active := queueProgress(hosts); c != last && (c.total() > 0 || last.total() == 0) {
 				bar.setProgress(c, active)
 				last = c
 			}

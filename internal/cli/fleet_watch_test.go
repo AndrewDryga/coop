@@ -207,4 +207,32 @@ func TestAgentBadge(t *testing.T) {
 	if got := agentBadge("mistral"); got != "m" { // unknown agent → its first letter
 		t.Errorf("agentBadge(mistral) = %q, want %q", got, "m")
 	}
+	// A wide (e.g. CJK) initial would render 2 cells and break the row's alignment → fall back to "?".
+	if got := agentBadge("日本語"); got != "?" {
+		t.Errorf("agentBadge(wide) = %q, want %q (a 2-cell glyph must not land in the 1-cell column)", got, "?")
+	}
+}
+
+// keepLastGood rides out a torn read of a fork's TASKS.md: an empty fresh read keeps the prior
+// counts (a queue doesn't vanish), but a real read — even a fresh fork going to zero from nothing —
+// passes through, and non-TASKS.md fields (running/lastLog) always stay fresh.
+func TestKeepLastGood(t *testing.T) {
+	prev := fleetRow{name: "a", counts: taskCounts{Done: 4, Todo: 6}, active: "task X", running: true}
+	// Torn read: fresh has no tasks but prev did → keep prev's counts/active, take fresh running.
+	torn := keepLastGood(fleetRow{name: "a", counts: taskCounts{}, active: "", running: false, lastLog: "new"}, prev)
+	if torn.counts != prev.counts || torn.active != prev.active {
+		t.Errorf("torn read should keep last-good counts/active: got %+v", torn)
+	}
+	if torn.running || torn.lastLog != "new" {
+		t.Errorf("torn read should still take fresh running/lastLog: got running=%v lastLog=%q", torn.running, torn.lastLog)
+	}
+	// Real update: fresh has tasks → it wins.
+	upd := keepLastGood(fleetRow{name: "a", counts: taskCounts{Done: 5, Todo: 5}, active: "task Y"}, prev)
+	if upd.counts.Done != 5 || upd.active != "task Y" {
+		t.Errorf("a real read should win: got %+v", upd)
+	}
+	// No prior (first tick) and an empty fork → stays empty, no panic.
+	if first := keepLastGood(fleetRow{name: "b"}, fleetRow{}); first.counts.total() != 0 {
+		t.Errorf("first-tick empty fork should stay empty: got %+v", first)
+	}
 }
