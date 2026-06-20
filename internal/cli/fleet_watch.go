@@ -34,6 +34,7 @@ type fleetRow struct {
 	name    string
 	agent   string
 	running bool
+	ran     bool // its loop produced log output — tells a stopped-incomplete fork from a never-started one
 	counts  taskCounts
 	active  string
 	lastLog string
@@ -46,10 +47,19 @@ func gatherFleetRow(repo, name string) fleetRow {
 		name:    name,
 		agent:   readForkAgent(ws),
 		running: forkRunningPid(repo, name) != 0,
+		ran:     forkRan(repo, name),
 		counts:  counts,
 		active:  active,
 		lastLog: lastLogLine(forkLog(repo, name)),
 	}
+}
+
+// forkRan reports whether a fork's loop has written any log output, so the dashboard can tell a
+// fork that started and then stopped with work left (a "stopped" fork, worth surfacing) from one
+// that's merely idle and never started (which recedes).
+func forkRan(repo, name string) bool {
+	fi, err := os.Stat(forkLog(repo, name))
+	return err == nil && fi.Size() > 0
 }
 
 // fleetWatch renders a live dashboard of every fork's progress, refreshed by polling the same
@@ -146,26 +156,34 @@ func stateGlyph(running bool, done, total, spin int) string {
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
 func fleetRowLine(r fleetRow, spin int) string {
 	done := !r.running && r.counts.total() > 0 && r.counts.Done == r.counts.total()
+	// stopped: the loop exited (not running) with tasks still unchecked — it didn't finish. Distinct
+	// from a fork that's merely idle and never started (no log), which recedes below. A stopped fork
+	// is the "paused-looking but actually quit at N/M" case the dashboard must not hide.
+	stopped := !r.running && !done && r.ran && r.counts.total() > 0
 	glyph := stateGlyph(r.running, r.counts.Done, r.counts.total(), spin)
+	if stopped {
+		glyph = ui.Yellow(glyph) // a stopped fork's mark is yellow — a dim ‖ idle one recedes instead
+	}
 	frac := 0.0
 	if t := r.counts.total(); t > 0 {
 		frac = float64(r.counts.Done) / float64(t)
 	}
-	doing := truncate(r.active, 32) // the active task is plain; the empty cases are colored
-	if r.active == "" {
-		if r.counts.total() == 0 {
-			doing = "(no queue)"
-		} else {
-			doing = ui.Green("✓ done")
-		}
+	doing := truncate(r.active, 32) // the active task is plain; the terminal states are colored
+	switch {
+	case stopped:
+		doing = ui.Yellow("stopped") // not its next task — it isn't working on it, it quit
+	case r.active == "" && r.counts.total() == 0:
+		doing = "(no queue)"
+	case r.active == "":
+		doing = ui.Green("✓ done")
 	}
 	line := fmt.Sprintf("%s %s %-*s %s %*s  %s",
 		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fleetCountW, fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total()), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}
-	if !r.running && !done {
-		line = ui.DimLine(line) // an idle/stopped fork recedes so the working ones stand out
+	if !r.running && !done && !stopped {
+		line = ui.DimLine(line) // a never-started idle fork recedes; running/done/stopped stay legible
 	}
 	return line
 }

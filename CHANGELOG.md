@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fleet watch` shows a stopped fork as "stopped", not "paused".** A fork whose loop had
+  exited with tasks still unchecked was painted with the idle `‖` glyph and its *next* task name, so
+  a fork that quit at 0/20 read as "paused, working on Task 1". Such a fork now shows a yellow mark
+  and "stopped" and stays legible; only a fork that never started (no log) recedes. (Done forks are
+  still `✓ done`, running forks still spin.)
+
 - **`coop fleet watch` no longer spams its header into scrollback.** The live dashboard repainted a
   bottom-pinned region, which redraws in place by counting lines up from the bottom — but once the
   dashboard was taller than the terminal pane, every refresh scrolled the top line (`coop fleet — N

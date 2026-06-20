@@ -107,6 +107,28 @@ func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
 	}
 }
 
+// A fork whose loop exited with work left (ran, not running, not done) reads as "stopped" — not as
+// if it's still on its next task — so a fork that quit at 0/20 isn't mistaken for paused/working.
+func TestFleetRowStopped(t *testing.T) {
+	stopped := fleetRowLine(fleetRow{name: "codex3", agent: "codex", running: false, ran: true, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0)
+	if !strings.Contains(stopped, "stopped") {
+		t.Errorf("a stopped fork should say stopped:\n%q", stopped)
+	}
+	if strings.Contains(stopped, "Task 1") {
+		t.Errorf("a stopped fork should not show its next task as if active:\n%q", stopped)
+	}
+	// A fork that never started (no log → ran=false) still shows its pending task, as before.
+	idle := fleetRowLine(fleetRow{name: "pending", agent: "gemini", running: false, ran: false, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0)
+	if strings.Contains(idle, "stopped") || !strings.Contains(idle, "Task 1") {
+		t.Errorf("an idle, never-started fork should show its pending task, not 'stopped':\n%q", idle)
+	}
+	// A done fork is still ✓ done, never "stopped", even though it isn't running.
+	doneRow := fleetRowLine(fleetRow{name: "claude1", agent: "claude", running: false, ran: true, counts: taskCounts{Done: 20}, active: ""}, 0)
+	if strings.Contains(doneRow, "stopped") || !strings.Contains(doneRow, "✓ done") {
+		t.Errorf("a finished fork should be ✓ done, not stopped:\n%q", doneRow)
+	}
+}
+
 func TestLastLogLine(t *testing.T) {
 	write := func(body string) string {
 		p := filepath.Join(t.TempDir(), "f.log")
