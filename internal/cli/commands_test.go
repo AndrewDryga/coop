@@ -220,3 +220,28 @@ func TestCmdRunMetaCases(t *testing.T) {
 		}
 	}
 }
+
+// `coop login` requires the agent (no silent default that opens a browser) and refuses a
+// non-interactive stdin instead of blocking on the paste-code prompt forever.
+func TestLoginRequiresAgentAndTTY(t *testing.T) {
+	// Force a non-terminal stdin so the tty guard is deterministic.
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	saved := os.Stdin
+	os.Stdin = devnull
+	defer func() { os.Stdin = saved }()
+
+	a := &app{cfg: &config.Config{}}
+	if code, err := a.cmdLogin(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("cmdLogin(nil) = (%d, %v), want (2, usage error)", code, err)
+	}
+	if code, err := a.loginTo("claude", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+		t.Errorf("loginTo(claude) non-tty = (%d, %v), want (2, interactive-terminal error)", code, err)
+	}
+	if code, err := a.loginTo("bogus", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "unknown agent") {
+		t.Errorf("loginTo(bogus) = (%d, %v), want (2, unknown agent — before the tty check)", code, err)
+	}
+}

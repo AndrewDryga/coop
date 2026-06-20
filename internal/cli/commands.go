@@ -121,11 +121,12 @@ func (a *app) defaultCmd(tool string) []string {
 
 func (a *app) cmdLogin(args []string) (int, error) {
 	profile, rest := extractProfile(args)
-	tool := agents.Default()
-	if len(rest) > 0 {
-		tool = rest[0]
+	// The agent is required — bare `coop login` must not silently default to one (it would open a
+	// browser and block); name it explicitly, like the help shows.
+	if len(rest) == 0 {
+		return 2, fmt.Errorf("usage: coop login <%s> [--profile <name>]", strings.Join(agents.Names(), "|"))
 	}
-	return a.loginTo(tool, profile)
+	return a.loginTo(rest[0], profile)
 }
 
 // extractProfile pulls coop's own `--profile <name>` (or `--profile=<name>`) flag out of
@@ -154,6 +155,11 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {
 		return 2, fmt.Errorf("unknown agent %q — use %s", tool, strings.Join(agents.Names(), ", "))
+	}
+	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
+	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
+	if !ui.IsTerminal(os.Stdin) {
+		return 2, errors.New("login needs an interactive terminal (it prompts for a paste code) — run it directly")
 	}
 	if profile == "" {
 		profile = config.DefaultProfile
