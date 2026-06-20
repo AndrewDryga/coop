@@ -56,11 +56,18 @@ func (a *app) runInBox(cmd []string, lead string) (int, error) {
 }
 
 func (a *app) cmdRun(args []string) (int, error) {
+	// Intercept the meta cases before entering the box. We can't lean on the dispatch's --help
+	// handling here: it's `--`-blind, so it would mistake `coop run -- --help` (run --help in the
+	// box) for a help request. Honor -- ourselves.
 	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
+		args = args[1:] // everything after -- runs verbatim
+	} else if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		printCommandHelp(runHelp) // not forwarded to the box, where it would exec `--help` and crash
+		return 0, nil
 	}
 	if len(args) == 0 {
-		args = a.defaultCmd("claude") // bare `coop run` opens claude
+		// `coop run` runs a raw command; it does not default to an agent (use `coop claude`).
+		return 2, errors.New("usage: coop run -- <cmd...>")
 	}
 	return a.runInBox(args, "") // raw command runner — not an agent session
 }

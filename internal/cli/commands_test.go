@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -190,5 +191,32 @@ func TestExtractSupervise(t *testing.T) {
 	got, rest = extractSupervise([]string{"fusion", "claude"})
 	if got || len(rest) != 2 {
 		t.Fatalf("without flag: supervise=%v rest=%v", got, rest)
+	}
+}
+
+// `coop run` with no command is a usage error (it doesn't default to an agent), and `coop run
+// --help`/-h prints run's own page — neither enters the box (which would exec `--help` and crash).
+func TestCmdRunMetaCases(t *testing.T) {
+	a := &app{cfg: &config.Config{}} // meta-cases return before runInBox, so no runtime needed
+	if code, err := a.cmdRun(nil); code != 2 || err == nil {
+		t.Errorf("cmdRun(nil) = (%d, %v), want (2, usage error)", code, err)
+	}
+	if code, err := a.cmdRun([]string{"--"}); code != 2 || err == nil {
+		t.Errorf("cmdRun(--) = (%d, %v), want (2, usage error)", code, err)
+	}
+	for _, h := range []string{"--help", "-h"} {
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		code, err := a.cmdRun([]string{h})
+		_ = w.Close()
+		os.Stdout = old
+		out, _ := io.ReadAll(r)
+		if code != 0 || err != nil {
+			t.Errorf("cmdRun(%q) = (%d, %v), want (0, nil)", h, code, err)
+		}
+		if !strings.Contains(string(out), "coop run — run a raw command") {
+			t.Errorf("cmdRun(%q) should print run's help, got:\n%s", h, out)
+		}
 	}
 }

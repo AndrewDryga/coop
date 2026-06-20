@@ -174,12 +174,15 @@ func helpForCommand(cmd string) int {
 	case cmd == "fork" || cmd == "clone":
 		code, _ := forkHelp()
 		return code
+	case cmd == "run":
+		printCommandHelp(runHelp)
+		return 0
 	case commandHelp[cmd] != "":
 		printCommandHelp(commandHelp[cmd])
 		return 0
 	case isKnownCommand(cmd):
-		// run + the agents (claude/codex/gemini) forward --help to the underlying CLI, so coop
-		// keeps no static page — point there instead of inventing one.
+		// The agents (claude/codex/gemini) forward --help to their own CLI, so coop keeps no
+		// static page — point there instead of inventing one.
 		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
 		return 0
 	default:

@@ -87,9 +87,20 @@ func helpText(cfg *config.Config) string {
 	return b.String()
 }
 
+// runHelp is `coop run`'s page. It's deliberately NOT in commandHelp: the dispatch's help check
+// is `--`-blind, so `coop run -- --help` (which must run --help in the box) would otherwise print
+// this instead. cmdRun (which honors --) and helpForCommand print it directly.
+const runHelp = `coop run — run a raw command in the box.
+
+  Usage: coop run -- <cmd...>
+
+  Everything after -- runs verbatim in the sandbox — same mounts, secret-shadowing,
+  and network as an agent. "coop run echo hi" works too; use -- when the command has
+  flags coop would otherwise read (e.g. coop run -- npm test --watch).`
+
 // commandHelp is the focused text for `coop <cmd> --help`, per subcommand. fork has its
-// own richer forkHelp; `run` and the agents deliberately aren't here so `--help` forwards
-// to the box command / the agent's own CLI. Each value's first line is the synopsis.
+// own richer forkHelp, run has runHelp, and the agents aren't here so `--help` forwards to the
+// agent's own CLI. Each value's first line is the synopsis.
 var commandHelp = map[string]string{
 	"shell": `coop shell — open an interactive shell in the box.
 
