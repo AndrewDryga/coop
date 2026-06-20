@@ -170,6 +170,82 @@ func idStr(t *testing.T, line []byte) string {
 	return string(m.ID)
 }
 
+// TestProxyReplayTimeoutFailsPending: a restarted child that never answers the replay handshake
+// (a hang, not a crash) must not freeze the editor — replay times out, the in-flight request is
+// failed back, and Run gives up with an error instead of blocking forever.
+func TestProxyReplayTimeoutFailsPending(t *testing.T) {
+	orig1, orig2 := replayStartupGrace, replayIdleTimeout
+	replayStartupGrace, replayIdleTimeout = 150*time.Millisecond, 150*time.Millisecond
+	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+
+	c1, c2 := newFakeChild(), newFakeChild()
+	queue := make(chan *fakeChild, 2)
+	queue <- c1
+	queue <- c2
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory) }()
+
+	childIn1 := bufio.NewReader(c1.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	// Bring child1 up with one in-flight request, then kill it.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, clientOut)
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{}}`)
+	readLine(t, childIn1)
+	c1.outW.Close() // child1 dies
+
+	// child2 receives the replayed initialize but NEVER answers (a hang). Drain its input so the
+	// replay writer isn't blocked, then let the timeout fire.
+	childIn2 := bufio.NewReader(c2.inR)
+	go func() {
+		for {
+			if _, err := childIn2.ReadBytes('\n'); err != nil {
+				return
+			}
+		}
+	}()
+
+	// The in-flight request is failed back to the editor (not left hanging)...
+	if id := idStr(t, readLine(t, clientOut)); id != "2" {
+		t.Fatalf("expected error response for the in-flight id 2, got id %q", id)
+	}
+	// ...and Run gives up rather than blocking forever on the hung child.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a non-nil error when replay times out")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not give up on a hung replay")
+	}
+}
+
+// TestFailAllPendingClearsNewReqs: a session/new in flight when the child dies must not leak its
+// newReqs entry (else it lingers forever and could bind a sessionId on a stale id).
+func TestFailAllPendingClearsNewReqs(t *testing.T) {
+	p := &proxy{
+		out:      io.Discard,
+		sessions: map[string]json.RawMessage{},
+		newReqs:  map[string]json.RawMessage{`"7"`: json.RawMessage(`{"cwd":"/w"}`)},
+		pending:  map[string]bool{`"7"`: true},
+	}
+	p.failAllPending()
+	if len(p.newReqs) != 0 {
+		t.Errorf("failAllPending should clear newReqs, got %v", p.newReqs)
+	}
+	if len(p.pending) != 0 {
+		t.Errorf("failAllPending should clear pending, got %v", p.pending)
+	}
+}
+
 func TestProxyGivesUpOnRapidFailures(t *testing.T) {
 	clientInR, _ := io.Pipe() // editor never sends or closes; the children just die
 	spawns := 0

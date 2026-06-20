@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop acp --supervise` teardown and replay are hardened.** Three narrow lifecycle bugs in the
+  supervise/restart path are fixed: (1) tearing down during the startup window (after `docker run`
+  begins but before the box is labelled) could orphan the container — the inner `coop acp` now runs
+  in its own process group (killed as a group, so its `docker run` grandchild dies too) and the box
+  gets a deterministic `--cidfile`, so the supervisor removes it by id even before labels exist;
+  (2) replay no longer blocks forever on a hung restarted agent — it waits generously for the first
+  response (a cold box may be provisioning) then bounds the gap between responses, failing in-flight
+  requests and giving up cleanly instead of freezing the editor; (3) a `session/new` in flight when
+  the child died no longer leaks its pending-request entry. `--supervise` is unchanged for users.
+
 - **Task-queue contract now matches the parser: every top-level `[ ]` is live.** The docs said
   the loop works `[ ]` items "under `## Active`", but the loop/split/status act on every
   unchecked top-level task wherever it sits. AGENTS.md, the scaffolded `coop init` templates,

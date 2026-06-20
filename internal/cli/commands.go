@@ -237,13 +237,19 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
 	// own progress lines, and COOP_QUIET tells the box to provision the toolchain silently.
+	extra := []string{"-e", "COOP_QUIET=1"}
+	// Under a supervisor, give the box a deterministic identity: --cidfile lets the supervisor
+	// tear it down by id even before its labels are queryable (see cmdACPSupervise's stop()).
+	if cid := os.Getenv("COOP_ACP_CIDFILE"); cid != "" {
+		extra = append(extra, "--cidfile", cid)
+	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool,
 		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
 		FusionGovernor: governor, ConsultLead: lead, Quiet: true,
-		ExtraArgs: []string{"-e", "COOP_QUIET=1"},
+		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -288,29 +294,56 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 			inW.Close()
 			return nil, err
 		}
+		// A deterministic container identity (a per-generation --cidfile) so teardown can remove
+		// the box even before its labels are queryable — closing the startup race where Stop fires
+		// after `docker run` begins but before the container is labelled. docker writes the id to
+		// this file the moment the container is created. A fresh dir per generation avoids the
+		// "name already in use" hazard across swaps, and `--cidfile` requires the path not to exist.
+		cidDir, cidPath := "", ""
+		env := append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
+		if a.rt.SupportsCIDFile() {
+			if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {
+				cidDir = d
+				cidPath = filepath.Join(d, "cid")
+				env = append(env, "COOP_ACP_CIDFILE="+cidPath)
+			}
+		}
 		cmd := exec.Command(self, inner...)
-		cmd.Env = append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
+		cmd.Env = env
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
+		// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
+		// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			inR.Close()
 			inW.Close()
 			outR.Close()
 			outW.Close()
+			if cidDir != "" {
+				os.RemoveAll(cidDir)
+			}
 			return nil, err
 		}
 		inR.Close()  // the child holds the read end now
 		outW.Close() // ...and the write end; outR sees EOF when the child exits
+		pid := cmd.Process.Pid
 		go func() { _ = cmd.Wait() }()
 		stop := func() {
-			// Kill exactly this supervisor's box(es) by label — reliable however the
-			// agent handles signals; --rm then removes them. Then drop the coop parent
-			// (its docker run exits with the container) and the pipes.
-			a.rt.KillByLabel("coop.sup", superID)
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+			// Remove the box by its deterministic cidfile id first — works even mid-startup, before
+			// labels exist; `rm -f` stops it too. Then kill the whole process group (inner coop +
+			// its run client), the label backstop for any box that did get labelled, and the pipes.
+			if cidPath != "" {
+				if cid, rerr := os.ReadFile(cidPath); rerr == nil {
+					a.rt.RemoveContainer(strings.TrimSpace(string(cid)))
+				}
 			}
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			a.rt.KillByLabel("coop.sup", superID)
 			inW.Close()
 			outR.Close()
+			if cidDir != "" {
+				os.RemoveAll(cidDir)
+			}
 		}
 		return &acpproxy.Child{In: inW, Out: outR, Stop: stop}, nil
 	}

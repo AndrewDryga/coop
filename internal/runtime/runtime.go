@@ -126,3 +126,16 @@ func (r Runtime) KillByLabel(key, value string) int {
 func (r Runtime) kill(id string) bool {
 	return id != "" && exec.Command(r.Name, "kill", id).Run() == nil
 }
+
+// RemoveContainer force-removes a container by id (or name) — `rm -f`, which stops it first.
+// Used to tear down a supervised box by its deterministic --cidfile id even before its labels
+// are queryable. Reports whether removal succeeded; a no-op (empty id) returns false.
+func (r Runtime) RemoveContainer(id string) bool {
+	return id != "" && exec.Command(r.Name, "rm", "-f", id).Run() == nil
+}
+
+// SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and
+// podman do; Apple's `container` CLI differs, so the supervisor falls back to labels there.
+func (r Runtime) SupportsCIDFile() bool {
+	return r.Name == "docker" || r.Name == "podman"
+}

@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -46,6 +47,21 @@ const (
 	minHealthy    = 2 * time.Second // a child living less than this counts as a rapid failure
 	maxRapidFails = 5               // give up after this many rapid failures in a row
 )
+
+// replayStartupGrace bounds how long the FIRST replayed response may take — a restarted box can be
+// pulling an image or provisioning a .tool-versions toolchain via asdf (minutes on a cold run), so
+// it's deliberately generous. It's the "ready" gate: once the agent answers once, the box is up and
+// replayIdleTimeout takes over. replayIdleTimeout bounds the gap between replay responses thereafter
+// — so a hang mid-replay (e.g. the agent makes a client request session/load never gets a reply to)
+// fails fast instead of freezing the editor. Vars, not consts, so tests can shrink them.
+var (
+	replayStartupGrace = 5 * time.Minute
+	replayIdleTimeout  = 60 * time.Second
+)
+
+// errReplayTimeout means a restarted child stopped responding during replay (a hang, not a
+// crash). The caller tears the child down and gives up, rather than leaving the editor frozen.
+var errReplayTimeout = errors.New("acpproxy: timed out waiting for the restarted agent")
 
 // Run proxies ACP between the editor and children from factory until the editor
 // closes clientIn (clean shutdown) or ctx is cancelled. A child that exits while the
@@ -117,7 +133,14 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 			return err
 		}
 		nr := bufio.NewReaderSize(next.Out, readBuf)
-		p.replay(next, nr) // publishes next as the live child (setChild) before failing pending
+		// replay publishes next as the live child (setChild) before failing pending. A replay
+		// timeout (the restarted agent hung) is a bounded failure: stop it and give up so the
+		// editor isn't frozen waiting — better a clean "server exited" than an infinite hang.
+		if err := p.replay(next, nr); err != nil {
+			next.Stop()
+			p.failAllPending()
+			return err
+		}
 		child, reader = next, nr
 	}
 }
@@ -206,7 +229,7 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 // initialize and a session/load for each live session, consuming their responses
 // (and any chatter emitted while loading) so the editor doesn't see them; then fail
 // any requests that were in flight when the old child died.
-func (p *proxy) replay(c *Child, br *bufio.Reader) {
+func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 	p.mu.Lock()
 	setup := make([][]byte, len(p.setup))
 	copy(setup, p.setup)
@@ -244,16 +267,24 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) {
 			}
 		}
 	}()
+	// Bounded read: allow a generous wait for the FIRST response (the box may still be starting),
+	// then a tighter idle bound once the agent has answered and is provably up. A child EOF here
+	// means it died during replay — break and let Run respawn it; a timeout means it hung — abort.
+	timeout := replayStartupGrace
 	for len(expect) > 0 {
-		line, err := br.ReadBytes('\n')
+		line, err := readLineCtx(br, timeout)
 		if len(line) > 0 {
 			if h := parse(line); h.isResponse() {
 				delete(expect, string(trimQuotes(h.ID)))
 			}
 		}
-		if err != nil {
-			break
+		if errors.Is(err, errReplayTimeout) {
+			return err
 		}
+		if err != nil {
+			break // child EOF: it died mid-replay; fall through, Run's loop respawns it
+		}
+		timeout = replayIdleTimeout
 	}
 	<-sent
 	// Publish the new child as live BEFORE failing the in-flight requests. failAllPending tells the
@@ -263,6 +294,28 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) {
 	// retry lands on the live child. (The initial child is published by Run; only swaps come here.)
 	p.setChild(c)
 	p.failAllPending()
+	return nil
+}
+
+// readLineCtx reads one newline-terminated line from br, returning errReplayTimeout if d elapses
+// first. On a timeout the blocked read is abandoned: its goroutine sends into a buffered channel and
+// exits once the child is stopped (which EOFs the reader), so the caller MUST tear the child down
+// after a timeout — it must not keep reading br. Used only during replay, where reads are sequential.
+func readLineCtx(br *bufio.Reader, d time.Duration) ([]byte, error) {
+	type res struct {
+		line []byte
+		err  error
+	}
+	ch := make(chan res, 1)
+	go func() { line, err := br.ReadBytes('\n'); ch <- res{line, err} }()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case r := <-ch:
+		return r.line, r.err
+	case <-t.C:
+		return nil, errReplayTimeout
+	}
 }
 
 // failAllPending answers every in-flight editor request with a JSON-RPC error so the
@@ -272,6 +325,9 @@ func (p *proxy) failAllPending() {
 	ids := make([]string, 0, len(p.pending))
 	for id := range p.pending {
 		ids = append(ids, id)
+		// A session/new in flight when the child died will never get a response — drop its
+		// newReqs entry too, or it leaks (and could wrongly bind a sessionId on a stale id).
+		delete(p.newReqs, id)
 	}
 	p.pending = map[string]bool{}
 	p.mu.Unlock()
