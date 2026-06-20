@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 2.7.1
 
 - **`coop fleet up` is loud when it aborts partway.** It still fails fast on the first fork that
   can't start (a silent partial fleet discovered hours later is worse), but the error now says how
