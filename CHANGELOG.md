@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A run now mounts only the launched agent's credentials, not every agent's.** A plain
+  `coop claude` used to bind-mount `~/.claude`, `~/.codex`, *and* `~/.gemini` (and pass the
+  whole `agents/env` with every API key) into the box, so the Claude process could read the
+  Codex/Gemini logins it had no need for. Each run is now scoped: a plain agent run mounts just
+  its own home and API key; `coop fusion` and `coop <agent> --consult` (and forks) also mount
+  the *authenticated* peers they're told to consult; raw `coop run`/`coop shell`, the merge
+  gate, and `coop doctor` mount no agent credentials; `coop login <agent>` mounts only the agent
+  being signed in. Peer API keys are filtered out of the env file for scoped runs; non-key
+  runtime vars still reach every box. `COOP_HOMES=0` still disables homes entirely.
+
 - **`.tool-versions` toolchains (go, ruby, …) now resolve in a login shell too.** The box puts
   asdf's shims on PATH via the image `ENV`, which only reaches the agent process and non-login
   shells; a login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH to the

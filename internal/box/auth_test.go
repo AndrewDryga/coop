@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -33,5 +34,73 @@ func TestAuthedAgents(t *testing.T) {
 	solo := &config.Config{ConfigDir: soloDir}
 	if got := authedPeers(solo, "codex"); len(got) != 0 {
 		t.Errorf("authedPeers with only the lead authed = %v, want none", got)
+	}
+}
+
+// TestCredentialScope: a plain agent run mounts only its own home; fusion/consult also get
+// authenticated peers; a raw run (no agent) and a homes-off run get nothing.
+func TestCredentialScope(t *testing.T) {
+	dir := t.TempDir()
+	// claude + gemini authed (so they're consultable peers); codex is not.
+	os.MkdirAll(filepath.Join(dir, "claude"), 0o755)
+	os.WriteFile(filepath.Join(dir, "claude", ".credentials.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "env"), []byte("GEMINI_API_KEY=real\n"), 0o644)
+	cfg := &config.Config{ConfigDir: dir}
+
+	cases := []struct {
+		name string
+		spec RunSpec
+		want []string
+	}{
+		{"plain claude", RunSpec{Homes: true, Agent: "claude"}, []string{"claude"}},
+		{"raw run", RunSpec{Homes: true}, nil},
+		{"homes off", RunSpec{Agent: "claude"}, nil},
+		{"consult claude", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude", "gemini"}},
+		{"fusion codex", RunSpec{Homes: true, Agent: "codex", FusionGovernor: "codex"}, []string{"codex", "claude", "gemini"}},
+	}
+	for _, c := range cases {
+		if got := credentialScope(cfg, c.spec); !slices.Equal(got, c.want) {
+			t.Errorf("%s: credentialScope = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEnvKeysOutsideScope: the API keys stripped are exactly the out-of-scope agents'.
+func TestEnvKeysOutsideScope(t *testing.T) {
+	// A claude-only scope strips Codex's and Gemini's keys, keeps Claude's.
+	drop := envKeysOutsideScope([]string{"claude"})
+	if !drop["OPENAI_API_KEY"] || !drop["GEMINI_API_KEY"] {
+		t.Errorf("claude scope should drop the peer API keys, got %v", drop)
+	}
+	if drop["ANTHROPIC_API_KEY"] {
+		t.Error("claude scope must keep ANTHROPIC_API_KEY")
+	}
+	// A raw run (empty scope) strips every agent key.
+	if all := envKeysOutsideScope(nil); !all["ANTHROPIC_API_KEY"] || !all["OPENAI_API_KEY"] || !all["GEMINI_API_KEY"] {
+		t.Errorf("empty scope should drop every agent key, got %v", all)
+	}
+}
+
+// TestWriteFilteredEnvFile: dropped keys vanish, everything else (the in-scope key, a
+// non-agent runtime var, a comment) is preserved verbatim.
+func TestWriteFilteredEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "env")
+	os.WriteFile(src, []byte("# creds\nANTHROPIC_API_KEY=keep\nOPENAI_API_KEY=secret\nMY_VAR=v\n"), 0o644)
+
+	out, err := writeFilteredEnvFile(src, map[string]bool{"OPENAI_API_KEY": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(out)
+	data, _ := os.ReadFile(out)
+	got := string(data)
+	if strings.Contains(got, "OPENAI_API_KEY") {
+		t.Errorf("filtered env still contains the dropped peer key:\n%s", got)
+	}
+	for _, keep := range []string{"# creds", "ANTHROPIC_API_KEY=keep", "MY_VAR=v"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("filtered env dropped %q it should keep:\n%s", keep, got)
+		}
 	}
 }

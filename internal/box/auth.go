@@ -26,6 +26,75 @@ func AuthedAgents(cfg *config.Config) []string {
 	return authed
 }
 
+// credentialScope is the set of agents whose credential home (~/.<name>) and env-file API
+// key a run may mount. A plain agent run (spec.Agent set) gets only that agent; a fusion
+// governor or consult lead also gets its authenticated peers, since it is explicitly told
+// to invoke them read-only; a raw or maintenance run (no agent) gets none. Homes off → none.
+func credentialScope(cfg *config.Config, spec RunSpec) []string {
+	if !spec.Homes {
+		return nil
+	}
+	primary := spec.Agent
+	consultsPeers := spec.FusionGovernor != "" || spec.ConsultLead != ""
+	switch {
+	case spec.FusionGovernor != "":
+		primary = spec.FusionGovernor
+	case spec.ConsultLead != "":
+		primary = spec.ConsultLead
+	}
+	if primary == "" {
+		return nil // raw/maintenance run — no agent session, no credentials
+	}
+	scope := []string{primary}
+	if consultsPeers {
+		scope = append(scope, authedPeers(cfg, primary)...)
+	}
+	return scope
+}
+
+// envKeysOutsideScope is the set of agent API-key env-file keys to strip for a run scoped
+// to the given agents: every agent's AuthMarker env key except those in scope. Non-agent
+// runtime vars in the env file are never in this set, so they always pass through.
+func envKeysOutsideScope(scope []string) map[string]bool {
+	in := map[string]bool{}
+	for _, a := range scope {
+		in[a] = true
+	}
+	drop := map[string]bool{}
+	for _, name := range agents.Names() {
+		if in[name] {
+			continue
+		}
+		if ag, ok := agents.Get(name); ok {
+			if _, envKey := ag.AuthMarker(); envKey != "" {
+				drop[envKey] = true
+			}
+		}
+	}
+	return drop
+}
+
+// writeFilteredEnvFile copies the env file to a temp file, dropping the given API-key lines
+// (KEY=...) so peer credentials don't enter a scoped box; comments, blanks, and every other
+// key are preserved verbatim. Returns the temp path the caller must clean up.
+func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
+			if k, _, ok := strings.Cut(t, "="); ok && drop[strings.TrimSpace(k)] {
+				continue // strip this peer's API key
+			}
+		}
+		kept = append(kept, line)
+	}
+	return writeTempFile(strings.Join(kept, "\n"))
+}
+
 // authedPeers returns the authenticated agents other than lead, preserving order.
 func authedPeers(cfg *config.Config, lead string) []string {
 	peers := make([]string, 0, len(agents.Names()))

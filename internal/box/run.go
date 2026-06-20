@@ -24,6 +24,14 @@ type RunSpec struct {
 	Network bool // join the sibling-services network if `coop up` created one
 	Cache   bool // mount the shared dependency cache volume
 
+	// Agent names the launched agent (claude/codex/gemini) whose credential home and
+	// env-file API key this run may mount — so a plain `coop claude` box can't read the
+	// Codex/Gemini credentials. Empty for a raw/maintenance run (no agent session), which
+	// mounts no agent credentials at all. FusionGovernor/ConsultLead (below) widen the
+	// scope to authenticated peers, since the lead is told to invoke them. See
+	// credentialScope. Ignored when Homes is false.
+	Agent string
+
 	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
@@ -226,6 +234,28 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
+	// Credential scope: the shared env file is passed in, but a scoped run (a plain agent
+	// or a raw command) strips the API keys of agents it has no business reading — so a
+	// `coop claude` box never sees OPENAI_API_KEY / GEMINI_API_KEY. Non-agent runtime vars
+	// always pass through. assembleArgs computes the same scope for the home mounts.
+	envFile := ""
+	if spec.Homes && fileExists(cfg.EnvFile()) {
+		drop := envKeysOutsideScope(credentialScope(cfg, spec))
+		switch {
+		case len(drop) == 0:
+			envFile = cfg.EnvFile() // nothing to strip — pass it through unchanged
+		default:
+			if p, err := writeFilteredEnvFile(cfg.EnvFile(), drop); err == nil {
+				tmpFiles = append(tmpFiles, p)
+				envFile = p
+			} else {
+				// Fail closed: if the peer keys can't be stripped, omit the env file
+				// entirely rather than leak them into a scoped box.
+				ui.Info("env: omitted (could not filter peer API keys): %v", err)
+			}
+		}
+	}
+
 	networkName := ""
 	// COOP_EGRESS=none → a fully offline box (assembleArgs forces --network none); skip the
 	// services-net join, there's nothing to reach.
@@ -240,7 +270,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	limits := boxLimits(cfg, rt.Name)
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, limits...)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, envFile, limits...)
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
@@ -379,7 +409,7 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
 // resource/privilege caps (see boxLimits).
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", "coop=box"}
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
@@ -400,7 +430,9 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
 
 	if spec.Homes {
-		for _, agent := range agents.Names() {
+		// Only the launched agent's credential home (plus authenticated peers for
+		// fusion/consult) — never every agent's, so a plain run can't read the others'.
+		for _, agent := range credentialScope(cfg, spec) {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
 		}
 		// Claude keeps its account + onboarding state in $CLAUDE_CONFIG_DIR — by
@@ -414,8 +446,8 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		// warns "bubblewrap is required for subprocess env scrubbing" before each
 		// command. Turn the scrub off — the container is the isolation boundary.
 		args = append(args, "-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
-		if fileExists(cfg.EnvFile()) {
-			args = append(args, "--env-file", cfg.EnvFile())
+		if envFile != "" {
+			args = append(args, "--env-file", envFile)
 		}
 		// Per-agent global instructions (the box env note + the user's, built in Run) at each
 		// agent's native path. The lead (fusion governor / consult lead) is excluded there; its

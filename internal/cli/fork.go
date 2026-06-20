@@ -272,7 +272,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 	}
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Cmd: cmd, ConsultLead: fa.agent,
+		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	forkNextSteps(fa.name)
@@ -582,7 +582,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		lead = agent
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, ConsultLead: lead,
+		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }

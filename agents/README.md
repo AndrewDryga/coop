@@ -13,11 +13,18 @@ entering the box.
 | `claude/` | `~/.claude` | Claude Code `settings.json`, login |
 | `codex/`  | `~/.codex`  | `config.toml`, `auth.json` |
 | `gemini/` | `~/.gemini` | Gemini `settings.json`, login |
-| `env`     | (env vars)  | API keys, passed to every launch |
+| `env`     | (env vars)  | API keys (scoped per launch) + shared runtime vars |
 | `INSTRUCTIONS.md` | all three native paths | one shared instruction file |
 | `mcp.json` | all three native MCP configs | MCP servers, defined once |
 
 The per-agent folders are created automatically the first time you run `coop`.
+
+Each run mounts only the **launched agent's** folder and its API key — `coop claude`
+sees `~/.claude` and `ANTHROPIC_API_KEY`, never the Codex/Gemini credentials or their
+keys. `coop fusion` and `coop <agent> --consult` also expose the *authenticated* peers
+(they're told to consult them); raw `coop run`/`coop shell` mount no agent credentials.
+Non-key variables in `env` (a `DATABASE_URL`, an MCP server's token, …) are shared and
+reach every box.
 
 ## Shared instructions (one file, every agent)
 

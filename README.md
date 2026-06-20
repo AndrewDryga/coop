@@ -428,6 +428,14 @@ One box, three agents. Each reads its config and credentials from
 edit those files on the host and they take effect in the box. Only the *active* profile
 is mounted, so a running agent sees just the account it's using, not the whole vault.
 
+Each run mounts only the **launched agent's** credentials: `coop claude` mounts
+`~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
+The exceptions are the modes where the lead is explicitly told to call its peers —
+`coop fusion` and `coop <agent> --consult` (and forks) — which also mount the
+*authenticated* peers so they can be consulted read-only. Raw runs (`coop run`,
+`coop shell`) and maintenance runs (the merge gate, `coop doctor`) mount no agent
+credentials at all. `coop login <agent>` mounts only the agent being signed in.
+
 > **Blast radius.** That profile dir is mounted read-write — the agent must write its
 > session history, and OAuth refresh rewrites the token in place. So a prompt-injected
 > agent can (a) read its own credentials and try to exfiltrate them — set
@@ -451,6 +459,11 @@ coop login gemini     # or it logs in on first use
 echo 'ANTHROPIC_API_KEY=sk-…'  >> ~/.config/coop/agents/env
 echo 'GEMINI_API_KEY=AIza…'    >> ~/.config/coop/agents/env
 ```
+
+A run only sees the API keys of the agents in its credential scope (above): a `coop
+claude` box gets `ANTHROPIC_API_KEY` but not `OPENAI_API_KEY` / `GEMINI_API_KEY`, which
+are filtered out before the env file is passed in. Any other variable in the file (a
+`DATABASE_URL`, `COOP_NO_ASDF`, …) is a shared runtime var and reaches every box.
 
 On first run the box pre-answers each agent's setup prompts — Claude's
 theme/folder-trust/bypass warnings, Codex's "trust this directory?", and Gemini's

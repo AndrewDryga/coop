@@ -41,16 +41,22 @@ func (a *app) resolveImage() (repo, img string, err error) {
 }
 
 // runInBox runs a command in the box against the current repo with the default
-// homes/network/cache toggles (the common interactive path). lead names the agent
-// being driven (claude/codex/gemini) so it gets the optional consult directive;
-// pass "" for raw commands (coop run/shell/login) that aren't an agent session.
-func (a *app) runInBox(cmd []string, lead string) (int, error) {
+// homes/network/cache toggles (the common interactive path). agent names the agent
+// being driven (claude/codex/gemini) so its credentials are mounted and, with consult,
+// it gets the second-opinion directive plus its authenticated peers' credentials. Pass
+// "" for raw commands (coop run/shell) that aren't an agent session — they mount no
+// agent credentials.
+func (a *app) runInBox(cmd []string, agent string, consult bool) (int, error) {
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
 	}
+	lead := ""
+	if consult {
+		lead = agent
+	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, ConsultLead: lead,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -69,7 +75,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 		// `coop run` runs a raw command; it does not default to an agent (use `coop claude`).
 		return 2, errors.New("usage: coop run -- <cmd...>")
 	}
-	return a.runInBox(args, "") // raw command runner — not an agent session
+	return a.runInBox(args, "", false) // raw command runner — not an agent session
 }
 
 // launchAgent runs a named agent: its autonomous default command, with any extra CLI
@@ -88,11 +94,7 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		profile, _ := extractProfile(args[1:])
 		return a.loginTo(tool, profile)
 	}
-	lead := "" // ConsultLead is set only with --consult, so the directive is opt-in
-	if consult {
-		lead = tool
-	}
-	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), lead)
+	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), tool, consult)
 }
 
 // extractConsult pulls coop's own --consult flag out of an agent's args (so it is
@@ -177,7 +179,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		where = fmt.Sprintf(" (profile %s)", profile)
 	}
 	ui.Info("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
-	return a.runInBox(ag.Login(a.cfg), "") // logging in, not an agent session
+	return a.runInBox(ag.Login(a.cfg), tool, false) // mounts only the agent being logged in to
 }
 
 // acpCommand maps an agent to its ACP adapter command inside the box.
@@ -238,7 +240,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
-		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true,
+		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool,
 		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
 		FusionGovernor: governor, ConsultLead: lead, Quiet: true,
 		ExtraArgs: []string{"-e", "COOP_QUIET=1"},
@@ -340,7 +342,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
 		strings.Join(fusion.Peers(governor, agents.Names()), " + "))
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, FusionGovernor: governor,
+		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -743,13 +745,13 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 			banner += fmt.Sprintf(" · profile %s", pool.active())
 		}
 		ui.Info("%s", banner)
-		code, out, err := a.runIteration(repo, img, iterCmd(work), hosts, sink)
+		code, out, err := a.runIteration(repo, img, agent, iterCmd(work), hosts, sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 		if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
 			ui.Info("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
-			a.debugShell(repo, img)
+			a.debugShell(repo, img, agent)
 			fails = 0 // the developer intervened; don't count this toward the stop cap
 			continue
 		}
@@ -778,7 +780,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(repo, img, iterCmd(audit), hosts, sink)
+		_, _, _ = a.runIteration(repo, img, agent, iterCmd(audit), hosts, sink)
 	}
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -796,9 +798,9 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 // debugShell opens an interactive shell in the box against the same repo/image as the
 // loop iteration, so --debug-on-fail can inspect the failed state. The box is disposable
 // per iteration, so this is a fresh shell in the same context, not the failed container.
-func (a *app) debugShell(repo, img string) {
+func (a *app) debugShell(repo, img, agent string) {
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: []string{a.cfg.Shell},
+		Image: img, Repo: repo, Cmd: []string{a.cfg.Shell}, Agent: agent,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -810,7 +812,7 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // live bar watches for task progress. In a fully interactive run the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view);
 // otherwise it goes straight to the terminal unchanged.
-func (a *app) runIteration(repo, img string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
+func (a *app) runIteration(repo, img, agent string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 
@@ -851,7 +853,7 @@ func (a *app) runIteration(repo, img string, cmd, hosts []string, sink io.Writer
 		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Batch: true,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),

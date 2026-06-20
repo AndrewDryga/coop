@@ -111,7 +111,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 		if err := rejectArgs("shell", rest); err != nil {
 			return 2, err
 		}
-		return a.runInBox([]string{a.cfg.Shell}, "")
+		return a.runInBox([]string{a.cfg.Shell}, "", false)
 	case "login":
 		return a.cmdLogin(rest)
 	case "profiles":
