@@ -342,8 +342,8 @@ func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
 }
 
 // boxLimits returns the resource + privilege caps that keep a runaway agent from
-// harming the host: a pids cap (fork bombs), optional memory/cpu caps, and
-// no-new-privileges. These are OCI-runtime flags applied for docker and podman;
+// harming the host: a pids cap (fork bombs), optional memory/cpu caps,
+// no-new-privileges, and dropping all Linux capabilities. These are OCI-runtime flags applied for docker and podman;
 // Apple's `container` CLI differs, so they're skipped there (its hardening is
 // tracked separately). All are config-driven (COOP_PIDS/MEMORY/CPUS,
 // COOP_NO_NEW_PRIVILEGES).
@@ -355,6 +355,11 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 	if cfg.NoNewPrivileges {
 		a = append(a, "--security-opt", "no-new-privileges")
 	}
+	// Drop every Linux capability: the agent workloads (node, npm, asdf, git) need none of
+	// Docker's default set, and dropping them tightens the posture for a repo Dockerfile.agent
+	// that runs USER root — root-in-container then holds no CAP_DAC_OVERRIDE / CAP_NET_RAW /
+	// CAP_MKNOD / CAP_SYS_CHROOT to abuse. Add one back only if a concrete need appears.
+	a = append(a, "--cap-drop", "ALL")
 	switch cfg.Pids {
 	case "", "0", "-1", "unlimited": // pids cap off
 	default:

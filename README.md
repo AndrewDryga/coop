@@ -863,7 +863,10 @@ turn them off.
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
 `COOP_NO_NEW_PRIVILEGES`) apply on docker and podman; Apple's `container` CLI differs,
-so they're skipped there for now.
+so they're skipped there for now. On docker/podman the box also runs with **all Linux
+capabilities dropped** (`--cap-drop ALL`) — the agent workloads need none, and it keeps
+root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
+`CAP_DAC_OVERRIDE` / `CAP_NET_RAW` / `CAP_MKNOD` and friends.
 
 **Agents & config**
 

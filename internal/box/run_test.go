@@ -231,7 +231,7 @@ func TestBoxLimits(t *testing.T) {
 		got := boxLimits(cfg, rt)
 		for _, want := range [][]string{
 			{"--security-opt", "no-new-privileges"}, {"--pids-limit", "4096"},
-			{"--memory", "4g"}, {"--cpus", "2"},
+			{"--memory", "4g"}, {"--cpus", "2"}, {"--cap-drop", "ALL"},
 		} {
 			if !containsSeq(got, want) {
 				t.Errorf("%s: boxLimits missing %v in %v", rt, want, got)
@@ -242,10 +242,11 @@ func TestBoxLimits(t *testing.T) {
 	if got := boxLimits(cfg, "container"); got != nil {
 		t.Errorf("container runtime should get no docker flags, got %v", got)
 	}
-	// Off switches: empty/unlimited pids and disabled no-new-privileges drop their flags.
+	// Off switches drop the resource/privilege flags, but --cap-drop ALL is unconditional (the
+	// agent workloads need no capabilities) — so the floor is exactly that.
 	off := &config.Config{Pids: "unlimited", NoNewPrivileges: false}
-	if got := boxLimits(off, "docker"); len(got) != 0 {
-		t.Errorf("pids off + no-new-privileges off should yield no flags, got %v", got)
+	if got := boxLimits(off, "docker"); !slices.Equal(got, []string{"--cap-drop", "ALL"}) {
+		t.Errorf("with everything off, boxLimits should be just --cap-drop ALL, got %v", got)
 	}
 }
 
