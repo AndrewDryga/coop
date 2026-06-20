@@ -406,27 +406,6 @@ removal up front. `--yes` also skips the prompts interactively.
 `coop fork <name> acp [agent]` fronts a fork as an [ACP](#drive-it-from-zed-acp) agent
 over stdio; `coop acp [agent]` does the same for the project in your current directory.
 
-To get coop agents into Zed's agent panel, register them once in your Zed user
-settings — `agent_servers` is a *user-level* setting, so Zed rejects it in a project's
-`.zed/settings.json`. Because `coop acp` resolves the repo from its working directory,
-one set of entries covers every coop project you open, forks included: open a fork
-with `coop fork open <name>` and the same agents resolve to it.
-
-```jsonc
-// ~/.config/zed/settings.json
-{
-  "agent_servers": {
-    "coop · claude": { "command": "coop", "args": ["acp", "claude"] },
-    "coop · codex":  { "command": "coop", "args": ["acp", "codex"] },
-    "coop · gemini": { "command": "coop", "args": ["acp", "gemini"] }
-  }
-}
-```
-
-Zed's secure-by-default Worktree Trust still applies: click the Restricted-Mode
-shield once to trust a project before its agents launch. Resuming a prior conversation
-rides on ACP's (still-stabilizing) `session/load`, which the editor drives.
-
 ## Agents & config
 
 One box, three agents. Each reads its config and credentials from
