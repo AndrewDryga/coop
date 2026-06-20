@@ -293,6 +293,11 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
+	// Rebasing/deleting a fork whose loop is still mid-iteration corrupts the in-flight work and
+	// orphans the worker — refuse, as prune does. Stop the loop first.
+	if len(runningForkNames(repo, []string{name})) > 0 {
+		return 1, fmt.Errorf("fork %q is still running its loop — stop it first: coop fork stop %s (or coop fleet down)", name, name)
+	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("git fetch: %w", err)
 	}
@@ -331,14 +336,30 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 		ui.Info("no forks to merge")
 		return 0, nil
 	}
+	// Never touch a fork whose loop is still running — rebasing/deleting its live worktree corrupts
+	// in-flight work and orphans the worker. Skip those with a notice and land the rest.
+	skip := map[string]bool{}
+	if live := runningForkNames(repo, names); len(live) > 0 {
+		ui.Info("skipping %d still-running fork(s): %s — stop them (coop fleet down) to land", len(live), strings.Join(live, ", "))
+		for _, n := range live {
+			skip[n] = true
+		}
+	}
+	if len(skip) == len(names) {
+		ui.Info("no forks to merge — every fork is still running")
+		return 0, nil
+	}
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
-	if !approve(fmt.Sprintf("rebase and land all %d fork(s)? each lands then is deleted", len(names)), yes) {
+	if !approve(fmt.Sprintf("rebase and land %d fork(s)? each lands then is deleted", len(names)-len(skip)), yes) {
 		return 0, nil
 	}
 	var landed []string
 	for _, n := range names {
+		if skip[n] {
+			continue
+		}
 		ws := forkWorkspace(repo, n)
 		if err := gitFetchInto(repo, ws, n); err != nil {
 			continue

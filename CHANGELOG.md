@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fork merge` refuses to land a fork whose loop is still running.** Merging rebases inside
+  the fork's worktree and then deletes it; doing that to a fork whose detached loop is mid-iteration
+  corrupted the in-flight work and orphaned the worker. `coop fork merge <name>` now errors if that
+  fork is still running (stop it first), and `coop fork merge --all` skips still-running forks with a
+  notice and lands the rest — matching how `coop fleet prune` already guards.
+
 - **`.agent/fleet` rejects a misspelled agent, a path with spaces, and duplicate fork names.** A line
   like `api borg .agent/TASKS.api.md` silently treated `borg` as the path (dropping the real one),
   surfacing later as a baffling "no such file: borg"; a path with spaces was truncated to its first

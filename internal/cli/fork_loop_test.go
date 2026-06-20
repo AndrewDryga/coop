@@ -90,6 +90,25 @@ func TestForkRunningPid(t *testing.T) {
 	}
 }
 
+// runningForkNames is the guard merge uses to never rebase/delete a fork out from under a live
+// loop: only forks with a live pidfile count; a dead pidfile and an absent one don't.
+func TestRunningForkNames(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(forkPid(repo, "live"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(forkPid(repo, "dead"), []byte("2147483646"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := runningForkNames(repo, []string{"live", "dead", "absent"})
+	if len(got) != 1 || got[0] != "live" {
+		t.Errorf("runningForkNames = %v, want [live] (a dead pidfile and an absent one aren't running)", got)
+	}
+}
+
 func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "proj")
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {

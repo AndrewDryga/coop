@@ -51,6 +51,19 @@ func forkRunningPid(repo, name string) int {
 	return pid
 }
 
+// runningForkNames returns the subset of names whose detached loop is still alive, in order — the
+// guard merge shares so it never rebases or deletes a fork out from under a live worker (prune
+// refuses on the same signal). forkRunningPid cleans any stale pidfile as a side effect.
+func runningForkNames(repo string, names []string) []string {
+	var live []string
+	for _, n := range names {
+		if forkRunningPid(repo, n) != 0 {
+			live = append(live, n)
+		}
+	}
+	return live
+}
+
 // runForkLoop seeds the fork's queue from the tasks file given to --tasks (only when
 // the fork has none yet, so a resumed loop keeps its own progress), then runs the
 // unattended loop with the chosen agent, capturing output to the fork's log.
