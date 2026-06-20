@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -209,6 +210,30 @@ func rejectArgs(cmd string, args []string) error {
 		return nil
 	}
 	return fmt.Errorf("%s takes no arguments (got %q) — see 'coop %s --help'", cmd, strings.Join(args, " "), cmd)
+}
+
+// colWidth is the width to size a table column to: the widest value (counted in runes), clamped
+// to [min, max]. Values longer than max are meant to be ellipsis-truncated to max by the caller.
+func colWidth(values []string, min, max int) int {
+	w := min
+	for _, v := range values {
+		if n := utf8.RuneCountInString(v); n > w {
+			w = n
+		}
+	}
+	if w > max {
+		w = max
+	}
+	return w
+}
+
+// padRight right-pads s to w columns counted in RUNES — unlike fmt's %-Ns, which counts bytes and
+// so mis-pads a value carrying a multibyte glyph (e.g. a truncated name's "…").
+func padRight(s string, w int) string {
+	if n := utf8.RuneCountInString(s); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
 }
 
 // unknownErr is the one shape for a rejected subcommand / agent / value: `unknown <noun>

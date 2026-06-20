@@ -101,3 +101,39 @@ func TestPaintCount(t *testing.T) {
 		t.Errorf("nonzero should be painted, got %q", got)
 	}
 }
+
+func TestColWidth(t *testing.T) {
+	// Empty / all-short → clamps up to min (the header width).
+	if got := colWidth(nil, 4, 24); got != 4 {
+		t.Errorf("empty colWidth = %d, want min 4", got)
+	}
+	if got := colWidth([]string{"a", "bb"}, 4, 24); got != 4 {
+		t.Errorf("all-short colWidth = %d, want min 4", got)
+	}
+	// Widest value within [min,max] wins.
+	if got := colWidth([]string{"a", "abcdef"}, 4, 24); got != 6 {
+		t.Errorf("colWidth = %d, want 6", got)
+	}
+	// Over max → clamps down to max.
+	if got := colWidth([]string{strings.Repeat("x", 40)}, 4, 24); got != 24 {
+		t.Errorf("over-max colWidth = %d, want 24", got)
+	}
+	// Width counts runes, not bytes: a 3-rune name with a multibyte glyph is width 3.
+	if got := colWidth([]string{"ab…"}, 1, 24); got != 3 {
+		t.Errorf("multibyte colWidth = %d, want 3 runes", got)
+	}
+}
+
+func TestPadRight(t *testing.T) {
+	if got := padRight("ab", 5); got != "ab   " {
+		t.Errorf("padRight = %q, want %q", got, "ab   ")
+	}
+	// Already at/over width → unchanged (never truncates).
+	if got := padRight("abcde", 3); got != "abcde" {
+		t.Errorf("over-width padRight = %q, want unchanged", got)
+	}
+	// Pads by RUNES: "ab…" is 3 runes (5 bytes) — to width 5 it gets 2 spaces, not 0.
+	if got := padRight("ab…", 5); got != "ab…  " {
+		t.Errorf("multibyte padRight = %q, want 2 trailing spaces", got)
+	}
+}

@@ -24,18 +24,19 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 		}
 		names = []string{args[0]}
 	}
+	// One width across every agent's profiles, so the "signed in" column lines up down the whole
+	// listing — not just within each agent's block.
+	var allProfiles []string
+	for _, agent := range names {
+		allProfiles = append(allProfiles, a.cfg.Profiles(agent)...)
+	}
+	width := colWidth(allProfiles, 0, 40)
 	for _, agent := range names {
 		fmt.Println(ui.Bold(agent))
 		profiles := a.cfg.Profiles(agent)
 		if len(profiles) == 0 {
 			fmt.Printf("  no profiles — run: coop login %s [--profile <name>]\n", agent)
 			continue
-		}
-		width := 0 // widest name, so the status column lines up for any-length profiles
-		for _, p := range profiles {
-			if len(p) > width {
-				width = len(p)
-			}
 		}
 		def := a.cfg.DefaultProfileOf(agent)
 		for _, p := range profiles {
@@ -47,8 +48,8 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			if p == def {
 				tag = ui.Dim("  (default)")
 			}
-			// Pad the plain name, then style the status — never color inside the width verb.
-			fmt.Printf("  %-*s  %s%s\n", width, p, status, tag)
+			// Pad the plain name (rune-aware), then style the status — never color inside the width.
+			fmt.Printf("  %s  %s%s\n", padRight(p, width), status, tag)
 		}
 	}
 	return 0, nil

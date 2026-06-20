@@ -119,12 +119,15 @@ func (a *app) cmdStatus(args []string) (int, error) {
 
 	fmt.Printf("%s — %d fork(s), %d running, %d blocked\n\n",
 		ui.Bold(filepath.Base(repo)+" fleet"), len(names), running, blocked)
-	const format = "  %-16s %-8s %-10s %-14s %s\n"
+	// Size the NAME column to the longest fork name (clamped + rune-padded) so a long name keeps
+	// every later column aligned under its header — see forkLs.
+	nw := colWidth(names, len("NAME"), 24)
+	format := "  %s %-8s %-10s %-14s %s\n"
 	// Bold the rendered line, not each cell (see forkLs): per-cell bold would count the
-	// ANSI bytes inside the %-Ns widths and misalign the header against the rows.
-	fmt.Print(ui.Bold(fmt.Sprintf(format, "NAME", "STATE", "TASKS", "CHANGES", "ACTIVE")))
+	// ANSI bytes inside the widths and misalign the header against the rows.
+	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), "STATE", "TASKS", "CHANGES", "ACTIVE")))
 	for _, s := range statuses {
-		fmt.Printf(format, s.Name, s.stateCell(), s.tasksCell(), s.changesCell(), s.activeCell())
+		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), s.stateCell(), s.tasksCell(), s.changesCell(), s.activeCell())
 	}
 	fmt.Printf("\n  %d/%d tasks done · %d running · %d blocked\n", doneTasks, totalTasks, running, blocked)
 	return 0, nil

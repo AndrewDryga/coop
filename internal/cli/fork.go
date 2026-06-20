@@ -420,13 +420,17 @@ func (a *app) forkLs(args []string) (int, error) {
 		ui.Info("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
 	}
-	const format = "  %-16s %-8s %-12s %-9s %-8s %-15s %s\n"
+	// Size the NAME column to the longest fork name (clamped), so a long name doesn't shove every
+	// later column past the header. The name is rune-padded (it may be ellipsis-truncated, and "…"
+	// is multibyte), so the NAME cell is a pre-padded %s; the rest stay %-Ns (ASCII glyphs/counts).
+	nw := colWidth(names, len("NAME"), 24)
+	const format = "  %s %-8s %-12s %-9s %-8s %-15s %s\n"
 	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
-	// escape bytes inside the %-Ns width count and misalign the header against the rows.
-	fmt.Print(ui.Bold(fmt.Sprintf(format, "NAME", "AGENT", "BRANCH", "STATE", "TASKS", "CHANGES", "UPDATED")))
+	// escape bytes inside the width count and misalign the header against the rows.
+	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), "AGENT", "BRANCH", "STATE", "TASKS", "CHANGES", "UPDATED")))
 	for _, n := range names {
 		s := gatherForkStatus(repo, n)
-		fmt.Printf(format, s.Name, s.Agent, s.Branch, s.stateCell(), s.tasksCell(), s.changesCell(), s.Updated)
+		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), s.Agent, s.Branch, s.stateCell(), s.tasksCell(), s.changesCell(), s.Updated)
 	}
 	return 0, nil
 }
