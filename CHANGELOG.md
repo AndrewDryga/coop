@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`.tool-versions` toolchains (go, ruby, …) now resolve in a login shell too.** The box puts
+  asdf's shims on PATH via the image `ENV`, which only reaches the agent process and non-login
+  shells; a login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH to the
+  Debian default and dropped the shims — so a gate run through a profile-sourcing shell saw
+  `go: not found` even though go was installed and shimmed (node/python/git survived, living in
+  `/usr/local/bin`). The base box now ships an `/etc/profile.d/asdf.sh` drop-in that re-adds the
+  shims for login shells. Rebuild with `coop build` to pick it up.
+
 - **`coop acp --supervise` no longer drops a request when the box restarts.** On a restart the
   proxy failed the in-flight requests (telling the editor to retry) a beat *before* it repointed
   to the new child, so a retry that arrived in that window was written to the dead child and

@@ -53,6 +53,10 @@ ARG AGENT_PACKAGES="%s"
 # first use into the cached ~/.cache volume, and Chromium runs --no-sandbox (the box already
 # IS the sandbox). ~/.asdf and ~/.cache are pre-created node-owned so their named volumes
 # inherit that owner — a fresh volume on a path absent from the image would mount root-owned.
+# A /etc/profile.d drop-in re-adds the asdf shims to PATH for login shells: they source
+# /etc/profile, which resets PATH to the Debian default and would otherwise hide go/ruby/…
+# pinned in .tool-versions (the ENV PATH below only reaches the agent process and non-login
+# shells — but agents commonly shell out through a profile-sourcing login shell).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
@@ -68,7 +72,8 @@ RUN apt-get update \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*' \
- && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache
+ && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache \
+ && printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh
 
 # Entrypoint: install whatever a repo's .tool-versions (or ~/.tool-versions) pins
 # via asdf, then run the requested command. A no-op when there is no .tool-versions.

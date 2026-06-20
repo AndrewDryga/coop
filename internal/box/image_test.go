@@ -36,6 +36,9 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		"python3 python-is-python3 python3-pip", `ln -s "$(command -v pip3)" /usr/local/bin/pip`,
 		// Playwright's Chromium system libs baked in as root so a browser launches in the box.
 		"npx -y playwright install-deps chromium",
+		// Login shells source /etc/profile (which resets PATH); a profile.d drop-in re-adds the
+		// asdf shims so go/ruby/… pinned in .tool-versions resolve there too, not just non-login.
+		`printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)
