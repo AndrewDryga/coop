@@ -110,6 +110,16 @@ if [ -z "$COOP_NO_ASDF" ] && command -v asdf >/dev/null 2>&1; then
     fi
     asdf reshim >/dev/null 2>&1 || true
   fi
+  # The agent CLIs are Node apps, so a bare node must always resolve. A prior repo's
+  # nodejs pin leaves a node shim in the persisted ~/.asdf volume; in a repo that does not
+  # pin nodejs (and with no global) that shim shadows the image node and errors with
+  # "No version is set for command node". If node is broken but asdf has a nodejs
+  # installed, set the newest as the global fallback -- a repo's own .tool-versions still
+  # overrides it, so a pinned project node keeps winning.
+  if ! node --version >/dev/null 2>&1; then
+    v=$(asdf list nodejs 2>/dev/null | tr -cd '0-9.\n ' | tr ' ' '\n' | grep . | sort -V | tail -n1)
+    [ -n "$v" ] && asdf set --home nodejs "$v" >/dev/null 2>&1 && asdf reshim nodejs >/dev/null 2>&1
+  fi
 fi
 exec "$@"
 ENTRY

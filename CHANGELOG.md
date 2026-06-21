@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The box repairs a bare `node` when an orphaned asdf nodejs shim shadows the image's node.** After
+  you run coop on a repo that pins `nodejs` in `.tool-versions`, asdf keeps that node shim in the
+  persisted `~/.asdf` volume. In a later repo that doesn't pin nodejs (e.g. a Go project), the shim
+  shadowed the image's node and failed with "No version is set for command node" — which broke the
+  Node-based agent CLIs invoked as subprocesses, so `coop fusion` / `--consult` peers (and any node
+  tool an agent shelled out to) errored even though the lead agent itself ran. The box entrypoint now
+  detects a broken `node` and pins the newest installed asdf nodejs as the global fallback; a repo's
+  own `.tool-versions` still overrides it. Run `coop build` to pick it up.
+
 - **Fusion/`--consult` peers can keep their thread across turns (`coop-consult` wrapper).** The
   governor/lead now consult peers through a small mounted `coop-consult <peer> --fresh|--continue`
   script instead of raw `claude -p …`/`codex exec …`/`gemini -p …`. `--fresh` starts a new read-only

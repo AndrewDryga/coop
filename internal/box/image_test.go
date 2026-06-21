@@ -39,6 +39,11 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		// Login shells source /etc/profile (which resets PATH); a profile.d drop-in re-adds the
 		// asdf shims so go/ruby/… pinned in .tool-versions resolve there too, not just non-login.
 		`printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
+		// The entrypoint repairs a bare `node` when an orphaned asdf nodejs shim (from a
+		// prior repo, persisted in the ~/.asdf volume) shadows the image node in a repo that
+		// doesn't pin nodejs — so the Node agent CLIs always have a working interpreter.
+		"if ! node --version >/dev/null 2>&1; then",
+		`asdf set --home nodejs "$v"`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)
