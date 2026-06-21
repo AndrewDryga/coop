@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop update` now self-updates the `coop` binary, then rebuilds the box image.** Previously it
+  only refreshed the box (base image + agent CLIs + ACP adapters), leaving the binary pinned at
+  whatever you installed. It now first upgrades `coop` to the latest GitHub release — fetched and
+  verified the same way `install.sh` does (checksum + cosign), and swapped in atomically (rename, not
+  in-place write) so replacing the running binary is safe — then rebuilds the image. `--self-only`
+  updates just the binary; `--box-only` keeps the old box-only behavior. A dev/source build, an
+  already-current binary, or a coop installed somewhere unwritable (a package-manager prefix) skips
+  the self-update with a note; an offline check is a soft warning that still lets the box rebuild.
+
 ## 2.7.2
 
 - **A crashed fork whose PID gets reused is no longer mistaken for "still running".** Liveness only

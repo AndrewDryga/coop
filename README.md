@@ -62,9 +62,9 @@ coop build && coop doctor
 [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman,
 auto-detected. `coop` itself is a single static binary with no other dependencies.
 
-**Staying current:** re-run the one-liner to upgrade the binary;
-[`coop update`](#keeping-the-box-current) rebuilds the box image fresh, pulling the
-latest agent CLIs and ACP adapters (they ship features often) plus a newer base.
+**Staying current:** [`coop update`](#keeping-the-box-current) self-updates the binary
+*and* rebuilds the box image fresh, pulling the latest agent CLIs and ACP adapters
+(they ship features often) plus a newer base. (Re-running the install one-liner still works.)
 
 <details><summary><b>Other ways to install</b></summary>
 
@@ -190,7 +190,7 @@ any of them.
 |---|---|
 | `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (and optionally a toolchain) |
 | `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
-| `coop build` · `update` | build the box image · [rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
+| `coop build` · `update` | build the box image · [self-update coop + rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
 | `coop check-secrets` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
 | `coop help` · `version` | print help · print the version |
@@ -830,8 +830,17 @@ from re-downloading the world.
 ### Keeping the box current
 
 ```bash
-coop update    # rebuild the image fresh: latest agent CLIs + ACP adapters + base
+coop update              # self-update coop, then rebuild the image fresh
+coop update --self-only  # just upgrade the coop binary
+coop update --box-only   # just rebuild the image (the old behavior)
 ```
+
+`coop update` first replaces the `coop` binary with the latest GitHub release —
+fetched and verified exactly as `install.sh` does (checksum + cosign signature),
+then swapped in atomically so replacing the running binary is safe — then rebuilds the
+box image. A dev/source build, an already-current binary, or a coop installed somewhere
+unwritable (a package-manager prefix) skips the self-update with a note and still
+rebuilds the image. The binary swap takes effect on your next `coop` run.
 
 **Stable vs fresh.** `coop build` is the *stable* path: it pins the base image to a
 specific Node digest, so a rebuild gets the same OS/runtime every time, and the cache

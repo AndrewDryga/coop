@@ -466,13 +466,38 @@ func (a *app) recycleBoxes() {
 	}
 }
 
-// cmdUpdate force-rebuilds the box image (--pull --no-cache) so the base image
-// and the npm-installed agent CLIs + ACP adapters refresh to their latest, then
-// reports the versions it landed on. ACP/agent packages ship features often.
+// cmdUpdate self-updates the coop binary to the latest release, then force-rebuilds
+// the box image (--pull --no-cache) so the base image and the npm-installed agent CLIs
+// + ACP adapters refresh to their latest, then reports the versions it landed on.
+// --self-only does just the binary; --box-only does just the image (the old behavior).
 func (a *app) cmdUpdate(args []string) (int, error) {
-	if err := rejectArgs("update", args); err != nil {
+	selfOnly, boxOnly, err := parseUpdateFlags(args)
+	if err != nil {
 		return 2, err
 	}
+
+	// Self-update the binary first. A failed *check* (offline/rate limit) is soft and
+	// must not block the box rebuild; a write or install failure is loud and exits
+	// non-zero, but the box still rebuilds (it's independent) so the run isn't wasted.
+	selfFailed := false
+	if !boxOnly {
+		if _, err := selfUpdate(os.Stdout); err != nil {
+			var ce checkError
+			switch {
+			case selfOnly:
+				return -1, err
+			case errors.As(err, &ce):
+				ui.Info("coop self-update: couldn't check for a newer release (%v) — continuing with the box", err)
+			default:
+				ui.Error("coop self-update failed: %v", err)
+				selfFailed = true
+			}
+		}
+		if selfOnly {
+			return 0, nil
+		}
+	}
+
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -489,7 +514,29 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		Cmd:       []string{"sh", "-c", "npm ls -g --depth=0 2>/dev/null | grep -iE 'claude|codex|gemini|acp' || true"},
 		ExtraArgs: []string{"-e", "COOP_NO_ASDF=1"}, // skip the .tool-versions provision for a quick version print
 	})
+	if selfFailed {
+		return 1, nil // box updated, binary didn't — signal the partial failure
+	}
 	return 0, nil
+}
+
+// parseUpdateFlags parses `coop update`'s own flags: --self-only (just the binary) and
+// --box-only (just the image), which are mutually exclusive.
+func parseUpdateFlags(args []string) (selfOnly, boxOnly bool, err error) {
+	for _, x := range args {
+		switch x {
+		case "--self-only":
+			selfOnly = true
+		case "--box-only":
+			boxOnly = true
+		default:
+			return false, false, fmt.Errorf("update: unknown flag %q (usage: coop update [--self-only|--box-only])", x)
+		}
+	}
+	if selfOnly && boxOnly {
+		return false, false, errors.New("update: --self-only and --box-only are mutually exclusive")
+	}
+	return selfOnly, boxOnly, nil
 }
 
 func (a *app) cmdUp(args []string) (int, error) {

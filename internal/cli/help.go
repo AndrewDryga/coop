@@ -73,7 +73,7 @@ func helpText(cfg *config.Config) string {
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
 	row("coop build", "build the box image (stable, pinned)")
-	row("coop update", "rebuild the box image fresh (latest base + agents)")
+	row("coop update", "self-update coop, then rebuild the box image fresh (latest base + agents)")
 	row("coop up", "start sibling services (db, redis)")
 	row("coop down", "stop sibling services")
 	row("coop doctor", "prove isolation — attack the box, check it holds")
@@ -286,13 +286,22 @@ var commandHelp = map[string]string{
   you don't lose the session. Other running boxes (a loop, an un-supervised
   session) keep the old image until they next start.`,
 
-	"update": `coop update — rebuild the box image fresh, to the latest base + agents.
+	"update": `coop update — self-update coop, then rebuild the box image fresh.
 
-  Usage: coop update
+  Usage: coop update [--self-only | --box-only]
 
-  Like coop build but --pull --no-cache and unpinned, so you get the newest
-  node base and agent CLIs. Use coop build for a reproducible image. Supervised
-  editor sessions are restarted onto the new image transparently, same as build.`,
+  First replaces the coop binary with the latest GitHub release — fetched and
+  verified the same way install.sh does (checksum + cosign), then swapped in
+  atomically so replacing the running binary is safe. Then rebuilds the image like
+  coop build but --pull --no-cache and unpinned, so the node base and agent CLIs
+  jump to latest. Use coop build for a reproducible image. Supervised editor
+  sessions are restarted onto the new image transparently, same as build.
+
+    --self-only   update just the coop binary, skip the image rebuild
+    --box-only    rebuild just the image, skip the self-update (the old behavior)
+
+  A dev/source build, an already-current binary, or a coop installed somewhere
+  unwritable (a package-manager prefix) skips the self-update with a note.`,
 }
 
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,

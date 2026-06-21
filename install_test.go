@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -64,4 +66,75 @@ func hasSHATool() bool {
 		}
 	}
 	return false
+}
+
+// TestInstallAtomicInstall exercises install.sh's atomic_install helper without network
+// (COOP_INSTALL_LIB=1 stops the script before any download): it must land the file with
+// mode 0755, overwrite an existing destination, and do so by rename — the destination's
+// inode changes — proving a self-update can replace the *running* binary without ETXTBSY
+// or corruption, and leave no .coop.new.* staging file behind.
+func TestInstallAtomicInstall(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("new binary v2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bindir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bindir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(bindir, "coop")
+	// Pre-existing destination with different content, to prove overwrite + inode swap.
+	if err := os.WriteFile(dest, []byte("old binary v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldIno := inodeOf(t, dest)
+
+	cmd := exec.Command("sh", "-c", `. ./install.sh; atomic_install "$1" "$2"`, "sh", src, dest)
+	cmd.Env = append(os.Environ(), "COOP_INSTALL_LIB=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("atomic_install failed: %v\n%s", err, out)
+	}
+
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new binary v2" {
+		t.Errorf("destination content = %q, want the new binary", got)
+	}
+	if fi, err := os.Stat(dest); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o755 {
+		t.Errorf("destination mode = %v, want 0755", fi.Mode().Perm())
+	}
+	if newIno := inodeOf(t, dest); newIno == oldIno {
+		t.Errorf("destination inode unchanged (%d) — atomic_install must rename, not overwrite in place", newIno)
+	}
+
+	entries, err := os.ReadDir(bindir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".coop.new.") {
+			t.Errorf("staging file left behind: %s", e.Name())
+		}
+	}
+}
+
+func inodeOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("no syscall.Stat_t on this platform")
+	}
+	return uint64(st.Ino)
 }

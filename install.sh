@@ -38,6 +38,30 @@ verify_checksum() {
   return 0
 }
 
+# atomic_install SRC DEST — install SRC to DEST by staging a temp file in DEST's own
+# directory (same filesystem) and rename(2)-ing it over DEST. The rename swaps inodes
+# atomically, so replacing the *running* coop during a self-update can't hit ETXTBSY
+# (Linux) or corrupt a live binary (macOS), and a failed copy never leaves a
+# half-written DEST. Pure (no network), unit-testable by sourcing with COOP_INSTALL_LIB=1.
+atomic_install() {
+  ai_src=$1
+  ai_dest=$2
+  ai_dir=$(dirname "$ai_dest")
+  mkdir -p "$ai_dir"
+  ai_tmp="$ai_dir/.coop.new.$$"
+  if ! install -m 0755 "$ai_src" "$ai_tmp"; then
+    rm -f "$ai_tmp"
+    echo "coop: failed to stage $ai_dest" >&2
+    return 1
+  fi
+  if ! mv -f "$ai_tmp" "$ai_dest"; then
+    rm -f "$ai_tmp"
+    echo "coop: failed to install $ai_dest" >&2
+    return 1
+  fi
+  return 0
+}
+
 # Tests source this file (COOP_INSTALL_LIB=1) to reach the functions above without running
 # the installer — stop here before any uname probing or network access.
 if [ "${COOP_INSTALL_LIB:-}" = 1 ]; then
@@ -103,8 +127,7 @@ else
 fi
 
 tar -xzf "$tmp/coop.tar.gz" -C "$tmp"
-mkdir -p "$bindir"
-install -m 0755 "$tmp/coop" "$bindir/coop"
+atomic_install "$tmp/coop" "$bindir/coop"
 echo "coop: installed $bindir/coop ($("$bindir/coop" version))"
 
 case ":$PATH:" in
