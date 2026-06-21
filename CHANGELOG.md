@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fusion/`--consult` peers can keep their thread across turns (`coop-consult` wrapper).** The
+  governor/lead now consult peers through a small mounted `coop-consult <peer> --fresh|--continue`
+  script instead of raw `claude -p …`/`codex exec …`/`gemini -p …`. `--fresh` starts a new read-only
+  session; `--continue` resumes the peer's *own* prior consult, so a follow-up sends only the delta
+  instead of re-pasting the static context. It hides the per-agent session-id mechanics (claude/gemini
+  start under a generated `--session-id`, codex's `thread_id` is captured from `exec --json`) and
+  prints whether it continued or fell back to fresh, so the lead knows when to resend full context.
+  `--consult` defaults to `--fresh` (independent second opinions); fusion's instruction tells the
+  governor to continue within a subject and start fresh on a new one. Peers stay read-only throughout.
+
 - **Fork re-entry resumes the right session, even after a loop or consult ran in the fork.** Re-entry
   used to resume the *most-recent* session for the fork's directory (claude `--continue`, gemini
   `--resume latest`), which a `coop fork … --loop` iteration or a fusion/`--consult` peer call sharing

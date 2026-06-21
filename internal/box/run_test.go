@@ -9,6 +9,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/fusion"
 )
 
 func TestDecideTTY(t *testing.T) {
@@ -161,7 +162,11 @@ func TestInstructionOverrideUsed(t *testing.T) {
 func TestAssembleArgsMountsInstructions(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node"}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	fusionMounts := []extraMount{{"/tmp/fusion", "/home/node/.codex/AGENTS.md"}}
+	fusionMounts := []extraMount{
+		{"/tmp/fusion", "/home/node/.codex/AGENTS.md"},
+		// The coop-consult wrapper mounts at an absolute path on PATH, not under HOME.
+		{"/tmp/coop-consult", fusion.ConsultWrapperPath},
+	}
 	instructionMounts := []extraMount{
 		{"/tmp/claude-ins", "/home/node/.claude/CLAUDE.md"},
 		{"/tmp/gemini-ins", "/home/node/.gemini/GEMINI.md"},
@@ -170,6 +175,7 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, "", "")
 	for _, want := range [][]string{
 		{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"},
+		{"-v", "/tmp/coop-consult:" + fusion.ConsultWrapperPath + ":ro"},
 		{"-v", "/tmp/claude-ins:/home/node/.claude/CLAUDE.md:ro"},
 		{"-v", "/tmp/gemini-ins:/home/node/.gemini/GEMINI.md:ro"},
 	} {

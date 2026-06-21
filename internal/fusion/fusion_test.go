@@ -1,12 +1,32 @@
 package fusion
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
 
 var allAgents = []string{"claude", "codex", "gemini"}
+
+// TestConsultWrapperShellcheck keeps the embedded coop-consult script clean. It's a Go
+// string constant, so the normal shellcheck pass can't see it; run it here when
+// shellcheck is available (skipped otherwise, so CI without it still passes).
+func TestConsultWrapperShellcheck(t *testing.T) {
+	sc, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck not installed")
+	}
+	f := filepath.Join(t.TempDir(), "coop-consult")
+	if err := os.WriteFile(f, []byte(ConsultWrapper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
+		t.Errorf("shellcheck flagged the consult wrapper:\n%s", out)
+	}
+}
 
 func TestValid(t *testing.T) {
 	for _, ok := range allAgents {
@@ -50,17 +70,17 @@ func TestPeerCmd(t *testing.T) {
 
 func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
 	ins := Instruction("codex", Peers("codex", allAgents))
-	// Names both peers' read-only commands.
+	// Names both peers via the coop-consult wrapper.
 	for _, want := range []string{
-		"claude -p --permission-mode plan",
-		"gemini --approval-mode plan -p",
+		"coop-consult claude --fresh",
+		"coop-consult gemini --fresh",
 	} {
 		if !strings.Contains(ins, want) {
-			t.Errorf("instruction missing peer command %q", want)
+			t.Errorf("instruction missing peer consult %q", want)
 		}
 	}
 	// Must NOT tell codex (the governor) to consult itself.
-	if strings.Contains(ins, "codex exec -s read-only") {
+	if strings.Contains(ins, "coop-consult codex") {
 		t.Error("instruction tells the governor to consult itself")
 	}
 	// Has the synthesis guidance and names the governor.
@@ -80,11 +100,25 @@ func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
 			t.Errorf("instruction missing read-only-advisor guidance %q", want)
 		}
 	}
-	// Each consult is memoryless, so the governor composes a self-contained prompt
-	// instead of forwarding the user's message verbatim (concern 2: follow-up turns).
-	for _, want := range []string{"MEMORYLESS", "self-contained", "verbatim"} {
+	// The fresh/continue session-mode contract: a full self-contained prompt on --fresh,
+	// only the delta on --continue, never forward the user's message verbatim, and trust
+	// the status line when a --continue falls back to fresh (concern 2: follow-up turns).
+	for _, want := range []string{"--fresh", "--continue", "self-contained", "delta", "verbatim", "status line"} {
 		if !strings.Contains(ins, want) {
-			t.Errorf("instruction missing memoryless-consult guidance %q", want)
+			t.Errorf("instruction missing session-mode guidance %q", want)
+		}
+	}
+}
+
+// TestConsultWrapperMatchesAdapters guards against the wrapper's hardcoded read-only
+// flags drifting from each adapter's ConsultCmd.
+func TestConsultWrapperMatchesAdapters(t *testing.T) {
+	for _, peer := range allAgents {
+		cmd := peerCmd(peer, "Q") // e.g. [claude -p --permission-mode plan Q]
+		for _, tok := range cmd[:len(cmd)-1] {
+			if !strings.Contains(ConsultWrapper, tok) {
+				t.Errorf("coop-consult wrapper missing %s consult flag %q (adapter ConsultCmd drifted?)", peer, tok)
+			}
 		}
 	}
 }
@@ -110,10 +144,10 @@ func TestLeadInstructions(t *testing.T) {
 	if got := LeadInstructions("BASE", nil); got != "BASE" {
 		t.Errorf("no peers: got %q, want %q", got, "BASE")
 	}
-	// With peers → an optional directive that spells out each peer's exact
-	// read-only command, naming only those peers, with the base kept.
+	// With peers → an optional directive that spells out each peer's coop-consult
+	// invocation (default --fresh), naming only those peers, with the base kept.
 	out := LeadInstructions("BASE", []string{"codex", "gemini"})
-	for _, want := range []string{"second opinion", "codex exec -s read-only", "gemini --approval-mode plan -p", "BASE"} {
+	for _, want := range []string{"second opinion", "coop-consult codex --fresh", "coop-consult gemini --fresh", "Default to --fresh", "BASE"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("LeadInstructions missing %q in:\n%s", want, out)
 		}

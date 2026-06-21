@@ -43,18 +43,26 @@ func peerCmd(tool, question string) []string {
 	return nil
 }
 
-// placeholder marks where the governor substitutes the prompt it composes for a
-// peer — NOT the user's message forwarded verbatim. Each consult is a fresh,
-// read-only call that has none of this thread's context, so the governor writes a
-// self-contained prompt carrying the context the peer needs to answer.
+// placeholder marks where the lead substitutes the prompt it composes for a peer —
+// NOT the user's message forwarded verbatim. A --fresh consult has none of this
+// thread's context, so the lead writes a self-contained prompt carrying the context
+// the peer needs; a --continue consult sends only the delta (see the instructions).
 const placeholder = `"<a self-contained prompt: your question + the context needed to answer it>"`
+
+// consultCall renders the coop-consult invocation that asks a peer read-only. It shows
+// --fresh (a new session); on a follow-up about the same subject the lead swaps in
+// --continue and sends only the delta. coop-consult hides each agent's session-id
+// mechanics behind one uniform interface (see ConsultWrapper).
+func consultCall(peer string) string {
+	return fmt.Sprintf("coop-consult %s --fresh %s", peer, placeholder)
+}
 
 // consultBlock renders a copy-pasteable shell snippet that runs every peer
 // read-only and in parallel, then prints each answer under a header.
 func consultBlock(peers []string) string {
 	var b strings.Builder
 	for _, p := range peers {
-		fmt.Fprintf(&b, "  ( %s ) >/tmp/peer-%s.txt 2>&1 &\n", strings.Join(peerCmd(p, placeholder), " "), p)
+		fmt.Fprintf(&b, "  ( %s ) >/tmp/peer-%s.txt 2>&1 &\n", consultCall(p), p)
 	}
 	b.WriteString("  wait\n")
 	for _, p := range peers {
@@ -63,12 +71,12 @@ func consultBlock(peers []string) string {
 	return b.String()
 }
 
-// peerCmdList renders one read-only command per peer as a labeled list, so a lead
+// peerCmdList renders one consult invocation per peer as a labeled list, so a lead
 // knows exactly how to invoke each model and can consult one or several.
 func peerCmdList(peers []string) string {
 	var b strings.Builder
 	for _, p := range peers {
-		fmt.Fprintf(&b, "- %s: %s\n", p, strings.Join(peerCmd(p, placeholder), " "))
+		fmt.Fprintf(&b, "- %s: %s\n", p, consultCall(p))
 	}
 	return b.String()
 }
@@ -97,23 +105,38 @@ to a peer; it cannot do it. Ask each peer only for the thinking the action needs
 the review, the diagnosis, the design — then make every edit and run every command
 yourself when you synthesize.
 
-Each consult is a FRESH, MEMORYLESS call: the peer sees only the text you pass it —
-not this conversation, not your earlier consults, not what you have done since.
-Never forward the user's message verbatim; past the first turn it is meaningless out
-of context ("fix the second one" tells a peer nothing). Compose a self-contained
-prompt every time: state the goal, paste the relevant code, paths, and errors, and
-ask the one specific question you need answered.
-
 ## 1. Consult BOTH peers FIRST — read-only, in parallel
-Drop the self-contained prompt you composed in place of the placeholder and run the
-whole block from your shell — do not drop a peer, even if the first answer already
-looks sufficient:
+Consult each peer with coop-consult <peer> --fresh|--continue "<prompt>" — it runs the
+peer read-only and prints a one-line session status first. Compose your prompt, drop it
+in place of the placeholder, and run the whole block from your shell — do not drop a
+peer, even if the first answer already looks sufficient:
 
 %s
 If a peer errors or is unavailable, proceed with the others — but always attempt
 all of them before you answer.
 
-## 2. Synthesize, then act
+## 2. Fresh or continue — choose the session mode each turn
+Each peer keeps the session you opened with it, so every consult is either a new
+thread or a continuation:
+- New question, or a new subject → --fresh, with the FULL self-contained prompt: the
+  goal, the relevant code/paths/errors, your question. Use it the first time you
+  consult a peer, and whenever you move to an unrelated subject (continuing a stale
+  thread only pollutes it).
+- Following up the SAME subject → --continue, with ONLY the delta: what you decided or
+  changed since, what the user now wants, what the other peer said — then your next
+  question. The peer still remembers its own last answer, so don't re-paste what you
+  already gave it. Never forward the user's message verbatim; out of context it is
+  meaningless ("fix the second one" tells a peer nothing).
+
+Two rules that keep this honest:
+- The peer remembers ITS OWN consult thread — not your conversation, not your edits.
+  Anything that happened on your side since you last consulted it is invisible unless
+  you put it in the delta.
+- Believe the status line, not your intent: each call prints "continued" or "fresh".
+  If you asked to --continue and it says it started FRESH (the session was lost), the
+  peer has no memory this turn — resend the full context.
+
+## 3. Synthesize, then act
 - Read every peer's answer in full before you respond.
 - Combine the strongest parts of each with your own reasoning; resolve
   disagreements by evidence or verification, not by a vote.
@@ -148,10 +171,16 @@ bug, a security-sensitive change — you can get a read-only second opinion from
 whose different blind spots may catch what you'd miss. This is optional and for the
 decisions that matter, not routine work; you remain the decider.
 
-Each peer runs read-only — it returns its analysis and never edits your files. Run
-the matching command from your shell, with your real question in the quotes:
+Consult a peer with coop-consult <peer> --fresh "<prompt>" — it runs the peer
+read-only (it returns analysis and never edits your files) and prints a one-line
+status first. Compose a self-contained prompt: your question plus the context to
+answer it.
 
 %s
+Default to --fresh — each hard call is best judged independently. Use --continue only
+to drill deeper into the SAME call you already asked about, sending just what changed;
+if the status line says a --continue fell back to FRESH, give full context.
+
 Consulting more than one? Run them in parallel and read every reply:
 
   ( <command A> ) >/tmp/a.txt 2>&1 &

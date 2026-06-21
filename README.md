@@ -516,24 +516,29 @@ coop fusion claude -- -p "Design the retry strategy"   # headless; args after --
 No extra service or protocol behind it: the leader is just that agent running
 normally (it edits, runs the gate, streams), plus a fusion instruction injected into
 the leader's instruction file only. For a non-trivial question it consults its peers
-from its shell — read-only and in parallel:
+read-only and in parallel through a small mounted wrapper:
 
 ```bash
-claude -p --permission-mode plan "<question>"   # read-only: returns its approach, never edits
-gemini --approval-mode plan -p   "<question>"
-codex  exec -s read-only         "<question>"
+coop-consult claude --fresh    "<prompt>"   # new read-only session; never edits
+coop-consult gemini --continue "<prompt>"   # resume the peer's thread; send only the delta
 ```
 
 The peers are read-only advisors: they analyze and report, and the leader makes
 every change itself — even when the task *is* a change, it consults on the thinking
-and does the writing. Each consult is also context-free (a fresh one-shot call), so
-the leader composes a self-contained prompt rather than forwarding your message
-verbatim — a follow-up like "fix the second one" means nothing to a peer that never
-saw the thread. It then merges the strongest parts, resolves disagreements by
-verification, and proceeds. Because the instruction lands only on the leader, the peers it spawns read
-their normal instructions and never recurse into a council of their own. Each
-consultation is two extra read-only runs, so it's for decisions and hard problems, not
-every keystroke — the leader is told to skip the council for trivial steps.
+and does the writing. A peer has none of the leader's conversation, so the leader
+composes a self-contained prompt rather than forwarding your message verbatim — a
+follow-up like "fix the second one" means nothing to a peer that never saw the
+thread. `coop-consult` adds optional continuity: `--fresh` starts a new session,
+`--continue` resumes the peer's own prior consult so a follow-up can send just the
+delta instead of re-pasting context (it prints whether it continued or fell back to
+fresh, so the leader knows when to resend). It hides the per-agent session-id
+mechanics — claude/gemini start under a generated id, codex's is captured from its
+JSON stream. The leader then merges the strongest parts, resolves disagreements by
+verification, and proceeds. Because the instruction lands only on the leader, the
+peers it spawns read their normal instructions and never recurse into a council of
+their own. Each consultation is two extra read-only runs, so it's for decisions and
+hard problems, not every keystroke — the leader is told to skip the council for
+trivial steps.
 
 **In Zed:** add one entry per leader and pick who governs from the agent dropdown:
 
@@ -550,10 +555,12 @@ every keystroke — the leader is told to skip the council for trivial steps.
 Outside fusion, add `--consult` to a normal run — `coop claude --consult` (or
 `codex`/`gemini`; in Zed, `coop acp claude --consult`) — for a lighter version of the
 same idea: on a genuinely hard or risky call the agent may consult its peers
-read-only and in parallel to catch blind spots, then decide. It's off by default
-and, unlike fusion, optional — no synthesis mandate, not for routine work. It only names
-peers that are authenticated: if no other agent is logged in, nothing is injected.
-And it's scoped to the agent you launched, so peers it spawns never recurse.
+read-only and in parallel (through the same `coop-consult` wrapper) to catch blind
+spots, then decide. It's off by default and, unlike fusion, optional — no synthesis
+mandate, not for routine work; it defaults to `--fresh` so each hard call gets an
+independent second opinion. It only names peers that are authenticated: if no other
+agent is logged in, nothing is injected. And it's scoped to the agent you launched,
+so peers it spawns never recurse.
 
 ## Drive it from Zed (ACP)
 

@@ -171,6 +171,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// merged into its native instruction file — only the governor, so the peers it
 	// spawns read their normal instructions and never recurse into a council.
 	var fusionMounts []extraMount
+	consultWired := false // true once a fusion/consult directive is injected → mount coop-consult
 	if spec.Homes && spec.FusionGovernor != "" {
 		if file := instructionFile(spec.FusionGovernor); file != "" {
 			base := agentBaseInstructions(cfg, spec.FusionGovernor, file)
@@ -180,6 +181,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 			} else {
 				tmpFiles = append(tmpFiles, p)
 				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
+				consultWired = true
 			}
 		}
 	}
@@ -200,8 +202,23 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 				} else {
 					tmpFiles = append(tmpFiles, p)
 					fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
+					consultWired = true
 				}
 			}
+		}
+	}
+
+	// coop-consult: mount the read-only consult wrapper (on PATH) whenever a fusion or
+	// --consult directive was injected, so the lead's `coop-consult <peer>` calls resolve.
+	// It carries the per-agent session-id mechanics for cross-turn continuity.
+	if consultWired {
+		if p, err := writeTempFile(fusion.ConsultWrapper); err != nil {
+			ui.Info("consult: skipped wrapper wiring: %v", err)
+		} else if err := os.Chmod(p, 0o755); err != nil {
+			ui.Info("consult: skipped wrapper wiring: %v", err)
+		} else {
+			tmpFiles = append(tmpFiles, p)
+			fusionMounts = append(fusionMounts, extraMount{p, fusion.ConsultWrapperPath})
 		}
 	}
 
