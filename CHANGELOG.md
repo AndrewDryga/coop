@@ -4,13 +4,6 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **`coop loop` shows which model each iteration is running.** When Claude streams its activity on a
-  TTY, the loop now surfaces the model from the agent's `init` event (e.g. `· model claude-opus-4-8`)
-  right after the iteration banner — so a long unattended run shows the model actually working,
-  including when credential-pool failover rotates to a different account or tier. coop doesn't choose
-  the model, so this reflects the agent's own report; non-streaming agents and detached fork logs are
-  unchanged.
-
 ## 2.7.2
 
 - **A crashed fork whose PID gets reused is no longer mistaken for "still running".** Liveness only
@@ -140,6 +133,13 @@
   to the new child, so a retry that arrived in that window was written to the dead child and
   silently dropped (a tight timing race; it also surfaced as an intermittently deadlocking test).
   The new child is now published before the retry signal, so the retry lands on it.
+
+- **`coop loop` shows which model each iteration is running.** When Claude streams its activity on a
+  TTY, the loop now surfaces the model from the agent's `init` event (e.g. `· model claude-opus-4-8`)
+  right after the iteration banner — so a long unattended run shows the model actually working,
+  including when credential-pool failover rotates to a different account or tier. coop doesn't choose
+  the model, so this reflects the agent's own report; non-streaming agents and detached fork logs are
+  unchanged.
 
 ## 2.6.1
 
