@@ -51,7 +51,8 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
 Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
 change, `/work` to execute a plan step by step against the gate, `/sweep` to
 drain `.agent/TASKS.md` unattended, `/investigate` to root-cause a failure before
-fixing, `/verify-api` before calling anything you're not sure exists. They live once in
+fixing, `/verify-api` before calling anything you're not sure exists, `/release` to
+cut a versioned, tagged release. They live once in
 `.agent/skills/`; each agent's dir (`.claude`, `.codex`, `.gemini`) symlinks to it.
 
 ## Taste
