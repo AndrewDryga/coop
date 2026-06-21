@@ -23,6 +23,10 @@ One command, installed once; the same box drives Claude, Codex, and Gemini.
 cd ~/code/some-repo && coop claude     # a sandboxed Claude, brakes off, secrets hidden
 ```
 
+> **📖 New here? Start at [coop.dryga.com](https://coop.dryga.com)** — the friendly guide, with
+> the *why* behind each feature, walkthroughs, and live terminal demos. This README is the
+> quick reference; the site is the readable docs.
+
 It's the working tooling behind two write-ups:
 [Running an AI coding agent you can't trust](https://dryga.com/blog/untrusted-ai-coding-agent/)
 (the sandbox) and [One brain, two agents](https://dryga.com/blog/os-for-coding-agents/)
@@ -205,51 +209,24 @@ your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 
 `.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are shadowed: an empty
 `tmpfs` over secret directories, a read-only empty file over secret files. Templates
-(`*.example`, `*.sample`, `*.template`) stay visible so the agent can still see the
-shape of your config. The default patterns are compiled in (see
-`internal/box/secrets.go`).
-
-That default list is a denylist of well-known names — it can't know your repo holds
-a `config/credentials.yaml` or a committed `prod.yml` full of secrets. Hide those by
-adding a `.coopignore` at the repo root, one pattern per line (`#` comments and
-blank lines ignored):
+(`*.example`, `*.sample`, `*.template`) stay visible. The defaults are compiled in
+(`internal/box/secrets.go`); add a `.coopignore` at the repo root for your own:
 
 ```gitignore
 prod.yml                 # basename — matched at any depth
 config/credentials.yaml  # a slash makes it a repo-relative path
-data/*.csv               # path globs work (filepath.Match; no **)
 vault/                   # a directory — its contents are hidden whole
 ```
 
-Patterns extend the defaults; they never un-hide. Templates and public CA bundles
-(`*.example`, `*.sample`, `*.template`, `cacerts.pem` and friends) stay visible by
-default — they're whitelisted so the defaults don't shadow them — but `.coopignore` is
-the user's final say: list one of those names explicitly and it's re-hidden. A
-`.coopignore` also works in any subdirectory (like `.gitignore`): it's scoped to that
-subtree — basename patterns match at any depth under it, path patterns are relative to it
-— so a monorepo's sub-teams can keep folder-local rules next to their code.
+**The boundary is `.coopignore`, not `.gitignore`.** A normal `coop run`/`loop`/`shell`
+binds your *whole* working tree, so a gitignored-but-present file (e.g. a
+`serviceAccount.json`) is **fully visible** to the agent — shadow it with `.coopignore`.
+For a token hiding *inside* a file, `coop check-secrets` scans by content (`file:line`,
+exit 1 on a hit); `--include-ignored` widens it to the whole visible tree. Prove your
+setup holds with [`coop doctor`](#prove-it-coop-doctor).
 
-A denylist can never be exhaustive, and **`.coopignore` is the boundary — not
-`.gitignore`.** A normal `coop run` / `coop loop` / `coop shell` binds your whole working
-tree, so a secret that's merely gitignored-but-present (a real `.env.local` is caught by the
-defaults, but a gitignored `serviceAccount.json` is not) is **fully visible to the agent** —
-gitignoring it does not hide it. Shadow anything that must live in the working tree with
-`.coopignore`. (A [fork](#forks-hand-off-work-like-a-pr) is the exception: it's a clone of
-committed content, so a gitignored file never comes along.) Prove your setup with
-[`coop doctor`](#prove-it-coop-doctor).
-
-Shadowing hides secrets by filename, but a token can hide *inside* an ordinary file.
-`coop check-secrets` scans for secret-looking content — provider token shapes and
-high-entropy values — and reports each as `file:line`, exiting non-zero on a hit so it
-works as a pre-flight or CI check. By default it scans the commit-candidate files
-(tracked + untracked, with gitignored ones excluded) — the noise you'd actually commit.
-But a `coop run`/`shell`/`loop` bind-mounts the *whole* working tree, so a
-gitignored-but-not-shadowed file is still visible to the agent; pass
-`coop check-secrets --include-ignored` to scan that full visible tree too (dependency/build
-dirs and shadowed files are still skipped). Either way it ignores already-shadowed files
-(the box never sees them) — if it flags something you keep on purpose, hide that file with a
-`.coopignore` entry. Forks land through the same content scan
-([`coop fork merge`](#forks-hand-off-work-like-a-pr)).
+> Full walkthrough — subdirectory scoping, template re-hiding, the fork exception:
+> [**coop.dryga.com/docs.html#secrets**](https://coop.dryga.com/docs.html#secrets).
 
 ### Your git identity, not the box's
 
