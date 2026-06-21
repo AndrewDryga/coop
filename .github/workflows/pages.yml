@@ -29,8 +29,24 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+      # actions/upload-pages-artifact is a composite that nests a tag-pinned
+      # actions/upload-artifact, which this repo's "every action SHA-pinned" policy
+      # rejects. Replicate it inline: its exact tar, then a SHA-pinned upload-artifact.
+      # The artifact MUST be named "github-pages" so deploy-pages picks it up.
+      - name: Archive the site into a Pages artifact
+        run: |
+          tar \
+            --dereference --hard-dereference \
+            --directory site \
+            -cvf "$RUNNER_TEMP/artifact.tar" \
+            --exclude=.git \
+            --exclude=.github \
+            .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          path: site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
       - id: deploy
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
