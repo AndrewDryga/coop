@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 2.10.1
 
 - **The loop continues an interrupted task instead of stranding it `[w]`.** When an iteration was
   killed mid-task — a rate limit, crash, or timeout after the agent claimed `[w]` but before it
