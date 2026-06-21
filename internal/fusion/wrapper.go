@@ -34,6 +34,11 @@ mode=$2
 shift 2
 prompt=${*:-}
 [ -n "$prompt" ] || prompt=$(cat)
+# The prompt is captured above, so no peer needs stdin. Detach it: claude -p reads
+# piped stdin on top of its arg and blocks forever on an inherited open pipe (the
+# governor backgrounds these consults), which hung claude consults at the status
+# line until they timed out while gemini returned. One redirect covers every peer.
+exec </dev/null
 idfile="/tmp/coop-consult-${peer}.id"
 
 new_id() {
@@ -55,7 +60,7 @@ case "$mode" in
 		case "$peer" in
 		claude) claude -p --permission-mode plan --resume "$id" "$prompt" ;;
 		gemini) gemini --approval-mode plan --resume "$id" -p "$prompt" ;;
-		codex) codex exec resume "$id" -c sandbox_mode=read-only --json "$prompt" </dev/null | codex_text ;;
+		codex) codex exec resume "$id" -c sandbox_mode=read-only --json "$prompt" | codex_text ;;
 		*) die "unknown peer: $peer" ;;
 		esac
 		exit
@@ -78,7 +83,7 @@ gemini)
 	gemini --approval-mode plan --session-id "$id" -p "$prompt"
 	;;
 codex)
-	out=$(codex exec -s read-only --json "$prompt" </dev/null) || true
+	out=$(codex exec -s read-only --json "$prompt") || true
 	printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1 >"$idfile"
 	printf '%s\n' "$out" | codex_text
 	;;
