@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork re-entry resumes the right session, even after a loop or consult ran in the fork.** Re-entry
+  used to resume the *most-recent* session for the fork's directory (claude `--continue`, gemini
+  `--resume latest`), which a `coop fork … --loop` iteration or a fusion/`--consult` peer call sharing
+  that directory could win — landing you in the wrong thread. coop now assigns claude/gemini forks
+  their own session id (stored in the fork's git-excluded `.coop/`) and resumes exactly it; codex,
+  which can't be handed an id, resumes the most-recent *interactive* session and skips `codex exec`
+  loop/consult runs. This also sidesteps gemini's basename-keyed session store (same-named forks in
+  different repos no longer collide on resume).
+
 - **Fusion governor consults peers with self-contained prompts, not your message verbatim.** The
   governor is now told that peers are read-only advisors — it consults them on the *thinking* a task
   needs and makes every change itself — and that each consult is a fresh, memoryless call, so it

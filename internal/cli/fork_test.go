@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -326,6 +327,64 @@ func TestParseForkContinue(t *testing.T) {
 	}
 	if fa, err := parseForkCreate([]string{"demo", "codex", "--continue"}); err != nil || !fa.cont || fa.agent != "codex" {
 		t.Errorf("parseForkCreate(demo codex --continue) = {cont:%v agent:%q}, err=%v", fa.cont, fa.agent, err)
+	}
+}
+
+func TestForkLaunchCmd(t *testing.T) {
+	cfgDir := t.TempDir()
+	ws := filepath.Join(t.TempDir(), "myrepo-forks", "demo")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: cfgDir}}
+
+	// First launch of a preset agent (claude): start under a fresh coop-owned id and
+	// persist it; the command carries --session-id <uuid>.
+	cmd := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, false)
+	id := readForkSession(ws, "claude")
+	if id == "" {
+		t.Fatal("first launch did not persist a session id")
+	}
+	if !slices.Contains(cmd, "--session-id") || !slices.Contains(cmd, id) {
+		t.Errorf("first launch cmd = %v, want --session-id %s", cmd, id)
+	}
+
+	// Re-entry once the session exists: resume exactly that id (not --continue/latest).
+	claudeKey := strings.ReplaceAll(ws, "/", "-")
+	sess := filepath.Join(cfgDir, "claude", "projects", claudeKey, id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(sess), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sess, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, true)
+	if !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, id) {
+		t.Errorf("re-entry cmd = %v, want --resume %s", cmd, id)
+	}
+	if readForkSession(ws, "claude") != id {
+		t.Error("session id changed on re-entry")
+	}
+
+	// Re-entry when the session id was persisted but never materialized (e.g. quit
+	// before a turn): fall back to a fresh start under the SAME id, not a resume error.
+	ws2 := filepath.Join(t.TempDir(), "myrepo-forks", "ghost")
+	if err := os.MkdirAll(ws2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveForkSession(ws2, "claude", id)
+	cmd = a.forkLaunchCmd(forkArgs{name: "ghost", agent: "claude"}, ws2, true)
+	if !slices.Contains(cmd, "--session-id") || slices.Contains(cmd, "--resume") {
+		t.Errorf("ghost re-entry cmd = %v, want a fresh --session-id (no live session)", cmd)
+	}
+
+	// codex can't preset an id: no session file, and a fresh start is plain Interactive.
+	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "codex"}, ws, false)
+	if readForkSession(ws, "codex") != "" {
+		t.Error("codex must not get a coop-owned session id")
+	}
+	if slices.Contains(cmd, "--session-id") {
+		t.Errorf("codex launch must not preset a session id: %v", cmd)
 	}
 }
 

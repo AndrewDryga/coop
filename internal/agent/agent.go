@@ -5,7 +5,6 @@
 package agent
 
 import (
-	"os"
 	"sort"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -21,9 +20,20 @@ type Agent interface {
 	Headless(cfg *config.Config, prompt string) []string
 	// ACP is the agent's ACP adapter command over stdio (for editors like Zed).
 	ACP() []string
-	// Resume re-enters the agent's last session, scoped to the fork at ws; the bool
-	// reports whether a session was found (else the caller starts fresh).
-	Resume(cfg *config.Config, ws string) ([]string, bool)
+	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
+	// whether a session was found (else the caller starts fresh via StartSession). id
+	// is the coop-owned session id for this (fork, agent): agents that honor a preset
+	// id (claude, gemini) resume exactly that id — immune to loop/consult sessions that
+	// share the cwd — while codex, which mints its own id, ignores it and scans for its
+	// most-recent interactive (non-exec) session.
+	Resume(cfg *config.Config, ws, id string) ([]string, bool)
+	// StartSession is the fresh interactive command under the coop-chosen session id:
+	// claude/gemini stamp it via --session-id so a later Resume can pin exactly it;
+	// codex ignores id and mints its own. An empty id falls back to Interactive.
+	StartSession(cfg *config.Config, id string) []string
+	// PresetSessionID reports whether the agent honors a caller-chosen session id. When
+	// false (codex), coop allocates none and relies on Resume's scan.
+	PresetSessionID() bool
 	// Login authenticates the agent (its token persists in its config dir).
 	Login(cfg *config.Config) []string
 	// ConsultCmd is the read-only, non-interactive command to ask this agent a
@@ -86,10 +96,4 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// hasEntries reports whether dir exists and holds at least one entry — i.e. a session.
-func hasEntries(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	return err == nil && len(entries) > 0
 }

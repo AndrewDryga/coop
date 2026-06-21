@@ -40,9 +40,19 @@ func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
 
 func (codexAgent) ACP() []string { return []string{"codex-acp"} }
 
-func (a codexAgent) Resume(cfg *config.Config, ws string) ([]string, bool) {
-	// `codex resume --last` is global, so find this fork's most recent session by the
-	// cwd recorded in its session files and resume that one by id.
+// PresetSessionID is false: codex has no flag to start a session under a caller-chosen
+// id (it mints its own UUIDv7), so coop allocates none and Resume scans instead.
+func (codexAgent) PresetSessionID() bool { return false }
+
+// StartSession ignores id (codex can't preset one) and just starts interactively;
+// Resume finds that session afterward by scanning.
+func (a codexAgent) StartSession(cfg *config.Config, _ string) []string {
+	return a.Interactive(cfg)
+}
+
+func (a codexAgent) Resume(cfg *config.Config, ws, _ string) ([]string, bool) {
+	// `codex resume --last` is global, so find this fork's most recent *interactive*
+	// session by the cwd recorded in its session files and resume that one by id.
 	if id := latestCodexSession(cfg.AgentDir("codex"), ws); id != "" {
 		b := a.base(cfg)
 		return append([]string{b[0], "resume", id}, b[1:]...), true
@@ -123,11 +133,14 @@ func latestCodexSession(codexDir, cwd string) string {
 		line, _ := bufio.NewReader(f).ReadString('\n')
 		var m struct {
 			Payload struct {
-				ID, Cwd string
+				ID, Cwd, Source string
 			} `json:"payload"`
 		}
 		if json.Unmarshal([]byte(line), &m) != nil || m.Payload.Cwd != cwd || m.Payload.ID == "" {
 			return nil
+		}
+		if m.Payload.Source == "exec" {
+			return nil // a loop/consult `codex exec` session, not the interactive one we resume
 		}
 		if info, err := d.Info(); err == nil && info.ModTime().After(bestTime) {
 			bestTime, bestID = info.ModTime(), m.Payload.ID

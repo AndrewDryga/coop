@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -263,22 +264,44 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
-	// run when no session for this fork exists.
-	cmd := a.defaultCmd(fa.agent)
-	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
-		if ag, ok := agents.Get(fa.agent); ok {
-			if rc, resumed := ag.Resume(a.cfg, ws); resumed {
-				cmd = rc
-				ui.Info("continuing your last %s session in this fork", fa.agent)
-			}
-		}
-	}
+	// run when no session for this fork exists. See forkLaunchCmd.
+	cmd := a.forkLaunchCmd(fa, ws, existed)
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	forkNextSteps(fa.name)
 	return 0, nil
+}
+
+// forkLaunchCmd builds the agent command for entering a fork: resume the fork's prior
+// session on re-entry (when one exists), else start fresh. For agents that honor a
+// coop-owned session id (claude/gemini) coop allocates one per (fork, agent), persists
+// it in the fork's git-excluded .coop state, starts the session under it, and resumes
+// exactly it later — so a loop or consult that shares the cwd can never hijack the
+// "continue". codex can't preset an id, so it scans for its most-recent interactive
+// session instead.
+func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
+	ag, ok := agents.Get(fa.agent)
+	if !ok {
+		return a.defaultCmd(fa.agent)
+	}
+	id := ""
+	if ag.PresetSessionID() {
+		if id = readForkSession(ws, fa.agent); id == "" {
+			if sid, err := newSessionID(); err == nil {
+				id = sid
+				saveForkSession(ws, fa.agent, id)
+			}
+		}
+	}
+	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
+		if rc, resumed := ag.Resume(a.cfg, ws, id); resumed {
+			ui.Info("continuing your last %s session in this fork", fa.agent)
+			return rc
+		}
+	}
+	return ag.StartSession(a.cfg, id)
 }
 
 func forkNextSteps(name string) {
@@ -362,6 +385,44 @@ func saveForkAgent(ws, agent string) {
 	if os.WriteFile(forkAgentFile(ws), []byte(agent+"\n"), 0o644) == nil {
 		excludeFork(ws, ".coop/")
 	}
+}
+
+// forkSessionFile records the coop-owned session id for a fork+agent (claude/gemini),
+// inside the fork but git-excluded, so re-entry resumes exactly that session.
+func forkSessionFile(ws, agent string) string {
+	return filepath.Join(ws, ".coop", "session."+agent)
+}
+
+func readForkSession(ws, agent string) string {
+	data, err := os.ReadFile(forkSessionFile(ws, agent))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func saveForkSession(ws, agent, id string) {
+	if id == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(forkSessionFile(ws, agent)), 0o755); err != nil {
+		return
+	}
+	if os.WriteFile(forkSessionFile(ws, agent), []byte(id+"\n"), 0o644) == nil {
+		excludeFork(ws, ".coop/")
+	}
+}
+
+// newSessionID returns a random RFC-4122 v4 UUID — the form claude and gemini require
+// for --session-id.
+func newSessionID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 // excludeFork appends a pattern to the fork's local .git/info/exclude (git's uncommitted

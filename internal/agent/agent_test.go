@@ -130,40 +130,85 @@ func TestResume(t *testing.T) {
 	cleanCmdEnv(t)
 	cfgDir := t.TempDir()
 	ws := "/work/myrepo-forks/demo"
+	id := "11111111-2222-4333-8444-555555555555"
 	cfg := &config.Config{ConfigDir: cfgDir}
 
-	// No session yet → fresh command, resumed=false.
+	// No session yet → fresh command, resumed=false (for every agent).
 	for _, name := range Names() {
 		a, _ := Get(name)
-		if cmd, resumed := a.Resume(cfg, ws); resumed {
+		if cmd, resumed := a.Resume(cfg, ws, id); resumed {
 			t.Errorf("Resume(%s) resumed with no session: %v", name, cmd)
 		}
 	}
 
+	// claude resumes the exact coop-owned id (projects/<cwd>/<id>.jsonl), not --continue.
 	claude, _ := Get("claude")
-	mustWrite(t, filepath.Join(cfgDir, "claude", "projects", claudeProjectKey(ws), "s.jsonl"), "{}")
-	if cmd, ok := claude.Resume(cfg, ws); !ok ||
-		!slices.Equal(cmd, []string{"claude", "--dangerously-skip-permissions", "--continue"}) {
+	mustWrite(t, filepath.Join(cfgDir, "claude", "projects", claudeProjectKey(ws), id+".jsonl"), "{}")
+	if cmd, ok := claude.Resume(cfg, ws, id); !ok ||
+		!slices.Equal(cmd, []string{"claude", "--dangerously-skip-permissions", "--resume", id}) {
 		t.Errorf("claude Resume = (%v, %v)", cmd, ok)
 	}
+	// A different id (no session file) must not resume.
+	if cmd, ok := claude.Resume(cfg, ws, "99999999-2222-4333-8444-555555555555"); ok {
+		t.Errorf("claude Resume matched an id with no session file: %v", cmd)
+	}
 
+	// gemini resumes the exact id, matched by file content (not "latest").
 	gemini, _ := Get("gemini")
-	mustWrite(t, filepath.Join(cfgDir, "gemini", "tmp", "demo", "chats", "session.jsonl"), "{}")
-	if cmd, ok := gemini.Resume(cfg, ws); !ok ||
-		!slices.Equal(cmd, []string{"gemini", "--yolo", "--resume", "latest"}) {
+	mustWrite(t, filepath.Join(cfgDir, "gemini", "tmp", "demo", "chats", "session-x.jsonl"),
+		`{"sessionId":"`+id+`"}`)
+	if cmd, ok := gemini.Resume(cfg, ws, id); !ok ||
+		!slices.Equal(cmd, []string{"gemini", "--yolo", "--resume", id}) {
 		t.Errorf("gemini Resume = (%v, %v)", cmd, ok)
 	}
 
+	// codex ignores the id and resumes its most-recent INTERACTIVE session for the cwd,
+	// skipping a newer `codex exec` (source=="exec") loop/consult session.
 	codex, _ := Get("codex")
-	mustWrite(t, filepath.Join(cfgDir, "codex", "sessions", "2026", "06", "16", "rollout-x.jsonl"),
-		`{"type":"session_meta","payload":{"id":"abc-123","cwd":"`+ws+`"}}`+"\n")
-	if cmd, ok := codex.Resume(cfg, ws); !ok ||
+	sess := filepath.Join(cfgDir, "codex", "sessions", "2026", "06")
+	mustWrite(t, filepath.Join(sess, "16", "rollout-interactive.jsonl"),
+		`{"type":"session_meta","payload":{"id":"abc-123","cwd":"`+ws+`","source":"cli"}}`+"\n")
+	mustWrite(t, filepath.Join(sess, "17", "rollout-exec.jsonl"),
+		`{"type":"session_meta","payload":{"id":"exec-999","cwd":"`+ws+`","source":"exec"}}`+"\n")
+	if cmd, ok := codex.Resume(cfg, ws, id); !ok ||
 		!slices.Equal(cmd, []string{"codex", "resume", "abc-123", "--dangerously-bypass-approvals-and-sandbox"}) {
-		t.Errorf("codex Resume = (%v, %v)", cmd, ok)
+		t.Errorf("codex Resume = (%v, %v) — want the interactive session, not the newer exec one", cmd, ok)
 	}
 	// A session recorded for a DIFFERENT cwd must not match.
-	if cmd, ok := codex.Resume(cfg, "/work/myrepo-forks/other"); ok {
+	if cmd, ok := codex.Resume(cfg, "/work/myrepo-forks/other", id); ok {
 		t.Errorf("codex Resume(other fork) wrongly matched: %v", cmd)
+	}
+}
+
+func TestStartSessionAndPreset(t *testing.T) {
+	cleanCmdEnv(t)
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	id := "11111111-2222-4333-8444-555555555555"
+
+	// claude/gemini preset a caller-chosen id; codex cannot.
+	for name, want := range map[string]bool{"claude": true, "gemini": true, "codex": false} {
+		a, _ := Get(name)
+		if a.PresetSessionID() != want {
+			t.Errorf("%s PresetSessionID = %v, want %v", name, a.PresetSessionID(), want)
+		}
+	}
+
+	claude, _ := Get("claude")
+	if cmd := claude.StartSession(cfg, id); !slices.Equal(cmd, []string{"claude", "--dangerously-skip-permissions", "--session-id", id}) {
+		t.Errorf("claude StartSession = %v", cmd)
+	}
+	gemini, _ := Get("gemini")
+	if cmd := gemini.StartSession(cfg, id); !slices.Equal(cmd, []string{"gemini", "--yolo", "--session-id", id}) {
+		t.Errorf("gemini StartSession = %v", cmd)
+	}
+	// codex ignores the id and just starts interactively.
+	codex, _ := Get("codex")
+	if cmd := codex.StartSession(cfg, id); !slices.Equal(cmd, codex.Interactive(cfg)) {
+		t.Errorf("codex StartSession = %v, want Interactive", cmd)
+	}
+	// Empty id → Interactive for the preset agents too.
+	if cmd := claude.StartSession(cfg, ""); !slices.Equal(cmd, claude.Interactive(cfg)) {
+		t.Errorf("claude StartSession(empty) = %v, want Interactive", cmd)
 	}
 }
 

@@ -32,12 +32,44 @@ func (a geminiAgent) Headless(cfg *config.Config, prompt string) []string {
 
 func (geminiAgent) ACP() []string { return []string{"gemini", "--acp"} }
 
-func (a geminiAgent) Resume(cfg *config.Config, ws string) ([]string, bool) {
-	// gemini keys sessions by project basename under ~/.gemini/tmp/<base>/chats.
-	if hasEntries(filepath.Join(cfg.AgentDir("gemini"), "tmp", filepath.Base(ws), "chats")) {
-		return append(a.base(cfg), "--resume", "latest"), true
+func (geminiAgent) PresetSessionID() bool { return true }
+
+func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {
+	if id == "" {
+		return a.Interactive(cfg)
+	}
+	return append(a.base(cfg), "--session-id", id)
+}
+
+// Resume pins the coop-owned session id rather than "latest" — a loop or consult in
+// the same cwd could be the latest, and gemini's tmp bucket is keyed by basename (so
+// same-named forks in different repos can collide), but resuming an explicit uuid is
+// immune to both. The id is matched by file content, so a change to gemini's session
+// filename scheme can't silently break detection.
+func (a geminiAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
+	if id != "" && geminiHasSession(cfg, ws, id) {
+		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
+}
+
+// geminiHasSession reports whether any chats file for ws records session id. gemini
+// keys sessions by project basename under ~/.gemini/tmp/<base>/chats.
+func geminiHasSession(cfg *config.Config, ws, id string) bool {
+	dir := filepath.Join(cfg.AgentDir("gemini"), "tmp", filepath.Base(ws), "chats")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil && strings.Contains(string(data), id) {
+			return true
+		}
+	}
+	return false
 }
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }

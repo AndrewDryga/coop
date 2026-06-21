@@ -285,10 +285,13 @@ See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to ru
 A fork remembers the agent it was created with, so `coop fork perf` after
 `coop fork perf codex` re-enters with *codex*, not a silent fallback to claude (pass an
 agent to switch; `coop fork ls` shows each fork's agent). The agent's session history
-persists too, so re-entry continues its last conversation instead of starting fresh
-— scoped to that fork (claude `--continue`, gemini `--resume latest`, and codex by the
-session whose recorded cwd is the fork). It falls back to a fresh session when none
-exists. Force one with `--new`; `--fresh` recreates the whole fork.
+persists too, so re-entry continues its last conversation instead of starting fresh.
+For claude and gemini, coop assigns each fork its own session id (kept in the fork's
+git-excluded `.coop/`) and resumes exactly that one — so a loop or a peer consult that
+shares the fork's directory can never hijack the "continue". codex can't be handed an
+id, so it resumes the most-recent *interactive* session recorded for the fork (skipping
+`codex exec` loop/consult runs). It falls back to a fresh session when none exists.
+Force one with `--new`; `--fresh` recreates the whole fork.
 
 ### Review — in your terminal or your IDE
 

@@ -36,9 +36,26 @@ func (a claudeAgent) Headless(cfg *config.Config, prompt string) []string {
 
 func (claudeAgent) ACP() []string { return []string{"claude-agent-acp"} }
 
-func (a claudeAgent) Resume(cfg *config.Config, ws string) ([]string, bool) {
-	if hasEntries(filepath.Join(cfg.AgentDir("claude"), "projects", claudeProjectKey(ws))) {
-		return append(a.base(cfg), "--continue"), true
+func (claudeAgent) PresetSessionID() bool { return true }
+
+func (a claudeAgent) StartSession(cfg *config.Config, id string) []string {
+	if id == "" {
+		return a.Interactive(cfg)
+	}
+	return append(a.base(cfg), "--session-id", id)
+}
+
+// Resume pins the coop-owned session id — claude stores a session at
+// projects/<cwd>/<id>.jsonl — so re-entry lands on exactly that conversation, never a
+// loop or consult session that merely shares the cwd (which `--continue` would pick).
+// No file for id yet → it was never created; the caller starts it fresh under that id.
+func (a claudeAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
+	if id == "" {
+		return a.Interactive(cfg), false
+	}
+	sess := filepath.Join(cfg.AgentDir("claude"), "projects", claudeProjectKey(ws), id+".jsonl")
+	if _, err := os.Stat(sess); err == nil {
+		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
 }
