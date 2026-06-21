@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 2.9.0
 
 - **A `claude` peer consult no longer hangs forever (`coop-consult` detaches peer stdin).** `claude -p`
   reads piped stdin *in addition to* its prompt argument, so when the lead backgrounded a consult the
