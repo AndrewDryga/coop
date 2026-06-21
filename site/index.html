@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>coop — run a coding agent in a box it can't escape</title>
+        <meta
+            name="description"
+            content="Run a coding agent on your real repos every day — in a disposable box it can't escape, with your secrets shadowed, and a whip that makes it work all night. One binary drives Claude, Codex, and Gemini."
+        />
+        <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml" />
+        <meta
+            property="og:title"
+            content="coop — run a coding agent in a box it can't escape"
+        />
+        <meta
+            property="og:description"
+            content="A sandboxed home for untrusted coding agents: secrets shadowed, the container as the cage, and an unattended loop that drains your task queue overnight."
+        />
+        <meta property="og:type" content="website" />
+        <link rel="stylesheet" href="assets/vendor/asciinema-player.css" />
+        <link rel="stylesheet" href="assets/css/site.css" />
+    </head>
+    <body>
+        <header class="nav">
+            <div class="container nav-inner">
+                <a class="brand" href="./"
+                    ><span class="wordmark"
+                        >co<span class="colon">:</span>op</span
+                    ></a
+                >
+                <button class="nav-toggle" aria-label="Menu" data-nav-toggle>
+                    ☰
+                </button>
+                <nav class="nav-links" data-nav>
+                    <a href="#features">Features</a>
+                    <a href="#security">Security</a>
+                    <a href="docs.html">Docs</a>
+                    <a href="#install">Install</a>
+                    <a
+                        class="gh"
+                        href="https://github.com/AndrewDryga/coop"
+                        target="_blank"
+                        rel="noopener"
+                        >GitHub ↗</a
+                    >
+                    <a class="nav-cta" href="docs.html#quickstart"
+                        >Get started</a
+                    >
+                </nav>
+            </div>
+        </header>
+
+        <main>
+            <section class="hero">
+                <div class="container">
+                    <div class="hero-text">
+                        <p class="hero-kicker">
+                            Keep your agents busy while you sleep
+                        </p>
+                        <h1>
+                            Run a coding agent in a box it
+                            <span class="hl">can't escape</span>.
+                        </h1>
+                        <p class="lead">
+                            Coding agents are most useful with the brakes off —
+                            and that's exactly when you don't want them loose on
+                            your laptop. Coop runs them in a disposable
+                            container that mounts only your repo, shadows its
+                            secrets, and can't reach your home dir, SSH keys, or
+                            other projects.
+                        </p>
+                        <div class="cmd">
+                            <span class="prompt">$</span>
+                            <code id="install-cmd"
+                                >curl -fsSL
+                                https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh
+                                | sh</code
+                            >
+                            <button class="copy" data-copy="#install-cmd">
+                                Copy
+                            </button>
+                        </div>
+                        <div class="hero-cta">
+                            <a
+                                class="btn btn-primary"
+                                href="docs.html#quickstart"
+                                >Get started →</a
+                            >
+                            <a
+                                class="btn btn-ghost"
+                                href="https://github.com/AndrewDryga/coop"
+                                target="_blank"
+                                rel="noopener"
+                                >★ Star on GitHub</a
+                            >
+                        </div>
+                    </div>
+                    <div class="hero-cast">
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title"
+                                    >coop loop — drain the queue overnight</span
+                                >
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/loop.cast"
+                                    data-autoplay="true"
+                                    data-loop="true"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="why">
+                <div class="container">
+                    <div class="cards">
+                        <div class="card">
+                            <span class="ic">🔒</span>
+                            <h3>The cage, not the leash</h3>
+                            <p>
+                                The container <em>is</em> the boundary. The
+                                agent runs
+                                <code>--dangerously-skip-permissions</code> and
+                                the worst it can do is trash one repo you can
+                                restore from git.
+                            </p>
+                        </div>
+                        <div class="card">
+                            <span class="ic">🙈</span>
+                            <h3>Secrets never enter</h3>
+                            <p>
+                                <code>.env</code>, <code>*.pem</code>,
+                                <code>secrets/</code> and friends are shadowed —
+                                empty <code>tmpfs</code> over dirs, a blank
+                                read-only file over files. Templates stay
+                                visible.
+                            </p>
+                        </div>
+                        <div class="card">
+                            <span class="ic">🌙</span>
+                            <h3>A whip for all-nighters</h3>
+                            <p>
+                                A fresh agent per iteration drains
+                                <code>.agent/TASKS.md</code>, rides through rate
+                                limits with profile failover, and audits its own
+                                work when the queue empties.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="features">
+                <div class="container">
+                    <div class="section-head">
+                        <span class="kicker">What it does</span>
+                        <h2>One binary. Every workflow.</h2>
+                        <p>
+                            Point it at any git repo and go. The same box drives
+                            a whole fleet overnight, a PR-style handoff, or a
+                            council of models — all behind the same container
+                            boundary.
+                        </p>
+                    </div>
+
+                    <!-- loop -->
+                    <div class="feature">
+                        <div class="feature-text">
+                            <span class="kicker">The loop</span>
+                            <h3>Drain the queue while you sleep</h3>
+                            <p>
+                                Fill <code>.agent/TASKS.md</code> with checkbox
+                                tasks and walk away. A fresh agent per iteration
+                                (no context rot) works every <code>[ ]</code>,
+                                commits behind your gate, and won't quit while
+                                any remain.
+                            </p>
+                            <ul>
+                                <li>
+                                    Each iteration prints
+                                    <b>which model is working</b>, live.
+                                </li>
+                                <li>
+                                    A rate limit triggers
+                                    <b>profile failover</b>, not a stall — it
+                                    switches accounts and keeps going.
+                                </li>
+                                <li>
+                                    When the queue empties, a fresh
+                                    <b>auditor</b> re-checks every
+                                    <code>[x]</code> against the git log.
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title">coop loop</span>
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/loop.cast"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- fleet -->
+                    <div class="feature flip">
+                        <div class="feature-text">
+                            <span class="kicker">A fleet</span>
+                            <h3>Many models, one live board</h3>
+                            <p>
+                                Run several agents at once, each looping in its
+                                own fork on its own slice of the queue.
+                                <code>coop fleet watch</code> is the live
+                                dashboard — progress, the task each is on, and
+                                who's done.
+                            </p>
+                            <ul>
+                                <li>
+                                    Declare the fleet once in
+                                    <code>.agent/fleet</code>;
+                                    <code>coop fleet up</code> starts them all
+                                    detached.
+                                </li>
+                                <li>
+                                    Watch them finish in real time, then
+                                    <code>coop fork merge --all</code> lands the
+                                    lot through a revalidating rebase queue.
+                                </li>
+                                <li>
+                                    Add agents until <em>review</em>, not
+                                    generation, is your bottleneck.
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title"
+                                    >coop fleet up · coop fleet watch</span
+                                >
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/fleet.cast"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- forks -->
+                    <div class="feature">
+                        <div class="feature-text">
+                            <span class="kicker">Forks</span>
+                            <h3>Hand off work like a PR</h3>
+                            <p>
+                                A fork is a throwaway local clone handed to an
+                                agent instead of your working tree. Its
+                                <code>origin</code> is a local path, so the
+                                agent has nowhere to push — and you stay the
+                                only one who lands anything.
+                            </p>
+                            <ul>
+                                <li>
+                                    <b>Open → work → review → land</b>, the
+                                    lifecycle of a contractor's PR.
+                                </li>
+                                <li>
+                                    Review the diff in your terminal or your
+                                    IDE; merge rebases onto your branch.
+                                </li>
+                                <li>
+                                    Set <code>COOP_GATE</code> and every merge
+                                    re-runs your tests on the rebased tree.
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title"
+                                    >coop fork — review &amp; land</span
+                                >
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/fork.cast"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- fusion -->
+                    <div class="feature flip">
+                        <div class="feature-text">
+                            <span class="kicker">Fusion</span>
+                            <h3>A council that argues before it commits</h3>
+                            <p>
+                                One model leads and does the real work; the
+                                other two advise read-only; the leader
+                                synthesizes the best of all three. You stop
+                                betting the run on one model's blind spots.
+                            </p>
+                            <ul>
+                                <li>
+                                    No extra service — the leader consults its
+                                    peers from its shell, in parallel.
+                                </li>
+                                <li>
+                                    The synthesized answer beats any single
+                                    model working alone.
+                                </li>
+                                <li>
+                                    Or add <code>--consult</code> to any run for
+                                    a lighter, opt-in second opinion.
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title">coop fusion claude</span>
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/fusion.cast"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="security" class="band">
+                <div class="container">
+                    <div class="section-head">
+                        <span class="kicker">Defense in depth</span>
+                        <h2>Secrets stay out of the box</h2>
+                        <p>
+                            Out of the box, coop shadows the usual suspects by
+                            name — no setup. <code>.coopignore</code> adds your
+                            repo's own; <code>coop check-secrets</code> catches
+                            tokens hiding <em>inside</em> files; and
+                            <code>coop doctor</code> proves the whole thing
+                            holds.
+                        </p>
+                    </div>
+
+                    <div class="shadow-defaults">
+                        <div class="sd-card sd-hidden">
+                            <span class="sd-label">🙈 Shadowed by default</span>
+                            <p class="sd-note">
+                                A blank <code>tmpfs</code> covers secret folders
+                                and an empty read-only file covers secret files
+                                — applied before the agent starts, so a
+                                well-known credential name is never readable or
+                                writable.
+                            </p>
+                            <div class="sd-chips">
+                                <code>.env</code><code>.env.*</code
+                                ><code>*.pem</code><code>*.key</code
+                                ><code>*.p12</code><code>*.tfvars</code
+                                ><code>*.tfstate</code><code>id_rsa</code
+                                ><code>.ssh/</code><code>.aws/</code
+                                ><code>.kube/</code><code>.gnupg/</code
+                                ><code>.npmrc</code><code>.netrc</code
+                                ><code>.git-credentials</code
+                                ><code>secrets/</code
+                                ><code>credentials.json</code
+                                ><code>service_account.json</code
+                                ><code>kubeconfig</code><code>database.yml</code
+                                ><span class="sd-more">+ more</span>
+                            </div>
+                        </div>
+                        <div class="sd-card sd-visible">
+                            <span class="sd-label">👁 Kept visible</span>
+                            <p class="sd-note">
+                                Templates and public CA bundles stay readable,
+                                so the agent can still see the shape of your
+                                config and TLS keeps working.
+                            </p>
+                            <div class="sd-chips">
+                                <code>*.example</code><code>*.sample</code
+                                ><code>*.template</code><code>cacerts.pem</code
+                                ><code>ca-bundle.crt</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- .coopignore / check-secrets -->
+                    <div class="feature">
+                        <div class="feature-text">
+                            <span class="kicker">.coopignore</span>
+                            <h3>Your final say on what's hidden</h3>
+                            <p>
+                                The defaults above can't know <em>your</em> repo
+                                holds a <code>config/credentials.yaml</code> or
+                                a committed <code>prod.yml</code>. Add a
+                                <code>.coopignore</code> — one pattern per line
+                                — and it's shadowed everywhere the box can see.
+                            </p>
+                            <ul>
+                                <li>
+                                    <b
+                                        >The boundary is
+                                        <code>.coopignore</code>, not
+                                        <code>.gitignore</code></b
+                                    >
+                                    — a normal run mounts your whole tree.
+                                </li>
+                                <li>
+                                    A content scan also gates every
+                                    <code>coop fork merge</code>, so a token in
+                                    an innocuous file is caught on the way in.
+                                </li>
+                                <li>
+                                    The box keeps <em>your</em> git identity —
+                                    commits are authored as you, your key never
+                                    enters.
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title">coop check-secrets</span>
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/secrets.cast"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- doctor (last) -->
+                    <div class="feature flip">
+                        <div class="feature-text">
+                            <span class="kicker">Prove it</span>
+                            <h3>
+                                <code>coop doctor</code> attacks the box for you
+                            </h3>
+                            <p>
+                                Don't take the isolation on faith.
+                                <code>doctor</code> plants a decoy secret,
+                                launches the box, and checks from
+                                <em>inside</em> that the secret is unreadable
+                                and unwritable — then checks on the host that a
+                                fork carries neither the secret nor a pushable
+                                remote.
+                            </p>
+                            <ul>
+                                <li>
+                                    <b>Inside the sandbox:</b> secrets shadowed,
+                                    decoy unwritable, source still readable.
+                                </li>
+                                <li>
+                                    <b>On the host:</b> gitignored secrets never
+                                    enter a clone; origin is a dead-end local
+                                    path.
+                                </li>
+                                <li>
+                                    Run it anytime — especially after changing
+                                    config.
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title">coop doctor</span>
+                            </div>
+                            <div class="term-body">
+                                <div
+                                    class="cast"
+                                    data-cast="casts/doctor.cast"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="install">
+                <div class="container">
+                    <div class="section-head">
+                        <span class="kicker">Install</span>
+                        <h2>From nothing to a sandboxed agent</h2>
+                        <p>
+                            One binary, no Go, no clone. A container runtime —
+                            Apple <code>container</code>, Docker, or Podman — is
+                            the only requirement.
+                        </p>
+                    </div>
+                    <div class="steps">
+                        <div class="step">
+                            <span class="n">01</span>
+                            <h4>Install the binary</h4>
+                            <p>
+                                Drops <code>coop</code> into
+                                <code>~/.local/bin</code> and builds the box if
+                                a runtime is present.
+                            </p>
+                            <div class="cmd">
+                                <span class="prompt">$</span>
+                                <code id="install-cmd2"
+                                    >curl -fsSL
+                                    https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh
+                                    | sh</code
+                                >
+                                <button class="copy" data-copy="#install-cmd2">
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <span class="n">02</span>
+                            <h4>Authenticate once</h4>
+                            <p>
+                                The token persists in the config dir —
+                                paste-code, no browser needed.
+                            </p>
+                            <pre
+                                class="code"
+                            ><span class="k">coop</span> doctor       <span class="t"># prove isolation</span>
+<span class="k">coop</span> login claude
+<span class="k">coop</span> claude       <span class="t"># go</span></pre>
+                        </div>
+                        <div class="step">
+                            <span class="n">03</span>
+                            <h4>Or run it all night</h4>
+                            <p>
+                                Scaffold a queue, fill it with checkbox tasks,
+                                and let the loop drain it.
+                            </p>
+                            <pre class="code"><span class="k">coop</span> init
+<span class="t"># …fill .agent/TASKS.md…</span>
+<span class="k">coop</span> loop</pre>
+                        </div>
+                    </div>
+                    <p class="center" style="margin-top: 28px">
+                        <a class="btn btn-primary" href="docs.html"
+                            >Read the docs →</a
+                        >
+                    </p>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <div class="container footer-inner">
+                <a class="brand" href="./"
+                    ><span class="wordmark"
+                        >co<span class="colon">:</span>op</span
+                    ></a
+                >
+                <div>
+                    <a href="docs.html">Docs</a> ·
+                    <a
+                        href="https://github.com/AndrewDryga/coop"
+                        target="_blank"
+                        rel="noopener"
+                        >GitHub</a
+                    >
+                    ·
+                    <a
+                        href="https://github.com/AndrewDryga/coop/releases"
+                        target="_blank"
+                        rel="noopener"
+                        >Releases</a
+                    >
+                    ·
+                    <a
+                        href="https://dryga.com/blog/untrusted-ai-coding-agent/"
+                        target="_blank"
+                        rel="noopener"
+                        >The write-up</a
+                    >
+                </div>
+                <span class="muted"
+                    >MIT · made by
+                    <a href="https://dryga.com" target="_blank" rel="noopener"
+                        >Andrew Dryga</a
+                    ></span
+                >
+            </div>
+        </footer>
+
+        <script src="assets/vendor/asciinema-player.min.js"></script>
+        <script src="assets/js/site.js"></script>
+    </body>
+</html>
