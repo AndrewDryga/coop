@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 2.7.2
 
 - **A crashed fork whose PID gets reused is no longer mistaken for "still running".** Liveness only
