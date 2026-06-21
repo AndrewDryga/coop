@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fusion governor consults peers with self-contained prompts, not your message verbatim.** The
+  governor is now told that peers are read-only advisors — it consults them on the *thinking* a task
+  needs and makes every change itself — and that each consult is a fresh, memoryless call, so it
+  composes a self-contained prompt (goal + context + question) rather than forwarding your message
+  verbatim, which was meaningless to a peer past the first turn (e.g. "fix the second one").
+
 - **`coop update` now self-updates the `coop` binary, then rebuilds the box image.** Previously it
   only refreshed the box (base image + agent CLIs + ACP adapters), leaving the binary pinned at
   whatever you installed. It now first upgrades `coop` to the latest GitHub release — fetched and

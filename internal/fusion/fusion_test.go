@@ -71,6 +71,24 @@ func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
 	}
 }
 
+func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
+	ins := Instruction("codex", Peers("codex", allAgents))
+	// Peers are read-only advisors; the governor does the writing itself (concern 1:
+	// a write-task is not handed to a peer, it's split into consult + the governor's act).
+	for _, want := range []string{"READ-ONLY ADVISORS", ".agent/TASKS.md", "yourself"} {
+		if !strings.Contains(ins, want) {
+			t.Errorf("instruction missing read-only-advisor guidance %q", want)
+		}
+	}
+	// Each consult is memoryless, so the governor composes a self-contained prompt
+	// instead of forwarding the user's message verbatim (concern 2: follow-up turns).
+	for _, want := range []string{"MEMORYLESS", "self-contained", "verbatim"} {
+		if !strings.Contains(ins, want) {
+			t.Errorf("instruction missing memoryless-consult guidance %q", want)
+		}
+	}
+}
+
 func TestGovernorInstructionsPreservesBase(t *testing.T) {
 	base := "# Project rules\nAlways run the gate."
 	out := GovernorInstructions(base, "codex", allAgents)

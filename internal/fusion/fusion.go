@@ -43,8 +43,11 @@ func peerCmd(tool, question string) []string {
 	return nil
 }
 
-// placeholder marks where the governor substitutes the real question/task.
-const placeholder = `"<your full question or task, verbatim>"`
+// placeholder marks where the governor substitutes the prompt it composes for a
+// peer — NOT the user's message forwarded verbatim. Each consult is a fresh,
+// read-only call that has none of this thread's context, so the governor writes a
+// self-contained prompt carrying the context the peer needs to answer.
+const placeholder = `"<a self-contained prompt: your question + the context needed to answer it>"`
 
 // consultBlock renders a copy-pasteable shell snippet that runs every peer
 // read-only and in parallel, then prints each answer under a header.
@@ -86,10 +89,25 @@ of fusion mode. The only thing that needs no consult is the incidental shell you
 run while carrying out a task you have ALREADY consulted on (ls, cd, cat, git
 status) — those are not themselves tasks.
 
+Your peers are READ-ONLY ADVISORS: they think and report, they never edit a file,
+run a mutating command, or touch the repo. YOU are the only one who acts. So when
+the task is to change something — "do a code review and add the results to
+.agent/TASKS.md", "fix the failing test", "refactor this" — do not hand that action
+to a peer; it cannot do it. Ask each peer only for the thinking the action needs —
+the review, the diagnosis, the design — then make every edit and run every command
+yourself when you synthesize.
+
+Each consult is a FRESH, MEMORYLESS call: the peer sees only the text you pass it —
+not this conversation, not your earlier consults, not what you have done since.
+Never forward the user's message verbatim; past the first turn it is meaningless out
+of context ("fix the second one" tells a peer nothing). Compose a self-contained
+prompt every time: state the goal, paste the relevant code, paths, and errors, and
+ask the one specific question you need answered.
+
 ## 1. Consult BOTH peers FIRST — read-only, in parallel
-Put your actual question/task where the placeholder is and run this whole block
-from your shell. Run it verbatim — do not drop a peer, even if the first answer
-already looks sufficient:
+Drop the self-contained prompt you composed in place of the placeholder and run the
+whole block from your shell — do not drop a peer, even if the first answer already
+looks sufficient:
 
 %s
 If a peer errors or is unavailable, proceed with the others — but always attempt
@@ -99,8 +117,9 @@ all of them before you answer.
 - Read every peer's answer in full before you respond.
 - Combine the strongest parts of each with your own reasoning; resolve
   disagreements by evidence or verification, not by a vote.
-- You are the decider: produce the single best answer or implementation, and
-  briefly note where the peers agreed or shifted your approach.
+- You are the decider: produce the single best answer or implementation — making
+  every edit and running every command yourself — and briefly note where the peers
+  agreed or shifted your approach.
 `, governor, strings.Join(peers, " and "), consultBlock(peers))
 }
 

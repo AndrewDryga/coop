@@ -521,8 +521,13 @@ gemini --approval-mode plan -p   "<question>"
 codex  exec -s read-only         "<question>"
 ```
 
-It then merges the strongest parts, resolves disagreements by verification, and
-proceeds. Because the instruction lands only on the leader, the peers it spawns read
+The peers are read-only advisors: they analyze and report, and the leader makes
+every change itself — even when the task *is* a change, it consults on the thinking
+and does the writing. Each consult is also context-free (a fresh one-shot call), so
+the leader composes a self-contained prompt rather than forwarding your message
+verbatim — a follow-up like "fix the second one" means nothing to a peer that never
+saw the thread. It then merges the strongest parts, resolves disagreements by
+verification, and proceeds. Because the instruction lands only on the leader, the peers it spawns read
 their normal instructions and never recurse into a council of their own. Each
 consultation is two extra read-only runs, so it's for decisions and hard problems, not
 every keystroke — the leader is told to skip the council for trivial steps.
