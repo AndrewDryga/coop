@@ -202,6 +202,10 @@ const (
 	// giving up — a backstop against a misfiring detector or a suspended account,
 	// set far above the handful of resets a real long run hits.
 	maxLimitWaits = 100
+	// maxStalls is how many consecutive work iterations may complete no task before the
+	// loop gives up — a backstop against an in-progress ([w]) task the agent keeps
+	// continuing but can't finish, which would otherwise spin forever.
+	maxStalls = 5
 )
 
 // decideIteration interprets one iteration's result, updates the failure/wait
@@ -223,6 +227,18 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 		return actStop, 0, time.Time{}
 	}
 	return actRetry, 0, time.Time{}
+}
+
+// progressStall tracks whether the loop is still completing tasks. Given the queue's Done
+// count after a work iteration, the running baseline, and the stall counter, it resets the
+// counter when Done advanced (a task finished) and bumps it otherwise; it reports stop once
+// maxStalls iterations pass with nothing completed — the signal that the active task (often a
+// continued [w]) can't be finished and the loop should give up rather than spin on it.
+func progressStall(done, baseline, stalls int) (newBaseline, newStalls int, stop bool) {
+	if done > baseline {
+		return done, 0, false
+	}
+	return baseline, stalls + 1, stalls+1 >= maxStalls
 }
 
 // tailWriter keeps the last max bytes written to it, so a long run's output can

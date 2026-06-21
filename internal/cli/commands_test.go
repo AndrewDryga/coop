@@ -38,6 +38,17 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 }
 
+// TestLoopWorkPromptContinuation: the work prompt tells the agent to pick up an interrupted
+// [w] task from its uncommitted working-tree changes, not only start fresh [ ] work.
+func TestLoopWorkPromptContinuation(t *testing.T) {
+	work := loopWorkPrompt("/repo", []string{".agent/TASKS.md"})
+	for _, want := range []string{"[w]", "git status", "git diff", "Finish a [w]", "[ ] or [w]"} {
+		if !strings.Contains(work, want) {
+			t.Errorf("work prompt missing continuation cue %q:\n%s", want, work)
+		}
+	}
+}
+
 func TestLoopPreflightPrompt(t *testing.T) {
 	repo := "/home/node/proj"
 	p := loopPreflightPrompt(repo, []string{".agent/TASKS.md"})

@@ -810,7 +810,7 @@ func parseLoopArgs(args []string, def bool) (agent string, debugOnFail, prefligh
 // for every agent. With several queues (a monorepo's per-component files) they're all listed so
 // the agent works the union.
 func loopWorkPrompt(repo string, queues []string) string {
-	return fmt.Sprintf("Read %s and %s, then work the next unchecked items per the protocol: claim with [w], do it, run the gate, commit, log it, flip to [x]. Do not stop while a [ ] remains.", absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
+	return fmt.Sprintf("Read %s and %s, then work the queue per the protocol. First, if any task is [w], a previous attempt was interrupted before it committed — its partial work may be uncommitted in the working tree: run `git status` and `git diff`, then continue that task from there (or discard the partial work with `git restore`/`git checkout` and redo it if it is off-track) until it is done. Otherwise claim the next [ ] with [w]. Either way: do the work, run the gate, commit, log it, flip to [x]. Finish a [w] task before starting a new [ ]. Do not stop while a [ ] or [w] remains.", absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
 }
 
 func loopAuditPrompt(repo string, queues []string) string {
@@ -838,11 +838,13 @@ func absJoin(repo string, queues []string) string {
 	return strings.Join(abs, ", ")
 }
 
-// loop works .agent/TASKS.md unattended until no "[ ]" remains, then (unless a
-// custom COOP_LOOP_CMD is set) runs a one-shot audit pass over the results. A
-// model rate/usage limit is not a failure: the loop waits for the reset — parsed
-// from the agent's own output when possible — and resumes the same iteration, so
-// a long run survives hitting the limit and continues once it clears.
+// loop works .agent/TASKS.md unattended until nothing actionable remains (no "[ ]"
+// or "[w]"), then (unless a custom COOP_LOOP_CMD is set) runs a one-shot audit pass
+// over the results. A model rate/usage limit is not a failure: the loop waits for the
+// reset — parsed from the agent's own output when possible — and retries, so a long run
+// survives the limit. A task left "[w]" by an interrupted iteration is continued (the
+// work prompt points the next agent at its uncommitted partial work), not stranded; a
+// run that completes no task for maxStalls iterations stops rather than spinning.
 func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, sink io.Writer, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
@@ -895,14 +897,21 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	} else {
 		ui.Info("starting unattended loop on %s — %d/%d done (Ctrl-C to stop)", label, c0.Done, c0.total())
 	}
-	fails, waits, completed := 0, 0, 0
-	for n := 1; anyTodo(); {
-		// Run this iteration on the pool's active subscription; the mount and the agent
-		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
-		a.cfg.SetActiveProfile(agent, pool.active())
+	fails, waits, completed, stalls := 0, 0, 0, 0
+	doneBaseline := c0.Done
+	for n := 1; ; {
 		// Surface queue progress + the task being worked, so a long run shows movement
 		// instead of a bare counter (the same scanTasks `coop status`/`coop tasks` use).
 		c, active := queueProgress(hosts)
+		// Keep going while anything is actionable — a [ ] todo or a [w] that an interrupted
+		// iteration left mid-task. Stop only when the queue is all [x]/[B], so a task claimed
+		// [w] when the box died (e.g. a rate limit) is continued, not silently stranded.
+		if c.Todo+c.Doing == 0 {
+			break
+		}
+		// Run this iteration on the pool's active subscription; the mount and the agent
+		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
+		a.cfg.SetActiveProfile(agent, pool.active())
 		banner := progressBanner(n, c, active)
 		if pool.rotates() {
 			banner += fmt.Sprintf(" · profile %s", pool.active())
@@ -922,6 +931,13 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		case actContinue:
 			completed++
 			n++
+			// A clean iteration that finishes no task means the agent keeps continuing a [w]
+			// it can't complete — bail after maxStalls rather than loop on it forever.
+			var stop bool
+			after, _ := queueProgress(hosts)
+			if doneBaseline, stalls, stop = progressStall(after.Done, doneBaseline, stalls); stop {
+				return code, fmt.Errorf("no task completed in %d iterations — stopping (stuck on %q?)", maxStalls, active)
+			}
 		case actWait:
 			// A rate/usage limit is expected on long runs. With more than one profile in
 			// the pool, switch to another subscription and retry immediately; otherwise wait

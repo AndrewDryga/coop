@@ -170,6 +170,27 @@ func TestDecideIteration(t *testing.T) {
 	}
 }
 
+// TestProgressStall: the loop's stall guard resets when a task completes (Done advances) and
+// stops only after maxStalls consecutive iterations complete nothing.
+func TestProgressStall(t *testing.T) {
+	// Done advanced → baseline moves up, stalls reset, never stop.
+	if b, s, stop := progressStall(3, 2, 4); b != 3 || s != 0 || stop {
+		t.Errorf("progress: got (%d,%d,%v), want (3,0,false)", b, s, stop)
+	}
+	// No progress → baseline held, stalls increment, no stop below the cap.
+	if b, s, stop := progressStall(2, 2, 0); b != 2 || s != 1 || stop {
+		t.Errorf("first stall: got (%d,%d,%v), want (2,1,false)", b, s, stop)
+	}
+	// maxStalls consecutive no-progress iterations → stop.
+	if _, s, stop := progressStall(2, 2, maxStalls-1); s != maxStalls || !stop {
+		t.Errorf("at cap: got stalls=%d stop=%v, want %d/true", s, stop, maxStalls)
+	}
+	// A completion resets the counter even at the cap.
+	if _, s, stop := progressStall(5, 2, maxStalls-1); s != 0 || stop {
+		t.Errorf("recovery: got stalls=%d stop=%v, want 0/false", s, stop)
+	}
+}
+
 func TestTailWriter(t *testing.T) {
 	w := &tailWriter{max: 10}
 	w.Write([]byte("12345"))

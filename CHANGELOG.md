@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop continues an interrupted task instead of stranding it `[w]`.** When an iteration was
+  killed mid-task — a rate limit, crash, or timeout after the agent claimed `[w]` but before it
+  committed — the claim used to sit `[w]` forever: later iterations only picked up `[ ]` items, and if
+  the stuck task was the last one the loop exited reporting "✓ done". Now the loop keeps running while
+  any `[ ]` **or** `[w]` remains, and the work prompt tells the agent a `[w]` is an interrupted attempt
+  whose partial work may be uncommitted — to inspect `git status`/`git diff` and continue it (or
+  discard and redo if it's off-track) before starting new `[ ]` work. A stall guard stops the run if
+  no task completes for several iterations, so a genuinely unfinishable task can't spin forever. This
+  pairs with the loop's existing profile rotation (`coop pool`): a rate limit switches subscriptions
+  and the new profile continues the same task from its on-disk partial work.
+
 ## 2.10.0
 
 - **Every box auto-starts the repo's sibling services (`compose.agent.yml`).** Previously only the
