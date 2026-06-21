@@ -32,6 +32,7 @@ type Config struct {
 
 	Homes     bool // COOP_HOMES — mount the per-agent home dirs
 	Network   bool // COOP_NETWORK — join the sibling-services network
+	AutoUp    bool // COOP_AUTO_UP — auto-start sibling services (compose up) before a box when a compose file is present
 	Cache     bool // COOP_CACHE — mount the shared dependency cache volume
 	Preflight bool // COOP_PREFLIGHT — run a one-shot cleanup pass (log/tasks/decisions) before `coop loop`
 
@@ -124,6 +125,7 @@ func Load() *Config {
 
 		Homes:     flag("COOP_HOMES"),
 		Network:   flag("COOP_NETWORK"),
+		AutoUp:    flag("COOP_AUTO_UP"),
 		Cache:     flag("COOP_CACHE"),
 		Preflight: flagOff("COOP_PREFLIGHT"),
 

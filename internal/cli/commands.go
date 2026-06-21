@@ -560,9 +560,8 @@ func (a *app) cmdUp(args []string) (int, error) {
 	proj := box.ServicesProject(repo)
 	rel, _ := filepath.Rel(repo, file)
 	ui.Info("starting services from %s (waiting until healthy)", rel)
-	code, err := a.rt.Run(os.Stdin, os.Stdout, os.Stderr, "compose", "-p", proj, "-f", file, "up", "-d", "--wait")
-	if err != nil || code != 0 {
-		return code, err
+	if err := box.EnsureServices(a.rt, repo, os.Stdout, os.Stderr); err != nil {
+		return -1, err
 	}
 	ui.Info("up on network %s_default — the box reaches them by name (db, redis, ...)", proj)
 	return 0, nil

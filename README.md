@@ -877,6 +877,7 @@ turn them off.
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
+| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `compose.agent.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /

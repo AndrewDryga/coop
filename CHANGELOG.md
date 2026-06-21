@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Every box auto-starts the repo's sibling services (`compose.agent.yml`).** Previously only the
+  explicit `coop up` brought services up; a box merely *joined* their network if it already existed,
+  so launching `coop fusion` / `coop acp` / `coop loop` / a fork without remembering `coop up` first
+  left the agent unable to reach its db/redis. Now every launch path funnels through `box.Run`, which
+  runs `compose up -d --wait` before starting the box whenever a compose file is present — so services
+  are up and healthy for any mode. It's idempotent (already-running services are a fast no-op), gated
+  the same way as the network join (skipped offline via `COOP_EGRESS=none`, on the Apple `container`
+  runtime which has no compose, or with `COOP_NETWORK=0`), and never blocks the session — a failure
+  warns and continues. Opt out with `COOP_AUTO_UP=0` to keep managing services with `coop up`/`coop down`.
+
 ## 2.9.0
 
 - **A `claude` peer consult no longer hangs forever (`coop-consult` detaches peer stdin).** `claude -p`

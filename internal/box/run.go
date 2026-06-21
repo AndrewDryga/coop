@@ -274,6 +274,24 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
+	// Bring sibling services up first, so the box can reach them by name. Every launch path —
+	// agent, fusion governor, acp, loop, fork — funnels through box.Run, so this one call covers
+	// them all. Gated like the network join below (on the services net, online, compose-capable
+	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
+	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
+	if autoUpServices(cfg, spec, rt.Name) {
+		if cf := ComposeFile(spec.Repo); cf != "" {
+			var out, errw io.Writer = io.Discard, io.Discard
+			if !spec.Quiet {
+				ui.Info("starting sibling services (%s)", filepath.Base(cf))
+				out, errw = os.Stderr, os.Stderr
+			}
+			if err := EnsureServices(rt, spec.Repo, out, errw); err != nil {
+				ui.Info("services: auto-start failed (%v) — continuing without them", err)
+			}
+		}
+	}
+
 	networkName := ""
 	// COOP_EGRESS=none → a fully offline box (assembleArgs forces --network none); skip the
 	// services-net join, there's nothing to reach.
