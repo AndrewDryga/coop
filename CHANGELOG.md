@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 2.8.0
 
 - **`coop loop --preflight` runs a cleanup pass before working the queue.** Opt-in (`--preflight`, or
   `COOP_PREFLIGHT=1` to default it on; `--no-preflight` overrides). Before the first work iteration it
