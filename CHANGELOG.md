@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 2.10.0
 
 - **Every box auto-starts the repo's sibling services (`compose.agent.yml`).** Previously only the
