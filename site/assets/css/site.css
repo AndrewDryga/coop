@@ -245,10 +245,18 @@ pre.code .s { color: var(--green); }            /* string/flag */
 
 /* ---- footer ------------------------------------------------------------- */
 .footer { border-top: 1px solid var(--border-soft); padding: 40px 0; color: var(--muted); }
-.footer-inner { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between; }
+/* 3-col grid so the links sit dead-center regardless of the side widths */
+.footer-inner { display: grid; grid-template-columns: 1fr auto 1fr; gap: 18px; align-items: center; }
+.footer-inner > .brand { justify-self: start; }
+.footer-inner > div { justify-self: center; text-align: center; }
+.footer-inner > .muted { justify-self: end; text-align: right; }
 .footer a { color: var(--muted); }
 .footer a:hover { color: var(--text); }
 .footer .brand { font-size: 1rem; }
+@media (max-width: 640px) {
+  .footer-inner { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 14px; }
+  .footer-inner > .brand, .footer-inner > div, .footer-inner > .muted { justify-self: center; text-align: center; }
+}
 
 /* ======================================================================== */
 /* docs page                                                                */
