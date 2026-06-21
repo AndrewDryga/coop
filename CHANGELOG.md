@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A `claude` peer consult no longer hangs forever (`coop-consult` detaches peer stdin).** `claude -p`
+  reads piped stdin *in addition to* its prompt argument, so when the lead backgrounded a consult the
+  peer inherited an open pipe and blocked reading it until killed — a `claude` consult timed out at the
+  status line while `gemini` returned. The wrapper now captures the prompt up front and detaches stdin
+  (`exec </dev/null`) for every peer, so none can block on it (codex's per-call redirect folds into the
+  one shared redirect).
+
+- **Each `coop-consult` is time-bounded so a slow or wedged peer can't stall the lead.** Every peer
+  call now runs under a timeout (default **30 minutes**); on expiry the peer is skipped with a clear
+  notice so the lead synthesizes from whoever answered, instead of the consult blocking and the lead
+  hand-rolling its own `timeout`. Set `COOP_CONSULT_TIMEOUT` (seconds) — via env or `coop.conf`, now
+  forwarded into the box — to tune it per run.
+
 ## 2.8.0
 
 - **`coop loop --preflight` runs a cleanup pass before working the queue.** Opt-in (`--preflight`, or

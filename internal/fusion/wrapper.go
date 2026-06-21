@@ -25,6 +25,8 @@ const ConsultWrapper = `#!/bin/sh
 # starts a new session; --continue resumes the peer's last one (send only the delta).
 # The prompt is the trailing argument, or piped on stdin (use a quoted heredoc for
 # prompts with awkward quoting). The first line printed is the session status to read.
+# Each consult is time-bounded (default 30m; set COOP_CONSULT_TIMEOUT in seconds to change);
+# a peer that doesn't answer in time is skipped with a notice so you synthesize from whoever did.
 set -u
 
 die() { echo "coop-consult: $1" >&2; exit 2; }
@@ -52,15 +54,30 @@ new_id() {
 # codex --json prints one JSON object per line; pull the agent's reply text.
 codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }
 
+# Bound every consult so a slow or wedged peer can't stall the lead's wait. Default 30m;
+# on timeout the peer is skipped with a notice (on stderr, so it survives codex's $()
+# capture and the codex_text pipe) and the lead synthesizes from whoever answered. -k
+# gives a peer that ignores SIGTERM a short grace before SIGKILL; GNU timeout exits 124
+# (TERM) or 137 (KILL) on expiry.
+consult_timeout=${COOP_CONSULT_TIMEOUT:-1800}
+run() {
+	timeout -k 30 "$consult_timeout" "$@"
+	st=$?
+	if [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; then
+		echo "[$peer: no reply within ${consult_timeout}s — skipped; synthesize without it]" >&2
+	fi
+	return "$st"
+}
+
 case "$mode" in
 --continue)
 	if [ -f "$idfile" ]; then
 		id=$(cat "$idfile")
 		echo "[$peer: continued — recalls your earlier consult; send only the delta]"
 		case "$peer" in
-		claude) claude -p --permission-mode plan --resume "$id" "$prompt" ;;
-		gemini) gemini --approval-mode plan --resume "$id" -p "$prompt" ;;
-		codex) codex exec resume "$id" -c sandbox_mode=read-only --json "$prompt" | codex_text ;;
+		claude) run claude -p --permission-mode plan --resume "$id" "$prompt" ;;
+		gemini) run gemini --approval-mode plan --resume "$id" -p "$prompt" ;;
+		codex) run codex exec resume "$id" -c sandbox_mode=read-only --json "$prompt" | codex_text ;;
 		*) die "unknown peer: $peer" ;;
 		esac
 		exit
@@ -76,14 +93,14 @@ id=$(new_id)
 case "$peer" in
 claude)
 	printf '%s' "$id" >"$idfile"
-	claude -p --permission-mode plan --session-id "$id" "$prompt"
+	run claude -p --permission-mode plan --session-id "$id" "$prompt"
 	;;
 gemini)
 	printf '%s' "$id" >"$idfile"
-	gemini --approval-mode plan --session-id "$id" -p "$prompt"
+	run gemini --approval-mode plan --session-id "$id" -p "$prompt"
 	;;
 codex)
-	out=$(codex exec -s read-only --json "$prompt") || true
+	out=$(run codex exec -s read-only --json "$prompt") || true
 	printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1 >"$idfile"
 	printf '%s\n' "$out" | codex_text
 	;;

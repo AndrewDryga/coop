@@ -893,6 +893,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_CONFIG_DIR` | `~/.config/coop/agents` | per-agent auth + settings folder |
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_FUSION_GOVERNOR` | `codex` | default leader for `coop fusion` |
+| `COOP_CONSULT_TIMEOUT` | `1800` | per-peer `coop-consult` timeout in seconds; a peer that doesn't answer in time is skipped so the lead synthesizes from whoever did |
 | `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
 

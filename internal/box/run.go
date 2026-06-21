@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -463,6 +464,13 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		// warns "bubblewrap is required for subprocess env scrubbing" before each
 		// command. Turn the scrub off — the container is the isolation boundary.
 		args = append(args, "-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
+		// coop-consult reads COOP_CONSULT_TIMEOUT (seconds) for its per-peer timeout; forward an
+		// explicit, valid override so the knob works per-run. Empty/invalid falls back to the
+		// wrapper's built-in 30m default. (The wrapper exists only in fusion/consult boxes; the
+		// var is inert elsewhere.)
+		if n, err := strconv.Atoi(cfg.ConsultTimeout); err == nil && n > 0 {
+			args = append(args, "-e", "COOP_CONSULT_TIMEOUT="+cfg.ConsultTimeout)
+		}
 		if envFile != "" {
 			args = append(args, "--env-file", envFile)
 		}

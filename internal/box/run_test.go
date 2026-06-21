@@ -126,6 +126,26 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "coop-cache:/home/node/.cache")
 }
 
+// TestAssembleArgsConsultTimeout: a valid COOP_CONSULT_TIMEOUT is forwarded into the box so the
+// coop-consult wrapper's per-peer timeout is tunable per-run; empty/invalid is dropped so the
+// wrapper's built-in default applies.
+func TestAssembleArgsConsultTimeout(t *testing.T) {
+	mk := func(timeout string) []string {
+		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), ConsultTimeout: timeout}
+		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true}
+		return assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
+	}
+	if !containsSeq(mk("3600"), []string{"-e", "COOP_CONSULT_TIMEOUT=3600"}) {
+		t.Error("valid timeout should be forwarded as -e COOP_CONSULT_TIMEOUT")
+	}
+	for _, bad := range []string{"", "0", "-5", "30m", "abc"} {
+		if containsSeq(mk(bad), []string{"-e", "COOP_CONSULT_TIMEOUT=" + bad}) {
+			t.Errorf("invalid timeout %q should not be forwarded", bad)
+		}
+	}
+}
+
 // containsSeq reports whether want appears as a contiguous subsequence of s.
 func containsSeq(s, want []string) bool {
 	if len(want) == 0 {
