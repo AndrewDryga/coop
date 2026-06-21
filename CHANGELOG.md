@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop --preflight` runs a cleanup pass before working the queue.** Opt-in (`--preflight`, or
+  `COOP_PREFLIGHT=1` to default it on; `--no-preflight` overrides). Before the first work iteration it
+  runs one agent pass that compacts `.agent/LOG.md`, removes done `[x]` tasks already committed, and
+  unblocks any `[B]` item whose `.agent/PENDING_DECISIONS.md` entry now has an answer — so a fresh run
+  starts from a tidy queue. It works no task and makes no commits (these files are git-ignored); it's
+  the symmetric front bookend to the existing audit pass, and is skipped under `COOP_LOOP_CMD`.
+
 - **The box repairs a bare `node` when an orphaned asdf nodejs shim shadows the image's node.** After
   you run coop on a repo that pins `nodejs` in `.tool-versions`, asdf keeps that node shim in the
   persisted `~/.asdf` volume. In a later repo that doesn't pin nodejs (e.g. a Go project), the shim

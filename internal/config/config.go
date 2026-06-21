@@ -30,9 +30,10 @@ type Config struct {
 	ImageOverride string // COOP_IMAGE — overrides image selection
 	AgentPackages string // COOP_AGENT_PACKAGES — pin/override the global agent+ACP npm specs (e.g. "@anthropic-ai/claude-code@1.2.3 …")
 
-	Homes   bool // COOP_HOMES — mount the per-agent home dirs
-	Network bool // COOP_NETWORK — join the sibling-services network
-	Cache   bool // COOP_CACHE — mount the shared dependency cache volume
+	Homes     bool // COOP_HOMES — mount the per-agent home dirs
+	Network   bool // COOP_NETWORK — join the sibling-services network
+	Cache     bool // COOP_CACHE — mount the shared dependency cache volume
+	Preflight bool // COOP_PREFLIGHT — run a one-shot cleanup pass (log/tasks/decisions) before `coop loop`
 
 	ServicesNet  string   // COOP_SERVICES_NET — override the services network name
 	LoopCmd      []string // COOP_LOOP_CMD — override the loop's per-iteration command
@@ -98,6 +99,15 @@ func Load() *Config {
 			return true
 		}
 	}
+	// flagOff is the opt-in sibling: default off, only an explicit truthy value turns it on.
+	flagOff := func(key string) bool {
+		switch strings.ToLower(get(key, "0")) {
+		case "1", "true", "yes", "on":
+			return true
+		default:
+			return false
+		}
+	}
 
 	c := &Config{
 		BaseImage: get("COOP_BASE_IMAGE", "coop-box"),
@@ -111,9 +121,10 @@ func Load() *Config {
 		ImageOverride: get("COOP_IMAGE", ""),
 		AgentPackages: get("COOP_AGENT_PACKAGES", ""),
 
-		Homes:   flag("COOP_HOMES"),
-		Network: flag("COOP_NETWORK"),
-		Cache:   flag("COOP_CACHE"),
+		Homes:     flag("COOP_HOMES"),
+		Network:   flag("COOP_NETWORK"),
+		Cache:     flag("COOP_CACHE"),
+		Preflight: flagOff("COOP_PREFLIGHT"),
 
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
 		LoopCmd:      shellSplit(get("COOP_LOOP_CMD", "")),

@@ -43,6 +43,9 @@ func TestDefaults(t *testing.T) {
 	if !c.Homes || !c.Network || !c.Cache {
 		t.Errorf("toggles default on: Homes=%v Network=%v Cache=%v", c.Homes, c.Network, c.Cache)
 	}
+	if c.Preflight {
+		t.Error("Preflight is opt-in — must default off")
+	}
 	if c.MCPFile != filepath.Join(wantDir, "mcp.json") {
 		t.Errorf("MCPFile = %q", c.MCPFile)
 	}
@@ -62,6 +65,7 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("COOP_CLAUDE_CMD", "claude --foo bar")
 	t.Setenv("COOP_CACHE", "0")
 	t.Setenv("COOP_NETWORK", "false")
+	t.Setenv("COOP_PREFLIGHT", "1")
 
 	c := Load()
 	if c.BaseImage != "custom-box" || c.Workdir != "/code" {
@@ -69,6 +73,9 @@ func TestEnvOverrides(t *testing.T) {
 	}
 	if c.Cache || c.Network {
 		t.Errorf("toggles should be off: Cache=%v Network=%v", c.Cache, c.Network)
+	}
+	if !c.Preflight {
+		t.Error("COOP_PREFLIGHT=1 should turn Preflight on")
 	}
 }
 

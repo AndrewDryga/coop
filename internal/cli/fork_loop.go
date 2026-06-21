@@ -146,7 +146,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 	// A fork works its own seeded queue in the worktree (the fleet file carries the
 	// per-component source path; here it's the standard .agent/TASKS.md).
 	forkQueue := []string{filepath.Join(".agent", "TASKS.md")}
-	code, err := a.loop(ws, img, agent, pool, forkQueue, sink, false) // detached/fork loops aren't interactive
+	code, err := a.loop(ws, img, agent, pool, forkQueue, sink, false, false) // detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}

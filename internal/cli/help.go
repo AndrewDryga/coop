@@ -221,7 +221,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the [ ] items; when the queue empties, an
   auditor re-checks every [x]. On a rate limit it switches to another signed-in
@@ -231,6 +231,10 @@ var commandHelp = map[string]string{
   queues at once — the loop keeps going while any of them has a [ ], so one loop can
   cover a monorepo's components. The whole repo is still mounted.
 
+  --preflight       run one cleanup pass before working: compact .agent/LOG.md,
+                    drop done [x] tasks, unblock [B] items whose pending decision
+                    now has an answer (opt-in; COOP_PREFLIGHT=1 to default it on,
+                    --no-preflight to override). Makes no code changes or commits.
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 

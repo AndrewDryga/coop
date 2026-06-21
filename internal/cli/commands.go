@@ -762,7 +762,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	agent, debugOnFail, err := parseLoopArgs(rest)
+	agent, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
 	}
@@ -779,23 +779,29 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, pool, queues, nil, debugOnFail)
+	return a.loop(repo, img, agent, pool, queues, nil, debugOnFail, preflight)
 }
 
-// parseLoopArgs pulls the --debug-on-fail flag (alias --debug) out of `coop loop` args;
-// what remains must be at most one agent name.
-func parseLoopArgs(args []string) (agent string, debugOnFail bool, err error) {
+// parseLoopArgs pulls the --debug-on-fail (alias --debug) and --preflight/--no-preflight
+// flags out of `coop loop` args; what remains must be at most one agent name. preflight
+// defaults to def (COOP_PREFLIGHT) and the flags override it.
+func parseLoopArgs(args []string, def bool) (agent string, debugOnFail, preflight bool, err error) {
+	preflight = def
 	var rest []string
 	for _, x := range args {
 		switch x {
 		case "--debug-on-fail", "--debug":
 			debugOnFail = true
+		case "--preflight":
+			preflight = true
+		case "--no-preflight":
+			preflight = false
 		default:
 			rest = append(rest, x)
 		}
 	}
 	agent, err = loopAgent(rest)
-	return agent, debugOnFail, err
+	return agent, debugOnFail, preflight, err
 }
 
 // loopWorkPrompt and loopAuditPrompt name the queue file(s) the iteration works as ABSOLUTE
@@ -812,6 +818,18 @@ func loopAuditPrompt(repo string, queues []string) string {
 	return fmt.Sprintf("Audit: for every [x] in %s, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.", absJoin(repo, queues))
 }
 
+// loopPreflightPrompt is the one-shot cleanup pass run before the work loop when
+// --preflight / COOP_PREFLIGHT is set: it tidies the .agent working state and resolves
+// answered blockers, but works no task and changes no code (these files are git-ignored,
+// so nothing is committed).
+func loopPreflightPrompt(repo string, queues []string) string {
+	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read these and tidy them: the task queue(s) %s, the contract %s, the log %s, and pending decisions %s. Then: (1) compact the log — condense bloated entries to short ones and trim or drop anything past the ~20 most recent; (2) remove outdated [x] tasks from the queue(s) — only ones already done AND committed (verify against the git log if unsure), never an unfinished [ ]; (3) for each [B] blocked task, if its decision in pending-decisions now has an answer, unblock it ([B] to [ ]) and delete the resolved entry. Leave every actionable [ ] task untouched; change no code and make no commits.",
+		absJoin(repo, queues),
+		filepath.Join(repo, "AGENTS.md"),
+		filepath.Join(repo, ".agent", "LOG.md"),
+		filepath.Join(repo, ".agent", "PENDING_DECISIONS.md"))
+}
+
 // absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
 func absJoin(repo string, queues []string) string {
 	abs := make([]string, len(queues))
@@ -826,7 +844,7 @@ func absJoin(repo string, queues []string) string {
 // model rate/usage limit is not a failure: the loop waits for the reset — parsed
 // from the agent's own output when possible — and resumes the same iteration, so
 // a long run survives hitting the limit and continues once it clears.
-func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, sink io.Writer, debugOnFail bool) (int, error) {
+func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, sink io.Writer, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -862,6 +880,14 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 			cmd = append(cmd, "--output-format", "stream-json", "--verbose")
 		}
 		return cmd
+	}
+	// Pre-flight: one best-effort housekeeping pass before working the queue — compact the
+	// log, drop done/outdated tasks, and unblock [B] items whose decision now has an answer.
+	// Opt-in (--preflight / COOP_PREFLIGHT); skipped under a custom COOP_LOOP_CMD (not the
+	// agent's headless form). Best-effort like the audit pass — a failure never blocks work.
+	if preflight && len(custom) == 0 {
+		ui.Info("pre-flight: tidying the working state (log, done tasks, resolved blockers)")
+		_, _, _ = a.runIteration(repo, img, agent, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)

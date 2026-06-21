@@ -182,7 +182,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--debug-on-fail]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--debug-on-fail` opens a box shell on an iteration failure |
+| `coop loop [agent] [--preflight] [--debug-on-fail]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
 | `coop fleet init` · `up` · `down` · `split <n>` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template) |
 | `coop status` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on |
@@ -635,6 +635,13 @@ section; the example is marked `[E]` so it's skipped), and won't quit while any 
 model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration command if
 you need something custom. When the queue empties, a fresh auditor
 re-checks every `[x]` against the git log and reopens anything that doesn't hold up.
+
+Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
+starts working: it compacts `.agent/LOG.md`, removes done `[x]` tasks already committed,
+and unblocks any `[B]` item whose `.agent/PENDING_DECISIONS.md` entry now has an answer —
+so a fresh run starts from a tidy queue. It works no task and makes no commits, and it's
+the symmetric front bookend to the audit pass. Off by default.
+
 `init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
 fast Claude commit-gate hook. Because those are Claude-only, `init` *also* installs a
 tracked git pre-commit gate (`.githooks/pre-commit`) and points `core.hooksPath` at
@@ -897,6 +904,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_EDITOR` | (detected) | editor for `coop fork review --open` |
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
+| `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 
 Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the
 `COOP_<AGENT>_CMD` overrides — are split into `argv` with shell quoting (single/double

@@ -38,6 +38,27 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 }
 
+func TestLoopPreflightPrompt(t *testing.T) {
+	repo := "/home/node/proj"
+	p := loopPreflightPrompt(repo, []string{".agent/TASKS.md"})
+	// Names the queue, the log, and pending decisions as absolute in-box paths.
+	for _, want := range []string{
+		"/home/node/proj/.agent/TASKS.md",
+		"/home/node/proj/.agent/LOG.md",
+		"/home/node/proj/.agent/PENDING_DECISIONS.md",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("preflight prompt missing absolute %q:\n%s", want, p)
+		}
+	}
+	// It's cleanup-only: no task work, no code, no commit; and it covers all three jobs.
+	for _, want := range []string{"do NOT work any task", "no commits", "compact the log", "[B]", "unblock"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("preflight prompt missing %q:\n%s", want, p)
+		}
+	}
+}
+
 func TestLoopAgent(t *testing.T) {
 	if got, err := loopAgent(nil); err != nil || got != "claude" {
 		t.Errorf("loopAgent(nil) = (%q, %v), want claude", got, err)
@@ -54,26 +75,34 @@ func TestLoopAgent(t *testing.T) {
 
 func TestParseLoopArgs(t *testing.T) {
 	cases := []struct {
-		args      []string
-		wantAgent string
-		wantDebug bool
-		wantErr   bool
+		args          []string
+		def           bool // COOP_PREFLIGHT default
+		wantAgent     string
+		wantDebug     bool
+		wantPreflight bool
+		wantErr       bool
 	}{
-		{nil, "claude", false, false},
-		{[]string{"codex"}, "codex", false, false},
-		{[]string{"--debug-on-fail"}, "claude", true, false},
-		{[]string{"gemini", "--debug"}, "gemini", true, false},
-		{[]string{"--debug-on-fail", "codex"}, "codex", true, false},
-		{[]string{"bogus"}, "", false, true},
+		{nil, false, "claude", false, false, false},
+		{[]string{"codex"}, false, "codex", false, false, false},
+		{[]string{"--debug-on-fail"}, false, "claude", true, false, false},
+		{[]string{"gemini", "--debug"}, false, "gemini", true, false, false},
+		{[]string{"--debug-on-fail", "codex"}, false, "codex", true, false, false},
+		{[]string{"bogus"}, false, "", false, false, true},
+		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
+		{[]string{"--preflight"}, false, "claude", false, true, false},
+		{[]string{"codex", "--preflight"}, false, "codex", false, true, false},
+		{nil, true, "claude", false, true, false},                         // COOP_PREFLIGHT=1 default
+		{[]string{"--no-preflight"}, true, "claude", false, false, false}, // flag overrides default-on
 	}
 	for _, c := range cases {
-		agent, debug, err := parseLoopArgs(c.args)
+		agent, debug, preflight, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (agent != c.wantAgent || debug != c.wantDebug) {
-			t.Errorf("parseLoopArgs(%v) = (%q, %v), want (%q, %v)", c.args, agent, debug, c.wantAgent, c.wantDebug)
+		if !c.wantErr && (agent != c.wantAgent || debug != c.wantDebug || preflight != c.wantPreflight) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (%q, debug=%v, preflight=%v), want (%q, %v, %v)",
+				c.args, c.def, agent, debug, preflight, c.wantAgent, c.wantDebug, c.wantPreflight)
 		}
 	}
 }
