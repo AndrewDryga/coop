@@ -18,11 +18,11 @@ import (
 type codexAgent struct{}
 
 const (
-	// Float within Codex's current major line so `coop update` pulls new
-	// patch/minor fixes without a source edit. The profile trigger below remains
-	// the local guard for openai/codex#28224.
-	codexCLIPackage = "@openai/codex@0"
-	codexACPPackage = "@agentclientprotocol/codex-acp@1"
+	// Float on npm's stable latest tag so `coop update` pulls new agent fixes
+	// without a source edit. The profile trigger below remains the local guard
+	// for openai/codex#28224.
+	codexCLIPackage = "@openai/codex@latest"
+	codexACPPackage = "@agentclientprotocol/codex-acp@latest"
 )
 
 func init() { register(codexAgent{}) }

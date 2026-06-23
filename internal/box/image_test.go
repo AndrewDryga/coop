@@ -13,8 +13,8 @@ import (
 func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	df := BaseDockerfile()
 	for _, pkg := range []string{
-		"@anthropic-ai/claude-code@2", "@agentclientprotocol/claude-agent-acp@0",
-		"@openai/codex@0", "@agentclientprotocol/codex-acp@1", "@google/gemini-cli@0",
+		"@anthropic-ai/claude-code@latest", "@agentclientprotocol/claude-agent-acp@latest",
+		"@openai/codex@latest", "@agentclientprotocol/codex-acp@latest", "@google/gemini-cli@latest",
 	} {
 		if !strings.Contains(df, pkg) {
 			t.Errorf("BaseDockerfile missing package %q", pkg)

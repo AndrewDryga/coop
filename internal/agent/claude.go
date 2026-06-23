@@ -70,8 +70,8 @@ func (claudeAgent) ConsultCmd(question string) []string {
 }
 
 const (
-	claudeCLIPackage = "@anthropic-ai/claude-code@2"
-	claudeACPPackage = "@agentclientprotocol/claude-agent-acp@0"
+	claudeCLIPackage = "@anthropic-ai/claude-code@latest"
+	claudeACPPackage = "@agentclientprotocol/claude-agent-acp@latest"
 )
 
 func (claudeAgent) Packages() []string {

@@ -81,7 +81,7 @@ func (geminiAgent) ConsultCmd(question string) []string {
 }
 
 // Packages is just the CLI: gemini's ACP mode is built in (gemini --acp).
-const geminiCLIPackage = "@google/gemini-cli@0"
+const geminiCLIPackage = "@google/gemini-cli@latest"
 
 func (geminiAgent) Packages() []string { return []string{geminiCLIPackage} }
 

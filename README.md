@@ -614,8 +614,8 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 > **Services** work too — if the repo has a `compose.agent.yml`, run `coop up` first and
 > the ACP box joins the same network.
 > **Custom images** must carry the ACP adapters: `coop init` scaffolds them in; for an
-> older/hand-written `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp@0`
-> and `@agentclientprotocol/codex-acp@1` to its `npm install -g` line (else `coop acp` fails with
+> older/hand-written `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp@latest`
+> and `@agentclientprotocol/codex-acp@latest` to its `npm install -g` line (else `coop acp` fails with
 > `codex-acp: not found`).
 
 ## Run it unattended
@@ -779,8 +779,8 @@ coop sets the working directory itself, so no `WORKDIR` is required. A skeleton:
 ```dockerfile
 FROM <your-language-base>
 RUN <install your toolchain> \
- && npm install -g @anthropic-ai/claude-code@2 @openai/codex@0 @google/gemini-cli@0 \
-      @agentclientprotocol/claude-agent-acp@0 @agentclientprotocol/codex-acp@1 \
+ && npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest \
+      @agentclientprotocol/claude-agent-acp@latest @agentclientprotocol/codex-acp@latest \
  && git config --system --add safe.directory '*' \
  && id -u node >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash node
 USER node
@@ -796,8 +796,8 @@ layer on top:
 
 ```dockerfile
 FROM your-devcontainer-image          # the team's source of truth for the env
-RUN npm install -g @anthropic-ai/claude-code@2 @openai/codex@0 @google/gemini-cli@0 \
-      @agentclientprotocol/claude-agent-acp@0 @agentclientprotocol/codex-acp@1 \
+RUN npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest \
+      @agentclientprotocol/claude-agent-acp@latest @agentclientprotocol/codex-acp@latest \
  && git config --system --add safe.directory '*'
 USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.
@@ -850,17 +850,17 @@ the base back to the `node:24` tag and rebuilds with `--pull --no-cache`, so the
 the agent CLIs + ACP adapters all jump to latest (they ship features often). To move the
 pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 
-**Agent package updates.** The built-in package specs float within the current major lines
-(`@anthropic-ai/claude-code@2`, `@openai/codex@0`, `@google/gemini-cli@0`,
-`@agentclientprotocol/claude-agent-acp@0`, and `@agentclientprotocol/codex-acp@1`), so
-`coop update` can pick up patch/minor agent fixes without a coop source change. Coop also
-applies a best-effort SQLite trigger to the active Codex profile before launch so inserts
-into the `logs_2.sqlite` feedback-log table are ignored; session history, auth, MCP config,
-and memories are not touched.
+**Agent package updates.** The built-in package specs follow npm's stable `latest` tag
+(`@anthropic-ai/claude-code@latest`, `@openai/codex@latest`, `@google/gemini-cli@latest`,
+`@agentclientprotocol/claude-agent-acp@latest`, and `@agentclientprotocol/codex-acp@latest`),
+so `coop update` can pick up agent fixes without a coop source change. Coop also applies a
+best-effort SQLite trigger to the active Codex profile before launch so inserts into the
+`logs_2.sqlite` feedback-log table are ignored; session history, auth, MCP config, and
+memories are not touched.
 
 For a fully reproducible image, also pin the tool versions: set
 `COOP_AGENT_PACKAGES` to exact specs and `coop build`, e.g.
-`COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0 …"` (the full
+`COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@2.1.186 @openai/codex@0.142.0 …"` (the full
 list is in `internal/agent/*.go`).
 
 ## Configuration
