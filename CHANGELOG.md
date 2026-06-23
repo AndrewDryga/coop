@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Per-fork credential profiles in `.agent/fleet`.** Add `profile=<name>` (or `profile=a,b`) to a
+  fleet line — e.g. `api codex .agent/TASKS.api.md profile=work` — to put that fork's loop on specific
+  account(s); several rotate on a rate limit. Give each fork a different account so a fleet runs in
+  parallel instead of all forks contending for the repo pool's first profile. It's a `key=value`
+  suffix, so it doesn't add to the fragile space-delimited positional fields, and `coop fleet up`
+  validates the profiles up front. Also exposed on `coop fork <name> <agent> --loop --tasks <p>
+  --profile a,b` (and a single `--profile` on an interactive fork). Forks with no `profile=` keep
+  rotating the repo pool / all signed-in profiles as before.
 - **Pick a credential profile for a single run with `--profile <name>`.** Previously `--profile` only
   worked for `coop login`; on a run it was forwarded to the agent and rejected. Now `coop claude
   --profile work` runs that one session on the `work` profile without changing the default

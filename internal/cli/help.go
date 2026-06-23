@@ -193,6 +193,10 @@ var commandHelp = map[string]string{
 
   up and down take --prune (with optional --force) to prune in the same step.
 
+  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b]". Add profile= to
+  put a fork's loop on specific account(s) — give each fork a different one so they
+  run in parallel instead of contending for the same rate limit.
+
   List forks: coop fork ls`,
 
 	"status": `coop status — fleet roll-up: where every fork stands, without tailing N logs.

@@ -107,12 +107,26 @@ func runningForkNames(repo string, names []string) []string {
 	return live
 }
 
+// forkPool builds a fork's rotation pool: its explicit per-fork profiles (from .agent/fleet's
+// `profile=` or `coop fork --profile`) when given — so a fleet can put each fork on its own account
+// instead of all contending for the repo pool's first profile — else the repo pool / all signed-in.
+func (a *app) forkPool(repo, agent, name string, profiles []string) (*profilePool, error) {
+	if len(profiles) > 0 {
+		pool, err := authedPool(a.cfg, agent, profiles)
+		if err != nil {
+			return nil, fmt.Errorf("fork %s: %w", name, err)
+		}
+		return pool, nil
+	}
+	return buildPool(a.cfg, repo, agent)
+}
+
 // runForkLoop seeds the fork's queue from the tasks file given to --tasks (only when
 // the fork has none yet, so a resumed loop keeps its own progress), then runs the
 // unattended loop with the chosen agent, capturing output to the fork's log.
 // detached=true means this process IS the background worker (its stdio is already the
 // log, and it owns the pidfile). tasks is an absolute path resolved by the caller.
-func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (int, error) {
+func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string, detached bool) (int, error) {
 	dst := filepath.Join(ws, ".agent", "TASKS.md")
 	if tasks != "" && !fileExists(dst) {
 		if err := os.MkdirAll(filepath.Join(ws, ".agent"), 0o755); err != nil {
@@ -139,7 +153,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 			}
 		}
 	}
-	pool, err := buildPool(a.cfg, repo, agent) // forks rotate the parent (origin) repo's pool
+	pool, err := a.forkPool(repo, agent, name, profiles)
 	if err != nil {
 		return -1, err
 	}
@@ -156,7 +170,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, detached bool) (i
 // detachForkLoop re-execs coop as a session-leader background worker whose stdio is
 // the fork's log, records its pid, and returns immediately. tasks is an absolute path
 // (resolved by the caller) forwarded so the worker seeds the same queue.
-func (a *app) detachForkLoop(repo, name, agent, tasks string) (int, error) {
+func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string) (int, error) {
 	// Refuse to start a second worker for a fork that's already looping: the pidfile write below
 	// would overwrite the first worker's pid, orphaning it untracked, and two loops would then race
 	// the same worktree's queue and branch. (fleetUp skips running forks before reaching here.)
@@ -175,7 +189,11 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("locate coop binary: %w", err)
 	}
-	cmd := exec.Command(self, "fork", name, agent, "--loop", "--tasks", tasks, "--_detached")
+	reExec := []string{"fork", name, agent, "--loop", "--tasks", tasks, "--_detached"}
+	if len(profiles) > 0 {
+		reExec = append(reExec, "--profile", strings.Join(profiles, ","))
+	}
+	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = logf, logf, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

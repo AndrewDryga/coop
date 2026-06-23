@@ -77,6 +77,7 @@ func forkHelp() (int, error) {
 		{"    --fresh", "recreate the fork from scratch (new clone + session)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks file that seeds the queue (required)"},
+		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
 		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
 		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
@@ -146,8 +147,9 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      string // --tasks <path>: the tasks file to seed the loop's queue (required with --loop)
-	worker     bool   // internal: this process IS the detached loop worker (--_detached)
+	tasks      string   // --tasks <path>: the tasks file to seed the loop's queue (required with --loop)
+	profiles   []string // --profile <a,b>: the credential profile(s) this fork uses (a loop rotates them)
+	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
@@ -184,6 +186,16 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks file")
 			}
+		case x == "--profile":
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
+				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
+			}
+			i++
+			fa.profiles = parseProfileList(rest[i])
+		case strings.HasPrefix(x, "--profile="):
+			if fa.profiles = parseProfileList(strings.TrimPrefix(x, "--profile=")); len(fa.profiles) == 0 {
+				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
+			}
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true
@@ -200,6 +212,11 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
+	}
+	// Several profiles only make sense for a loop (it rotates them on a limit); a single
+	// interactive session runs on exactly one.
+	if len(fa.profiles) > 1 && !fa.loop {
+		return fa, errors.New("coop fork: multiple --profile values only apply with --loop (an interactive fork uses one profile)")
 	}
 	return fa, nil
 }
@@ -255,11 +272,17 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.loop {
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, false)
+		}
+	}
+	// A single --profile pins this interactive session's credential profile.
+	if len(fa.profiles) == 1 {
+		if err := a.selectRunProfile(fa.agent, fa.profiles[0]); err != nil {
+			return 2, err
 		}
 	}
 	// Resume the agent's prior session by default when re-entering a fork (opt out with

@@ -16,18 +16,30 @@ func TestParseFleet(t *testing.T) {
 	in := "# a fleet\n" +
 		"perf codex .agent/TASKS.perf.md\n" +
 		"deps gemini .agent/TASKS.deps.md\n" +
-		"docs .agent/TASKS.docs.md\n\n" // agent omitted → claude
+		"docs .agent/TASKS.docs.md\n" + // agent omitted → claude
+		"api codex .agent/TASKS.api.md profile=work\n" + // per-fork single profile
+		"web .agent/TASKS.web.md profile=work,personal\n\n" // agent omitted + per-fork pool
 	got, err := parseFleet(in)
 	if err != nil {
 		t.Fatalf("parseFleet: %v", err)
 	}
 	want := []fleetEntry{
-		{"perf", "codex", ".agent/TASKS.perf.md"},
-		{"deps", "gemini", ".agent/TASKS.deps.md"},
-		{"docs", "claude", ".agent/TASKS.docs.md"},
+		{"perf", "codex", ".agent/TASKS.perf.md", nil},
+		{"deps", "gemini", ".agent/TASKS.deps.md", nil},
+		{"docs", "claude", ".agent/TASKS.docs.md", nil},
+		{"api", "codex", ".agent/TASKS.api.md", []string{"work"}},
+		{"web", "claude", ".agent/TASKS.web.md", []string{"work", "personal"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleet = %v, want %v", got, want)
+	}
+	// An unknown key=value option is rejected (only profile= is known).
+	if _, err := parseFleet("api codex q.md bogus=1"); err == nil {
+		t.Error("parseFleet: want error for an unknown option key")
+	}
+	// profile= with no value is rejected, not a silent empty pool.
+	if _, err := parseFleet("api codex q.md profile="); err == nil {
+		t.Error("parseFleet: want error for an empty profile= value")
 	}
 	if _, err := parseFleet("perf"); err == nil {
 		t.Error("parseFleet: want error when the tasks path is missing")

@@ -216,6 +216,13 @@ func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
 	if len(names) == 0 {
 		names = cfg.Profiles(agent)
 	}
+	return authedPool(cfg, agent, names)
+}
+
+// authedPool wraps names in a rotation pool, keeping only the signed-in ones (order preserved) and
+// erroring when none are — the loop can't run unauthenticated. Shared by buildPool (repo pool / all
+// signed-in) and a fork's explicit per-fork profile list (`profile=` in .agent/fleet, or --profile).
+func authedPool(cfg *config.Config, agent string, names []string) (*profilePool, error) {
 	var authed []string
 	for _, p := range names {
 		if box.ProfileAuthed(cfg, agent, p) {
@@ -226,6 +233,18 @@ func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
 		return nil, fmt.Errorf("%s has no signed-in profile — run: coop login %s [--profile <name>]", agent, agent)
 	}
 	return newProfilePool(authed), nil
+}
+
+// parseProfileList splits a comma-separated profile list ("work,personal") into names, trimming
+// spaces and dropping empties.
+func parseProfileList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // rotateOnLimit handles a rate limit when the pool has more than one profile: it advances
