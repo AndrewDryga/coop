@@ -106,18 +106,29 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if profile != "" {
-		// Require the profile to already exist — otherwise a typo would silently create an empty
-		// husk dir (box.Run pre-creates the active profile), the very clutter `profiles rm` cleans up.
-		if !slices.Contains(a.cfg.Profiles(tool), profile) {
-			return 2, fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", tool, profile, tool, profile)
-		}
-		if !box.ProfileAuthed(a.cfg, tool, profile) {
-			ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", tool, profile, tool, profile)
-		}
-		a.cfg.SetActiveProfile(tool, profile)
+	if err := a.selectRunProfile(tool, profile); err != nil {
+		return 2, err
 	}
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), tool, consult)
+}
+
+// selectRunProfile points cfg at the credential profile chosen with --profile for a run of tool
+// (a no-op when profile is ""). It requires the profile to already exist — a typo otherwise
+// silently creates an empty husk dir (box.Run pre-creates the active profile), the very clutter
+// `coop profiles rm` cleans up — and notes (without blocking) one that exists but isn't signed in.
+// Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP.
+func (a *app) selectRunProfile(tool, profile string) error {
+	if profile == "" {
+		return nil
+	}
+	if !slices.Contains(a.cfg.Profiles(tool), profile) {
+		return fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", tool, profile, tool, profile)
+	}
+	if !box.ProfileAuthed(a.cfg, tool, profile) {
+		ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", tool, profile, tool, profile)
+	}
+	a.cfg.SetActiveProfile(tool, profile)
+	return nil
 }
 
 // extractConsult pulls coop's own --consult flag out of an agent's args (so it is
@@ -284,6 +295,13 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return a.cmdACPSupervise(args)
 	}
 	consult, args := extractConsult(args)
+	// --profile pins this ACP session to one credential profile — so an editor can point a
+	// "claude (work)" agent_servers entry at ["acp","claude","--profile","work"]. Read before the
+	// tool token; an agent's own --profile still passes through after a `--`.
+	profile, args, err := extractRunProfile(args)
+	if err != nil {
+		return 2, err
+	}
 	tool := agents.Default()
 	if len(args) > 0 {
 		tool = args[0]
@@ -302,6 +320,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 	cmd, ok := acpCommand(tool)
 	if !ok {
 		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
+	}
+	if err := a.selectRunProfile(tool, profile); err != nil {
+		return 2, err
 	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
@@ -438,9 +459,18 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 // read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
+	// --profile picks the governor's credential profile, like a plain `coop <agent>` run; read it
+	// before governor parsing so the governor's own --profile is still reachable after a `--`.
+	profile, args, err := extractRunProfile(args)
+	if err != nil {
+		return 2, err
+	}
 	governor, rest := a.parseGovernor(args)
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
+	}
+	if err := a.selectRunProfile(governor, profile); err != nil {
+		return 2, err
 	}
 	repo, img, err := a.resolveImage()
 	if err != nil {

@@ -140,9 +140,10 @@ var commandHelp = map[string]string{
   'coop profiles rm <agent> <profile>' deletes a stored profile (its login token and
   session history). Set a different default first if you're removing the marked one.
 
-  Run one agent on a specific profile without changing the default:
-  'coop claude --profile <name>'. An agent's own --profile goes after a --, e.g.
-  'coop codex -- --profile <name>'.`,
+  Run on a specific profile without changing the default — works on any agent launch:
+  'coop claude --profile <name>', 'coop fusion <agent> --profile <name>', and
+  'coop acp <agent> --profile <name>' (so an editor entry can pin an account). An
+  agent's own --profile goes after a --, e.g. 'coop codex -- --profile <name>'.`,
 
 	"pool": `coop pool — which credential profiles this repo's loop rotates.
 
@@ -158,10 +159,13 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--supervise]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--supervise]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
+
+  --profile <name> pins the session to one credential profile, so an editor can run
+  two entries on different accounts, e.g. ["acp","claude","--profile","work"].
 
   --supervise keeps the editor connected across a box restart: it runs the agent
   in a child and, if the container dies, starts a new one and replays the ACP

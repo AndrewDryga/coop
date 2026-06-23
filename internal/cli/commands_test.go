@@ -211,6 +211,49 @@ func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
 	}
 }
 
+func TestSelectRunProfile(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	work := cfg.AgentProfileDir("claude", "work") // signed in
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, ".credentials.json"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "bare"), 0o700); err != nil { // exists, no creds
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg}
+
+	if err := a.selectRunProfile("claude", ""); err != nil {
+		t.Errorf("empty profile should be a no-op: %v", err)
+	}
+	if err := a.selectRunProfile("claude", "ghost"); err == nil {
+		t.Error("unknown profile should error")
+	}
+	if err := a.selectRunProfile("claude", "work"); err != nil {
+		t.Fatalf("signed-in profile should select: %v", err)
+	}
+	if got := cfg.AgentDir("claude"); got != work {
+		t.Errorf("active dir = %q, want %q", got, work)
+	}
+	if err := a.selectRunProfile("claude", "bare"); err != nil {
+		t.Errorf("an existing but unsigned profile should select with a note, not error: %v", err)
+	}
+}
+
+// --profile is wired into every agent-launch path; a nonexistent profile must fail fast (before any
+// box/Docker work) on fusion and acp too, not just a plain agent run.
+func TestRunProfileWiringRejectsUnknown(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if code, err := a.cmdFusion([]string{"claude", "--profile", "ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdFusion --profile ghost = (%d, %v), want 2 + error", code, err)
+	}
+	if code, err := a.cmdACP([]string{"claude", "--profile", "ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdACP --profile ghost = (%d, %v), want 2 + error", code, err)
+	}
+}
+
 func TestParseServices(t *testing.T) {
 	cases := []struct {
 		in   string
