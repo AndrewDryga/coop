@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop update` now refreshes agent CLI packages within their major lines.** The shared box's
+  built-in npm specs are `@anthropic-ai/claude-code@2`, `@openai/codex@0`,
+  `@google/gemini-cli@0`, `@agentclientprotocol/claude-agent-acp@0`, and
+  `@agentclientprotocol/codex-acp@1`, so a fresh `coop update` picks up new patch/minor agent
+  fixes without a coop source change. Codex profiles are also hardened before launch with a
+  best-effort SQLite trigger that ignores inserts into `logs_2.sqlite`'s feedback-log table
+  (openai/codex#28224); sessions, auth, MCP config, and memories are left alone.
+- **`COOP_NO_ASDF=1` no longer breaks Node-based agent CLIs when the shared asdf volume has a
+  stale Node shim.** The flag still skips `.tool-versions` provisioning, but the entrypoint now
+  always repairs a broken bare `node` by selecting an installed asdf Node fallback when needed.
+
 ## 2.10.1
 
 - **The loop continues an interrupted task instead of stranding it `[w]`.** When an iteration was

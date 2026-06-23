@@ -81,41 +81,43 @@ RUN apt-get update \
 # persists in the mounted ~/.asdf volume and is reused across runs and repos.
 COPY <<'ENTRY' /usr/local/bin/coop-entry
 #!/bin/sh
-if [ -z "$COOP_NO_ASDF" ] && command -v asdf >/dev/null 2>&1; then
-  f=; d=$PWD
-  while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
-  [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
-  if [ -n "$f" ]; then
-    # Only provision (and say so) when a pinned tool is actually missing. Otherwise this
-    # ran on every launch and printed a "provisioning" line with nothing to do — just spam.
-    need=
-    while read -r t v _; do
-      case "$t" in ''|'#'*) continue ;; esac
-      [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/$t/$v" ] || { need=1; break; }
-    done < "$f"
-    if [ -n "$need" ]; then
-      # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
-      # stdio, not a human. Otherwise narrate with a dimmed coop: prefix (matching ui).
-      log=/dev/stderr
-      if [ -n "$COOP_QUIET" ]; then
-        log=/dev/null
-      else
-        if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
-        echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
+if command -v asdf >/dev/null 2>&1; then
+  if [ -z "$COOP_NO_ASDF" ]; then
+    f=; d=$PWD
+    while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
+    [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
+    if [ -n "$f" ]; then
+      # Only provision (and say so) when a pinned tool is actually missing. Otherwise this
+      # ran on every launch and printed a "provisioning" line with nothing to do — just spam.
+      need=
+      while read -r t v _; do
+        case "$t" in ''|'#'*) continue ;; esac
+        [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/$t/$v" ] || { need=1; break; }
+      done < "$f"
+      if [ -n "$need" ]; then
+        # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
+        # stdio, not a human. Otherwise narrate with a dimmed coop: prefix (matching ui).
+        log=/dev/stderr
+        if [ -n "$COOP_QUIET" ]; then
+          log=/dev/null
+        else
+          if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
+          echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
+        fi
+        for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
+          asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
+        done
+        asdf install >"$log" 2>&1 || true
       fi
-      for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
-        asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
-      done
-      asdf install >"$log" 2>&1 || true
+      asdf reshim >/dev/null 2>&1 || true
     fi
-    asdf reshim >/dev/null 2>&1 || true
   fi
   # The agent CLIs are Node apps, so a bare node must always resolve. A prior repo's
   # nodejs pin leaves a node shim in the persisted ~/.asdf volume; in a repo that does not
   # pin nodejs (and with no global) that shim shadows the image node and errors with
-  # "No version is set for command node". If node is broken but asdf has a nodejs
-  # installed, set the newest as the global fallback -- a repo's own .tool-versions still
-  # overrides it, so a pinned project node keeps winning.
+  # "No version is set for command node". COOP_NO_ASDF skips provisioning, not this repair.
+  # If node is broken but asdf has a nodejs installed, set the newest as the global fallback
+  # -- a repo's own .tool-versions still overrides it, so a pinned project node keeps winning.
   if ! node --version >/dev/null 2>&1; then
     v=$(asdf list nodejs 2>/dev/null | tr -cd '0-9.\n ' | tr ' ' '\n' | grep . | sort -V | tail -n1)
     [ -n "$v" ] && asdf set --home nodejs "$v" >/dev/null 2>&1 && asdf reshim nodejs >/dev/null 2>&1

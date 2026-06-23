@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +16,14 @@ import (
 )
 
 type codexAgent struct{}
+
+const (
+	// Float within Codex's current major line so `coop update` pulls new
+	// patch/minor fixes without a source edit. The profile trigger below remains
+	// the local guard for openai/codex#28224.
+	codexCLIPackage = "@openai/codex@0"
+	codexACPPackage = "@agentclientprotocol/codex-acp@1"
+)
 
 func init() { register(codexAgent{}) }
 
@@ -71,7 +80,7 @@ func (codexAgent) ConsultCmd(question string) []string {
 }
 
 func (codexAgent) Packages() []string {
-	return []string{"@openai/codex", "@zed-industries/codex-acp"}
+	return []string{codexCLIPackage, codexACPPackage}
 }
 
 func (codexAgent) InstructionFile() string { return "AGENTS.md" }
@@ -99,6 +108,7 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
+	hardenCodexSQLiteFeedbackLog(dir)
 	path := filepath.Join(dir, "config.toml")
 	data, _ := os.ReadFile(path) // missing file → empty, which is fine
 	if strings.Contains(string(data), fmt.Sprintf("projects.%q", workdir)) {
@@ -113,6 +123,22 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) {
 	}
 	out += fmt.Sprintf("[projects.%q]\ntrust_level = \"trusted\"\n", workdir)
 	os.WriteFile(path, []byte(out), 0o644)
+}
+
+// hardenCodexSQLiteFeedbackLog applies the upstream issue's local workaround to
+// the mounted Codex profile. It blocks inserts into the feedback-log table only;
+// sessions, auth, MCP config, and memories continue to work. Best-effort by
+// design: a fresh profile has no DB yet, and custom hosts may not ship sqlite3.
+func hardenCodexSQLiteFeedbackLog(dir string) {
+	db := filepath.Join(dir, "logs_2.sqlite")
+	if info, err := os.Stat(db); err != nil || info.IsDir() {
+		return
+	}
+	sqlite, err := exec.LookPath("sqlite3")
+	if err != nil {
+		return
+	}
+	_ = exec.Command(sqlite, db, `CREATE TRIGGER IF NOT EXISTS block_log_inserts BEFORE INSERT ON logs BEGIN SELECT RAISE(IGNORE); END;`).Run()
 }
 
 // latestCodexSession returns the id of the most recent codex session recorded for cwd,

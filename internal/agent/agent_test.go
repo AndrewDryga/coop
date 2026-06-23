@@ -47,7 +47,12 @@ func TestRegistry(t *testing.T) {
 		t.Errorf("Default() = %q, want claude", Default())
 	}
 	// Packages is the union across agents (claude 2 + codex 2 + gemini 1).
-	if got := Packages(); len(got) != 5 || !slices.Contains(got, "@google/gemini-cli") {
+	if got := Packages(); len(got) != 5 ||
+		!slices.Contains(got, claudeCLIPackage) ||
+		!slices.Contains(got, claudeACPPackage) ||
+		!slices.Contains(got, codexCLIPackage) ||
+		!slices.Contains(got, codexACPPackage) ||
+		!slices.Contains(got, geminiCLIPackage) {
 		t.Errorf("Packages() = %v", got)
 	}
 }

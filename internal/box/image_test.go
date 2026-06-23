@@ -13,8 +13,8 @@ import (
 func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	df := BaseDockerfile()
 	for _, pkg := range []string{
-		"@anthropic-ai/claude-code", "@agentclientprotocol/claude-agent-acp",
-		"@openai/codex", "@zed-industries/codex-acp", "@google/gemini-cli",
+		"@anthropic-ai/claude-code@2", "@agentclientprotocol/claude-agent-acp@0",
+		"@openai/codex@0", "@agentclientprotocol/codex-acp@1", "@google/gemini-cli@0",
 	} {
 		if !strings.Contains(df, pkg) {
 			t.Errorf("BaseDockerfile missing package %q", pkg)
@@ -42,12 +42,18 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		// The entrypoint repairs a bare `node` when an orphaned asdf nodejs shim (from a
 		// prior repo, persisted in the ~/.asdf volume) shadows the image node in a repo that
 		// doesn't pin nodejs — so the Node agent CLIs always have a working interpreter.
+		"COOP_NO_ASDF skips provisioning, not this repair.",
 		"if ! node --version >/dev/null 2>&1; then",
 		`asdf set --home nodejs "$v"`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)
 		}
+	}
+	skipProvisioning := strings.Index(df, `if [ -z "$COOP_NO_ASDF" ]; then`)
+	repairNode := strings.Index(df, "if ! node --version >/dev/null 2>&1; then")
+	if skipProvisioning < 0 || repairNode < 0 || repairNode < skipProvisioning {
+		t.Errorf("node repair should run after the COOP_NO_ASDF provisioning branch")
 	}
 }
 

@@ -15,8 +15,8 @@ RUN apt-get update \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
-      @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
+ && npm install -g @anthropic-ai/claude-code@2 @openai/codex@0 @google/gemini-cli@0 \
+      @agentclientprotocol/claude-agent-acp@0 @agentclientprotocol/codex-acp@1 \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \

@@ -69,8 +69,13 @@ func (claudeAgent) ConsultCmd(question string) []string {
 	return []string{"claude", "-p", "--permission-mode", "plan", question}
 }
 
+const (
+	claudeCLIPackage = "@anthropic-ai/claude-code@2"
+	claudeACPPackage = "@agentclientprotocol/claude-agent-acp@0"
+)
+
 func (claudeAgent) Packages() []string {
-	return []string{"@anthropic-ai/claude-code", "@agentclientprotocol/claude-agent-acp"}
+	return []string{claudeCLIPackage, claudeACPPackage}
 }
 
 func (claudeAgent) InstructionFile() string { return "CLAUDE.md" }
