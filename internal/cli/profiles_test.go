@@ -87,3 +87,52 @@ func TestCmdProfilesDefault(t *testing.T) {
 		t.Errorf("default = %q, want personal", got)
 	}
 }
+
+func TestRemoveProfile(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	for _, p := range []string{"personal", "personal_backup", "default"} {
+		if err := os.MkdirAll(cfg.AgentProfileDir("claude", p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cfg.SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"bad arity", []string{"rm", "claude"}},
+		{"unknown agent", []string{"rm", "nope", "default"}},
+		{"unknown profile", []string{"rm", "claude", "ghost"}},
+		{"refuses the marked default", []string{"rm", "claude", "personal"}},
+	} {
+		if code, err := a.cmdProfiles(tc.args); code != 2 || err == nil {
+			t.Errorf("%s: code=%d err=%v, want 2 + error", tc.name, code, err)
+		}
+	}
+	// personal (the default) must survive the refused deletion.
+	if !pathExists(cfg.AgentProfileDir("claude", "personal")) {
+		t.Fatal("refused deletion still removed the default profile dir")
+	}
+
+	// Remove the stray "default" profile (discard the confirmation listing on stdout).
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, err := a.cmdProfiles([]string{"rm", "claude", "default"})
+	_ = w.Close()
+	os.Stdout = old
+	_, _ = io.ReadAll(r)
+	if code != 0 || err != nil {
+		t.Fatalf("rm default: code=%d err=%v", code, err)
+	}
+	if pathExists(cfg.AgentProfileDir("claude", "default")) {
+		t.Error("default profile dir was not removed")
+	}
+	if !pathExists(cfg.AgentProfileDir("claude", "personal")) {
+		t.Error("removing default wrongly affected personal")
+	}
+}

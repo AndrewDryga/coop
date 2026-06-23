@@ -166,6 +166,51 @@ func TestExtractConsult(t *testing.T) {
 	}
 }
 
+func TestExtractRunProfile(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        []string
+		wantProfile string
+		wantRest    []string
+		wantErr     bool
+	}{
+		{"none", []string{"-p", "hi"}, "", []string{"-p", "hi"}, false},
+		{"space form", []string{"--profile", "work", "-p", "hi"}, "work", []string{"-p", "hi"}, false},
+		{"equals form", []string{"--profile=work"}, "work", nil, false},
+		{"missing value", []string{"--profile"}, "", nil, true},
+		// coop reads --profile only before --; the agent's own --profile passes through verbatim.
+		{"passthrough after --", []string{"--", "--profile", "codexprof"}, "", []string{"--", "--profile", "codexprof"}, false},
+		{"coop profile then passthrough", []string{"--profile", "work", "--", "--profile", "codexprof"},
+			"work", []string{"--", "--profile", "codexprof"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			profile, rest, err := extractRunProfile(c.args)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
+			}
+			if c.wantErr {
+				return
+			}
+			if profile != c.wantProfile || !slices.Equal(rest, c.wantRest) {
+				t.Errorf("extractRunProfile(%v) = (%q, %v), want (%q, %v)", c.args, profile, rest, c.wantProfile, c.wantRest)
+			}
+		})
+	}
+}
+
+func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
+	// A nonexistent profile must error before any box work, so a typo never silently creates a husk.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	code, err := a.launchAgent("claude", []string{"--profile", "ghost", "-p", "hi"})
+	if code != 2 || err == nil {
+		t.Fatalf("launchAgent --profile ghost = (%d, %v), want 2 + error", code, err)
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("error should name the bad profile: %v", err)
+	}
+}
+
 func TestParseServices(t *testing.T) {
 	cases := []struct {
 		in   string

@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -11,11 +13,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// cmdProfiles lists each agent's stored credential profiles and whether they're signed in,
-// or — with the `default` subcommand — marks which profile an interactive run uses.
+// cmdProfiles lists each agent's stored credential profiles and whether they're signed in, or —
+// with a subcommand — marks the default (`default`) or deletes a profile (`rm`).
 func (a *app) cmdProfiles(args []string) (int, error) {
 	if len(args) > 0 && args[0] == "default" {
 		return a.setProfileDefault(args[1:])
+	}
+	if len(args) > 0 && args[0] == "rm" {
+		return a.removeProfile(args[1:])
 	}
 	names := agents.Names()
 	if len(args) > 0 {
@@ -79,5 +84,41 @@ func (a *app) setProfileDefault(args []string) (int, error) {
 		ui.Info("note: %s profile %q isn't signed in yet — run: coop login %s --profile %s", agent, name, agent, name)
 	}
 	ui.Info("%s default profile → %s", agent, name)
+	return a.cmdProfiles([]string{agent})
+}
+
+// removeProfile deletes a stored credential profile's directory — its login token and that
+// profile's session history. It refuses to delete the agent's marked default (set another first,
+// so a run never lands on a profile that's gone) and never deletes the legacy flat layout's whole
+// agent dir. A pool that still names the profile is harmless: buildPool drops members that aren't
+// signed in.
+func (a *app) removeProfile(args []string) (int, error) {
+	if len(args) != 2 {
+		return 2, errors.New("usage: coop profiles rm <agent> <profile>")
+	}
+	agent, name := args[0], args[1]
+	if _, ok := agents.Get(agent); !ok {
+		return 2, unknownErr("agent", agent, agents.Names())
+	}
+	have := a.cfg.Profiles(agent)
+	if !slices.Contains(have, name) {
+		if len(have) == 0 {
+			return 2, fmt.Errorf("%s has no profiles", agent)
+		}
+		return 2, fmt.Errorf("%s has no profile %q — have: %s", agent, name, strings.Join(have, ", "))
+	}
+	if name == a.cfg.DefaultProfileOf(agent) {
+		return 2, fmt.Errorf("%s profile %q is the default — set another first: coop profiles default %s <other>", agent, name, agent)
+	}
+	dir := a.cfg.AgentProfileDir(agent, name)
+	// Guard the legacy flat layout, where the "default" profile resolves to the agent dir itself:
+	// removing that would wipe every profile, not one.
+	if dir == filepath.Join(a.cfg.ConfigDir, agent) {
+		return 2, fmt.Errorf("%s has no separate %q profile directory to remove", agent, name)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return -1, err
+	}
+	ui.Info("removed %s profile %q", agent, name)
 	return a.cmdProfiles([]string{agent})
 }

@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Pick a credential profile for a single run with `coop <agent> --profile <name>`.** Previously
+  `--profile` only worked for `coop login`; on a run it was forwarded to the agent and rejected. Now
+  `coop claude --profile work` runs that one session on the `work` profile without changing the
+  default (`coop profiles default` still sets the persistent one). coop consumes the flag only before
+  a `--`, so an agent's own `--profile` is still reachable as `coop codex -- --profile <name>`.
+- **Delete a stored profile with `coop profiles rm <agent> <profile>`.** Removes that profile's login
+  token and session history. It refuses to delete the marked default (set another first) and never
+  touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
+  earlier login layout, e.g. `coop profiles rm claude default`.
+
 - **`coop update` now refreshes agent CLI packages from npm's stable `latest` tags.** The shared
   box's built-in npm specs are `@anthropic-ai/claude-code@latest`, `@openai/codex@latest`,
   `@google/gemini-cli@latest`, `@agentclientprotocol/claude-agent-acp@latest`, and

@@ -127,6 +127,7 @@ var commandHelp = map[string]string{
 
   Usage: coop profiles [claude|codex|gemini]
          coop profiles default <agent> <profile>
+         coop profiles rm <agent> <profile>
 
   Shows each agent's profiles and whether they're signed in. A profile is one
   subscription; add more with 'coop login <agent> --profile <name>', then let the
@@ -134,7 +135,14 @@ var commandHelp = map[string]string{
 
   'coop profiles default <agent> <profile>' marks which profile an interactive run
   (plain 'coop claude') uses — so the default is a mark you set, not whichever one
-  happens to be named "default".`,
+  happens to be named "default".
+
+  'coop profiles rm <agent> <profile>' deletes a stored profile (its login token and
+  session history). Set a different default first if you're removing the marked one.
+
+  Run one agent on a specific profile without changing the default:
+  'coop claude --profile <name>'. An agent's own --profile goes after a --, e.g.
+  'coop codex -- --profile <name>'.`,
 
 	"pool": `coop pool — which credential profiles this repo's loop rotates.
 

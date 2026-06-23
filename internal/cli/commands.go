@@ -81,15 +81,13 @@ func (a *app) cmdRun(args []string) (int, error) {
 // launchAgent runs a named agent: its autonomous default command, with any extra CLI
 // args you pass appended — so `coop claude --continue` keeps coop's autonomy + MCP
 // flags and just adds yours. The agents' autonomous flags are global, so this is safe
-// even before subcommands (e.g. `coop codex resume --last`). coop's own --consult is
-// stripped first so it isn't forwarded to the agent.
+// even before subcommands (e.g. `coop codex resume --last`). coop's own --consult and
+// --profile are stripped first so they aren't forwarded to the agent.
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	consult, args := extractConsult(args)
 	// `coop claude login` reads as "log in to claude", not "prompt claude with the
 	// word login" — route it to the sign-in flow like `coop login claude` (honoring
-	// `--profile`, e.g. `coop claude login --profile work`). Only the login path reads
-	// --profile; an interactive run forwards args untouched so codex's own --profile
-	// (a config.toml profile) still reaches codex.
+	// `--profile`, e.g. `coop claude login --profile work`).
 	if len(args) >= 1 && args[0] == "login" {
 		profile, rest, err := extractProfile(args[1:])
 		if err != nil {
@@ -99,6 +97,25 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 			return 2, fmt.Errorf("unexpected argument %q after 'coop %s login'", rest[0], tool)
 		}
 		return a.loginTo(tool, profile)
+	}
+	// `coop claude --profile work` runs on a chosen credential profile (one subscription);
+	// coop consumes the flag so it isn't forwarded. It's read only before a `--`, so an agent's
+	// own --profile (e.g. codex's config.toml profile) is still reachable as
+	// `coop codex -- --profile <name>`.
+	profile, args, err := extractRunProfile(args)
+	if err != nil {
+		return 2, err
+	}
+	if profile != "" {
+		// Require the profile to already exist — otherwise a typo would silently create an empty
+		// husk dir (box.Run pre-creates the active profile), the very clutter `profiles rm` cleans up.
+		if !slices.Contains(a.cfg.Profiles(tool), profile) {
+			return 2, fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", tool, profile, tool, profile)
+		}
+		if !box.ProfileAuthed(a.cfg, tool, profile) {
+			ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", tool, profile, tool, profile)
+		}
+		a.cfg.SetActiveProfile(tool, profile)
 	}
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), tool, consult)
 }
@@ -173,6 +190,29 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 func extractProfile(args []string) (profile string, rest []string, err error) {
 	profile = config.DefaultProfile
 	for i := 0; i < len(args); i++ {
+		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
+			if e != nil {
+				return "", nil, e
+			}
+			profile = v
+			i += n - 1
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	return profile, rest, nil
+}
+
+// extractRunProfile pulls coop's own --profile <name> (or --profile=<name>) out of an agent
+// RUN's args, returning the chosen credential profile ("" if none) and the remaining args.
+// Unlike extractProfile (login), it stops at a "--" separator and forwards everything after it
+// verbatim — so an agent's own --profile (e.g. codex's config.toml profile) is still reachable
+// as `coop codex -- --profile <name>`. A --profile with no value is an error, like login's.
+func extractRunProfile(args []string) (profile string, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			return profile, append(rest, args[i:]...), nil
+		}
 		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
 			if e != nil {
 				return "", nil, e
