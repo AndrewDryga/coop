@@ -180,6 +180,14 @@ func helpForCommand(cmd string) int {
 	case cmd == "run":
 		printCommandHelp(runHelp)
 		return 0
+	case cmd == "help":
+		// `coop help help` — help IS the top-level reference, so print it (not a broken pointer
+		// to `coop help --help`, which these have no underlying CLI for).
+		printHelp(config.Load())
+		return 0
+	case cmd == "version":
+		fmt.Println("coop version — print coop's version.")
+		return 0
 	case commandHelp[cmd] != "":
 		printCommandHelp(commandHelp[cmd])
 		return 0

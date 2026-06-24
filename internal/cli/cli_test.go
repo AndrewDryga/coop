@@ -90,6 +90,29 @@ func TestMainHelpSubcommand(t *testing.T) {
 	}
 }
 
+// `coop help help` / `coop help version` must not print a broken "forwards --help — run 'coop help
+// --help'" pointer (neither has an underlying CLI, and `coop help --help` errors). help prints the
+// top-level reference; version a synopsis.
+func TestHelpForHelpAndVersion(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	codeHelp := helpForCommand("help")
+	codeVer := helpForCommand("version")
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if codeHelp != 0 || codeVer != 0 {
+		t.Errorf("helpForCommand help=%d version=%d, want 0/0", codeHelp, codeVer)
+	}
+	if s := string(out); strings.Contains(s, "forwards --help") {
+		t.Errorf("help/version must not print the broken passthrough pointer:\n%s", s)
+	}
+	if s := string(out); !strings.Contains(s, "Usage") {
+		t.Errorf("`coop help help` should print the top-level reference:\n%s", s)
+	}
+}
+
 // unknownErr is the one shape for a rejected subcommand/agent/value, with a typo hint for a
 // near-miss. The sub-command groups (tasks/fleet/pool/profiles) all use it.
 func TestUnknownErr(t *testing.T) {
