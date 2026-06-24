@@ -46,7 +46,8 @@ url = "https://mcp.sentry.dev/mcp"
 }
 
 func TestGenerateCodexPreservesExistingConfig(t *testing.T) {
-	existing := writeTmp(t, "config.toml", "model = \"o3\"\n\n[mcp_servers.stale]\ncommand = \"gone\"\n")
+	existing := writeTmp(t, "config.toml",
+		"model = \"o3\"\n\n[mcp_servers.stale]\ncommand = \"gone\"\n\n[mcp_servers_backup]\nnote = \"keep me\"\n")
 	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +58,28 @@ func TestGenerateCodexPreservesExistingConfig(t *testing.T) {
 	if strings.Contains(got, "stale") {
 		t.Error("the user's own [mcp_servers.*] should be replaced, not kept")
 	}
+	// A lookalike table whose name merely starts with "mcp_servers" is NOT an MCP table and must survive.
+	if !strings.Contains(got, "[mcp_servers_backup]") || !strings.Contains(got, "keep me") {
+		t.Errorf("a [mcp_servers_backup] table must be preserved (only real [mcp_servers.*] tables are stripped):\n%s", got)
+	}
 	if !strings.Contains(got, "[mcp_servers.ctx7]") {
 		t.Error("shared servers should be present")
+	}
+}
+
+// A numeric MCP env value (JSON numbers decode to float64) must render as plain digits, never
+// scientific notation — "8080", not "8.08e+03"; a big value not "1.23e+19".
+func TestGenerateCodexNumericEnvNoScientificNotation(t *testing.T) {
+	mcp := `{"mcpServers":{"s":{"command":"x","env":{"PORT":8080,"BIG":12345678901234567890}}}}`
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `PORT = "8080"`) {
+		t.Errorf(`PORT should render as "8080":\n%s`, got)
+	}
+	if strings.Contains(got, "e+") || strings.Contains(got, "E+") {
+		t.Errorf("numeric env must not render in scientific notation:\n%s", got)
 	}
 }
 

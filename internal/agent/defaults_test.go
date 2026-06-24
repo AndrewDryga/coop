@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,6 +141,52 @@ func TestEnsureCodexDefaultsPreservesExisting(t *testing.T) {
 	}
 	if !strings.Contains(got, `[projects."/w"]`) {
 		t.Error("trust entry not appended")
+	}
+}
+
+func TestEnsureCodexDefaultsHardensSQLiteFeedbackLog(t *testing.T) {
+	sqlite, err := exec.LookPath("sqlite3")
+	if err != nil {
+		t.Skip("sqlite3 not available")
+	}
+	dir := t.TempDir()
+	cdir := filepath.Join(dir, "codex")
+	if err := os.MkdirAll(cdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(cdir, "logs_2.sqlite")
+	sql := `
+CREATE TABLE logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  ts_nanos INTEGER NOT NULL,
+  level TEXT NOT NULL,
+  target TEXT NOT NULL,
+  estimated_bytes INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO logs(ts, ts_nanos, level, target) VALUES (1, 0, 'INFO', 'before');
+`
+	if out, err := exec.Command(sqlite, db, sql).CombinedOutput(); err != nil {
+		t.Fatalf("sqlite setup: %v\n%s", err, out)
+	}
+
+	codexAgent{}.EnsureDefaults(&config.Config{ConfigDir: dir}, "/w")
+
+	insert := `INSERT INTO logs(ts, ts_nanos, level, target) VALUES (2, 0, 'INFO', 'after'); SELECT count(*) FROM logs;`
+	out, err := exec.Command(sqlite, db, insert).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite insert after hardening: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "1" {
+		t.Fatalf("logs row count after hardening = %q, want 1", strings.TrimSpace(string(out)))
+	}
+	trigger := `SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='block_log_inserts';`
+	out, err = exec.Command(sqlite, db, trigger).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite trigger lookup: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "1" {
+		t.Fatalf("block_log_inserts trigger count = %q, want 1", strings.TrimSpace(string(out)))
 	}
 }
 

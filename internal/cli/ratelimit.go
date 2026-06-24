@@ -195,8 +195,10 @@ const (
 )
 
 const (
-	// maxLoopFailures is how many consecutive non-rate-limit iteration failures
-	// the loop tolerates before giving up (e.g. a wedged image or broken repo).
+	// maxLoopFailures is how many non-rate-limit iteration failures the loop tolerates before
+	// giving up (e.g. a wedged image or broken repo). Counted since the last successful iteration;
+	// a rate-limit wait in between doesn't reset it (the build is still failing), so the failures
+	// aren't necessarily back-to-back.
 	maxLoopFailures = 5
 	// maxLimitWaits is how many consecutive rate-limit pauses to ride out before
 	// giving up — a backstop against a misfiring detector or a suspended account,
@@ -229,13 +231,14 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 	return actRetry, 0, time.Time{}
 }
 
-// progressStall tracks whether the loop is still completing tasks. Given the queue's Done
-// count after a work iteration, the running baseline, and the stall counter, it resets the
-// counter when Done advanced (a task finished) and bumps it otherwise; it reports stop once
-// maxStalls iterations pass with nothing completed — the signal that the active task (often a
-// continued [w]) can't be finished and the loop should give up rather than spin on it.
+// progressStall tracks whether the loop is still completing tasks. Given the queue's Done count
+// after a work iteration, the running baseline, and the stall counter, it resets the counter when
+// Done CHANGES (a task finished, or an audit reopened one / a torn read undercounted — either way the
+// queue moved) and bumps it only when Done is unchanged; it reports stop once maxStalls iterations
+// pass with no movement — the signal that the active task (often a continued [w]) can't be finished.
+// Keying on "changed" (not "advanced") means a Done dip-then-recover isn't a false stall.
 func progressStall(done, baseline, stalls int) (newBaseline, newStalls int, stop bool) {
-	if done > baseline {
+	if done != baseline {
 		return done, 0, false
 	}
 	return baseline, stalls + 1, stalls+1 >= maxStalls

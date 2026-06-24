@@ -82,6 +82,10 @@ func TestLoopAgent(t *testing.T) {
 	if _, err := loopAgent([]string{"bogus"}); err == nil {
 		t.Error("loopAgent(bogus): want error")
 	}
+	// More than one agent is a usage error, not silently last-wins.
+	if _, err := loopAgent([]string{"claude", "codex"}); err == nil {
+		t.Error("loopAgent(claude codex): want error for more than one agent")
+	}
 }
 
 func TestParseLoopArgs(t *testing.T) {
@@ -157,12 +161,103 @@ func TestExtractConsult(t *testing.T) {
 		{[]string{"--consult"}, true, nil},
 		{[]string{"--consult", "-p", "hi"}, true, []string{"-p", "hi"}},
 		{[]string{"-p", "hi", "--consult"}, true, []string{"-p", "hi"}},
+		// After --, a --consult is the agent's own arg, not coop's — passed through verbatim.
+		{[]string{"--", "--consult"}, false, []string{"--", "--consult"}},
+		{[]string{"--consult", "--", "--consult"}, true, []string{"--", "--consult"}},
 	}
 	for _, c := range cases {
 		got, rest := extractConsult(c.args)
 		if got != c.want || !slices.Equal(rest, c.wantRest) {
 			t.Errorf("extractConsult(%v) = (%v, %v), want (%v, %v)", c.args, got, rest, c.want, c.wantRest)
 		}
+	}
+}
+
+func TestExtractRunProfile(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        []string
+		wantProfile string
+		wantRest    []string
+		wantErr     bool
+	}{
+		{"none", []string{"-p", "hi"}, "", []string{"-p", "hi"}, false},
+		{"space form", []string{"--profile", "work", "-p", "hi"}, "work", []string{"-p", "hi"}, false},
+		{"equals form", []string{"--profile=work"}, "work", nil, false},
+		{"missing value", []string{"--profile"}, "", nil, true},
+		// coop reads --profile only before --; the agent's own --profile passes through verbatim.
+		{"passthrough after --", []string{"--", "--profile", "codexprof"}, "", []string{"--", "--profile", "codexprof"}, false},
+		{"coop profile then passthrough", []string{"--profile", "work", "--", "--profile", "codexprof"},
+			"work", []string{"--", "--profile", "codexprof"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			profile, rest, err := extractRunProfile(c.args)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
+			}
+			if c.wantErr {
+				return
+			}
+			if profile != c.wantProfile || !slices.Equal(rest, c.wantRest) {
+				t.Errorf("extractRunProfile(%v) = (%q, %v), want (%q, %v)", c.args, profile, rest, c.wantProfile, c.wantRest)
+			}
+		})
+	}
+}
+
+func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
+	// A nonexistent profile must error before any box work, so a typo never silently creates a husk.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	code, err := a.launchAgent("claude", []string{"--profile", "ghost", "-p", "hi"})
+	if code != 2 || err == nil {
+		t.Fatalf("launchAgent --profile ghost = (%d, %v), want 2 + error", code, err)
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("error should name the bad profile: %v", err)
+	}
+}
+
+func TestSelectRunProfile(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	work := cfg.AgentProfileDir("claude", "work") // signed in
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, ".credentials.json"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "bare"), 0o700); err != nil { // exists, no creds
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg}
+
+	if err := a.selectRunProfile("claude", ""); err != nil {
+		t.Errorf("empty profile should be a no-op: %v", err)
+	}
+	if err := a.selectRunProfile("claude", "ghost"); err == nil {
+		t.Error("unknown profile should error")
+	}
+	if err := a.selectRunProfile("claude", "work"); err != nil {
+		t.Fatalf("signed-in profile should select: %v", err)
+	}
+	if got := cfg.AgentDir("claude"); got != work {
+		t.Errorf("active dir = %q, want %q", got, work)
+	}
+	if err := a.selectRunProfile("claude", "bare"); err != nil {
+		t.Errorf("an existing but unsigned profile should select with a note, not error: %v", err)
+	}
+}
+
+// --profile is wired into every agent-launch path; a nonexistent profile must fail fast (before any
+// box/Docker work) on fusion and acp too, not just a plain agent run.
+func TestRunProfileWiringRejectsUnknown(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if code, err := a.cmdFusion([]string{"claude", "--profile", "ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdFusion --profile ghost = (%d, %v), want 2 + error", code, err)
+	}
+	if code, err := a.cmdACP([]string{"claude", "--profile", "ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdACP --profile ghost = (%d, %v), want 2 + error", code, err)
 	}
 }
 
@@ -249,6 +344,21 @@ func TestInitNextSteps(t *testing.T) {
 	}
 }
 
+// `coop acp` takes an agent (or fusion [governor]) and coop flags only — a leftover token must be a
+// usage error (exit 2), not silently ignored. Returns before any box/Docker work.
+func TestCmdACPRejectsExtraArgs(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	for _, args := range [][]string{
+		{"claude", "foo"},
+		{"claude", "--nope"},
+		{"fusion", "claude", "junk"},
+	} {
+		if code, err := a.cmdACP(args); code != 2 || err == nil {
+			t.Errorf("cmdACP(%v) = (%d, %v), want (2, usage error)", args, code, err)
+		}
+	}
+}
+
 func TestExtractSupervise(t *testing.T) {
 	got, rest := extractSupervise([]string{"claude", "--supervise"})
 	if !got || len(rest) != 1 || rest[0] != "claude" {
@@ -257,6 +367,11 @@ func TestExtractSupervise(t *testing.T) {
 	got, rest = extractSupervise([]string{"fusion", "claude"})
 	if got || len(rest) != 2 {
 		t.Fatalf("without flag: supervise=%v rest=%v", got, rest)
+	}
+	// After --, a --supervise is the inner agent's own arg — not consumed by coop.
+	got, rest = extractSupervise([]string{"claude", "--", "--supervise"})
+	if got || !slices.Equal(rest, []string{"claude", "--", "--supervise"}) {
+		t.Fatalf("after --: supervise=%v rest=%v, want false + verbatim", got, rest)
 	}
 }
 
@@ -309,6 +424,28 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 	}
 	if code, err := a.loginTo("bogus", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "unknown agent") {
 		t.Errorf("loginTo(bogus) = (%d, %v), want (2, unknown agent — before the tty check)", code, err)
+	}
+}
+
+func TestValidProfileName(t *testing.T) {
+	for _, ok := range []string{"default", "work", "personal_backup", "p1", "acc.2"} {
+		if !validProfileName(ok) {
+			t.Errorf("%q should be a valid profile name", ok)
+		}
+	}
+	for _, bad := range []string{"", ".", "..", "../../x", "a/b", `a\b`, "-x"} {
+		if validProfileName(bad) {
+			t.Errorf("%q should be rejected (traversal/collision/flag-like)", bad)
+		}
+	}
+}
+
+func TestLoginRejectsBadProfileName(t *testing.T) {
+	// A traversal name must be rejected before any vault/dir work — and before the tty check, so it
+	// fails the same way piped or at a terminal.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "invalid profile name") {
+		t.Errorf("loginTo bad profile = (%d, %v), want (2, invalid profile name)", code, err)
 	}
 }
 

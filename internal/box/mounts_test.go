@@ -244,6 +244,10 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 	for _, p := range []string{
 		"credentials.json", "service_account.json", "gcp-sa.json", "config/app-sa.json",
 		"kubeconfig", "config/database.yml",
+		// YAML credential/secret files (.yaml and .yml).
+		"config/credentials.yaml", "credentials.yml", "secrets.yaml", "config/secrets.yml",
+		// Case variants must still shadow (case-insensitive built-in matching).
+		".ENV", "ID_RSA", "config/Server.PEM", "CREDENTIALS.JSON",
 	} {
 		if !shadowed(p) {
 			t.Errorf("%s should be shadowed by the broadened denylist", p)
@@ -253,6 +257,12 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 	for _, p := range []string{"server.crt", "ca.cer", "application.yml", "src/main.go", "package.json"} {
 		if shadowed(p) {
 			t.Errorf("%s must NOT be shadowed (public cert / ordinary config)", p)
+		}
+	}
+	// A case variant of an AllowGlobs name (template/CA bundle) must still be allowed.
+	for _, p := range []string{".ENV.EXAMPLE", "CACERTS.PEM"} {
+		if shadowed(p) {
+			t.Errorf("%s must NOT be shadowed (case variant of an allowed template/CA name)", p)
 		}
 	}
 }

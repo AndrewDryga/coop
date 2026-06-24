@@ -13,13 +13,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// fleetEntry is one fork in the declarative fleet: a name, the model to run it, and
-// the tasks file that seeds its loop.
+// fleetEntry is one fork in the declarative fleet: a name, the model to run it, the tasks file
+// that seeds its loop, and optionally the credential profile(s) its loop rotates (so a fleet can
+// put each fork on its own account instead of all contending for the repo pool's first profile).
 type fleetEntry struct {
-	name  string
-	agent string
-	tasks string
+	name     string
+	agent    string
+	tasks    string
+	profiles []string
 }
+
+// fleetLineShape is the one-line grammar shown in fleet parse errors.
+const fleetLineShape = "<name> [agent] <tasks-path> [profile=a,b]"
 
 // fleetFile is the declarative fleet: .agent/fleet, one fork per line as
 // "<name> [agent] <tasks-path>" (agent defaults to claude; the tasks path is required
@@ -43,16 +48,27 @@ func parseFleet(data string) ([]fleetEntry, error) {
 			rest = rest[1:]
 		}
 		if len(rest) == 0 {
-			return nil, fmt.Errorf("fleet: %q needs a tasks path — %q", e.name, "<name> [agent] <tasks-path>")
-		}
-		// Exactly one token may remain — the path. Leftovers mean a misspelled middle agent (which
-		// was NOT consumed above, so the real path got dropped) or whitespace in the path. Rejecting
-		// here turns a baffling later "no such file" into a clear error at parse time.
-		if len(rest) > 1 {
-			return nil, fmt.Errorf("fleet: %q — expected %q but got extra tokens %q; a middle token must be a known agent (%s) and the path can't contain spaces",
-				e.name, "<name> [agent] <tasks-path>", strings.Join(rest, " "), strings.Join(agents.Names(), ", "))
+			return nil, fmt.Errorf("fleet: %q needs a tasks path — %q", e.name, fleetLineShape)
 		}
 		e.tasks = rest[0]
+		// Any further tokens are key=value options (currently only profile=). A bare extra token is a
+		// misspelled middle agent (so the real path got mis-read) or a space in the path — rejecting
+		// it turns a baffling later "no such file" into a clear error at parse time.
+		for _, tok := range rest[1:] {
+			key, val, ok := strings.Cut(tok, "=")
+			if !ok {
+				return nil, fmt.Errorf("fleet: %q — unexpected token %q; expected %q (a middle token must be a known agent %s; the path can't contain spaces; extra options are key=value)",
+					e.name, tok, fleetLineShape, strings.Join(agents.Names(), ", "))
+			}
+			switch key {
+			case "profile":
+				if e.profiles = parseProfileList(val); len(e.profiles) == 0 {
+					return nil, fmt.Errorf("fleet: %q — profile= needs a name or comma-separated list", e.name)
+				}
+			default:
+				return nil, fmt.Errorf("fleet: %q — unknown option %q (known: profile=)", e.name, key)
+			}
+		}
 		if !validForkName(e.name) {
 			return nil, fmt.Errorf("fleet: invalid fork name %q", e.name)
 		}
@@ -99,15 +115,18 @@ func (a *app) cmdFleet(args []string) (int, error) {
 }
 
 // fleetTemplate seeds .agent/fleet with a documented, ready-to-edit format.
-const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path>
+const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path> [profile=a,b]
 #   <name>        the fork's name (also its git branch)
 #   [agent]       claude (default), codex, or gemini
 #   <tasks-path>  the tasks file that seeds the fork's loop (relative to the repo)
+#   profile=a,b   optional: the credential profile(s) this fork's loop uses (rotated on a
+#                 rate limit). Give each fork a DIFFERENT account so they run in parallel
+#                 instead of all contending for the same one. Omit to share the repo pool.
 # Blank lines and #-comments are ignored.  Start the fleet with: coop fleet up
 #
 # Example:
-# api    codex   .agent/TASKS.api.md
-# deps   gemini  .agent/TASKS.deps.md
+# api    codex   .agent/TASKS.api.md   profile=work
+# deps   gemini  .agent/TASKS.deps.md  profile=personal,backup
 `
 
 // fleetInit writes a documented .agent/fleet template so you can declare a fleet without
@@ -154,6 +173,19 @@ func (a *app) fleetUp(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// Validate per-fork profiles up front, so a typo fails loud here instead of silently in a
+	// detached worker's log. (A fork with no profile= falls back to the repo pool / all signed-in.)
+	var unsigned []string
+	for _, e := range fleet {
+		for _, p := range e.profiles {
+			if !box.ProfileAuthed(a.cfg, e.agent, p) {
+				unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, p))
+			}
+		}
+	}
+	if len(unsigned) > 0 {
+		return 2, fmt.Errorf("fleet up: these profiles aren't signed in: %s — run: coop login <agent> --profile <name>", strings.Join(unsigned, ", "))
+	}
 	started := 0
 	for _, e := range fleet {
 		if pid := forkRunningPid(repo, e.name); pid != 0 {
@@ -164,7 +196,11 @@ func (a *app) fleetUp(args []string) (int, error) {
 		if !filepath.IsAbs(tasks) {
 			tasks = filepath.Join(repo, tasks)
 		}
-		if code, err := a.cmdFork([]string{e.name, e.agent, "--loop", "-d", "--tasks", tasks}); err != nil {
+		forkArgs := []string{e.name, e.agent, "--loop", "-d", "--tasks", tasks}
+		if len(e.profiles) > 0 {
+			forkArgs = append(forkArgs, "--profile", strings.Join(e.profiles, ","))
+		}
+		if code, err := a.cmdFork(forkArgs); err != nil {
 			return code, fleetAbortErr(e.name, err, started)
 		}
 		started++
@@ -191,8 +227,10 @@ func (a *app) fleetDown(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	names := make([]string, len(fleet))
 	stopped := 0
-	for _, e := range fleet {
+	for i, e := range fleet {
+		names[i] = e.name
 		if forkRunningPid(repo, e.name) != 0 {
 			if _, err := a.forkStop([]string{e.name}); err == nil {
 				stopped++
@@ -200,6 +238,13 @@ func (a *app) fleetDown(args []string) (int, error) {
 		}
 	}
 	ui.Info("fleet down: stopped %d", stopped)
+	// `down` only stops forks listed in .agent/fleet — surface a running fork that isn't (removed
+	// from the file, or started by hand) rather than leave it silently running.
+	for _, n := range fleetOrphans(names, forkNames(repo)) {
+		if forkRunningPid(repo, n) != 0 {
+			ui.Info("note: fork %s is running but not in .agent/fleet — stop it with: coop fork stop %s", n, n)
+		}
+	}
 	if prune {
 		if err := a.pruneFleet(repo, force); err != nil {
 			return -1, err

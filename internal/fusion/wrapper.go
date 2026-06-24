@@ -101,7 +101,10 @@ gemini)
 	;;
 codex)
 	out=$(run codex exec -s read-only --json "$prompt") || true
-	printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1 >"$idfile"
+	# Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
+	# and writing an empty idfile would make the next --continue run "codex exec resume ''".
+	tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
+	if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
 	printf '%s\n' "$out" | codex_text
 	;;
 *) die "unknown peer: $peer" ;;

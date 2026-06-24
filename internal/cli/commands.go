@@ -81,15 +81,13 @@ func (a *app) cmdRun(args []string) (int, error) {
 // launchAgent runs a named agent: its autonomous default command, with any extra CLI
 // args you pass appended — so `coop claude --continue` keeps coop's autonomy + MCP
 // flags and just adds yours. The agents' autonomous flags are global, so this is safe
-// even before subcommands (e.g. `coop codex resume --last`). coop's own --consult is
-// stripped first so it isn't forwarded to the agent.
+// even before subcommands (e.g. `coop codex resume --last`). coop's own --consult and
+// --profile are stripped first so they aren't forwarded to the agent.
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	consult, args := extractConsult(args)
 	// `coop claude login` reads as "log in to claude", not "prompt claude with the
 	// word login" — route it to the sign-in flow like `coop login claude` (honoring
-	// `--profile`, e.g. `coop claude login --profile work`). Only the login path reads
-	// --profile; an interactive run forwards args untouched so codex's own --profile
-	// (a config.toml profile) still reaches codex.
+	// `--profile`, e.g. `coop claude login --profile work`).
 	if len(args) >= 1 && args[0] == "login" {
 		profile, rest, err := extractProfile(args[1:])
 		if err != nil {
@@ -100,7 +98,37 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		}
 		return a.loginTo(tool, profile)
 	}
+	// `coop claude --profile work` runs on a chosen credential profile (one subscription);
+	// coop consumes the flag so it isn't forwarded. It's read only before a `--`, so an agent's
+	// own --profile (e.g. codex's config.toml profile) is still reachable as
+	// `coop codex -- --profile <name>`.
+	profile, args, err := extractRunProfile(args)
+	if err != nil {
+		return 2, err
+	}
+	if err := a.selectRunProfile(tool, profile); err != nil {
+		return 2, err
+	}
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), tool, consult)
+}
+
+// selectRunProfile points cfg at the credential profile chosen with --profile for a run of tool
+// (a no-op when profile is ""). It requires the profile to already exist — a typo otherwise
+// silently creates an empty husk dir (box.Run pre-creates the active profile), the very clutter
+// `coop profiles rm` cleans up — and notes (without blocking) one that exists but isn't signed in.
+// Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP.
+func (a *app) selectRunProfile(tool, profile string) error {
+	if profile == "" {
+		return nil
+	}
+	if !slices.Contains(a.cfg.Profiles(tool), profile) {
+		return fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", tool, profile, tool, profile)
+	}
+	if !box.ProfileAuthed(a.cfg, tool, profile) {
+		ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", tool, profile, tool, profile)
+	}
+	a.cfg.SetActiveProfile(tool, profile)
+	return nil
 }
 
 // extractConsult pulls coop's own --consult flag out of an agent's args (so it is
@@ -108,7 +136,10 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 // opts a normal run into the second-opinion directive — letting the agent consult
 // its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
 func extractConsult(args []string) (consult bool, rest []string) {
-	for _, a := range args {
+	for i, a := range args {
+		if a == "--" { // everything after -- is the agent's own args, verbatim
+			return consult, append(rest, args[i:]...)
+		}
 		if a == "--consult" {
 			consult = true
 			continue
@@ -186,6 +217,40 @@ func extractProfile(args []string) (profile string, rest []string, err error) {
 	return profile, rest, nil
 }
 
+// extractRunProfile pulls coop's own --profile <name> (or --profile=<name>) out of an agent
+// RUN's args, returning the chosen credential profile ("" if none) and the remaining args.
+// Unlike extractProfile (login), it stops at a "--" separator and forwards everything after it
+// verbatim — so an agent's own --profile (e.g. codex's config.toml profile) is still reachable
+// as `coop codex -- --profile <name>`. A --profile with no value is an error, like login's.
+func extractRunProfile(args []string) (profile string, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			return profile, append(rest, args[i:]...), nil
+		}
+		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
+			if e != nil {
+				return "", nil, e
+			}
+			profile = v
+			i += n - 1
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	return profile, rest, nil
+}
+
+// validProfileName keeps a credential profile name to a single safe path segment, so a name passed
+// to --profile can't traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
+// '.', empty, or leading '-'). Login is the path that CREATES the dir from the name, so it's the
+// gate; runs/select/rm/default already require an existing profile.
+func validProfileName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "-") {
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\")
+}
+
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
 // config dir for the chosen profile. Shared by `coop login [agent] [--profile p]` and
 // `coop <agent> login [--profile p]`.
@@ -194,13 +259,18 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if !ok {
 		return 2, unknownErr("agent", tool, agents.Names())
 	}
+	if profile == "" {
+		profile = config.DefaultProfile
+	}
+	// Validate the profile name (a static arg) before the environment checks below, so a traversal
+	// name like "../../x" can't escape the vault and fails the same way piped or at a tty.
+	if !validProfileName(profile) {
+		return 2, fmt.Errorf("invalid profile name %q — use a single segment (no '/', '..', or leading '-')", profile)
+	}
 	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
 	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
 	if !ui.IsTerminal(os.Stdin) {
 		return 2, errors.New("login needs an interactive terminal (it prompts for a paste code) — run it directly")
-	}
-	if profile == "" {
-		profile = config.DefaultProfile
 	}
 	// A named profile needs the profiles/ layout; EnsureProfilesDir also migrates a
 	// pre-existing flat login into profiles/default the first time, so it isn't orphaned.
@@ -244,15 +314,25 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return a.cmdACPSupervise(args)
 	}
 	consult, args := extractConsult(args)
+	// --profile pins this ACP session to one credential profile — so an editor can point a
+	// "claude (work)" agent_servers entry at ["acp","claude","--profile","work"]. Read before the
+	// tool token; an agent's own --profile still passes through after a `--`.
+	profile, args, err := extractRunProfile(args)
+	if err != nil {
+		return 2, err
+	}
 	tool := agents.Default()
+	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
 	if len(args) > 0 {
 		tool = args[0]
+		consumed = 1
 	}
 	governor := ""
 	if tool == "fusion" {
 		governor = a.cfg.FusionGovernor
 		if len(args) > 1 {
 			governor = args[1]
+			consumed = 2
 		}
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
@@ -262,6 +342,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 	cmd, ok := acpCommand(tool)
 	if !ok {
 		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
+	}
+	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
+	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
+	if leftover := args[consumed:]; len(leftover) > 0 {
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile p])", leftover[0])
+	}
+	if err := a.selectRunProfile(tool, profile); err != nil {
+		return 2, err
 	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
@@ -291,7 +379,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 }
 
 func extractSupervise(args []string) (supervise bool, rest []string) {
-	for _, a := range args {
+	for i, a := range args {
+		if a == "--" { // everything after -- is the inner agent's own args, verbatim
+			return supervise, append(rest, args[i:]...)
+		}
 		if a == "--supervise" {
 			supervise = true
 			continue
@@ -398,9 +489,18 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 // read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
+	// --profile picks the governor's credential profile, like a plain `coop <agent>` run; read it
+	// before governor parsing so the governor's own --profile is still reachable after a `--`.
+	profile, args, err := extractRunProfile(args)
+	if err != nil {
+		return 2, err
+	}
 	governor, rest := a.parseGovernor(args)
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
+	}
+	if err := a.selectRunProfile(governor, profile); err != nil {
+		return 2, err
 	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
@@ -746,12 +846,15 @@ func promptGateLangs(in io.Reader) []string {
 // loopAgent picks the model for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
 func loopAgent(args []string) (string, error) {
-	agent := agents.Default()
+	agent, set := agents.Default(), false
 	for _, x := range args {
 		if !agents.Valid(x) {
 			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s])", x, strings.Join(agents.Names(), "|"))
 		}
-		agent = x
+		if set {
+			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
+		}
+		agent, set = x, true
 	}
 	return agent, nil
 }
@@ -954,7 +1057,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 			if waits > maxLimitWaits {
 				return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
 			}
-			return code, fmt.Errorf("iteration failed %d times in a row — stopping", fails)
+			return code, fmt.Errorf("iteration failed %d times since the last success — stopping", fails)
 		}
 	}
 	if len(custom) == 0 {

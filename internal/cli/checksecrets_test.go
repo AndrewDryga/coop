@@ -125,6 +125,33 @@ func TestScanVisibleTree(t *testing.T) {
 	}
 }
 
+func TestUnscannedIgnoredCount(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	mk := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".gitignore", "secret.txt\n.env\n")
+	mk("secret.txt", "x") // gitignored, NOT shadowed → box-visible blind spot → counts
+	mk(".env", "x")       // gitignored AND shadowed → protected → must NOT count
+	mk("tracked.go", "x") // committed → in the default scan → not counted
+	git(t, repo, "add", ".gitignore", "tracked.go")
+	git(t, repo, "commit", "-qm", "add")
+
+	if n := unscannedIgnoredCount(repo); n != 1 {
+		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env is shadowed, tracked.go committed)", n)
+	}
+}
+
 func TestReadScannable(t *testing.T) {
 	dir := t.TempDir()
 	text := filepath.Join(dir, "a.txt")

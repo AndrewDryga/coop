@@ -30,12 +30,14 @@ var secretPatterns = []struct {
 }
 
 // secretAssignRe matches an assignment whose KEY name ENDS in a credential word —
-// password, secret, token, api_key, access_key, client_secret, auth_token, credentials
-// (with an optional encoding suffix like _b64/_value) — capturing the key (1) and a long
-// value (2) for an entropy check. Anchoring the word at the END of the key (not anywhere
-// in it) is what keeps config keys that merely contain "auth"/"token" from matching —
-// authenticator, auth_proxy_headers, allocate_tokens, token_url — a big FP source.
-var secretAssignRe = regexp.MustCompile(`(?i)([\w-]*(?:password|passwd|secret[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|authorization|secret|token|credentials?)(?:[_-](?:b64|base64|encoded|value|json|pem))?)\s*[:=]\s*["']?([^\s"']{20,})`)
+// password, secret, token, api_key, access_key, client_secret, auth_token, master_key,
+// encryption_key, secret_key_base, credentials (with an optional encoding suffix like
+// _b64/_value) — capturing the key (1) and a long value (2) for an entropy check. Anchoring
+// the word at the END of the key (not anywhere in it) is what keeps config keys that merely
+// contain "auth"/"token" from matching — authenticator, auth_proxy_headers, allocate_tokens,
+// token_url — a big FP source. Specific *_key names (master/encryption + Rails secret_key_base)
+// are listed explicitly rather than a bare "_key", which would flag public_key/primary_key/etc.
+var secretAssignRe = regexp.MustCompile(`(?i)([\w-]*(?:password|passwd|secret[_-]?key[_-]?base|secret[_-]?key|master[_-]?key|encryption[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|authorization|secret|token|credentials?)(?:[_-](?:b64|base64|encoded|value|json|pem))?)\s*[:=]\s*["']?([^\s"']{20,})`)
 
 // entropyThreshold flags a value as likely-random above this many bits/char (Shannon).
 // Real base64/hex tokens sit ~3.5–6; English/placeholder text sits lower.

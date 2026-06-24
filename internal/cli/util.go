@@ -29,14 +29,28 @@ func pathExists(path string) bool {
 // and any other TASKS.md reader share this so they can't drift apart.
 func isOpenTask(line string) bool { return strings.HasPrefix(line, "- [ ]") }
 
-// queueHasTodo reports whether a TASKS.md file still has an unclaimed task.
+// fenceMarker reports whether a line opens or closes a Markdown fenced code block (``` or ~~~ —
+// three or more, ignoring leading whitespace and any info string). Every task scanner toggles on
+// it so a "- [ ]" documented INSIDE a fence isn't read as real work — otherwise it's a phantom
+// task: the loop never sees the queue empty, fleet/tasks split leak it, and the bar shows it.
+func fenceMarker(line string) bool {
+	t := strings.TrimLeft(line, " \t")
+	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
+}
+
+// queueHasTodo reports whether a TASKS.md file still has an unclaimed task (fenced examples skipped).
 func queueHasTodo(queue string) bool {
 	data, err := os.ReadFile(queue)
 	if err != nil {
 		return false
 	}
+	inFence := false
 	for _, line := range strings.Split(string(data), "\n") {
-		if isOpenTask(line) {
+		if fenceMarker(line) {
+			inFence = !inFence
+			continue
+		}
+		if !inFence && isOpenTask(line) {
 			return true
 		}
 	}
@@ -61,7 +75,15 @@ func (c taskCounts) total() int { return c.Todo + c.Doing + c.Done + c.Blocked }
 func scanTasks(content string) (taskCounts, string) {
 	var c taskCounts
 	active, firstTodo := "", ""
+	inFence := false
 	for _, line := range strings.Split(content, "\n") {
+		if fenceMarker(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue // a "- [ ]" inside a fenced code block is documentation, not a task
+		}
 		m := taskLineRe.FindStringSubmatch(line)
 		if m == nil {
 			continue

@@ -45,7 +45,8 @@ func loadPools(cfg *config.Config) (poolRegistry, error) {
 	return reg, nil
 }
 
-// savePools writes the registry atomically (temp + rename) so a crash can't truncate it.
+// savePools writes the registry atomically (unique temp + rename) so a crash can't truncate it and
+// concurrent writers don't clobber a shared temp. Call it inside modifyPoolRegistry's lock.
 func savePools(cfg *config.Config, reg poolRegistry) error {
 	data, err := json.MarshalIndent(reg, "", "  ")
 	if err != nil {
@@ -54,11 +55,36 @@ func savePools(cfg *config.Config, reg poolRegistry) error {
 	if err := os.MkdirAll(cfg.ConfigDir, 0o700); err != nil {
 		return err
 	}
-	tmp := poolsFile(cfg) + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return err
+	return config.WriteFileAtomic(poolsFile(cfg), append(data, '\n'))
+}
+
+// modifyPoolRegistry applies fn to the pool registry as one locked read-modify-write, so concurrent
+// edits (parallel `coop pool add`, fleet ops) don't lose updates (last-writer-wins used to drop them).
+func modifyPoolRegistry(cfg *config.Config, fn func(poolRegistry)) error {
+	return config.WithLock(poolsFile(cfg), func() error {
+		reg, err := loadPools(cfg)
+		if err != nil {
+			return err
+		}
+		fn(reg)
+		return savePools(cfg, reg)
+	})
+}
+
+// assignPool sets repo+agent's profile list in reg, or clears the entry (pruning an emptied repo
+// map) when the list is empty.
+func assignPool(reg poolRegistry, repo, agent string, list []string) {
+	if len(list) == 0 {
+		delete(reg[repo], agent)
+		if len(reg[repo]) == 0 {
+			delete(reg, repo)
+		}
+		return
 	}
-	return os.Rename(tmp, poolsFile(cfg))
+	if reg[repo] == nil {
+		reg[repo] = map[string][]string{}
+	}
+	reg[repo][agent] = list
 }
 
 // repoPool returns the profiles configured for repo+agent (nil if none).
@@ -70,24 +96,11 @@ func repoPool(cfg *config.Config, repo, agent string) ([]string, error) {
 	return reg[repo][agent], nil
 }
 
-// setRepoPool replaces the profile list for repo+agent; an empty list clears the entry.
+// setRepoPool replaces the profile list for repo+agent (locked); an empty list clears the entry.
 func setRepoPool(cfg *config.Config, repo, agent string, profiles []string) error {
-	reg, err := loadPools(cfg)
-	if err != nil {
-		return err
-	}
-	if len(profiles) == 0 {
-		delete(reg[repo], agent)
-		if len(reg[repo]) == 0 {
-			delete(reg, repo)
-		}
-	} else {
-		if reg[repo] == nil {
-			reg[repo] = map[string][]string{}
-		}
-		reg[repo][agent] = profiles
-	}
-	return savePools(cfg, reg)
+	return modifyPoolRegistry(cfg, func(reg poolRegistry) {
+		assignPool(reg, repo, agent, profiles)
+	})
 }
 
 // cmdPool shows or edits the current repo's rotation pool.
@@ -109,22 +122,29 @@ func (a *app) cmdPool(args []string) (int, error) {
 		if _, ok := agents.Get(agent); !ok {
 			return 2, unknownErr("agent", agent, agents.Names())
 		}
-		cur, err := repoPool(a.cfg, repo, agent)
-		if err != nil {
-			return -1, err
+		for _, p := range profiles { // a mistyped flag mustn't be stored as a profile named "--x"
+			if !validProfileName(p) {
+				return 2, fmt.Errorf("invalid profile name %q — a profile is a single name (no '/', '..', or leading '-')", p)
+			}
 		}
-		var next []string
 		if verb == "add" {
-			next = addProfiles(cur, profiles)
 			for _, p := range profiles { // a pool member you haven't signed into yet won't rotate
 				if !box.ProfileAuthed(a.cfg, agent, p) {
 					ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", agent, p, agent, p)
 				}
 			}
-		} else {
-			next = removeProfiles(cur, profiles)
 		}
-		if err := setRepoPool(a.cfg, repo, agent, next); err != nil {
+		// One locked read-modify-write: read the current list and apply add/rm inside the lock so a
+		// concurrent edit can't be lost (read-then-separate-write used to drop updates).
+		err := modifyPoolRegistry(a.cfg, func(reg poolRegistry) {
+			cur := reg[repo][agent]
+			if verb == "add" {
+				assignPool(reg, repo, agent, addProfiles(cur, profiles))
+			} else {
+				assignPool(reg, repo, agent, removeProfiles(cur, profiles))
+			}
+		})
+		if err != nil {
 			return -1, err
 		}
 		return a.showPool(repo)
@@ -216,6 +236,13 @@ func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
 	if len(names) == 0 {
 		names = cfg.Profiles(agent)
 	}
+	return authedPool(cfg, agent, names)
+}
+
+// authedPool wraps names in a rotation pool, keeping only the signed-in ones (order preserved) and
+// erroring when none are — the loop can't run unauthenticated. Shared by buildPool (repo pool / all
+// signed-in) and a fork's explicit per-fork profile list (`profile=` in .agent/fleet, or --profile).
+func authedPool(cfg *config.Config, agent string, names []string) (*profilePool, error) {
 	var authed []string
 	for _, p := range names {
 		if box.ProfileAuthed(cfg, agent, p) {
@@ -226,6 +253,18 @@ func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
 		return nil, fmt.Errorf("%s has no signed-in profile — run: coop login %s [--profile <name>]", agent, agent)
 	}
 	return newProfilePool(authed), nil
+}
+
+// parseProfileList splits a comma-separated profile list ("work,personal") into names, trimming
+// spaces and dropping empties.
+func parseProfileList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // rotateOnLimit handles a rate limit when the pool has more than one profile: it advances

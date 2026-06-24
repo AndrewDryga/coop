@@ -4,6 +4,60 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Per-fork credential profiles in `.agent/fleet`.** Add `profile=<name>` (or `profile=a,b`) to a
+  fleet line — e.g. `api codex .agent/TASKS.api.md profile=work` — to put that fork's loop on specific
+  account(s); several rotate on a rate limit. Give each fork a different account so a fleet runs in
+  parallel instead of all forks contending for the repo pool's first profile. It's a `key=value`
+  suffix, so it doesn't add to the fragile space-delimited positional fields, and `coop fleet up`
+  validates the profiles up front. Also exposed on `coop fork <name> <agent> --loop --tasks <p>
+  --profile a,b` (and a single `--profile` on an interactive fork). Forks with no `profile=` keep
+  rotating the repo pool / all signed-in profiles as before.
+- **Pick a credential profile for a single run with `--profile <name>`.** Previously `--profile` only
+  worked for `coop login`; on a run it was forwarded to the agent and rejected. Now `coop claude
+  --profile work` runs that one session on the `work` profile without changing the default
+  (`coop profiles default` still sets the persistent one). It works on every agent-launch path —
+  `coop <agent>`, `coop fusion <agent>`, and `coop acp <agent>` (so an editor can pin two ACP entries
+  to different accounts). coop consumes the flag only before a `--`, so an agent's own `--profile` is
+  still reachable as `coop codex -- --profile <name>`; a nonexistent profile errors instead of
+  creating an empty husk dir.
+- **Delete a stored profile with `coop profiles rm <agent> <profile>`.** Removes that profile's login
+  token and session history. It refuses to delete the marked default (set another first) and never
+  touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
+  earlier login layout, e.g. `coop profiles rm claude default`.
+
+- **Security hardening (from an end-to-end audit).** Secret shadowing now covers `*.yaml`/`*.yml`
+  credential files and matches filenames case-insensitively, so `config/credentials.yaml`, `.ENV`, and
+  `ID_RSA` no longer slip into the box (notably on case-insensitive filesystems). `COOP_EGRESS` fails
+  closed — an unrecognized value (a typo like `None`) is treated as offline instead of silently
+  granting full network. `coop login --profile` rejects a traversal/collision name, so credentials
+  can't be written outside the agent vault. `coop check-secrets` also flags
+  `secret_key_base`/`master_key`/`encryption_key` and notes how many gitignored-but-box-visible files
+  the default scan skipped.
+- **Reliability fixes (audit).** A `- [ ]` inside a Markdown code fence in `.agent/TASKS.md` is no
+  longer counted as a task (it had made the loop never finish and leaked phantom slices). Concurrent
+  `coop pool add` / `coop profiles default` no longer lose updates (writes are locked + atomic).
+  Regenerating a Codex MCP config no longer drops a user's own `[mcp_servers_backup]`-style tables, and
+  numeric MCP env values render as plain digits. `coop fork --profile <typo>` fails before cloning (no
+  stray fork), and a fork can't be named `acp`. Fusion's governor is told to consult only
+  authenticated peers.
+- **CLI consistency (audit).** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
+  malformed arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
+  error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
+  honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet;
+  `coop profiles` flags a dangling default; and `coop tasks lint` no longer false-flags Markdown link
+  lists.
+
+- **`coop update` now refreshes agent CLI packages from npm's stable `latest` tags.** The shared
+  box's built-in npm specs are `@anthropic-ai/claude-code@latest`, `@openai/codex@latest`,
+  `@google/gemini-cli@latest`, `@agentclientprotocol/claude-agent-acp@latest`, and
+  `@agentclientprotocol/codex-acp@latest`, so a fresh `coop update` picks up agent fixes without
+  a coop source change. Codex profiles are also hardened before launch with a best-effort SQLite
+  trigger that ignores inserts into `logs_2.sqlite`'s feedback-log table (openai/codex#28224);
+  sessions, auth, MCP config, and memories are left alone.
+- **`COOP_NO_ASDF=1` no longer breaks Node-based agent CLIs when the shared asdf volume has a
+  stale Node shim.** The flag still skips `.tool-versions` provisioning, but the entrypoint now
+  always repairs a broken bare `node` by selecting an installed asdf Node fallback when needed.
+
 ## 2.10.1
 
 - **The loop continues an interrupted task instead of stranding it `[w]`.** When an iteration was

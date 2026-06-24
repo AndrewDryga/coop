@@ -127,6 +127,7 @@ var commandHelp = map[string]string{
 
   Usage: coop profiles [claude|codex|gemini]
          coop profiles default <agent> <profile>
+         coop profiles rm <agent> <profile>
 
   Shows each agent's profiles and whether they're signed in. A profile is one
   subscription; add more with 'coop login <agent> --profile <name>', then let the
@@ -134,7 +135,15 @@ var commandHelp = map[string]string{
 
   'coop profiles default <agent> <profile>' marks which profile an interactive run
   (plain 'coop claude') uses — so the default is a mark you set, not whichever one
-  happens to be named "default".`,
+  happens to be named "default".
+
+  'coop profiles rm <agent> <profile>' deletes a stored profile (its login token and
+  session history). Set a different default first if you're removing the marked one.
+
+  Run on a specific profile without changing the default — works on any agent launch:
+  'coop claude --profile <name>', 'coop fusion <agent> --profile <name>', and
+  'coop acp <agent> --profile <name>' (so an editor entry can pin an account). An
+  agent's own --profile goes after a --, e.g. 'coop codex -- --profile <name>'.`,
 
 	"pool": `coop pool — which credential profiles this repo's loop rotates.
 
@@ -150,10 +159,13 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--supervise]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--supervise]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
+
+  --profile <name> pins the session to one credential profile, so an editor can run
+  two entries on different accounts, e.g. ["acp","claude","--profile","work"].
 
   --supervise keeps the editor connected across a box restart: it runs the agent
   in a child and, if the container dies, starts a new one and replays the ACP
@@ -162,10 +174,13 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini]
+  Usage: coop fusion [claude|codex|gemini] [args...]
 
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
-  writes. Lighter, opt-in variant: coop <agent> --consult`,
+  writes. Lighter, opt-in variant: coop <agent> --consult
+
+  Like coop <agent>, it forwards extra args to the governor — a leading agent name
+  picks the governor; anything else (e.g. --model opus, or after a --) passes through.`,
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
 
@@ -180,6 +195,10 @@ var commandHelp = map[string]string{
                  unmerged — pass --force to remove those too)
 
   up and down take --prune (with optional --force) to prune in the same step.
+
+  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b]". Add profile= to
+  put a fork's loop on specific account(s) — give each fork a different one so they
+  run in parallel instead of contending for the same rate limit.
 
   List forks: coop fork ls`,
 

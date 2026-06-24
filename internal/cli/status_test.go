@@ -43,6 +43,21 @@ func TestScanTasks(t *testing.T) {
 	}
 }
 
+func TestScanTasksSkipsFencedTasks(t *testing.T) {
+	// A "- [ ]" documented inside a ``` code fence (at column 0) must NOT be counted — otherwise
+	// the loop never sees the queue empty and the bar/split see phantom tasks.
+	queue := "## Active\n\n- [ ] real one\n\n" +
+		"```\n- [ ] fenced phantom\n- [x] also fenced\n```\n\n" +
+		"- [x] done\n"
+	c, active := scanTasks(queue)
+	if c.Todo != 1 || c.Done != 1 || c.total() != 2 {
+		t.Errorf("counts = %+v, want Todo 1 / Done 1 / total 2 (fenced lines excluded)", c)
+	}
+	if active != "real one" {
+		t.Errorf("active = %q, want %q", active, "real one")
+	}
+}
+
 func TestScanTasksActiveFallsBackToTodo(t *testing.T) {
 	// No [w] claimed → the active task is the first unclaimed [ ].
 	c, active := scanTasks("- [x] done\n- [ ] do this next\n- [ ] and then this\n")

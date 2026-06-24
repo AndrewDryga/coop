@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +50,31 @@ func TestPoolHelpers(t *testing.T) {
 	}
 }
 
+func TestModifyPoolRegistryConcurrent(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	repo := "/abs/repo"
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			p := fmt.Sprintf("p%d", i)
+			_ = modifyPoolRegistry(cfg, func(reg poolRegistry) {
+				assignPool(reg, repo, "claude", addProfiles(reg[repo]["claude"], []string{p}))
+			})
+		}(i)
+	}
+	wg.Wait()
+	got, err := repoPool(cfg, repo, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Errorf("after %d concurrent adds the pool has %d profiles, want %d (lost updates — the lock didn't serialize)", n, len(got), n)
+	}
+}
+
 func TestLoadPoolsCorrupt(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	if err := os.WriteFile(poolsFile(cfg), []byte("{not json"), 0o600); err != nil {
@@ -68,6 +95,9 @@ func TestCmdPoolDenials(t *testing.T) {
 		{"unknown verb", []string{"frobnicate"}},
 		{"add missing profiles", []string{"add", "claude"}},
 		{"clear missing agent", []string{"clear"}},
+		{"flag-like profile", []string{"add", "claude", "--x"}},  // a mistyped flag, not a profile
+		{"traversal profile", []string{"add", "claude", "../e"}}, // must not store a path
+		{"rm flag-like profile", []string{"rm", "claude", "-foo"}},
 	} {
 		if code, err := a.cmdPool(tc.args); code != 2 || err == nil {
 			t.Errorf("%s: code=%d err=%v, want code 2 + error", tc.name, code, err)

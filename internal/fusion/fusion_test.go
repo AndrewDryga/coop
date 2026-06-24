@@ -139,6 +139,18 @@ func TestGovernorInstructionsPreservesBase(t *testing.T) {
 	}
 }
 
+// box.Run passes [governor] + authenticated peers, so the directive must name only those — never an
+// unauthenticated peer the governor can't actually consult.
+func TestGovernorInstructionsNamesOnlyGivenPeers(t *testing.T) {
+	out := GovernorInstructions("base", "codex", []string{"codex", "claude"}) // gemini omitted (unauthed)
+	if !strings.Contains(out, "claude") {
+		t.Errorf("should name the authed peer claude:\n%s", out)
+	}
+	if strings.Contains(out, "gemini") {
+		t.Errorf("must NOT name the omitted (unauthenticated) peer gemini:\n%s", out)
+	}
+}
+
 func TestLeadInstructions(t *testing.T) {
 	// No peers → the base is returned unchanged (nothing to consult).
 	if got := LeadInstructions("BASE", nil); got != "BASE" {
