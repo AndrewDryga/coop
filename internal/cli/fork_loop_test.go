@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -69,6 +70,22 @@ func TestParseForkCreateProfiles(t *testing.T) {
 	}
 	if _, err := parseForkCreate([]string{"perf", "--profile"}); err == nil {
 		t.Error("--profile with no value: want error")
+	}
+}
+
+func TestForkStopMessages(t *testing.T) {
+	repo := t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	// A fork that doesn't exist → "no such fork" (matching ls/path/rm), not "not running".
+	if code, err := a.forkStop([]string{"ghost"}); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork") {
+		t.Errorf("forkStop(ghost) = (%d, %v), want (1, no such fork)", code, err)
+	}
+	// A fork that exists but has no running loop → "not running".
+	if err := os.MkdirAll(forkWorkspace(repo, "idle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := a.forkStop([]string{"idle"}); code != 1 || err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("forkStop(idle) = (%d, %v), want (1, not running)", code, err)
 	}
 }
 

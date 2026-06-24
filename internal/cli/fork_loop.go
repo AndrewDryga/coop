@@ -299,6 +299,9 @@ func (a *app) forkStop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	if !pathExists(forkWorkspace(repo, name)) {
+		return 1, fmt.Errorf("no such fork: %s", name) // match ls/path/rm, not "not running"
+	}
 	pid := forkRunningPid(repo, name)
 	if pid == 0 {
 		return 1, fmt.Errorf("fork %s is not running", name)
