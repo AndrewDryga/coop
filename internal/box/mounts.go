@@ -103,7 +103,11 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 		// false positives — never an explicit .coopignore, which is the user's authoritative
 		// hide rule. So a name like ca-bundle.crt or .env.example stays visible by default but
 		// can still be re-hidden by listing it in .coopignore.
-		byDefault := matchesAny(name, SecretGlobs) && !matchesAny(name, AllowGlobs)
+		// Match the built-in denylist case-insensitively so a case variant (.ENV, ID_RSA, *.PEM)
+		// can't slip past — important on a case-insensitive host FS (macOS/Windows). The user's
+		// .coopignore stays case-sensitive (their patterns, their casing).
+		lname := strings.ToLower(name)
+		byDefault := matchesAny(lname, SecretGlobs) && !matchesAny(lname, AllowGlobs)
 		return byDefault || shadowedByCoopignore(relSlash, loadDir)
 	}
 }
