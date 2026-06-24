@@ -176,13 +176,21 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if spec.Homes && spec.FusionGovernor != "" {
 		if file := instructionFile(spec.FusionGovernor); file != "" {
 			base := agentBaseInstructions(cfg, spec.FusionGovernor, file)
-			content := fusion.GovernorInstructions(base, spec.FusionGovernor, agents.Names())
+			// Name only AUTHENTICATED peers in the council directive — credentials are scoped to
+			// authed peers (credentialScope), so telling the governor it MUST consult an unsigned
+			// peer just wastes turns on a consult that can't authenticate. With no authed peer,
+			// fusion degenerates to a normal run: mount the governor's plain instructions, no directive.
+			peers := authedPeers(cfg, spec.FusionGovernor)
+			content := base
+			if len(peers) > 0 {
+				content = fusion.GovernorInstructions(base, spec.FusionGovernor, append([]string{spec.FusionGovernor}, peers...))
+			}
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("fusion: skipped instruction wiring: %v", err)
 			} else {
 				tmpFiles = append(tmpFiles, p)
 				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
-				consultWired = true
+				consultWired = len(peers) > 0 // only mount coop-consult when there's a peer to consult
 			}
 		}
 	}
