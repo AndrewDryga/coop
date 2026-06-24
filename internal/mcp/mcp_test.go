@@ -67,6 +67,22 @@ func TestGenerateCodexPreservesExistingConfig(t *testing.T) {
 	}
 }
 
+// A numeric MCP env value (JSON numbers decode to float64) must render as plain digits, never
+// scientific notation — "8080", not "8.08e+03"; a big value not "1.23e+19".
+func TestGenerateCodexNumericEnvNoScientificNotation(t *testing.T) {
+	mcp := `{"mcpServers":{"s":{"command":"x","env":{"PORT":8080,"BIG":12345678901234567890}}}}`
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `PORT = "8080"`) {
+		t.Errorf(`PORT should render as "8080":\n%s`, got)
+	}
+	if strings.Contains(got, "e+") || strings.Contains(got, "E+") {
+		t.Errorf("numeric env must not render in scientific notation:\n%s", got)
+	}
+}
+
 func TestGenerateGeminiMerge(t *testing.T) {
 	existing := writeTmp(t, "settings.json", `{"theme":"dark","mcpServers":{"old":{"command":"true"}}}`)
 	got, err := GenerateGemini(writeTmp(t, "mcp.json", sample), existing)

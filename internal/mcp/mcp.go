@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -79,6 +80,17 @@ func GenerateCodex(mcpFile, existing string) (string, error) {
 	return out + "\n", nil
 }
 
+// envValueString renders an MCP env value as the string Codex (and the shell) will see. MCP env is
+// string→string, but JSON numbers decode to float64, and fmt.Sprint gives a float64 scientific
+// notation (12345 → fine, but a big value → "1.23e+19"). Format floats with 'f' so a numeric env
+// value renders as plain digits (a port "8080", not "8080" via "8.08e+03"). Non-numbers pass through.
+func envValueString(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
+}
+
 func writeCodexServer(b *strings.Builder, name string, s server) {
 	fmt.Fprintf(b, "[mcp_servers.%s]\n", name)
 	switch {
@@ -96,7 +108,7 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 			b.WriteString("\n")
 			fmt.Fprintf(b, "[mcp_servers.%s.env]\n", name)
 			for _, k := range sortedKeys(s.Env) {
-				fmt.Fprintf(b, "%s = %s\n", k, tomlString(fmt.Sprint(s.Env[k])))
+				fmt.Fprintf(b, "%s = %s\n", k, tomlString(envValueString(s.Env[k])))
 			}
 		}
 	}
