@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -29,10 +30,12 @@ import (
 
 const forkSuffix = "-forks"
 
-// forkVerbs are the reserved subcommands of `coop fork`; a fork can't be named one.
+// forkVerbs are the reserved subcommands of `coop fork`; a fork can't be named one. "acp" is
+// reserved too: `coop fork <name> acp` fronts a fork over ACP, so a fork literally named "acp"
+// would shadow that route.
 var forkVerbs = map[string]bool{
 	"ls": true, "review": true, "merge": true, "rm": true, "open": true,
-	"logs": true, "stop": true, "path": true,
+	"logs": true, "stop": true, "path": true, "acp": true,
 }
 
 // forkHome is the sibling directory that holds every fork of repo.
@@ -227,6 +230,13 @@ func (a *app) forkCreate(args []string) (int, error) {
 	fa, err := parseForkCreate(args)
 	if err != nil {
 		return 2, err
+	}
+	// Validate the requested profile(s) before any image/clone work, so a typo'd --profile fails fast
+	// and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
+	for _, p := range fa.profiles {
+		if !slices.Contains(a.cfg.Profiles(fa.agent), p) {
+			return 2, fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", fa.agent, p, fa.agent, p)
+		}
 	}
 	if fa.tasks != "" { // resolve to an absolute path now, so a detached worker still finds it
 		abs, err := filepath.Abs(fa.tasks)
