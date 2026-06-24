@@ -266,6 +266,11 @@ func (a *app) forkMerge(args []string) (int, error) {
 			name = x
 		}
 	}
+	// Validate the static args before the environment: a missing <name> (without --all) is a usage
+	// error (exit 2), not the dirty-tree / non-interactive error (exit 1) the env gates below report.
+	if !all && name == "" {
+		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -286,10 +291,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if all {
 		return a.forkMergeAll(repo, img, force, yes)
 	}
-	if name == "" {
-		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
-	}
-	ws := forkWorkspace(repo, name)
+	ws := forkWorkspace(repo, name) // name is non-empty here (the !all && name=="" check above returned)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}

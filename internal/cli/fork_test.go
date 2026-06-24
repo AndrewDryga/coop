@@ -27,10 +27,19 @@ func TestValidForkName(t *testing.T) {
 			t.Errorf("validForkName(%q) = false, want true", n)
 		}
 	}
-	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "a/b", `a\b`, "..", ".", "-x"} {
+	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "acp", "a/b", `a\b`, "..", ".", "-x"} {
 		if validForkName(n) {
 			t.Errorf("validForkName(%q) = true, want false", n)
 		}
+	}
+}
+
+// A typo'd --profile must fail (exit 2) before any image/clone work, so it never leaves a stray
+// fork behind. The check runs before resolveImage, so it returns without a runtime.
+func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}} // no profiles signed in
+	if code, err := a.forkCreate([]string{"scratchfork", "claude", "--profile", "ghost"}); code != 2 || err == nil {
+		t.Fatalf("forkCreate with a bad --profile = (%d, %v), want (2, error before any clone)", code, err)
 	}
 }
 

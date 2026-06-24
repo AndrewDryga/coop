@@ -49,15 +49,51 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	if includeIgnored {
 		scope = "the full visible tree (including gitignored files)"
 	}
+	// A clean default scan can be false assurance: a box bind-mounts the WHOLE tree, so a
+	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Note how
+	// many such files --include-ignored would add, so the user knows the default's blind spot.
+	noteUnscanned := func() {
+		if !includeIgnored {
+			if n := unscannedIgnoredCount(repo); n > 0 {
+				ui.Info("check-secrets: %d gitignored file(s) weren't scanned, but a box can still read them — rescan with --include-ignored to cover them", n)
+			}
+		}
+	}
 	if len(findings) == 0 {
 		ui.Info("check-secrets: no secrets found — scanned %s", scope)
+		noteUnscanned()
 		return 0, nil
 	}
 	for _, f := range findings {
 		fmt.Printf("  %s\n", f)
 	}
 	ui.Info("check-secrets: %d finding(s) in %s — remove the secret, or if intended hide the file with a .coopignore entry", len(findings), scope)
+	noteUnscanned()
 	return 1, nil
+}
+
+// unscannedIgnoredCount counts files the box can read but the default scan skipped — gitignored
+// files (in the full visible tree but not the commit-candidate set) that aren't shadowed. It tells
+// the user how much surface --include-ignored would add, so a clean default scan isn't false
+// assurance. Returns 0 when git is unavailable (both sets fall back to the same full walk).
+func unscannedIgnoredCount(repo string) int {
+	all, err1 := candidateFiles(repo, true)
+	committed, err2 := candidateFiles(repo, false)
+	if err1 != nil || err2 != nil {
+		return 0
+	}
+	inCommit := make(map[string]bool, len(committed))
+	for _, r := range committed {
+		inCommit[r] = true
+	}
+	shadowed := box.NewShadowDecider(repo)
+	n := 0
+	for _, r := range all {
+		if !inCommit[r] && !shadowed(r) { // box-visible, gitignored, not protected
+			n++
+		}
+	}
+	return n
 }
 
 // scanVisibleTree runs the content scanner on each candidate file the box can see (see

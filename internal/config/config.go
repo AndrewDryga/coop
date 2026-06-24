@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // Config is the fully-resolved settings for one invocation. It is computed once
@@ -47,7 +48,7 @@ type Config struct {
 	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
 	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off
 	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
-	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline)
+	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline); an unrecognized value fails CLOSED to "none"
 
 	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (default 1800, owned by the wrapper)
@@ -57,6 +58,10 @@ type Config struct {
 
 	// BoxHome is ~/.config/coop: the home for conf, mcp.json, and agents/.
 	BoxHome string
+
+	// Warnings are non-fatal config problems found during Load (e.g. an unrecognized COOP_EGRESS
+	// that failed closed); the CLI entry point surfaces them once per invocation.
+	Warnings []string
 
 	conf map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
 
@@ -154,7 +159,25 @@ func Load() *Config {
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
 	c.defaultProfiles = loadConfFile(c.DefaultsFile())
+
+	// COOP_EGRESS is a security toggle — fail CLOSED on an unrecognized value so a typo ("None",
+	// "off") can't silently grant full outbound. Only the exact "open"/"none" are honored.
+	if eg, ok := normalizeEgress(c.Egress); !ok {
+		c.Warnings = append(c.Warnings, "COOP_EGRESS=\""+c.Egress+"\" is not recognized (use open|none) — failing closed to none (offline)")
+		c.Egress = eg
+	}
 	return c
+}
+
+// normalizeEgress fails closed: anything other than "open"/"none" becomes "none" (offline), so a
+// typo'd COOP_EGRESS never silently grants full outbound. ok reports whether v was recognized.
+func normalizeEgress(v string) (egress string, ok bool) {
+	switch v {
+	case "open", "none":
+		return v, true
+	default:
+		return "none", false
+	}
 }
 
 // EnvFile is the optional file of KEY=VALUE pairs passed into every box.
@@ -199,34 +222,76 @@ func (c *Config) DefaultProfileOf(agent string) string {
 	return DefaultProfile
 }
 
-// SetDefaultProfile marks name as agent's default profile, persisting it to DefaultsFile
-// (atomic temp+rename) and updating the in-memory view.
+// SetDefaultProfile marks name as agent's default profile, persisting it to DefaultsFile and
+// updating the in-memory view. The load→modify→write runs under WithLock so concurrent writers
+// (e.g. two `coop profiles default` for different agents) don't lose each other's edit.
 func (c *Config) SetDefaultProfile(agent, name string) error {
-	m := loadConfFile(c.DefaultsFile())
-	m[agent] = name
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k + "=" + m[k] + "\n")
-	}
 	if err := os.MkdirAll(c.ConfigDir, 0o700); err != nil {
 		return err
 	}
-	tmp := c.DefaultsFile() + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, c.DefaultsFile()); err != nil {
+	err := WithLock(c.DefaultsFile(), func() error {
+		m := loadConfFile(c.DefaultsFile())
+		m[agent] = name
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		for _, k := range keys {
+			b.WriteString(k + "=" + m[k] + "\n")
+		}
+		return WriteFileAtomic(c.DefaultsFile(), []byte(b.String()))
+	})
+	if err != nil {
 		return err
 	}
 	if c.defaultProfiles == nil {
 		c.defaultProfiles = map[string]string{}
 	}
 	c.defaultProfiles[agent] = name
+	return nil
+}
+
+// WithLock runs fn while holding an exclusive advisory lock (flock) on a sibling <path>.lock, so a
+// load→modify→write of path can't lose a concurrent process's update. Best-effort: if the lock file
+// or flock can't be obtained, fn still runs (these are convenience configs, not a critical section,
+// and blocking the command would be worse). Linux/darwin only — coop's only targets.
+func WithLock(path string, fn func() error) error {
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fn()
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX) != nil {
+		return fn()
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+// WriteFileAtomic writes data to path via a uniquely-named temp file in the same dir, then renames
+// it into place. The rename is atomic (no truncated file on a crash) and a UNIQUE temp name means
+// concurrent writers don't clobber a shared "<path>.tmp" mid-write.
+func WriteFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(name)
+		if werr != nil {
+			return werr
+		}
+		return cerr
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
 	return nil
 }
 

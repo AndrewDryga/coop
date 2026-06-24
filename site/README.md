@@ -9,10 +9,13 @@ bundle (two files under `assets/vendor/`).
 site/
   index.html            landing page
   docs.html             documentation (sticky sidebar, a section per feature)
+  site.webmanifest      PWA manifest (name, theme color, app icons)
+  robots.txt            allow-all + sitemap pointer
+  sitemap.xml           the two pages, for crawlers
   assets/
     css/site.css        the whole design system
     js/site.js          player mounting, copy buttons, nav, docs sidebar
-    img/                logo + favicon
+    img/                favicon + app icons + og-image (see "SEO assets")
     vendor/             asciinema-player.min.js + .css (vendored, ~190 KB)
   casts/*.cast          asciinema v2 recordings, embedded in the pages
 ```
@@ -62,3 +65,23 @@ cp package/dist/bundle/asciinema-player.min.js site/assets/vendor/
 cp package/dist/bundle/asciinema-player.css    site/assets/vendor/
 rm -rf package asciinema-player-*.tgz
 ```
+
+## SEO assets
+
+The favicon, app icons, and social-share card under `assets/img/` are **generated,
+committed artifacts** — like the casts. One source of truth (the coop mark + the
+tagline) lives in `tools/gen_seo_assets.py`; it rasterizes with headless Chrome and
+bundles `favicon.ico` with ImageMagick, so the icons and the card can't drift apart:
+
+```bash
+python3 tools/gen_seo_assets.py          # regenerate everything
+python3 tools/gen_seo_assets.py icons    # just the favicon / app icons
+python3 tools/gen_seo_assets.py og       # just the 1200×630 social card
+```
+
+Outputs: `favicon.svg` (primary), `favicon.ico` (16/32/48), `apple-touch-icon.png`
+(180), `icon-192/512.png` + `icon-maskable-512.png` (PWA), and `og-image.png`
+(1200×630, used for both Open Graph and Twitter). The `<head>` of each page wires
+these up alongside canonical, Open Graph, Twitter-card, and JSON-LD tags; edit the
+canonical/`og:url` base if the site ever moves off `andrewdryga.github.io/coop/`.
+

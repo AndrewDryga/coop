@@ -49,11 +49,26 @@ func TestScanSecretsEntropy(t *testing.T) {
 	if f := ScanSecrets(`api_key = "tok_Ab3kP9xR2_mQ7vL4Tn8wZ1Cf6"`); len(f) == 0 {
 		t.Error("expected an entropy finding for an underscore-separated mixed-case token")
 	}
+	// Specific *_key credential names now flagged: Rails secret_key_base, master_key, encryption_key.
+	if f := ScanSecrets(`secret_key_base = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sG2eU4iO7p"`); len(f) == 0 {
+		t.Error("expected an entropy finding for a literal Rails secret_key_base")
+	}
+	if f := ScanSecrets(`master_key: "850cb6abb7fc844f89c7bcc8adce5e9d0a2e7dc80f6c96c8"`); len(f) == 0 {
+		t.Error("expected an entropy finding for a literal master_key")
+	}
+	if f := ScanSecrets(`encryption_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`); len(f) == 0 {
+		t.Error("expected an entropy finding for a literal encryption_key")
+	}
 	// No false positives: a hash on a non-secret key, a short secret, prose, plain code.
 	for _, clean := range []string{
 		`commit = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"`, // not a secret-named key
-		`password = "hunter2"`,                                // too short for the entropy gate
-		`greeting = "hello there, how are you today friend"`,  // spaces / low entropy
+		// Bare *_key names that are NOT credentials must stay unflagged (we add specific names,
+		// never a bare "_key"): a DB key, a foreign key, and a PUBLIC key.
+		`primary_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`,
+		`foreign_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`,
+		`public_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`,
+		`password = "hunter2"`,                               // too short for the entropy gate
+		`greeting = "hello there, how are you today friend"`, // spaces / low entropy
 		`func main() { fmt.Println("ok") }`,
 		`name: Jane Doe`,
 		// Code expressions on a secret-named key are references, not literal secrets.

@@ -90,6 +90,47 @@ func TestMainHelpSubcommand(t *testing.T) {
 	}
 }
 
+// `coop version` takes no arguments — extras are a usage error (exit 2), like every other no-arg
+// command, not silently ignored.
+func TestVersionRejectsExtraArgs(t *testing.T) {
+	oo, oe := os.Stdout, os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stdout, os.Stderr = w, w
+	codeExtra := Main([]string{"version", "foo"})
+	codeOK := Main([]string{"version"})
+	_ = w.Close()
+	os.Stdout, os.Stderr = oo, oe
+	if codeExtra != 2 {
+		t.Errorf("Main(version foo) = %d, want 2 (usage error)", codeExtra)
+	}
+	if codeOK != 0 {
+		t.Errorf("Main(version) = %d, want 0", codeOK)
+	}
+}
+
+// `coop help help` / `coop help version` must not print a broken "forwards --help — run 'coop help
+// --help'" pointer (neither has an underlying CLI, and `coop help --help` errors). help prints the
+// top-level reference; version a synopsis.
+func TestHelpForHelpAndVersion(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	codeHelp := helpForCommand("help")
+	codeVer := helpForCommand("version")
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if codeHelp != 0 || codeVer != 0 {
+		t.Errorf("helpForCommand help=%d version=%d, want 0/0", codeHelp, codeVer)
+	}
+	if s := string(out); strings.Contains(s, "forwards --help") {
+		t.Errorf("help/version must not print the broken passthrough pointer:\n%s", s)
+	}
+	if s := string(out); !strings.Contains(s, "Usage") {
+		t.Errorf("`coop help help` should print the top-level reference:\n%s", s)
+	}
+}
+
 // unknownErr is the one shape for a rejected subcommand/agent/value, with a typo hint for a
 // near-miss. The sub-command groups (tasks/fleet/pool/profiles) all use it.
 func TestUnknownErr(t *testing.T) {

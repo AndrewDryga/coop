@@ -606,7 +606,7 @@ box, edits your files over ACP, and you approve its tool calls in Zed (or let th
 the box is the boundary).
 
 Under the hood `coop acp [claude|codex|gemini|fusion]` runs the matching adapter
-(`@agentclientprotocol/claude-agent-acp`, `@zed-industries/codex-acp`, `gemini --acp`)
+(`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`)
 inside the box over stdio. The repo mounts at its real host path — the same path
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
 lines up: a thread you started with `coop loop` is there to resume in Zed.
@@ -614,8 +614,8 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 > **Services** work too — if the repo has a `compose.agent.yml`, run `coop up` first and
 > the ACP box joins the same network.
 > **Custom images** must carry the ACP adapters: `coop init` scaffolds them in; for an
-> older/hand-written `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp` and
-> `@zed-industries/codex-acp` to its `npm install -g` line (else `coop acp` fails with
+> older/hand-written `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp@latest`
+> and `@agentclientprotocol/codex-acp@latest` to its `npm install -g` line (else `coop acp` fails with
 > `codex-acp: not found`).
 
 ## Run it unattended
@@ -742,9 +742,11 @@ coop claude             # provisions elixir/erlang/node/… from it, then runs t
 ```
 
 The first install of a new toolchain can be slow (e.g. Erlang compiles), then it's
-reused across runs and repos. Set `COOP_NO_ASDF=1` (in `agents/env`) to skip it. For a
-baked, fully-reproducible image instead, `coop init --stack asdf` scaffolds an asdf
-`Dockerfile.agent` that installs the same `.tool-versions` at build time.
+reused across runs and repos. Set `COOP_NO_ASDF=1` (in `agents/env`) to skip provisioning
+from `.tool-versions`; coop still repairs a stale persisted Node shim when needed so the
+agent CLIs keep running. For a baked, fully-reproducible image instead,
+`coop init --stack asdf` scaffolds an asdf `Dockerfile.agent` that installs the same
+`.tool-versions` at build time.
 
 ### `Dockerfile.agent` — a per-project image
 
@@ -777,8 +779,8 @@ coop sets the working directory itself, so no `WORKDIR` is required. A skeleton:
 ```dockerfile
 FROM <your-language-base>
 RUN <install your toolchain> \
- && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
-      @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
+ && npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest \
+      @agentclientprotocol/claude-agent-acp@latest @agentclientprotocol/codex-acp@latest \
  && git config --system --add safe.directory '*' \
  && id -u node >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash node
 USER node
@@ -794,8 +796,8 @@ layer on top:
 
 ```dockerfile
 FROM your-devcontainer-image          # the team's source of truth for the env
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
-      @agentclientprotocol/claude-agent-acp @zed-industries/codex-acp \
+RUN npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest \
+      @agentclientprotocol/claude-agent-acp@latest @agentclientprotocol/codex-acp@latest \
  && git config --system --add safe.directory '*'
 USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.
@@ -848,9 +850,17 @@ the base back to the `node:24` tag and rebuilds with `--pull --no-cache`, so the
 the agent CLIs + ACP adapters all jump to latest (they ship features often). To move the
 pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 
+**Agent package updates.** The built-in package specs follow npm's stable `latest` tag
+(`@anthropic-ai/claude-code@latest`, `@openai/codex@latest`, `@google/gemini-cli@latest`,
+`@agentclientprotocol/claude-agent-acp@latest`, and `@agentclientprotocol/codex-acp@latest`),
+so `coop update` can pick up agent fixes without a coop source change. Coop also applies a
+best-effort SQLite trigger to the active Codex profile before launch so inserts into the
+`logs_2.sqlite` feedback-log table are ignored; session history, auth, MCP config, and
+memories are not touched.
+
 For a fully reproducible image, also pin the tool versions: set
 `COOP_AGENT_PACKAGES` to exact specs and `coop build`, e.g.
-`COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@1.2.3 @openai/codex@1.0.0 …"` (the full
+`COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@2.1.186 @openai/codex@0.142.0 …"` (the full
 list is in `internal/agent/*.go`).
 
 ## Configuration
@@ -875,7 +885,7 @@ turn them off.
 | `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
-| `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning |
+| `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
 | `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `compose.agent.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |

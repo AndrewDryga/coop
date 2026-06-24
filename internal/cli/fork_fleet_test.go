@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,18 +17,30 @@ func TestParseFleet(t *testing.T) {
 	in := "# a fleet\n" +
 		"perf codex .agent/TASKS.perf.md\n" +
 		"deps gemini .agent/TASKS.deps.md\n" +
-		"docs .agent/TASKS.docs.md\n\n" // agent omitted → claude
+		"docs .agent/TASKS.docs.md\n" + // agent omitted → claude
+		"api codex .agent/TASKS.api.md profile=work\n" + // per-fork single profile
+		"web .agent/TASKS.web.md profile=work,personal\n\n" // agent omitted + per-fork pool
 	got, err := parseFleet(in)
 	if err != nil {
 		t.Fatalf("parseFleet: %v", err)
 	}
 	want := []fleetEntry{
-		{"perf", "codex", ".agent/TASKS.perf.md"},
-		{"deps", "gemini", ".agent/TASKS.deps.md"},
-		{"docs", "claude", ".agent/TASKS.docs.md"},
+		{"perf", "codex", ".agent/TASKS.perf.md", nil},
+		{"deps", "gemini", ".agent/TASKS.deps.md", nil},
+		{"docs", "claude", ".agent/TASKS.docs.md", nil},
+		{"api", "codex", ".agent/TASKS.api.md", []string{"work"}},
+		{"web", "claude", ".agent/TASKS.web.md", []string{"work", "personal"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleet = %v, want %v", got, want)
+	}
+	// An unknown key=value option is rejected (only profile= is known).
+	if _, err := parseFleet("api codex q.md bogus=1"); err == nil {
+		t.Error("parseFleet: want error for an unknown option key")
+	}
+	// profile= with no value is rejected, not a silent empty pool.
+	if _, err := parseFleet("api codex q.md profile="); err == nil {
+		t.Error("parseFleet: want error for an empty profile= value")
 	}
 	if _, err := parseFleet("perf"); err == nil {
 		t.Error("parseFleet: want error when the tasks path is missing")
@@ -221,6 +234,39 @@ func TestFleetSplit(t *testing.T) {
 	parsed, err := parseFleet(string(fleet))
 	if err != nil || len(parsed) != 2 {
 		t.Errorf("written .agent/fleet does not parse back: %v (%d entries)", err, len(parsed))
+	}
+}
+
+// `coop fleet down` stops listed forks but must surface (not silently leave) a running fork that
+// isn't in .agent/fleet — one removed from the file, or started by hand.
+func TestFleetDownWarnsRunningOrphan(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude .agent/T.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A running fork "b" that isn't in the fleet (its workspace exists + a live pidfile).
+	if err := os.MkdirAll(forkWorkspace(repo, "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkPid(repo, "b", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	_, _ = a.fleetDown(nil)
+	_ = w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	if !strings.Contains(string(out), "b") || !strings.Contains(string(out), "not in .agent/fleet") {
+		t.Errorf("expected a warning about running orphan b:\n%s", out)
 	}
 }
 

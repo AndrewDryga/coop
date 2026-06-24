@@ -11,8 +11,9 @@ import (
 // Matching is by basename, at any depth (the repo's .git is always skipped).
 //
 // This is a denylist: it catches well-known credential names, NOT every secret a
-// given repo might hold (e.g. a committed config/credentials.yaml). Add repo-specific
-// paths in a .coopignore (see CoopIgnoreFile / LoadUserGlobs).
+// given repo might hold (e.g. a token in an app config under a custom name). Add
+// repo-specific paths in a .coopignore (see CoopIgnoreFile / LoadUserGlobs).
+// Matching is case-insensitive (see NewShadowDecider), so .ENV / ID_RSA can't slip past.
 var SecretGlobs = []string{
 	".env", ".env.*", "*.secret", "*.secrets",
 	"*.tfvars", "*.tfstate", "*.tfstate.*",
@@ -25,6 +26,9 @@ var SecretGlobs = []string{
 	// *.crt/*.cer (usually PUBLIC certs — shadowing them breaks in-box TLS, cf. the cacerts task)
 	// nor application*.yml / settings.local.json (commonly non-secret app config — too false-positive).
 	"credentials.json", "service_account.json", "*-sa.json", "kubeconfig", "database.yml",
+	// YAML credential/secret files (the .json/.yml variants above missed .yaml/.yml here): a
+	// committed credentials.yaml or secrets.yml is a common real leak. `y*ml` covers .yaml and .yml.
+	"credentials.y*ml", "secrets.y*ml",
 }
 
 // AllowGlobs are files the agent should still see even though their name matches a secret

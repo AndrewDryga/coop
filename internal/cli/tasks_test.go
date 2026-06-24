@@ -60,6 +60,27 @@ func TestParseTasksBlocksAndSections(t *testing.T) {
 	}
 }
 
+// A "- [ ]" inside a fenced code block (column 0) is documentation, not a task: parseTasks must
+// not start a new task on it, so split/list/lint don't leak a phantom.
+func TestParseTasksIgnoresFencedTaskLines(t *testing.T) {
+	content := "## Active\n\n- [ ] real task\n  - **Context:** see the example below\n\n" +
+		"```\n- [ ] phantom inside a fence\n- [x] also fenced\n```\n\n" +
+		"- [x] done task\n"
+	tasks := parseTasks(content)
+	todo, done := 0, 0
+	for _, tk := range tasks {
+		switch tk.State {
+		case " ":
+			todo++
+		case "x":
+			done++
+		}
+	}
+	if len(tasks) != 2 || todo != 1 || done != 1 {
+		t.Errorf("parseTasks found %d tasks (todo=%d done=%d), want 2 (todo 1, done 1) — the fenced lines aren't tasks", len(tasks), todo, done)
+	}
+}
+
 // A non-positive bucket count must not panic (make([],n<0) / the i%n divide-by-zero) — return nil.
 func TestSplitOpenTaskBlocksNonPositive(t *testing.T) {
 	for _, n := range []int{0, -1} {
@@ -119,6 +140,23 @@ func TestTasksLintClean(t *testing.T) {
 	code, err := tasksLint(path)
 	if err != nil || code != 0 {
 		t.Errorf("clean queue lint = (%d, %v), want (0, nil)", code, err)
+	}
+}
+
+// A Markdown link list item ("- [text](url)") must not be flagged as a malformed task marker —
+// its "]" is followed by "(", not a space, so it isn't a task shape.
+func TestTasksLintIgnoresLinkLists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "TASKS.md")
+	q := "## Active\n\n- [ ] real task\n" +
+		"  - **Context:** see the links below.\n  - **Likely files:** x.go\n" +
+		"  - **Implementation direction:** boring.\n  - **Acceptance checks:** gate green.\n\n" +
+		"## Notes\n\n- [see the docs](https://example.com/docs)\n- [the spec](https://example.com/spec)\n"
+	if err := os.WriteFile(path, []byte(q), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksLint(path); err != nil || code != 0 {
+		t.Errorf("lint with link lists = (%d, %v), want (0, nil) — links aren't malformed markers", code, err)
 	}
 }
 

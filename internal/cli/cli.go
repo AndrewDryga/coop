@@ -58,6 +58,10 @@ func Main(argv []string) int {
 		printHelp(config.Load())
 		return 0
 	case "version", "-v", "--version":
+		if err := rejectArgs("version", argv[1:]); err != nil { // reject extras like every no-arg command
+			ui.Error("%v", err)
+			return 2
+		}
 		fmt.Println("coop " + resolveVersion())
 		return 0
 	}
@@ -78,6 +82,9 @@ func Main(argv []string) int {
 	}
 
 	cfg := config.Load()
+	for _, w := range cfg.Warnings { // non-fatal config problems (e.g. an unrecognized COOP_EGRESS)
+		ui.Info("warning: %s", w)
+	}
 	rt, err := runtime.Detect(cfg.RuntimeName)
 	if err != nil {
 		ui.Error("%v", err)
@@ -176,6 +183,14 @@ func helpForCommand(cmd string) int {
 		return code
 	case cmd == "run":
 		printCommandHelp(runHelp)
+		return 0
+	case cmd == "help":
+		// `coop help help` — help IS the top-level reference, so print it (not a broken pointer
+		// to `coop help --help`, which these have no underlying CLI for).
+		printHelp(config.Load())
+		return 0
+	case cmd == "version":
+		fmt.Println("coop version — print coop's version.")
 		return 0
 	case commandHelp[cmd] != "":
 		printCommandHelp(commandHelp[cmd])
