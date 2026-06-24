@@ -400,6 +400,28 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 	}
 }
 
+func TestValidProfileName(t *testing.T) {
+	for _, ok := range []string{"default", "work", "personal_backup", "p1", "acc.2"} {
+		if !validProfileName(ok) {
+			t.Errorf("%q should be a valid profile name", ok)
+		}
+	}
+	for _, bad := range []string{"", ".", "..", "../../x", "a/b", `a\b`, "-x"} {
+		if validProfileName(bad) {
+			t.Errorf("%q should be rejected (traversal/collision/flag-like)", bad)
+		}
+	}
+}
+
+func TestLoginRejectsBadProfileName(t *testing.T) {
+	// A traversal name must be rejected before any vault/dir work — and before the tty check, so it
+	// fails the same way piped or at a terminal.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "invalid profile name") {
+		t.Errorf("loginTo bad profile = (%d, %v), want (2, invalid profile name)", code, err)
+	}
+}
+
 // TestStrictFlagParsing: value-bearing coop flags reject a missing value or a stray arg up
 // front (exit 2) instead of silently falling back to a default or ignoring the typo. These all
 // return before any runtime/scaffold work, so a bare app suffices.

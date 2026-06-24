@@ -237,6 +237,17 @@ func extractRunProfile(args []string) (profile string, rest []string, err error)
 	return profile, rest, nil
 }
 
+// validProfileName keeps a credential profile name to a single safe path segment, so a name passed
+// to --profile can't traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
+// '.', empty, or leading '-'). Login is the path that CREATES the dir from the name, so it's the
+// gate; runs/select/rm/default already require an existing profile.
+func validProfileName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "-") {
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\")
+}
+
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
 // config dir for the chosen profile. Shared by `coop login [agent] [--profile p]` and
 // `coop <agent> login [--profile p]`.
@@ -245,13 +256,18 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if !ok {
 		return 2, unknownErr("agent", tool, agents.Names())
 	}
+	if profile == "" {
+		profile = config.DefaultProfile
+	}
+	// Validate the profile name (a static arg) before the environment checks below, so a traversal
+	// name like "../../x" can't escape the vault and fails the same way piped or at a tty.
+	if !validProfileName(profile) {
+		return 2, fmt.Errorf("invalid profile name %q — use a single segment (no '/', '..', or leading '-')", profile)
+	}
 	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
 	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
 	if !ui.IsTerminal(os.Stdin) {
 		return 2, errors.New("login needs an interactive terminal (it prompts for a paste code) — run it directly")
-	}
-	if profile == "" {
-		profile = config.DefaultProfile
 	}
 	// A named profile needs the profiles/ layout; EnsureProfilesDir also migrates a
 	// pre-existing flat login into profiles/default the first time, so it isn't orphaned.
