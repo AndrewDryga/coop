@@ -229,13 +229,14 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 	return actRetry, 0, time.Time{}
 }
 
-// progressStall tracks whether the loop is still completing tasks. Given the queue's Done
-// count after a work iteration, the running baseline, and the stall counter, it resets the
-// counter when Done advanced (a task finished) and bumps it otherwise; it reports stop once
-// maxStalls iterations pass with nothing completed — the signal that the active task (often a
-// continued [w]) can't be finished and the loop should give up rather than spin on it.
+// progressStall tracks whether the loop is still completing tasks. Given the queue's Done count
+// after a work iteration, the running baseline, and the stall counter, it resets the counter when
+// Done CHANGES (a task finished, or an audit reopened one / a torn read undercounted — either way the
+// queue moved) and bumps it only when Done is unchanged; it reports stop once maxStalls iterations
+// pass with no movement — the signal that the active task (often a continued [w]) can't be finished.
+// Keying on "changed" (not "advanced") means a Done dip-then-recover isn't a false stall.
 func progressStall(done, baseline, stalls int) (newBaseline, newStalls int, stop bool) {
-	if done > baseline {
+	if done != baseline {
 		return done, 0, false
 	}
 	return baseline, stalls + 1, stalls+1 >= maxStalls

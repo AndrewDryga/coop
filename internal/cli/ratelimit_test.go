@@ -189,6 +189,11 @@ func TestProgressStall(t *testing.T) {
 	if _, s, stop := progressStall(5, 2, maxStalls-1); s != 0 || stop {
 		t.Errorf("recovery: got stalls=%d stop=%v, want 0/false", s, stop)
 	}
+	// A Done DECREASE (an audit reopened an [x], or a torn read) is movement, not a stall — it
+	// re-baselines and resets, so it can't falsely trip the cap on the next iteration.
+	if b, s, stop := progressStall(3, 5, maxStalls-1); b != 3 || s != 0 || stop {
+		t.Errorf("decrease: got (%d,%d,%v), want (3,0,false)", b, s, stop)
+	}
 }
 
 func TestTailWriter(t *testing.T) {
