@@ -161,6 +161,9 @@ func TestExtractConsult(t *testing.T) {
 		{[]string{"--consult"}, true, nil},
 		{[]string{"--consult", "-p", "hi"}, true, []string{"-p", "hi"}},
 		{[]string{"-p", "hi", "--consult"}, true, []string{"-p", "hi"}},
+		// After --, a --consult is the agent's own arg, not coop's — passed through verbatim.
+		{[]string{"--", "--consult"}, false, []string{"--", "--consult"}},
+		{[]string{"--consult", "--", "--consult"}, true, []string{"--", "--consult"}},
 	}
 	for _, c := range cases {
 		got, rest := extractConsult(c.args)
@@ -364,6 +367,11 @@ func TestExtractSupervise(t *testing.T) {
 	got, rest = extractSupervise([]string{"fusion", "claude"})
 	if got || len(rest) != 2 {
 		t.Fatalf("without flag: supervise=%v rest=%v", got, rest)
+	}
+	// After --, a --supervise is the inner agent's own arg — not consumed by coop.
+	got, rest = extractSupervise([]string{"claude", "--", "--supervise"})
+	if got || !slices.Equal(rest, []string{"claude", "--", "--supervise"}) {
+		t.Fatalf("after --: supervise=%v rest=%v, want false + verbatim", got, rest)
 	}
 }
 

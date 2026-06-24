@@ -136,7 +136,10 @@ func (a *app) selectRunProfile(tool, profile string) error {
 // opts a normal run into the second-opinion directive — letting the agent consult
 // its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
 func extractConsult(args []string) (consult bool, rest []string) {
-	for _, a := range args {
+	for i, a := range args {
+		if a == "--" { // everything after -- is the agent's own args, verbatim
+			return consult, append(rest, args[i:]...)
+		}
 		if a == "--consult" {
 			consult = true
 			continue
@@ -376,7 +379,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 }
 
 func extractSupervise(args []string) (supervise bool, rest []string) {
-	for _, a := range args {
+	for i, a := range args {
+		if a == "--" { // everything after -- is the inner agent's own args, verbatim
+			return supervise, append(rest, args[i:]...)
+		}
 		if a == "--supervise" {
 			supervise = true
 			continue
