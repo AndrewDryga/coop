@@ -95,6 +95,9 @@ func TestCmdPoolDenials(t *testing.T) {
 		{"unknown verb", []string{"frobnicate"}},
 		{"add missing profiles", []string{"add", "claude"}},
 		{"clear missing agent", []string{"clear"}},
+		{"flag-like profile", []string{"add", "claude", "--x"}},  // a mistyped flag, not a profile
+		{"traversal profile", []string{"add", "claude", "../e"}}, // must not store a path
+		{"rm flag-like profile", []string{"rm", "claude", "-foo"}},
 	} {
 		if code, err := a.cmdPool(tc.args); code != 2 || err == nil {
 			t.Errorf("%s: code=%d err=%v, want code 2 + error", tc.name, code, err)

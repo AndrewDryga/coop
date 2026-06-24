@@ -122,6 +122,11 @@ func (a *app) cmdPool(args []string) (int, error) {
 		if _, ok := agents.Get(agent); !ok {
 			return 2, unknownErr("agent", agent, agents.Names())
 		}
+		for _, p := range profiles { // a mistyped flag mustn't be stored as a profile named "--x"
+			if !validProfileName(p) {
+				return 2, fmt.Errorf("invalid profile name %q — a profile is a single name (no '/', '..', or leading '-')", p)
+			}
+		}
 		if verb == "add" {
 			for _, p := range profiles { // a pool member you haven't signed into yet won't rotate
 				if !box.ProfileAuthed(a.cfg, agent, p) {
