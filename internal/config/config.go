@@ -47,7 +47,7 @@ type Config struct {
 	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
 	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off
 	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
-	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline)
+	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline); an unrecognized value fails CLOSED to "none"
 
 	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (default 1800, owned by the wrapper)
@@ -57,6 +57,10 @@ type Config struct {
 
 	// BoxHome is ~/.config/coop: the home for conf, mcp.json, and agents/.
 	BoxHome string
+
+	// Warnings are non-fatal config problems found during Load (e.g. an unrecognized COOP_EGRESS
+	// that failed closed); the CLI entry point surfaces them once per invocation.
+	Warnings []string
 
 	conf map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
 
@@ -154,7 +158,25 @@ func Load() *Config {
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
 	c.defaultProfiles = loadConfFile(c.DefaultsFile())
+
+	// COOP_EGRESS is a security toggle — fail CLOSED on an unrecognized value so a typo ("None",
+	// "off") can't silently grant full outbound. Only the exact "open"/"none" are honored.
+	if eg, ok := normalizeEgress(c.Egress); !ok {
+		c.Warnings = append(c.Warnings, "COOP_EGRESS=\""+c.Egress+"\" is not recognized (use open|none) — failing closed to none (offline)")
+		c.Egress = eg
+	}
 	return c
+}
+
+// normalizeEgress fails closed: anything other than "open"/"none" becomes "none" (offline), so a
+// typo'd COOP_EGRESS never silently grants full outbound. ok reports whether v was recognized.
+func normalizeEgress(v string) (egress string, ok bool) {
+	switch v {
+	case "open", "none":
+		return v, true
+	default:
+		return "none", false
+	}
 }
 
 // EnvFile is the optional file of KEY=VALUE pairs passed into every box.

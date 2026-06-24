@@ -301,3 +301,35 @@ func TestTasksFiles(t *testing.T) {
 		t.Errorf("COOP_TASKS list = %v", got)
 	}
 }
+
+func TestNormalizeEgress(t *testing.T) {
+	for _, tc := range []struct {
+		in     string
+		want   string
+		wantOk bool
+	}{
+		{"open", "open", true},
+		{"none", "none", true},
+		{"None", "none", false}, // a case typo of the security toggle must fail CLOSED
+		{"off", "none", false},
+		{"disabled", "none", false},
+		{"", "none", false},
+	} {
+		if got, ok := normalizeEgress(tc.in); got != tc.want || ok != tc.wantOk {
+			t.Errorf("normalizeEgress(%q) = (%q,%v), want (%q,%v)", tc.in, got, ok, tc.want, tc.wantOk)
+		}
+	}
+}
+
+func TestLoadEgressFailsClosed(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("COOP_EGRESS", "None") // a typo of "none"
+	if c := Load(); c.Egress != "none" || len(c.Warnings) == 0 {
+		t.Errorf("typo'd COOP_EGRESS: Egress=%q warnings=%v, want none (fail closed) + a warning", c.Egress, c.Warnings)
+	}
+	t.Setenv("COOP_EGRESS", "open")
+	if c := Load(); c.Egress != "open" || len(c.Warnings) != 0 {
+		t.Errorf("open: Egress=%q warnings=%v, want open + no warnings", c.Egress, c.Warnings)
+	}
+}

@@ -78,6 +78,9 @@ func Main(argv []string) int {
 	}
 
 	cfg := config.Load()
+	for _, w := range cfg.Warnings { // non-fatal config problems (e.g. an unrecognized COOP_EGRESS)
+		ui.Info("warning: %s", w)
+	}
 	rt, err := runtime.Detect(cfg.RuntimeName)
 	if err != nil {
 		ui.Error("%v", err)
