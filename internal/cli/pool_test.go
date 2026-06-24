@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +47,31 @@ func TestPoolHelpers(t *testing.T) {
 	}
 	if got := removeProfiles([]string{"a", "b", "c"}, []string{"b"}); !slices.Equal(got, []string{"a", "c"}) {
 		t.Errorf("removeProfiles = %v", got)
+	}
+}
+
+func TestModifyPoolRegistryConcurrent(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	repo := "/abs/repo"
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			p := fmt.Sprintf("p%d", i)
+			_ = modifyPoolRegistry(cfg, func(reg poolRegistry) {
+				assignPool(reg, repo, "claude", addProfiles(reg[repo]["claude"], []string{p}))
+			})
+		}(i)
+	}
+	wg.Wait()
+	got, err := repoPool(cfg, repo, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Errorf("after %d concurrent adds the pool has %d profiles, want %d (lost updates — the lock didn't serialize)", n, len(got), n)
 	}
 }
 

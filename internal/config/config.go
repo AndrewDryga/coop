@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // Config is the fully-resolved settings for one invocation. It is computed once
@@ -221,34 +222,76 @@ func (c *Config) DefaultProfileOf(agent string) string {
 	return DefaultProfile
 }
 
-// SetDefaultProfile marks name as agent's default profile, persisting it to DefaultsFile
-// (atomic temp+rename) and updating the in-memory view.
+// SetDefaultProfile marks name as agent's default profile, persisting it to DefaultsFile and
+// updating the in-memory view. The load→modify→write runs under WithLock so concurrent writers
+// (e.g. two `coop profiles default` for different agents) don't lose each other's edit.
 func (c *Config) SetDefaultProfile(agent, name string) error {
-	m := loadConfFile(c.DefaultsFile())
-	m[agent] = name
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k + "=" + m[k] + "\n")
-	}
 	if err := os.MkdirAll(c.ConfigDir, 0o700); err != nil {
 		return err
 	}
-	tmp := c.DefaultsFile() + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, c.DefaultsFile()); err != nil {
+	err := WithLock(c.DefaultsFile(), func() error {
+		m := loadConfFile(c.DefaultsFile())
+		m[agent] = name
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		for _, k := range keys {
+			b.WriteString(k + "=" + m[k] + "\n")
+		}
+		return WriteFileAtomic(c.DefaultsFile(), []byte(b.String()))
+	})
+	if err != nil {
 		return err
 	}
 	if c.defaultProfiles == nil {
 		c.defaultProfiles = map[string]string{}
 	}
 	c.defaultProfiles[agent] = name
+	return nil
+}
+
+// WithLock runs fn while holding an exclusive advisory lock (flock) on a sibling <path>.lock, so a
+// load→modify→write of path can't lose a concurrent process's update. Best-effort: if the lock file
+// or flock can't be obtained, fn still runs (these are convenience configs, not a critical section,
+// and blocking the command would be worse). Linux/darwin only — coop's only targets.
+func WithLock(path string, fn func() error) error {
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fn()
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX) != nil {
+		return fn()
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+// WriteFileAtomic writes data to path via a uniquely-named temp file in the same dir, then renames
+// it into place. The rename is atomic (no truncated file on a crash) and a UNIQUE temp name means
+// concurrent writers don't clobber a shared "<path>.tmp" mid-write.
+func WriteFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(name)
+		if werr != nil {
+			return werr
+		}
+		return cerr
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
 	return nil
 }
 
