@@ -11,6 +11,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+// A missing <name> (without --all) is a usage error (exit 2), reported before the dirty-tree /
+// non-interactive environment gates — so the user sees the real problem, not "uncommitted changes".
+func TestForkMergeRequiresName(t *testing.T) {
+	a := &app{cfg: &config.Config{}}
+	if code, err := a.forkMerge(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("forkMerge(nil) = (%d, %v), want (2, usage error)", code, err)
+	}
+	if code, err := a.forkMerge([]string{"--nope"}); code != 2 || err == nil {
+		t.Errorf("forkMerge(--nope) = (%d, %v), want (2, unknown-flag error)", code, err)
+	}
+}
+
 // trustedSignArgs must read signing config from your GLOBAL git config — so neither a fork nor the
 // agent-writable parent repo can point gpg.program at a planted binary — and track gpg.format to
 // the matching program key. (`git config --global` ignores -C, writing the GIT_CONFIG_GLOBAL file.)
