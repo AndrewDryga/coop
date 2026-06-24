@@ -319,14 +319,17 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 2, err
 	}
 	tool := agents.Default()
+	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
 	if len(args) > 0 {
 		tool = args[0]
+		consumed = 1
 	}
 	governor := ""
 	if tool == "fusion" {
 		governor = a.cfg.FusionGovernor
 		if len(args) > 1 {
 			governor = args[1]
+			consumed = 2
 		}
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
@@ -336,6 +339,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 	cmd, ok := acpCommand(tool)
 	if !ok {
 		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
+	}
+	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
+	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
+	if leftover := args[consumed:]; len(leftover) > 0 {
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile p])", leftover[0])
 	}
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err

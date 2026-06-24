@@ -337,6 +337,21 @@ func TestInitNextSteps(t *testing.T) {
 	}
 }
 
+// `coop acp` takes an agent (or fusion [governor]) and coop flags only — a leftover token must be a
+// usage error (exit 2), not silently ignored. Returns before any box/Docker work.
+func TestCmdACPRejectsExtraArgs(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	for _, args := range [][]string{
+		{"claude", "foo"},
+		{"claude", "--nope"},
+		{"fusion", "claude", "junk"},
+	} {
+		if code, err := a.cmdACP(args); code != 2 || err == nil {
+			t.Errorf("cmdACP(%v) = (%d, %v), want (2, usage error)", args, code, err)
+		}
+	}
+}
+
 func TestExtractSupervise(t *testing.T) {
 	got, rest := extractSupervise([]string{"claude", "--supervise"})
 	if !got || len(rest) != 1 || rest[0] != "claude" {
