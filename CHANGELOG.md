@@ -25,6 +25,28 @@
   touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
   earlier login layout, e.g. `coop profiles rm claude default`.
 
+- **Security hardening (from an end-to-end audit).** Secret shadowing now covers `*.yaml`/`*.yml`
+  credential files and matches filenames case-insensitively, so `config/credentials.yaml`, `.ENV`, and
+  `ID_RSA` no longer slip into the box (notably on case-insensitive filesystems). `COOP_EGRESS` fails
+  closed — an unrecognized value (a typo like `None`) is treated as offline instead of silently
+  granting full network. `coop login --profile` rejects a traversal/collision name, so credentials
+  can't be written outside the agent vault. `coop check-secrets` also flags
+  `secret_key_base`/`master_key`/`encryption_key` and notes how many gitignored-but-box-visible files
+  the default scan skipped.
+- **Reliability fixes (audit).** A `- [ ]` inside a Markdown code fence in `.agent/TASKS.md` is no
+  longer counted as a task (it had made the loop never finish and leaked phantom slices). Concurrent
+  `coop pool add` / `coop profiles default` no longer lose updates (writes are locked + atomic).
+  Regenerating a Codex MCP config no longer drops a user's own `[mcp_servers_backup]`-style tables, and
+  numeric MCP env values render as plain digits. `coop fork --profile <typo>` fails before cloning (no
+  stray fork), and a fork can't be named `acp`. Fusion's governor is told to consult only
+  authenticated peers.
+- **CLI consistency (audit).** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
+  malformed arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
+  error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
+  honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet;
+  `coop profiles` flags a dangling default; and `coop tasks lint` no longer false-flags Markdown link
+  lists.
+
 - **`coop update` now refreshes agent CLI packages from npm's stable `latest` tags.** The shared
   box's built-in npm specs are `@anthropic-ai/claude-code@latest`, `@openai/codex@latest`,
   `@google/gemini-cli@latest`, `@agentclientprotocol/claude-agent-acp@latest`, and
