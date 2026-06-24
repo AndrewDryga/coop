@@ -143,6 +143,23 @@ func TestTasksLintClean(t *testing.T) {
 	}
 }
 
+// A Markdown link list item ("- [text](url)") must not be flagged as a malformed task marker —
+// its "]" is followed by "(", not a space, so it isn't a task shape.
+func TestTasksLintIgnoresLinkLists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "TASKS.md")
+	q := "## Active\n\n- [ ] real task\n" +
+		"  - **Context:** see the links below.\n  - **Likely files:** x.go\n" +
+		"  - **Implementation direction:** boring.\n  - **Acceptance checks:** gate green.\n\n" +
+		"## Notes\n\n- [see the docs](https://example.com/docs)\n- [the spec](https://example.com/spec)\n"
+	if err := os.WriteFile(path, []byte(q), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksLint(path); err != nil || code != 0 {
+		t.Errorf("lint with link lists = (%d, %v), want (0, nil) — links aren't malformed markers", code, err)
+	}
+}
+
 func TestTasksAdd(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "TASKS.md")

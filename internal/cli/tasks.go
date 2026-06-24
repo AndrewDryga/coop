@@ -246,9 +246,11 @@ func tasksList(path string) (int, error) {
 // requiredSections is the self-contained shape the contract requires of every task.
 var requiredSections = []string{"Context", "Likely files", "Implementation direction", "Acceptance"}
 
-// malformedMarkerRe matches a top-level list item that looks like a task but whose marker
-// is not a real state — caught when taskLineRe (the valid form) does not also match.
-var malformedMarkerRe = regexp.MustCompile(`^- \[[^\]]*\]`)
+// malformedMarkerRe matches a top-level list item that looks like a task but whose marker is not a
+// real state — caught when taskLineRe (the valid form) does not also match. The "]" must be followed
+// by a space or end of line, so a Markdown link list item ("- [text](url)", where "]" is followed by
+// "(") isn't mistaken for a malformed task.
+var malformedMarkerRe = regexp.MustCompile(`^- \[[^\]]*\](?: |$)`)
 
 func tasksLint(path string) (int, error) {
 	content := readFileString(path)
