@@ -44,7 +44,23 @@ func parseTasks(content string) []task {
 		tasks = append(tasks, *cur)
 		cur = nil
 	}
+	inFence := false
 	for i, line := range strings.Split(content, "\n") {
+		// Inside a fenced code block, nothing is a task or heading — a documented "- [ ]" or "#"
+		// there is just text; keep it as the current task's body so a slice stays whole.
+		if fenceMarker(line) {
+			inFence = !inFence
+			if cur != nil {
+				cur.Lines = append(cur.Lines, line)
+			}
+			continue
+		}
+		if inFence {
+			if cur != nil {
+				cur.Lines = append(cur.Lines, line)
+			}
+			continue
+		}
 		if m := taskLineRe.FindStringSubmatch(line); m != nil {
 			flush()
 			cur = &task{State: m[1], Title: strings.TrimSpace(line[len(m[0]):]), Section: section, Lines: []string{line}, LineNo: i + 1}
@@ -242,8 +258,13 @@ func tasksLint(path string) (int, error) {
 	var findings []string
 	add := func(line int, msg string) { findings = append(findings, fmt.Sprintf("  TASKS.md:%d: %s", line, msg)) }
 
+	inFence := false
 	for i, line := range strings.Split(content, "\n") {
-		if malformedMarkerRe.MatchString(line) && !taskLineRe.MatchString(line) {
+		if fenceMarker(line) {
+			inFence = !inFence
+			continue
+		}
+		if !inFence && malformedMarkerRe.MatchString(line) && !taskLineRe.MatchString(line) {
 			add(i+1, "malformed task marker (use [ ] [w] [x] [B], or [E] for the example)")
 		}
 	}

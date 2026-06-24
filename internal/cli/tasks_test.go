@@ -60,6 +60,27 @@ func TestParseTasksBlocksAndSections(t *testing.T) {
 	}
 }
 
+// A "- [ ]" inside a fenced code block (column 0) is documentation, not a task: parseTasks must
+// not start a new task on it, so split/list/lint don't leak a phantom.
+func TestParseTasksIgnoresFencedTaskLines(t *testing.T) {
+	content := "## Active\n\n- [ ] real task\n  - **Context:** see the example below\n\n" +
+		"```\n- [ ] phantom inside a fence\n- [x] also fenced\n```\n\n" +
+		"- [x] done task\n"
+	tasks := parseTasks(content)
+	todo, done := 0, 0
+	for _, tk := range tasks {
+		switch tk.State {
+		case " ":
+			todo++
+		case "x":
+			done++
+		}
+	}
+	if len(tasks) != 2 || todo != 1 || done != 1 {
+		t.Errorf("parseTasks found %d tasks (todo=%d done=%d), want 2 (todo 1, done 1) — the fenced lines aren't tasks", len(tasks), todo, done)
+	}
+}
+
 // A non-positive bucket count must not panic (make([],n<0) / the i%n divide-by-zero) — return nil.
 func TestSplitOpenTaskBlocksNonPositive(t *testing.T) {
 	for _, n := range []int{0, -1} {
