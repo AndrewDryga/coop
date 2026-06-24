@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,6 +234,39 @@ func TestFleetSplit(t *testing.T) {
 	parsed, err := parseFleet(string(fleet))
 	if err != nil || len(parsed) != 2 {
 		t.Errorf("written .agent/fleet does not parse back: %v (%d entries)", err, len(parsed))
+	}
+}
+
+// `coop fleet down` stops listed forks but must surface (not silently leave) a running fork that
+// isn't in .agent/fleet — one removed from the file, or started by hand.
+func TestFleetDownWarnsRunningOrphan(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude .agent/T.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A running fork "b" that isn't in the fleet (its workspace exists + a live pidfile).
+	if err := os.MkdirAll(forkWorkspace(repo, "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkPid(repo, "b", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	_, _ = a.fleetDown(nil)
+	_ = w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	if !strings.Contains(string(out), "b") || !strings.Contains(string(out), "not in .agent/fleet") {
+		t.Errorf("expected a warning about running orphan b:\n%s", out)
 	}
 }
 

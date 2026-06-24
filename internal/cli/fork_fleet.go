@@ -227,8 +227,10 @@ func (a *app) fleetDown(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	names := make([]string, len(fleet))
 	stopped := 0
-	for _, e := range fleet {
+	for i, e := range fleet {
+		names[i] = e.name
 		if forkRunningPid(repo, e.name) != 0 {
 			if _, err := a.forkStop([]string{e.name}); err == nil {
 				stopped++
@@ -236,6 +238,13 @@ func (a *app) fleetDown(args []string) (int, error) {
 		}
 	}
 	ui.Info("fleet down: stopped %d", stopped)
+	// `down` only stops forks listed in .agent/fleet — surface a running fork that isn't (removed
+	// from the file, or started by hand) rather than leave it silently running.
+	for _, n := range fleetOrphans(names, forkNames(repo)) {
+		if forkRunningPid(repo, n) != 0 {
+			ui.Info("note: fork %s is running but not in .agent/fleet — stop it with: coop fork stop %s", n, n)
+		}
+	}
 	if prune {
 		if err := a.pruneFleet(repo, force); err != nil {
 			return -1, err
