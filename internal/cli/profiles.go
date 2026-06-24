@@ -56,6 +56,11 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			// Pad the plain name (rune-aware), then style the status — never color inside the width.
 			fmt.Printf("  %s  %s%s\n", padRight(p, width), status, tag)
 		}
+		// Surface a dangling default: the marked (or built-in) default points at a profile that
+		// doesn't exist, so an interactive run would land on nothing. Don't leave it silent.
+		if !slices.Contains(profiles, def) {
+			fmt.Printf("  %s\n", ui.Dim(fmt.Sprintf("default → %s (missing — set one: coop profiles default %s <name>)", def, agent)))
+		}
 	}
 	return 0, nil
 }

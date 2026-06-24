@@ -43,6 +43,28 @@ func TestCmdProfiles(t *testing.T) {
 	}
 }
 
+// When the marked default points at a profile that no longer exists, the listing must surface it
+// (otherwise an interactive run silently lands on nothing).
+func TestCmdProfilesDanglingDefault(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetDefaultProfile("claude", "ghost"); err != nil { // ghost was never created / was removed
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	(&app{cfg: cfg}).cmdProfiles([]string{"claude"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if !strings.Contains(string(out), "missing") || !strings.Contains(string(out), "ghost") {
+		t.Errorf("expected a dangling-default note naming ghost:\n%s", out)
+	}
+}
+
 func TestCmdProfilesUnknownAgent(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	if code, err := a.cmdProfiles([]string{"nope"}); code != 2 || err == nil {
