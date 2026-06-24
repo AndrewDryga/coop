@@ -82,6 +82,10 @@ func TestLoopAgent(t *testing.T) {
 	if _, err := loopAgent([]string{"bogus"}); err == nil {
 		t.Error("loopAgent(bogus): want error")
 	}
+	// More than one agent is a usage error, not silently last-wins.
+	if _, err := loopAgent([]string{"claude", "codex"}); err == nil {
+		t.Error("loopAgent(claude codex): want error for more than one agent")
+	}
 }
 
 func TestParseLoopArgs(t *testing.T) {

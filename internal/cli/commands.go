@@ -840,12 +840,15 @@ func promptGateLangs(in io.Reader) []string {
 // loopAgent picks the model for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
 func loopAgent(args []string) (string, error) {
-	agent := agents.Default()
+	agent, set := agents.Default(), false
 	for _, x := range args {
 		if !agents.Valid(x) {
 			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s])", x, strings.Join(agents.Names(), "|"))
 		}
-		agent = x
+		if set {
+			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
+		}
+		agent, set = x, true
 	}
 	return agent, nil
 }
