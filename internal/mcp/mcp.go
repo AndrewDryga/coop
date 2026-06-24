@@ -104,6 +104,9 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 
 // keepNonMCP returns the user's config.toml with its [mcp_servers.*] tables
 // removed (and trailing blank lines trimmed), or "" if there is no such file.
+// Only real MCP tables are stripped — [mcp_servers.<name>...] and a bare [mcp_servers] —
+// NOT a lookalike like [mcp_servers_backup] or [mcp_serverssettings], which a too-broad
+// prefix used to silently drop from the box's config.
 func keepNonMCP(path string) string {
 	if path == "" {
 		return ""
@@ -116,7 +119,7 @@ func keepNonMCP(path string) string {
 	skip := false
 	for _, line := range strings.Split(string(data), "\n") {
 		if s := strings.TrimSpace(line); strings.HasPrefix(s, "[") {
-			skip = strings.HasPrefix(s, "[mcp_servers")
+			skip = strings.HasPrefix(s, "[mcp_servers.") || strings.HasPrefix(s, "[mcp_servers]")
 		}
 		if !skip {
 			kept = append(kept, strings.TrimRight(line, "\r"))
