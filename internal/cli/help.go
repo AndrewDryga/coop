@@ -174,10 +174,13 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini]
+  Usage: coop fusion [claude|codex|gemini] [args...]
 
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
-  writes. Lighter, opt-in variant: coop <agent> --consult`,
+  writes. Lighter, opt-in variant: coop <agent> --consult
+
+  Like coop <agent>, it forwards extra args to the governor — a leading agent name
+  picks the governor; anything else (e.g. --model opus, or after a --) passes through.`,
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
 
