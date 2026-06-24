@@ -195,8 +195,10 @@ const (
 )
 
 const (
-	// maxLoopFailures is how many consecutive non-rate-limit iteration failures
-	// the loop tolerates before giving up (e.g. a wedged image or broken repo).
+	// maxLoopFailures is how many non-rate-limit iteration failures the loop tolerates before
+	// giving up (e.g. a wedged image or broken repo). Counted since the last successful iteration;
+	// a rate-limit wait in between doesn't reset it (the build is still failing), so the failures
+	// aren't necessarily back-to-back.
 	maxLoopFailures = 5
 	// maxLimitWaits is how many consecutive rate-limit pauses to ride out before
 	// giving up — a backstop against a misfiring detector or a suspended account,

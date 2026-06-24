@@ -1057,7 +1057,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 			if waits > maxLimitWaits {
 				return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
 			}
-			return code, fmt.Errorf("iteration failed %d times in a row — stopping", fails)
+			return code, fmt.Errorf("iteration failed %d times since the last success — stopping", fails)
 		}
 	}
 	if len(custom) == 0 {
