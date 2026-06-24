@@ -58,6 +58,10 @@ func Main(argv []string) int {
 		printHelp(config.Load())
 		return 0
 	case "version", "-v", "--version":
+		if err := rejectArgs("version", argv[1:]); err != nil { // reject extras like every no-arg command
+			ui.Error("%v", err)
+			return 2
+		}
 		fmt.Println("coop " + resolveVersion())
 		return 0
 	}

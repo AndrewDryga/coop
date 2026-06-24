@@ -90,6 +90,24 @@ func TestMainHelpSubcommand(t *testing.T) {
 	}
 }
 
+// `coop version` takes no arguments — extras are a usage error (exit 2), like every other no-arg
+// command, not silently ignored.
+func TestVersionRejectsExtraArgs(t *testing.T) {
+	oo, oe := os.Stdout, os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stdout, os.Stderr = w, w
+	codeExtra := Main([]string{"version", "foo"})
+	codeOK := Main([]string{"version"})
+	_ = w.Close()
+	os.Stdout, os.Stderr = oo, oe
+	if codeExtra != 2 {
+		t.Errorf("Main(version foo) = %d, want 2 (usage error)", codeExtra)
+	}
+	if codeOK != 0 {
+		t.Errorf("Main(version) = %d, want 0", codeOK)
+	}
+}
+
 // `coop help help` / `coop help version` must not print a broken "forwards --help — run 'coop help
 // --help'" pointer (neither has an underlying CLI, and `coop help --help` errors). help prints the
 // top-level reference; version a synopsis.
