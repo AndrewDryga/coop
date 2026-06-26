@@ -23,6 +23,19 @@ func helpRequested(args []string) bool {
 
 func printHelp(cfg *config.Config) { fmt.Print(helpText(cfg)) }
 
+// groupHelp prints a command group's focused help (its commandHelp entry) and returns exit
+// 0 — the response to a bare `coop <group>` with no subcommand. A group must never answer a
+// missing subcommand with an `unknown <group> command ""` error; that path is for a *mistyped*
+// subcommand. See .agent/rules/bare-subcommand-shows-help.md.
+func groupHelp(cmd string) (int, error) {
+	if h, ok := commandHelp[cmd]; ok {
+		printCommandHelp(h)
+		return 0, nil
+	}
+	printHelp(config.Load())
+	return 0, nil
+}
+
 // helpText renders the top-level command reference: one command per line, grouped, with a
 // pointer to per-command help. Flags, sub-verbs, and examples live in `coop <cmd> --help`
 // and the README, so this stays a clean, scannable overview.

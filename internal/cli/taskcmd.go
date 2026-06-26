@@ -26,7 +26,9 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		args = rest[1:]
 	}
 	switch sub {
-	case "", "list", "ls":
+	case "":
+		return groupHelp("tasks") // bare `coop tasks` shows help, not an error (see rule)
+	case "list", "ls":
 		return tasksFolderList(root)
 	case "lint":
 		return tasksFolderLint(root)

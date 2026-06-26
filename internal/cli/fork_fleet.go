@@ -96,6 +96,8 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		sub = args[0]
 	}
 	switch sub {
+	case "":
+		return groupHelp("fleet") // bare `coop fleet` shows help, not an error (see rule)
 	case "init":
 		return a.fleetInit()
 	case "up":
