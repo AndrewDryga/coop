@@ -19,10 +19,11 @@ import (
 // (absolute path to .agent/tasks). No sub-command lists the tree.
 func cmdTasksFolder(root string, rest []string) (int, error) {
 	sub := ""
+	var args []string
 	if len(rest) > 0 {
 		sub = rest[0]
+		args = rest[1:]
 	}
-	args := rest[1:]
 	switch sub {
 	case "", "list", "ls":
 		return tasksFolderList(root)
@@ -95,7 +96,12 @@ func slugify(s string) string {
 		}
 	}
 	slug := strings.Trim(b.String(), "-")
-	return truncate(slug, 48)
+	// Hard-cap the length for a sane folder name — a plain rune cut, NOT truncate (whose
+	// "…" ellipsis has no place in a path); re-trim any dash left dangling at the cut.
+	if r := []rune(slug); len(r) > 48 {
+		slug = strings.Trim(string(r[:48]), "-")
+	}
+	return slug
 }
 
 func tasksFolderAdd(root string, args []string) (int, error) {

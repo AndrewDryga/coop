@@ -17,6 +17,21 @@ func TestSlugify(t *testing.T) {
 			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
 		}
 	}
+	// A long title is hard-capped to a clean ASCII slug — no "…" ellipsis in a path,
+	// no dangling dash, ≤ 48 runes.
+	long := slugify("Folder-mode fleet split: distribute task folders across forks and worktrees")
+	if n := len([]rune(long)); n > 48 {
+		t.Errorf("long slug %q is %d runes, want ≤ 48", long, n)
+	}
+	if strings.ContainsRune(long, '…') {
+		t.Errorf("long slug must not contain an ellipsis: %q", long)
+	}
+	if strings.HasPrefix(long, "-") || strings.HasSuffix(long, "-") {
+		t.Errorf("long slug has a dangling dash: %q", long)
+	}
+	if !strings.HasPrefix(long, "folder-mode-fleet-split") {
+		t.Errorf("long slug lost its prefix: %q", long)
+	}
 }
 
 func TestFindTask(t *testing.T) {
@@ -99,6 +114,27 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if len(readTaskTree(root)) != 0 {
 		t.Fatal("after drop, tree not empty")
+	}
+}
+
+func TestCmdTasksFolderDispatch(t *testing.T) {
+	root := t.TempDir()
+	// no sub-command (empty rest) must not panic and should list cleanly
+	if code, err := cmdTasksFolder(root, nil); code != 0 || err != nil {
+		t.Fatalf("cmdTasksFolder(nil): code=%d err=%v", code, err)
+	}
+	if code, err := cmdTasksFolder(root, []string{}); code != 0 || err != nil {
+		t.Fatalf("cmdTasksFolder([]): code=%d err=%v", code, err)
+	}
+	// add then list through the dispatcher
+	if code, err := cmdTasksFolder(root, []string{"add", "Hello world"}); code != 0 || err != nil {
+		t.Fatalf("add via dispatch: code=%d err=%v", code, err)
+	}
+	if code, err := cmdTasksFolder(root, []string{"list"}); code != 0 || err != nil {
+		t.Fatalf("list via dispatch: code=%d err=%v", code, err)
+	}
+	if code, _ := cmdTasksFolder(root, []string{"bogus"}); code != 2 {
+		t.Errorf("unknown sub should return code 2, got %d", code)
 	}
 }
 
