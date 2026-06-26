@@ -49,8 +49,8 @@ func TestInit(t *testing.T) {
 
 	// Core files exist with content.
 	for _, rel := range []string{
-		"AGENTS.md", ".agent/TASKS.md", ".agent/LOG.md", ".agent/BACKLOG.md",
-		".agent/IDEAS.md", ".agent/PENDING_DECISIONS.md",
+		"AGENTS.md", ".agent/tasks/README.md", ".agent/LOG.md", ".agent/BACKLOG.md",
+		".agent/IDEAS.md",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
 		".githooks/pre-commit",
 	} {
@@ -61,6 +61,13 @@ func TestInit(t *testing.T) {
 		}
 		if fi.Size() == 0 {
 			t.Errorf("%s is empty", rel)
+		}
+	}
+
+	// The four task state directories exist (the folder-mode queue).
+	for _, st := range []string{"todo", "in_progress", "blocked", "done"} {
+		if fi, err := os.Stat(filepath.Join(repo, ".agent/tasks", st)); err != nil || !fi.IsDir() {
+			t.Errorf(".agent/tasks/%s should be a directory: %v", st, err)
 		}
 	}
 
@@ -180,8 +187,8 @@ func TestInitIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Edit a file, then re-init: it must be kept, not overwritten.
-	tasks := filepath.Join(repo, ".agent/TASKS.md")
-	os.WriteFile(tasks, []byte("MY EDITS"), 0o644)
+	readme := filepath.Join(repo, ".agent/tasks/README.md")
+	os.WriteFile(readme, []byte("MY EDITS"), 0o644)
 
 	// Capture the re-run's log. An unchanged symlink must read as "kept existing", not the action
 	// verb "linked" (which looks like a rewrite on every subsequent init); and a kept skill must
@@ -207,8 +214,8 @@ func TestInitIdempotent(t *testing.T) {
 		t.Errorf("re-run should render a kept skill with the same leading slash as the added branch:\n%s", out)
 	}
 
-	if b, _ := os.ReadFile(tasks); string(b) != "MY EDITS" {
-		t.Error("re-init clobbered an edited TASKS.md")
+	if b, _ := os.ReadFile(readme); string(b) != "MY EDITS" {
+		t.Error("re-init clobbered an edited .agent/tasks/README.md")
 	}
 	// .gitignore rule must not be duplicated.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))

@@ -1,5 +1,5 @@
 # .agent/IDEAS.md — product ideas: dump your current thinking, a sketch or a full spec
-# if you already have one. Never auto-implemented; a human moves one into .agent/TASKS.md.
+# if you already have one. Never auto-implemented; a human moves one into .agent/tasks/todo/.
 
 ## Example
 

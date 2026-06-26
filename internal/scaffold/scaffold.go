@@ -30,6 +30,10 @@ func Init(repo, stack string, gateLangs []string) error {
 	if err := mkdirs(
 		filepath.Join(repo, ".agent", "rules"),
 		filepath.Join(repo, ".agent", "skills"),
+		filepath.Join(repo, ".agent", "tasks", "todo"),
+		filepath.Join(repo, ".agent", "tasks", "in_progress"),
+		filepath.Join(repo, ".agent", "tasks", "blocked"),
+		filepath.Join(repo, ".agent", "tasks", "done"),
 		filepath.Join(repo, ".claude", "hooks"),
 		filepath.Join(repo, ".codex"),
 		filepath.Join(repo, ".gemini"),
@@ -42,10 +46,9 @@ func Init(repo, stack string, gateLangs []string) error {
 		perm      os.FileMode
 	}{
 		{filepath.Join(repo, "AGENTS.md"), "templates/AGENTS.md", 0o644},
-		{filepath.Join(repo, ".agent", "TASKS.md"), "templates/agent/TASKS.md", 0o644},
+		{filepath.Join(repo, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644},
 		{filepath.Join(repo, ".agent", "BACKLOG.md"), "templates/agent/BACKLOG.md", 0o644},
 		{filepath.Join(repo, ".agent", "LOG.md"), "templates/agent/LOG.md", 0o644},
-		{filepath.Join(repo, ".agent", "PENDING_DECISIONS.md"), "templates/agent/PENDING_DECISIONS.md", 0o644},
 		{filepath.Join(repo, ".agent", "IDEAS.md"), "templates/agent/IDEAS.md", 0o644},
 		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
 		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
