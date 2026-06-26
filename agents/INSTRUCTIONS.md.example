@@ -14,6 +14,17 @@
 - Verify before claiming done: run the build and tests, don't assume.
 - Match the surrounding code's style; don't reformat unrelated lines.
 - When you're unsure, ask rather than guess on anything destructive.
+- For non-trivial work, set the runtime's persistent goal/tracker if it exists
+  (`/goal` or equivalent). If it does not, keep the goal durable in the repo's
+  task/log files. Do not invent commands your runtime does not have.
+- Batch independent read-only work (`/batch`, parallel tool calls, or backgrounded
+  shell reads): searches, file reads, logs, docs, and status checks. Keep dependent
+  or mutating steps sequential unless the runtime gives each worker its own
+  isolated checkout.
+- Use native subagents/Task workers for research, code surveys, second opinions,
+  review, and diagnosis. Treat them as read-only advisors unless the runtime
+  explicitly gives them separate workspaces. The lead agent decides, edits,
+  verifies, and owns the final answer.
 
 ## Your sandbox
 - You run inside a coop container — that container is your sandbox and security

@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
+  and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
+  its runtime has one, batch independent read-only work, and use native subagents or task workers for
+  research and second opinions while keeping writes serialized in the current checkout. The wording is
+  capability-based so Claude, Codex, and Gemini use their native equivalents without inventing
+  unavailable slash commands or trying to run host-side Coop commands from inside the box.
+
 - **Per-fork credential profiles in `.agent/fleet`.** Add `profile=<name>` (or `profile=a,b`) to a
   fleet line — e.g. `api codex .agent/TASKS.api.md profile=work` — to put that fork's loop on specific
   account(s); several rotate on a rate limit. Give each fork a different account so a fleet runs in

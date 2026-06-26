@@ -93,11 +93,43 @@ func TestInit(t *testing.T) {
 		}
 	}
 
+	// The canonical cross-agent instructions teach professional use of native
+	// orchestration features without depending on one agent's exact command names.
+	agents, _ := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
+	for _, want := range []string{"/goal", "/batch", "subagents", "native", "do not invent slash commands", "Keep writes serialized"} {
+		if !strings.Contains(string(agents), want) {
+			t.Errorf("AGENTS.md missing agent-stack guidance %q:\n%s", want, agents)
+		}
+	}
+	for _, bad := range []string{"coop fork", "coop fleet", "coop-consult"} {
+		if strings.Contains(string(agents), bad) {
+			t.Errorf("AGENTS.md should not recommend host-side/non-native orchestration %q:\n%s", bad, agents)
+		}
+	}
+
 	// .gitignore carries the working-state rule (skills + rules tracked).
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	for _, want := range []string{".agent/*", "!.agent/rules/", "!.agent/skills/", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
+		}
+	}
+}
+
+func TestGlobalInstructionsExampleTeachesAgentStack(t *testing.T) {
+	path := filepath.Join("..", "..", "agents", "INSTRUCTIONS.md.example")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/goal", "/batch", "subagents", "native", "runtime does not have", "separate workspaces"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("global INSTRUCTIONS example missing agent-stack guidance %q:\n%s", want, data)
+		}
+	}
+	for _, bad := range []string{"coop fork", "coop fleet", "coop-consult", "separate fork"} {
+		if strings.Contains(string(data), bad) {
+			t.Errorf("global INSTRUCTIONS example should not recommend host-side/non-native orchestration %q:\n%s", bad, data)
 		}
 	}
 }
