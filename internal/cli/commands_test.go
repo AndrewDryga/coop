@@ -49,6 +49,44 @@ func TestLoopWorkPromptContinuation(t *testing.T) {
 	}
 }
 
+// TestLoopWorkPromptStateHandoff: the work prompt wires .agent/state.md into the loop's
+// cross-iteration handoff — read it first when resuming a [w], keep it current while working,
+// and finalize it as the last step (never blank it, so a review can reopen the task). The path
+// is absolute (gemini's read_file rejects a relative one, like the queue and AGENTS.md).
+func TestLoopWorkPromptStateHandoff(t *testing.T) {
+	work := loopWorkPrompt("/home/node/proj", []string{".agent/TASKS.md"})
+	if !strings.Contains(work, "/home/node/proj/.agent/state.md") {
+		t.Errorf("work prompt should name the absolute state.md path:\n%s", work)
+	}
+	for _, want := range []string{"resume note", "keep", "final step", "finished state"} {
+		if !strings.Contains(work, want) {
+			t.Errorf("work prompt missing state-handoff cue %q:\n%s", want, work)
+		}
+	}
+}
+
+// TestLoopPromptsFolderMode: when the queue is a .agent/tasks directory, the loop prompts
+// describe the folder workflow (coop tasks moves, per-task state.md/log.md) instead of the
+// legacy single-file [ ]/[w]/[x] flow.
+func TestLoopPromptsFolderMode(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks", "todo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work := loopWorkPrompt(repo, []string{".agent/tasks"})
+	for _, want := range []string{"coop tasks claim", "in_progress/", "state.md", "coop tasks done", "coop tasks block"} {
+		if !strings.Contains(work, want) {
+			t.Errorf("folder work prompt missing %q:\n%s", want, work)
+		}
+	}
+	if pre := loopPreflightPrompt(repo, []string{".agent/tasks"}); !strings.Contains(pre, "coop tasks unblock") {
+		t.Errorf("folder preflight prompt should mention unblock:\n%s", pre)
+	}
+	if aud := loopAuditPrompt(repo, []string{".agent/tasks"}); !strings.Contains(aud, "done/") {
+		t.Errorf("folder audit prompt should audit done/:\n%s", aud)
+	}
+}
+
 func TestLoopPreflightPrompt(t *testing.T) {
 	repo := "/home/node/proj"
 	p := loopPreflightPrompt(repo, []string{".agent/TASKS.md"})

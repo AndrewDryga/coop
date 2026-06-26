@@ -913,10 +913,17 @@ func parseLoopArgs(args []string, def bool) (agent string, debugOnFail, prefligh
 // for every agent. With several queues (a monorepo's per-component files) they're all listed so
 // the agent works the union.
 func loopWorkPrompt(repo string, queues []string) string {
-	return fmt.Sprintf("Read %s and %s, then work the queue per the protocol. First, if any task is [w], a previous attempt was interrupted before it committed — its partial work may be uncommitted in the working tree: run `git status` and `git diff`, then continue that task from there (or discard the partial work with `git restore`/`git checkout` and redo it if it is off-track) until it is done. Otherwise claim the next [ ] with [w]. Either way: do the work, run the gate, commit, log it, flip to [x]. Finish a [w] task before starting a new [ ]. Do not stop while a [ ] or [w] remains.", absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
+	if root, ok := loopTasksRoot(repo, queues); ok {
+		return loopWorkPromptFolder(repo, root)
+	}
+	state := filepath.Join(repo, ".agent", "state.md")
+	return fmt.Sprintf("Read %s and %s, then work the queue per the protocol. First, if any task is [w], a previous attempt was interrupted before it committed: read %s — the prior attempt's resume note (where it stopped, the next action, traps) — then run `git status` and `git diff` to see its uncommitted work, and continue that task from there (or discard the partial work with `git restore`/`git checkout` and redo it if it is off-track) until it is done. Otherwise claim the next [ ] with [w]. As you work, keep %s current — a small, overwritten snapshot of the status, what is done, the next action, and any traps; refresh it before each commit and before you pause, so an interrupted iteration (or a different agent on the next one) resumes from it instead of re-deriving the state from the diff. Do the work, run the gate, commit, log it, flip to [x]. Always update %s as your final step — even when the task is done, leave it reflecting the finished state (do not blank it); a review may reopen the task, and the note lets the next agent pick up the requested changes. Finish a [w] task before starting a new [ ]. Do not stop while a [ ] or [w] remains.", absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"), state, state, state)
 }
 
 func loopAuditPrompt(repo string, queues []string) string {
+	if root, ok := loopTasksRoot(repo, queues); ok {
+		return loopAuditPromptFolder(root)
+	}
 	return fmt.Sprintf("Audit: for every [x] in %s, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail — flip [x] back to [ ] and note what is missing. Do not fix anything yourself.", absJoin(repo, queues))
 }
 
@@ -925,11 +932,46 @@ func loopAuditPrompt(repo string, queues []string) string {
 // answered blockers, but works no task and changes no code (these files are git-ignored,
 // so nothing is committed).
 func loopPreflightPrompt(repo string, queues []string) string {
+	if root, ok := loopTasksRoot(repo, queues); ok {
+		return loopPreflightPromptFolder(repo, root)
+	}
 	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read these and tidy them: the task queue(s) %s, the contract %s, the log %s, and pending decisions %s. Then: (1) compact the log — condense bloated entries to short ones and trim or drop anything past the ~20 most recent; (2) remove outdated [x] tasks from the queue(s) — only ones already done AND committed (verify against the git log if unsure), never an unfinished [ ]; (3) for each [B] blocked task, if its decision in pending-decisions now has an answer, unblock it ([B] to [ ]) and delete the resolved entry. Leave every actionable [ ] task untouched; change no code and make no commits.",
 		absJoin(repo, queues),
 		filepath.Join(repo, "AGENTS.md"),
 		filepath.Join(repo, ".agent", "LOG.md"),
 		filepath.Join(repo, ".agent", "PENDING_DECISIONS.md"))
+}
+
+// loopTasksRoot reports the absolute .agent/tasks directory when the queue is a single
+// folder-mode tree, so the loop's prompts can describe the folder workflow; else ok=false
+// and the legacy single-file prompts are used.
+func loopTasksRoot(repo string, queues []string) (string, bool) {
+	if len(queues) == 1 {
+		if root := filepath.Join(repo, queues[0]); isTaskDir(root) {
+			return root, true
+		}
+	}
+	return "", false
+}
+
+// loopWorkPromptFolder is the folder-mode work prompt: a task is a folder whose state is its
+// directory, so transitions are `coop tasks` moves and the per-task state.md/log.md replace the
+// single repo-rooted files. It keeps the legacy prompt's resume/handoff discipline.
+func loopWorkPromptFolder(repo, root string) string {
+	return fmt.Sprintf("Read %s and %s, then work the queue per the protocol. A task is a folder under %s and its state is its directory. First, if a task is already in in_progress/, a previous attempt was interrupted before it committed: read that task's state.md (its resume note — where it stopped, the next action, traps), then run `git status` and `git diff` to see its uncommitted work, and continue it (or discard the partial work with `git restore`/`git checkout` and redo it if off-track) until done. Otherwise pick the next task in todo/ and claim it with `coop tasks claim <id>` (this moves it to in_progress/). As you work, keep that task's state.md current — a small, overwritten snapshot of the status, what is done, the next action, and any traps — refreshed before each commit and before you pause; append your reasoning to its log.md. Do the work, run the gate, commit (the folder move ships in that commit), then `coop tasks done <id>`. If you hit a one-way-door decision, run `coop tasks block <id>` and fill in its decision.md. Update state.md as your final step, leaving it reflecting the finished state (do not blank it). Finish the in_progress task before claiming a new one. Do not stop while todo/ or in_progress/ has a task.",
+		filepath.Join(repo, "AGENTS.md"), filepath.Join(root, "README.md"), root)
+}
+
+// loopAuditPromptFolder audits the done/ archive (folder-mode counterpart of loopAuditPrompt).
+func loopAuditPromptFolder(root string) string {
+	return fmt.Sprintf("Audit: for every task folder in %s/done/, verify its gate passes and a commit implementing it exists in the git log. Reopen any that fail with `coop tasks claim <id>` (moves it back to in_progress/) and note what is missing in its log.md. Do not fix anything yourself.", root)
+}
+
+// loopPreflightPromptFolder is the folder-mode pre-flight cleanup (no PENDING_DECISIONS or [x]
+// pruning — decisions are per-task and done work already lives in done/).
+func loopPreflightPromptFolder(repo, root string) string {
+	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and %s. Then: (1) compact the log %s — condense bloated entries and trim anything past the most recent; (2) for each task in %s/blocked/, if its decision.md now has a filled-in Resolution, unblock it with `coop tasks unblock <id>`. Leave every todo/ and in_progress/ task untouched; change no code and make no commits.",
+		filepath.Join(root, "README.md"), filepath.Join(repo, "AGENTS.md"), filepath.Join(repo, ".agent", "LOG.md"), root)
 }
 
 // absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
