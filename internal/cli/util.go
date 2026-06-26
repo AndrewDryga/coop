@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -23,104 +22,30 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-// isOpenTask reports whether a line is an unclaimed task: a list item beginning
-// "- [ ]". Anchoring to the line start keeps the "[ ]" in the legend/comment header,
-// in prose, or in an Example block from being read as work. The loop, fleet split,
-// and any other TASKS.md reader share this so they can't drift apart.
-func isOpenTask(line string) bool { return strings.HasPrefix(line, "- [ ]") }
-
 // fenceMarker reports whether a line opens or closes a Markdown fenced code block (``` or ~~~ —
-// three or more, ignoring leading whitespace and any info string). Every task scanner toggles on
-// it so a "- [ ]" documented INSIDE a fence isn't read as real work — otherwise it's a phantom
-// task: the loop never sees the queue empty, fleet/tasks split leak it, and the bar shows it.
+// three or more, ignoring leading whitespace and any info string). Task-body scanners toggle on
+// it so a "- [ ]" documented INSIDE a fence (e.g. an example in a task body) isn't read as a real
+// subtask.
 func fenceMarker(line string) bool {
 	t := strings.TrimLeft(line, " \t")
 	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
 }
 
-// queueHasTodo reports whether a queue still has an unclaimed task. In folder mode
-// (queue is a .agent/tasks directory) that's a non-empty todo/ state dir; for a legacy
-// TASKS.md file it's an anchored "- [ ]" outside a code fence.
+// queueHasTodo reports whether a queue (a .agent/tasks directory) still has an unclaimed task —
+// a non-empty todo/ state dir.
 func queueHasTodo(queue string) bool {
-	if isTaskDir(queue) {
-		c, _ := taskTreeCounts(readTaskTree(queue))
-		return c.Todo > 0
-	}
-	data, err := os.ReadFile(queue)
-	if err != nil {
-		return false
-	}
-	inFence := false
-	for _, line := range strings.Split(string(data), "\n") {
-		if fenceMarker(line) {
-			inFence = !inFence
-			continue
-		}
-		if !inFence && isOpenTask(line) {
-			return true
-		}
-	}
-	return false
+	c, _ := taskTreeCounts(readTaskTree(queue))
+	return c.Todo > 0
 }
 
-// taskLineRe matches an anchored task line and captures its state marker. It only matches
-// list items at the line start, so the legend, prose, and indented sub-bullets are never
-// read as tasks. [E] is the example marker — matched so a parser can see it, but it counts
-// as no work.
-var taskLineRe = regexp.MustCompile(`^- \[([ wxBE])\] `)
-
-// taskCounts tallies a TASKS.md queue by state.
+// taskCounts tallies a task queue by state (todo/in_progress/blocked/done).
 type taskCounts struct{ Todo, Doing, Done, Blocked int }
 
 func (c taskCounts) total() int { return c.Todo + c.Doing + c.Done + c.Blocked }
 
-// scanTasks tallies task states in a TASKS.md body and returns the "active" task — the
-// first claimed (`[w]`) task, or failing that the first unclaimed (`[ ]`) one — so a
-// status view can show what each fork is on. The shared anchored parser keeps the loop,
-// fleet split, status, and `coop tasks` from drifting apart.
-func scanTasks(content string) (taskCounts, string) {
-	var c taskCounts
-	active, firstTodo := "", ""
-	inFence := false
-	for _, line := range strings.Split(content, "\n") {
-		if fenceMarker(line) {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue // a "- [ ]" inside a fenced code block is documentation, not a task
-		}
-		m := taskLineRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		title := strings.TrimSpace(line[len(m[0]):])
-		switch m[1] {
-		case " ":
-			c.Todo++
-			if firstTodo == "" {
-				firstTodo = title
-			}
-		case "w":
-			c.Doing++
-			if active == "" {
-				active = title
-			}
-		case "x":
-			c.Done++
-		case "B":
-			c.Blocked++
-		}
-	}
-	if active == "" {
-		active = firstTodo
-	}
-	return c, active
-}
-
-// queueProgress sums task counts across every queue file and returns the first active
-// task (the first [w], else the first [ ]). It's the loop's at-a-glance progress, built
-// from the same scanTasks the status and `coop tasks` views use so they can't disagree.
+// queueProgress sums task counts across the queue(s) and returns the first active task (the
+// first in_progress, else the first todo) — the loop's at-a-glance progress, from the same
+// taskTreeCounts the status and `coop tasks` views use so they can't disagree.
 func queueProgress(hosts []string) (taskCounts, string) {
 	var total taskCounts
 	active := ""

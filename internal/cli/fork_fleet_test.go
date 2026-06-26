@@ -144,38 +144,6 @@ func TestPolicyScanContent(t *testing.T) {
 	}
 }
 
-func TestFleetSplitIgnoresLegendAndExample(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "r")
-	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	tasks := "# .agent/TASKS.md — the work queue.\n" +
-		"# [ ] todo   [w] claimed   [x] done   [B] blocked\n\n" +
-		"## Example\n\n- [E] sample task\n\n" +
-		"## Active\n\n- [ ] a\n- [ ] b\n- [ ] c\n"
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "TASKS.md"), []byte(tasks), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.fleetSplit([]string{"2"}); err != nil || code != 0 {
-		t.Fatalf("fleetSplit = (%d, %v), want (0, nil)", code, err)
-	}
-	s1, _ := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.slice1.md"))
-	s2, _ := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.slice2.md"))
-	all := string(s1) + string(s2)
-	for _, want := range []string{"[ ] a", "[ ] b", "[ ] c"} {
-		if !strings.Contains(all, want) {
-			t.Errorf("real task %q missing from slices:\n%s", want, all)
-		}
-	}
-	if strings.Contains(all, "[ ] todo") {
-		t.Errorf("legend line leaked into a slice as a task:\n%s", all)
-	}
-	if strings.Contains(all, "[E]") {
-		t.Errorf("Example block leaked into a slice:\n%s", all)
-	}
-}
-
 func TestFleetInit(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "r")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -206,29 +174,24 @@ func TestFleetInit(t *testing.T) {
 
 func TestFleetSplit(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "r")
-	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "TASKS.md"),
-		[]byte("- [ ] a\n- [ ] b\n- [ ] c\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"2026-01-01-a", "2026-01-02-b", "2026-01-03-c"} {
+		writeTaskFile(t, filepath.Join(repo, ".agent", "tasks", "todo", id, "task.md"), "# "+id+"\n")
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
 	if code, err := a.fleetSplit([]string{"2"}); err != nil || code != 0 {
 		t.Fatalf("fleetSplit = (%d, %v), want (0, nil)", code, err)
 	}
-	// Round-robin: slice1 gets a + c, slice2 gets b.
-	s1, _ := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.slice1.md"))
-	s2, _ := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.slice2.md"))
-	if !strings.Contains(string(s1), "[ ] a") || !strings.Contains(string(s1), "[ ] c") {
-		t.Errorf("slice1 = %q, want a and c", s1)
+	// Round-robin over the sorted todo list: slice1 gets a + c, slice2 gets b — as folder copies.
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", "todo", "2026-01-01-a")) ||
+		!isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", "todo", "2026-01-03-c")) {
+		t.Error("slice1 should hold a and c")
 	}
-	if !strings.Contains(string(s2), "[ ] b") {
-		t.Errorf("slice2 = %q, want b", s2)
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice2", "todo", "2026-01-02-b")) {
+		t.Error("slice2 should hold b")
 	}
-	// It also writes .agent/fleet with each fork's explicit tasks path.
+	// It also writes .agent/fleet with each fork's explicit tasks dir.
 	fleet, _ := os.ReadFile(filepath.Join(repo, ".agent", "fleet"))
-	if !strings.Contains(string(fleet), "slice1 claude .agent/TASKS.slice1.md") {
+	if !strings.Contains(string(fleet), "slice1 claude .agent/tasks.slice1") {
 		t.Errorf(".agent/fleet = %q, want an explicit slice1 path line", fleet)
 	}
 	parsed, err := parseFleet(string(fleet))

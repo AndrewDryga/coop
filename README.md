@@ -673,9 +673,8 @@ except `rules/`, the shared knowledge base, which is committed.
 | `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; plain bullets, never auto-worked, a human promotes one into `tasks/todo/` |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 
-Upgrading a repo that still has a single `.agent/TASKS.md`? coop reads it as a fallback,
-but to convert it to the folder format, paste the prompt in [MIGRATING.md](MIGRATING.md)
-to any coding agent in the repo.
+Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
+by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the repo.
 
 ### A fleet
 

@@ -213,9 +213,9 @@ func TestAgentBadge(t *testing.T) {
 	}
 }
 
-// keepLastGood rides out a torn read of a fork's TASKS.md: an empty fresh read keeps the prior
+// keepLastGood rides out a torn read of a fork's task tree: an empty fresh read keeps the prior
 // counts (a queue doesn't vanish), but a real read — even a fresh fork going to zero from nothing —
-// passes through, and non-TASKS.md fields (running/lastLog) always stay fresh.
+// passes through, and non-tree fields (running/lastLog) always stay fresh.
 func TestKeepLastGood(t *testing.T) {
 	prev := fleetRow{name: "a", counts: taskCounts{Done: 4, Todo: 6}, active: "task X", running: true}
 	// Torn read: fresh has no tasks but prev did → keep prev's counts/active, take fresh running.

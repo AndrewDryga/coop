@@ -12,99 +12,58 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// The loop work/audit prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
-// read_file rejects a relative path, so a relative ".agent/TASKS.md" left gemini/codex fleet forks
+// The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
+// read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fleet forks
 // unable to read their own queue (claude resolved it against cwd and was fine).
 func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	repo := "/home/node/proj"
-	work := loopWorkPrompt(repo, []string{".agent/TASKS.md"})
-	for _, want := range []string{"/home/node/proj/.agent/TASKS.md", "/home/node/proj/AGENTS.md"} {
+	work := loopWorkPrompt(repo, []string{".agent/tasks"})
+	for _, want := range []string{"/home/node/proj/.agent/tasks", "/home/node/proj/AGENTS.md"} {
 		if !strings.Contains(work, want) {
 			t.Errorf("work prompt missing absolute %q:\n%s", want, work)
 		}
 	}
-	if strings.Contains(work, " .agent/TASKS.md") || strings.Contains(work, "and AGENTS.md") {
-		t.Errorf("work prompt still names a relative path:\n%s", work)
-	}
-	// Several queues are all listed, each absolute.
-	multi := loopWorkPrompt(repo, []string{"portal/.agent/TASKS.md", "runner/.agent/TASKS.md"})
-	for _, want := range []string{"/home/node/proj/portal/.agent/TASKS.md", "/home/node/proj/runner/.agent/TASKS.md"} {
+	// Several queues (a monorepo's per-component trees) are all listed, each absolute.
+	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"})
+	for _, want := range []string{"/home/node/proj/portal/.agent/tasks", "/home/node/proj/runner/.agent/tasks"} {
 		if !strings.Contains(multi, want) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
 		}
 	}
-	if audit := loopAuditPrompt(repo, []string{".agent/TASKS.md"}); !strings.Contains(audit, "/home/node/proj/.agent/TASKS.md") {
+	if audit := loopAuditPrompt(repo, []string{".agent/tasks"}); !strings.Contains(audit, "/home/node/proj/.agent/tasks") {
 		t.Errorf("audit prompt should name the absolute queue:\n%s", audit)
 	}
 }
 
-// TestLoopWorkPromptContinuation: the work prompt tells the agent to pick up an interrupted
-// [w] task from its uncommitted working-tree changes, not only start fresh [ ] work.
-func TestLoopWorkPromptContinuation(t *testing.T) {
-	work := loopWorkPrompt("/repo", []string{".agent/TASKS.md"})
-	for _, want := range []string{"[w]", "git status", "git diff", "Finish a [w]", "[ ] or [w]"} {
-		if !strings.Contains(work, want) {
-			t.Errorf("work prompt missing continuation cue %q:\n%s", want, work)
-		}
-	}
-}
-
-// TestLoopWorkPromptStateHandoff: the work prompt wires .agent/state.md into the loop's
-// cross-iteration handoff — read it first when resuming a [w], keep it current while working,
-// and finalize it as the last step (never blank it, so a review can reopen the task). The path
-// is absolute (gemini's read_file rejects a relative one, like the queue and AGENTS.md).
-func TestLoopWorkPromptStateHandoff(t *testing.T) {
-	work := loopWorkPrompt("/home/node/proj", []string{".agent/TASKS.md"})
-	if !strings.Contains(work, "/home/node/proj/.agent/state.md") {
-		t.Errorf("work prompt should name the absolute state.md path:\n%s", work)
-	}
-	for _, want := range []string{"resume note", "keep", "final step", "finished state"} {
-		if !strings.Contains(work, want) {
-			t.Errorf("work prompt missing state-handoff cue %q:\n%s", want, work)
-		}
-	}
-}
-
-// TestLoopPromptsFolderMode: when the queue is a .agent/tasks directory, the loop prompts
-// describe the folder workflow (coop tasks moves, per-task state.md/log.md) instead of the
-// legacy single-file [ ]/[w]/[x] flow.
-func TestLoopPromptsFolderMode(t *testing.T) {
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks", "todo"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	work := loopWorkPrompt(repo, []string{".agent/tasks"})
-	for _, want := range []string{"coop tasks claim", "in_progress/", "state.md", "coop tasks done", "coop tasks block"} {
+// TestLoopWorkPromptFolderWorkflow: the work prompt drives the folder queue — claim/done/block
+// via `coop tasks`, resume an interrupted in_progress task from its state.md + the git diff, and
+// finalize state.md (never blank it) so a different agent or a review can pick up next iteration.
+func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
+	work := loopWorkPrompt("/repo", []string{".agent/tasks"})
+	for _, want := range []string{
+		"coop tasks claim", "coop tasks done", "coop tasks block",
+		"in_progress/", "git status", "git diff",
+		"state.md", "resume note", "final step", "finished state",
+		"Finish the in_progress task", "Do not stop while",
+	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("folder work prompt missing %q:\n%s", want, work)
 		}
 	}
-	if pre := loopPreflightPrompt(repo, []string{".agent/tasks"}); !strings.Contains(pre, "coop tasks unblock") {
-		t.Errorf("folder preflight prompt should mention unblock:\n%s", pre)
-	}
-	if aud := loopAuditPrompt(repo, []string{".agent/tasks"}); !strings.Contains(aud, "done/") {
-		t.Errorf("folder audit prompt should audit done/:\n%s", aud)
-	}
 }
 
-func TestLoopPreflightPrompt(t *testing.T) {
-	repo := "/home/node/proj"
-	p := loopPreflightPrompt(repo, []string{".agent/TASKS.md"})
-	// Names the queue, the log, and pending decisions as absolute in-box paths.
-	for _, want := range []string{
-		"/home/node/proj/.agent/TASKS.md",
-		"/home/node/proj/.agent/LOG.md",
-		"/home/node/proj/.agent/PENDING_DECISIONS.md",
-	} {
-		if !strings.Contains(p, want) {
-			t.Errorf("preflight prompt missing absolute %q:\n%s", want, p)
+// TestLoopPreflightAndAuditFolder: preflight only unblocks blocked/ tasks with an answered
+// decision (no code, no commits); audit re-checks the done/ archive against git and reopens via claim.
+func TestLoopPreflightAndAuditFolder(t *testing.T) {
+	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"})
+	for _, want := range []string{"do NOT work any task", "no commits", "coop tasks unblock", "blocked/"} {
+		if !strings.Contains(pre, want) {
+			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
 	}
-	// It's cleanup-only: no task work, no code, no commit; and it covers all three jobs.
-	for _, want := range []string{"do NOT work any task", "no commits", "compact the log", "[B]", "unblock"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("preflight prompt missing %q:\n%s", want, p)
-		}
+	aud := loopAuditPrompt("/repo", []string{".agent/tasks"})
+	if !strings.Contains(aud, "done/") || !strings.Contains(aud, "coop tasks claim") {
+		t.Errorf("audit prompt should re-check done/ and reopen via claim:\n%s", aud)
 	}
 }
 

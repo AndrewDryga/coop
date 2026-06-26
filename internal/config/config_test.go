@@ -293,11 +293,11 @@ func TestDefaultProfileMark(t *testing.T) {
 func TestTasksFiles(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if got := Load().TasksFiles; !slices.Equal(got, []string{filepath.Join(".agent", "TASKS.md")}) {
-		t.Errorf("default TasksFiles = %v, want [.agent/TASKS.md]", got)
+	if got := Load().TasksFiles; !slices.Equal(got, []string{filepath.Join(".agent", "tasks")}) {
+		t.Errorf("default TasksFiles = %v, want [.agent/tasks]", got)
 	}
-	t.Setenv("COOP_TASKS", "portal/.agent/TASKS.md runner/.agent/TASKS.md")
-	if got := Load().TasksFiles; !slices.Equal(got, []string{"portal/.agent/TASKS.md", "runner/.agent/TASKS.md"}) {
+	t.Setenv("COOP_TASKS", "portal/.agent/tasks runner/.agent/tasks")
+	if got := Load().TasksFiles; !slices.Equal(got, []string{"portal/.agent/tasks", "runner/.agent/tasks"}) {
 		t.Errorf("COOP_TASKS list = %v", got)
 	}
 }

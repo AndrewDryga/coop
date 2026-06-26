@@ -239,8 +239,8 @@ var commandHelp = map[string]string{
   split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
 
   A task's state is its directory, so each transition is a folder move. Defaults to
-  .agent/tasks/ (a legacy single .agent/TASKS.md is auto-detected as a fallback). Point
-  --tasks at another tasks dir or file, or set COOP_TASKS. Paths are repo-relative.`,
+  .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths are
+  repo-relative.`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 
@@ -264,8 +264,8 @@ var commandHelp = map[string]string{
   auditor re-checks every shipped task. On a rate limit it switches to another
   signed-in profile (see 'coop pool'), or waits out the reset when there's only one.
 
-  Defaults to .agent/tasks/ (a legacy .agent/TASKS.md is auto-detected). Repeat --tasks
-  (or set COOP_TASKS) to drain several queues at once — the loop keeps going while any
+  Defaults to .agent/tasks/. Repeat --tasks (or set COOP_TASKS) to drain several
+  queues at once — the loop keeps going while any
   has unfinished work, so one loop can cover a monorepo's components. The whole repo is
   still mounted.
 

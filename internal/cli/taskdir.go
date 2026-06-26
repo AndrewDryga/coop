@@ -17,8 +17,7 @@ import (
 // nothing can drift. Moving the folder between state dirs IS the state change.
 // The contract is in AGENTS.md; converting a legacy single-file queue is MIGRATING.md.
 
-// tasksRoot is the repo-relative directory whose existence selects folder mode; when it
-// is a directory, every reader uses it instead of a legacy single TASKS.md file.
+// tasksRoot is the repo-relative task queue directory every reader works against.
 const tasksRoot = ".agent/tasks"
 
 // Task state directories, in lifecycle order. The directory name IS the status.
@@ -253,49 +252,33 @@ func stateOrder(state string) int {
 	return len(taskStates)
 }
 
-// defaultTasksFile is the legacy single-file queue path config falls back to when
-// COOP_TASKS is unset (matching config.Load). Used only to detect "the user didn't
-// override the default" so a present .agent/tasks/ folder tree can take precedence.
-var defaultTasksFile = filepath.Join(".agent", "TASKS.md")
-
-// queueCounts reads a task source — a folder-mode .agent/tasks directory or a legacy
-// single TASKS.md file — and returns its counts and active task. This dir-or-file branch
-// is the one seam every reader funnels through, so folder and legacy modes can't drift.
-func queueCounts(path string) (taskCounts, string) {
-	if isTaskDir(path) {
-		return taskTreeCounts(readTaskTree(path))
-	}
-	return scanTasks(readFileString(path))
+// queueCounts reads a task queue directory (.agent/tasks) and returns its counts and active
+// task — the one seam the status, loop, and fleet readers funnel through. A missing/empty dir
+// reads as all-zero.
+func queueCounts(dir string) (taskCounts, string) {
+	return taskTreeCounts(readTaskTree(dir))
 }
 
-// wsTaskSource returns a workspace's task source: its .agent/tasks folder when that
-// exists, else the legacy .agent/TASKS.md. Used by the status and fleet views, which
-// read a fork's queue directly rather than through taskQueues.
+// wsTaskSource returns a workspace's task queue directory (.agent/tasks). Used by the status
+// and fleet views, which read a fork's queue directly rather than through taskQueues.
 func wsTaskSource(ws string) string {
-	if dir := filepath.Join(ws, tasksRoot); isTaskDir(dir) {
-		return dir
-	}
-	return filepath.Join(ws, ".agent", "TASKS.md")
+	return filepath.Join(ws, tasksRoot)
 }
 
-// latestTaskLog returns the last n lines of the most-recently-modified per-task log.md
-// under ws's .agent/tasks tree (the agent's "why", folder mode), or the legacy
-// .agent/LOG.md tail, or "" — surfaced by `coop fork review`.
+// latestTaskLog returns the last n lines of the most-recently-modified per-task log.md under
+// ws's .agent/tasks tree (the agent's "why") — surfaced by `coop fork review`; "" if none.
 func latestTaskLog(ws string, n int) string {
-	if root := filepath.Join(ws, tasksRoot); isTaskDir(root) {
-		matches, _ := filepath.Glob(filepath.Join(root, "*", "*", "log.md"))
-		newest, newestMod := "", time.Time{}
-		for _, m := range matches {
-			if fi, err := os.Stat(m); err == nil && fi.ModTime().After(newestMod) {
-				newest, newestMod = m, fi.ModTime()
-			}
+	matches, _ := filepath.Glob(filepath.Join(ws, tasksRoot, "*", "*", "log.md"))
+	newest, newestMod := "", time.Time{}
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(newestMod) {
+			newest, newestMod = m, fi.ModTime()
 		}
-		if newest == "" {
-			return ""
-		}
-		return lastLines(readFileString(newest), n)
 	}
-	return lastLines(readFileString(filepath.Join(ws, ".agent", "LOG.md")), n)
+	if newest == "" {
+		return ""
+	}
+	return lastLines(readFileString(newest), n)
 }
 
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"

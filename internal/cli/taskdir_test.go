@@ -139,8 +139,8 @@ func TestReadTaskTreeAndCounts(t *testing.T) {
 	}
 }
 
-func TestQueueCountsAndSourceFolderVsLegacy(t *testing.T) {
-	// folder mode: queueCounts/queueHasTodo/wsTaskSource all use the .agent/tasks tree
+func TestQueueCountsAndSource(t *testing.T) {
+	// queueCounts/queueHasTodo/wsTaskSource all read the .agent/tasks tree.
 	ws := t.TempDir()
 	dir := filepath.Join(ws, tasksRoot)
 	writeTaskFile(t, filepath.Join(dir, "todo", "2026-01-01-a", "task.md"), "# one\n")
@@ -150,27 +150,17 @@ func TestQueueCountsAndSourceFolderVsLegacy(t *testing.T) {
 	}
 	c, active := queueCounts(dir)
 	if c.Todo != 1 || c.Doing != 1 {
-		t.Errorf("folder counts = %+v", c)
+		t.Errorf("counts = %+v", c)
 	}
 	if active != "two" {
-		t.Errorf("folder active = %q", active)
+		t.Errorf("active = %q", active)
 	}
 	if !queueHasTodo(dir) {
-		t.Errorf("folder queueHasTodo should be true with a todo/ task")
+		t.Errorf("queueHasTodo should be true with a todo/ task")
 	}
-
-	// legacy file mode: a workspace with only .agent/TASKS.md falls back to it
-	legacyWs := t.TempDir()
-	legacy := filepath.Join(legacyWs, ".agent", "TASKS.md")
-	writeTaskFile(t, legacy, "## Active\n- [ ] legacy task\n  - **Context:** x\n")
-	if got := wsTaskSource(legacyWs); got != legacy {
-		t.Errorf("wsTaskSource legacy = %q, want %q", got, legacy)
-	}
-	if cf, _ := queueCounts(legacy); cf.Todo != 1 {
-		t.Errorf("legacy counts = %+v", cf)
-	}
-	if !queueHasTodo(legacy) {
-		t.Errorf("legacy queueHasTodo should be true")
+	// A missing/empty tree reads as all-zero, no panic.
+	if c0, a0 := queueCounts(filepath.Join(t.TempDir(), "nope")); c0.total() != 0 || a0 != "" {
+		t.Errorf("missing tree = %+v %q, want zero/empty", c0, a0)
 	}
 }
 

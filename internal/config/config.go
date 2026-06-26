@@ -39,7 +39,7 @@ type Config struct {
 
 	ServicesNet  string   // COOP_SERVICES_NET — override the services network name
 	LoopCmd      []string // COOP_LOOP_CMD — override the loop's per-iteration command
-	TasksFiles   []string // COOP_TASKS — task-queue file(s) the loop and `coop tasks` work (repo-relative; default .agent/TASKS.md)
+	TasksFiles   []string // COOP_TASKS — task queue(s) the loop and `coop tasks` work (repo-relative; default .agent/tasks)
 	Gate         []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
@@ -136,7 +136,7 @@ func Load() *Config {
 
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
 		LoopCmd:      shellSplit(get("COOP_LOOP_CMD", "")),
-		TasksFiles:   shellSplit(get("COOP_TASKS", filepath.Join(".agent", "TASKS.md"))),
+		TasksFiles:   shellSplit(get("COOP_TASKS", filepath.Join(".agent", "tasks"))),
 		Gate:         shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs: shellSplit(get("COOP_RUN_ARGS", "")),
 

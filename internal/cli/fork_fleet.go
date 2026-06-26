@@ -357,11 +357,10 @@ func (a *app) pruneFleet(repo string, force bool) error {
 	return nil
 }
 
-// fleetSplit mechanically round-robins the unchecked items in .agent/TASKS.md into
-// per-fork slices (.agent/TASKS.<name>.md) and writes a matching .agent/fleet that
-// names each slice's path explicitly. It is a DUMB split — for semantic slicing, have
-// an agent partition the queue. Forks come from .agent/fleet (preserving its agents),
-// or from `coop fleet split <n>` (slice1..N, all claude).
+// fleetSplit mechanically round-robins the todo task folders in .agent/tasks into per-fork
+// task trees (.agent/tasks.<name>) and writes a matching .agent/fleet naming each slice's
+// path. It is a DUMB split — for semantic slicing, have an agent partition the queue. Forks
+// come from .agent/fleet (preserving its agents), or from `coop fleet split <n>` (slice1..N).
 func (a *app) fleetSplit(args []string) (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -385,65 +384,17 @@ func (a *app) fleetSplit(args []string) (int, error) {
 	if len(targets) == 0 {
 		return 2, errors.New("usage: coop fleet split <n>   (or define .agent/fleet first)")
 	}
-	// Folder mode: round-robin the todo task folders into per-fork task trees.
-	if root := filepath.Join(repo, tasksRoot); isTaskDir(root) {
-		names, agts := make([]string, len(targets)), make([]string, len(targets))
-		for i, t := range targets {
-			names[i], agts[i] = t.name, t.agent
-		}
-		return a.fleetSplitFolders(repo, root, names, agts)
-	}
-	data, err := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.md"))
-	if err != nil {
-		return -1, errors.New("no .agent/TASKS.md — run 'coop init'")
-	}
-	// Slice whole task blocks (title + five-part body), not bare title lines, so each
-	// fork's queue stays self-contained. Shares the anchored splitter with `coop tasks`.
-	buckets := splitOpenTaskBlocks(string(data), len(targets))
-	empty := true
-	for _, b := range buckets {
-		if len(b) > 0 {
-			empty = false
-		}
-	}
-	if empty {
-		ui.Info("no unchecked [ ] items to split")
-		return 0, nil
-	}
-	var fleetLines []string
+	// Round-robin the todo task folders into per-fork task trees (.agent/tasks.<name>).
+	root := filepath.Join(repo, tasksRoot)
+	names, agts := make([]string, len(targets)), make([]string, len(targets))
 	for i, t := range targets {
-		if len(buckets[i]) == 0 {
-			continue
-		}
-		rel := filepath.Join(".agent", "TASKS."+t.name+".md")
-		body := fmt.Sprintf("# %s — slice for fork %s\n\n%s\n", rel, t.name, strings.Join(buckets[i], "\n\n"))
-		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
-			return -1, err
-		}
-		ui.Info("wrote %s (%d items)", rel, len(buckets[i]))
-		fleetLines = append(fleetLines, fmt.Sprintf("%s %s %s", t.name, t.agent, rel))
+		names[i], agts[i] = t.name, t.agent
 	}
-	// Write .agent/fleet so its config shows each fork's explicit tasks path. Don't
-	// clobber a hand-authored fleet (it already carries the agents/paths you chose) —
-	// print the lines to reconcile instead.
-	if !fileExists(fleetFile(repo)) {
-		header := "# coop fleet — one fork per line: <name> [agent] <tasks-path>\n"
-		out := header + strings.Join(fleetLines, "\n") + "\n"
-		if err := os.WriteFile(fleetFile(repo), []byte(out), 0o644); err != nil {
-			return -1, err
-		}
-		ui.Info("wrote .agent/fleet — review the slices, then 'coop fleet up'")
-		return 0, nil
-	}
-	ui.Info("mechanical round-robin split — .agent/fleet exists, so reconcile these lines:")
-	for _, l := range fleetLines {
-		fmt.Printf("  %s\n", l)
-	}
-	return 0, nil
+	return a.fleetSplitFolders(repo, root, names, agts)
 }
 
-// fleetSplitFolders is the folder-mode counterpart of the legacy TASKS.md split: it
-// round-robins the todo task folders into per-fork task trees (.agent/tasks.<name>) and
+// fleetSplitFolders round-robins the todo task folders into per-fork task trees
+// (.agent/tasks.<name>, copies) and
 // writes .agent/fleet pointing each fork at its slice directory (a dir → folder mode).
 func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, error) {
 	written, counts, total, err := splitTodoFolders(repo, root, names)
