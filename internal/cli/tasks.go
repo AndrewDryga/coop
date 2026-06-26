@@ -174,6 +174,14 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// Folder mode: when the resolved source is a .agent/tasks directory, the whole
+	// folder-tree command set (add/claim/block/unblock/done/drop/decisions + list/lint)
+	// takes over. Legacy single-file TASKS.md handling stays below for un-migrated repos.
+	if len(rels) == 1 {
+		if src := filepath.Join(repo, rels[0]); isTaskDir(src) {
+			return cmdTasksFolder(src, rest)
+		}
+	}
 	switch sub {
 	case "list", "ls":
 		return runPerFile(repo, rels, tasksList)
