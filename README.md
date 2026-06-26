@@ -675,6 +675,10 @@ except `rules/`, the shared knowledge base, which is committed.
 | `IDEAS.md` | product ideas, never auto-implemented — a human moves one into `tasks/todo/` first |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 
+Upgrading a repo that still has a single `.agent/TASKS.md`? coop reads it as a fallback,
+but to convert it to the folder format, paste the prompt in [MIGRATING.md](MIGRATING.md)
+to any coding agent in the repo.
+
 ### A fleet
 
 Run several models at once, each looping unattended in its own [fork](#forks-hand-off-work-like-a-pr).
