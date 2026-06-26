@@ -186,8 +186,8 @@
                             <span class="ic">🌙</span>
                             <h3>A whip for all-nighters</h3>
                             <p>
-                                A fresh agent per iteration drains
-                                <code>.agent/TASKS.md</code>, rides through rate
+                                A fresh agent per iteration drains the
+                                <code>.agent/tasks/</code> queue, rides through rate
                                 limits with profile failover, and audits its own
                                 work when the queue empties.
                             </p>
@@ -215,11 +215,11 @@
                             <span class="kicker">The loop</span>
                             <h3>Drain the queue while you sleep</h3>
                             <p>
-                                Fill <code>.agent/TASKS.md</code> with checkbox
-                                tasks and walk away. A fresh agent per iteration
-                                (no context rot) works every <code>[ ]</code>,
+                                Add tasks to <code>.agent/tasks/</code> (a folder
+                                per task) and walk away. A fresh agent per iteration
+                                (no context rot) claims each one,
                                 commits behind your gate, and won't quit while
-                                any remain.
+                                work remains.
                             </p>
                             <ul>
                                 <li>
@@ -234,7 +234,7 @@
                                 <li>
                                     When the queue empties, a fresh
                                     <b>auditor</b> re-checks every
-                                    <code>[x]</code> against the git log.
+                                    shipped task against the git log.
                                 </li>
                             </ul>
                         </div>
@@ -606,7 +606,7 @@
                                 and let the loop drain it.
                             </p>
                             <pre class="code"><span class="k">coop</span> init
-<span class="t"># …fill .agent/TASKS.md…</span>
+<span class="k">coop</span> tasks add <span class="s">"…"</span>  <span class="t"># a folder per task under .agent/tasks/</span>
 <span class="k">coop</span> loop</pre>
                         </div>
                     </div>

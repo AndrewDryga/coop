@@ -10,7 +10,7 @@
 [0.683, "o", "o"]
 [0.725, "o", "p"]
 [0.975, "o", "\r\n"]
-[2.275, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m starting unattended loop on .agent/TASKS.md with claude — 0/7 done (Ctrl-C to stop)\r\n"]
+[2.275, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m starting unattended loop on .agent/tasks with claude — 0/7 done (Ctrl-C to stop)\r\n"]
 [2.775, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m iteration 1 · 0/7 done · now: Add retry to the API client · \u001b[2mprofile personal\u001b[0m\r\n"]
 [3.275, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m shadowed 4 secret path(s)\r\n"]
 [3.975, "o", "\u001b[2m· model claude-opus-4-8\u001b[0m\r\n"]

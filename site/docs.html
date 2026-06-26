@@ -548,19 +548,20 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         </p>
                     </div>
                     <p>
-                        You write tasks as checkboxes in
-                        <code>.agent/TASKS.md</code>.
+                        You write each task as a folder under
+                        <code>.agent/tasks/</code> (its state is its directory).
                         <code>coop loop</code> then starts a
                         <strong>fresh agent for each one</strong> — so every
                         task begins with a clean head, no leftover context to
                         rot. The agent claims a task, does it, runs your gate,
                         commits the result, and moves to the next. It won't stop
-                        while a single <code>[ ]</code> remains.
+                        while any task remains in <code>todo/</code> or
+                        <code>in_progress/</code>.
                     </p>
                     <pre
                         class="code"
                     ><span class="k">coop</span> init             <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
-<span class="t"># …fill .agent/TASKS.md with checkbox tasks…</span>
+<span class="k">coop</span> tasks add <span class="s">"…"</span>  <span class="t"># a folder per task under .agent/tasks/</span>
 <span class="k">coop</span> loop             <span class="t"># disposable agents drain the queue, then audit</span></pre>
                     <p>
                         <strong>It checks its own work.</strong> When the list
@@ -622,11 +623,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <th>What it's for</th>
                         </tr>
                         <tr>
-                            <td><code>TASKS.md</code></td>
+                            <td><code>tasks/</code></td>
                             <td>
-                                the work queue — <code>[ ]</code> todo,
-                                <code>[w]</code> claimed, <code>[x]</code> done,
-                                <code>[B]</code> blocked
+                                the work queue — a folder per task under
+                                <code>todo/</code>, <code>in_progress/</code>,
+                                <code>blocked/</code>, <code>done/</code>; its
+                                state is its directory
                             </td>
                         </tr>
                         <tr>

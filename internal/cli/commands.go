@@ -766,7 +766,7 @@ func initNextSteps(repo string, services []string) []string {
 	if len(services) > 0 {
 		steps = append(steps, fmt.Sprintf("`coop up`  (starts %s for the box)", strings.Join(services, " + ")))
 	}
-	steps = append(steps, "edit .agent/TASKS.md, then `coop loop`")
+	steps = append(steps, "`coop tasks add \"<title>\"`, then `coop loop`")
 	return steps
 }
 

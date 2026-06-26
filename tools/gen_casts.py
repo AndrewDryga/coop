@@ -200,10 +200,10 @@ def capture_output(argv, cwd=ROOT, cols=88, rows=44):
 
 
 def scene_loop():
-    """The headline: a fresh agent per iteration drains .agent/TASKS.md unattended."""
+    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended."""
     c = Cast("loop", cols=90, rows=27, title="coop loop — work the queue all night")
     c.command("coop loop")
-    c.line(coop("starting unattended loop on .agent/TASKS.md with claude — 0/7 done (Ctrl-C to stop)"), after=0.7)
+    c.line(coop("starting unattended loop on .agent/tasks with claude — 0/7 done (Ctrl-C to stop)"), after=0.7)
     c.line(coop("iteration 1 · 0/7 done · now: Add retry to the API client · " + dim("profile personal")), after=0.5)
     c.line(coop("shadowed 4 secret path(s)"), after=0.5)
     c.line(dim("· model claude-opus-4-8"), after=0.7)
