@@ -182,11 +182,11 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--preflight] [--debug-on-fail]` | work [`.agent/TASKS.md`](#the-loop) unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
-| `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks file (`-d` detaches) |
+| `coop loop [agent] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
+| `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template) |
 | `coop status` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on |
-| `coop tasks list` · `lint` · `add "<title>"` · `split <n>` | inspect/validate `.agent/TASKS.md` — `lint` flags stale `[w]` claims and tasks that aren't [self-contained](#the-loop); `split` carves it into self-contained slices |
+| `coop tasks add` · `claim` · `block` · `done` · `list` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
 
 **Set up & maintain**
 
@@ -275,7 +275,7 @@ the parent — so the agent can commit *as you* and ignores the same noise you d
 **Loop one unattended.** Hand a fork a tasks file and it works the queue on its own:
 
 ```bash
-coop fork api codex --loop -d --tasks .agent/TASKS.md   # -d detaches; tail it with coop fork logs api -f
+coop fork api codex --loop -d   # -d detaches; loops .agent/tasks by default; tail it with coop fork logs api -f
 ```
 
 See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to run several at once.
@@ -623,24 +623,25 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 ### The loop
 
 ```bash
-coop init             # scaffold AGENTS.md, the .agent/ working folder, and the hooks
-# ...fill in .agent/TASKS.md with checkbox tasks...
-coop loop             # disposable agents work the queue until it's done, then audit
-coop loop codex       # …or pick the model: claude (default), codex, or gemini
+coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
+coop tasks add "..."      # add a task (a folder under .agent/tasks/todo/)
+coop loop                 # disposable agents work the queue until it's done, then audit
+coop loop codex           # …or pick the model: claude (default), codex, or gemini
 ```
 
-`loop` starts a fresh agent per iteration (no context rot), works every unchecked
-top-level `[ ]` in the queue file (wherever it sits — there's no special "active"
-section; the example is marked `[E]` so it's skipped), and won't quit while any remain. Pass `claude`/`codex`/`gemini` to choose the
-model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration command if
-you need something custom. When the queue empties, a fresh auditor
-re-checks every `[x]` against the git log and reopens anything that doesn't hold up.
+A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
+in: `todo/` · `in_progress/` · `blocked/` · `done/`. `loop` starts a fresh agent per
+iteration (no context rot), claims the next task from `todo/` (or resumes one left in
+`in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini` to
+choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
+command if you need something custom. When the queue empties, a fresh auditor re-checks
+every task in `done/` against the git log and reopens anything that doesn't hold up.
 
 Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
-starts working: it compacts `.agent/LOG.md`, removes done `[x]` tasks already committed,
-and unblocks any `[B]` item whose `.agent/PENDING_DECISIONS.md` entry now has an answer —
-so a fresh run starts from a tidy queue. It works no task and makes no commits, and it's
-the symmetric front bookend to the audit pass. Off by default.
+starts working: it compacts `.agent/LOG.md` and unblocks any `blocked/` task whose
+`decision.md` now has an answer — so a fresh run starts from a tidy queue. It works no
+task and makes no commits, and it's the symmetric front bookend to the audit pass. Off
+by default.
 
 `init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
 fast Claude commit-gate hook. Because those are Claude-only, `init` *also* installs a
@@ -656,7 +657,7 @@ through the daily cap instead of burning retries against it.
 
 `init` also installs generic workflow skills into `.claude/skills/` (shared with
 Codex): `/spec` a multi-file change, `/work` it step-by-step against the gate, `/sweep`
-to drain `.agent/TASKS.md`, `/investigate` to root-cause a failure, and `/verify-api`
+to drain `.agent/tasks/`, `/investigate` to root-cause a failure, and `/verify-api`
 before calling anything you're unsure of. Edit them freely — `init` won't overwrite a
 skill you've changed.
 
@@ -668,11 +669,10 @@ except `rules/`, the shared knowledge base, which is committed.
 
 | File | What it's for |
 |---|---|
-| `TASKS.md` | the work queue — `[ ]` todo · `[w]` claimed · `[x]` done+gated+committed · `[B]` blocked (the loop reads only this) |
-| `BACKLOG.md` | work found *outside* the current task — captured, not auto-worked; a human promotes items into `TASKS.md` |
+| `tasks/` | the work queue — one folder per task under `todo/`/`in_progress/`/`blocked/`/`done/`; a task's state is its directory, and `coop tasks` moves it. A blocked task carries its own `decision.md`. The loop reads `todo/`+`in_progress/`. |
+| `BACKLOG.md` | work found *outside* the current task — captured, not auto-worked; a human promotes items into `tasks/todo/` |
 | `LOG.md` | the agent's chain-of-thought (what + why), so intent survives a compaction |
-| `PENDING_DECISIONS.md` | anything needing a human call — decision, options, recommendation; the task goes `[B]` |
-| `IDEAS.md` | product ideas, never auto-implemented — a human moves one into `TASKS.md` first |
+| `IDEAS.md` | product ideas, never auto-implemented — a human moves one into `tasks/todo/` first |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 
 ### A fleet
@@ -716,7 +716,7 @@ docs         .agent/TASKS.docs.md
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
 `coop fleet down` stops them. To bootstrap that file, `coop fleet split <n>` mechanically
-round-robins your `.agent/TASKS.md` into `.agent/TASKS.slice<n>.md` files and writes a
+round-robins your `.agent/tasks/` todo folders into per-fork `.agent/tasks.<n>/` slices and writes a
 matching `.agent/fleet` with each slice's explicit path (use an agent for *semantic*
 slicing). It won't clobber a fleet you've already written — it prints the lines to
 reconcile instead.
