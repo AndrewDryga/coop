@@ -49,8 +49,7 @@ func TestInit(t *testing.T) {
 
 	// Core files exist with content.
 	for _, rel := range []string{
-		"AGENTS.md", ".agent/tasks/README.md", ".agent/LOG.md", ".agent/BACKLOG.md",
-		".agent/IDEAS.md",
+		"AGENTS.md", ".agent/tasks/README.md", ".agent/BACKLOG.md",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
 		".githooks/pre-commit",
 	} {

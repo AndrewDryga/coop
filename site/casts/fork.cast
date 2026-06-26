@@ -123,7 +123,7 @@
 [12.953, "o", "\u001b[2m  M  internal/payments/webhook.go\u001b[0m\r\n"]
 [13.073, "o", "\u001b[2m  A  internal/payments/idempotency.go\u001b[0m\r\n"]
 [13.373, "o", "\u001b[2m  M  internal/payments/charge.go\u001b[0m\r\n"]
-[13.573, "o", "\u001b[1mwhy (.agent/LOG.md, latest):\u001b[0m\r\n"]
+[13.573, "o", "\u001b[1mwhy (latest task log):\u001b[0m\r\n"]
 [14.473, "o", "\u001b[2m  - signatures checked against Stripe's published test vectors\u001b[0m\r\n"]
 [14.473, "o", "\u001b[2m~/code/acme-api\u001b[0m \u001b[92m❯\u001b[0m "]
 [14.865, "o", "c"]

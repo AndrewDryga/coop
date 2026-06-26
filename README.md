@@ -669,10 +669,8 @@ except `rules/`, the shared knowledge base, which is committed.
 
 | File | What it's for |
 |---|---|
-| `tasks/` | the work queue — one folder per task under `todo/`/`in_progress/`/`blocked/`/`done/`; a task's state is its directory, and `coop tasks` moves it. A blocked task carries its own `decision.md`. The loop reads `todo/`+`in_progress/`. |
-| `BACKLOG.md` | work found *outside* the current task — captured, not auto-worked; a human promotes items into `tasks/todo/` |
-| `LOG.md` | the agent's chain-of-thought (what + why), so intent survives a compaction |
-| `IDEAS.md` | product ideas, never auto-implemented — a human moves one into `tasks/todo/` first |
+| `tasks/` | the work queue — one folder per task under `todo/`/`in_progress/`/`blocked/`/`done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `todo/`+`in_progress/`. |
+| `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; plain bullets, never auto-worked, a human promotes one into `tasks/todo/` |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? coop reads it as a fallback,

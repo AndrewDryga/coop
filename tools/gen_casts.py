@@ -284,7 +284,7 @@ def scene_fork():
     c.line(dim("  M  internal/payments/webhook.go"), after=0.12)
     c.line(dim("  A  internal/payments/idempotency.go"), after=0.12)
     c.line(dim("  M  internal/payments/charge.go"), after=0.3)
-    c.line(bold("why (.agent/LOG.md, latest):"), after=0.2)
+    c.line(bold("why (latest task log):"), after=0.2)
     c.line(dim("  - signatures checked against Stripe's published test vectors"), after=0.9)
     c.command("coop fork merge payments")
     c.line(coop("rebase payments onto main — 4 commit(s), +112 -18"), after=0.5)

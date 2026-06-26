@@ -970,8 +970,8 @@ func loopAuditPromptFolder(root string) string {
 // loopPreflightPromptFolder is the folder-mode pre-flight cleanup (no PENDING_DECISIONS or [x]
 // pruning — decisions are per-task and done work already lives in done/).
 func loopPreflightPromptFolder(repo, root string) string {
-	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and %s. Then: (1) compact the log %s — condense bloated entries and trim anything past the most recent; (2) for each task in %s/blocked/, if its decision.md now has a filled-in Resolution, unblock it with `coop tasks unblock <id>`. Leave every todo/ and in_progress/ task untouched; change no code and make no commits.",
-		filepath.Join(root, "README.md"), filepath.Join(repo, "AGENTS.md"), filepath.Join(repo, ".agent", "LOG.md"), root)
+	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and %s. Then, for each task in %s/blocked/, if its decision.md now has a filled-in Resolution, unblock it with `coop tasks unblock <id>`. Leave every todo/ and in_progress/ task untouched; change no code and make no commits.",
+		filepath.Join(root, "README.md"), filepath.Join(repo, "AGENTS.md"), root)
 }
 
 // absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.

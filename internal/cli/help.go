@@ -256,10 +256,9 @@ var commandHelp = map[string]string{
   has unfinished work, so one loop can cover a monorepo's components. The whole repo is
   still mounted.
 
-  --preflight       run one cleanup pass before working: compact .agent/LOG.md and
-                    unblock blocked/ tasks whose decision now has an answer (opt-in;
-                    COOP_PREFLIGHT=1 to default it on, --no-preflight to override).
-                    Makes no code changes or commits.
+  --preflight       run one cleanup pass before working: unblock blocked/ tasks whose
+                    decision now has an answer (opt-in; COOP_PREFLIGHT=1 to default it
+                    on, --no-preflight to override). Makes no code changes or commits.
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 

@@ -204,7 +204,7 @@ func tasksFolderDrop(root string, args []string) (int, error) {
 	if err := os.RemoveAll(t.Dir); err != nil {
 		return -1, err
 	}
-	ui.Info("dropped %s/%s (the record is in git history; note why in LOG.md)", t.State, t.ID)
+	ui.Info("dropped %s/%s (the record is in git history; note why in the commit)", t.State, t.ID)
 	return 0, nil
 }
 

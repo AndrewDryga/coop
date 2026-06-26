@@ -1,6 +1,7 @@
-# .agent/BACKLOG.md — work discovered outside the current task's scope.
-# Capture it the moment you see it, then stay on task. Not auto-worked and not
-# scanned by the Stop hook; a human promotes an item into .agent/tasks/todo/.
+# .agent/BACKLOG.md — anything noted but not scheduled: discovered work, chores, and
+# product ideas. Capture it the moment you see it (plain bullets, never `- [ ]`), then
+# stay on task. Not auto-worked and not scanned by the Stop hook; a human promotes an
+# item into .agent/tasks/todo/ (a real task folder) when it's ready to work.
 
 ## Example
 
@@ -9,3 +10,7 @@
   out. Whatever's in your head, not a headline — but don't go plan it further.
 
 ## Backlog
+<!-- discovered work: bugs, chores, refactors -->
+
+## Ideas
+<!-- speculative product features — may never be built; need a product call first -->

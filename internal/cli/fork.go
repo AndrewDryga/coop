@@ -712,7 +712,7 @@ func (a *app) runReviewCmd(repo, ws, name, ref string) (int, error) {
 }
 
 // forkBrief prints a review summary before the diff — commits, files changed, and
-// the agent's own reasoning from the fork's .agent/LOG.md — so a reviewer gets a map
+// the agent's own reasoning from the fork's latest task log — so a reviewer gets a map
 // before reading the patch.
 func (a *app) forkBrief(repo, ws, name, ref string) {
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
@@ -731,11 +731,9 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 		fmt.Println(ui.Bold("files:"))
 		fmt.Println(indent(files))
 	}
-	if data, err := os.ReadFile(filepath.Join(ws, ".agent", "LOG.md")); err == nil {
-		if why := lastLines(string(data), 12); strings.TrimSpace(why) != "" {
-			fmt.Println(ui.Bold("why (.agent/LOG.md, latest):"))
-			fmt.Println(indent(why))
-		}
+	if why := latestTaskLog(ws, 12); strings.TrimSpace(why) != "" {
+		fmt.Println(ui.Bold("why (latest task log):"))
+		fmt.Println(indent(why))
 	}
 	fmt.Println(ui.Bold("diff:"))
 }

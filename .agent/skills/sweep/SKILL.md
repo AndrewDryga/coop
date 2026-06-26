@@ -39,8 +39,7 @@ Build *to* them, then *check the diff against them*.
    abuse path, UX, tests (including the failure path), docs, readability — against
    the house rules. Fix what you find; iterate until you'd defend it.
 5. **Commit** — one focused commit for this task; keep the task's `state.md` (resume
-   snapshot) and `log.md` (journal) current, and append a one-line *what + why* to
-   `.agent/LOG.md`.
+   snapshot) and `log.md` (journal — the *what + why*) current.
 6. **Done** — `coop tasks done <id>` (moves it to `done/`; the move ships in the
    commit). Blocked instead? `coop tasks block <id>` and fill in its `decision.md`
    (the question · options · recommendation), then move on.

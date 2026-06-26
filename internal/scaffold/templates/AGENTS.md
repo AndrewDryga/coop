@@ -3,8 +3,7 @@
 
 ## BOOT — on a fresh start or after compaction, read in order:
 1. this file
-2. .agent/LOG.md      (what was done and why)
-3. .agent/tasks/      (what's left — the work queue; start at .agent/tasks/README.md)
+2. .agent/tasks/      (the queue + recent done/ — what's left and what shipped; start at .agent/tasks/README.md)
 
 ## How we build (the creed)
 - **Boring first.** Reach for the dull, proven shape; clever earns its place only when boring can't do the job — and you can say *why* in one sentence.
@@ -14,7 +13,7 @@
 - **Boy-scout rule.** Fix small, safe messes as you pass through; backlog the big ones — never smuggle an unrelated refactor into the commit.
 
 ## Use the agent stack
-- **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` + `LOG.md` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
+- **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
 - **Batch independent reads.** Use tool batching (`/batch`, parallel tool calls, or backgrounded shell reads) for independent searches, file reads, log collection, and docs lookups. Do not batch dependent steps or mutating commands that can race.
 - **Delegate thinking, keep ownership.** Use native subagents/Task workers for broad research, codebase surveys, second opinions, review, and root-cause hypotheses. Treat them as read-only advisors unless your runtime explicitly gives them an isolated workspace. The lead agent makes the decision, edits files, runs the gate, and owns the result.
 - **Keep writes serialized in this checkout.** Native workers are for thinking unless the runtime proves they have separate workspaces. Never let two workers edit the same checkout at once.
@@ -48,17 +47,10 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
   `in_progress/` task, or you after a review — resumes from the note instead of re-deriving it
   from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
   travels with the task to `done/`.
-- `BACKLOG.md` — work you discover *outside* the current task: dump what you already know about it, stay on
-  task, keep going. Not auto-worked, not scanned by the Stop hook; a human
-  promotes an item into `tasks/todo/` when it's time.
-- `LOG.md` — cross-task chain-of-thought: what you did and *why*, so intent survives a
-  compaction (per-task detail lives in each task's `log.md`). Append a short entry per
-  decision/task, newest first. **Housekeeping is mandatory, not optional.** When LOG.md grows
-  past ~150 lines, trim older entries down to one-liners or remove them entirely in the same
-  commit. Never postpone cleanup because the file is large — that is exactly when it must happen.
-- `IDEAS.md` — product ideas: dump your current thinking, a sketch or a full spec if you
-  have one. Never auto-implemented; a human approves and moves one into `tasks/todo/`. The loop
-  reads `tasks/` only.
+- `BACKLOG.md` — anything noted but not scheduled: discovered work, chores, and product
+  ideas. Plain bullets (never `- [ ]`), captured then left — not auto-worked, not scanned by
+  the Stop hook. A human promotes an item into `tasks/todo/` (a real task folder) when it's
+  ready. The loop reads `tasks/` only; per-task reasoning lives in each task's own `log.md`.
 - `rules/` — the taste knowledge base (the one committed part).
 
 ## Skills

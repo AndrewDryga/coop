@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The folder-based task system. A task is a FOLDER under .agent/tasks/<state>/<id>/
@@ -275,6 +276,26 @@ func wsTaskSource(ws string) string {
 		return dir
 	}
 	return filepath.Join(ws, ".agent", "TASKS.md")
+}
+
+// latestTaskLog returns the last n lines of the most-recently-modified per-task log.md
+// under ws's .agent/tasks tree (the agent's "why", folder mode), or the legacy
+// .agent/LOG.md tail, or "" — surfaced by `coop fork review`.
+func latestTaskLog(ws string, n int) string {
+	if root := filepath.Join(ws, tasksRoot); isTaskDir(root) {
+		matches, _ := filepath.Glob(filepath.Join(root, "*", "*", "log.md"))
+		newest, newestMod := "", time.Time{}
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.ModTime().After(newestMod) {
+				newest, newestMod = m, fi.ModTime()
+			}
+		}
+		if newest == "" {
+			return ""
+		}
+		return lastLines(readFileString(newest), n)
+	}
+	return lastLines(readFileString(filepath.Join(ws, ".agent", "LOG.md")), n)
 }
 
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"
