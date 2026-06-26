@@ -135,7 +135,7 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
 		return -1, err
 	}
-	ui.Info("added todo/%s — fill in its Context / Acceptance criteria / Approach / Subtasks", id)
+	ui.Info("added %s/%s — fill in its Context / Acceptance criteria / Approach / Subtasks", stateTodo, id)
 	return 0, nil
 }
 
@@ -150,13 +150,13 @@ func tasksFolderMove(root string, args []string, newState, verb string) (int, er
 		return 1, err
 	}
 	if t.State == newState {
-		ui.Info("%s is already %s", t.ID, newState)
+		ui.Info("%s is already %s", t.ID, stateLabel(newState))
 		return 0, nil
 	}
 	if err := moveTaskDir(root, t, newState); err != nil {
 		return -1, err
 	}
-	ui.Info("%s %s — now %s/%s", verb, t.ID, newState, t.ID)
+	ui.Info("%s %s (now %s)", verb, t.ID, stateLabel(newState))
 	return 0, nil
 }
 
@@ -191,7 +191,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
-	ui.Info("blocked %s — fill in blocked/%s/decision.md (the question, options, your recommendation)", t.ID, t.ID)
+	ui.Info("blocked %s — fill in %s/%s/decision.md (the question, options, your recommendation)", t.ID, stateBlocked, t.ID)
 	return 0, nil
 }
 
@@ -271,7 +271,7 @@ func tasksFolderList(root string) (int, error) {
 			fmt.Println()
 		}
 		first = false
-		fmt.Printf("%s (%d)\n", ui.Bold(state), len(ts))
+		fmt.Printf("%s (%d)\n", ui.Bold(stateLabel(state)), len(ts))
 		for _, t := range ts {
 			fmt.Printf("  - %s  %s%s\n", t.ID, truncate(t.Title, 56), listSuffix(t))
 		}
@@ -319,10 +319,10 @@ func tasksFolderDecisions(root string) (int, error) {
 		}
 	}
 	if n == 0 {
-		ui.Info("no open decisions — nothing in blocked/")
+		ui.Info("no open decisions — nothing is blocked")
 		return 0, nil
 	}
-	ui.Info("%d open decision(s) — resolve in each blocked/<id>/decision.md, then 'coop tasks unblock <id>'", n)
+	ui.Info("%d open decision(s) — resolve each %s/<id>/decision.md, then 'coop tasks unblock <id>'", n, stateBlocked)
 	return 0, nil
 }
 
@@ -335,10 +335,10 @@ func tasksFolderLint(root string) (int, error) {
 		// blocked ⇒ a decision.md is present; a todo shouldn't carry one (it'd be blocked).
 		// A resolved decision.md may ride along through in_progress→done as the audit trail.
 		if t.State == stateBlocked && !t.HasDecision {
-			add(t.ID, "in blocked/ but has no decision.md — add one or move it out of blocked/")
+			add(t.ID, "blocked but has no decision.md — add one, or unblock it")
 		}
 		if t.State == stateTodo && t.HasDecision {
-			add(t.ID, "has a decision.md but is in todo/ — an open decision means it should be in blocked/")
+			add(t.ID, "has a decision.md but is todo — an open decision means it should be blocked")
 		}
 		// a status field is forbidden — the directory IS the status
 		if fields, _ := splitFrontmatter(body); fields["status"] != "" {

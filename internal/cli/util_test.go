@@ -24,13 +24,13 @@ func TestTruncate(t *testing.T) {
 func TestQueueHasTodo(t *testing.T) {
 	// done/ and in_progress/ tasks are not open todos.
 	root := filepath.Join(t.TempDir(), ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(root, "done", "d", "task.md"), "# done\n")
-	writeTaskFile(t, filepath.Join(root, "in_progress", "w", "task.md"), "# wip\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "d", "task.md"), "# done\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "w", "task.md"), "# wip\n")
 	if queueHasTodo(root) {
 		t.Error("done/in_progress tasks must not count as a todo")
 	}
 	// A real todo task does.
-	writeTaskFile(t, filepath.Join(root, "todo", "n", "task.md"), "# next\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "n", "task.md"), "# next\n")
 	if !queueHasTodo(root) {
 		t.Error("a todo/ task should count")
 	}
@@ -43,13 +43,13 @@ func TestQueueHasTodo(t *testing.T) {
 func TestQueueProgress(t *testing.T) {
 	// Two queue dirs; queueProgress sums both, active = the first in_progress task.
 	q1 := filepath.Join(t.TempDir(), ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(q1, "done", "a", "task.md"), "# shipped\n")
-	writeTaskFile(t, filepath.Join(q1, "in_progress", "b", "task.md"), "# wiring it up\n")
-	writeTaskFile(t, filepath.Join(q1, "todo", "c", "task.md"), "# later\n")
+	writeTaskFile(t, filepath.Join(q1, stateDone, "a", "task.md"), "# shipped\n")
+	writeTaskFile(t, filepath.Join(q1, stateInProgress, "b", "task.md"), "# wiring it up\n")
+	writeTaskFile(t, filepath.Join(q1, stateTodo, "c", "task.md"), "# later\n")
 	q2 := filepath.Join(t.TempDir(), ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(q2, "done", "d", "task.md"), "# also done\n")
-	writeTaskFile(t, filepath.Join(q2, "todo", "e", "task.md"), "# another\n")
-	writeTaskFile(t, filepath.Join(q2, "blocked", "f", "task.md"), "# stuck\n")
+	writeTaskFile(t, filepath.Join(q2, stateDone, "d", "task.md"), "# also done\n")
+	writeTaskFile(t, filepath.Join(q2, stateTodo, "e", "task.md"), "# another\n")
+	writeTaskFile(t, filepath.Join(q2, stateBlocked, "f", "task.md"), "# stuck\n")
 	c, active := queueProgress([]string{q1, q2})
 	if c.Done != 2 || c.Doing != 1 || c.Todo != 2 || c.Blocked != 1 || c.total() != 6 {
 		t.Errorf("counts = %+v (total %d), want Done2 Doing1 Todo2 Blocked1 total6", c, c.total())

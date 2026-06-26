@@ -16,7 +16,7 @@ func TestStreamDecoder(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"echo hi","description":"x"}}]}}`,
 		`{"type":"user","message":{"content":[{"tool_use_id":"t1","type":"tool_result","content":"429 too many requests","is_error":false}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"working on task 9"}]}}`,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":".agent/tasks/in_progress/2026-06-26-egress/task.md"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":".agent/tasks/10_in_progress/2026-06-26-egress/task.md"}}]}}`,
 		`{"type":"user","message":{"content":[{"tool_use_id":"t2","type":"tool_result","content":"could not find string to replace","is_error":true}]}}`,
 		`not valid json`,
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":8269,"total_cost_usd":0.1117,"result":"done"}`,
@@ -31,7 +31,7 @@ func TestStreamDecoder(t *testing.T) {
 	d.flush()
 
 	o := out.String()
-	for _, want := range []string{"· model claude-opus-4-8", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ Edit", ".agent/tasks/in_progress/2026-06-26-egress/task.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
+	for _, want := range []string{"· model claude-opus-4-8", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ Edit", ".agent/tasks/10_in_progress/2026-06-26-egress/task.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("rendered output missing %q\n--- got ---\n%s", want, o)
 		}

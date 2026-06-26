@@ -1,6 +1,6 @@
 ---
 name: sweep
-description: Drain this repo's .agent/tasks/ queue autonomously and run-to-completion, taking EACH task to a ship-ready bar — claim a todo/ task (`coop tasks claim`), build it, gate it green, self-review it against the .agent/rules KB and every hat, ITERATE until clean, COMMIT it on its own, then `coop tasks done` — without quitting early. Arms the Stop-hook sentinel. Use to "work all the tasks" / drain a backlog / run an unattended sweep.
+description: Drain this repo's .agent/tasks/ queue autonomously and run-to-completion, taking EACH task to a ship-ready bar — claim a 00_todo/ task (`coop tasks claim`), build it, gate it green, self-review it against the .agent/rules KB and every hat, ITERATE until clean, COMMIT it on its own, then `coop tasks done` — without quitting early. Arms the Stop-hook sentinel. Use to "work all the tasks" / drain a backlog / run an unattended sweep.
 argument-hint: "[optional note or filter]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
@@ -20,15 +20,15 @@ Build *to* them, then *check the diff against them*.
 
 ## 1. Arm
 - `touch .agent/active` — arms the Stop hook: until you remove it, trying to stop
-  while any task remains in `todo/` is blocked. (It's git-ignored.)
+  while any task remains in `00_todo/` is blocked. (It's git-ignored.)
 - Read `AGENTS.md` in full (the gate **and** the contract), `.agent/tasks/README.md`,
   and every `.agent/rules/*.md` (the taste KB). Run `coop tasks` to announce the
-  queue and the open `todo/` count.
+  queue and the open `00_todo/` count.
 - Optionally set a `/goal` to harden "don't stop early" on top of the sentinel.
 
-## 2. The loop — claim the next task, repeat until todo/ and in_progress/ are empty
-1. **Claim** — `coop tasks claim <id>` (moves `todo/` → `in_progress/`) *first*, so a
-   parallel agent won't grab it. A task already in `in_progress/` is a prior attempt —
+## 2. The loop — claim the next task, repeat until 00_todo/ and 10_in_progress/ are empty
+1. **Claim** — `coop tasks claim <id>` (moves `00_todo/` → `10_in_progress/`) *first*, so a
+   parallel agent won't grab it. A task already in `10_in_progress/` is a prior attempt —
    resume it: read its `state.md`, then `git status`/`git diff`.
 2. **Build** — wear the hats; obey `AGENTS.md`, match `.agent/rules/` and the
    surrounding style exactly. `/spec` first if it spans more than one file (writes the
@@ -40,15 +40,15 @@ Build *to* them, then *check the diff against them*.
    the house rules. Fix what you find; iterate until you'd defend it.
 5. **Commit** — one focused commit for this task; keep the task's `state.md` (resume
    snapshot) and `log.md` (journal — the *what + why*) current.
-6. **Done** — `coop tasks done <id>` (moves it to `done/`; the move ships in the
+6. **Done** — `coop tasks done <id>` (moves it to `xx_done/`; the move ships in the
    commit). Blocked instead? `coop tasks block <id>` and fill in its `decision.md`
    (the question · options · recommendation), then move on.
 7. Spot unrelated work? Drop it in `.agent/BACKLOG.md` and return to the queue —
    don't derail the current task.
 
 ## 3. Finish
-- When `todo/` and `in_progress/` are empty, `rm -f .agent/active` to disarm, then run
-  a completeness pass: re-check every task you moved to `done/` against `git log` —
+- When `00_todo/` and `10_in_progress/` are empty, `rm -f .agent/active` to disarm, then run
+  a completeness pass: re-check every task you moved to `xx_done/` against `git log` —
   gate green *and* a commit exists. Reopen anything that doesn't hold up with
-  `coop tasks claim <id>` (back to `in_progress/`), and go again.
-- Report: tasks shipped, anything parked in `BACKLOG.md` or `blocked/`, gate status.
+  `coop tasks claim <id>` (back to `10_in_progress/`), and go again.
+- Report: tasks shipped, anything parked in `BACKLOG.md` or `50_blocked/`, gate status.

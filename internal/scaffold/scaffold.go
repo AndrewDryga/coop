@@ -30,10 +30,12 @@ func Init(repo, stack string, gateLangs []string) error {
 	if err := mkdirs(
 		filepath.Join(repo, ".agent", "rules"),
 		filepath.Join(repo, ".agent", "skills"),
-		filepath.Join(repo, ".agent", "tasks", "todo"),
-		filepath.Join(repo, ".agent", "tasks", "in_progress"),
-		filepath.Join(repo, ".agent", "tasks", "blocked"),
-		filepath.Join(repo, ".agent", "tasks", "done"),
+		// State dirs carry a numeric sort prefix so `ls .agent/tasks` lists them in lifecycle
+		// order; names must match the cli package's state constants (taskdir.go) verbatim.
+		filepath.Join(repo, ".agent", "tasks", "00_todo"),
+		filepath.Join(repo, ".agent", "tasks", "10_in_progress"),
+		filepath.Join(repo, ".agent", "tasks", "50_blocked"),
+		filepath.Join(repo, ".agent", "tasks", "xx_done"),
 		filepath.Join(repo, ".claude", "hooks"),
 		filepath.Join(repo, ".codex"),
 		filepath.Join(repo, ".gemini"),

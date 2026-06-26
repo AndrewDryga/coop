@@ -61,25 +61,25 @@ func TestScanSubtasksSkipsFences(t *testing.T) {
 func TestParseTaskFolderTitleResolution(t *testing.T) {
 	dir := t.TempDir()
 	// frontmatter title wins
-	a := filepath.Join(dir, "todo", "2026-01-01-a")
+	a := filepath.Join(dir, stateTodo, "2026-01-01-a")
 	writeTaskFile(t, filepath.Join(a, "task.md"), "---\ntitle: From frontmatter\n---\n# From H1\n")
 	if it, ok := parseTaskFolder(a, stateTodo); !ok || it.Title != "From frontmatter" || it.ID != "2026-01-01-a" {
 		t.Fatalf("frontmatter title: ok=%v item=%+v", ok, it)
 	}
 	// no frontmatter title → H1
-	b := filepath.Join(dir, "todo", "2026-01-01-b")
+	b := filepath.Join(dir, stateTodo, "2026-01-01-b")
 	writeTaskFile(t, filepath.Join(b, "task.md"), "# Heading title\nbody")
 	if it, _ := parseTaskFolder(b, stateTodo); it.Title != "Heading title" {
 		t.Errorf("H1 title = %q", it.Title)
 	}
 	// neither → id
-	c := filepath.Join(dir, "todo", "2026-01-01-c")
+	c := filepath.Join(dir, stateTodo, "2026-01-01-c")
 	writeTaskFile(t, filepath.Join(c, "task.md"), "just prose, no heading")
 	if it, _ := parseTaskFolder(c, stateTodo); it.Title != "2026-01-01-c" {
 		t.Errorf("id fallback title = %q", it.Title)
 	}
 	// no task.md → not a task
-	empty := filepath.Join(dir, "todo", "not-a-task")
+	empty := filepath.Join(dir, stateTodo, "not-a-task")
 	if err := os.MkdirAll(empty, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -90,14 +90,14 @@ func TestParseTaskFolderTitleResolution(t *testing.T) {
 
 func TestReadTaskTreeAndCounts(t *testing.T) {
 	root := t.TempDir()
-	writeTaskFile(t, filepath.Join(root, "todo", "2026-01-02-second", "task.md"), "# Second todo\n- [ ] a\n")
-	writeTaskFile(t, filepath.Join(root, "todo", "2026-01-01-first", "task.md"), "# First todo\n")
-	writeTaskFile(t, filepath.Join(root, "in_progress", "2026-01-03-active", "task.md"), "# Active one\n- [x] done\n- [ ] todo\n")
-	writeTaskFile(t, filepath.Join(root, "blocked", "2026-01-04-stuck", "task.md"), "# Stuck\n")
-	writeTaskFile(t, filepath.Join(root, "blocked", "2026-01-04-stuck", "decision.md"), "# Decision: ?\n")
-	writeTaskFile(t, filepath.Join(root, "done", "2026-01-05-shipped", "task.md"), "# Shipped\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-02-second", "task.md"), "# Second todo\n- [ ] a\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-first", "task.md"), "# First todo\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-03-active", "task.md"), "# Active one\n- [x] done\n- [ ] todo\n")
+	writeTaskFile(t, filepath.Join(root, stateBlocked, "2026-01-04-stuck", "task.md"), "# Stuck\n")
+	writeTaskFile(t, filepath.Join(root, stateBlocked, "2026-01-04-stuck", "decision.md"), "# Decision: ?\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-05-shipped", "task.md"), "# Shipped\n")
 	// a stray non-task folder is ignored
-	if err := os.MkdirAll(filepath.Join(root, "todo", "scratch"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, stateTodo, "scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,8 +143,8 @@ func TestQueueCountsAndSource(t *testing.T) {
 	// queueCounts/queueHasTodo/wsTaskSource all read the .agent/tasks tree.
 	ws := t.TempDir()
 	dir := filepath.Join(ws, tasksRoot)
-	writeTaskFile(t, filepath.Join(dir, "todo", "2026-01-01-a", "task.md"), "# one\n")
-	writeTaskFile(t, filepath.Join(dir, "in_progress", "2026-01-02-b", "task.md"), "# two\n")
+	writeTaskFile(t, filepath.Join(dir, stateTodo, "2026-01-01-a", "task.md"), "# one\n")
+	writeTaskFile(t, filepath.Join(dir, stateInProgress, "2026-01-02-b", "task.md"), "# two\n")
 	if got := wsTaskSource(ws); got != dir {
 		t.Fatalf("wsTaskSource = %q, want %q", got, dir)
 	}
@@ -226,7 +226,7 @@ func TestSplitTodoFolders(t *testing.T) {
 
 func TestTaskTreeCountsActiveFallsBackToTodo(t *testing.T) {
 	root := t.TempDir()
-	writeTaskFile(t, filepath.Join(root, "todo", "2026-01-01-only", "task.md"), "# Only todo\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-only", "task.md"), "# Only todo\n")
 	_, active := taskTreeCounts(readTaskTree(root))
 	if active != "Only todo" {
 		t.Errorf("active = %q, want the todo task when none in progress", active)

@@ -63,8 +63,8 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// The four task state directories exist (the folder-mode queue).
-	for _, st := range []string{"todo", "in_progress", "blocked", "done"} {
+	// The four task state directories exist (the folder-mode queue, with the lifecycle-sort prefix).
+	for _, st := range []string{"00_todo", "10_in_progress", "50_blocked", "xx_done"} {
 		if fi, err := os.Stat(filepath.Join(repo, ".agent/tasks", st)); err != nil || !fi.IsDir() {
 			t.Errorf(".agent/tasks/%s should be a directory: %v", st, err)
 		}

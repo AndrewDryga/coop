@@ -228,19 +228,20 @@ var commandHelp = map[string]string{
   Usage: coop tasks [--tasks <path>]... <command>
 
   list             list tasks by state (todo/in_progress/blocked/done), with counts
-  add "<title>"    scaffold a new task folder in todo/
-  claim <id>       move a task todo/ -> in_progress/ (claim it before you start)
-  block <id>       move it to blocked/ and write a decision.md stub
-  unblock <id>     move it back blocked/ -> in_progress/
-  done <id>        move it to done/ (the archive)
+  add "<title>"    scaffold a new task folder (lands in todo)
+  claim <id>       claim a task before you start it (todo -> in_progress)
+  block <id>       park it on a decision (-> blocked) and write a decision.md stub
+  unblock <id>     move it back to in_progress once the decision is made
+  done <id>        move it to done (the archive)
   drop <id>        remove a task folder (the record stays in git history)
-  decisions        list the open decisions (one per blocked/ task)
+  decisions        list the open decisions (one per blocked task)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
   split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
 
-  A task's state is its directory, so each transition is a folder move. Defaults to
-  .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths are
-  repo-relative.`,
+  A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ xx_done/, the
+  numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
+  Defaults to .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths
+  are repo-relative.`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 

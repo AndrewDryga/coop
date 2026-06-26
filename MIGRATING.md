@@ -4,9 +4,10 @@
 
 Older coop repos kept the work queue in a single `.agent/TASKS.md` (with
 `[ ]`/`[w]`/`[x]`/`[B]` checkboxes) plus a global `.agent/PENDING_DECISIONS.md`.
-coop still reads that layout (it's auto-detected), but the current format is a
-**folder per task** under `.agent/tasks/`, where a task's state is its directory
-(`todo/` · `in_progress/` · `blocked/` · `done/`). See the README's task section.
+As of coop v3, that layout is **no longer read** — the format is a **folder per
+task** under `.agent/tasks/`, where a task's state is its directory (`00_todo/` ·
+`10_in_progress/` · `50_blocked/` · `xx_done/`; the numeric prefix just sorts `ls`
+in lifecycle order). Convert once with the prompt below; there is no fallback.
 
 To convert, paste the prompt below to any coding agent (Claude, Codex, Gemini, …)
 **running in the repo**. It's a one-time, content-preserving migration; an LLM
@@ -29,9 +30,10 @@ SOURCE
 - Ignore the header/legend comments, the `[E]` example task, and any `- [ ]` lines
   inside ``` fenced code blocks (those are documentation, not tasks).
 
-TARGET — a folder per task; the task's STATE is its directory:
-  `- [ ]` → `.agent/tasks/todo/`        `- [w]` → `.agent/tasks/in_progress/`
-  `- [B]` → `.agent/tasks/blocked/`      `- [x]` → `.agent/tasks/done/`
+TARGET — a folder per task; the task's STATE is its directory (the NN_ prefix is
+part of the directory name — use it verbatim):
+  `- [ ]` → `.agent/tasks/00_todo/`        `- [w]` → `.agent/tasks/10_in_progress/`
+  `- [B]` → `.agent/tasks/50_blocked/`      `- [x]` → `.agent/tasks/xx_done/`
 
 FOR EACH TASK
 1. id = `YYYY-MM-DD-<slug>`: use a date from the task body if it has one, else
@@ -62,7 +64,7 @@ FOR EACH TASK
    steps. Put anything that doesn't fit under a trailing `## Notes` heading —
    never drop content. Do NOT add a `status:` field; the directory is the status.
 
-3. For a `[B]` (blocked) task, also write `.agent/tasks/blocked/<id>/decision.md`:
+3. For a `[B]` (blocked) task, also write `.agent/tasks/50_blocked/<id>/decision.md`:
 
    # Decision: <the open question>
 
@@ -82,7 +84,7 @@ FOR EACH TASK
 
    If `.agent/PENDING_DECISIONS.md` has an entry matching this task (by the title or
    topic it names), fold it into this `decision.md`. A pending decision that matches
-   no task → create a new `blocked/` task for it.
+   no task → create a new `50_blocked/` task for it.
 
 CLEAN UP
 4. Once every task and decision has been migrated, delete `.agent/TASKS.md` and

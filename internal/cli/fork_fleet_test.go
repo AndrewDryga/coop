@@ -175,18 +175,18 @@ func TestFleetInit(t *testing.T) {
 func TestFleetSplit(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "r")
 	for _, id := range []string{"2026-01-01-a", "2026-01-02-b", "2026-01-03-c"} {
-		writeTaskFile(t, filepath.Join(repo, ".agent", "tasks", "todo", id, "task.md"), "# "+id+"\n")
+		writeTaskFile(t, filepath.Join(repo, ".agent", "tasks", stateTodo, id, "task.md"), "# "+id+"\n")
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
 	if code, err := a.fleetSplit([]string{"2"}); err != nil || code != 0 {
 		t.Fatalf("fleetSplit = (%d, %v), want (0, nil)", code, err)
 	}
 	// Round-robin over the sorted todo list: slice1 gets a + c, slice2 gets b — as folder copies.
-	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", "todo", "2026-01-01-a")) ||
-		!isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", "todo", "2026-01-03-c")) {
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", stateTodo, "2026-01-01-a")) ||
+		!isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", stateTodo, "2026-01-03-c")) {
 		t.Error("slice1 should hold a and c")
 	}
-	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice2", "todo", "2026-01-02-b")) {
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice2", stateTodo, "2026-01-02-b")) {
 		t.Error("slice2 should hold b")
 	}
 	// It also writes .agent/fleet with each fork's explicit tasks dir.

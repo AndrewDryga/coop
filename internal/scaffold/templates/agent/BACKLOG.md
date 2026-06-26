@@ -1,7 +1,7 @@
 # .agent/BACKLOG.md — anything noted but not scheduled: discovered work, chores, and
 # product ideas. Capture it the moment you see it (plain bullets, never `- [ ]`), then
 # stay on task. Not auto-worked and not scanned by the Stop hook; a human promotes an
-# item into .agent/tasks/todo/ (a real task folder) when it's ready to work.
+# item into .agent/tasks/00_todo/ (a real task folder) when it's ready to work.
 
 ## Example
 

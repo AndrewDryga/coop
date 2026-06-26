@@ -624,21 +624,22 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 
 ```bash
 coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
-coop tasks add "..."      # add a task (a folder under .agent/tasks/todo/)
+coop tasks add "..."      # add a task (a folder under .agent/tasks/00_todo/)
 coop loop                 # disposable agents work the queue until it's done, then audit
 coop loop codex           # …or pick the model: claude (default), codex, or gemini
 ```
 
 A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
-in: `todo/` · `in_progress/` · `blocked/` · `done/`. `loop` starts a fresh agent per
-iteration (no context rot), claims the next task from `todo/` (or resumes one left in
-`in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini` to
-choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
+in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `xx_done/` (the numeric prefix sorts
+`ls` in lifecycle order; `coop tasks` shows the clean names). `loop` starts a fresh agent
+per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
+in `10_in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini`
+to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
 command if you need something custom. When the queue empties, a fresh auditor re-checks
-every task in `done/` against the git log and reopens anything that doesn't hold up.
+every task in `xx_done/` against the git log and reopens anything that doesn't hold up.
 
 Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
-starts working: it unblocks any `blocked/` task whose `decision.md` now has an answer —
+starts working: it unblocks any `50_blocked/` task whose `decision.md` now has an answer —
 so a fresh run starts from a tidy queue. It works no
 task and makes no commits, and it's the symmetric front bookend to the audit pass. Off
 by default.
@@ -669,8 +670,8 @@ except `rules/`, the shared knowledge base, which is committed.
 
 | File | What it's for |
 |---|---|
-| `tasks/` | the work queue — one folder per task under `todo/`/`in_progress/`/`blocked/`/`done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `todo/`+`in_progress/`. |
-| `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; plain bullets, never auto-worked, a human promotes one into `tasks/todo/` |
+| `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`xx_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
+| `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; plain bullets, never auto-worked, a human promotes one into `tasks/00_todo/` |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format

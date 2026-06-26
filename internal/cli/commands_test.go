@@ -42,7 +42,7 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	work := loopWorkPrompt("/repo", []string{".agent/tasks"})
 	for _, want := range []string{
 		"coop tasks claim", "coop tasks done", "coop tasks block",
-		"in_progress/", "git status", "git diff",
+		"10_in_progress/", "00_todo/", "git status", "git diff",
 		"state.md", "resume note", "final step", "finished state",
 		"Finish the in_progress task", "Do not stop while",
 	} {
@@ -56,14 +56,14 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 // decision (no code, no commits); audit re-checks the done/ archive against git and reopens via claim.
 func TestLoopPreflightAndAuditFolder(t *testing.T) {
 	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"})
-	for _, want := range []string{"do NOT work any task", "no commits", "coop tasks unblock", "blocked/"} {
+	for _, want := range []string{"do NOT work any task", "no commits", "coop tasks unblock", "50_blocked/"} {
 		if !strings.Contains(pre, want) {
 			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
 	}
 	aud := loopAuditPrompt("/repo", []string{".agent/tasks"})
-	if !strings.Contains(aud, "done/") || !strings.Contains(aud, "coop tasks claim") {
-		t.Errorf("audit prompt should re-check done/ and reopen via claim:\n%s", aud)
+	if !strings.Contains(aud, "xx_done/") || !strings.Contains(aud, "coop tasks claim") {
+		t.Errorf("audit prompt should re-check xx_done/ and reopen via claim:\n%s", aud)
 	}
 }
 

@@ -555,8 +555,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         task begins with a clean head, no leftover context to
                         rot. The agent claims a task, does it, runs your gate,
                         commits the result, and moves to the next. It won't stop
-                        while any task remains in <code>todo/</code> or
-                        <code>in_progress/</code>.
+                        while any task remains in <code>00_todo/</code> or
+                        <code>10_in_progress/</code>.
                     </p>
                     <pre
                         class="code"
@@ -626,9 +626,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <td><code>tasks/</code></td>
                             <td>
                                 the work queue — a folder per task under
-                                <code>todo/</code>, <code>in_progress/</code>,
-                                <code>blocked/</code>, <code>done/</code>; its
-                                state is its directory
+                                <code>00_todo/</code>,
+                                <code>10_in_progress/</code>,
+                                <code>50_blocked/</code>, <code>xx_done/</code>;
+                                its state is its directory (the numeric prefix
+                                sorts <code>ls</code> in lifecycle order;
+                                <code>coop tasks</code> shows the clean names)
                             </td>
                         </tr>
                         <tr>
