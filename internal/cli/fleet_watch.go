@@ -62,10 +62,10 @@ func forkRan(repo, name string) bool {
 	return err == nil && fi.Size() > 0
 }
 
-// keepLastGood rides out a torn read of a fork's TASKS.md (the agent rewrites it as it works; a
-// read that lands mid-rewrite can come back empty). A populated queue never legitimately drops to
-// zero tasks, so when the fresh read shows none but the last one had some, keep the previous
-// counts/active. Everything not derived from TASKS.md (running, lastLog, ran) stays fresh.
+// keepLastGood rides out a torn read of a fork's task tree (the agent moves task folders as it
+// works; a read that lands mid-move can come back empty). A populated queue never legitimately
+// drops to zero tasks, so when the fresh read shows none but the last one had some, keep the
+// previous counts/active. Everything not derived from the tree (running, lastLog, ran) stays fresh.
 func keepLastGood(fresh, prev fleetRow) fleetRow {
 	if fresh.counts.total() == 0 && prev.counts.total() > 0 {
 		fresh.counts = prev.counts
@@ -105,7 +105,7 @@ func (a *app) fleetWatch() (int, error) {
 	defer t.Stop()
 
 	name := filepath.Base(repo)
-	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn TASKS.md read
+	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn task-tree read
 	for spin := 0; ; spin++ {
 		names := forkNames(repo) // re-read so a fork added/removed mid-watch shows up
 		rows := make([]fleetRow, len(names))
