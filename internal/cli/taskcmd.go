@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 
 // cmdTasksFolder routes `coop tasks <sub>` against a folder-mode tree rooted at root
 // (absolute path to .agent/tasks). No sub-command lists the tree.
-func cmdTasksFolder(root string, rest []string) (int, error) {
+func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	sub := ""
 	var args []string
 	if len(rest) > 0 {
@@ -41,11 +42,13 @@ func cmdTasksFolder(root string, rest []string) (int, error) {
 		return tasksFolderMove(root, args, stateDone, "done")
 	case "drop":
 		return tasksFolderDrop(root, args)
+	case "split":
+		return tasksFolderSplit(repo, root, args)
 	case "decisions":
 		return tasksFolderDecisions(root)
 	default:
 		return 2, unknownErr("tasks command", sub,
-			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "drop", "decisions"})
+			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "drop", "split", "decisions"})
 	}
 }
 
@@ -202,6 +205,47 @@ func tasksFolderDrop(root string, args []string) (int, error) {
 		return -1, err
 	}
 	ui.Info("dropped %s/%s (the record is in git history; note why in LOG.md)", t.State, t.ID)
+	return 0, nil
+}
+
+// tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.1 …
+// .agent/tasks.n), as COPIES — the source is untouched. Loop one fork per slice. The
+// folder-mode counterpart of the legacy tasksSplit (which wrote TASKS.N.md files).
+func tasksFolderSplit(repo, root string, args []string) (int, error) {
+	if len(args) < 1 {
+		return 2, errors.New("usage: coop tasks split <n>")
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n <= 0 {
+		return 2, errors.New("usage: coop tasks split <n>")
+	}
+	names := make([]string, n)
+	for i := range names {
+		names[i] = strconv.Itoa(i + 1)
+	}
+	written, counts, total, err := splitTodoFolders(repo, root, names)
+	if err != nil {
+		return -1, err
+	}
+	if total == 0 {
+		ui.Info("no todo task(s) to split")
+		return 0, nil
+	}
+	wrote := 0
+	for i, rel := range written {
+		if rel == "" {
+			continue
+		}
+		ui.Info("wrote %s (%d task(s))", rel, counts[i])
+		wrote++
+	}
+	if wrote < n {
+		ui.Info("only %d todo task(s) — wrote %d slice(s), not the %d requested", total, wrote, n)
+	}
+	// The slices are COPIES; the source .agent/tasks is untouched. Say which to run so a
+	// later loop doesn't process every task twice.
+	ui.Info("the slices are copies — .agent/tasks is unchanged; loop one fork per slice")
+	ui.Info("e.g. coop fork s1 --loop --tasks .agent/tasks.1 ; don't also loop .agent/tasks, or each task runs twice")
 	return 0, nil
 }
 

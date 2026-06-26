@@ -174,6 +174,66 @@ func TestQueueCountsAndSourceFolderVsLegacy(t *testing.T) {
 	}
 }
 
+func TestCopyTree(t *testing.T) {
+	src := t.TempDir()
+	writeTaskFile(t, filepath.Join(src, "a", "x.md"), "hello")
+	writeTaskFile(t, filepath.Join(src, "b.txt"), "world")
+	dst := filepath.Join(t.TempDir(), "out")
+	if err := copyTree(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileString(filepath.Join(dst, "a", "x.md")); got != "hello" {
+		t.Errorf("nested file = %q", got)
+	}
+	if got := readFileString(filepath.Join(dst, "b.txt")); got != "world" {
+		t.Errorf("top file = %q", got)
+	}
+}
+
+func TestSplitTodoFolders(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, ".agent", "tasks")
+	for _, id := range []string{"2026-01-01-a", "2026-01-02-b", "2026-01-03-c", "2026-01-04-d", "2026-01-05-e"} {
+		writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# "+id+"\n")
+	}
+	// an in_progress task must be excluded from the split
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-06-active", "task.md"), "# active\n")
+
+	written, counts, total, err := splitTodoFolders(repo, root, []string{"1", "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 5 {
+		t.Fatalf("total = %d, want 5 (in_progress excluded)", total)
+	}
+	if counts[0] != 3 || counts[1] != 2 {
+		t.Errorf("round-robin counts = %v, want [3 2]", counts)
+	}
+	if written[0] != filepath.Join(".agent", "tasks.1") || written[1] != filepath.Join(".agent", "tasks.2") {
+		t.Errorf("written slice dirs = %v", written)
+	}
+	if !fileExists(filepath.Join(repo, ".agent", "tasks.1", stateTodo, "2026-01-01-a", "task.md")) {
+		t.Error("slice 1 missing the first round-robin task's copied task.md")
+	}
+	// source is untouched (the slices are copies)
+	if c, _ := taskTreeCounts(readTaskTree(root)); c.Todo != 5 || c.Doing != 1 {
+		t.Errorf("source tree changed by split: %+v", c)
+	}
+	// each slice is itself a valid folder-mode queue
+	if c, _ := taskTreeCounts(readTaskTree(filepath.Join(repo, ".agent", "tasks.1"))); c.Todo != 3 {
+		t.Errorf("slice 1 todo = %d, want 3", c.Todo)
+	}
+
+	// more slices than tasks → the trailing bucket is empty (written == "")
+	repo2 := t.TempDir()
+	root2 := filepath.Join(repo2, ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root2, stateTodo, "only", "task.md"), "# only\n")
+	w, c, tot, _ := splitTodoFolders(repo2, root2, []string{"1", "2"})
+	if tot != 1 || c[0] != 1 || c[1] != 0 || w[0] == "" || w[1] != "" {
+		t.Errorf("uneven split: written=%v counts=%v total=%d", w, c, tot)
+	}
+}
+
 func TestTaskTreeCountsActiveFallsBackToTodo(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, "todo", "2026-01-01-only", "task.md"), "# Only todo\n")

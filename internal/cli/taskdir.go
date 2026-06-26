@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -183,6 +184,62 @@ func readTaskTree(root string) []taskItem {
 		return items[i].ID < items[j].ID
 	})
 	return items
+}
+
+// copyTree recursively copies directory src into dst (creating dst and parents). Used to
+// seed a fork worktree with a folder-mode task tree, and to write per-fork task slices.
+func copyTree(src, dst string) error {
+	return fs.WalkDir(os.DirFS(src), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, p) // p is "." for the root, then forward-slash rel paths
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return copyFile(filepath.Join(src, p), target)
+	})
+}
+
+// splitTodoFolders round-robins the todo task folders under root into len(names) per-fork
+// task trees — siblings of root named "tasks.<name>" — copying each task folder into that
+// slice's todo/. The source tree is left untouched (the slices are COPIES). Returns, per
+// name, the repo-relative slice dir written ("" when that bucket was empty) and its task
+// count, plus the total number of todo tasks. Shared by `coop tasks split` and `coop fleet
+// split` so they can't drift.
+func splitTodoFolders(repo, root string, names []string) (written []string, counts []int, total int, err error) {
+	n := len(names)
+	written = make([]string, n)
+	counts = make([]int, n)
+	if n == 0 {
+		return written, counts, 0, nil
+	}
+	var todo []taskItem
+	for _, it := range readTaskTree(root) {
+		if it.State == stateTodo {
+			todo = append(todo, it)
+		}
+	}
+	parent := filepath.Dir(root)
+	for i, it := range todo {
+		b := i % n // deterministic round-robin over the sorted todo list
+		if e := copyTree(it.Dir, filepath.Join(parent, "tasks."+names[b], stateTodo, it.ID)); e != nil {
+			return nil, nil, 0, e
+		}
+		counts[b]++
+	}
+	for i := range names {
+		if counts[i] == 0 {
+			continue
+		}
+		sliceDir := filepath.Join(parent, "tasks."+names[i])
+		if rel, e := filepath.Rel(repo, sliceDir); e == nil {
+			written[i] = rel
+		} else {
+			written[i] = sliceDir
+		}
+	}
+	return written, counts, len(todo), nil
 }
 
 // stateOrder maps a state to its lifecycle index for sorting (unknown states sort last).

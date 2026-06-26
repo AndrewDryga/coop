@@ -127,17 +127,31 @@ func (a *app) forkPool(repo, agent, name string, profiles []string) (*profilePoo
 // detached=true means this process IS the background worker (its stdio is already the
 // log, and it owns the pidfile). tasks is an absolute path resolved by the caller.
 func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string, detached bool) (int, error) {
-	dst := filepath.Join(ws, ".agent", "TASKS.md")
-	if tasks != "" && !fileExists(dst) {
-		if err := os.MkdirAll(filepath.Join(ws, ".agent"), 0o755); err != nil {
-			return -1, err
-		}
-		if err := copyFile(tasks, dst); err != nil {
-			return -1, err
+	// Seed the fork's queue from the --tasks source (only when the fork has none yet, so a
+	// resumed loop keeps its own progress). The source may be a folder-mode tree (.agent/tasks,
+	// or a per-fork .agent/tasks.<name> slice from fleet split) or a legacy single file; seed
+	// and loop on the matching shape inside the worktree.
+	forkRel := filepath.Join(".agent", "TASKS.md")
+	if isTaskDir(tasks) {
+		forkRel = filepath.FromSlash(tasksRoot)
+	}
+	dst := filepath.Join(ws, forkRel)
+	if tasks != "" && !pathExists(dst) {
+		if isTaskDir(tasks) {
+			if err := copyTree(tasks, dst); err != nil {
+				return -1, err
+			}
+		} else {
+			if err := os.MkdirAll(filepath.Join(ws, ".agent"), 0o755); err != nil {
+				return -1, err
+			}
+			if err := copyFile(tasks, dst); err != nil {
+				return -1, err
+			}
 		}
 	} else if tasks != "" {
 		// The fork already has a queue (a resumed loop keeps its progress), so the
-		// tasks file isn't re-seeded — say so instead of silently ignoring it.
+		// source isn't re-seeded — say so instead of silently ignoring it.
 		ui.Info("%s already has a queue — keeping its progress; --tasks not re-applied (use --fresh to reseed)", name)
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
@@ -157,9 +171,9 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 	if err != nil {
 		return -1, err
 	}
-	// A fork works its own seeded queue in the worktree (the fleet file carries the
-	// per-component source path; here it's the standard .agent/TASKS.md).
-	forkQueue := []string{filepath.Join(".agent", "TASKS.md")}
+	// A fork works its own seeded queue in the worktree — the folder tree (.agent/tasks)
+	// or the legacy .agent/TASKS.md, whichever the source seeded.
+	forkQueue := []string{forkRel}
 	code, err := a.loop(ws, img, agent, pool, forkQueue, sink, false, false) // detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)

@@ -383,6 +383,14 @@ func (a *app) fleetSplit(args []string) (int, error) {
 	if len(targets) == 0 {
 		return 2, errors.New("usage: coop fleet split <n>   (or define .agent/fleet first)")
 	}
+	// Folder mode: round-robin the todo task folders into per-fork task trees.
+	if root := filepath.Join(repo, tasksRoot); isTaskDir(root) {
+		names, agts := make([]string, len(targets)), make([]string, len(targets))
+		for i, t := range targets {
+			names[i], agts[i] = t.name, t.agent
+		}
+		return a.fleetSplitFolders(repo, root, names, agts)
+	}
 	data, err := os.ReadFile(filepath.Join(repo, ".agent", "TASKS.md"))
 	if err != nil {
 		return -1, errors.New("no .agent/TASKS.md — run 'coop init'")
@@ -416,6 +424,44 @@ func (a *app) fleetSplit(args []string) (int, error) {
 	// Write .agent/fleet so its config shows each fork's explicit tasks path. Don't
 	// clobber a hand-authored fleet (it already carries the agents/paths you chose) —
 	// print the lines to reconcile instead.
+	if !fileExists(fleetFile(repo)) {
+		header := "# coop fleet — one fork per line: <name> [agent] <tasks-path>\n"
+		out := header + strings.Join(fleetLines, "\n") + "\n"
+		if err := os.WriteFile(fleetFile(repo), []byte(out), 0o644); err != nil {
+			return -1, err
+		}
+		ui.Info("wrote .agent/fleet — review the slices, then 'coop fleet up'")
+		return 0, nil
+	}
+	ui.Info("mechanical round-robin split — .agent/fleet exists, so reconcile these lines:")
+	for _, l := range fleetLines {
+		fmt.Printf("  %s\n", l)
+	}
+	return 0, nil
+}
+
+// fleetSplitFolders is the folder-mode counterpart of the legacy TASKS.md split: it
+// round-robins the todo task folders into per-fork task trees (.agent/tasks.<name>) and
+// writes .agent/fleet pointing each fork at its slice directory (a dir → folder mode).
+func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, error) {
+	written, counts, total, err := splitTodoFolders(repo, root, names)
+	if err != nil {
+		return -1, err
+	}
+	if total == 0 {
+		ui.Info("no todo task(s) to split")
+		return 0, nil
+	}
+	var fleetLines []string
+	for i := range names {
+		if written[i] == "" {
+			continue
+		}
+		ui.Info("wrote %s (%d task(s))", written[i], counts[i])
+		fleetLines = append(fleetLines, fmt.Sprintf("%s %s %s", names[i], agts[i], written[i]))
+	}
+	// Same fleet-file write/reconcile as the legacy split: don't clobber a hand-authored
+	// .agent/fleet — print the lines to reconcile instead.
 	if !fileExists(fleetFile(repo)) {
 		header := "# coop fleet — one fork per line: <name> [agent] <tasks-path>\n"
 		out := header + strings.Join(fleetLines, "\n") + "\n"

@@ -179,7 +179,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	// takes over. Legacy single-file TASKS.md handling stays below for un-migrated repos.
 	if len(rels) == 1 {
 		if src := filepath.Join(repo, rels[0]); isTaskDir(src) {
-			return cmdTasksFolder(src, rest)
+			return cmdTasksFolder(repo, src, rest)
 		}
 	}
 	switch sub {

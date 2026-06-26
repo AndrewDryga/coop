@@ -120,21 +120,40 @@ func TestTasksFolderLifecycle(t *testing.T) {
 func TestCmdTasksFolderDispatch(t *testing.T) {
 	root := t.TempDir()
 	// no sub-command (empty rest) must not panic and should list cleanly
-	if code, err := cmdTasksFolder(root, nil); code != 0 || err != nil {
+	if code, err := cmdTasksFolder(root, root, nil); code != 0 || err != nil {
 		t.Fatalf("cmdTasksFolder(nil): code=%d err=%v", code, err)
 	}
-	if code, err := cmdTasksFolder(root, []string{}); code != 0 || err != nil {
+	if code, err := cmdTasksFolder(root, root, []string{}); code != 0 || err != nil {
 		t.Fatalf("cmdTasksFolder([]): code=%d err=%v", code, err)
 	}
 	// add then list through the dispatcher
-	if code, err := cmdTasksFolder(root, []string{"add", "Hello world"}); code != 0 || err != nil {
+	if code, err := cmdTasksFolder(root, root, []string{"add", "Hello world"}); code != 0 || err != nil {
 		t.Fatalf("add via dispatch: code=%d err=%v", code, err)
 	}
-	if code, err := cmdTasksFolder(root, []string{"list"}); code != 0 || err != nil {
+	if code, err := cmdTasksFolder(root, root, []string{"list"}); code != 0 || err != nil {
 		t.Fatalf("list via dispatch: code=%d err=%v", code, err)
 	}
-	if code, _ := cmdTasksFolder(root, []string{"bogus"}); code != 2 {
+	if code, _ := cmdTasksFolder(root, root, []string{"bogus"}); code != 2 {
 		t.Errorf("unknown sub should return code 2, got %d", code)
+	}
+}
+
+func TestTasksFolderSplitCommand(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-02-b", "task.md"), "# b\n")
+	if code, err := tasksFolderSplit(repo, root, []string{"2"}); code != 0 || err != nil {
+		t.Fatalf("split 2: code=%d err=%v", code, err)
+	}
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.1")) || !isTaskDir(filepath.Join(repo, ".agent", "tasks.2")) {
+		t.Error("split did not create both slice dirs")
+	}
+	if code, _ := tasksFolderSplit(repo, root, []string{"0"}); code != 2 {
+		t.Errorf("split 0 should be a usage error (2), got %d", code)
+	}
+	if code, _ := tasksFolderSplit(repo, root, nil); code != 2 {
+		t.Errorf("split with no n should be a usage error (2), got %d", code)
 	}
 }
 
