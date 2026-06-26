@@ -4,7 +4,7 @@
 ## BOOT — on a fresh start or after compaction, read in order:
 1. this file
 2. .agent/LOG.md      (what was done and why)
-3. .agent/TASKS.md    (what's left)
+3. .agent/tasks/      (what's left — the work queue; start at .agent/tasks/README.md)
 
 ## How we build (the creed)
 - **Boring first.** Reach for the dull, proven shape; clever earns its place only when boring can't do the job — and you can say *why* in one sentence.
@@ -14,7 +14,7 @@
 - **Boy-scout rule.** Fix small, safe messes as you pass through; backlog the big ones — never smuggle an unrelated refactor into the commit.
 
 ## Use the agent stack
-- **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `TASKS.md` + `LOG.md` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
+- **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` + `LOG.md` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
 - **Batch independent reads.** Use tool batching (`/batch`, parallel tool calls, or backgrounded shell reads) for independent searches, file reads, log collection, and docs lookups. Do not batch dependent steps or mutating commands that can race.
 - **Delegate thinking, keep ownership.** Use native subagents/Task workers for broad research, codebase surveys, second opinions, review, and root-cause hypotheses. Treat them as read-only advisors unless your runtime explicitly gives them an isolated workspace. The lead agent makes the decision, edits files, runs the gate, and owns the result.
 - **Keep writes serialized in this checkout.** Native workers are for thinking unless the runtime proves they have separate workspaces. Never let two workers edit the same checkout at once.
@@ -24,40 +24,47 @@
 `<format-check> && <build --warnings-as-errors> && <tests>`
 
 ## The contract
-- States: `[ ]` todo · `[w]` claimed · `[x]` done+gated+committed · `[B]` blocked.
-- **Every top-level `[ ]` is live.** The loop, split, and status act on every unchecked top-level task in a queue file, wherever it sits — there is no special "active" section (a `## Active` heading is just convention). The example uses `[E]` so it's skipped; anything not ready to be worked belongs in `BACKLOG.md`/`IDEAS.md` or as plain prose, never as a `[ ]`.
-- Claim a task by flipping it to `[w]` BEFORE you start it.
-- `[x]` only when the gate is green, the change is committed, and LOG.md has an entry.
-- Blocked? `[B]` + a .agent/PENDING_DECISIONS.md entry. There is no fifth state.
+- A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `todo/` · `in_progress/` · `blocked/` · `done/`. Moving the folder IS the state change — use `coop tasks`, never a manual `mv`. There is no status field and no fifth state.
+- **Every folder in `todo/` is live.** The loop picks the next from `todo/` and resumes one already in `in_progress/`; `blocked/` is parked, `done/` is the archive. Anything not ready to work belongs in `BACKLOG.md`/`IDEAS.md`, never as a task folder.
+- Claim a task with `coop tasks claim <id>` (moves it to `in_progress/`) BEFORE you start it.
+- `coop tasks done <id>` (moves it to `done/`) only when the gate is green, the change is committed, and LOG.md has an entry — the folder move ships in that commit.
+- Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
 - One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
-- **Tasks are self-contained.** TASKS.md gets read by a fresh agent after a compaction or in a new session — so a task can't lean on prior chat, a past review, or memory not in the repo. Each one states: the problem + context, likely files, an implementation direction, and acceptance checks. If it can't stand on its own with just the BOOT files, it isn't ready for the queue.
-- Never stop while a `[ ]` remains.
+- **Tasks are self-contained.** A task's `task.md` gets read by a fresh agent after a compaction or in a new session — so it can't lean on prior chat, a past review, or memory not in the repo. Each states: the problem + context, acceptance criteria, an approach (or a `spec.md`), and its subtasks. If it can't stand on its own with just the BOOT files, it isn't ready for the queue.
+- Never stop while `todo/` or `in_progress/` has a task.
 
 ## The .agent/ working state
 Durable working memory the BOOT protocol reads back. Only `rules/` is committed;
 the rest is local (git-ignored) so it never creates commit noise or merge churn.
-- `TASKS.md` — the work queue (the four states above).
+- `tasks/` — the work queue: one folder per task under `todo/`/`in_progress/`/`blocked/`/`done/`.
+  See `tasks/README.md` for the layout and the per-task files (`task.md`, plus optional
+  `spec.md`, `log.md`, `state.md`, `decision.md`, `screenshots/`, `artifacts/`). `coop tasks`
+  lists and moves them.
+- `state.md` — a small, overwritten resume snapshot of the task in flight (status, what's
+  done, the next action, traps), kept inside the in-progress task's own folder. The loop's
+  working agent refreshes it at each checkpoint (before a commit / pause) and once more as the
+  final step when the task is done, so the next iteration — a *different* agent resuming the same
+  `in_progress/` task, or you after a review — resumes from the note instead of re-deriving it
+  from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
+  travels with the task to `done/`.
 - `BACKLOG.md` — work you discover *outside* the current task: dump what you already know about it, stay on
   task, keep going. Not auto-worked, not scanned by the Stop hook; a human
-  promotes an item into TASKS.md when it's time.
-- `LOG.md` — your chain-of-thought: what you did and *why*, so intent survives a
-  compaction. Append a short entry per decision/task, newest first.
-  **Housekeeping is mandatory, not optional.** When LOG.md exceeds 20 entries,
-  trim older entries down to one-liners or remove them entirely in the same
-  commit. Never postpone cleanup because the file is large — that is exactly
-  when it must happen.
-- `PENDING_DECISIONS.md` — anything needing a human call: the decision, the
-  options, your recommendation. Mark the task `[B]`. Never guess on a one-way door.
+  promotes an item into `tasks/todo/` when it's time.
+- `LOG.md` — cross-task chain-of-thought: what you did and *why*, so intent survives a
+  compaction (per-task detail lives in each task's `log.md`). Append a short entry per
+  decision/task, newest first. **Housekeeping is mandatory, not optional.** When LOG.md grows
+  past ~150 lines, trim older entries down to one-liners or remove them entirely in the same
+  commit. Never postpone cleanup because the file is large — that is exactly when it must happen.
 - `IDEAS.md` — product ideas: dump your current thinking, a sketch or a full spec if you
-  have one. Never auto-implemented; a human
-  approves and moves one into TASKS.md. The loop reads TASKS.md only.
+  have one. Never auto-implemented; a human approves and moves one into `tasks/todo/`. The loop
+  reads `tasks/` only.
 - `rules/` — the taste knowledge base (the one committed part).
 
 ## Skills
 Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
 change, `/work` to execute a plan step by step against the gate, `/sweep` to
-drain `.agent/TASKS.md` unattended, `/investigate` to root-cause a failure before
+drain `.agent/tasks/` unattended, `/investigate` to root-cause a failure before
 fixing, `/verify-api` before calling anything you're not sure exists, `/release` to
 cut a versioned, tagged release. They live once in
 `.agent/skills/`; each agent's dir (`.claude`, `.codex`, `.gemini`) symlinks to it.

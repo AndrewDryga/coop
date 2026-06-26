@@ -4,6 +4,31 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Tasks are folders now (`.agent/tasks/`); state is the directory.** The single
+  `.agent/TASKS.md` queue is replaced by one folder per task under
+  `todo/`/`in_progress/`/`blocked/`/`done/` — a task's workflow state is which directory
+  it's in, so a finished task physically leaves the queue (no more done-but-unpruned rot)
+  and there's no status field to drift. Each task folder holds its own `task.md` plus
+  optional `spec.md`, `log.md`, `state.md`, a co-located `decision.md` (replacing the global
+  PENDING_DECISIONS.md), and `screenshots/`/`artifacts/`. New `coop tasks` subcommands drive
+  it — `add`, `claim`, `block`, `unblock`, `done`, `drop`, `list`, `lint`, `decisions` —
+  each transition an atomic folder move. The loop, `coop status`, `coop fleet`, the Stop
+  hook, and `coop init` are all folder-aware; a repo that still has a legacy `.agent/TASKS.md`
+  keeps working (auto-detected). Subtasks are a `- [ ]` checklist inside `task.md`, and the
+  frontmatter is sync-ready for GitHub Issues / Jira. Design + research live in
+  `.agent/specs/task-system/`.
+
+- **The loop hands off mid-task through `.agent/state.md`.** Each `coop loop` iteration runs a
+  fresh headless agent with no memory of the last, so a task interrupted mid-flight used to be
+  resumed only by reverse-engineering the uncommitted `git diff`. Now the work prompt has the agent
+  keep a small, overwritten resume note (`.agent/state.md`: status · what's done · next action ·
+  traps), refreshed at each checkpoint, and read first when continuing a `[w]` task. Because it's
+  plain markdown in the repo, the next iteration can be a *different* agent (claude → codex → gemini)
+  and still resume cleanly — the groundwork for switching agents, not just credential profiles,
+  between iterations. The agent finalizes the note as its last step on a task — even when done — so
+  a review can reopen it and the next agent picks up the requested changes from the note rather than
+  the diff.
+
 - **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
   and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
   its runtime has one, batch independent read-only work, and use native subagents or task workers for
