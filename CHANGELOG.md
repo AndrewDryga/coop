@@ -15,8 +15,8 @@
   each transition an atomic folder move. The loop, `coop status`, `coop fleet`, the Stop
   hook, and `coop init` are all folder-aware; a repo that still has a legacy `.agent/TASKS.md`
   keeps working (auto-detected). Subtasks are a `- [ ]` checklist inside `task.md`, and the
-  frontmatter is sync-ready for GitHub Issues / Jira. Design + research live in
-  `.agent/specs/task-system/`.
+  frontmatter is sync-ready for GitHub Issues / Jira. To convert a legacy single-file queue,
+  see `MIGRATING.md`.
 
 - **The loop hands off mid-task through `.agent/state.md`.** Each `coop loop` iteration runs a
   fresh headless agent with no memory of the last, so a task interrupted mid-flight used to be

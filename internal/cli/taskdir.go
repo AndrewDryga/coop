@@ -14,7 +14,7 @@ import (
 // spec.md / log.md / state.md / decision.md / screenshots/ / artifacts/. A task's
 // workflow state is the parent directory it sits in — there is no status field, so
 // nothing can drift. Moving the folder between state dirs IS the state change.
-// Full design: .agent/specs/task-system/DESIGN.md.
+// The contract is in AGENTS.md; converting a legacy single-file queue is MIGRATING.md.
 
 // tasksRoot is the repo-relative directory whose existence selects folder mode; when it
 // is a directory, every reader uses it instead of a legacy single TASKS.md file.
