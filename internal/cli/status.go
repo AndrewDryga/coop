@@ -27,7 +27,7 @@ func gatherForkStatus(repo, name string) forkStatus {
 		agent = "?" // a fork made before agents were remembered
 	}
 	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
-	counts, active := scanTasks(readFileString(filepath.Join(ws, ".agent", "TASKS.md")))
+	counts, active := queueCounts(wsTaskSource(ws))
 	return forkStatus{
 		Name:    name,
 		Agent:   agent,

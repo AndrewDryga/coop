@@ -130,6 +130,11 @@ func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 	given := flags
 	if len(given) == 0 {
 		given = cfg.TasksFiles
+		// Prefer the folder-based queue when it exists and the user hasn't overridden the
+		// default — so a migrated repo auto-adopts .agent/tasks without any flag change.
+		if len(given) == 1 && given[0] == defaultTasksFile && isTaskDir(filepath.Join(repo, tasksRoot)) {
+			given = []string{tasksRoot}
+		}
 	}
 	var rels []string
 	for _, g := range given {

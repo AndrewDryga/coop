@@ -38,8 +38,14 @@ func fenceMarker(line string) bool {
 	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
 }
 
-// queueHasTodo reports whether a TASKS.md file still has an unclaimed task (fenced examples skipped).
+// queueHasTodo reports whether a queue still has an unclaimed task. In folder mode
+// (queue is a .agent/tasks directory) that's a non-empty todo/ state dir; for a legacy
+// TASKS.md file it's an anchored "- [ ]" outside a code fence.
 func queueHasTodo(queue string) bool {
+	if isTaskDir(queue) {
+		c, _ := taskTreeCounts(readTaskTree(queue))
+		return c.Todo > 0
+	}
 	data, err := os.ReadFile(queue)
 	if err != nil {
 		return false
@@ -119,7 +125,7 @@ func queueProgress(hosts []string) (taskCounts, string) {
 	var total taskCounts
 	active := ""
 	for _, h := range hosts {
-		c, a := scanTasks(readFileString(h))
+		c, a := queueCounts(h)
 		total.Todo += c.Todo
 		total.Doing += c.Doing
 		total.Done += c.Done

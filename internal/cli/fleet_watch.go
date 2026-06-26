@@ -42,7 +42,7 @@ type fleetRow struct {
 
 func gatherFleetRow(repo, name string) fleetRow {
 	ws := forkWorkspace(repo, name)
-	counts, active := scanTasks(readFileString(filepath.Join(ws, ".agent", "TASKS.md")))
+	counts, active := queueCounts(wsTaskSource(ws))
 	return fleetRow{
 		name:    name,
 		agent:   readForkAgent(ws),
