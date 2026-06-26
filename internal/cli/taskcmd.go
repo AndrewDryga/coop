@@ -259,11 +259,17 @@ func tasksFolderList(root string) (int, error) {
 	for _, t := range items {
 		byState[t.State] = append(byState[t.State], t)
 	}
+	// Groups breathe: a blank line between state sections (see rule list-output-echoes-source).
+	first := true
 	for _, state := range taskStates {
 		ts := byState[state]
 		if len(ts) == 0 {
 			continue
 		}
+		if !first {
+			fmt.Println()
+		}
+		first = false
 		fmt.Printf("%s (%d)\n", ui.Bold(state), len(ts))
 		for _, t := range ts {
 			fmt.Printf("  - %s  %s%s\n", t.ID, truncate(t.Title, 56), listSuffix(t))

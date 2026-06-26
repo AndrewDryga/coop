@@ -22,7 +22,7 @@ func TestHelpTextAligned(t *testing.T) {
 	// Commands are listed individually, not collapsed into a "<verb>" placeholder.
 	for _, want := range []string{
 		"coop fork review <name>", "coop fork merge <name>", "coop fork stop <name>",
-		"coop doctor", "coop check-secrets", "coop tasks list|lint|add|split",
+		"coop doctor", "coop check-secrets", "coop tasks add|claim|block|done|list|…",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing %q", want)

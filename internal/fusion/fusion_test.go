@@ -95,7 +95,7 @@ func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
 	ins := Instruction("codex", Peers("codex", allAgents))
 	// Peers are read-only advisors; the governor does the writing itself (concern 1:
 	// a write-task is not handed to a peer, it's split into consult + the governor's act).
-	for _, want := range []string{"READ-ONLY ADVISORS", ".agent/TASKS.md", "yourself"} {
+	for _, want := range []string{"READ-ONLY ADVISORS", ".agent/tasks/", "yourself"} {
 		if !strings.Contains(ins, want) {
 			t.Errorf("instruction missing read-only-advisor guidance %q", want)
 		}

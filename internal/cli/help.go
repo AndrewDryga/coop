@@ -68,7 +68,7 @@ func helpText(cfg *config.Config) string {
 	row("coop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
 	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
 	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
-	row("coop tasks list|lint|add|split", "inspect/validate the queue(s) (--tasks, COOP_TASKS)")
+	row("coop tasks add|claim|block|done|list|…", "drive the .agent/tasks/ queue (folder per task)")
 
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
@@ -189,7 +189,7 @@ var commandHelp = map[string]string{
   init           write a .agent/fleet template
   up             start every fork in the fleet, looping its tasks, detached
   down           stop the fleet's running loops
-  split <n>      split .agent/TASKS.md into n fork slices, then write .agent/fleet
+  split <n>      split the task queue into n fork slices, then write .agent/fleet
   watch          live dashboard: every fork's progress, refreshing (Ctrl-C to exit)
   prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
                  unmerged — pass --force to remove those too)
@@ -210,19 +210,24 @@ var commandHelp = map[string]string{
   it's on — plus fleet totals. Reads queues, git, and loop state; no daemon.
   --watch (-w) refreshes it live as a dashboard (same as 'coop fleet watch').`,
 
-	"tasks": `coop tasks — inspect and validate the task queue(s).
+	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
-  Usage: coop tasks [--tasks <path>]... <list|lint|add|split>
+  Usage: coop tasks [--tasks <path>]... <command>
 
-  list        list tasks by state, with a count
-  lint        flag stale claims, unshaped or malformed tasks (exits 1 if any)
-  add "..."   append a new task stub
-  split <n>   split the open tasks into n files
+  list             list tasks by state (todo/in_progress/blocked/done), with counts
+  add "<title>"    scaffold a new task folder in todo/
+  claim <id>       move a task todo/ -> in_progress/ (claim it before you start)
+  block <id>       move it to blocked/ and write a decision.md stub
+  unblock <id>     move it back blocked/ -> in_progress/
+  done <id>        move it to done/ (the archive)
+  drop <id>        remove a task folder (the record stays in git history)
+  decisions        list the open decisions (one per blocked/ task)
+  lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
+  split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
 
-  Defaults to .agent/TASKS.md. Repeat --tasks to span several queues (a monorepo's
-  per-component files, e.g. --tasks portal/.agent/TASKS.md --tasks runner/.agent/
-  TASKS.md) — list and lint cover them all; add and split target a single one. Or set
-  COOP_TASKS to a space-separated list. Paths are relative to the repo root.`,
+  A task's state is its directory, so each transition is a folder move. Defaults to
+  .agent/tasks/ (a legacy single .agent/TASKS.md is auto-detected as a fallback). Point
+  --tasks at another tasks dir or file, or set COOP_TASKS. Paths are repo-relative.`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 
@@ -242,18 +247,19 @@ var commandHelp = map[string]string{
 
   Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--preflight] [--debug-on-fail]
 
-  A fresh agent per iteration works the [ ] items; when the queue empties, an
-  auditor re-checks every [x]. On a rate limit it switches to another signed-in
-  profile (see 'coop pool'), or waits out the reset when there's only one.
+  A fresh agent per iteration works the todo tasks; when the queue empties, an
+  auditor re-checks every shipped task. On a rate limit it switches to another
+  signed-in profile (see 'coop pool'), or waits out the reset when there's only one.
 
-  Defaults to .agent/TASKS.md. Repeat --tasks (or set COOP_TASKS) to drain several
-  queues at once — the loop keeps going while any of them has a [ ], so one loop can
-  cover a monorepo's components. The whole repo is still mounted.
+  Defaults to .agent/tasks/ (a legacy .agent/TASKS.md is auto-detected). Repeat --tasks
+  (or set COOP_TASKS) to drain several queues at once — the loop keeps going while any
+  has unfinished work, so one loop can cover a monorepo's components. The whole repo is
+  still mounted.
 
-  --preflight       run one cleanup pass before working: compact .agent/LOG.md,
-                    drop done [x] tasks, unblock [B] items whose pending decision
-                    now has an answer (opt-in; COOP_PREFLIGHT=1 to default it on,
-                    --no-preflight to override). Makes no code changes or commits.
+  --preflight       run one cleanup pass before working: compact .agent/LOG.md and
+                    unblock blocked/ tasks whose decision now has an answer (opt-in;
+                    COOP_PREFLIGHT=1 to default it on, --no-preflight to override).
+                    Makes no code changes or commits.
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 

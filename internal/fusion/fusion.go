@@ -99,8 +99,8 @@ status) — those are not themselves tasks.
 
 Your peers are READ-ONLY ADVISORS: they think and report, they never edit a file,
 run a mutating command, or touch the repo. YOU are the only one who acts. So when
-the task is to change something — "do a code review and add the results to
-.agent/TASKS.md", "fix the failing test", "refactor this" — do not hand that action
+the task is to change something — "do a code review and file a task in
+.agent/tasks/", "fix the failing test", "refactor this" — do not hand that action
 to a peer; it cannot do it. Ask each peer only for the thinking the action needs —
 the review, the diagnosis, the design — then make every edit and run every command
 yourself when you synthesize.

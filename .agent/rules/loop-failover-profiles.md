@@ -4,7 +4,8 @@ When the unattended loop hits a rate/usage limit and more than one credential pr
 available, it switches the *active profile* and retries the same task item on the next
 subscription — it does not resume or carry a conversation. This is correct because **the
 loop has no session**: each iteration is a fresh `Headless` run (`claude -p …`), and
-continuity lives entirely in `.agent/TASKS.md` + git, not a chat thread. Resuming a
+continuity lives entirely in the task folder (`.agent/tasks/`, incl. the in-progress
+task's `state.md`) + git, not a chat thread. Resuming a
 session (the adapters' interactive `Resume`/`StartSession` path — `--resume <id>` /
 `codex resume <id>`) is interactive-only; the loop never touches it. So swapping accounts mid-run costs nothing — that's the whole
 reason failover is cheap, and why "but the session resets when the sub changes" doesn't

@@ -34,7 +34,7 @@ serves one caller.
 - A numbered list of **small, independently verifiable steps**, each with its own
   done-condition (what gate proves it).
 - The tests each step needs — happy path **and** the failure/denial path.
-- Anything you're unsure of → a `/verify-api` to run, or a `PENDING_DECISIONS`
+- Anything you're unsure of → a `/verify-api` to run, or a `decision.md` in the task folder
   entry if it needs a human call.
 
 Stop and let the user approve before `/work`. Don't start building from `/spec`.
