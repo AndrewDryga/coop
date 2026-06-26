@@ -296,8 +296,8 @@ Force one with `--new`; `--fresh` recreates the whole fork.
 ### Review — in your terminal or your IDE
 
 `coop fork review <name>` opens with a brief — the commits, the files changed, and
-the agent's own `.agent/LOG.md` reasoning — then shows the diff in your pager. No setup
-needed. To review in an IDE instead:
+the agent's own reasoning (the latest task `log.md`) — then shows the diff in your pager.
+No setup needed. To review in an IDE instead:
 
 | | |
 |---|---|
@@ -638,8 +638,8 @@ command if you need something custom. When the queue empties, a fresh auditor re
 every task in `done/` against the git log and reopens anything that doesn't hold up.
 
 Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
-starts working: it compacts `.agent/LOG.md` and unblocks any `blocked/` task whose
-`decision.md` now has an answer — so a fresh run starts from a tidy queue. It works no
+starts working: it unblocks any `blocked/` task whose `decision.md` now has an answer —
+so a fresh run starts from a tidy queue. It works no
 task and makes no commits, and it's the symmetric front bookend to the audit pass. Off
 by default.
 
