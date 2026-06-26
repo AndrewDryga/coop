@@ -21,8 +21,9 @@
 - **The loop hands off mid-task through `.agent/state.md`.** Each `coop loop` iteration runs a
   fresh headless agent with no memory of the last, so a task interrupted mid-flight used to be
   resumed only by reverse-engineering the uncommitted `git diff`. Now the work prompt has the agent
-  keep a small, overwritten resume note (`.agent/state.md`: status · what's done · next action ·
-  traps), refreshed at each checkpoint, and read first when continuing a `[w]` task. Because it's
+  keep a small, overwritten resume note in the in-progress task's folder (`state.md`: status ·
+  what's done · next action · traps), refreshed at each checkpoint, and read first when resuming
+  it. Because it's
   plain markdown in the repo, the next iteration can be a *different* agent (claude → codex → gemini)
   and still resume cleanly — the groundwork for switching agents, not just credential profiles,
   between iterations. The agent finalizes the note as its last step on a task — even when done — so
