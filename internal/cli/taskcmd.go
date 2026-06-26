@@ -211,8 +211,7 @@ func tasksFolderDrop(root string, args []string) (int, error) {
 }
 
 // tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.1 …
-// .agent/tasks.n), as COPIES — the source is untouched. Loop one fork per slice. The
-// folder-mode counterpart of the legacy tasksSplit (which wrote TASKS.N.md files).
+// .agent/tasks.n), as COPIES — the source is untouched. Loop one fork per slice.
 func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, errors.New("usage: coop tasks split <n>")

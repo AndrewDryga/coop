@@ -120,15 +120,15 @@ func (a *app) cmdFleet(args []string) (int, error) {
 const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path> [profile=a,b]
 #   <name>        the fork's name (also its git branch)
 #   [agent]       claude (default), codex, or gemini
-#   <tasks-path>  the tasks file that seeds the fork's loop (relative to the repo)
+#   <tasks-path>  the task tree that seeds the fork's loop (a dir, relative to the repo)
 #   profile=a,b   optional: the credential profile(s) this fork's loop uses (rotated on a
 #                 rate limit). Give each fork a DIFFERENT account so they run in parallel
 #                 instead of all contending for the same one. Omit to share the repo pool.
 # Blank lines and #-comments are ignored.  Start the fleet with: coop fleet up
 #
 # Example:
-# api    codex   .agent/TASKS.api.md   profile=work
-# deps   gemini  .agent/TASKS.deps.md  profile=personal,backup
+# api    codex   .agent/tasks.api   profile=work
+# deps   gemini  .agent/tasks.deps  profile=personal,backup
 `
 
 // fleetInit writes a documented .agent/fleet template so you can declare a fleet without
@@ -413,8 +413,7 @@ func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, e
 		ui.Info("wrote %s (%d task(s))", written[i], counts[i])
 		fleetLines = append(fleetLines, fmt.Sprintf("%s %s %s", names[i], agts[i], written[i]))
 	}
-	// Same fleet-file write/reconcile as the legacy split: don't clobber a hand-authored
-	// .agent/fleet — print the lines to reconcile instead.
+	// Don't clobber a hand-authored .agent/fleet — print the lines to reconcile instead.
 	if !fileExists(fleetFile(repo)) {
 		header := "# coop fleet — one fork per line: <name> [agent] <tasks-path>\n"
 		out := header + strings.Join(fleetLines, "\n") + "\n"

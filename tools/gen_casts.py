@@ -267,7 +267,7 @@ def scene_doctor():
 def scene_fork():
     """Hand off work like a PR: open a fork, list, review the diff, land it."""
     c = Cast("fork", rows=26, title="coop fork — review and land like a PR")
-    c.command("coop fork payments codex --loop -d --tasks .agent/TASKS.payments.md")
+    c.command("coop fork payments codex --loop -d --tasks .agent/tasks.payments")
     c.line(coop("forking acme-api → ../acme-api-forks/payments " + dim("(secrets stay out of the clone)")), after=0.6)
     c.line(coop("started fork payments (codex) in the background"), after=0.5)
     c.line(coop("  coop fork logs payments -f   ·   coop fork stop payments"), after=1.0)

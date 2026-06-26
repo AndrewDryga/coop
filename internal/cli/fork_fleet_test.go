@@ -15,21 +15,21 @@ import (
 
 func TestParseFleet(t *testing.T) {
 	in := "# a fleet\n" +
-		"perf codex .agent/TASKS.perf.md\n" +
-		"deps gemini .agent/TASKS.deps.md\n" +
-		"docs .agent/TASKS.docs.md\n" + // agent omitted → claude
-		"api codex .agent/TASKS.api.md profile=work\n" + // per-fork single profile
-		"web .agent/TASKS.web.md profile=work,personal\n\n" // agent omitted + per-fork pool
+		"perf codex .agent/tasks.perf\n" +
+		"deps gemini .agent/tasks.deps\n" +
+		"docs .agent/tasks.docs\n" + // agent omitted → claude
+		"api codex .agent/tasks.api profile=work\n" + // per-fork single profile
+		"web .agent/tasks.web profile=work,personal\n\n" // agent omitted + per-fork pool
 	got, err := parseFleet(in)
 	if err != nil {
 		t.Fatalf("parseFleet: %v", err)
 	}
 	want := []fleetEntry{
-		{"perf", "codex", ".agent/TASKS.perf.md", nil},
-		{"deps", "gemini", ".agent/TASKS.deps.md", nil},
-		{"docs", "claude", ".agent/TASKS.docs.md", nil},
-		{"api", "codex", ".agent/TASKS.api.md", []string{"work"}},
-		{"web", "claude", ".agent/TASKS.web.md", []string{"work", "personal"}},
+		{"perf", "codex", ".agent/tasks.perf", nil},
+		{"deps", "gemini", ".agent/tasks.deps", nil},
+		{"docs", "claude", ".agent/tasks.docs", nil},
+		{"api", "codex", ".agent/tasks.api", []string{"work"}},
+		{"web", "claude", ".agent/tasks.web", []string{"work", "personal"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleet = %v, want %v", got, want)
@@ -53,7 +53,7 @@ func TestParseFleet(t *testing.T) {
 	}
 	// A misspelled middle agent must not be swallowed as the path (dropping the real path) — it's an
 	// error naming the agents, not a silent "no such file: borg" later.
-	if _, err := parseFleet("api borg .agent/TASKS.api.md"); err == nil {
+	if _, err := parseFleet("api borg .agent/tasks.api"); err == nil {
 		t.Error("parseFleet: want error for an unknown middle agent token")
 	}
 	// A path with spaces is rejected, not truncated to its first word.

@@ -679,12 +679,12 @@ by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the
 ### A fleet
 
 Run several models at once, each looping unattended in its own [fork](#forks-hand-off-work-like-a-pr).
-Split the work into separate tasks files and hand each fork one with `--tasks`:
+Split the work into separate task trees and hand each fork one with `--tasks`:
 
 ```bash
-coop fork perf codex  --loop -d --tasks .agent/TASKS.perf.md   # codex loops the perf file, detached
-coop fork deps gemini --loop -d --tasks .agent/TASKS.deps.md   # gemini takes the deps file
-coop fork docs claude --loop -d --tasks .agent/TASKS.docs.md   # claude takes the docs
+coop fork perf codex  --loop -d --tasks .agent/tasks.perf   # codex loops the perf slice, detached
+coop fork deps gemini --loop -d --tasks .agent/tasks.deps   # gemini takes the deps slice
+coop fork docs claude --loop -d --tasks .agent/tasks.docs   # claude takes the docs
 
 coop status            # fleet at a glance: progress (done/total), blockers, the task each is on
 coop fork ls           # who's running, how big the diff, last activity
@@ -692,9 +692,9 @@ coop fork logs -f      # tail every fork at once (compose-style, prefixed)
 coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
 ```
 
-`--loop` needs `--tasks <path>` — the file is explicit, never inferred from the
-fork name, so a fork and its tasks file can be named independently. It seeds the fork's
-queue from that file (once — a resumed loop keeps its own progress) and runs the loop
+`--loop` needs `--tasks <path>` — the path is explicit, never inferred from the
+fork name, so a fork and its task tree can be named independently. It seeds the fork's
+queue from that tree (once — a resumed loop keeps its own progress) and runs the loop
 with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
 `../<repo>-forks/.coop/<name>.log`. When one finishes,
 [review and land it](#forks-hand-off-work-like-a-pr) like a PR, then `git push`. Add
@@ -710,9 +710,9 @@ the format documented inline), one fork per line as `<name> [agent] <tasks-path>
 defaults to `claude`; the path is relative to the repo root):
 
 ```
-perf  codex  .agent/TASKS.perf.md
-deps  gemini .agent/TASKS.deps.md
-docs         .agent/TASKS.docs.md
+perf  codex  .agent/tasks.perf
+deps  gemini .agent/tasks.deps
+docs         .agent/tasks.docs
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
