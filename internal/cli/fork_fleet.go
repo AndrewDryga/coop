@@ -160,9 +160,9 @@ func (a *app) fleetInit() (int, error) {
 // be loud about it and name the cleanup, so a half-started fleet isn't discovered hours later.
 func fleetAbortErr(name string, err error, started int) error {
 	if started > 0 {
-		return fmt.Errorf("fleet up: %q failed to start (%v) — aborted with %d fork(s) already running; stop them with 'coop fleet down' (or inspect via 'coop fork ls')", name, err, started)
+		return fmt.Errorf("fleet up: %q failed to start (%w) — aborted with %d fork(s) already running; stop them with 'coop fleet down' (or inspect via 'coop fork ls')", name, err, started)
 	}
-	return fmt.Errorf("fleet up: %q failed to start: %v", name, err)
+	return fmt.Errorf("fleet up: %q failed to start: %w", name, err)
 }
 
 func (a *app) fleetUp(args []string) (int, error) {

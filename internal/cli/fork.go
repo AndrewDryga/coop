@@ -601,7 +601,7 @@ func (a *app) forkReview(args []string) (int, error) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
-		return -1, fmt.Errorf("git fetch: %w", err)
+		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
 	ref := "review/" + name
 	a.forkBrief(repo, ws, name, ref)

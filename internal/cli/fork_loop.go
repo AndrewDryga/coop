@@ -368,7 +368,7 @@ func (a *app) forkStop(args []string) (int, error) {
 	}
 	// Tear down the loop's box if a SIGKILL'd `docker run` client orphaned it (--rm never fires on
 	// SIGKILL): the box is labeled coop.fork=<name>, so kill exactly this fork's container(s).
-	if n := a.rt.KillByLabel("coop.fork", name); n > 0 {
+	if n := a.rt.KillByLabel(box.LabelFork, name); n > 0 {
 		ui.Info("  killed %d orphaned box container(s)", n)
 	}
 	_ = os.Remove(forkPid(repo, name))

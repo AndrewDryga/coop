@@ -131,22 +131,27 @@ func (a *app) selectRunProfile(tool, profile string) error {
 	return nil
 }
 
-// extractConsult pulls coop's own --consult flag out of an agent's args (so it is
-// not forwarded to the agent CLI) and reports whether it was present. --consult
-// opts a normal run into the second-opinion directive — letting the agent consult
-// its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
-func extractConsult(args []string) (consult bool, rest []string) {
+// extractBoolFlag pulls one of coop's own bool flags out of an agent's args (so it isn't
+// forwarded to the agent CLI) and reports whether it was present. Everything after a `--`
+// is the agent's own args and is passed through verbatim.
+func extractBoolFlag(args []string, flag string) (found bool, rest []string) {
 	for i, a := range args {
-		if a == "--" { // everything after -- is the agent's own args, verbatim
-			return consult, append(rest, args[i:]...)
+		if a == "--" {
+			return found, append(rest, args[i:]...)
 		}
-		if a == "--consult" {
-			consult = true
+		if a == flag {
+			found = true
 			continue
 		}
 		rest = append(rest, a)
 	}
-	return consult, rest
+	return found, rest
+}
+
+// extractConsult opts a normal run into the second-opinion directive — letting the agent
+// consult its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
+func extractConsult(args []string) (consult bool, rest []string) {
+	return extractBoolFlag(args, "--consult")
 }
 
 // defaultCmd is the agent's autonomous interactive command; an unknown name runs as a
@@ -379,17 +384,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 }
 
 func extractSupervise(args []string) (supervise bool, rest []string) {
-	for i, a := range args {
-		if a == "--" { // everything after -- is the inner agent's own args, verbatim
-			return supervise, append(rest, args[i:]...)
-		}
-		if a == "--supervise" {
-			supervise = true
-			continue
-		}
-		rest = append(rest, a)
-	}
-	return supervise, rest
+	return extractBoolFlag(args, "--supervise")
 }
 
 // cmdACPSupervise serves the editor on stdio and runs the real `coop acp <rest>` as a
@@ -465,7 +460,7 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 				}
 			}
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
-			a.rt.KillByLabel("coop.sup", superID)
+			a.rt.KillByLabel(box.LabelSupervisor, superID)
 			inW.Close()
 			outR.Close()
 			if cidDir != "" {
@@ -558,9 +553,9 @@ func (a *app) cmdBuild(args []string) (int, error) {
 // running boxes (loops, forks, an un-supervised session) are left alone; SIGKILLing
 // them would lose work, and they pick up the new image when they next start.
 func (a *app) recycleBoxes() {
-	total := a.rt.CountByLabel("coop", "box")
-	supervised := a.rt.CountByLabel("coop.supervised", "1")
-	if n := a.rt.KillByLabel("coop.supervised", "1"); n > 0 {
+	total := a.rt.CountByLabel(box.LabelKey, box.LabelBox)
+	supervised := a.rt.CountByLabel(box.LabelSupervised, box.LabelOn)
+	if n := a.rt.KillByLabel(box.LabelSupervised, box.LabelOn); n > 0 {
 		ui.Info("restarted %d supervised session(s) onto the new image", n)
 	}
 	if others := total - supervised; others > 0 {

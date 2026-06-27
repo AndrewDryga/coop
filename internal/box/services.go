@@ -35,5 +35,5 @@ func EnsureServices(rt runtime.Runtime, repo string, stdout, stderr io.Writer) e
 // runtime supports compose — Apple `container` does not. Whether a compose file actually exists
 // is checked separately, by EnsureServices.
 func autoUpServices(cfg *config.Config, spec RunSpec, rtName string) bool {
-	return cfg.AutoUp && spec.Network && cfg.Egress != "none" && rtName != "container"
+	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container"
 }

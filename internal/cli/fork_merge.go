@@ -313,7 +313,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return 1, fmt.Errorf("fork %q is still running its loop — stop it first: coop fork stop %s (or coop fleet down)", name, name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
-		return -1, fmt.Errorf("git fetch: %w", err)
+		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
 	ref := "review/" + name
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)

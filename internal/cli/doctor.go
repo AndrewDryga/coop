@@ -82,7 +82,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	// the probe tests the actual box the agent runs in, not a stand-in. Fall back to alpine when
 	// it isn't built yet, so doctor still works before a first `coop build`.
 	img := box.ImageForRepo(fixture, a.cfg.BaseImage, a.cfg.ImageOverride)
-	usingReal := a.rt.Silent("image", "inspect", img)
+	usingReal := box.ImageExists(a.rt, img)
 	if !usingReal {
 		img = "alpine"
 	}

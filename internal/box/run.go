@@ -14,6 +14,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+// Container labels coop stamps on its boxes so it can find and tear them down later. The SET
+// sites (assembleArgs, below) and the cli QUERY sites (CountByLabel/KillByLabel) MUST agree —
+// a label renamed on only one side would orphan running containers — so both reference these.
+const (
+	LabelKey        = "coop"            // every coop box: coop=box
+	LabelBox        = "box"             //   (its value)
+	LabelSupervised = "coop.supervised" // a supervised inner box (build/update restart it): =1
+	LabelOn         = "1"               //   (its value)
+	LabelSupervisor = "coop.sup"        // value=<supervisor id>, so a supervisor kills only its own
+	LabelFork       = "coop.fork"       // value=<fork name>, so `coop fork stop` tears it down
+)
+
 // RunSpec describes a single container run.
 type RunSpec struct {
 	Image   string
@@ -133,7 +145,9 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// carries the trust entry on the very first run.
 	if spec.Homes {
 		for _, name := range agents.Names() {
-			os.MkdirAll(cfg.AgentDir(name), 0o700) // a credential vault — owner-only
+			// Best-effort: EnsureDefaults below is best-effort too, and a real failure to make the
+			// vault surfaces with a clearer error when its home is mounted. 0o700 — owner-only.
+			_ = os.MkdirAll(cfg.AgentDir(name), 0o700)
 			if ag, ok := agents.Get(name); ok {
 				ag.EnsureDefaults(cfg, workdir)
 			}
@@ -304,9 +318,9 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	networkName := ""
-	// COOP_EGRESS=none → a fully offline box (assembleArgs forces --network none); skip the
-	// services-net join, there's nothing to reach.
-	if cfg.Egress != "none" && spec.Network {
+	// Only "open" gets any networking (the same fail-closed test the --network flag uses below):
+	// an offline box (COOP_EGRESS=none) has nothing to reach, so skip the services-net join.
+	if cfg.Egress == "open" && spec.Network {
 		net := cfg.ServicesNet
 		if net == "" {
 			net = ServicesProject(spec.Repo) + "_default"
@@ -452,23 +466,31 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 	return a
 }
 
+// appendROMounts appends a read-only `-v host:box:ro` bind for each mount.
+func appendROMounts(args []string, ms []extraMount) []string {
+	for _, m := range ms {
+		args = append(args, "-v", m.host+":"+m.box+":ro")
+	}
+	return args
+}
+
 // assembleArgs builds the full container-runtime argument list. It is pure given
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
 // resource/privilege caps (see boxLimits).
 func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName, envFile string, limits ...string) []string {
-	args := []string{"run", "--rm", "--label", "coop=box"}
+	args := []string{"run", "--rm", "--label", LabelKey + "=" + LabelBox}
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
 		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its
 		// box(es) on teardown, so nothing is orphaned.
-		args = append(args, "--label", "coop.supervised=1", "--label", "coop.sup="+spec.SupervisorID)
+		args = append(args, "--label", LabelSupervised+"="+LabelOn, "--label", LabelSupervisor+"="+spec.SupervisorID)
 	}
 	if spec.ForkName != "" {
 		// A detached fork loop's box: `coop fork stop` kills it by this label after SIGKILLing the
 		// worker, so a SIGKILL'd `docker run` client can't orphan a container that keeps writing the
 		// fork's worktree (the fork name has no whitespace/`=`, so it's a safe label value).
-		args = append(args, "--label", "coop.fork="+spec.ForkName)
+		args = append(args, "--label", LabelFork+"="+spec.ForkName)
 	}
 	switch mode {
 	case ttyInteractive:
@@ -512,22 +534,14 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		// Per-agent global instructions (the box env note + the user's, built in Run) at each
 		// agent's native path. The lead (fusion governor / consult lead) is excluded there; its
 		// augmented file is the fusion/consult mount just below.
-		for _, m := range instructionMounts {
-			args = append(args, "-v", m.host+":"+m.box+":ro")
-		}
+		args = appendROMounts(args, instructionMounts)
 		// Fusion: the governor's augmented instruction file (peers + synthesis).
-		for _, m := range fusionMounts {
-			args = append(args, "-v", m.host+":"+m.box+":ro")
-		}
+		args = appendROMounts(args, fusionMounts)
 		// Your git environment: identity + signing-off + global gitignore.
-		for _, m := range gitMounts {
-			args = append(args, "-v", m.host+":"+m.box+":ro")
-		}
+		args = appendROMounts(args, gitMounts)
 		if mcpPresent {
 			args = append(args, "-v", cfg.MCPFile+":"+cfg.MCPInBox+":ro")
-			for _, m := range mcpMounts {
-				args = append(args, "-v", m.host+":"+m.box+":ro")
-			}
+			args = appendROMounts(args, mcpMounts)
 		}
 	}
 
