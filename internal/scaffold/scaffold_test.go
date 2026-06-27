@@ -8,7 +8,49 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
+
+// The scaffolded asdf Dockerfile hard-codes the agent npm packages (it's a static embed, unlike the
+// generated base image), so guard it against drifting from the registry: every agents.Packages()
+// entry must appear in it, else a newly-added agent silently won't install in an asdf-stack box.
+func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
+	data, err := os.ReadFile("templates/dockerfile/asdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, pkg := range agents.Packages() {
+		if !strings.Contains(content, pkg) {
+			t.Errorf("templates/dockerfile/asdf is missing %q — it drifted from agents.Packages()", pkg)
+		}
+	}
+}
+
+// A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its
+// block — that would drop the !rules/!skills un-ignore and leave tracked dirs ignored.
+func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&scaffolder{repo: repo}).updateGitignore(); err != nil {
+		t.Fatal(err)
+	}
+	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	for _, want := range []string{".agent/*\n", "!.agent/rules/", "!.agent/skills/"} {
+		if !strings.Contains(string(gi), want) {
+			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
+		}
+	}
+	// And it stays idempotent: a second run doesn't duplicate the exact marker.
+	_ = (&scaffolder{repo: repo}).updateGitignore()
+	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if n := strings.Count(string(gi2), "\n.agent/*\n"); n != 1 {
+		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
+	}
+}
 
 // TestDockerfileTemplatesTrustAnyWorktree guards the real-path-mount contract:
 // coop mounts the repo at its real host path and sets the workdir itself, so every

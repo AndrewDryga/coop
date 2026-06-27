@@ -83,6 +83,22 @@ func TestGenerateCodexNumericEnvNoScientificNotation(t *testing.T) {
 	}
 }
 
+// A server name with a dot/space, and an env value with a control char, must produce VALID TOML:
+// the name is quoted (else a dot nests the table / a space breaks the parse) and \n is escaped.
+func TestGenerateCodexQuotesNonBareNamesAndEscapes(t *testing.T) {
+	mcp := `{"mcpServers":{"my.server":{"command":"x","env":{"K":"a\nb"}}}}`
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `[mcp_servers."my.server"]`) {
+		t.Errorf("a dotted server name must be quoted (else it nests the table):\n%s", got)
+	}
+	if strings.Contains(got, "a\nb") || !strings.Contains(got, `K = "a\nb"`) {
+		t.Errorf("a control char in an env value must be escaped (no raw newline):\n%s", got)
+	}
+}
+
 func TestGenerateGeminiMerge(t *testing.T) {
 	existing := writeTmp(t, "settings.json", `{"theme":"dark","mcpServers":{"old":{"command":"true"}}}`)
 	got, err := GenerateGemini(writeTmp(t, "mcp.json", sample), existing)

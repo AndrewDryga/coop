@@ -92,7 +92,7 @@ func envValueString(v any) string {
 }
 
 func writeCodexServer(b *strings.Builder, name string, s server) {
-	fmt.Fprintf(b, "[mcp_servers.%s]\n", name)
+	fmt.Fprintf(b, "[mcp_servers.%s]\n", tomlKey(name))
 	switch {
 	case s.URL != "": // streamable HTTP server
 		fmt.Fprintf(b, "url = %s\n", tomlString(s.URL))
@@ -106,9 +106,9 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 		}
 		if len(s.Env) > 0 {
 			b.WriteString("\n")
-			fmt.Fprintf(b, "[mcp_servers.%s.env]\n", name)
+			fmt.Fprintf(b, "[mcp_servers.%s.env]\n", tomlKey(name))
 			for _, k := range sortedKeys(s.Env) {
-				fmt.Fprintf(b, "%s = %s\n", k, tomlString(envValueString(s.Env[k])))
+				fmt.Fprintf(b, "%s = %s\n", tomlKey(k), tomlString(envValueString(s.Env[k])))
 			}
 		}
 	}
@@ -205,7 +205,27 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 func tomlString(s string) string {
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+	// Escape the control characters a TOML basic string forbids (a raw \n/\t in an env value would
+	// otherwise produce invalid TOML and break the whole config), plus \ and ".
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(s) + `"`
+}
+
+// tomlKey renders a TOML table-name segment / bare key, quoting it when it isn't a bare key
+// (^[A-Za-z0-9_-]+$). A server name with a dot would otherwise NEST the table (my.server →
+// mcp_servers.my.server, a server named "server" under "my"), and one with a space would be
+// invalid TOML and break every server — so coop quotes them.
+func tomlKey(s string) string {
+	bare := s != ""
+	for _, r := range s {
+		if !(r == '-' || r == '_' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			bare = false
+			break
+		}
+	}
+	if bare {
+		return s
+	}
+	return tomlString(s)
 }
 
 func tomlStringArray(a []string) string {

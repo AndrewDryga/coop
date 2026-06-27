@@ -268,8 +268,11 @@ func (s *scaffolder) updateGitignore() error {
 	gi := filepath.Join(s.repo, ".gitignore")
 	if data, err := os.ReadFile(gi); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(line, ".agent/*") {
-				return nil // already ignored
+			// Match coop's exact marker line, not a prefix — a pre-existing broad rule like
+			// `.agent/*.log` must NOT make us skip the block (which would drop the !rules/!skills
+			// un-ignore and the .gemini symlink rules, leaving tracked dirs ignored).
+			if strings.TrimSpace(line) == ".agent/*" {
+				return nil // coop's block is already present
 			}
 		}
 	}
