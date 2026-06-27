@@ -881,7 +881,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, pool, queues, nil, debugOnFail, preflight)
+	return a.loop(repo, img, agent, "", pool, queues, nil, debugOnFail, preflight) // local loop: no fork label
 }
 
 // parseLoopArgs pulls the --debug-on-fail (alias --debug) and --preflight/--no-preflight
@@ -944,7 +944,10 @@ func absJoin(repo string, queues []string) string {
 // survives the limit. A task left in in_progress/ by an interrupted iteration is continued (the
 // work prompt points the next agent at its uncommitted partial work), not stranded; a
 // run that completes no task for maxStalls iterations stops rather than spinning.
-func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, sink io.Writer, debugOnFail, preflight bool) (int, error) {
+// forkName is non-empty only for a detached fork loop — it labels each iteration's box so
+// `coop fork stop` can tear the container down by label (see RunSpec.ForkName); the local
+// `coop loop` passes "".
+func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues []string, sink io.Writer, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -990,7 +993,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	// (not the agent's headless form). Best-effort like the audit pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(repo, img, agent, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
+		_, _, _ = a.runIteration(repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1019,7 +1022,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 			banner += fmt.Sprintf(" · profile %s", pool.active())
 		}
 		ui.Info("%s", banner)
-		code, out, err := a.runIteration(repo, img, agent, iterCmd(work), hosts, sink)
+		code, out, err := a.runIteration(repo, img, agent, forkName, iterCmd(work), hosts, sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
@@ -1062,7 +1065,7 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(repo, img, agent, iterCmd(audit), hosts, sink)
+		_, _, _ = a.runIteration(repo, img, agent, forkName, iterCmd(audit), hosts, sink)
 	}
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -1094,7 +1097,7 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // live bar watches for task progress. In a fully interactive run the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view);
 // otherwise it goes straight to the terminal unchanged.
-func (a *app) runIteration(repo, img, agent string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
+func (a *app) runIteration(repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 
@@ -1135,7 +1138,7 @@ func (a *app) runIteration(repo, img, agent string, cmd, hosts []string, sink io
 		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),

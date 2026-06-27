@@ -321,6 +321,23 @@ func TestBuildArgs(t *testing.T) {
 	// TestStageBuildContext; that path lives in Build, not baseBuildArgs.)
 }
 
+// A detached fork loop's box is labeled coop.fork=<name> so `coop fork stop` can KillByLabel it
+// after SIGKILL (preventing an orphaned container); a non-fork box has no such label.
+func TestAssembleArgsForkLabel(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: "open"}
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+	with := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, ForkName: "perf"},
+		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
+	if !containsSeq(with, []string{"--label", "coop.fork=perf"}) {
+		t.Errorf("a fork-loop box must be labeled coop.fork=perf: %v", with)
+	}
+	without := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true},
+		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
+	if slices.Contains(without, "coop.fork=") || containsSeq(without, []string{"--label", "coop.fork=perf"}) {
+		t.Errorf("a non-fork box must not carry a coop.fork label: %v", without)
+	}
+}
+
 // TestAssembleArgsAsdfVolume: the base image mounts the persistent ~/.asdf volume
 // (for runtime .tool-versions installs); a per-project image does not.
 func TestAssembleArgsAsdfVolume(t *testing.T) {

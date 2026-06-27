@@ -36,6 +36,9 @@ type RunSpec struct {
 	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
+	ForkName string // non-empty for a detached fork loop's box: tags it coop.fork=<name> so
+	// `coop fork stop` can tear the container down by label after SIGKILL (else --rm never fires
+	// on a SIGKILL'd run client and the orphaned container keeps mutating the worktree)
 	Batch     bool      // loop/doctor: no tty, stdin from /dev/null
 	Quiet     bool      // suppress the "shadowed N secret path(s)" line (doctor)
 	Stdout    io.Writer // capture output (doctor); nil means inherit os.Stdout
@@ -460,6 +463,12 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its
 		// box(es) on teardown, so nothing is orphaned.
 		args = append(args, "--label", "coop.supervised=1", "--label", "coop.sup="+spec.SupervisorID)
+	}
+	if spec.ForkName != "" {
+		// A detached fork loop's box: `coop fork stop` kills it by this label after SIGKILLing the
+		// worker, so a SIGKILL'd `docker run` client can't orphan a container that keeps writing the
+		// fork's worktree (the fork name has no whitespace/`=`, so it's a safe label value).
+		args = append(args, "--label", "coop.fork="+spec.ForkName)
 	}
 	switch mode {
 	case ttyInteractive:

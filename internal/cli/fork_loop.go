@@ -201,7 +201,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 	}
 	// A fork works its own seeded queue (the .agent/tasks tree) in the worktree.
 	forkQueue := []string{forkRel}
-	code, err := a.loop(ws, img, agent, pool, forkQueue, sink, false, false) // detached/fork loops aren't interactive; no pre-flight
+	code, err := a.loop(ws, img, agent, name, pool, forkQueue, sink, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}
@@ -365,6 +365,11 @@ func (a *app) forkStop(args []string) (int, error) {
 	// lives would make the fork invisible and re-open the double-start window claimForkPid closes.
 	if syscall.Kill(pid, 0) == nil {
 		return 1, fmt.Errorf("fork %s (pid %d) did not exit even after SIGKILL — leaving it tracked", name, pid)
+	}
+	// Tear down the loop's box if a SIGKILL'd `docker run` client orphaned it (--rm never fires on
+	// SIGKILL): the box is labeled coop.fork=<name>, so kill exactly this fork's container(s).
+	if n := a.rt.KillByLabel("coop.fork", name); n > 0 {
+		ui.Info("  killed %d orphaned box container(s)", n)
 	}
 	_ = os.Remove(forkPid(repo, name))
 	ui.Info("stopped fork %s", name)
