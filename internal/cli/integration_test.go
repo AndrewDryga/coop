@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // End-to-end tests for the folder task system: they drive the real `coop tasks` dispatcher
@@ -219,6 +220,28 @@ func TestIntegrationFleetSplitValidQueues(t *testing.T) {
 		if !strings.HasPrefix(e.tasks, filepath.Join(".agent", "tasks.")) {
 			t.Errorf("fleet entry %q points at %q, not a slice dir", e.name, e.tasks)
 		}
+	}
+}
+
+// TestLoopAcceptsFolderQueue is the regression guard for the loop's queue-existence check:
+// it used fileExists, which is false for a directory, so it rejected every folder queue with
+// "no task file found" before running a single iteration. The guard must accept a real
+// .agent/tasks directory and proceed (here it then fails at the image check — runtime "false"
+// makes ImageExists report no image — which proves the guard passed).
+func TestLoopAcceptsFolderQueue(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: "false"}}
+
+	code, err := a.loop(repo, "no-such-image", "claude", nil, []string{tasksRoot}, io.Discard, false, false)
+	if err == nil {
+		t.Fatalf("expected loop to fail at the image check, got (%d, nil)", code)
+	}
+	if strings.Contains(err.Error(), "no task queue") || strings.Contains(err.Error(), "no task file") {
+		t.Fatalf("loop rejected a valid folder queue at the existence guard: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not built") {
+		t.Fatalf("guard should pass and fail at the image check, got: %v", err)
 	}
 }
 

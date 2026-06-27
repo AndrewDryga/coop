@@ -957,8 +957,10 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		}
 		return false
 	}
-	if !slices.ContainsFunc(hosts, fileExists) {
-		return -1, fmt.Errorf("no task file found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
+	// A queue is a directory (.agent/tasks), so check for one with isTaskDir — fileExists is
+	// false for a directory and used to reject every folder queue, so the loop never ran.
+	if !slices.ContainsFunc(hosts, isTaskDir) {
+		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	if !box.ImageExists(a.rt, img) {
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
