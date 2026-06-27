@@ -366,7 +366,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
-	if !approve(fmt.Sprintf("rebase and land %d fork(s)? each lands then is deleted", len(names)-len(skip)), yes) {
+	if !approve(fmt.Sprintf("rebase and land up to %d fork(s)? each that lands is then deleted", len(names)-len(skip)), yes) {
 		return 0, nil
 	}
 	var landed []string
