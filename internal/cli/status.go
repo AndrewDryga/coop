@@ -140,12 +140,14 @@ func (a *app) cmdStatus(args []string) (int, error) {
 	// Size the NAME column to the longest fork name (clamped + rune-padded) so a long name keeps
 	// every later column aligned under its header — see forkLs.
 	nw := colWidth(names, len("NAME"), 24)
-	format := "  %s %-8s %-10s %-14s %s\n"
+	// Rune-pad every cell (padRight) instead of %-Ns: a glyph like ⚠/⚑ in TASKS/CHANGES is multi-byte,
+	// so %-Ns (which counts bytes) would short-pad and shove later columns out from under their headers.
+	format := "  %s %s %s %s %s\n"
 	// Bold the rendered line, not each cell (see forkLs): per-cell bold would count the
 	// ANSI bytes inside the widths and misalign the header against the rows.
-	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), "STATE", "TASKS", "CHANGES", "ACTIVE")))
+	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("STATE", 8), padRight("TASKS", 10), padRight("CHANGES", 14), "ACTIVE")))
 	for _, s := range statuses {
-		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), s.stateCell(), s.tasksCell(), s.changesCell(), s.activeCell())
+		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.stateCell(), 8), padRight(s.tasksCell(), 10), padRight(s.changesCell(), 14), s.activeCell())
 	}
 	fmt.Printf("\n  %d/%d tasks done · %d running · %d blocked\n", doneTasks, totalTasks, running, blocked)
 	return 0, nil

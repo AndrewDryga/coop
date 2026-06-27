@@ -109,11 +109,13 @@ func (a *app) fleetWatch() (int, error) {
 	for spin := 0; ; spin++ {
 		names := forkNames(repo) // re-read so a fork added/removed mid-watch shows up
 		rows := make([]fleetRow, len(names))
+		next := make(map[string]fleetRow, len(names)) // rebuilt each tick so a removed fork's row drops out
 		for i, n := range names {
 			row := keepLastGood(gatherFleetRow(repo, n), prev[n])
-			prev[n] = row
+			next[n] = row
 			rows[i] = row
 		}
+		prev = next
 		screen.Frame(fleetDashboard(name, rows, spin))
 		select {
 		case <-sig:

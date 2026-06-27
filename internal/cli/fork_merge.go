@@ -163,7 +163,11 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	}
 	if img != "" { // COOP_GATE configured
 		if !a.runGate(repo, img) {
-			_ = gitRun(repo, "reset", "--hard", pre)
+			if e := gitRun(repo, "reset", "--hard", pre); e != nil {
+				// The rollback itself failed — the parent is left at the un-gated merge; say so loudly
+				// rather than reporting a clean "rolled back".
+				return false, fmt.Errorf("%s: gate failed AND rollback failed — parent left at the bad merge; reset it by hand (git -C %q reset --hard %s): %w", name, repo, pre, e)
+			}
 			return false, fmt.Errorf("%s: gate failed after rebase — rolled back", name)
 		}
 	}
@@ -213,6 +217,11 @@ func trustedSignArgs() []string {
 // leaves the fork untouched and points at where to resolve.
 func (a *app) landFork(repo, ws, name string) error {
 	head := gitOut(repo, "rev-parse", "HEAD")
+	if head == "" {
+		// A parent with no commits yet → `git rebase ""` fails with a cryptic "invalid upstream";
+		// give a clear cause instead.
+		return fmt.Errorf("%s: the parent repo has no commits yet — make an initial commit before landing a fork", name)
+	}
 	// Every git command here runs on an agent-controlled tree (the fork ws AND the parent repo,
 	// whose .git the agent could have poisoned), so all go through the hardened helpers — a
 	// planted .git/hooks/* or malicious .git/config must not execute on the host (see gitHardening).

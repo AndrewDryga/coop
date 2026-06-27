@@ -216,11 +216,13 @@ func parseForkCreate(args []string) (forkArgs, error) {
 				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
 			}
 			i++
-			fa.profiles = parseProfileList(rest[i])
+			fa.profiles = addProfiles(fa.profiles, parseProfileList(rest[i])) // repeated --profile accumulates (deduped), not last-wins
 		case strings.HasPrefix(x, "--profile="):
-			if fa.profiles = parseProfileList(strings.TrimPrefix(x, "--profile=")); len(fa.profiles) == 0 {
+			list := parseProfileList(strings.TrimPrefix(x, "--profile="))
+			if len(list) == 0 {
 				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
 			}
+			fa.profiles = addProfiles(fa.profiles, list)
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true
@@ -540,17 +542,17 @@ func (a *app) forkLs(args []string) (int, error) {
 		ui.Info("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
 	}
-	// Size the NAME column to the longest fork name (clamped), so a long name doesn't shove every
-	// later column past the header. The name is rune-padded (it may be ellipsis-truncated, and "…"
-	// is multibyte), so the NAME cell is a pre-padded %s; the rest stay %-Ns (ASCII glyphs/counts).
+	// Size the NAME column to the longest fork name (clamped). Rune-pad EVERY cell (padRight) rather
+	// than %-Ns: a glyph like ⚠/⚑ in TASKS/CHANGES (or a "…" in a truncated name) is multi-byte, so
+	// %-Ns would count bytes, short-pad, and shove later columns out from under their headers.
 	nw := colWidth(names, len("NAME"), 24)
-	const format = "  %s %-8s %-12s %-9s %-8s %-15s %s\n"
+	const format = "  %s %s %s %s %s %s %s\n"
 	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
 	// escape bytes inside the width count and misalign the header against the rows.
-	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), "AGENT", "BRANCH", "STATE", "TASKS", "CHANGES", "UPDATED")))
+	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), "UPDATED")))
 	for _, n := range names {
 		s := gatherForkStatus(repo, n)
-		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), s.Agent, s.Branch, s.stateCell(), s.tasksCell(), s.changesCell(), s.Updated)
+		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), s.Updated)
 	}
 	return 0, nil
 }
