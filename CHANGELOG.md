@@ -66,6 +66,11 @@
   now print that group's help and exit 0 — the natural way to discover the subcommands. (`coop
   pool` and `coop profiles` already showed a sensible default view, so they're unchanged.)
 
+- **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
+  demand, so a monorepo can start a per-component queue without a root `coop init`; and `coop
+  status` now reports the local queue's progress (done/total · blocked · the active task) when
+  you're running a single loop with no forks, instead of just "no forks yet".
+
 - **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
   and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
   its runtime has one, batch independent read-only work, and use native subagents or task workers for
