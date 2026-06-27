@@ -257,6 +257,56 @@ func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 	}
 }
 
+// claimForkPid is the atomic reservation that closes the double-start race: a first claim wins, a
+// second claim of a LIVE fork is refused, and a STALE pidfile (dead pid) is reclaimed.
+func TestClaimForkPid(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimForkPid(repo, "x"); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if !pathExists(forkPid(repo, "x")) {
+		t.Fatal("claim should create the pidfile")
+	}
+	// The placeholder is this (live) process's pid, so a second claim is refused — no double-start.
+	if err := claimForkPid(repo, "x"); err == nil {
+		t.Error("a second claim of a live fork must be refused")
+	}
+	// A stale pidfile (a pid that isn't running) is reclaimed.
+	if err := os.WriteFile(forkPid(repo, "stale"), []byte("2147483646\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimForkPid(repo, "stale"); err != nil {
+		t.Errorf("claim should reclaim a stale pidfile, got %v", err)
+	}
+}
+
+// clearForkPidIfMine removes the pidfile only when it names THIS process — never one a different
+// live worker owns (the orphan-cascade guard).
+func TestClearForkPidIfMine(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkPid(repo, "mine", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	clearForkPidIfMine(repo, "mine")
+	if pathExists(forkPid(repo, "mine")) {
+		t.Error("clearForkPidIfMine should remove a pidfile that names us")
+	}
+	// A pidfile owned by another pid must be left alone.
+	if err := os.WriteFile(forkPid(repo, "other"), []byte("424242\ntoken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clearForkPidIfMine(repo, "other")
+	if !pathExists(forkPid(repo, "other")) {
+		t.Error("clearForkPidIfMine must NOT remove a pidfile owned by another process")
+	}
+}
+
 func TestStreamLog(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.log")

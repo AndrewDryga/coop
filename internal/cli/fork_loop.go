@@ -82,6 +82,42 @@ func writeForkPid(repo, name string, pid int) error {
 	return os.WriteFile(forkPid(repo, name), []byte(fmt.Sprintf("%d\n%s\n", pid, procStartToken(pid))), 0o644)
 }
 
+// claimForkPid atomically reserves a fork's pidfile BEFORE its worker starts, so two concurrent
+// detach attempts (a hand-run `fork -d` racing `fleet up`, or two of either) can't both pass a
+// check-then-write and leave two loops racing one worktree/branch. O_EXCL fails if the file exists;
+// an existing LIVE loop is refused, a STALE file (dead/reused pid, which forkRunningPid removes) is
+// reclaimed on the retry. On success the file holds a placeholder pid until the worker overwrites it.
+func claimForkPid(repo, name string) error {
+	path := forkPid(repo, name)
+	for try := 0; try < 2; try++ {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			fmt.Fprintf(f, "%d\n", os.Getpid())
+			return f.Close()
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if pid := forkRunningPid(repo, name); pid != 0 {
+			return fmt.Errorf("fork %s already has a loop running (pid %d) — stop it first: coop fork stop %s", name, pid, name)
+		}
+		// forkRunningPid cleared a stale file; loop to retry the exclusive claim.
+	}
+	return fmt.Errorf("fork %s: another loop start is racing — try again", name)
+}
+
+// clearForkPidIfMine removes the fork's pidfile only if it still names THIS process, so an exiting
+// worker (or a failed parent claim) never deletes a pidfile a different live worker owns.
+func clearForkPidIfMine(repo, name string) {
+	data, err := os.ReadFile(forkPid(repo, name))
+	if err != nil {
+		return
+	}
+	if pid, _ := parsePidfile(string(data)); pid == os.Getpid() {
+		_ = os.Remove(forkPid(repo, name))
+	}
+}
+
 // procStartToken returns an opaque identity for pid that's fixed for the process's lifetime — its
 // start time, via ps(1) (portable across macOS and Linux). A pid reused by a later process reports a
 // different start time. Empty if it can't be read (then liveness falls back to existence only). It
@@ -144,7 +180,12 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	var sink io.Writer
 	if detached {
-		defer os.Remove(forkPid(repo, name)) // the worker clears its pidfile when done
+		// This process IS the worker: stamp our OWN pid + a start-token computed now (we're
+		// unambiguously alive, so pid-reuse detection is reliable — unlike the parent stamping us
+		// the instant after Start, when ps may not see us yet), and on a clean exit clear the
+		// pidfile only if it still names us.
+		_ = writeForkPid(repo, name, os.Getpid())
+		defer clearForkPidIfMine(repo, name)
 	} else {
 		// Foreground: tee to a log so `coop fork logs` works after the fact too.
 		if err := os.MkdirAll(forkStateDir(repo), 0o755); err == nil {
@@ -171,17 +212,18 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 // the fork's log, records its pid, and returns immediately. tasks is an absolute path
 // (resolved by the caller) forwarded so the worker seeds the same queue.
 func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string) (int, error) {
-	// Refuse to start a second worker for a fork that's already looping: the pidfile write below
-	// would overwrite the first worker's pid, orphaning it untracked, and two loops would then race
-	// the same worktree's queue and branch. (fleetUp skips running forks before reaching here.)
-	if pid := forkRunningPid(repo, name); pid != 0 {
-		return 1, fmt.Errorf("fork %s already has a loop running (pid %d) — stop it first: coop fork stop %s", name, pid, name)
-	}
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
+	// Atomically reserve the fork before starting its worker, so two concurrent detach attempts
+	// can't both pass a check-then-write and race two loops on one worktree/branch. (fleetUp also
+	// skips running forks, but that check has the same window without this.)
+	if err := claimForkPid(repo, name); err != nil {
+		return 1, err
+	}
 	logf, err := os.Create(forkLog(repo, name))
 	if err != nil {
+		clearForkPidIfMine(repo, name) // release the reservation on a failed start
 		return -1, err
 	}
 	defer logf.Close()
@@ -198,9 +240,10 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = logf, logf, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
+		clearForkPidIfMine(repo, name) // release the reservation
 		return -1, err
 	}
-	_ = writeForkPid(repo, name, cmd.Process.Pid)
+	_ = writeForkPid(repo, name, cmd.Process.Pid) // name the child now; the worker re-stamps with its own token
 	ui.Info("started fork %s (%s) in the background", name, agent)
 	ui.Info("  coop fork logs %s -f   ·   coop fork stop %s", name, name)
 	return 0, nil
