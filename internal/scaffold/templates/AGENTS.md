@@ -48,7 +48,7 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
   from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
   travels with the task to `xx_done/`.
 - `BACKLOG.md` — anything noted but not scheduled: discovered work, chores, and product
-  ideas. Plain bullets (never `- [ ]`), captured then left — not auto-worked, not scanned by
+  ideas. One item per `##` section (the file's header carries a template), captured then left — not auto-worked, not scanned by
   the Stop hook. A human promotes an item into `tasks/00_todo/` (a real task folder) when it's
   ready. The loop reads `tasks/` only; per-task reasoning lives in each task's own `log.md`.
 - `rules/` — the taste knowledge base (the one committed part).
