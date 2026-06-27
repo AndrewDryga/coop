@@ -220,7 +220,7 @@ const (
 	// set far above the handful of resets a real long run hits.
 	maxLimitWaits = 100
 	// maxStalls is how many consecutive work iterations may complete no task before the
-	// loop gives up — a backstop against an in-progress ([w]) task the agent keeps
+	// loop gives up — a backstop against an in_progress/ task the agent keeps
 	// continuing but can't finish, which would otherwise spin forever.
 	maxStalls = 5
 )
@@ -251,7 +251,8 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 // counter, it resets the counter when that count CHANGES — a task finished OR got parked on a human
 // decision, or an audit reopened one / a torn read undercounted: either way the queue moved — and
 // bumps it only when nothing settled; it reports stop once maxStalls iterations pass with no movement
-// (the active task, often a continued [w], can't be finished and isn't being parked either). Keying
+// (the active task, often a continued in_progress/ one, can't be finished and isn't being parked
+// either). Keying
 // on "changed" (not "advanced") means a dip-then-recover isn't a false stall, and counting blocked —
 // not just done — means triaging one-way doors into 50_blocked/ is progress, not a "stuck" stop.
 func progressStall(settled, baseline, stalls int) (newBaseline, newStalls int, stop bool) {

@@ -129,10 +129,10 @@ func TestFleetRowStopped(t *testing.T) {
 	}
 }
 
-// A fork that is unfinished but has no actionable task left (the remainder is all [B] blocked) must
-// read as "blocked", never "✓ done" — scanTasks returns active=="" for an all-blocked queue exactly
-// as it does for an all-done one, so the row can't use that as the done signal. Regression for the
-// watch flashing "✓ done" at e.g. 2/5 with 3 blocked (even while still running).
+// A fork that is unfinished but has no actionable task left (the remainder is all in blocked/) must
+// read as "blocked", never "✓ done" — taskTreeCounts returns active=="" for an all-blocked queue
+// exactly as it does for an all-done one, so the row can't use that as the done signal. Regression
+// for the watch flashing "✓ done" at e.g. 2/5 with 3 blocked (even while still running).
 func TestFleetRowBlockedNotDone(t *testing.T) {
 	cases := []struct {
 		desc string

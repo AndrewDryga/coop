@@ -173,12 +173,13 @@ func stateGlyph(running bool, done, total, spin int) string {
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
 func fleetRowLine(r fleetRow, spin int) string {
 	total := r.counts.total()
-	allDone := total > 0 && r.counts.Done == total // "done" = every task is [x], not just "no [ ] left"
+	allDone := total > 0 && r.counts.Done == total // "done" = every task in done/, not just "no todo/ left"
 	// stopped: the loop exited (not running) with tasks unfinished — it ran and quit at N/M. Distinct
 	// from a fork merely idle and never started (no log), which recedes below.
 	stopped := !r.running && !allDone && r.ran && total > 0
-	// blocked: unfinished, but nothing is actionable ([ ]/[w]) — the remainder is all [B]. scanTasks
-	// returns active=="" for this exactly as it does for all-done, so it must NOT read as "done".
+	// blocked: unfinished, but nothing is actionable (no todo/ or in_progress/ task) — the remainder is
+	// all blocked/. taskTreeCounts returns active=="" for this exactly as it does for all-done, so it
+	// must NOT read as "done".
 	blocked := !allDone && !stopped && total > 0 && r.active == ""
 	glyph := stateGlyph(r.running, r.counts.Done, total, spin)
 	switch {

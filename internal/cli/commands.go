@@ -1008,7 +1008,7 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	settledBaseline := c0.Done + c0.Blocked // "settled" = tasks out of the actionable set (done OR blocked)
 	for n := 1; ; {
 		// Surface queue progress + the task being worked, so a long run shows movement
-		// instead of a bare counter (the same scanTasks `coop status`/`coop tasks` use).
+		// instead of a bare counter (the same queueProgress `coop status`/`coop tasks` use).
 		c, active := queueProgress(hosts)
 		// Keep going while anything is actionable — a todo/ task or an in_progress/ one an
 		// interrupted iteration left mid-task. Stop only when both are empty (the rest is

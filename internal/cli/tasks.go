@@ -59,8 +59,8 @@ func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 }
 
 // cmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
-// parent directory. The subcommands (list/lint/add/claim/block/unblock/done/drop/decisions/
-// split) live in taskcmd.go; a bare `coop tasks` shows help.
+// parent directory. The subcommands (list/lint/add/claim/block/unblock/done/remove/split/
+// decisions) live in taskcmd.go; a bare `coop tasks` shows help.
 func (a *app) cmdTasks(args []string) (int, error) {
 	flags, rest, err := extractTasksFlags(args)
 	if err != nil {

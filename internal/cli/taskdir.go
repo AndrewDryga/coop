@@ -312,8 +312,8 @@ func latestTaskLog(ws string, n int) string {
 }
 
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"
-// task title — the first in_progress task, or failing that the first todo — mirroring the
-// legacy scanTasks "first [w], else first [ ]" so the status/loop views read the same.
+// task title — the first in_progress task, or failing that the first todo — so the
+// status, loop, and fleet views all agree on what a queue is "working on".
 func taskTreeCounts(items []taskItem) (taskCounts, string) {
 	var c taskCounts
 	active, firstTodo := "", ""
