@@ -217,8 +217,13 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// gitClone clones src→dst carrying gitHardening. Clone runs no hooks of its own, but the
+// source repo's config is agent-writable, so blanking the exec knobs (a planted
+// uploadpack.packObjectsHook, an ext:: transport) on the clone is defense in depth — matching
+// every other repo-touching git call. The flags are inert for a plain local clone.
 func gitClone(src, dst string) error {
-	return exec.Command("git", "clone", "--quiet", src, dst).Run()
+	args := append(append([]string{}, gitHardening...), "clone", "--quiet", src, dst)
+	return exec.Command("git", args...).Run()
 }
 
 func gitCheckoutNewBranch(repo, branch string) error {
