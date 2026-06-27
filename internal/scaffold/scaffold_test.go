@@ -12,19 +12,28 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
-// The scaffolded asdf Dockerfile hard-codes the agent npm packages (it's a static embed, unlike the
-// generated base image), so guard it against drifting from the registry: every agents.Packages()
-// entry must appear in it, else a newly-added agent silently won't install in an asdf-stack box.
+// The scaffolded asdf Dockerfile pins the agent npm packages in one ARG (it's a static embed,
+// unlike the generated base image). Guard that the ARG default stays EXACTLY agents.Packages()
+// — same set, same order — so adding, removing, or reordering an agent in coop can't silently
+// leave an asdf-stack box installing a stale list.
 func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
 	data, err := os.ReadFile("templates/dockerfile/asdf")
 	if err != nil {
 		t.Fatal(err)
 	}
+	const marker = `ARG AGENT_PACKAGES="`
 	content := string(data)
-	for _, pkg := range agents.Packages() {
-		if !strings.Contains(content, pkg) {
-			t.Errorf("templates/dockerfile/asdf is missing %q — it drifted from agents.Packages()", pkg)
-		}
+	i := strings.Index(content, marker)
+	if i < 0 {
+		t.Fatalf("asdf Dockerfile has no %q line", marker)
+	}
+	rest := content[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatal("asdf AGENT_PACKAGES ARG has no closing quote")
+	}
+	if got, want := rest[:j], strings.Join(agents.Packages(), " "); got != want {
+		t.Errorf("asdf AGENT_PACKAGES drifted from agents.Packages():\n got: %s\nwant: %s", got, want)
 	}
 }
 
