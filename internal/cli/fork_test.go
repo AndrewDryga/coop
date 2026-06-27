@@ -21,6 +21,22 @@ func TestForkWorkspace(t *testing.T) {
 	}
 }
 
+// A mistyped fork subcommand must be a usage error with a suggestion — never silently turned into
+// a new fork (clone + branch + agent). An explicit agent (a real create) bypasses the guard.
+func TestForkTypoSuggestsSubcommand(t *testing.T) {
+	repo := t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.cmdFork([]string{"reviw"}); code != 2 || err == nil || !strings.Contains(err.Error(), "review") {
+		t.Errorf("coop fork reviw = (%d, %v), want (2, did-you-mean review)", code, err)
+	}
+	if pathExists(forkWorkspace(repo, "reviw")) {
+		t.Error("a typo must not create a fork")
+	}
+	if got := forkVerbList(); !slices.Equal(got, []string{"acp", "logs", "ls", "merge", "open", "path", "review", "rm", "stop"}) {
+		t.Errorf("forkVerbList = %v", got)
+	}
+}
+
 func TestValidForkName(t *testing.T) {
 	for _, n := range []string{"perf", "deps", "fix-1", "a.b"} {
 		if !validForkName(n) {

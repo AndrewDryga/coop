@@ -138,8 +138,28 @@ func (a *app) cmdFork(args []string) (int, error) {
 		if len(args) >= 2 && args[1] == "acp" {
 			return a.forkACP(args[0], args[2:])
 		}
+		// A typo'd subcommand would otherwise become a NEW fork name and silently clone + branch +
+		// launch an agent. If args[0] isn't an existing fork, has no explicit agent (which signals a
+		// real create), and is a near-miss of a real subcommand, suggest it instead of creating.
+		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil &&
+			!pathExists(forkWorkspace(repo, args[0])) && !(len(args) >= 2 && agents.Valid(args[1])) {
+			if verb, ok := nearestCommand(args[0], forkVerbList()); ok {
+				return 2, fmt.Errorf("unknown fork command %q — did you mean 'coop fork %s'? (give an agent, e.g. 'coop fork %s claude', to make a fork by that name)", args[0], verb, args[0])
+			}
+		}
 		return a.forkCreate(args)
 	}
+}
+
+// forkVerbList is the reserved fork subcommands as a sorted slice, for did-you-mean matching on a
+// mistyped subcommand (so it isn't silently turned into a new fork name).
+func forkVerbList() []string {
+	v := make([]string, 0, len(forkVerbs))
+	for k := range forkVerbs {
+		v = append(v, k)
+	}
+	sort.Strings(v)
+	return v
 }
 
 // forkArgs is the parsed form of `coop fork <name> [agent] [flags]`.
@@ -301,12 +321,14 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
 	// run when no session for this fork exists. See forkLaunchCmd.
 	cmd := a.forkLaunchCmd(fa, ws, existed)
-	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
+	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
-	forkNextSteps(fa.name)
-	return 0, nil
+	if err == nil {
+		forkNextSteps(fa.name) // the box ran (the work is in the fork); print next steps even on a nonzero agent exit
+	}
+	return code, err // propagate the agent's exit code, like every other launch path
 }
 
 // forkLaunchCmd builds the agent command for entering a fork: resume the fork's prior
