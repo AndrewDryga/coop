@@ -100,6 +100,19 @@ func (a *app) cmdStatus(args []string) (int, error) {
 	}
 	names := forkNames(repo)
 	if len(names) == 0 {
+		// No forks — but in the single-loop workflow there's still a local queue to report.
+		// Show its progress instead of a bare "no forks", so `coop status` is useful either way.
+		if rels, err := taskQueues(a.cfg, repo, nil); err == nil && len(rels) > 0 {
+			abs := make([]string, len(rels))
+			for i, r := range rels {
+				abs[i] = filepath.Join(repo, r)
+			}
+			if c, active := queueProgress(abs); c.total() > 0 {
+				ui.Info("%s — local queue: %s", ui.Bold(filepath.Base(repo)), progressLine(c, active))
+				ui.Info("  no forks yet — 'coop fork <name>' or 'coop fleet up' to run several in parallel")
+				return 0, nil
+			}
+		}
 		ui.Info("no forks yet — open one with 'coop fork <name>' or a fleet with 'coop fleet up'")
 		return 0, nil
 	}
