@@ -4,13 +4,13 @@ import "testing"
 
 func TestScanSecretsPatterns(t *testing.T) {
 	hits := map[string]string{
-		"Anthropic API key": `client = "sk-ant-api03-abcDEF1234567890abcDEF12"`,
-		"OpenAI API key":    `OPENAI_KEY=sk-proj-abcDEF1234567890abcDEF1234`,
-		"AWS access key id": `aws_key: AKIA1234567890ABCDEF`,
-		"GitHub token":      `token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"`,
+		"Anthropic API key":         `client = "sk-ant-api03-abcDEF1234567890abcDEF12"`,
+		"OpenAI API key":            `OPENAI_KEY=sk-proj-abcDEF1234567890abcDEF1234`,
+		"AWS access key id":         `aws_key: AKIA1234567890ABCDEF`,
+		"GitHub token":              `token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"`,
 		"GitHub fine-grained token": `pat = github_pat_11ABCDEFGHIJKLMNOPQRST_0aBcDeFgHiJkLmNoPqRsTuVwXyZ012345`,
-		"private key":       "-----BEGIN OPENSSH PRIVATE KEY-----",
-		"Google API key":    `key=AIzaSyA1234567890abcdefghijklmnopqrstuv`,
+		"private key":               "-----BEGIN OPENSSH PRIVATE KEY-----",
+		"Google API key":            `key=AIzaSyA1234567890abcdefghijklmnopqrstuv`,
 	}
 	for kind, line := range hits {
 		f := ScanSecrets(line)

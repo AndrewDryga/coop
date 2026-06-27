@@ -6,17 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
-
-// secretRe flags filenames that look like credentials or keys — agents are good at
-// passing the gate while quietly widening the blast radius, so a merge surfaces them.
-var secretRe = regexp.MustCompile(`(?i)(^|/)(\.env(\.|$)|[^/]*\.(pem|key|p12|pfx)$|id_rsa|id_ed25519|credentials(\.|$)|[^/]*secret[^/]*)`)
 
 // policyScan returns human-readable concerns about a fork's added/changed files:
 // secret-looking filenames, large blobs, and — by scanning each changed blob's
@@ -27,6 +22,10 @@ func policyScan(repo, ref string) []string {
 	if out == "" {
 		return nil
 	}
+	// Flag a credential-looking filename with the SAME decider that shadows secrets from the box,
+	// so the merge gate can't drift from the shadow denylist (it used to be a separate hand-rolled
+	// regex that missed kubeconfig/.npmrc/.netrc/service_account.json/*.kdbx/… that SecretGlobs covers).
+	shadowed := box.NewShadowDecider(repo)
 	var warns []string
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -34,7 +33,7 @@ func policyScan(repo, ref string) []string {
 			continue
 		}
 		path := f[len(f)-1]
-		if secretRe.MatchString(path) {
+		if shadowed(filepath.ToSlash(path)) {
 			warns = append(warns, "secret-like file: "+path)
 		}
 		// Files that run host code the moment a human touches the merged tree (cd, open the

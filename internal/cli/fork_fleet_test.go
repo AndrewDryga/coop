@@ -93,11 +93,15 @@ func TestPolicyScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setupFork: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ws, ".env"), []byte("SECRET=1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ws, "safe.txt"), []byte("ok\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// .env (classic) plus files the old hand-rolled regex MISSED but SecretGlobs covers — the gate
+	// now shares the shadow decider, so these must be flagged. safe.txt must not be.
+	for name, body := range map[string]string{
+		".env": "SECRET=1\n", "kubeconfig": "apiVersion: v1\n", ".npmrc": "//r/:_authToken=x\n",
+		"service_account.json": "{}\n", "safe.txt": "ok\n",
+	} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "add files")
@@ -105,8 +109,10 @@ func TestPolicyScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	warns := strings.Join(policyScan(repo, "review/x"), "\n")
-	if !strings.Contains(warns, ".env") {
-		t.Errorf("policyScan missed .env: %q", warns)
+	for _, want := range []string{".env", "kubeconfig", ".npmrc", "service_account.json"} {
+		if !strings.Contains(warns, want) {
+			t.Errorf("policyScan missed credential file %q: %q", want, warns)
+		}
 	}
 	if strings.Contains(warns, "safe.txt") {
 		t.Errorf("policyScan wrongly flagged safe.txt: %q", warns)
