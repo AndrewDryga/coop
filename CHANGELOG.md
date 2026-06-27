@@ -4,21 +4,49 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **Tasks are folders now (`.agent/tasks/`); state is the directory.** The single
-  `.agent/TASKS.md` queue is replaced by one folder per task under
-  `todo/`/`in_progress/`/`blocked/`/`done/` — a task's workflow state is which directory
-  it's in, so a finished task physically leaves the queue (no more done-but-unpruned rot)
-  and there's no status field to drift. Each task folder holds its own `task.md` plus
-  optional `spec.md`, `log.md`, `state.md`, a co-located `decision.md` (replacing the global
-  PENDING_DECISIONS.md), and `screenshots/`/`artifacts/`. New `coop tasks` subcommands drive
-  it — `add`, `claim`, `block`, `unblock`, `done`, `drop`, `list`, `lint`, `decisions` —
-  each transition an atomic folder move. The loop, `coop status`, `coop fleet`, the Stop
-  hook, and `coop init` are all folder-aware; a repo that still has a legacy `.agent/TASKS.md`
-  keeps working (auto-detected). Subtasks are a `- [ ]` checklist inside `task.md`, and the
-  frontmatter is sync-ready for GitHub Issues / Jira. To convert a legacy single-file queue,
-  see `MIGRATING.md`.
+- **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
+  The work queue is one folder per task under four state directories — `00_todo/` ·
+  `10_in_progress/` · `50_blocked/` · `xx_done/` — and a task's workflow state is simply which
+  directory it sits in. There is no `status:` field and **no legacy fallback**: coop no longer
+  reads a single-file `TASKS.md`.
 
-- **The loop hands off mid-task through `.agent/state.md`.** Each `coop loop` iteration runs a
+  *Why it's better.* A finished task physically leaves the queue (its folder moves to
+  `xx_done/`), so the "done but never pruned" rot that bloated a single `TASKS.md` is gone and
+  the loop never re-scans shipped work. State can't drift from reality, because the directory
+  *is* the state — every transition is an atomic folder move (`os.Rename`) that git records as a
+  rename. Each task carries its own design (`spec.md`), working journal (`log.md`), resume note
+  (`state.md`), pending decision (`decision.md`, replacing the global `PENDING_DECISIONS.md`),
+  and `screenshots/`/`artifacts/` instead of everything piling into shared top-level files. The
+  numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
+  lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`xx_` keeps
+  done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
+  `add`/`claim`/`block`/`unblock`/`done`/`drop`/`list`/`lint`/`decisions` — and the loop, `coop
+  status`, `coop fleet`, the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
+  checklist inside `task.md`; the frontmatter is sync-ready for GitHub Issues / Jira.
+
+  *Migrating.* It's a one-time, content-preserving conversion an LLM handles well (the old task
+  bodies are prose to map, not a rigid parse). Commit first, then paste the prompt below to any
+  coding agent **running in the repo**; afterward verify with `coop tasks` and `coop tasks lint`.
+  The full version (with the `decision.md` / `PENDING_DECISIONS.md` handling spelled out) is in
+  [`MIGRATING.md`](MIGRATING.md):
+
+  ```text
+  Convert this repo's legacy coop task queue to the folder format; lose no content.
+  SOURCE: `.agent/TASKS.md` — each top-level `- [ ] / [w] / [x] / [B] <title>` is one task and
+  the indented bullets beneath it are its body; `.agent/PENDING_DECISIONS.md` holds decisions.
+  Ignore the legend, the `[E]` example, and any `- [ ]` lines inside ``` fenced code blocks.
+  TARGET: a folder per task; the task's STATE is its directory (use the NN_ prefix verbatim):
+    `- [ ]` -> `.agent/tasks/00_todo/`      `- [w]` -> `.agent/tasks/10_in_progress/`
+    `- [B]` -> `.agent/tasks/50_blocked/`    `- [x]` -> `.agent/tasks/xx_done/`
+  For each task write `.agent/tasks/<state>/<YYYY-MM-DD-slug>/task.md`: frontmatter (id, title,
+  labels, updated) + the body mapped into **Context** / **Acceptance criteria** / **Approach**
+  and a `## Subtasks` checklist; never add a `status:` field. For a `[B]` task also write
+  `<id>/decision.md` (question, options, recommendation, resolution), folding in any matching
+  `PENDING_DECISIONS.md` entry. Then delete `.agent/TASKS.md` and `.agent/PENDING_DECISIONS.md`,
+  and report the tasks migrated per state.
+  ```
+
+- **The loop hands off mid-task through a per-task `state.md`.** Each `coop loop` iteration runs a
   fresh headless agent with no memory of the last, so a task interrupted mid-flight used to be
   resumed only by reverse-engineering the uncommitted `git diff`. Now the work prompt has the agent
   keep a small, overwritten resume note in the in-progress task's folder (`state.md`: status ·
@@ -30,6 +58,11 @@
   a review can reopen it and the next agent picks up the requested changes from the note rather than
   the diff.
 
+- **A bare command group prints its help instead of an error.** `coop tasks` and `coop fleet`
+  with no subcommand used to fail with an "unknown command" error built from an empty token; they
+  now print that group's help and exit 0 — the natural way to discover the subcommands. (`coop
+  pool` and `coop profiles` already showed a sensible default view, so they're unchanged.)
+
 - **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
   and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
   its runtime has one, batch independent read-only work, and use native subagents or task workers for
@@ -38,7 +71,7 @@
   unavailable slash commands or trying to run host-side Coop commands from inside the box.
 
 - **Per-fork credential profiles in `.agent/fleet`.** Add `profile=<name>` (or `profile=a,b`) to a
-  fleet line — e.g. `api codex .agent/TASKS.api.md profile=work` — to put that fork's loop on specific
+  fleet line — e.g. `api codex .agent/tasks.api profile=work` — to put that fork's loop on specific
   account(s); several rotate on a rate limit. Give each fork a different account so a fleet runs in
   parallel instead of all forks contending for the repo pool's first profile. It's a `key=value`
   suffix, so it doesn't add to the fragile space-delimited positional fields, and `coop fleet up`
@@ -66,8 +99,7 @@
   can't be written outside the agent vault. `coop check-secrets` also flags
   `secret_key_base`/`master_key`/`encryption_key` and notes how many gitignored-but-box-visible files
   the default scan skipped.
-- **Reliability fixes (audit).** A `- [ ]` inside a Markdown code fence in `.agent/TASKS.md` is no
-  longer counted as a task (it had made the loop never finish and leaked phantom slices). Concurrent
+- **Reliability fixes (audit).** Concurrent
   `coop pool add` / `coop profiles default` no longer lose updates (writes are locked + atomic).
   Regenerating a Codex MCP config no longer drops a user's own `[mcp_servers_backup]`-style tables, and
   numeric MCP env values render as plain digits. `coop fork --profile <typo>` fails before cloning (no
@@ -76,9 +108,8 @@
 - **CLI consistency (audit).** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
   malformed arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
   error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
-  honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet;
-  `coop profiles` flags a dangling default; and `coop tasks lint` no longer false-flags Markdown link
-  lists.
+  honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet; and
+  `coop profiles` flags a dangling default.
 
 - **`coop update` now refreshes agent CLI packages from npm's stable `latest` tags.** The shared
   box's built-in npm specs are `@anthropic-ai/claude-code@latest`, `@openai/codex@latest`,
