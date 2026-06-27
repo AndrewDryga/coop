@@ -671,7 +671,7 @@ except `rules/`, the shared knowledge base, which is committed.
 | File | What it's for |
 |---|---|
 | `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`xx_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
-| `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; plain bullets, never auto-worked, a human promotes one into `tasks/00_todo/` |
+| `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; one item per `##` section, never auto-worked, a human promotes one into `tasks/00_todo/` |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
