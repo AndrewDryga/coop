@@ -12,7 +12,7 @@ lifecycle order instead of alphabetically (`xx_` keeps done last). `coop tasks` 
 clean names — todo · in_progress · blocked · done.
 
 A state change is a folder move — use the commands, not a manual `mv`:
-`coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>` · `drop <id>`.
+`coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>`.
 The directory IS the status; there is no status field to keep in sync.
 
 ## A task folder (`<id>` is `YYYY-MM-DD-<slug>`)
@@ -49,7 +49,10 @@ The directory IS the status; there is no status field to keep in sync.
 - One task = one outcome = one commit. The move to `xx_done/` ships in that commit.
 - Claim with `coop tasks claim <id>` BEFORE you start.
 - Blocked? `coop tasks block <id>`, then fill in `50_blocked/<id>/decision.md`.
-- Finish with `coop tasks done <id>`; abandon with `coop tasks drop <id>`.
+- Finish with `coop tasks done <id>` — a finished task is **moved** to `xx_done/`, never
+  deleted. Agents only move tasks between states; they don't remove them.
+- Pruning the archive is a manual, human step: `coop tasks remove --all-done` (or
+  `coop tasks remove <id>` for one). The loop and `/sweep` never do this.
 - Counts / subtask progress / the blocked list are DERIVED — `coop tasks`,
   `coop tasks decisions`. Never hand-maintain them here.
 - The body is plain markdown (syncs cleanly to GitHub Issues; one conversion from Jira).

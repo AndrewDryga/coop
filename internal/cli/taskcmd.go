@@ -42,15 +42,15 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderMove(root, args, stateInProgress, "unblocked")
 	case "done":
 		return tasksFolderMove(root, args, stateDone, "done")
-	case "drop":
-		return tasksFolderDrop(root, args)
+	case "remove", "rm":
+		return tasksFolderRemove(root, args)
 	case "split":
 		return tasksFolderSplit(repo, root, args)
 	case "decisions":
 		return tasksFolderDecisions(root)
 	default:
 		return 2, unknownErr("tasks command", sub,
-			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "drop", "split", "decisions"})
+			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "remove", "split", "decisions"})
 	}
 }
 
@@ -195,9 +195,33 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	return 0, nil
 }
 
-func tasksFolderDrop(root string, args []string) (int, error) {
-	if len(args) < 1 {
-		return 2, errors.New("usage: coop tasks drop <id>")
+// tasksFolderRemove deletes task folders — `remove <id>` for one (any state), or
+// `remove --all-done` to clear the xx_done/ archive. It is a MANUAL, human action: the
+// loop and skills only ever MOVE a finished task to xx_done/, never delete it, so done
+// tasks accumulate until someone prunes them with this.
+func tasksFolderRemove(root string, args []string) (int, error) {
+	const usage = "usage: coop tasks remove <id>  |  coop tasks remove --all-done"
+	if len(args) == 1 && args[0] == "--all-done" {
+		items := readTaskTree(root)
+		removed := 0
+		for _, t := range items {
+			if t.State != stateDone {
+				continue
+			}
+			if err := os.RemoveAll(t.Dir); err != nil {
+				return -1, err
+			}
+			removed++
+		}
+		if removed == 0 {
+			ui.Info("no done task(s) to remove")
+			return 0, nil
+		}
+		ui.Info("removed %d done task(s) from %s/", removed, stateDone)
+		return 0, nil
+	}
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return 2, errors.New(usage)
 	}
 	t, err := findTask(root, args[0])
 	if err != nil {
@@ -206,7 +230,7 @@ func tasksFolderDrop(root string, args []string) (int, error) {
 	if err := os.RemoveAll(t.Dir); err != nil {
 		return -1, err
 	}
-	ui.Info("dropped %s/%s (the record is in git history; note why in the commit)", t.State, t.ID)
+	ui.Info("removed %s/%s (note why in the commit)", t.State, t.ID)
 	return 0, nil
 }
 

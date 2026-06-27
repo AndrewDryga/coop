@@ -981,12 +981,13 @@ func (a *app) loop(repo, img, agent string, pool *profilePool, queues []string, 
 		}
 		return cmd
 	}
-	// Pre-flight: one best-effort housekeeping pass before working the queue — compact the
-	// log, drop done/outdated tasks, and unblock [B] items whose decision now has an answer.
-	// Opt-in (--preflight / COOP_PREFLIGHT); skipped under a custom COOP_LOOP_CMD (not the
-	// agent's headless form). Best-effort like the audit pass — a failure never blocks work.
+	// Pre-flight: one best-effort housekeeping pass before working the queue — unblock any
+	// task whose decision.md now has a filled-in Resolution. It works no task and deletes
+	// nothing: done tasks are pruned only by a human (`coop tasks remove --all-done`), never
+	// by an agent. Opt-in (--preflight / COOP_PREFLIGHT); skipped under a custom COOP_LOOP_CMD
+	// (not the agent's headless form). Best-effort like the audit pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
-		ui.Info("pre-flight: tidying the working state (log, done tasks, resolved blockers)")
+		ui.Info("pre-flight: resolving answered blockers")
 		_, _, _ = a.runIteration(repo, img, agent, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
 	}
 	label := strings.Join(queues, ", ")

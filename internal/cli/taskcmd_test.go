@@ -108,12 +108,42 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Errorf("re-done should be a no-op (code 0), got %d", code)
 	}
 
-	// drop removes the folder
-	if code, err := tasksFolderDrop(root, []string{id}); code != 0 || err != nil {
-		t.Fatalf("drop: code=%d err=%v", code, err)
+	// remove deletes the folder (a manual, by-id removal)
+	if code, err := tasksFolderRemove(root, []string{id}); code != 0 || err != nil {
+		t.Fatalf("remove: code=%d err=%v", code, err)
 	}
 	if len(readTaskTree(root)) != 0 {
-		t.Fatal("after drop, tree not empty")
+		t.Fatal("after remove, tree not empty")
+	}
+}
+
+func TestTasksFolderRemoveAllDone(t *testing.T) {
+	root := t.TempDir()
+	// two done tasks, one todo and one in_progress that must SURVIVE --all-done
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-01-a", "task.md"), "# a\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-02-b", "task.md"), "# b\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-03-c", "task.md"), "# c\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-04-d", "task.md"), "# d\n")
+
+	if code, err := tasksFolderRemove(root, []string{"--all-done"}); code != 0 || err != nil {
+		t.Fatalf("remove --all-done: code=%d err=%v", code, err)
+	}
+	items := readTaskTree(root)
+	if len(items) != 2 {
+		t.Fatalf("after --all-done, want 2 tasks left (todo+in_progress), got %d", len(items))
+	}
+	for _, it := range items {
+		if it.State == stateDone {
+			t.Errorf("a done task survived --all-done: %s", it.ID)
+		}
+	}
+	// A second run is a clean no-op (nothing done left), not an error.
+	if code, err := tasksFolderRemove(root, []string{"--all-done"}); code != 0 || err != nil {
+		t.Errorf("remove --all-done with no done tasks should be a no-op, got (%d, %v)", code, err)
+	}
+	// Bare `remove` (no id, no flag) is a usage error.
+	if code, _ := tasksFolderRemove(root, nil); code != 2 {
+		t.Errorf("remove with no args should be a usage error (2), got %d", code)
 	}
 }
 

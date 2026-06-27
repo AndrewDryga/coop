@@ -20,9 +20,12 @@
   numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
   lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`xx_` keeps
   done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
-  `add`/`claim`/`block`/`unblock`/`done`/`drop`/`list`/`lint`/`decisions` — and the loop, `coop
+  `add`/`claim`/`block`/`unblock`/`done`/`remove`/`list`/`lint`/`decisions` — and the loop, `coop
   status`, `coop fleet`, the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
-  checklist inside `task.md`; the frontmatter is sync-ready for GitHub Issues / Jira.
+  checklist inside `task.md`; the frontmatter is sync-ready for GitHub Issues / Jira. A finished
+  task is **moved** to `xx_done/`, never deleted: the loop and `/sweep` only ever move tasks
+  between states, so done tasks accumulate as the shipped record until you prune them by hand with
+  `coop tasks remove --all-done` (or `coop tasks remove <id>` for one).
 
   *Migrating.* It's a one-time, content-preserving conversion an LLM handles well (the old task
   bodies are prose to map, not a rigid parse). Commit first, then paste the prompt below to any

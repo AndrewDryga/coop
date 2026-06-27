@@ -233,13 +233,15 @@ var commandHelp = map[string]string{
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to in_progress once the decision is made
   done <id>        move it to done (the archive)
-  drop <id>        remove a task folder (the record stays in git history)
+  remove <id>      delete a task folder; --all-done clears the whole done archive
   decisions        list the open decisions (one per blocked task)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
   split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ xx_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
+  Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
+  done, never delete it, so 'coop tasks remove --all-done' is how you prune the archive.
   Defaults to .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths
   are repo-relative.`,
 
