@@ -87,6 +87,9 @@ func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 
+// CredentialEnvKeys is Codex's only token env var.
+func (codexAgent) CredentialEnvKeys() []string { return []string{"OPENAI_API_KEY"} }
+
 // MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
 func (codexAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))

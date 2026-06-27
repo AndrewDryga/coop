@@ -52,9 +52,10 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 	return scope
 }
 
-// envKeysOutsideScope is the set of agent API-key env-file keys to strip for a run scoped
-// to the given agents: every agent's AuthMarker env key except those in scope. Non-agent
-// runtime vars in the env file are never in this set, so they always pass through.
+// envKeysOutsideScope is the set of agent token env-file keys to strip for a run scoped to
+// the given agents: every credential key (the API key plus alternates like
+// ANTHROPIC_AUTH_TOKEN) of every agent except those in scope. Non-agent runtime vars in the
+// env file are never in this set, so they always pass through.
 func envKeysOutsideScope(scope []string) map[string]bool {
 	in := map[string]bool{}
 	for _, a := range scope {
@@ -66,8 +67,10 @@ func envKeysOutsideScope(scope []string) map[string]bool {
 			continue
 		}
 		if ag, ok := agents.Get(name); ok {
-			if _, envKey := ag.AuthMarker(); envKey != "" {
-				drop[envKey] = true
+			for _, envKey := range ag.CredentialEnvKeys() {
+				if envKey != "" {
+					drop[envKey] = true
+				}
 			}
 		}
 	}

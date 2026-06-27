@@ -46,6 +46,12 @@ type Agent interface {
 	// login, and the env-file key it reads an API key from — either present means it's
 	// set up and worth offering as a consult peer.
 	AuthMarker() (file, envKey string)
+	// CredentialEnvKeys is every env-file key this agent reads a token from — the
+	// AuthMarker key plus any alternates it honors (e.g. claude also reads
+	// ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN). A scoped run strips all of an
+	// out-of-scope agent's keys, so a peer's alternate token can't leak into a box that
+	// isn't authorized for it.
+	CredentialEnvKeys() []string
 	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
 	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
 	MCP(cfg *config.Config) ([]MCPMount, error)

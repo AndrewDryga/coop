@@ -84,6 +84,12 @@ func (claudeAgent) AuthMarker() (file, envKey string) {
 	return ".credentials.json", "ANTHROPIC_API_KEY"
 }
 
+// CredentialEnvKeys lists every env var Claude Code reads a token from: the API key plus
+// the two alternates (a custom auth token and a headless OAuth token).
+func (claudeAgent) CredentialEnvKeys() []string {
+	return []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+}
+
 // MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).
 func (claudeAgent) MCP(*config.Config) ([]MCPMount, error) { return nil, nil }
 

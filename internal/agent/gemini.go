@@ -91,6 +91,12 @@ func (geminiAgent) AuthMarker() (file, envKey string) {
 	return "gemini-credentials.json", "GEMINI_API_KEY"
 }
 
+// CredentialEnvKeys lists every env var the Gemini CLI reads a key from: GEMINI_API_KEY
+// and the GOOGLE_API_KEY it also honors.
+func (geminiAgent) CredentialEnvKeys() []string {
+	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
+}
+
 // MCP merges the shared servers into gemini's settings.json.
 func (geminiAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 	gm, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))

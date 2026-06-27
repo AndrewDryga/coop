@@ -65,19 +65,30 @@ func TestCredentialScope(t *testing.T) {
 	}
 }
 
-// TestEnvKeysOutsideScope: the API keys stripped are exactly the out-of-scope agents'.
+// TestEnvKeysOutsideScope: the token keys stripped are exactly the out-of-scope agents' —
+// every credential key they honor, not just the primary API key.
 func TestEnvKeysOutsideScope(t *testing.T) {
-	// A claude-only scope strips Codex's and Gemini's keys, keeps Claude's.
+	// A claude-only scope strips Codex's and Gemini's keys (including Gemini's GOOGLE_API_KEY
+	// alternate), keeps every Claude key.
 	drop := envKeysOutsideScope([]string{"claude"})
-	if !drop["OPENAI_API_KEY"] || !drop["GEMINI_API_KEY"] {
-		t.Errorf("claude scope should drop the peer API keys, got %v", drop)
+	if !drop["OPENAI_API_KEY"] || !drop["GEMINI_API_KEY"] || !drop["GOOGLE_API_KEY"] {
+		t.Errorf("claude scope should drop the peer token keys (incl. GOOGLE_API_KEY), got %v", drop)
 	}
-	if drop["ANTHROPIC_API_KEY"] {
-		t.Error("claude scope must keep ANTHROPIC_API_KEY")
+	for _, keep := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if drop[keep] {
+			t.Errorf("claude scope must keep %s", keep)
+		}
 	}
-	// A raw run (empty scope) strips every agent key.
-	if all := envKeysOutsideScope(nil); !all["ANTHROPIC_API_KEY"] || !all["OPENAI_API_KEY"] || !all["GEMINI_API_KEY"] {
-		t.Errorf("empty scope should drop every agent key, got %v", all)
+	// A codex-only scope strips Claude's alternates too, so a peer's OAuth token can't leak in.
+	if cx := envKeysOutsideScope([]string{"codex"}); !cx["ANTHROPIC_AUTH_TOKEN"] || !cx["CLAUDE_CODE_OAUTH_TOKEN"] {
+		t.Errorf("codex scope should drop Claude's alternate tokens, got %v", cx)
+	}
+	// A raw run (empty scope) strips every agent key, alternates included.
+	all := envKeysOutsideScope(nil)
+	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		if !all[k] {
+			t.Errorf("empty scope should drop every agent key, missing %s: %v", k, all)
+		}
 	}
 }
 
