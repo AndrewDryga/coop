@@ -161,6 +161,8 @@ func preCommitHook(langs []string) string {
 # coop pre-commit gate — runs for every committer (agent or human) via
 # core.hooksPath=.githooks, so Codex/Gemini and a plain git commit can't bypass the format
 # check the way they bypass Claude-only hooks. Fast by design. Skip once: git commit --no-verify.
+set -f          # the file lists below are word-split on purpose; don't also glob-expand a name
+IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
 staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
 
 ` + gateBody(langs, "1") + "\n\nexit 0\n"
@@ -172,6 +174,8 @@ func claudeCommitGate(langs []string) string {
 	return `#!/bin/bash
 # Fast commit gate: format staged files, block the commit if they're dirty.
 # Reads the tool call on stdin; only acts on git commit. Fails open.
+set -f          # the file lists below are word-split on purpose; don't also glob-expand a name
+IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
 input=$(cat)
 echo "$input" | grep -q '"command"[^}]*git commit' || exit 0
 staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0

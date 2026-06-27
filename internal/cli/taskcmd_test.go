@@ -130,6 +130,17 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 }
 
+// moveTaskDir reports an actionable error, not a raw ENOENT, when the task's source folder
+// vanished under it — a concurrent move to a different state won the race.
+func TestMoveTaskDirSourceVanished(t *testing.T) {
+	root := t.TempDir()
+	ti := taskItem{ID: "2026-01-01-x", State: stateTodo, Dir: filepath.Join(root, stateTodo, "2026-01-01-x")}
+	err := moveTaskDir(root, ti, stateInProgress) // source never created → vanished
+	if err == nil || !strings.Contains(err.Error(), "changed state under us") {
+		t.Errorf("moveTaskDir with a vanished source = %v, want an actionable 'changed state' error", err)
+	}
+}
+
 func TestTasksFolderRemoveAllDone(t *testing.T) {
 	root := t.TempDir()
 	// two done tasks, one todo and one in_progress that must SURVIVE --all-done

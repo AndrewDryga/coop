@@ -247,6 +247,11 @@ func moveTaskDir(root string, t taskItem, newState string) error {
 	if err := os.MkdirAll(filepath.Join(root, newState), 0o755); err != nil {
 		return err
 	}
+	if !pathExists(t.Dir) {
+		// The source vanished between findTask and now — a concurrent move to a DIFFERENT state
+		// won the race. Report it as the actionable message this guard promises, not a raw ENOENT.
+		return fmt.Errorf("can't move %s: it changed state under us (a concurrent move won) — re-run 'coop tasks'", t.ID)
+	}
 	return os.Rename(t.Dir, dest)
 }
 

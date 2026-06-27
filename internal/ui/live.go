@@ -114,6 +114,9 @@ func (s *AltScreen) Leave() { fmt.Fprint(s.w, "\033[?25h\033[?1049l") }
 
 // ProgressBar renders a width-cell bar filled to frac (0..1), the filled cells cyan.
 func ProgressBar(frac float64, width int) string {
+	if width < 0 {
+		width = 0 // a negative width would make strings.Repeat panic on the empty portion
+	}
 	if frac < 0 {
 		frac = 0
 	}

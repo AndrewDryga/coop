@@ -34,6 +34,12 @@ die() { echo "coop-consult: $1" >&2; exit 2; }
 peer=$1
 mode=$2
 shift 2
+# Validate the peer up front, before it's used in the idfile path below — a bogus name would
+# otherwise build a stray/traversed /tmp path and make --continue's "continued" line lie.
+case "$peer" in
+claude | codex | gemini) ;;
+*) die "unknown peer: $peer (expected claude|codex|gemini)" ;;
+esac
 prompt=${*:-}
 [ -n "$prompt" ] || prompt=$(cat)
 # The prompt is captured above, so no peer needs stdin. Detach it: claude -p reads
