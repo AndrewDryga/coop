@@ -32,4 +32,19 @@ func TestBuildFixtureWorldReadable(t *testing.T) {
 	} else if fi.Mode().Perm()&0o004 == 0 {
 		t.Errorf("src/app.js mode = %o, want world-readable", fi.Mode().Perm())
 	}
+	// The expanded fixture seeds a direnv file, a private key one level down, and a symlink to a
+	// secret — the cases the probe needs to prove shadowing covers (.envrc/key by name, symlink
+	// by following it). A missing one would make those probe checks silently fail.
+	for _, rel := range []string{".envrc", filepath.Join("deploy", "id_ed25519")} {
+		if fi, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("fixture missing %s: %v", rel, err)
+		} else if fi.Mode().Perm()&0o004 == 0 {
+			t.Errorf("%s mode = %o, want world-readable", rel, fi.Mode().Perm())
+		}
+	}
+	if target, err := os.Readlink(filepath.Join(dir, "notes-link")); err != nil {
+		t.Errorf("fixture symlink notes-link missing: %v", err)
+	} else if target != ".env" {
+		t.Errorf("notes-link -> %q, want .env (a symlink to a shadowed secret)", target)
+	}
 }
