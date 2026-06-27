@@ -81,6 +81,51 @@ func TestMergeOneNoGate(t *testing.T) {
 	}
 }
 
+// TestMergeOneRebasesNamedBranch (M3): landing rebases the fork's OWN branch by name, even if the
+// agent left a different branch checked out in the ws. With the parent moved forward, a non-rebased
+// branch wouldn't fast-forward — so a clean land here proves `name` (not the stray branch) was rebased.
+func TestMergeOneRebasesNamedBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	// The fork's real work, committed on its branch "perf".
+	if err := os.WriteFile(filepath.Join(ws, "wanted.txt"), []byte("real work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "perf work")
+	// The parent moves forward, so a non-rebased branch could not fast-forward.
+	if err := os.WriteFile(filepath.Join(repo, "parent.txt"), []byte("moved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "parent moves on")
+	// The agent wanders off onto a different branch in the ws.
+	git(t, ws, "checkout", "-q", "-b", "stray")
+	if err := os.WriteFile(filepath.Join(ws, "stray.txt"), []byte("not this\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "stray work")
+
+	landed, err := a.mergeOne(repo, "", "perf", false)
+	if err != nil || !landed {
+		t.Fatalf("mergeOne = (%v, %v), want (true, nil) — it must rebase the named branch", landed, err)
+	}
+	if !pathExists(filepath.Join(repo, "wanted.txt")) {
+		t.Error("did not land the fork's named-branch work")
+	}
+	if pathExists(filepath.Join(repo, "stray.txt")) {
+		t.Error("wrongly landed the stray checked-out branch")
+	}
+}
+
 func TestMergeOneConflictRollsBack(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

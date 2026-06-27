@@ -229,15 +229,19 @@ func (a *app) landFork(repo, ws, name string) error {
 	// on checkout/merge/diff (the residual gitHardening can't close, since the names are arbitrary).
 	neut := forkDriverNeutralizer(ws)
 	withNeut := func(args ...string) []string { return append(append([]string{}, neut...), args...) }
+	// Rebase the fork's branch by NAME, not whatever the agent left checked out — `git rebase
+	// <upstream> <branch>` checks out and rebases exactly `name`, so the branch we sign and rebase
+	// is provably the same one we fetch and fast-forward below (an agent that `git checkout`ed a
+	// different branch in the ws can't make us land un-rebased, unsigned commits).
 	var rebaseErr error
 	if wantsSigning() {
-		rebaseErr = gitInteractive(ws, withNeut(append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head)...)...)
+		rebaseErr = gitInteractive(ws, withNeut(append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)...)
 	} else {
-		rebaseErr = gitRun(ws, withNeut("rebase", head)...)
+		rebaseErr = gitRun(ws, withNeut("rebase", head, name)...)
 	}
 	if rebaseErr != nil {
 		_ = gitRun(ws, withNeut("rebase", "--abort")...)
-		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s), then re-run", name, gitBranch(repo), ws, head)
+		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)
