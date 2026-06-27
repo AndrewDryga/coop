@@ -304,31 +304,21 @@ func TestBoxLimits(t *testing.T) {
 
 func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
-	repo := t.TempDir() // no Dockerfile.agent → shared base
 
 	// Stable build pins the FROM image; fresh (coop update) floats it and adds --pull --no-cache.
-	if a, base := buildArgs(cfg, repo, false); !base || !slices.Equal(a, []string{"build", "--build-arg", "NODE_IMAGE=" + pinnedNodeImage, "-t", "coop-box", "-"}) {
-		t.Errorf("base cached: base=%v args=%v", base, a)
+	if a := baseBuildArgs(cfg, false); !slices.Equal(a, []string{"build", "--build-arg", "NODE_IMAGE=" + pinnedNodeImage, "-t", "coop-box", "-"}) {
+		t.Errorf("base cached: args=%v", a)
 	}
-	if a, _ := buildArgs(cfg, repo, true); !slices.Equal(a, []string{"build", "--pull", "--no-cache", "--build-arg", "NODE_IMAGE=" + floatingNodeImage, "-t", "coop-box", "-"}) {
+	if a := baseBuildArgs(cfg, true); !slices.Equal(a, []string{"build", "--pull", "--no-cache", "--build-arg", "NODE_IMAGE=" + floatingNodeImage, "-t", "coop-box", "-"}) {
 		t.Errorf("base fresh: args=%v", a)
 	}
 	// COOP_AGENT_PACKAGES pins the agent npm specs via a build arg.
 	pinned := &config.Config{BaseImage: "coop-box", AgentPackages: "@anthropic-ai/claude-code@1.2.3"}
-	if a, _ := buildArgs(pinned, repo, false); !containsSeq(a, []string{"--build-arg", "AGENT_PACKAGES=@anthropic-ai/claude-code@1.2.3"}) {
+	if a := baseBuildArgs(pinned, false); !containsSeq(a, []string{"--build-arg", "AGENT_PACKAGES=@anthropic-ai/claude-code@1.2.3"}) {
 		t.Errorf("pinned packages not forwarded: %v", a)
 	}
-
-	// A Dockerfile.agent → per-project image built from a context, with the fresh flags.
-	os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM x\n"), 0o644)
-	a, base := buildArgs(cfg, repo, true)
-	if base {
-		t.Error("with a Dockerfile.agent, base should be false")
-	}
-	if !containsSeq(a, []string{"build", "--pull", "--no-cache"}) ||
-		!containsSeq(a, []string{"-f", filepath.Join(repo, "Dockerfile.agent"), repo}) {
-		t.Errorf("custom fresh: args=%v", a)
-	}
+	// (A repo with a Dockerfile.agent builds from a shadow-filtered staged context — see
+	// TestStageBuildContext; that path lives in Build, not baseBuildArgs.)
 }
 
 // TestAssembleArgsAsdfVolume: the base image mounts the persistent ~/.asdf volume

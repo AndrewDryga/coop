@@ -8,6 +8,47 @@ import (
 	"testing"
 )
 
+// stageBuildContext must OMIT shadowed secrets (and .git) from the Docker build context — so a
+// Dockerfile.agent COPY can't bake them into an image layer — while keeping every non-secret file.
+func TestStageBuildContext(t *testing.T) {
+	repo := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("Dockerfile.agent", "FROM x\n")
+	write("main.go", "package main\n")
+	write("config/app.yaml", "ok\n")
+	write(".env", "SECRET=1\n")          // shadowed
+	write("id_rsa", "KEY\n")             // shadowed (hard key pattern)
+	write(".aws/credentials", "creds\n") // shadowed dir
+	write(".git/config", "[core]\n")     // .git is never part of a build context
+
+	ctx, cleanup, err := stageBuildContext(repo)
+	if err != nil {
+		t.Fatalf("stageBuildContext: %v", err)
+	}
+	defer cleanup()
+
+	exists := func(rel string) bool { _, e := os.Lstat(filepath.Join(ctx, rel)); return e == nil }
+	for _, keep := range []string{"Dockerfile.agent", "main.go", "config/app.yaml", "config"} {
+		if !exists(keep) {
+			t.Errorf("staged context should keep non-secret %q", keep)
+		}
+	}
+	for _, omit := range []string{".env", "id_rsa", ".aws", ".aws/credentials", ".git", ".git/config"} {
+		if exists(omit) {
+			t.Errorf("staged context must OMIT %q (secret or .git)", omit)
+		}
+	}
+}
+
 // The base Dockerfile installs every agent's npm packages, assembled from the registry
 // (not a hard-coded list), with the template fully resolved.
 func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {

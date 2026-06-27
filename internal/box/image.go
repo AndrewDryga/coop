@@ -2,6 +2,8 @@ package box
 
 import (
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,10 +166,9 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) erro
 	if err := rt.EnsureDaemon(); err != nil {
 		return err
 	}
-	args, base := buildArgs(cfg, repo, fresh)
-	if base {
+	if !fileExists(filepath.Join(repo, "Dockerfile.agent")) {
 		ui.Info("building %s (shared base)", cfg.BaseImage)
-		return buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, args...))
+		return buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
 	}
 	img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
 	// Dockerfile.agent defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent with
@@ -178,29 +179,37 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) erro
 		ui.Info("note: Dockerfile.agent is untracked in git — it defines this box, and an agent can author one; review it before building")
 	}
 	ui.Info("building %s from Dockerfile.agent (this project's toolchain)", img)
-	err := buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
+	// Build from a shadow-filtered COPY of the repo, not the repo itself: secret shadowing is a
+	// run-time -v overlay, so without this a `COPY .env /` / `COPY . .` in an agent-authored
+	// Dockerfile.agent would bake a shadowed secret into a persistent (pushable) image layer. The
+	// staged context omits every shadowed path (and .git), so a targeted COPY of a secret fails the
+	// build loudly instead of leaking silently.
+	ctx, cleanup, err := stageBuildContext(repo)
+	if err != nil {
+		return fmt.Errorf("staging the build context: %w", err)
+	}
+	defer cleanup()
+	args := []string{"build"}
+	if fresh {
+		args = append(args, "--pull", "--no-cache")
+	}
+	args = append(args, "-t", img, "-f", filepath.Join(ctx, "Dockerfile.agent"), ctx)
+	err = buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
 	if err == nil {
 		StampImageInputs(cfg, repo, img) // record inputs so a later run can flag drift
 	}
 	return err
 }
 
-// buildArgs assembles the runtime build arguments for repo's image. fresh adds
-// --pull --no-cache so the base image and the agent CLIs / ACP adapters refresh
-// to their latest; base reports whether the shared base (BaseDockerfile via
-// stdin) is built, vs the repo's own Dockerfile.agent (a build context).
-func buildArgs(cfg *config.Config, repo string, fresh bool) (args []string, base bool) {
-	args = []string{"build"}
+// baseBuildArgs assembles the runtime args for building the shared base image (BaseDockerfile via
+// stdin). fresh adds --pull --no-cache so the base image and the agent CLIs / ACP adapters refresh
+// to their latest; otherwise the FROM image is pinned so `coop build` is reproducible. Tool
+// versions stay latest unless pinned via COOP_AGENT_PACKAGES.
+func baseBuildArgs(cfg *config.Config, fresh bool) []string {
+	args := []string{"build"}
 	if fresh {
 		args = append(args, "--pull", "--no-cache")
 	}
-	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
-		img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
-		return append(args, "-t", img, "-f", filepath.Join(repo, "Dockerfile.agent"), repo), false
-	}
-	// Shared base: pin the FROM image so `coop build` is reproducible; `coop update`
-	// (fresh) floats it so --pull fetches the newest node:24. Tool versions stay latest
-	// unless pinned via COOP_AGENT_PACKAGES.
 	node := pinnedNodeImage
 	if fresh {
 		node = floatingNodeImage
@@ -209,7 +218,82 @@ func buildArgs(cfg *config.Config, repo string, fresh bool) (args []string, base
 	if cfg.AgentPackages != "" {
 		args = append(args, "--build-arg", "AGENT_PACKAGES="+cfg.AgentPackages)
 	}
-	return append(args, "-t", cfg.BaseImage, "-"), true
+	return append(args, "-t", cfg.BaseImage, "-")
+}
+
+// stageBuildContext copies repo into a throwaway dir, OMITTING every shadowed path (NewShadowDecider
+// — the same denylist that hides secrets from a run) and .git, so a Dockerfile.agent build can't bake
+// an in-repo secret into an image layer. Returns the staged dir and a cleanup func. A non-secret
+// COPY still works (the file is present); a COPY of a shadowed file fails (it's absent), which is the
+// intended loud failure rather than a silent leak.
+func stageBuildContext(repo string) (string, func(), error) {
+	shadowed := NewShadowDecider(repo)
+	ctx, err := os.MkdirTemp("", "coop-buildctx-")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(ctx) }
+	err = filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(repo, p)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		slash := filepath.ToSlash(rel)
+		if d.IsDir() {
+			if d.Name() == ".git" || shadowed(slash) {
+				return fs.SkipDir // .git isn't needed in a build context; a shadowed dir must not leak
+			}
+			return os.MkdirAll(filepath.Join(ctx, rel), 0o755)
+		}
+		if shadowed(slash) {
+			return nil // omit the secret — a COPY of it then fails the build instead of baking it
+		}
+		return copyForBuild(p, filepath.Join(ctx, rel))
+	})
+	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return ctx, cleanup, nil
+}
+
+// copyForBuild copies one entry into the staged context, preserving symlinks (as links, so a link
+// to an omitted secret is left dangling, not resolved) and skipping irregular files.
+func copyForBuild(src, dst string) error {
+	fi, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(target, dst)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func buildErr(code int, err error) error {
