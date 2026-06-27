@@ -133,6 +133,8 @@ func TestParseGovernor(t *testing.T) {
 		{"passthrough args keep order", []string{"exec", "foo"}, "codex", []string{"exec", "foo"}},
 		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", []string{"-p", "hi"}},
 		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "codex", []string{"--governor", "claude"}},
+		// A SECOND agent token is NOT swallowed as the governor — only the first is; the rest passes through.
+		{"second agent token passes through", []string{"codex", "gemini"}, "codex", []string{"gemini"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

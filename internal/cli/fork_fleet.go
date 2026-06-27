@@ -107,6 +107,9 @@ func (a *app) cmdFleet(args []string) (int, error) {
 	case "split":
 		return a.fleetSplit(args[1:])
 	case "watch":
+		if err := rejectArgs("fleet watch", args[1:]); err != nil {
+			return 2, err
+		}
 		return a.fleetWatch()
 	case "prune":
 		return a.fleetPrune(args[1:])

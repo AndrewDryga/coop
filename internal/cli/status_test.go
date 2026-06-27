@@ -31,6 +31,16 @@ func TestActiveCell(t *testing.T) {
 	}
 }
 
+// `coop status` (watch or not) rejects a stray argument instead of silently ignoring it.
+func TestStatusRejectsStrayArgs(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	for _, args := range [][]string{{"bogus"}, {"-w", "bogus"}, {"bogus", "--watch"}} {
+		if code, err := a.cmdStatus(args); code != 2 || err == nil {
+			t.Errorf("cmdStatus(%v) = (%d, %v), want (2, usage error)", args, code, err)
+		}
+	}
+}
+
 // captureStderr returns whatever fn writes to os.Stderr (ui.Info goes there).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()

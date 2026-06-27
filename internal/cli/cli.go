@@ -58,6 +58,9 @@ func Main(argv []string) int {
 		printHelp(config.Load())
 		return 0
 	case "version", "-v", "--version":
+		if helpRequested(argv[1:]) { // `coop version --help` prints its help, not a self-referential error
+			return helpForCommand("version")
+		}
 		if err := rejectArgs("version", argv[1:]); err != nil { // reject extras like every no-arg command
 			ui.Error("%v", err)
 			return 2

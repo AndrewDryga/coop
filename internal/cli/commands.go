@@ -520,14 +520,16 @@ func (a *app) cmdFusion(args []string) (int, error) {
 // COOP_FUSION_GOVERNOR); everything else passes through to the governor.
 func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 	governor = a.cfg.FusionGovernor
+	tookGov := false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":
 			return governor, append(rest, args[i+1:]...) // everything after passes through
-		case len(rest) == 0 && agents.Valid(args[i]):
-			// A leading agent name is the governor: `coop fusion claude` (matches
-			// `coop acp fusion claude`); otherwise the default / COOP_FUSION_GOVERNOR.
-			governor = args[i]
+		case !tookGov && len(rest) == 0 && agents.Valid(args[i]):
+			// Only the FIRST leading agent name is the governor: `coop fusion claude` (matches
+			// `coop acp fusion claude`); otherwise the default / COOP_FUSION_GOVERNOR. A second
+			// agent token passes through to the governor (not silently swallowed as the governor).
+			governor, tookGov = args[i], true
 		default:
 			rest = append(rest, args[i])
 		}
