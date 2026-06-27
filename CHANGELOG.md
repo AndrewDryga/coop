@@ -115,12 +115,31 @@
   can't be written outside the agent vault. `coop check-secrets` also flags
   `secret_key_base`/`master_key`/`encryption_key` and notes how many gitignored-but-box-visible files
   the default scan skipped.
+- **Security hardening (multi-agent audit sweep).** A template/sample SUFFIX (`*.example`/`*.sample`/
+  `*.template`) no longer un-shadows a private-key pattern, so a file named `id_rsa.example` (a real
+  key under a template name) is shadowed from the box — only exact public CA-bundle names still
+  override `*.pem`. `coop check-secrets` (and the fork merge gate) now flag a password embedded in a
+  connection-string URL (`postgres://user:pw@host`) and GitHub fine-grained tokens (`github_pat_…`).
+  The fork **merge gate** now reuses the same shadow denylist that hides secrets from the box, instead
+  of a separate regex that had drifted — so `kubeconfig`, `.npmrc`, `.netrc`, `service_account.json`,
+  `*.kdbx`, etc. can no longer land silently on `coop fork merge`. The box also forces `--network none`
+  for any egress value other than an explicit `open` (defense in depth at the boundary).
 - **Reliability fixes (audit).** Concurrent
   `coop pool add` / `coop profiles default` no longer lose updates (writes are locked + atomic).
   Regenerating a Codex MCP config no longer drops a user's own `[mcp_servers_backup]`-style tables, and
   numeric MCP env values render as plain digits. `coop fork --profile <typo>` fails before cloning (no
   stray fork), and a fork can't be named `acp`. Fusion's governor is told to consult only
   authenticated peers.
+- **Reliability fixes (multi-agent audit sweep).** `coop fork -d` now claims its pidfile atomically
+  (and the worker owns it on exit), so two concurrent detaches can't start two loops racing one
+  worktree; `coop fork stop` confirms the worker is dead (escalating to SIGKILL) before clearing the
+  pidfile. `coop fork merge` rebases the fork's branch by name, so it can't sign/land the wrong branch
+  if an agent left another checked out. The unattended loop no longer false-"stall"s when it's parking
+  one-way-door tasks into `50_blocked/` (progress = done *or* blocked), parses minute/hour `retry-after`
+  hints, and falls back to backoff on an unrecognized reset timezone instead of waking hours early.
+  `coop status`/`fleet watch` counts no longer briefly inflate on a torn read of a task move. A
+  duplicate fork name with whitespace/`=`, a duplicate profile in `--profile a,a`, and a duplicate task
+  id across states are all rejected/de-duped.
 - **CLI consistency (audit).** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
   malformed arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
   error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
