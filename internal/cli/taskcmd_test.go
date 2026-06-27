@@ -11,6 +11,11 @@ func TestSlugify(t *testing.T) {
 		"Make COOP_EGRESS fail closed!": "make-coop-egress-fail-closed",
 		"  Trim --- dashes  ":           "trim-dashes",
 		"123 Go":                        "123-go",
+		// Unicode letters/digits survive instead of being dropped to "" — a non-Latin title
+		// gets a real slug, and a mixed one keeps both scripts.
+		"Привет мир":  "привет-мир",
+		"Café déjà":   "café-déjà",
+		"Fix Привет!": "fix-привет",
 	}
 	for in, want := range cases {
 		if got := slugify(in); got != want {

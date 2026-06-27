@@ -323,10 +323,13 @@ func TestWriteMCPStub(t *testing.T) {
 }
 
 func TestInitNextSteps(t *testing.T) {
-	// Bare repo (no Dockerfile.agent, no services) → just the edit-then-loop step.
+	// In a git repo (no Dockerfile.agent, no services) → just the edit-then-loop step.
 	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if got := initNextSteps(repo, nil); len(got) != 1 || !strings.Contains(got[0], "coop loop") {
-		t.Errorf("bare repo steps = %v, want only the loop step", got)
+		t.Errorf("git repo steps = %v, want only the loop step", got)
 	}
 	// A scaffolded Dockerfile.agent + sibling services → build, up (naming the services), loop.
 	if err := os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM x"), 0o644); err != nil {
@@ -340,6 +343,10 @@ func TestInitNextSteps(t *testing.T) {
 		!strings.Contains(got[1], "coop up") || !strings.Contains(got[1], "postgres + redis") ||
 		!strings.Contains(got[2], "coop loop") {
 		t.Errorf("steps wrong or out of order: %v", got)
+	}
+	// Outside a git repo, the first step is `git init` — forks and the loop need one.
+	if steps := initNextSteps(t.TempDir(), nil); len(steps) == 0 || !strings.Contains(steps[0], "git init") {
+		t.Errorf("non-git repo should lead with `git init`, got %v", steps)
 	}
 }
 

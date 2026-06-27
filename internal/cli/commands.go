@@ -688,7 +688,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	}
 	file := box.ComposeFile(repo)
 	if file == "" {
-		return -1, errors.New("no compose.agent.yml here")
+		return -1, errors.New("no compose.agent.yml here — nothing to bring down")
 	}
 	proj := box.ServicesProject(repo)
 	cargs := []string{"compose", "-p", proj, "-f", file, "down"}
@@ -762,6 +762,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 // one block.
 func initNextSteps(repo string, services []string) []string {
 	var steps []string
+	// coop runs forks and the loop on top of git (worktrees, rebase-merge); a repo that
+	// isn't initialized yet needs that first, so lead with it.
+	if !pathExists(filepath.Join(repo, ".git")) {
+		steps = append(steps, "`git init`  (coop's forks and loop need a git repo)")
+	}
 	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
 		steps = append(steps, "review Dockerfile.agent, then `coop build`")
 	}
@@ -851,7 +856,7 @@ func loopAgent(args []string) (string, error) {
 	agent, set := agents.Default(), false
 	for _, x := range args {
 		if !agents.Valid(x) {
-			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s])", x, strings.Join(agents.Names(), "|"))
+			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <dir>] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
 		}
 		if set {
 			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)

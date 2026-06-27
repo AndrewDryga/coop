@@ -156,6 +156,13 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	if code, _ := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "list"}); code != 2 {
 		t.Errorf("two --tasks should be a usage error (2), got %d", code)
 	}
+
+	// `coop tasks --tasks done` swallows `done` as the queue path; rather than silently
+	// showing help + exit 0, it errors and points at the likely-intended subcommand.
+	code, err := a.cmdTasks([]string{"--tasks", "done"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop tasks done") {
+		t.Errorf("`tasks --tasks done` should be a usage error suggesting `coop tasks done`, got code=%d err=%v", code, err)
+	}
 }
 
 // TestIntegrationListShowsCleanLabels confirms the prefix never leaks into output: the list

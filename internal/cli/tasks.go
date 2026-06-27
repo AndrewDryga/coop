@@ -89,6 +89,12 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if !isTaskDir(root) {
 		switch sub {
 		case "":
+			// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no
+			// subcommand — then help + exit 0 reads as a silent no-op. If the swallowed value
+			// names a subcommand, the user almost certainly meant `coop tasks <sub>`.
+			if len(flags) == 1 && isTasksSubcommand(flags[0]) {
+				return 2, fmt.Errorf("`--tasks` takes a queue dir, not a subcommand — did you mean `coop tasks %s`? (no task queue %q here)", flags[0], rels[0])
+			}
 			return groupHelp("tasks")
 		case "add":
 			// fall through — tasksFolderAdd creates the queue dir

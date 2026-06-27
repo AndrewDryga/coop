@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -54,6 +55,17 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	}
 }
 
+// isTasksSubcommand reports whether s names a `coop tasks` subcommand (or alias). cmdTasks
+// uses it to catch `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a
+// queue path. Keep in sync with the dispatch switch above.
+func isTasksSubcommand(s string) bool {
+	switch s {
+	case "list", "ls", "lint", "add", "claim", "start", "block", "unblock", "done", "remove", "rm", "split", "decisions":
+		return true
+	}
+	return false
+}
+
 // findTask locates a task by ID across all state dirs: an exact ID match, else a unique
 // substring match (so a slug fragment works). Ambiguous or absent is an error.
 func findTask(root, id string) (taskItem, error) {
@@ -88,14 +100,16 @@ func findTask(root, id string) (taskItem, error) {
 	}
 }
 
-// slugify turns a title into a lowercase, hyphenated id fragment: runs of non-alphanumeric
-// become a single "-", trimmed, capped to keep folder names sane.
+// slugify turns a title into a lowercase, hyphenated id fragment: runs of non-letter/digit
+// become a single "-", trimmed, capped to keep folder names sane. Letters and digits are
+// taken Unicode-wide (unicode.IsLetter/IsDigit), so a Cyrillic or CJK title yields a real
+// slug instead of being dropped to "" — git and every modern filesystem store UTF-8 paths.
 func slugify(s string) string {
 	var b strings.Builder
 	lastDash := true // suppress a leading dash
 	for _, r := range strings.ToLower(s) {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			b.WriteRune(r)
 			lastDash = false
 		default:
@@ -293,7 +307,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 			ui.Info("no done task(s) to remove")
 			return 0, nil
 		}
-		ui.Info("removed %d done task(s) from %s/", removed, stateDone)
+		ui.Info("removed %d done task(s)", removed)
 		return 0, nil
 	}
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
@@ -306,7 +320,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	if err := os.RemoveAll(t.Dir); err != nil {
 		return -1, err
 	}
-	ui.Info("removed %s/%s (note why in the commit)", t.State, t.ID)
+	ui.Info("removed %s (was %s — note why in the commit)", t.ID, stateLabel(t.State))
 	return 0, nil
 }
 
