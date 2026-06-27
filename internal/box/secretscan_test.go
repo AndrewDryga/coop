@@ -8,6 +8,7 @@ func TestScanSecretsPatterns(t *testing.T) {
 		"OpenAI API key":    `OPENAI_KEY=sk-proj-abcDEF1234567890abcDEF1234`,
 		"AWS access key id": `aws_key: AKIA1234567890ABCDEF`,
 		"GitHub token":      `token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"`,
+		"GitHub fine-grained token": `pat = github_pat_11ABCDEFGHIJKLMNOPQRST_0aBcDeFgHiJkLmNoPqRsTuVwXyZ012345`,
 		"private key":       "-----BEGIN OPENSSH PRIVATE KEY-----",
 		"Google API key":    `key=AIzaSyA1234567890abcdefghijklmnopqrstuv`,
 	}
@@ -21,6 +22,32 @@ func TestScanSecretsPatterns(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: findings %v don't include the expected kind for %q", kind, f, line)
+		}
+	}
+}
+
+func TestScanSecretsURLCredentials(t *testing.T) {
+	// A password embedded in a connection string is flagged regardless of the key name (the key
+	// isn't a credential word, so the entropy path never sees it).
+	for _, line := range []string{
+		`DATABASE_URL=postgres://app:S3cr3tP4ss@db.internal:5432/app`,
+		`redis = "redis://default:hunter2pass@cache:6379/0"`,
+		`amqp://guest:r4bb1tMQpw@broker//`,
+	} {
+		if f := ScanSecrets(line); len(f) == 0 {
+			t.Errorf("expected a connection-string password finding for %q", line)
+		}
+	}
+	// NOT flagged: a plain URL with no inline password, an interpolated/placeholder password,
+	// or one too short to be a real secret.
+	for _, line := range []string{
+		`token_url = https://api.example.com/oauth/token`,
+		`url: redis://cache:6379/0`,
+		`DB=postgres://user:${DB_PASSWORD}@host/db`,
+		`x = https://user:pass@host`, // "pass" < 6 chars
+	} {
+		if f := ScanSecrets(line); len(f) != 0 {
+			t.Errorf("did not expect a finding for %q, got %v", line, f)
 		}
 	}
 }

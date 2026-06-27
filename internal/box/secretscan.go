@@ -24,6 +24,7 @@ var secretPatterns = []struct {
 	{"Anthropic API key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`)},
 	{"OpenAI API key", regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}`)},
 	{"GitHub token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
+	{"GitHub fine-grained token", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}`)},
 	{"Slack token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}`)},
 	{"Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
 	{"Stripe key", regexp.MustCompile(`\b[sr]k_live_[0-9a-zA-Z]{24,}\b`)},
@@ -89,6 +90,12 @@ var placeholderRe = regexp.MustCompile(`(?i)(example|placeholder|redacted|change
 // precise provider patterns still scan every line, comments included.)
 var commentRe = regexp.MustCompile(`^\s*(#|;|//)`)
 
+// urlCredRe matches a connection string with an inline password — scheme://user:PASSWORD@host
+// (postgres/redis/amqp/mongodb…). The password leaks regardless of the key name (DATABASE_URL=,
+// REDIS=, a bare URL), so this is checked directly, not via the secret-named-key entropy path
+// (which would skip it: the key isn't a credential word, and looksLikeURLOrPath bails on "://").
+var urlCredRe = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:([^/\s:@]{6,})@`)
+
 // looksLikeURLOrPath reports whether a value is a URL or filesystem path rather than a
 // literal secret — e.g. token_url = https://…/oauth, or CREDENTIALS = /secrets/x.json.
 func looksLikeURLOrPath(v string) bool {
@@ -112,6 +119,15 @@ func ScanSecrets(content string) []SecretFinding {
 			// provider token never contains "example"/"secret"/etc.
 			if tok := p.re.FindString(line); tok != "" && !placeholderRe.MatchString(tok) {
 				out = append(out, SecretFinding{n, p.kind})
+				matched = true
+			}
+		}
+		// A password embedded in a connection-string URL (postgres://user:pw@host) — flagged when
+		// the password looks real (long enough, not a placeholder or a ${VAR}/code reference).
+		if !matched {
+			if m := urlCredRe.FindStringSubmatch(line); m != nil &&
+				!placeholderRe.MatchString(m[1]) && !looksLikeCodeRef(m[1]) {
+				out = append(out, SecretFinding{n, "password in a connection-string URL"})
 				matched = true
 			}
 		}
