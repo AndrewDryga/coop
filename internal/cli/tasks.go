@@ -78,12 +78,23 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		return 2, errors.New("coop tasks works one queue at a time — give a single --tasks <dir>")
 	}
 	root := filepath.Join(repo, rels[0])
-	// A bare `coop tasks` (no subcommand) shows help, so don't demand the queue exists yet.
-	if (len(rest) == 0 || rest[0] == "") && !isTaskDir(root) {
-		return groupHelp("tasks")
+	sub := ""
+	if len(rest) > 0 {
+		sub = rest[0]
 	}
+	// When the queue doesn't exist yet, a bare `coop tasks` still shows help, and `add`
+	// bootstraps it on demand (tasksFolderAdd creates the folder) — that's how you start a
+	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
+	// Every other subcommand needs an existing queue to act on.
 	if !isTaskDir(root) {
-		return -1, fmt.Errorf("no task queue at %s — run 'coop init'", rels[0])
+		switch sub {
+		case "":
+			return groupHelp("tasks")
+		case "add":
+			// fall through — tasksFolderAdd creates the queue dir
+		default:
+			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"…\"' to start one here)", rels[0], rels[0])
+		}
 	}
 	return cmdTasksFolder(repo, root, rest)
 }
