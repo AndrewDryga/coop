@@ -155,6 +155,31 @@ func TestForkRmSafe(t *testing.T) {
 	}
 }
 
+// TestForkRmRefusesRunning: `coop fork rm` must refuse a fork whose loop is running (its worktree
+// is bind-mounted RW into a live container) and must NOT delete the worktree — like merge/prune do.
+func TestForkRmRefusesRunning(t *testing.T) {
+	repo := t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	ws := forkWorkspace(repo, "busy")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Mark it running by claiming the pidfile for THIS (live) process.
+	if err := writeForkPid(repo, "busy", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	code, err := a.forkRm([]string{"busy"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Errorf("fork rm of a running fork = (%d, %v), want (1, still running)", code, err)
+	}
+	if !pathExists(ws) {
+		t.Error("fork rm refused but still deleted the running fork's worktree")
+	}
+}
+
 func TestParseShortstat(t *testing.T) {
 	ins, del := parseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
 	if ins != 42 || del != 7 {

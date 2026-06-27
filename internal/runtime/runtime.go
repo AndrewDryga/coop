@@ -134,6 +134,20 @@ func (r Runtime) RemoveContainer(id string) bool {
 	return id != "" && exec.Command(r.Name, "rm", "-f", id).Run() == nil
 }
 
+// RemoveByLabel force-removes (`rm -f`: stop then delete) every running container whose label
+// matches key=value, returning how many were removed. Like KillByLabel but it deletes rather
+// than just kills — so a SIGKILL-orphaned `docker run --rm` container (whose run client was
+// killed before it could auto-remove) is gone, not left lingering in Exited state.
+func (r Runtime) RemoveByLabel(key, value string) int {
+	n := 0
+	for _, id := range r.psIDs("label=" + key + "=" + value) {
+		if r.RemoveContainer(id) {
+			n++
+		}
+	}
+	return n
+}
+
 // SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and
 // podman do; Apple's `container` CLI differs, so the supervisor falls back to labels there.
 func (r Runtime) SupportsCIDFile() bool {

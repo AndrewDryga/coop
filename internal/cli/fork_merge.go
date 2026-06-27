@@ -143,6 +143,13 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
 	}
+	// Re-check running here, immediately before the land — the caller's check happened earlier
+	// (across an approve prompt, or once at the top of a --all queue), so a loop could have
+	// started in that gap, and landing onto a live worktree corrupts the in-flight iteration.
+	// This narrows the TOCTOU window to microseconds; it isn't a full lock.
+	if len(runningForkNames(repo, []string{name})) > 0 {
+		return false, fmt.Errorf("fork %q started running its loop — stop it first: coop fork stop %s", name, name)
+	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return false, fmt.Errorf("%s: git fetch: %w", name, err)
 	}

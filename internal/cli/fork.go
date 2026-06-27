@@ -808,6 +808,17 @@ func (a *app) forkRm(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
+	// A running loop has the worktree bind-mounted RW; deleting it would orphan the worker +
+	// container and strand the pidfile. Refuse (like merge/prune do) — or with --force, stop the
+	// loop first so its container is reaped before the worktree goes.
+	if len(runningForkNames(repo, []string{name})) > 0 {
+		if !force {
+			return 1, fmt.Errorf("fork %q is still running its loop — stop it first: coop fork stop %s (or use --force)", name, name)
+		}
+		if code, err := a.forkStop([]string{name}); err != nil {
+			return code, err
+		}
+	}
 	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
 		return 1, err
 	}
