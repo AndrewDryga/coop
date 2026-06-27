@@ -20,7 +20,7 @@ cover: ## Run unit tests with a coverage summary
 lint: ## gofmt check + go vet (+ staticcheck if installed)
 	@gofmt -l . | (! grep .) || { echo "gofmt: files need formatting (run: gofmt -w .)"; exit 1; }
 	@go vet ./...
-	@command -v staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "(staticcheck not installed — skipping)"
+	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; else echo "(staticcheck not installed — skipping)"; fi
 
 snapshot: ## Build a local release snapshot with GoReleaser (no publish)
 	@goreleaser release --snapshot --clean
