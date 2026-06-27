@@ -24,6 +24,12 @@ func TestDetectLimit(t *testing.T) {
 			"Error: rate limited. Please retry after 45s.", true, now.Add(45 * time.Second)},
 		{"try again in N seconds",
 			"overloaded; try again in 30 seconds", true, now.Add(30 * time.Second)},
+		{"retry after N minutes",
+			"rate limited; try again in 5 minutes", true, now.Add(5 * time.Minute)},
+		{"retry after N hours",
+			"Please retry after 2 hours.", true, now.Add(2 * time.Hour)},
+		{"bare http retry-after (seconds)",
+			"429; retry-after: 30", true, now.Add(30 * time.Second)},
 		{"broad rate-limit keyword, no reset",
 			"request failed: rate limit exceeded", true, time.Time{}},
 		{"http 429, no reset",
@@ -80,6 +86,7 @@ func TestParseResetTime(t *testing.T) {
 			time.Date(2027, time.January, 2, 8, 0, 0, 0, time.UTC)},
 		{"no resets clause", base, "You've hit your weekly limit.", time.Time{}},
 		{"unparseable when", base, "resets soon, hang tight", time.Time{}},
+		{"unrecognized tz falls back to backoff", base, "resets Jun 18, 8pm (PST)", time.Time{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -188,6 +195,11 @@ func TestProgressStall(t *testing.T) {
 	// A completion resets the counter even at the cap.
 	if _, s, stop := progressStall(5, 2, maxStalls-1); s != 0 || stop {
 		t.Errorf("recovery: got stalls=%d stop=%v, want 0/false", s, stop)
+	}
+	// The loop feeds the SETTLED count (done+blocked), so blocking a one-way door (done flat,
+	// blocked up → settled changes) is progress and must reset the stall, even at the cap.
+	if b, s, stop := progressStall(1, 0, maxStalls-1); b != 1 || s != 0 || stop {
+		t.Errorf("a settled change (e.g. a block) must reset the stall: got (%d,%d,%v), want (1,0,false)", b, s, stop)
 	}
 	// A Done DECREASE (an audit reopened an [x], or a torn read) is movement, not a stall — it
 	// re-baselines and resets, so it can't falsely trip the cap on the next iteration.

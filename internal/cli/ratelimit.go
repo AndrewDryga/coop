@@ -28,9 +28,10 @@ var (
 	resetsRe = regexp.MustCompile(`(?i)resets?\s+([^\n·]+)`)
 	// A trailing timezone in parens at the end of that clause, e.g. "(UTC)".
 	tzParenRe = regexp.MustCompile(`\(([A-Za-z]{2,5})\)\s*$`)
-	// API-style hints carrying a delay: "retry after 30", "retry-after: 30s",
-	// "try again in 30 seconds".
-	retryAfterRe = regexp.MustCompile(`(?i)(?:retry[ -]?after|try again in)[^\d]{0,8}(\d{1,7})\s*(?:s\b|sec|second)`)
+	// API-style hints carrying a delay: "retry-after: 30" (bare = seconds), "retry after 30s",
+	// "try again in 5 minutes", "retry after 2 hours". The unit is optional and scaled by its
+	// first letter (m→minutes, h→hours, else seconds) in the caller.
+	retryAfterRe = regexp.MustCompile(`(?i)(?:retry[ -]?after|try again in)[^\d]{0,8}(\d{1,7})\s*([a-z]+)?`)
 	// Broad markers with no parseable reset — a limit we should back off from.
 	limitMarkers = []string{
 		"usage limit", "rate limit", "rate-limit", "rate limited",
@@ -60,7 +61,16 @@ func detectLimit(output string, now time.Time) limitHint {
 	lower := strings.ToLower(output)
 	if m := retryAfterRe.FindStringSubmatch(lower); m != nil {
 		if n, err := strconv.Atoi(m[1]); err == nil {
-			return limitHint{limited: true, resetAt: now.Add(time.Duration(n) * time.Second)}
+			unit := time.Second // a bare number (HTTP Retry-After) is seconds
+			if len(m[2]) > 0 {
+				switch m[2][0] {
+				case 'm':
+					unit = time.Minute
+				case 'h':
+					unit = time.Hour
+				}
+			}
+			return limitHint{limited: true, resetAt: now.Add(time.Duration(n) * unit)}
 		}
 	}
 	for _, mark := range limitMarkers {
@@ -86,6 +96,11 @@ func parseResetTime(output string, now time.Time) time.Time {
 		switch strings.ToUpper(tz[1]) {
 		case "UTC", "GMT", "Z":
 			loc = time.UTC
+		default:
+			// A stated but unrecognized zone (PST, ET, CET, …): don't silently reinterpret the
+			// time in the HOST's zone — on a UTC server that can be hours early, waking the loop
+			// before the real reset so it re-hits the limit. Fall back to backoff instead.
+			return time.Time{}
 		}
 		s = strings.TrimSpace(s[:len(s)-len(tz[0])])
 	}
@@ -231,15 +246,17 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 	return actRetry, 0, time.Time{}
 }
 
-// progressStall tracks whether the loop is still completing tasks. Given the queue's Done count
-// after a work iteration, the running baseline, and the stall counter, it resets the counter when
-// Done CHANGES (a task finished, or an audit reopened one / a torn read undercounted — either way the
-// queue moved) and bumps it only when Done is unchanged; it reports stop once maxStalls iterations
-// pass with no movement — the signal that the active task (often a continued [w]) can't be finished.
-// Keying on "changed" (not "advanced") means a Done dip-then-recover isn't a false stall.
-func progressStall(done, baseline, stalls int) (newBaseline, newStalls int, stop bool) {
-	if done != baseline {
-		return done, 0, false
+// progressStall tracks whether the loop is still moving tasks OUT of the actionable set. Given the
+// queue's settled count (done + blocked) after a work iteration, the running baseline, and the stall
+// counter, it resets the counter when that count CHANGES — a task finished OR got parked on a human
+// decision, or an audit reopened one / a torn read undercounted: either way the queue moved — and
+// bumps it only when nothing settled; it reports stop once maxStalls iterations pass with no movement
+// (the active task, often a continued [w], can't be finished and isn't being parked either). Keying
+// on "changed" (not "advanced") means a dip-then-recover isn't a false stall, and counting blocked —
+// not just done — means triaging one-way doors into 50_blocked/ is progress, not a "stuck" stop.
+func progressStall(settled, baseline, stalls int) (newBaseline, newStalls int, stop bool) {
+	if settled != baseline {
+		return settled, 0, false
 	}
 	return baseline, stalls + 1, stalls+1 >= maxStalls
 }
