@@ -772,6 +772,13 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         up across tools — a thread you started with
                         <code>coop loop</code> is right there to resume in Zed.
                     </p>
+                    <p>
+                        Add <code>"--supervise"</code> to the args to keep the
+                        session connected across a <code>coop build</code> /
+                        <code>coop update</code>: coop restarts it onto the new
+                        image and replays the handshake, so a rebuild doesn't
+                        drop your editor.
+                    </p>
                     <div class="note">
                         GUI apps don't always inherit your shell's
                         <code>PATH</code>. If Zed can't find <code>coop</code>,

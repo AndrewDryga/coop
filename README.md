@@ -161,7 +161,7 @@ any of them.
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
 | `coop run -- <cmd>` | run any command in the box (raw — none of coop's agent flags) |
 | `coop shell` | a shell in the box, to look around |
-| `coop acp [agent\|fusion]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) |
+| `coop acp [agent\|fusion] [--supervise]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); `--supervise` keeps the editor connected across a box restart |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
@@ -182,10 +182,10 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
-| `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; defaults to `.agent/tasks`) |
-| `coop fleet init` · `up` · `down` · `split <n>` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template) |
-| `coop status` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on |
+| `coop loop [agent] [--tasks <path>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
+| `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--loop` requires `--tasks`) |
+| `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
+| `coop status [-w]` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on (`-w` watches live) |
 | `coop tasks add` · `claim` · `block` · `done` · `list` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
 
 **Set up & maintain**
@@ -275,7 +275,7 @@ the parent — so the agent can commit *as you* and ignores the same noise you d
 **Loop one unattended.** Hand a fork a tasks file and it works the queue on its own:
 
 ```bash
-coop fork api codex --loop -d   # -d detaches; loops .agent/tasks by default; tail it with coop fork logs api -f
+coop fork api codex --loop -d --tasks .agent/tasks   # -d detaches; tail it with coop fork logs api -f
 ```
 
 See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to run several at once.
@@ -611,6 +611,11 @@ inside the box over stdio. The repo mounts at its real host path — the same pa
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
 lines up: a thread you started with `coop loop` is there to resume in Zed.
 
+Add `--supervise` to the ACP args in your editor (e.g. `["acp","claude","--supervise"]`) to
+keep the session connected across a box restart: `coop build`/`coop update` restart a
+supervised session onto the new image and replay the ACP handshake, so a rebuild doesn't drop
+your editor.
+
 > **Services** work too — if the repo has a `compose.agent.yml`, run `coop up` first and
 > the ACP box joins the same network.
 > **Custom images** must carry the ACP adapters: `coop init` scaffolds them in; for an
@@ -918,6 +923,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_EDITOR` | (detected) | editor for `coop fork review --open` |
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
+| `COOP_TASKS` | `.agent/tasks` | the loop's task-queue dir (also the `--tasks` flag; repeat `--tasks` to drain several) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 
 Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the
