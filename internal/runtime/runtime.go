@@ -99,11 +99,9 @@ func (r Runtime) psIDs(filters ...string) []string {
 	if err != nil {
 		return nil
 	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return nil
-	}
-	return strings.Split(trimmed, "\n")
+	// Fields (not Split on "\n") so a blank line or a stray CRLF can't yield an empty/`\r`-suffixed
+	// id — which would over-count CountByLabel or silently no-op a kill. Ids carry no whitespace.
+	return strings.Fields(string(out))
 }
 
 // CountByLabel returns how many running containers carry the label key=value.

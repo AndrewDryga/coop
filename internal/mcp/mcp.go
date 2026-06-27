@@ -36,7 +36,10 @@ func GenerateGemini(mcpFile, existing string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	settings := readJSONObject(existing)
+	settings, err := readJSONObject(existing)
+	if err != nil {
+		return "", err
+	}
 
 	merged, _ := settings["mcpServers"].(map[string]any)
 	if merged == nil {
@@ -92,6 +95,11 @@ func envValueString(v any) string {
 }
 
 func writeCodexServer(b *strings.Builder, name string, s server) {
+	if s.URL == "" && s.Command == "" {
+		// No transport — skip this malformed/empty entry rather than emit a bodyless
+		// [mcp_servers.<name>] table, which Codex may reject and so break ALL its MCP servers.
+		return
+	}
 	fmt.Fprintf(b, "[mcp_servers.%s]\n", tomlKey(name))
 	switch {
 	case s.URL != "": // streamable HTTP server
@@ -180,19 +188,26 @@ func readMCP(path string, v any) error {
 	return nil
 }
 
-// readJSONObject reads a JSON object, tolerating a missing or malformed file by
-// returning an empty object (so a broken settings.json never aborts a run).
-func readJSONObject(path string) map[string]any {
+// readJSONObject reads a JSON object from path. A missing or empty file (or "") yields an empty
+// object — there's nothing to merge onto. A present-but-malformed file is an ERROR: the caller
+// then skips MCP wiring (box.Run logs a notice and the agent runs on its own real config) rather
+// than silently overwriting the user's settings with a config that has only mcpServers.
+func readJSONObject(path string) (map[string]any, error) {
 	out := map[string]any{}
 	if path == "" {
-		return out
+		return out, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return out
+		return out, nil // no existing settings → start fresh
 	}
-	_ = json.Unmarshal(data, &out)
-	return out
+	if len(bytes.TrimSpace(data)) == 0 {
+		return out, nil // empty file → start fresh
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("existing %s is not valid JSON: %w", path, err)
+	}
+	return out, nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {

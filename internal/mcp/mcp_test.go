@@ -137,3 +137,34 @@ func TestGenerateEmpty(t *testing.T) {
 		t.Errorf("empty servers -> empty codex output; got %q err %v", got, err)
 	}
 }
+
+// A present-but-malformed existing gemini settings file must error (so box.Run skips wiring and
+// gemini keeps its real config), not silently produce a settings.json containing only mcpServers.
+func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
+	mcpFile := writeTmp(t, "mcp.json", sample)
+	if _, err := GenerateGemini(mcpFile, writeTmp(t, "settings.json", `{"theme":"dark", oops`)); err == nil {
+		t.Error("malformed existing settings.json should error, not discard the user's settings")
+	}
+	// Missing/empty existing is fine — nothing to merge onto.
+	if _, err := GenerateGemini(mcpFile, filepath.Join(t.TempDir(), "nope.json")); err != nil {
+		t.Errorf("missing existing settings should be ok, got %v", err)
+	}
+	if _, err := GenerateGemini(mcpFile, writeTmp(t, "empty.json", "  \n")); err != nil {
+		t.Errorf("empty existing settings should be ok, got %v", err)
+	}
+}
+
+// A server with neither command nor url is skipped, not emitted as a bodyless table that would
+// break Codex's whole config parse.
+func TestGenerateCodexSkipsTransportlessServer(t *testing.T) {
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", `{"mcpServers":{"good":{"command":"x"},"broken":{}}}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "broken") {
+		t.Errorf("transport-less server should be skipped, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.good]") {
+		t.Errorf("valid server should remain, got:\n%s", got)
+	}
+}
