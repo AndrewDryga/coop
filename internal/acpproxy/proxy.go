@@ -141,6 +141,7 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 			p.failAllPending()
 			return err
 		}
+		child.Stop() // release the dead child's pipes + cidfile dir before swapping in the new one
 		child, reader = next, nr
 	}
 }
@@ -286,15 +287,32 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		}
 		timeout = replayIdleTimeout
 	}
-	<-sent
-	// Publish the new child as live BEFORE failing the in-flight requests. failAllPending tells the
-	// editor to retry, and editors retry at once; if p.child still pointed at the dead child, that
-	// retry would be written to it and silently dropped (the swap-window race). Setting it here —
-	// after <-sent, so the replay writer is done and there's no concurrent write to c.In — means the
-	// retry lands on the live child. (The initial child is published by Run; only swaps come here.)
-	p.setChild(c)
-	p.failAllPending()
+	<-sent // replay writer done: no concurrent write to c.In
+	p.swapChild(c)
 	return nil
+}
+
+// swapChild publishes c as the live child AND fails the requests that were in flight, in one
+// critical section. The two MUST be atomic: a request that arrives during the swap is then
+// either (a) seen before the lock — added to pending, failed here, and (since p.child was still
+// the dead child) written there and dropped, so the editor's retry is the only delivery; or
+// (b) seen after the lock — routed to the live child and NOT in the failed snapshot. Splitting
+// setChild and failAllPending left a window where a request could be BOTH routed to the live
+// child AND failed — a duplicate response and a re-executed prompt. (Run publishes the initial
+// child via setChild; only swaps come through here.)
+func (p *proxy) swapChild(c *Child) {
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.pending))
+	for id := range p.pending {
+		ids = append(ids, id)
+		delete(p.newReqs, id) // a session/new in flight at the swap never gets a response
+	}
+	p.pending = map[string]bool{}
+	p.child = c
+	p.mu.Unlock()
+	for _, id := range ids {
+		_, _ = p.out.Write(errorResponse(id))
+	}
 }
 
 // readLineCtx reads one newline-terminated line from br, returning errReplayTimeout if d elapses

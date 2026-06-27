@@ -2,6 +2,7 @@ package acpproxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -243,6 +244,43 @@ func TestFailAllPendingClearsNewReqs(t *testing.T) {
 	}
 	if len(p.pending) != 0 {
 		t.Errorf("failAllPending should clear pending, got %v", p.pending)
+	}
+}
+
+// TestSwapChildPublishesAndFailsAtomically guards the swap-window double-reply: a swap must
+// publish the new child AND fail the in-flight requests as one step. With the two split, a request
+// arriving in the gap was routed to the now-live child AND failed — a duplicate response and a
+// re-run prompt. Here an in-flight id is failed exactly once, the new child goes live, and a
+// request that lands after the swap reaches the live child and is NOT failed.
+func TestSwapChildPublishesAndFailsAtomically(t *testing.T) {
+	var out bytes.Buffer
+	p := &proxy{
+		out:      &out,
+		sessions: map[string]json.RawMessage{},
+		newReqs:  map[string]json.RawMessage{`"1"`: json.RawMessage(`{"cwd":"/w"}`)},
+		pending:  map[string]bool{`"1"`: true},
+	}
+	fc := newFakeChild()
+	c := fc.child()
+	p.swapChild(c)
+
+	if p.child != c {
+		t.Error("swapChild did not publish the new child as live")
+	}
+	if len(p.pending) != 0 || len(p.newReqs) != 0 {
+		t.Errorf("swapChild should clear pending+newReqs, got pending=%v newReqs=%v", p.pending, p.newReqs)
+	}
+	if got := out.String(); strings.Count(got, `"id":"1"`) != 1 {
+		t.Errorf("in-flight id 1 should be failed exactly once, got: %q", got)
+	}
+
+	// A request arriving after the swap routes to the live child and is not failed.
+	go p.fromClient([]byte(`{"jsonrpc":"2.0","id":"2","method":"session/prompt","params":{}}` + "\n"))
+	if got := readLine(t, bufio.NewReader(fc.inR)); !strings.Contains(string(got), `"id":"2"`) {
+		t.Errorf("post-swap request should reach the live child, got: %q", got)
+	}
+	if strings.Contains(out.String(), `"id":"2"`) {
+		t.Error("post-swap request must NOT be failed — the live child answers it")
 	}
 }
 
