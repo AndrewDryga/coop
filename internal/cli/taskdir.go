@@ -166,6 +166,11 @@ func parseTaskFolder(dir, state string) (taskItem, bool) {
 // dir is simply empty. root is typically <repo>/.agent/tasks.
 func readTaskTree(root string) []taskItem {
 	var items []taskItem
+	// The four ReadDir calls below aren't one atomic snapshot, so a task being moved between state
+	// dirs (an os.Rename) can be read in BOTH — once in the source dir, once in the destination.
+	// Dedup by id, keeping the first (lifecycle-earliest) occurrence, so a torn read can't inflate
+	// the counts (coop status / fleet watch) or flash a false "✓ done" as the last task finishes.
+	seen := map[string]bool{}
 	for _, state := range taskStates {
 		stateDir := filepath.Join(root, state)
 		entries, err := os.ReadDir(stateDir)
@@ -176,7 +181,8 @@ func readTaskTree(root string) []taskItem {
 			if !e.IsDir() {
 				continue
 			}
-			if t, ok := parseTaskFolder(filepath.Join(stateDir, e.Name()), state); ok {
+			if t, ok := parseTaskFolder(filepath.Join(stateDir, e.Name()), state); ok && !seen[t.ID] {
+				seen[t.ID] = true
 				items = append(items, t)
 			}
 		}

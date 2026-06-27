@@ -139,6 +139,35 @@ func TestReadTaskTreeAndCounts(t *testing.T) {
 	}
 }
 
+// TestReadTaskTreeDedupesTornMove: a task read in two state dirs (a torn read of an in-flight
+// os.Rename) is counted ONCE, at its earliest-lifecycle state — so counts can't inflate and a
+// finishing task can't flash a false "✓ done" in the dashboard.
+func TestReadTaskTreeDedupesTornMove(t *testing.T) {
+	root := t.TempDir()
+	// the SAME id present in both 10_in_progress and xx_done, as during a mid-read move
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-01-x", "task.md"), "# X\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-01-x", "task.md"), "# X\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-02-a", "task.md"), "# A\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-03-b", "task.md"), "# B\n")
+
+	items := readTaskTree(root)
+	if len(items) != 3 {
+		t.Fatalf("torn move double-counted: %d items, want 3 distinct ids", len(items))
+	}
+	if c, _ := taskTreeCounts(items); c.total() != 3 {
+		t.Errorf("counts inflated by a torn read: total=%d, want 3", c.total())
+	}
+	var x taskItem
+	for _, it := range items {
+		if it.ID == "2026-01-01-x" {
+			x = it
+		}
+	}
+	if x.State != stateInProgress {
+		t.Errorf("torn-move task attributed to %q, want %q (earliest-lifecycle)", x.State, stateInProgress)
+	}
+}
+
 func TestQueueCountsAndSource(t *testing.T) {
 	// queueCounts/queueHasTodo/wsTaskSource all read the .agent/tasks tree.
 	ws := t.TempDir()
