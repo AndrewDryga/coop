@@ -37,6 +37,32 @@ func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
 	}
 }
 
+// TestGeneratedHooksShellcheckClean renders every commit gate coop writes into a user's repo —
+// the .githooks/pre-commit and .claude commit gate, for all detected langs and the neutral
+// fallback — and asserts shellcheck finds nothing. CI only shellchecks install.sh, so without
+// this a generated hook could ship with warnings. Skipped when shellcheck isn't installed.
+func TestGeneratedHooksShellcheckClean(t *testing.T) {
+	sc, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck not installed")
+	}
+	hooks := map[string]string{
+		"pre-commit (all langs)":  preCommitHook(GateLangs),
+		"claude gate (all langs)": claudeCommitGate(GateLangs),
+		"pre-commit (neutral)":    preCommitHook(nil),
+		"claude gate (neutral)":   claudeCommitGate(nil),
+	}
+	for name, body := range hooks {
+		path := filepath.Join(t.TempDir(), "hook.sh")
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(sc, path).CombinedOutput(); err != nil {
+			t.Errorf("%s is not shellcheck-clean:\n%s", name, out)
+		}
+	}
+}
+
 // A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its
 // block — that would drop the !rules/!skills un-ignore and leave tracked dirs ignored.
 func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {

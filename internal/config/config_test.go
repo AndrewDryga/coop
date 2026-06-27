@@ -310,10 +310,13 @@ func TestNormalizeEgress(t *testing.T) {
 	}{
 		{"open", "open", true},
 		{"none", "none", true},
+		{" open ", "open", true}, // stray whitespace is trimmed, not a fail-closed foot-gun
+		{"\tnone\n", "none", true},
 		{"None", "none", false}, // a case typo of the security toggle must fail CLOSED
 		{"off", "none", false},
 		{"disabled", "none", false},
 		{"", "none", false},
+		{"   ", "none", false}, // whitespace-only is empty → fail closed
 	} {
 		if got, ok := normalizeEgress(tc.in); got != tc.want || ok != tc.wantOk {
 			t.Errorf("normalizeEgress(%q) = (%q,%v), want (%q,%v)", tc.in, got, ok, tc.want, tc.wantOk)

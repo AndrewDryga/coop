@@ -87,9 +87,10 @@ var gateSnippets = map[string]string{
 	"go": `# Go: block the commit if any staged .go file isn't gofmt-clean.
 go_files=$(echo "$staged" | grep '\.go$' || true)
 if [ -n "$go_files" ] && command -v gofmt >/dev/null 2>&1; then
+  # shellcheck disable=SC2086  # intentional: split the file list into separate gofmt args
   bad=$(gofmt -l $go_files 2>/dev/null || true)
   if [ -n "$bad" ]; then
-    echo "pre-commit blocked — these need gofmt:" >&2; echo "$bad" | sed 's/^/  /' >&2
+    echo "pre-commit blocked — these need gofmt:" >&2; echo "  ${bad//$'\n'/$'\n'  }" >&2
     echo "fix: gofmt -w <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
@@ -106,8 +107,9 @@ fi`,
 	"elixir": `# Elixir: block the commit if any staged .ex/.exs file isn't mix-format clean.
 ex_files=$(echo "$staged" | grep -E '\.exs?$' || true)
 if [ -n "$ex_files" ] && command -v mix >/dev/null 2>&1; then
+  # shellcheck disable=SC2086  # intentional: split the file list into separate mix-format args
   if ! mix format --check-formatted $ex_files >/dev/null 2>&1; then
-    echo "pre-commit blocked — these need mix format:" >&2; echo "$ex_files" | sed 's/^/  /' >&2
+    echo "pre-commit blocked — these need mix format:" >&2; echo "  ${ex_files//$'\n'/$'\n'  }" >&2
     echo "fix: mix format   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
@@ -127,7 +129,8 @@ const neutralNote = `# No language was auto-detected, so this gate is intentiona
 # checks your repo doesn't use. Add fast checks below (re-run 'coop init' after adding a
 # go.mod / *.tf / mix.exs / Cargo.toml, or a .tool-versions, to get them generated):
 #   go_files=$(echo "$staged" | grep '\.go$');  [ -n "$go_files" ] && gofmt -l $go_files
-#   tf_files=$(echo "$staged" | grep '\.tf$');  [ -n "$tf_files" ] && terraform fmt -check $tf_files`
+#   tf_files=$(echo "$staged" | grep '\.tf$');  [ -n "$tf_files" ] && terraform fmt -check $tf_files
+: "${staged:-}"  # no checks yet — reference $staged so the empty gate stays shellcheck-clean`
 
 func gateSnippet(lang, exitCode string) string {
 	return strings.ReplaceAll(gateSnippets[lang], "@EXIT@", exitCode)

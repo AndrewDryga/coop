@@ -171,7 +171,11 @@ func Load() *Config {
 
 // normalizeEgress fails closed: anything other than "open"/"none" becomes "none" (offline), so a
 // typo'd COOP_EGRESS never silently grants full outbound. ok reports whether v was recognized.
+// Surrounding whitespace is trimmed first so a stray-space value (COOP_EGRESS=" open ", common
+// from a config line or copy-paste) is honored instead of silently failing closed; a genuine
+// case/spelling variant ("None", "off") still fails closed with a warning.
 func normalizeEgress(v string) (egress string, ok bool) {
+	v = strings.TrimSpace(v)
 	switch v {
 	case "open", "none":
 		return v, true
