@@ -248,6 +248,11 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 		"config/credentials.yaml", "credentials.yml", "secrets.yaml", "config/secrets.yml",
 		// Case variants must still shadow (case-insensitive built-in matching).
 		".ENV", "ID_RSA", "config/Server.PEM", "CREDENTIALS.JSON",
+		// Audit additions: direnv, more service-cred shapes, docker/yarn/vault/db dotfiles.
+		".envrc", "config/.envrc", "service-account.json", "client_secret_123.json",
+		"firebase-adminsdk-abc.json", "gha-creds-x.json", "auth.json", "secret.json", "app.secret.json",
+		".docker", ".yarnrc.yml", ".yarnrc", ".my.cnf", ".s3cfg", ".boto",
+		".vault-token", "_netrc", "kubeconfig.yaml", "prod.tfvars.json", "keystore.pkcs12",
 	} {
 		if !shadowed(p) {
 			t.Errorf("%s should be shadowed by the broadened denylist", p)

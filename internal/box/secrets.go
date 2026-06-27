@@ -15,17 +15,21 @@ import (
 // repo-specific paths in a .coopignore (see CoopIgnoreFile / LoadUserGlobs).
 // Matching is case-insensitive (see NewShadowDecider), so .ENV / ID_RSA can't slip past.
 var SecretGlobs = []string{
-	".env", ".env.*", "*.secret", "*.secrets",
-	"*.tfvars", "*.tfstate", "*.tfstate.*",
-	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx", "*.ovpn",
+	".env", ".env.*", ".envrc", "*.secret", "*.secrets",
+	"*.tfvars", "*.tfvars.json", "*.tfstate", "*.tfstate.*",
+	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx", "*.ovpn", "*.pkcs12",
 	"id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*",
-	".netrc", ".npmrc", ".pypirc", ".git-credentials", ".htpasswd", ".dockercfg", ".pgpass",
-	"secrets", ".secrets", "credentials", ".aws", ".kube", ".ssh", ".gnupg",
-	// High-confidence service-credential filenames the list missed: GCP service-account keys, a
-	// literal kubeconfig (only the .kube dir was caught before), and Rails DB creds. NOT added:
-	// *.crt/*.cer (usually PUBLIC certs — shadowing them breaks in-box TLS, cf. the cacerts task)
-	// nor application*.yml / settings.local.json (commonly non-secret app config — too false-positive).
-	"credentials.json", "service_account.json", "*-sa.json", "kubeconfig", "database.yml",
+	".netrc", "_netrc", ".npmrc", ".yarnrc", ".yarnrc.yml", ".pypirc", ".git-credentials", ".htpasswd",
+	".dockercfg", ".pgpass", ".my.cnf", ".s3cfg", ".boto", ".vault-token", "vault-token",
+	"secrets", ".secrets", "credentials", ".aws", ".kube", ".ssh", ".gnupg", ".docker",
+	// High-confidence service-credential filenames: GCP service-account / OAuth-client / firebase /
+	// gha keys (hyphen and underscore spellings), a literal kubeconfig (.yaml/.yml too; only the
+	// .kube dir was caught before), Rails DB creds, and named secret.json files. NOT added:
+	// *.crt/*.cer (usually PUBLIC certs — shadowing breaks in-box TLS, cf. cacerts), *.asc/*.gpg
+	// (commonly public signatures / encrypted-at-rest), nor application*.yml — too false-positive.
+	"credentials.json", "service_account.json", "service-account.json", "*-sa.json", "client_secret*.json",
+	"firebase-adminsdk*.json", "gha-creds-*.json", "auth.json", "secret.json", "secrets.json", "*.secret.json",
+	"kubeconfig", "kubeconfig.yaml", "kubeconfig.yml", "database.yml",
 	// YAML credential/secret files (the .json/.yml variants above missed .yaml/.yml here): a
 	// committed credentials.yaml or secrets.yml is a common real leak. `y*ml` covers .yaml and .yml.
 	"credentials.y*ml", "secrets.y*ml",
@@ -51,7 +55,7 @@ var allowTemplateGlobs = []string{"*.example", "*.sample", "*.template"}
 // hardSecretGlobs are the high-confidence private-key / keystore patterns (the subset of
 // SecretGlobs) that a template suffix must never un-shadow.
 var hardSecretGlobs = []string{
-	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx",
+	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx", "*.pkcs12",
 	"id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*",
 }
 
