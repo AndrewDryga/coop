@@ -252,9 +252,9 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 // decision, or an audit reopened one / a torn read undercounted: either way the queue moved — and
 // bumps it only when nothing settled; it reports stop once maxStalls iterations pass with no movement
 // (the active task, often a continued in_progress/ one, can't be finished and isn't being parked
-// either). Keying
-// on "changed" (not "advanced") means a dip-then-recover isn't a false stall, and counting blocked —
-// not just done — means triaging one-way doors into 50_blocked/ is progress, not a "stuck" stop.
+// either). Keying on "changed" (not "advanced") means a dip-then-recover isn't a false stall, and
+// counting blocked — not just done — means triaging one-way doors into 50_blocked/ is progress, not
+// a "stuck" stop.
 func progressStall(settled, baseline, stalls int) (newBaseline, newStalls int, stop bool) {
 	if settled != baseline {
 		return settled, 0, false

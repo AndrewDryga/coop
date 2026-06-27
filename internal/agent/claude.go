@@ -94,10 +94,8 @@ func (claudeAgent) CredentialEnvKeys() []string {
 func (claudeAgent) MCP(*config.Config) ([]MCPMount, error) { return nil, nil }
 
 // ClaudeProjectKey is how Claude Code names a project's session dir: the absolute cwd with
-// every non-alphanumeric character turned into a dash — not just "/", so "/repo/.agent"
-// becomes "-repo--agent" (the leading dot of a dotted segment dashes too). Matching this
-// exactly is what lets coop find the right session file to resume. Exported so the one
-// caller that must place a session file (a test) shares this single definition.
+// every non-alphanumeric character (not just "/") turned into a dash. coop must match it
+// exactly to find the session file to resume.
 func ClaudeProjectKey(ws string) string {
 	return strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
