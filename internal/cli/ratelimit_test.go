@@ -30,6 +30,15 @@ func TestDetectLimit(t *testing.T) {
 			"Please retry after 2 hours.", true, now.Add(2 * time.Hour)},
 		{"bare http retry-after (seconds)",
 			"429; retry-after: 30", true, now.Add(30 * time.Second)},
+		// A non-time unit ("attempts", "ways") is ordinary prose, not a retry-after — don't trip.
+		{"non-time unit (attempts) is not a limit",
+			"I'll retry after 3 attempts to fix the test", false, time.Time{}},
+		{"non-time unit (ways) is not a limit",
+			"let me try again in 2 ways", false, time.Time{}},
+		// An absurd hours value overflows int64; it must saturate to a long wait, not flip negative
+		// (which would make limitWait clamp to the 10s minimum — a busy retry against a real limit).
+		{"absurd retry-after hours saturates",
+			"Please retry after 9999999 hours.", true, now.Add(limitMaxWait)},
 		{"broad rate-limit keyword, no reset",
 			"request failed: rate limit exceeded", true, time.Time{}},
 		{"http 429, no reset",

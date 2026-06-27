@@ -61,16 +61,28 @@ func detectLimit(output string, now time.Time) limitHint {
 	lower := strings.ToLower(output)
 	if m := retryAfterRe.FindStringSubmatch(lower); m != nil {
 		if n, err := strconv.Atoi(m[1]); err == nil {
-			unit := time.Second // a bare number (HTTP Retry-After) is seconds
+			unit, isTime := time.Second, true // a bare number (HTTP Retry-After) is seconds
 			if len(m[2]) > 0 {
 				switch m[2][0] {
+				case 's':
+					unit = time.Second
 				case 'm':
 					unit = time.Minute
 				case 'h':
 					unit = time.Hour
+				default:
+					// A non-time unit ("retry after 3 attempts", "try again in 2 ways") is ordinary
+					// prose, not a limit — don't treat it as one.
+					isTime = false
 				}
 			}
-			return limitHint{limited: true, resetAt: now.Add(time.Duration(n) * unit)}
+			if isTime {
+				dur := time.Duration(n) * unit
+				if dur < 0 { // overflow on an absurd count (millions of hours) — saturate; limitWait caps it
+					dur = limitMaxWait
+				}
+				return limitHint{limited: true, resetAt: now.Add(dur)}
+			}
 		}
 	}
 	for _, mark := range limitMarkers {

@@ -1005,7 +1005,8 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		ui.Info("starting unattended loop on %s — %d/%d done (Ctrl-C to stop)", label, c0.Done, c0.total())
 	}
 	fails, waits, completed, stalls := 0, 0, 0, 0
-	settledBaseline := c0.Done + c0.Blocked // "settled" = tasks out of the actionable set (done OR blocked)
+	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
+	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	for n := 1; ; {
 		// Surface queue progress + the task being worked, so a long run shows movement
 		// instead of a bare counter (the same queueProgress `coop status`/`coop tasks` use).
@@ -1038,13 +1039,19 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		case actContinue:
 			completed++
 			n++
-			// A clean iteration that neither finishes NOR blocks a task means the agent keeps
-			// continuing an in_progress task it can't complete — bail after maxStalls rather than
-			// loop forever. Blocking a one-way door is progress (the task leaves the actionable set).
-			var stop bool
+			// A clean iteration that neither finishes NOR blocks a task AND commits nothing means
+			// the agent keeps continuing an in_progress task it can't complete — bail after maxStalls
+			// rather than loop forever. But a commit IS progress on a big task (a genuinely stuck loop
+			// spins WITHOUT committing), as is blocking a one-way door — so don't count either as a stall.
 			after, _ := queueProgress(hosts)
-			if settledBaseline, stalls, stop = progressStall(after.Done+after.Blocked, settledBaseline, stalls); stop {
-				return code, fmt.Errorf("no task finished or blocked in %d iterations — stopping (stuck on %q?)", maxStalls, active)
+			settled := after.Done + after.Blocked
+			head := gitOut(repo, "rev-parse", "HEAD")
+			if head != "" && head != prevHead {
+				prevHead, settledBaseline, stalls = head, settled, 0
+			} else if newBase, newStalls, stop := progressStall(settled, settledBaseline, stalls); stop {
+				return code, fmt.Errorf("no task finished, blocked, or committed in %d iterations — stopping (stuck on %q?)", maxStalls, active)
+			} else {
+				settledBaseline, stalls = newBase, newStalls
 			}
 		case actWait:
 			// A rate/usage limit is expected on long runs. With more than one profile in
