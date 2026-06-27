@@ -92,24 +92,27 @@ func TestEnvKeysOutsideScope(t *testing.T) {
 	}
 }
 
-// TestWriteFilteredEnvFile: dropped keys vanish, everything else (the in-scope key, a
-// non-agent runtime var, a comment) is preserved verbatim.
+// TestWriteFilteredEnvFile: dropped keys vanish (both KEY=val AND a bare KEY, which
+// docker imports from the ambient env), everything else (the in-scope key, a non-agent
+// runtime var, a bare non-credential flag, a comment) is preserved verbatim.
 func TestWriteFilteredEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "env")
-	os.WriteFile(src, []byte("# creds\nANTHROPIC_API_KEY=keep\nOPENAI_API_KEY=secret\nMY_VAR=v\n"), 0o644)
+	os.WriteFile(src, []byte("# creds\nANTHROPIC_API_KEY=keep\nOPENAI_API_KEY=secret\nGEMINI_API_KEY\nMY_VAR=v\nMY_FLAG\n"), 0o644)
 
-	out, err := writeFilteredEnvFile(src, map[string]bool{"OPENAI_API_KEY": true})
+	out, err := writeFilteredEnvFile(src, map[string]bool{"OPENAI_API_KEY": true, "GEMINI_API_KEY": true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(out)
 	data, _ := os.ReadFile(out)
 	got := string(data)
-	if strings.Contains(got, "OPENAI_API_KEY") {
-		t.Errorf("filtered env still contains the dropped peer key:\n%s", got)
+	for _, dropped := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY"} {
+		if strings.Contains(got, dropped) {
+			t.Errorf("filtered env still contains the dropped peer key %q (bare or =):\n%s", dropped, got)
+		}
 	}
-	for _, keep := range []string{"# creds", "ANTHROPIC_API_KEY=keep", "MY_VAR=v"} {
+	for _, keep := range []string{"# creds", "ANTHROPIC_API_KEY=keep", "MY_VAR=v", "MY_FLAG"} {
 		if !strings.Contains(got, keep) {
 			t.Errorf("filtered env dropped %q it should keep:\n%s", keep, got)
 		}

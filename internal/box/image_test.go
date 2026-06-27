@@ -119,13 +119,13 @@ func TestDockerfileAgentUntracked(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Present but untracked → flagged.
-	if !dockerfileAgentUntracked(repo) {
+	if !fileUntracked(repo, "Dockerfile.agent") {
 		t.Error("an untracked Dockerfile.agent should be flagged")
 	}
 	// Tracked → not flagged.
 	gitc(repo, "add", "Dockerfile.agent")
 	gitc(repo, "commit", "-qm", "add")
-	if dockerfileAgentUntracked(repo) {
+	if fileUntracked(repo, "Dockerfile.agent") {
 		t.Error("a committed Dockerfile.agent should not be flagged")
 	}
 	// Non-git dir → no signal (false), even with the file present.
@@ -133,7 +133,7 @@ func TestDockerfileAgentUntracked(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nogit, "Dockerfile.agent"), []byte("FROM x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if dockerfileAgentUntracked(nogit) {
+	if fileUntracked(nogit, "Dockerfile.agent") {
 		t.Error("a non-git repo should not be flagged (untracked isn't meaningful there)")
 	}
 }

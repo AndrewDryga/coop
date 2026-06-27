@@ -308,6 +308,12 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		if cf := ComposeFile(spec.Repo); cf != "" {
 			var out, errw io.Writer = io.Discard, io.Discard
 			if !spec.Quiet {
+				// compose interpolates host paths/${VARS} and coop runs it on the HOST, automatically,
+				// every launch — so an agent-authored (untracked) compose.agent.yml is a side door
+				// around the box. Surface it like Dockerfile.agent, so a planted one is noticed.
+				if fileUntracked(spec.Repo, filepath.Base(cf)) {
+					ui.Info("note: %s is untracked in git — coop auto-starts it on your host, and an agent can author one; review it", filepath.Base(cf))
+				}
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))
 				out, errw = os.Stderr, os.Stderr
 			}

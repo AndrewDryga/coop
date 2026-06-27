@@ -78,8 +78,10 @@ func envKeysOutsideScope(scope []string) map[string]bool {
 }
 
 // writeFilteredEnvFile copies the env file to a temp file, dropping the given API-key lines
-// (KEY=...) so peer credentials don't enter a scoped box; comments, blanks, and every other
-// key are preserved verbatim. Returns the temp path the caller must clean up.
+// so peer credentials don't enter a scoped box; comments, blanks, and every other key are
+// preserved verbatim. Returns the temp path the caller must clean up. Both `KEY=val` and a
+// BARE `KEY` line are stripped: docker --env-file treats a bare key as "import it from the
+// current environment", so leaving one in would leak a peer key from coop's own env.
 func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -89,8 +91,10 @@ func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
-			if k, _, ok := strings.Cut(t, "="); ok && drop[strings.TrimSpace(k)] {
-				continue // strip this peer's API key
+			// strings.Cut returns the whole token as the key when there's no "=", so this
+			// catches a bare key too — not only KEY=val.
+			if k, _, _ := strings.Cut(t, "="); drop[strings.TrimSpace(k)] {
+				continue // strip this peer's API key (KEY=val or a bare imported KEY)
 			}
 		}
 		kept = append(kept, line)
