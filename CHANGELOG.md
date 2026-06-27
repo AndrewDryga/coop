@@ -71,6 +71,14 @@
   status` now reports the local queue's progress (done/total · blocked · the active task) when
   you're running a single loop with no forks, instead of just "no forks yet".
 
+- **Self-documenting task files + a reference README.** `coop tasks add` now seeds `task.md` +
+  `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a short header
+  that explains the file and its format — so dumping a resume snapshot, journaling the *why*, and
+  answering a blocked one-way-door decision are all by-the-book without leaving the folder. The
+  `decision.md` carries an explicit "HUMAN: write your answer here, then `coop tasks unblock`"
+  marker, and `.agent/tasks/README.md` is the full reference: a description, template, and worked
+  example for every per-task file.
+
 - **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
   and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
   its runtime has one, batch independent read-only work, and use native subagents or task workers for

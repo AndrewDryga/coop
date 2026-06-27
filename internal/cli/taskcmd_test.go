@@ -207,3 +207,55 @@ func TestTasksFolderLint(t *testing.T) {
 		t.Fatalf("clean lint: code=%d err=%v (want 0)", code, err)
 	}
 }
+
+// `coop tasks add` seeds self-documenting task.md + log.md + state.md (but not decision.md,
+// which would make a todo task lint-dirty), and the result is lint-clean out of the box.
+func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"make egress fail closed"}); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	items := readTaskTree(root)
+	if len(items) != 1 {
+		t.Fatalf("want 1 task, got %d", len(items))
+	}
+	dir := filepath.Join(root, stateTodo, items[0].ID)
+
+	for _, f := range []string{"task.md", "log.md", "state.md"} {
+		if !fileExists(filepath.Join(dir, f)) {
+			t.Errorf("add should seed %s", f)
+		}
+		if body := readFileString(filepath.Join(dir, f)); !strings.Contains(body, "<!--") {
+			t.Errorf("%s should open with an explanatory header comment", f)
+		}
+	}
+	if fileExists(filepath.Join(dir, "decision.md")) {
+		t.Error("add must NOT seed decision.md — a todo task carrying one is a lint error")
+	}
+	// A freshly-added task is lint-clean (acceptance present, no decision in todo, no status field).
+	if code, err := tasksFolderLint(root); code != 0 || err != nil {
+		t.Errorf("a freshly-added task should be lint-clean, got code=%d err=%v", code, err)
+	}
+}
+
+// `coop tasks block` writes a decision.md that's self-documenting and easy for a human to
+// answer: the structured sections, a HUMAN reply marker, and the exact unblock command.
+func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"pick the database"}); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	id := readTaskTree(root)[0].ID
+	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
+		t.Fatalf("block: code=%d err=%v", code, err)
+	}
+	dec := readFileString(filepath.Join(root, stateBlocked, id, "decision.md"))
+	for _, want := range []string{
+		"# Decision:", "**The decision:**", "**Options:**", "**Recommendation:**",
+		"**Resolution:**", "HUMAN:", "coop tasks unblock " + id,
+	} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decision.md missing %q:\n%s", want, dec)
+		}
+	}
+}

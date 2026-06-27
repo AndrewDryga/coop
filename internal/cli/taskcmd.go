@@ -109,6 +109,40 @@ func slugify(s string) string {
 	return slug
 }
 
+// newTaskFiles is the set of starter files `coop tasks add` writes into a new task folder: the
+// required task.md plus a seeded log.md and state.md. Each opens with an HTML-comment header
+// that explains the file and shows its format, so the file is self-documenting yet renders clean
+// once filled. The full reference with worked examples is .agent/tasks/README.md. decision.md is
+// NOT seeded here — `block` writes it, since a pending decision is what moves a task to
+// 50_blocked/ (and a decision.md on a todo task is a lint error).
+func newTaskFiles(id, title, now string) map[string]string {
+	return map[string]string{
+		"task.md": "<!-- Task spec — a fresh agent must be able to work this from this file ALONE.\n" +
+			"     Full format + examples: .agent/tasks/README.md -->\n" +
+			"---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
+			"# " + title + "\n\n" +
+			"**Context:** <the problem, why it matters, and where in the code it lives>\n\n" +
+			"**Acceptance criteria:** <the gate green + the behaviour/test that proves it's done>\n\n" +
+			"**Approach:** <the boring plan; when it outgrows ~a screen, move it into spec.md>\n\n" +
+			"## Subtasks\n" +
+			"- [ ] <first small, end-to-end, testable step — check off once the gate is green>\n",
+		"log.md": "<!-- Append-only working journal: what you did and WHY (decisions, dead ends,\n" +
+			"     surprises). Add to the BOTTOM; never rewrite history. The short \"where am I\n" +
+			"     now\" snapshot lives in state.md, not here. Example entry:\n" +
+			"       ## " + now[:10] + " — chose os.Rename over copy+delete\n" +
+			"       - atomic, so a torn move can't half-create the task folder. -->\n\n" +
+			"# Log — " + title + "\n",
+		"state.md": "<!-- Resume snapshot — OVERWRITE this whole file at each checkpoint (before a\n" +
+			"     commit or pause) so a fresh agent can resume cold. Keep it short; this is NOT\n" +
+			"     a journal (that's log.md). -->\n\n" +
+			"# State — " + title + "\n\n" +
+			"**Status:** not started\n" +
+			"**Done so far:** —\n" +
+			"**Next action:** <the very next concrete step>\n" +
+			"**Traps:** <gotchas the next agent must know, or —>\n",
+	}
+}
+
 func tasksFolderAdd(root string, args []string) (int, error) {
 	title := strings.TrimSpace(strings.Join(args, " "))
 	if title == "" {
@@ -126,16 +160,12 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return -1, err
 	}
-	body := fmt.Sprintf("---\nid: %s\ntitle: %s\nlabels: []\nupdated: %s\n---\n\n# %s\n\n"+
-		"**Context:** \n\n"+
-		"**Acceptance criteria:** \n\n"+
-		"**Approach:** \n\n"+
-		"## Subtasks\n- [ ] \n",
-		id, title, time.Now().Format(time.RFC3339), title)
-	if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
-		return -1, err
+	for name, content := range newTaskFiles(id, title, time.Now().Format(time.RFC3339)) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			return -1, err
+		}
 	}
-	ui.Info("added %s/%s — fill in its Context / Acceptance criteria / Approach / Subtasks", stateTodo, id)
+	ui.Info("added %s/%s — fill in task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md are seeded", stateTodo, id)
 	return 0, nil
 }
 
@@ -184,14 +214,23 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	}
 	dec := filepath.Join(root, stateBlocked, t.ID, "decision.md")
 	if !fileExists(dec) {
-		stub := fmt.Sprintf("# Decision: %s?\n\n**Blocks:** this task (`%s`).\n\n"+
-			"**The decision:** \n\n**Options:**\n- **A — :** \n- **B — :** \n\n"+
-			"**Recommendation:** \n\n---\n\n**Resolution:** \n", t.Title, t.ID)
+		stub := "<!-- A one-way-door choice that blocks this task. The agent fills The decision,\n" +
+			"     Options, and Recommendation; a HUMAN writes Resolution, then runs:\n" +
+			"       coop tasks unblock " + t.ID + " -->\n\n" +
+			"# Decision: " + t.Title + "?\n\n" +
+			"**Blocks:** this task (`" + t.ID + "`).\n\n" +
+			"**The decision:** <what must be chosen, and why it can't be undone cheaply>\n\n" +
+			"**Options:**\n" +
+			"- **A — <name>:** <consequence>\n" +
+			"- **B — <name>:** <consequence>\n\n" +
+			"**Recommendation:** <the agent's pick + one line why>\n\n" +
+			"---\n\n" +
+			"**Resolution:** <!-- HUMAN: your answer here (e.g. \"A — go with Postgres\"), then: coop tasks unblock " + t.ID + " -->\n"
 		if err := os.WriteFile(dec, []byte(stub), 0o644); err != nil {
 			return -1, err
 		}
 	}
-	ui.Info("blocked %s — fill in %s/%s/decision.md (the question, options, your recommendation)", t.ID, stateBlocked, t.ID)
+	ui.Info("blocked %s — fill in %s/%s/decision.md, then a human writes Resolution and runs 'coop tasks unblock %s'", t.ID, stateBlocked, t.ID, t.ID)
 	return 0, nil
 }
 
