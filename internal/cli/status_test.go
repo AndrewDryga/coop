@@ -21,6 +21,8 @@ func TestActiveCell(t *testing.T) {
 		{"no queue", forkStatus{}, "(no queue)"},
 		{"all done", forkStatus{Counts: taskCounts{Done: 3}}, "✓ done"},
 		{"in flight", forkStatus{Active: "fix the bug", Counts: taskCounts{Doing: 1}}, "fix the bug"},
+		// blocked-only (nothing actionable, but parked on a decision) must NOT read as done.
+		{"blocked only", forkStatus{Counts: taskCounts{Done: 1, Blocked: 2}}, "blocked"},
 	}
 	for _, c := range cases {
 		if got := c.s.activeCell(); got != c.want {

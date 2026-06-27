@@ -1069,6 +1069,12 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	}
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
+	} else if cf, _ := queueProgress(hosts); cf.Blocked > 0 {
+		// The loop stops when nothing is actionable (todo+in_progress empty), but tasks parked in
+		// 50_blocked/ on a human decision are NOT done — don't report success.
+		fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf(
+			"stopped — %d/%d done, %d blocked on a decision; resolve them (coop tasks decisions), then re-run",
+			cf.Done, cf.total(), cf.Blocked))))
 	} else {
 		cf, _ := queueProgress(hosts)
 		msg := fmt.Sprintf("✓ queue verified done — %d/%d", cf.Done, cf.total())

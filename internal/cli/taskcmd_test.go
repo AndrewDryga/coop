@@ -72,7 +72,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 
 	// claim via a substring of the id
-	if code, err := tasksFolderMove(root, []string{"egress"}, stateInProgress, "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{"egress"}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
 		t.Fatalf("claim: code=%d err=%v", code, err)
 	}
 	if got := readTaskTree(root)[0].State; got != stateInProgress {
@@ -92,15 +92,19 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 
 	// unblock → in_progress (decision.md rides along)
-	if code, err := tasksFolderMove(root, []string{id}, stateInProgress, "unblocked"); code != 0 || err != nil {
+	if code, err := tasksFolderUnblock(root, []string{id}); code != 0 || err != nil {
 		t.Fatalf("unblock: code=%d err=%v", code, err)
 	}
 	if readTaskTree(root)[0].State != stateInProgress {
 		t.Fatal("after unblock, not in_progress")
 	}
+	// unblocking a non-blocked task is an error (it's in_progress now), not a silent reopen.
+	if code, err := tasksFolderUnblock(root, []string{id}); code == 0 || err == nil {
+		t.Errorf("unblock of a non-blocked task should error, got (%d, %v)", code, err)
+	}
 
 	// done → done/
-	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	if readTaskTree(root)[0].State != stateDone {
@@ -108,7 +112,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 
 	// no-op move when already in the target state
-	if code, _ := tasksFolderMove(root, []string{id}, stateDone, "done"); code != 0 {
+	if code, _ := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 {
 		t.Errorf("re-done should be a no-op (code 0), got %d", code)
 	}
 
@@ -272,7 +276,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	id := readTaskTree(root)[0].ID
-	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	// Same title → same id, but it now lives in xx_done/ — the re-add must fail.
@@ -282,5 +286,19 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	items := readTaskTree(root)
 	if len(items) != 1 || items[0].State != stateDone {
 		t.Fatalf("collision must not create a duplicate id: %+v", items)
+	}
+}
+
+// A move onto a destination that already holds the same id (a torn move / stray duplicate across
+// states) must be a clean, actionable error — not a raw os.Rename "file exists" that strands the task.
+func TestMoveTaskDirRefusesDuplicateDest(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-01-x", "task.md"), "# x\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-01-x", "task.md"), "# x\n")
+	// `done` resolves the in_progress copy (read-side dedup keeps earliest); moving it onto the
+	// existing xx_done copy must surface a clean "already exists", not crash or strand.
+	code, err := tasksFolderMove(root, []string{"2026-01-01-x"}, stateDone, "done", "done")
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("move onto a duplicate dest = (%d, %v), want a clean 'already exists' error", code, err)
 	}
 }

@@ -10,7 +10,7 @@ printf '%s' "$(cat)" | grep -q '"stop_hook_active"[[:space:]]*:[[:space:]]*true'
 # next iteration, so it doesn't block stopping.)
 tasks="$CLAUDE_PROJECT_DIR/.agent/tasks"
 [ -d "$tasks" ] || exit 0
-left=$(find "$tasks/00_todo" -name task.md 2>/dev/null | wc -l | tr -d ' ')
+left=$(find "$tasks/00_todo" -mindepth 2 -maxdepth 2 -name task.md 2>/dev/null | wc -l | tr -d ' ')
 if [ "${left:-0}" -gt 0 ]; then
   echo ".agent/tasks/00_todo has $left unclaimed task(s). Keep going ('coop tasks claim <id>'), or 'coop tasks block <id>'." >&2
   exit 2

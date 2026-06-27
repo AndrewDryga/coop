@@ -232,6 +232,15 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 		}
 	}
 	parent := filepath.Dir(root)
+	// Pre-clean each slice so a RE-split regenerates from the current source instead of merging into
+	// a stale one: without this, a task already worked in a slice (moved to its xx_done/) plus a fresh
+	// todo copy of the same id would leave the id in two states in one slice — and a loop on it would
+	// re-run completed work. Slices are disposable copies of the (untouched) source, safe to rebuild.
+	for _, name := range names {
+		if e := os.RemoveAll(filepath.Join(parent, "tasks."+name)); e != nil {
+			return nil, nil, 0, e
+		}
+	}
 	for i, it := range todo {
 		b := i % n // deterministic round-robin over the sorted todo list
 		if e := copyTree(it.Dir, filepath.Join(parent, "tasks."+names[b], stateTodo, it.ID)); e != nil {

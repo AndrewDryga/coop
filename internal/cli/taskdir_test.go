@@ -253,6 +253,34 @@ func TestSplitTodoFolders(t *testing.T) {
 	}
 }
 
+// A RE-split must regenerate each slice from the (unchanged) source, not merge into a stale one —
+// else a task already worked in a slice (moved to xx_done) plus a fresh todo copy of the same id
+// would leave it in two states and a loop on the slice would re-run completed work.
+func TestSplitTodoFoldersRecleansSlices(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
+	if _, _, _, err := splitTodoFolders(repo, root, []string{"1"}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the slice being worked in place: a task moved to xx_done + a stale todo not in source.
+	writeTaskFile(t, filepath.Join(repo, ".agent", "tasks.1", stateDone, "2026-01-01-a", "task.md"), "# a (done)\n")
+	writeTaskFile(t, filepath.Join(repo, ".agent", "tasks.1", stateTodo, "2026-01-09-stale", "task.md"), "# stale\n")
+
+	if _, _, _, err := splitTodoFolders(repo, root, []string{"1"}); err != nil {
+		t.Fatal(err)
+	}
+	if isTaskDir(filepath.Join(repo, ".agent", "tasks.1", stateDone, "2026-01-01-a")) {
+		t.Error("re-split must clear the slice's stale xx_done copy (else the loop re-runs done work)")
+	}
+	if isTaskDir(filepath.Join(repo, ".agent", "tasks.1", stateTodo, "2026-01-09-stale")) {
+		t.Error("re-split must clear a stale todo not present in the source")
+	}
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.1", stateTodo, "2026-01-01-a")) {
+		t.Error("re-split should re-copy the source's current todo")
+	}
+}
+
 func TestTaskTreeCountsActiveFallsBackToTodo(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-only", "task.md"), "# Only todo\n")

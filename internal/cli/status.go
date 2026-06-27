@@ -76,10 +76,12 @@ func (s forkStatus) activeCell() string {
 	switch {
 	case s.Counts.total() == 0:
 		return "(no queue)"
-	case s.Active == "":
-		return "✓ done"
-	default:
+	case s.Active != "":
 		return truncate(s.Active, 44)
+	case s.Counts.Blocked > 0:
+		return "blocked" // nothing actionable, but tasks are parked on a decision — NOT done
+	default:
+		return "✓ done"
 	}
 }
 

@@ -35,13 +35,13 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "add":
 		return tasksFolderAdd(root, args)
 	case "claim", "start":
-		return tasksFolderMove(root, args, stateInProgress, "claimed")
+		return tasksFolderMove(root, args, stateInProgress, "claim", "claimed")
 	case "block":
 		return tasksFolderBlock(root, args)
 	case "unblock":
-		return tasksFolderMove(root, args, stateInProgress, "unblocked")
+		return tasksFolderUnblock(root, args)
 	case "done":
-		return tasksFolderMove(root, args, stateDone, "done")
+		return tasksFolderMove(root, args, stateDone, "done", "done")
 	case "remove", "rm":
 		return tasksFolderRemove(root, args)
 	case "split":
@@ -179,9 +179,10 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	return 0, nil
 }
 
-// tasksFolderMove relocates a task's folder to newState (claim/unblock/done). Moving to the
-// state it's already in is a no-op note, not an error.
-func tasksFolderMove(root string, args []string, newState, verb string) (int, error) {
+// tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
+// in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
+// to the state it's already in is a no-op note, not an error.
+func tasksFolderMove(root string, args []string, newState, verb, pastVerb string) (int, error) {
 	if len(args) < 1 {
 		return 2, fmt.Errorf("usage: coop tasks %s <id>", verb)
 	}
@@ -196,13 +197,39 @@ func tasksFolderMove(root string, args []string, newState, verb string) (int, er
 	if err := moveTaskDir(root, t, newState); err != nil {
 		return -1, err
 	}
-	ui.Info("%s %s (now %s)", verb, t.ID, stateLabel(newState))
+	ui.Info("%s %s (now %s)", pastVerb, t.ID, stateLabel(newState))
 	return 0, nil
 }
 
-// moveTaskDir renames a task's folder into root/newState, creating the state dir if needed.
+// tasksFolderUnblock moves a task out of 50_blocked/ back to 10_in_progress/ — but only if it's
+// actually blocked, so a fat-fingered id can't silently reopen a done (or todo) task.
+func tasksFolderUnblock(root string, args []string) (int, error) {
+	if len(args) < 1 {
+		return 2, errors.New("usage: coop tasks unblock <id>")
+	}
+	t, err := findTask(root, args[0])
+	if err != nil {
+		return 1, err
+	}
+	if t.State != stateBlocked {
+		return 1, fmt.Errorf("%s is not blocked (it's %s) — nothing to unblock", t.ID, stateLabel(t.State))
+	}
+	if err := moveTaskDir(root, t, stateInProgress); err != nil {
+		return -1, err
+	}
+	ui.Info("unblocked %s (now %s)", t.ID, stateLabel(stateInProgress))
+	return 0, nil
+}
+
+// moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
+// id already exists in newState (a torn move or a stray duplicate across states), it refuses with an
+// actionable message rather than letting os.Rename fail with a raw "file exists" and stranding the
+// task. (readTaskTree dedups such a duplicate on the READ side; this guards the WRITE side.)
 func moveTaskDir(root string, t taskItem, newState string) error {
 	dest := filepath.Join(root, newState, t.ID)
+	if t.Dir != dest && pathExists(dest) {
+		return fmt.Errorf("can't move %s to %s/: a folder with that id already exists there (a torn move or stray copy) — remove one: rm -rf %q", t.ID, stateLabel(newState), dest)
+	}
 	if err := os.MkdirAll(filepath.Join(root, newState), 0o755); err != nil {
 		return err
 	}
