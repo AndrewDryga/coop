@@ -111,7 +111,9 @@ func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
 }
 
 // TestConsultWrapperMatchesAdapters guards against the wrapper's hardcoded read-only
-// flags drifting from each adapter's ConsultCmd.
+// flags drifting from each adapter's ConsultCmd — for the fresh form (every flag) and the
+// --continue/resume form (its read-only mode, which has no adapter source and so could
+// loosen unnoticed).
 func TestConsultWrapperMatchesAdapters(t *testing.T) {
 	for _, peer := range allAgents {
 		cmd := peerCmd(peer, "Q") // e.g. [claude -p --permission-mode plan Q]
@@ -121,6 +123,40 @@ func TestConsultWrapperMatchesAdapters(t *testing.T) {
 			}
 		}
 	}
+
+	// The --continue branch resumes a session with a hand-written invocation (no adapter
+	// returns the resume form). Assert it keeps the SAME read-only mode the fresh consult
+	// uses, tied to the adapter so the two can't drift apart and silently un-sandbox a resume.
+	ci, fi := strings.Index(ConsultWrapper, "--continue)"), strings.Index(ConsultWrapper, "--fresh)")
+	if ci < 0 || fi < 0 || ci >= fi {
+		t.Fatalf("wrapper structure changed: --continue@%d --fresh@%d", ci, fi)
+	}
+	continueBranch := ConsultWrapper[ci:fi]
+	for _, peer := range allAgents {
+		mode := readOnlyMode(peerCmd(peer, "Q"))
+		if mode == "" {
+			t.Errorf("%s ConsultCmd has no recognizable read-only mode flag", peer)
+			continue
+		}
+		if !strings.Contains(continueBranch, mode) {
+			t.Errorf("coop-consult --continue dropped %s's read-only mode %q (wrapper drifted from adapter)", peer, mode)
+		}
+	}
+}
+
+// readOnlyMode pulls the sandbox/permission value a peer's fresh consult uses
+// (the token after --permission-mode/--approval-mode/-s), so a test can assert --continue
+// keeps it. "" if none is found.
+func readOnlyMode(cmd []string) string {
+	for i, tok := range cmd {
+		switch tok {
+		case "--permission-mode", "--approval-mode", "-s":
+			if i+1 < len(cmd) {
+				return cmd[i+1]
+			}
+		}
+	}
+	return ""
 }
 
 func TestGovernorInstructionsPreservesBase(t *testing.T) {

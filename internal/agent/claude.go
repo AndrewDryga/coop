@@ -53,7 +53,7 @@ func (a claudeAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) 
 	if id == "" {
 		return a.Interactive(cfg), false
 	}
-	sess := filepath.Join(cfg.AgentDir("claude"), "projects", claudeProjectKey(ws), id+".jsonl")
+	sess := filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), id+".jsonl")
 	if _, err := os.Stat(sess); err == nil {
 		return append(a.base(cfg), "--resume", id), true
 	}
@@ -93,9 +93,19 @@ func (claudeAgent) CredentialEnvKeys() []string {
 // MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).
 func (claudeAgent) MCP(*config.Config) ([]MCPMount, error) { return nil, nil }
 
-// claudeProjectKey is how Claude Code names a project's session dir: the absolute cwd
-// with path separators turned into dashes.
-func claudeProjectKey(ws string) string { return strings.ReplaceAll(ws, "/", "-") }
+// ClaudeProjectKey is how Claude Code names a project's session dir: the absolute cwd with
+// every non-alphanumeric character turned into a dash — not just "/", so "/repo/.agent"
+// becomes "-repo--agent" (the leading dot of a dotted segment dashes too). Matching this
+// exactly is what lets coop find the right session file to resume. Exported so the one
+// caller that must place a session file (a test) shares this single definition.
+func ClaudeProjectKey(ws string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, ws)
+}
 
 // EnsureDefaults pre-answers Claude Code's first-run prompts (theme, folder-trust, the
 // bypass-permissions warning) and pins its bash OS-sandbox off — the box is itself the

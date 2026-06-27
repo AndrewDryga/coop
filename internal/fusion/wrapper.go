@@ -77,7 +77,7 @@ case "$mode" in
 		case "$peer" in
 		claude) run claude -p --permission-mode plan --resume "$id" "$prompt" ;;
 		gemini) run gemini --approval-mode plan --resume "$id" -p "$prompt" ;;
-		codex) run codex exec resume "$id" -c sandbox_mode=read-only --json "$prompt" | codex_text ;;
+		codex) out=$(run codex exec resume "$id" -c sandbox_mode=read-only --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st" ;;
 		*) die "unknown peer: $peer" ;;
 		esac
 		exit
@@ -100,12 +100,15 @@ gemini)
 	run gemini --approval-mode plan --session-id "$id" -p "$prompt"
 	;;
 codex)
-	out=$(run codex exec -s read-only --json "$prompt") || true
+	out=$(run codex exec -s read-only --json "$prompt"); st=$?
 	# Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
 	# and writing an empty idfile would make the next --continue run "codex exec resume ''".
 	tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
 	if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
 	printf '%s\n' "$out" | codex_text
+	# Propagate codex's own exit status (timeout/error), not the codex_text pipe's 0, so a
+	# consult failure is observable like claude/gemini's instead of always looking successful.
+	exit "$st"
 	;;
 *) die "unknown peer: $peer" ;;
 esac

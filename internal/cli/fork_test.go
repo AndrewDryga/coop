@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -376,7 +377,9 @@ func TestForkLaunchCmd(t *testing.T) {
 	}
 
 	// Re-entry once the session exists: resume exactly that id (not --continue/latest).
-	claudeKey := strings.ReplaceAll(ws, "/", "-")
+	// Place the fake session where the adapter resolves it — via the same key function, so
+	// this test can't drift from Claude Code's project-dir encoding.
+	claudeKey := agents.ClaudeProjectKey(ws)
 	sess := filepath.Join(cfgDir, "claude", "projects", claudeKey, id+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(sess), 0o755); err != nil {
 		t.Fatal(err)

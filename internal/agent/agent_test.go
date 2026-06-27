@@ -148,7 +148,7 @@ func TestResume(t *testing.T) {
 
 	// claude resumes the exact coop-owned id (projects/<cwd>/<id>.jsonl), not --continue.
 	claude, _ := Get("claude")
-	mustWrite(t, filepath.Join(cfgDir, "claude", "projects", claudeProjectKey(ws), id+".jsonl"), "{}")
+	mustWrite(t, filepath.Join(cfgDir, "claude", "projects", ClaudeProjectKey(ws), id+".jsonl"), "{}")
 	if cmd, ok := claude.Resume(cfg, ws, id); !ok ||
 		!slices.Equal(cmd, []string{"claude", "--dangerously-skip-permissions", "--resume", id}) {
 		t.Errorf("claude Resume = (%v, %v)", cmd, ok)
@@ -254,6 +254,23 @@ func TestMCP(t *testing.T) {
 		m, err := ag.MCP(cfg)
 		if err != nil || len(m) != 1 || m[0].BoxPath != boxPath || m[0].Content == "" {
 			t.Errorf("%s MCP = %v, %v; want one non-empty mount at %s", name, m, err, boxPath)
+		}
+	}
+}
+
+// TestClaudeProjectKey: the session-dir key dashes every non-alphanumeric char (matching
+// Claude Code), so a dotted segment like ".agent" maps to "-agent" and coop resolves the
+// right project dir. Ground truth: Claude stores "/x/.config" as "-x--config".
+func TestClaudeProjectKey(t *testing.T) {
+	cases := map[string]string{
+		"/Users/a/Projects/os/coop": "-Users-a-Projects-os-coop",
+		"/x/.config/hammerspoon":    "-x--config-hammerspoon",
+		"/repo/.agent":              "-repo--agent",
+		"/has_underscore/and.dot":   "-has-underscore-and-dot",
+	}
+	for in, want := range cases {
+		if got := ClaudeProjectKey(in); got != want {
+			t.Errorf("ClaudeProjectKey(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
