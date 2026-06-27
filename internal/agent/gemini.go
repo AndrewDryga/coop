@@ -41,31 +41,26 @@ func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {
 	return append(a.base(cfg), "--session-id", id)
 }
 
-// Resume pins the coop-owned session id rather than "latest" — a loop or consult in
-// the same cwd could be the latest, and gemini's tmp bucket is keyed by basename (so
-// same-named forks in different repos can collide), but resuming an explicit uuid is
-// immune to both. The id is matched by file content, so a change to gemini's session
-// filename scheme can't silently break detection.
+// Resume pins the coop-owned session id rather than "latest" — a loop or consult in the same
+// cwd could be the latest, but resuming an explicit uuid is immune. It's matched by file
+// content across every project bucket, so neither gemini's bucket-naming scheme nor a
+// same-named fork in another repo can break or misdirect detection.
 func (a geminiAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	if id != "" && geminiHasSession(cfg, ws, id) {
+	if id != "" && geminiHasSession(cfg, id) {
 		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
 }
 
-// geminiHasSession reports whether any chats file for ws records session id. gemini
-// keys sessions by project basename under ~/.gemini/tmp/<base>/chats.
-func geminiHasSession(cfg *config.Config, ws, id string) bool {
-	dir := filepath.Join(cfg.AgentDir("gemini"), "tmp", filepath.Base(ws), "chats")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if data, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil && strings.Contains(string(data), id) {
+// geminiHasSession reports whether any chats file records session id. gemini stores chats under
+// ~/.gemini/tmp/<bucket>/chats where <bucket> is a version-dependent encoding of the project path
+// (a slug now, a hash in older versions, with a collision suffix) — so rather than reconstruct it
+// (and silently miss when it changes), scan every bucket and match the coop-owned id, a unique
+// uuid that appears only in its own session.
+func geminiHasSession(cfg *config.Config, id string) bool {
+	files, _ := filepath.Glob(filepath.Join(cfg.AgentDir("gemini"), "tmp", "*", "chats", "*"))
+	for _, f := range files {
+		if data, err := os.ReadFile(f); err == nil && strings.Contains(string(data), id) {
 			return true
 		}
 	}

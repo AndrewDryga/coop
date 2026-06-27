@@ -166,6 +166,14 @@ func TestResume(t *testing.T) {
 		!slices.Equal(cmd, []string{"gemini", "--yolo", "--resume", id}) {
 		t.Errorf("gemini Resume = (%v, %v)", cmd, ok)
 	}
+	// gemini's tmp bucket is a version-dependent slug/hash of the path, not the raw basename — so
+	// resume must find the id regardless of the bucket name (the old raw-basename lookup silently
+	// missed a fork named e.g. "My.Repo" whose real bucket is "my-repo").
+	slugWs := filepath.Join(t.TempDir(), "My.Cool_Repo")
+	mustWrite(t, filepath.Join(cfgDir, "gemini", "tmp", "my-cool-repo", "chats", "s.jsonl"), `{"sessionId":"`+id+`"}`)
+	if _, ok := gemini.Resume(cfg, slugWs, id); !ok {
+		t.Error("gemini Resume must match a session in a slug-named bucket, not only the raw basename")
+	}
 
 	// codex ignores the id and resumes its most-recent INTERACTIVE session for the cwd,
 	// skipping a newer `codex exec` (source=="exec") loop/consult session.
