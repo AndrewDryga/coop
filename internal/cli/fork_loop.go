@@ -349,12 +349,38 @@ func (a *app) forkStop(args []string) (int, error) {
 	if pid == 0 {
 		return 1, fmt.Errorf("fork %s is not running", name)
 	}
-	// The worker is a session leader (Setsid); signal its whole group, falling back
-	// to the single pid.
-	if syscall.Kill(-pid, syscall.SIGTERM) != nil {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+	// The worker is a session leader (Setsid); signal its whole group, falling back to the single
+	// pid. SIGTERM first, then escalate to SIGKILL if it doesn't exit (mid-iteration / blocked).
+	killGroup := func(sig syscall.Signal) {
+		if syscall.Kill(-pid, sig) != nil {
+			_ = syscall.Kill(pid, sig)
+		}
+	}
+	killGroup(syscall.SIGTERM)
+	if !waitForExit(pid, 3*time.Second) {
+		killGroup(syscall.SIGKILL)
+		waitForExit(pid, 2*time.Second)
+	}
+	// Only clear the pidfile once the worker is actually gone — removing it while the worker still
+	// lives would make the fork invisible and re-open the double-start window claimForkPid closes.
+	if syscall.Kill(pid, 0) == nil {
+		return 1, fmt.Errorf("fork %s (pid %d) did not exit even after SIGKILL — leaving it tracked", name, pid)
 	}
 	_ = os.Remove(forkPid(repo, name))
 	ui.Info("stopped fork %s", name)
 	return 0, nil
+}
+
+// waitForExit polls until pid is gone or timeout elapses; it reports whether the process exited.
+func waitForExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if syscall.Kill(pid, 0) != nil {
+			return true // gone (ESRCH) — or not ours to signal, either way not the live worker
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

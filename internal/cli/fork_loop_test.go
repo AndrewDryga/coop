@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -280,6 +281,17 @@ func TestClaimForkPid(t *testing.T) {
 	}
 	if err := claimForkPid(repo, "stale"); err != nil {
 		t.Errorf("claim should reclaim a stale pidfile, got %v", err)
+	}
+}
+
+// waitForExit returns immediately-true for a dead pid and false (after the timeout) for a live one
+// — forkStop uses it to confirm death before clearing the pidfile.
+func TestWaitForExit(t *testing.T) {
+	if !waitForExit(2147483646, 2*time.Second) { // a pid that isn't running
+		t.Error("waitForExit should report a non-running pid as exited (fast)")
+	}
+	if waitForExit(os.Getpid(), 80*time.Millisecond) { // we're alive
+		t.Error("waitForExit should report a live pid as not-exited after the timeout")
 	}
 }
 
