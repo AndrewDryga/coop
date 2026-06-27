@@ -434,14 +434,20 @@ func readForkAgent(ws string) string {
 	return ""
 }
 
-func saveForkAgent(ws, agent string) {
-	if agent == "" {
+func saveForkAgent(ws, agent string) { saveForkMeta(ws, forkAgentFile(ws), agent) }
+
+// saveForkMeta writes one of a fork's .coop/ bookkeeping files (its agent, its session id),
+// best-effort: an empty value is a no-op, and any write failure is swallowed since the file
+// is a convenience re-derived or re-prompted next run. On a successful write it excludes
+// .coop/ from the fork's diff so the bookkeeping never lands in a merge.
+func saveForkMeta(ws, path, value string) {
+	if value == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(forkAgentFile(ws)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
-	if os.WriteFile(forkAgentFile(ws), []byte(agent+"\n"), 0o644) == nil {
+	if os.WriteFile(path, []byte(value+"\n"), 0o644) == nil {
 		excludeFork(ws, ".coop/")
 	}
 }
@@ -460,17 +466,7 @@ func readForkSession(ws, agent string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func saveForkSession(ws, agent, id string) {
-	if id == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(forkSessionFile(ws, agent)), 0o755); err != nil {
-		return
-	}
-	if os.WriteFile(forkSessionFile(ws, agent), []byte(id+"\n"), 0o644) == nil {
-		excludeFork(ws, ".coop/")
-	}
-}
+func saveForkSession(ws, agent, id string) { saveForkMeta(ws, forkSessionFile(ws, agent), id) }
 
 // newSessionID returns a random RFC-4122 v4 UUID — the form claude and gemini require
 // for --session-id.

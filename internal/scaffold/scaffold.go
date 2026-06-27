@@ -130,25 +130,25 @@ func (s *scaffolder) rel(p string) string {
 func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
 		ui.Detail("kept existing %s", filepath.Base(dest))
-		return nil
+		return nil // present: don't even read the template
 	}
 	data, err := templates.ReadFile(embedPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(dest, data, perm); err != nil {
-		return err
-	}
-	ui.Detail("wrote %s", s.rel(dest))
-	return nil
+	return s.writeNewFile(dest, data, perm)
 }
 
 // writeContentIfAbsent writes generated content to dest (like writeIfAbsent, but from a
 // string rather than an embedded template), never clobbering an existing file.
 func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode) error {
+	return s.writeNewFile(dest, []byte(content), perm)
+}
+
+// writeNewFile writes data to dest with perm (creating parent dirs), unless dest already
+// exists — then it's left untouched. Either way it reports what it did. Shared tail of the
+// two IfAbsent wrappers, which differ only in their byte source.
+func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
 		ui.Detail("kept existing %s", filepath.Base(dest))
 		return nil
@@ -156,7 +156,7 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(dest, []byte(content), perm); err != nil {
+	if err := os.WriteFile(dest, data, perm); err != nil {
 		return err
 	}
 	ui.Detail("wrote %s", s.rel(dest))
