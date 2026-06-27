@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 var allAgents = []string{"claude", "codex", "gemini"}
@@ -52,19 +54,25 @@ func TestPeers(t *testing.T) {
 	}
 }
 
-func TestPeerCmd(t *testing.T) {
+// Each adapter owns its read-only consult command; assert the exact flags — they're the
+// sandbox that keeps a consulted peer from editing files.
+func TestConsultCmds(t *testing.T) {
 	cases := map[string][]string{
 		"claude": {"claude", "-p", "--permission-mode", "plan", "Q"},
 		"gemini": {"gemini", "--approval-mode", "plan", "-p", "Q"},
 		"codex":  {"codex", "exec", "-s", "read-only", "Q"},
 	}
 	for tool, want := range cases {
-		if got := peerCmd(tool, "Q"); !slices.Equal(got, want) {
-			t.Errorf("peerCmd(%q) = %v, want %v", tool, got, want)
+		ag, ok := agents.Get(tool)
+		if !ok {
+			t.Fatalf("agent %q not registered", tool)
+		}
+		if got := ag.ConsultCmd("Q"); !slices.Equal(got, want) {
+			t.Errorf("%s ConsultCmd = %v, want %v", tool, got, want)
 		}
 	}
-	if peerCmd("gpt", "Q") != nil {
-		t.Error("peerCmd of an unknown tool should be nil")
+	if _, ok := agents.Get("gpt"); ok {
+		t.Error("an unknown tool should not resolve to an agent")
 	}
 }
 
@@ -116,7 +124,8 @@ func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
 // loosen unnoticed).
 func TestConsultWrapperMatchesAdapters(t *testing.T) {
 	for _, peer := range allAgents {
-		cmd := peerCmd(peer, "Q") // e.g. [claude -p --permission-mode plan Q]
+		ag, _ := agents.Get(peer)
+		cmd := ag.ConsultCmd("Q") // e.g. [claude -p --permission-mode plan Q]
 		for _, tok := range cmd[:len(cmd)-1] {
 			if !strings.Contains(ConsultWrapper, tok) {
 				t.Errorf("coop-consult wrapper missing %s consult flag %q (adapter ConsultCmd drifted?)", peer, tok)
