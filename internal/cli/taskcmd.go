@@ -57,6 +57,11 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // findTask locates a task by ID across all state dirs: an exact ID match, else a unique
 // substring match (so a slug fragment works). Ambiguous or absent is an error.
 func findTask(root, id string) (taskItem, error) {
+	if id == "" {
+		// An empty fragment would substring-match every task ("" is in everything); make it a
+		// clear error instead of silently acting on the first/only one.
+		return taskItem{}, errors.New("need a task id (run 'coop tasks' to list)")
+	}
 	items := readTaskTree(root)
 	for _, t := range items {
 		if t.ID == id {
@@ -153,10 +158,15 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 		return 2, errors.New("title has no usable letters/digits for a slug")
 	}
 	id := time.Now().Format("2006-01-02") + "-" + slug
-	dir := filepath.Join(root, stateTodo, id)
-	if pathExists(dir) {
-		return 1, fmt.Errorf("task %q already exists", id)
+	// An id is a stable, unique handle, so reject a collision in ANY state — not just todo/ —
+	// else a re-add after the task shipped would make two folders share an id (and findTask
+	// would silently shadow one).
+	for _, st := range taskStates {
+		if pathExists(filepath.Join(root, st, id)) {
+			return 1, fmt.Errorf("task %q already exists in %s/", id, st)
+		}
 	}
+	dir := filepath.Join(root, stateTodo, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return -1, err
 	}

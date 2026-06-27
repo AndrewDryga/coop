@@ -50,6 +50,10 @@ func TestFindTask(t *testing.T) {
 	if _, err := findTask(root, "zzz"); err == nil {
 		t.Errorf("missing 'zzz' should error")
 	}
+	// An empty fragment must error, not substring-match every task.
+	if _, err := findTask(root, ""); err == nil {
+		t.Errorf("empty id should error, not match everything")
+	}
 }
 
 func TestTasksFolderLifecycle(t *testing.T) {
@@ -257,5 +261,26 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 		if !strings.Contains(dec, want) {
 			t.Errorf("decision.md missing %q:\n%s", want, dec)
 		}
+	}
+}
+
+// An id is a unique handle: re-adding a title whose id already exists in ANY state (e.g. a
+// shipped task in xx_done/) must be rejected, not create a second folder that shadows the first.
+func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"redo me"}); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	id := readTaskTree(root)[0].ID
+	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done"); code != 0 || err != nil {
+		t.Fatalf("done: code=%d err=%v", code, err)
+	}
+	// Same title → same id, but it now lives in xx_done/ — the re-add must fail.
+	if code, err := tasksFolderAdd(root, []string{"redo me"}); code == 0 || err == nil {
+		t.Fatalf("re-add of a shipped id should be rejected, got (%d, %v)", code, err)
+	}
+	items := readTaskTree(root)
+	if len(items) != 1 || items[0].State != stateDone {
+		t.Fatalf("collision must not create a duplicate id: %+v", items)
 	}
 }
