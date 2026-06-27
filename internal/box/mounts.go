@@ -99,15 +99,18 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 		if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 			name = relSlash[i+1:]
 		}
-		// AllowGlobs (templates, public CA bundles) override only the built-in SecretGlobs
-		// false positives — never an explicit .coopignore, which is the user's authoritative
-		// hide rule. So a name like ca-bundle.crt or .env.example stays visible by default but
-		// can still be re-hidden by listing it in .coopignore.
+		// A secret-named file stays visible only if an allow rule rescues it: an EXACT known-public
+		// name (a CA bundle, which overrides even *.pem), or a template/sample SUFFIX — but a
+		// suffix can never un-shadow a private-key pattern, so id_rsa.example stays shadowed. Allow
+		// rules override only built-in SecretGlobs false positives, never an explicit .coopignore
+		// (the user's authoritative hide rule).
 		// Match the built-in denylist case-insensitively so a case variant (.ENV, ID_RSA, *.PEM)
 		// can't slip past — important on a case-insensitive host FS (macOS/Windows). The user's
 		// .coopignore stays case-sensitive (their patterns, their casing).
 		lname := strings.ToLower(name)
-		byDefault := matchesAny(lname, SecretGlobs) && !matchesAny(lname, AllowGlobs)
+		allowed := matchesAny(lname, AllowGlobs) ||
+			(matchesAny(lname, allowTemplateGlobs) && !matchesAny(lname, hardSecretGlobs))
+		byDefault := matchesAny(lname, SecretGlobs) && !allowed
 		return byDefault || shadowedByCoopignore(relSlash, loadDir)
 	}
 }

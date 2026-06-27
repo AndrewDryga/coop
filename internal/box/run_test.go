@@ -58,6 +58,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	cfg := &config.Config{
 		HomeInBox: "/home/node",
 		ConfigDir: t.TempDir(), // empty: no env/instructions/mcp
+		Egress:    "open",      // the production default (config.Load); else the box fails closed to --network none
 	}
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}}
@@ -99,6 +100,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 		ConfigDir: dir,
 		MCPFile:   filepath.Join(dir, "mcp.json"),
 		MCPInBox:  "/home/node/.mcp.json",
+		Egress:    "open", // production default; required for the services-net join below
 	}
 	spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true, Cache: true}
 	mcpMounts := []extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}
@@ -124,6 +126,31 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "/tmp/gc:/home/node/.gitconfig:ro")
 	mustContain("--network", "coop-r_default")
 	mustContain("-v", "coop-cache:/home/node/.cache")
+}
+
+// TestAssembleArgsEgressFailsClosed: the box gets full/services networking ONLY when Egress is
+// exactly "open"; "none", a typo, or an unnormalized empty value all yield --network none, so a
+// missed config.normalizeEgress can never silently grant outbound at the box boundary.
+func TestAssembleArgsEgressFailsClosed(t *testing.T) {
+	netArgs := func(egress, servicesNet string) []string {
+		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
+		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true}
+		return assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, servicesNet, "")
+	}
+	// "open" joins a services net; "open" with no services leaves the default bridge (no --network).
+	if !containsSeq(netArgs("open", "coop-r_default"), []string{"--network", "coop-r_default"}) {
+		t.Error(`Egress "open" should join the services network`)
+	}
+	if slices.Contains(netArgs("open", ""), "--network") {
+		t.Error(`Egress "open" with no services should leave the default bridge (no --network)`)
+	}
+	// Anything else fails closed to --network none — even a typo, and even with a services net present.
+	for _, egress := range []string{"none", "None", "off", "", "yes", "full"} {
+		if !containsSeq(netArgs(egress, "coop-r_default"), []string{"--network", "none"}) {
+			t.Errorf("Egress %q must fail closed to --network none", egress)
+		}
+	}
 }
 
 // TestAssembleArgsConsultTimeout: a valid COOP_CONSULT_TIMEOUT is forwarded into the box so the

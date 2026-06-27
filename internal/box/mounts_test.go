@@ -267,6 +267,28 @@ func TestSecretGlobsServiceCredentials(t *testing.T) {
 	}
 }
 
+// TestTemplateSuffixNeverUnshadowsKeys: a *.example/*.sample/*.template suffix rescues an ordinary
+// secret-named file (.env.example), but must NEVER un-shadow a private-key pattern — a real key
+// hiding behind a template name (id_rsa.example) would otherwise be readable in the box.
+func TestTemplateSuffixNeverUnshadowsKeys(t *testing.T) {
+	shadowed := NewShadowDecider(t.TempDir())
+	// Private keys under a template/sample suffix MUST stay shadowed.
+	for _, p := range []string{
+		"id_rsa.example", "id_ed25519.sample", "config/id_ecdsa.template", "id_dsa.example",
+		"ID_RSA.EXAMPLE", // case variant
+	} {
+		if !shadowed(p) {
+			t.Errorf("%s is a private key under a template name — it MUST stay shadowed", p)
+		}
+	}
+	// A template/sample of an ordinary secret, and exact public CA bundles, stay visible.
+	for _, p := range []string{".env.example", ".env.sample", "cacerts.pem"} {
+		if shadowed(p) {
+			t.Errorf("%s must NOT be shadowed (legit template / public CA bundle)", p)
+		}
+	}
+}
+
 // TestCoopIgnoreOverridesAllowGlobs: an AllowGlobs name (public CA bundle, .env.example) stays
 // visible by default, but an explicit .coopignore entry re-hides it — .coopignore is the user's
 // final say. Ordinary secrets stay shadowed regardless.

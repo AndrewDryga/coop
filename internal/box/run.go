@@ -524,12 +524,14 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 
 	args = append(args, cfg.ExtraRunArgs...)
 	args = append(args, spec.ExtraArgs...)
-	// COOP_EGRESS=none cuts the box off the network entirely (no exfiltration of the repo, visible
-	// secrets, or mounted credentials), overriding any services-net join. Default "open" keeps the
-	// runtime's bridge (full outbound) — the agent needs npm/the model API, so this is opt-in.
-	net := networkName
-	if cfg.Egress == "none" {
-		net = "none"
+	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
+	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped
+	// config.normalizeEgress) cuts the box off the network entirely (--network none), so a missed
+	// normalization can never silently grant outbound. "open" keeps the runtime's bridge (full
+	// outbound) plus any services-net join; the agent needs npm/the model API, so it's opt-in.
+	net := "none"
+	if cfg.Egress == "open" {
+		net = networkName // "" → default bridge (full outbound); else the joined services net
 	}
 	if net != "" {
 		args = append(args, "--network", net)

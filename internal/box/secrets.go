@@ -31,17 +31,28 @@ var SecretGlobs = []string{
 	"credentials.y*ml", "secrets.y*ml",
 }
 
-// AllowGlobs are files the agent should still see even though their name matches a secret
-// pattern, because they aren't secret: template/sample files (e.g. .env.example) and well-known
-// PUBLIC CA bundles (cacerts.pem and friends) that `*.pem`/`*.crt` would otherwise shadow —
-// emptying a trusted CA bundle breaks TLS verification inside the box (e.g. Elixir's castore at
-// deps/castore/priv/cacerts.pem). A real private key is never named one of these, and the content
-// scanner still catches a secret hiding in an oddly-named file. AllowGlobs override only the
-// built-in SecretGlobs false positives — NOT an explicit .coopignore entry, which is the user's
-// authoritative hide rule, so a template/CA-bundle name can still be re-hidden by listing it there.
+// AllowGlobs are EXACT, known-PUBLIC filenames that stay visible even though they match a secret
+// pattern: the well-known CA bundles that `*.pem`/`*.crt` would otherwise shadow — emptying a
+// trusted CA bundle breaks TLS verification inside the box (e.g. Elixir's castore at
+// deps/castore/priv/cacerts.pem). These are specific public files, so they override even a
+// high-confidence key pattern. An explicit .coopignore entry is still authoritative and can
+// re-hide one.
 var AllowGlobs = []string{
-	"*.example", "*.sample", "*.template",
 	"cacerts.pem", "cacert.pem", "ca-bundle.pem", "ca-bundle.crt", "ca-certificates.crt", "ca-cert.pem",
+}
+
+// allowTemplateGlobs are template/sample suffixes that rescue an ordinary secret-named file (a
+// .env.example) from a false positive. They override only the SOFT secret patterns — NEVER a
+// private-key/keystore pattern (hardSecretGlobs): a file literally named `id_rsa.example` or
+// `server.key.sample` is too dangerous to wave through on a suffix alone, because the content
+// scanner does NOT run against what a live box reads — only shadowing protects it at runtime.
+var allowTemplateGlobs = []string{"*.example", "*.sample", "*.template"}
+
+// hardSecretGlobs are the high-confidence private-key / keystore patterns (the subset of
+// SecretGlobs) that a template suffix must never un-shadow.
+var hardSecretGlobs = []string{
+	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx",
+	"id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*",
 }
 
 // CoopIgnoreFile is the repo-local file listing extra paths to shadow, one per line
