@@ -56,7 +56,9 @@ func validForkName(name string) bool {
 	if name == "." || name == ".." || strings.HasPrefix(name, "-") {
 		return false
 	}
-	return !strings.ContainsAny(name, "/\\")
+	// A fork name is also a git branch and a whitespace-/`=`-delimited token in .agent/fleet, so
+	// whitespace or `=` would break the fleet-file round-trip (parseFleet re-splits on Fields).
+	return !strings.ContainsAny(name, "/\\ \t\r\n=")
 }
 
 // forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).

@@ -256,11 +256,14 @@ func authedPool(cfg *config.Config, agent string, names []string) (*profilePool,
 }
 
 // parseProfileList splits a comma-separated profile list ("work,personal") into names, trimming
-// spaces and dropping empties.
+// spaces, dropping empties, and de-duplicating (first-seen order) — so "a,a,b" doesn't masquerade
+// as a rotating multi-account pool that, on a rate limit, finds no free profile and waits anyway.
 func parseProfileList(s string) []string {
 	var out []string
+	seen := map[string]bool{}
 	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
+		if p = strings.TrimSpace(p); p != "" && !seen[p] {
+			seen[p] = true
 			out = append(out, p)
 		}
 	}

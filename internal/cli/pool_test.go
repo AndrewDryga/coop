@@ -48,6 +48,11 @@ func TestPoolHelpers(t *testing.T) {
 	if got := removeProfiles([]string{"a", "b", "c"}, []string{"b"}); !slices.Equal(got, []string{"a", "c"}) {
 		t.Errorf("removeProfiles = %v", got)
 	}
+	// parseProfileList trims, drops empties, and de-dupes (first-seen) so "a,a,b" / "work, work"
+	// isn't a fake rotating pool that waits the full reset on a limit instead of rotating.
+	if got := parseProfileList("a, a ,b,,a"); !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("parseProfileList dedupe = %v, want [a b]", got)
+	}
 }
 
 func TestModifyPoolRegistryConcurrent(t *testing.T) {

@@ -27,7 +27,8 @@ func TestValidForkName(t *testing.T) {
 			t.Errorf("validForkName(%q) = false, want true", n)
 		}
 	}
-	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "acp", "a/b", `a\b`, "..", ".", "-x"} {
+	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "acp", "a/b", `a\b`, "..", ".", "-x",
+		"my fork", "a\tb", "a\nb", "a=b"} { // whitespace / '=' break the git branch + fleet-file round-trip
 		if validForkName(n) {
 			t.Errorf("validForkName(%q) = true, want false", n)
 		}
