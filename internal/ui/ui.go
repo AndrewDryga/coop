@@ -146,6 +146,7 @@ func (p Palette) paint(code, s string) string {
 func (p Palette) Bold(s string) string   { return p.paint(codeBold, s) }
 func (p Palette) Dim(s string) string    { return p.paint(codeDim, s) }
 func (p Palette) Gray(s string) string   { return p.paint(codeGray, s) }
+func (p Palette) Faint(s string) string  { return p.paint(codeDim+codeGray, s) } // dim + gray — the most recessive text (e.g. a task id)
 func (p Palette) Green(s string) string  { return p.paint(codeGreen, s) }
 func (p Palette) Red(s string) string    { return p.paint(codeRed, s) }
 func (p Palette) Yellow(s string) string { return p.paint(codeYellow, s) }

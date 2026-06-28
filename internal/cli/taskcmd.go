@@ -399,9 +399,9 @@ func tasksFolderList(root string) (int, error) {
 				fmt.Println() // one blank line between tasks
 			}
 			// Title-first (what a human scans), then the markers; the id — a long machine handle
-			// you only need to `claim`/`done` — drops to a gray second line so it doesn't drown it.
+			// you only need to `claim`/`done` — drops to a faint second line so it doesn't drown it.
 			fmt.Printf("  %s%s\n", truncate(t.Title, listTitleWidth()), listSuffix(p, t))
-			fmt.Printf("    %s\n", p.Gray(t.ID))
+			fmt.Printf("    %s\n", p.Faint(t.ID))
 		}
 	}
 	c, _ := taskTreeCounts(items)
@@ -524,7 +524,7 @@ func tasksFolderDecisions(root string) (int, error) {
 		// Question first (what you weigh), the id gray below (the handle you `unblock` with),
 		// the recommendation dim under it — same shape as the task list.
 		fmt.Printf("%s %s\n", p.Red("⚠"), p.Bold(question))
-		fmt.Printf("    %s\n", p.Gray(t.ID))
+		fmt.Printf("    %s\n", p.Faint(t.ID))
 		if rec != "" {
 			fmt.Printf("    %s %s\n", p.Dim("rec:"), truncate(rec, 80))
 		}
