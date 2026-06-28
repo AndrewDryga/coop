@@ -116,6 +116,47 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
+// wrapWords greedily word-wraps s into lines no wider than w runes, breaking on whitespace; a
+// single word longer than w is hard-split so a line can never overflow. Always returns at least
+// one line (possibly ""). Like truncate it counts runes, not display cells — fine for the common
+// ASCII title; a wide-script title may wrap a column early.
+func wrapWords(s string, w int) []string {
+	if w < 1 {
+		w = 1
+	}
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var lines []string
+	cur, curLen := "", 0
+	for _, word := range words {
+		wr := []rune(word)
+		for len(wr) > w { // hard-split a word longer than the whole budget
+			if curLen > 0 {
+				lines = append(lines, cur)
+				cur, curLen = "", 0
+			}
+			lines = append(lines, string(wr[:w]))
+			wr = wr[w:]
+		}
+		word = string(wr)
+		switch {
+		case curLen == 0:
+			cur, curLen = word, len(wr)
+		case curLen+1+len(wr) <= w:
+			cur, curLen = cur+" "+word, curLen+1+len(wr)
+		default:
+			lines = append(lines, cur)
+			cur, curLen = word, len(wr)
+		}
+	}
+	if curLen > 0 || len(lines) == 0 {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
 // sanitizeCell strips control characters (notably ESC, 0x1b) from a one-line display string so a
 // task title or decision text — which can come from an untrusted agent's task.md — can't inject
 // ANSI escapes into coop's output: corrupting a redirect/pipe, or spoofing the colored UI on a

@@ -398,9 +398,17 @@ func tasksFolderList(root string) (int, error) {
 			if i > 0 {
 				fmt.Println() // one blank line between tasks
 			}
-			// Title-first (what a human scans), then the markers; the id — a long machine handle
-			// you only need to `claim`/`done` — drops to a faint second line so it doesn't drown it.
-			fmt.Printf("  %s%s\n", truncate(t.Title, listTitleWidth()), listSuffix(p, t))
+			// Title-first (what a human scans), wrapped across as many lines as it needs so the
+			// whole title is always readable — the markers hang off the last line. The id, a long
+			// machine handle you only need to `claim`/`done`, drops to a faint line below.
+			tlines := wrapWords(t.Title, titleWrapWidth())
+			for li, tl := range tlines {
+				if li == len(tlines)-1 {
+					fmt.Printf("  %s%s\n", tl, listSuffix(p, t))
+				} else {
+					fmt.Printf("  %s\n", tl)
+				}
+			}
 			fmt.Printf("    %s\n", p.Faint(t.ID))
 		}
 	}
@@ -434,27 +442,27 @@ func paintState(p ui.Palette, state, s string) string {
 	}
 }
 
-// listTitleWidth caps a task title to the terminal width (less the indent and the short
-// progress/decision suffix), so titles read fully on a normal/wide terminal instead of a fixed
-// 56. Falls back to a sane width when stdout isn't a terminal, and won't run to the edge of an
-// ultra-wide one.
-func listTitleWidth() int {
+// titleWrapWidth is the column budget for wrapping a task title: the terminal width less the
+// 2-space indent, clamped so it reads on a wide terminal and fits a narrow one. When stdout is NOT
+// a terminal (a pipe/redirect) it returns a very large width, so the title prints on ONE line and
+// the full text stays greppable instead of being split across lines.
+func titleWrapWidth() int {
 	w := ui.TermWidthRaw(os.Stdout)
-	switch {
-	case w <= 0:
-		w = 100 // width unknown (not a terminal / pipe) — a sane default, NOT a real narrow width
-	case w > 120:
+	if w <= 0 {
+		return 1 << 30 // not a terminal: don't wrap — emit the whole title on one line
+	}
+	if w > 120 {
 		w = 120
 	}
-	tw := w - 22 // 2-space indent + the "  [n/m]  ⚠ decision" suffix
-	if tw < 10 {
-		tw = 10 // floor so a genuinely narrow pane still shows a usable, non-empty title slice
+	w -= 2 // the 2-space indent
+	if w < 12 {
+		w = 12 // floor so a genuinely narrow pane still wraps to a usable width
 	}
-	return tw
+	return w
 }
 
 // bannerWidth is the column span for the list's header/footer rules — the terminal width,
-// clamped like listTitleWidth so a rule neither overruns a narrow pane nor stretches across an
+// clamped like titleWrapWidth so a rule neither overruns a narrow pane nor stretches across an
 // ultra-wide one. Only consulted on a terminal (rules are drawn only when color is on).
 func bannerWidth() int {
 	w := ui.TermWidthRaw(os.Stdout)
