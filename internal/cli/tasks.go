@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -125,19 +126,20 @@ func (a *app) cmdTasks(args []string) (int, error) {
 // per-project .agent/tasks each), printing every queue under its rel-path header. A queue that
 // doesn't exist yet is noted, not fatal — the mutating commands still require a single target.
 func tasksListAll(repo string, rels []string) (int, error) {
+	p := ui.For(os.Stdout)
 	for i, rel := range rels {
 		if i > 0 {
 			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
-		fmt.Println(ui.Bold("# " + rel))
+		fmt.Println(p.Bold("# " + rel))
 		root := filepath.Join(repo, rel)
 		// Empty/absent queues print a plain gray line (not ui.Info) so the whole roll-up stays one
 		// clean stdout block — no "coop:" prefix mid-list, and `coop tasks ls > file` keeps it all.
 		switch {
 		case !isTaskDir(root):
-			fmt.Println(ui.Gray("  (no task queue here yet)"))
+			fmt.Println(p.Gray("  (no task queue here yet)"))
 		case len(readTaskTree(root)) == 0:
-			fmt.Println(ui.Gray("  (no tasks)"))
+			fmt.Println(p.Gray("  (no tasks)"))
 		default:
 			if _, err := tasksFolderList(root); err != nil {
 				return -1, err
@@ -150,6 +152,7 @@ func tasksListAll(repo string, rels []string) (int, error) {
 // tasksDecisionsAll rolls up `coop tasks decisions` across several configured queues, each under
 // its header (only queues that exist are shown).
 func tasksDecisionsAll(repo string, rels []string) (int, error) {
+	p := ui.For(os.Stdout)
 	first := true
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
@@ -160,7 +163,7 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
 		first = false
-		fmt.Println(ui.Bold("# " + rel))
+		fmt.Println(p.Bold("# " + rel))
 		if _, err := tasksFolderDecisions(root); err != nil {
 			return -1, err
 		}

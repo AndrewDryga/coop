@@ -375,6 +375,7 @@ func tasksFolderList(root string) (int, error) {
 		ui.Info("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
 	}
+	p := ui.For(os.Stdout)
 	byState := map[string][]taskItem{}
 	for _, t := range items {
 		byState[t.State] = append(byState[t.State], t)
@@ -390,21 +391,43 @@ func tasksFolderList(root string) (int, error) {
 			fmt.Print("\n\n") // two blank lines between state sections
 		}
 		first = false
-		fmt.Printf("%s (%d)\n", ui.Bold(stateLabel(state)), len(ts))
+		// The state label is colored by state (the shared key — cyan todo · yellow in progress ·
+		// red blocked · green done), so a section is findable by its color; the count rides dim.
+		fmt.Printf("%s %s\n", p.Bold(paintState(p, state, stateLabel(state))), p.Dim(fmt.Sprintf("(%d)", len(ts))))
 		for i, t := range ts {
 			if i > 0 {
 				fmt.Println() // one blank line between tasks
 			}
 			// Title-first (what a human scans), then the markers; the id — a long machine handle
 			// you only need to `claim`/`done` — drops to a gray second line so it doesn't drown it.
-			fmt.Printf("  %s%s\n", truncate(t.Title, listTitleWidth()), listSuffix(t))
-			fmt.Printf("    %s\n", ui.Gray(t.ID))
+			fmt.Printf("  %s%s\n", truncate(t.Title, listTitleWidth()), listSuffix(p, t))
+			fmt.Printf("    %s\n", p.Gray(t.ID))
 		}
 	}
 	c, _ := taskTreeCounts(items)
-	fmt.Printf("\n  %d todo · %s in progress · %s blocked · %s done\n",
-		c.Todo, paintCount(c.Doing, ui.Yellow), paintCount(c.Blocked, ui.Red), paintCount(c.Done, ui.Green))
+	summary := strings.Join([]string{
+		paintCount(c.Todo, p.Cyan) + " todo",
+		paintCount(c.Doing, p.Yellow) + " in progress",
+		paintCount(c.Blocked, p.Red) + " blocked",
+		paintCount(c.Done, p.Green) + " done",
+	}, p.Dim(" · "))
+	fmt.Printf("\n  %s\n", summary)
 	return 0, nil
+}
+
+// paintState colors s by task state — the one key shared across the list (the state headings
+// and the summary counts): cyan todo · yellow in progress · red blocked · green done.
+func paintState(p ui.Palette, state, s string) string {
+	switch state {
+	case stateInProgress:
+		return p.Yellow(s)
+	case stateBlocked:
+		return p.Red(s)
+	case stateDone:
+		return p.Green(s)
+	default: // todo
+		return p.Cyan(s)
+	}
 }
 
 // listTitleWidth caps a task title to the terminal width (less the indent and the short
@@ -422,20 +445,28 @@ func listTitleWidth() int {
 	return w - 22 // 2-space indent + the "  [n/m]  ⚠ decision" suffix
 }
 
-// listSuffix renders a task's at-a-glance extras: subtask progress and a blocked flag.
-func listSuffix(t taskItem) string {
+// listSuffix renders a task's at-a-glance extras: subtask progress (green once every box is
+// checked, else dim so an unfinished task doesn't shout) and a red flag on a blocked task.
+func listSuffix(p ui.Palette, t taskItem) string {
 	s := ""
 	if n := len(t.Subtasks); n > 0 {
-		s += fmt.Sprintf("  [%d/%d]", t.doneSubtasks(), n)
+		done := t.doneSubtasks()
+		prog := fmt.Sprintf("[%d/%d]", done, n)
+		if done == n {
+			s += "  " + p.Green(prog)
+		} else {
+			s += "  " + p.Dim(prog)
+		}
 	}
 	if t.State == stateBlocked {
-		s += "  " + ui.Red("⚠ decision")
+		s += "  " + p.Red("⚠ decision")
 	}
 	return s
 }
 
 func tasksFolderDecisions(root string) (int, error) {
 	items := readTaskTree(root)
+	p := ui.For(os.Stdout)
 	n := 0
 	for _, t := range items {
 		if t.State != stateBlocked {
@@ -453,9 +484,15 @@ func tasksFolderDecisions(root string) (int, error) {
 				rec = strings.TrimSpace(r)
 			}
 		}
-		fmt.Printf("%s  %s\n", ui.Bold(t.ID), question)
+		if n > 1 {
+			fmt.Println() // each decision is its own block
+		}
+		// Question first (what you weigh), the id gray below (the handle you `unblock` with),
+		// the recommendation dim under it — same shape as the task list.
+		fmt.Printf("%s %s\n", p.Red("⚠"), p.Bold(question))
+		fmt.Printf("    %s\n", p.Gray(t.ID))
 		if rec != "" {
-			fmt.Printf("    rec: %s\n", truncate(rec, 80))
+			fmt.Printf("    %s %s\n", p.Dim("rec:"), truncate(rec, 80))
 		}
 	}
 	if n == 0 {

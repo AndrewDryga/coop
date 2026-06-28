@@ -9,7 +9,23 @@ import (
 	"strings"
 )
 
-// ANSI codes, blanked when stderr is not a terminal.
+// Raw SGR codes — always defined. Both the stderr-gated package vars below and the
+// stream-scoped Palette draw from these, so the escape sequences live in exactly one place.
+const (
+	codeReset   = "\033[0m"
+	codeBold    = "\033[1m"
+	codeDim     = "\033[2m"
+	codeRed     = "\033[31m"
+	codeGreen   = "\033[32m"
+	codeYellow  = "\033[33m"
+	codeMagenta = "\033[35m"
+	codeCyan    = "\033[36m"
+	codeGray    = "\033[90m" // bright black — a true gray, vs codeDim's terminal-dependent "faint"
+)
+
+// ANSI codes for the package-level helpers, blanked when stderr is not a terminal — coop's
+// progress and diagnostic lines go to stderr. A stdout view (e.g. `coop tasks list`) colors
+// through a Palette gated on stdout instead.
 var (
 	cGreen   string
 	cRed     string
@@ -24,9 +40,9 @@ var (
 
 func init() {
 	if IsTerminal(os.Stderr) {
-		cGreen, cRed, cYellow, cCyan = "\033[32m", "\033[31m", "\033[33m", "\033[36m"
-		cMagenta, cDim, cBold, cReset = "\033[35m", "\033[2m", "\033[1m", "\033[0m"
-		cGray = "\033[90m" // bright black — a true gray, vs cDim's terminal-dependent "faint"
+		cGreen, cRed, cYellow, cCyan = codeGreen, codeRed, codeYellow, codeCyan
+		cMagenta, cDim, cBold, cReset = codeMagenta, codeDim, codeBold, codeReset
+		cGray = codeGray
 	}
 }
 
@@ -106,3 +122,27 @@ func DimLine(s string) string {
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }
 func Cross() string { return cRed + "✗" + cReset }
+
+// Palette applies ANSI color gated on a chosen stream. Use For(os.Stdout) for a stdout view —
+// `coop tasks list` — so a redirect or pipe (`coop tasks ls > file`) stays plain text, where the
+// package-level Bold/Gray/… helpers gate on stderr (coop's progress stream). Each method is the
+// identity function when color is off, so the call site reads the same with or without it.
+type Palette struct{ on bool }
+
+// For returns a Palette that emits color iff f is a real terminal.
+func For(f *os.File) Palette { return Palette{on: IsTerminal(f)} }
+
+func (p Palette) paint(code, s string) string {
+	if !p.on {
+		return s
+	}
+	return code + s + codeReset
+}
+
+func (p Palette) Bold(s string) string   { return p.paint(codeBold, s) }
+func (p Palette) Dim(s string) string    { return p.paint(codeDim, s) }
+func (p Palette) Gray(s string) string   { return p.paint(codeGray, s) }
+func (p Palette) Green(s string) string  { return p.paint(codeGreen, s) }
+func (p Palette) Red(s string) string    { return p.paint(codeRed, s) }
+func (p Palette) Yellow(s string) string { return p.paint(codeYellow, s) }
+func (p Palette) Cyan(s string) string   { return p.paint(codeCyan, s) }
