@@ -152,9 +152,10 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 		t.Error("list wrongly created the missing queue dir")
 	}
 
-	// Two queues at once is a usage error (coop tasks works one at a time).
-	if code, _ := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "list"}); code != 2 {
-		t.Errorf("two --tasks should be a usage error (2), got %d", code)
+	// Two queues at once is a usage error for a MUTATING command — it needs one target. (The
+	// read-only list/decisions roll up across both; see TestIntegrationMultiQueueRollup.)
+	if code, _ := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "done", "x"}); code != 2 {
+		t.Errorf("two --tasks on a mutating command should be a usage error (2), got %d", code)
 	}
 
 	// `coop tasks --tasks done` swallows `done` as the queue path; rather than silently
@@ -162,6 +163,32 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	code, err := a.cmdTasks([]string{"--tasks", "done"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop tasks done") {
 		t.Errorf("`tasks --tasks done` should be a usage error suggesting `coop tasks done`, got code=%d err=%v", code, err)
+	}
+}
+
+// TestIntegrationMultiQueueRollup: `coop tasks list`/`decisions` roll up across several configured
+// queues (a monorepo with a per-project .agent/tasks), each under its header; a mutating command
+// across multiple queues still errors (one unambiguous target at a time).
+func TestIntegrationMultiQueueRollup(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, "a", tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# X\n")
+	writeTaskFile(t, filepath.Join(repo, "b", tasksRoot, stateDone, "2026-01-02-y", "task.md"), "# Y\n")
+	a := appFor(repo)
+	twoQueues := []string{"--tasks", "a/" + tasksRoot, "--tasks", "b/" + tasksRoot}
+
+	out := captureStdout(t, func() {
+		if code, err := a.cmdTasks(append(append([]string{}, twoQueues...), "list")); code != 0 || err != nil {
+			t.Fatalf("multi-queue list: code=%d err=%v", code, err)
+		}
+	})
+	for _, want := range []string{"a/" + tasksRoot, "b/" + tasksRoot, "2026-01-01-x", "2026-01-02-y"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("multi-queue list missing %q:\n%s", want, out)
+		}
+	}
+	// A mutating command across two queues is rejected (needs one target).
+	if code, err := a.cmdTasks(append(append([]string{}, twoQueues...), "claim", "x")); code != 2 || err == nil {
+		t.Errorf("multi-queue claim should be a usage error (one queue at a time), got code=%d err=%v", code, err)
 	}
 }
 

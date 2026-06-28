@@ -8,6 +8,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // extractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
@@ -74,14 +75,29 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if len(rels) != 1 {
-		return 2, errors.New("coop tasks works one queue at a time — give a single --tasks <dir>")
-	}
-	root := filepath.Join(repo, rels[0])
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]
 	}
+	if len(rels) > 1 {
+		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set
+		// `coop loop`/`coop fleet` drain. The read-only roll-ups span them all (each under a header);
+		// the mutating commands need one unambiguous target.
+		switch sub {
+		case "list", "ls":
+			return tasksListAll(repo, rels)
+		case "decisions":
+			return tasksDecisionsAll(repo, rels)
+		case "":
+			return groupHelp("tasks")
+		default:
+			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (list and decisions span all %d configured queues)", sub, len(rels))
+		}
+	}
+	if len(rels) == 0 {
+		return 2, errors.New("coop tasks: no task queue configured — set COOP_TASKS or pass --tasks <dir>")
+	}
+	root := filepath.Join(repo, rels[0])
 	// When the queue doesn't exist yet, a bare `coop tasks` still shows help, and `add`
 	// bootstraps it on demand (tasksFolderAdd creates the folder) — that's how you start a
 	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
@@ -103,4 +119,49 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		}
 	}
 	return cmdTasksFolder(repo, root, rest)
+}
+
+// tasksListAll rolls up `coop tasks list` across several configured queues (a monorepo with a
+// per-project .agent/tasks each), printing every queue under its rel-path header. A queue that
+// doesn't exist yet is noted, not fatal — the mutating commands still require a single target.
+func tasksListAll(repo string, rels []string) (int, error) {
+	for i, rel := range rels {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Println(ui.Bold("# " + rel))
+		root := filepath.Join(repo, rel)
+		if !isTaskDir(root) {
+			ui.Info("  (no task queue here yet)")
+			continue
+		}
+		if _, err := tasksFolderList(root); err != nil {
+			return -1, err
+		}
+	}
+	return 0, nil
+}
+
+// tasksDecisionsAll rolls up `coop tasks decisions` across several configured queues, each under
+// its header (only queues that exist are shown).
+func tasksDecisionsAll(repo string, rels []string) (int, error) {
+	first := true
+	for _, rel := range rels {
+		root := filepath.Join(repo, rel)
+		if !isTaskDir(root) {
+			continue
+		}
+		if !first {
+			fmt.Println()
+		}
+		first = false
+		fmt.Println(ui.Bold("# " + rel))
+		if _, err := tasksFolderDecisions(root); err != nil {
+			return -1, err
+		}
+	}
+	if first {
+		ui.Info("no task queues found across the %d configured paths", len(rels))
+	}
+	return 0, nil
 }
