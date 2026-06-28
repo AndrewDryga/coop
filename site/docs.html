@@ -628,7 +628,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                                 the work queue — a folder per task under
                                 <code>00_todo/</code>,
                                 <code>10_in_progress/</code>,
-                                <code>50_blocked/</code>, <code>xx_done/</code>;
+                                <code>50_blocked/</code>, <code>99_done/</code>;
                                 its state is its directory (the numeric prefix
                                 sorts <code>ls</code> in lifecycle order;
                                 <code>coop tasks</code> shows the clean names)
@@ -660,7 +660,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         of the work, all running at the same time.
                     </p>
                     <p>
-                        Split the backlog into separate task files and hand each
+                        Split the backlog into separate task trees and hand each
                         fork one. <code>coop fleet up</code> starts them all in
                         the background; <code>coop fleet watch</code> is the
                         live board, showing each fork's progress, the task it's
