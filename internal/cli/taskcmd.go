@@ -439,26 +439,32 @@ func paintState(p ui.Palette, state, s string) string {
 // 56. Falls back to a sane width when stdout isn't a terminal, and won't run to the edge of an
 // ultra-wide one.
 func listTitleWidth() int {
-	w := ui.TermWidth(os.Stdout)
+	w := ui.TermWidthRaw(os.Stdout)
 	switch {
-	case w < 40:
-		w = 100 // not a terminal / unknown
+	case w <= 0:
+		w = 100 // width unknown (not a terminal / pipe) — a sane default, NOT a real narrow width
 	case w > 120:
 		w = 120
 	}
-	return w - 22 // 2-space indent + the "  [n/m]  ⚠ decision" suffix
+	tw := w - 22 // 2-space indent + the "  [n/m]  ⚠ decision" suffix
+	if tw < 10 {
+		tw = 10 // floor so a genuinely narrow pane still shows a usable, non-empty title slice
+	}
+	return tw
 }
 
 // bannerWidth is the column span for the list's header/footer rules — the terminal width,
 // clamped like listTitleWidth so a rule neither overruns a narrow pane nor stretches across an
 // ultra-wide one. Only consulted on a terminal (rules are drawn only when color is on).
 func bannerWidth() int {
-	w := ui.TermWidth(os.Stdout)
+	w := ui.TermWidthRaw(os.Stdout)
 	switch {
-	case w < 40:
-		return 80
+	case w <= 0:
+		return 80 // width unknown (not a terminal)
 	case w > 120:
 		return 120
+	case w < 20:
+		return 20 // floor: keeps the footer rule (width-2) positive and the banner readable
 	}
 	return w
 }
@@ -523,10 +529,10 @@ func tasksFolderDecisions(root string) (int, error) {
 		}
 		// Question first (what you weigh), the id gray below (the handle you `unblock` with),
 		// the recommendation dim under it — same shape as the task list.
-		fmt.Printf("%s %s\n", p.Red("⚠"), p.Bold(question))
+		fmt.Printf("%s %s\n", p.Red("⚠"), p.Bold(sanitizeCell(question)))
 		fmt.Printf("    %s\n", p.Faint(t.ID))
 		if rec != "" {
-			fmt.Printf("    %s %s\n", p.Dim("rec:"), truncate(rec, 80))
+			fmt.Printf("    %s %s\n", p.Dim("rec:"), truncate(sanitizeCell(rec), 80))
 		}
 	}
 	if n == 0 {

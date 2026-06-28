@@ -104,6 +104,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
 	// Every other subcommand needs an existing queue to act on.
 	if !isTaskDir(root) {
+		legacy := legacyTasksFile(root)
 		switch sub {
 		case "":
 			// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no
@@ -114,12 +115,31 @@ func (a *app) cmdTasks(args []string) (int, error) {
 			}
 			return groupHelp("tasks")
 		case "add":
+			if legacy != "" {
+				return 2, legacyMigrateErr(repo, legacy, rels[0])
+			}
 			// fall through — tasksFolderAdd creates the queue dir
 		default:
+			if legacy != "" {
+				return 2, legacyMigrateErr(repo, legacy, rels[0])
+			}
 			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"…\"' to start one here)", rels[0], rels[0])
 		}
 	}
 	return cmdTasksFolder(repo, root, rest)
+}
+
+// legacyMigrateErr is shown when a coop-v2 `.agent/TASKS.md` exists but the v3 folder queue does
+// not — pointing at MIGRATING.md instead of `coop init`, which would scaffold an empty queue beside
+// the populated legacy file and read as "v3 ate my tasks". legacyAbs is the legacy file's abs path.
+func legacyMigrateErr(repo, legacyAbs, queueRel string) error {
+	rel := legacyAbs
+	if r, err := filepath.Rel(repo, legacyAbs); err == nil {
+		rel = r
+	}
+	return fmt.Errorf("found a legacy %s from coop v2 — v3 stores one folder per task under %s/. "+
+		"convert it once with the prompt in MIGRATING.md, then re-run ('coop init' scaffolds an EMPTY "+
+		"queue and does NOT migrate it)", rel, queueRel)
 }
 
 // tasksListAll rolls up `coop tasks list` across several configured queues (a monorepo with a
@@ -159,6 +179,18 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 		if !isTaskDir(root) {
 			continue
 		}
+		// Only surface a queue that actually has an open decision, so the roll-up never prints a
+		// bare "# path" header over nothing (the per-queue "none" note goes to stderr).
+		hasBlocked := false
+		for _, t := range readTaskTree(root) {
+			if t.State == stateBlocked {
+				hasBlocked = true
+				break
+			}
+		}
+		if !hasBlocked {
+			continue
+		}
 		if !first {
 			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
@@ -169,7 +201,7 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 		}
 	}
 	if first {
-		ui.Info("no task queues found across the %d configured paths", len(rels))
+		ui.Info("no open decisions across the %d configured queue(s)", len(rels))
 	}
 	return 0, nil
 }

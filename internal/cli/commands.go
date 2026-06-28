@@ -746,6 +746,13 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// (only when the repo has its own Docker and no Dockerfile.agent yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
+	if lf := legacyTasksFile(filepath.Join(repo, tasksRoot)); lf != "" {
+		rel := lf
+		if r, err := filepath.Rel(repo, lf); err == nil {
+			rel = r
+		}
+		ui.Info("note: a legacy %s is present — v3 uses a folder per task and did NOT migrate it; convert it with MIGRATING.md", rel)
+	}
 	scaffold.SuggestDocker(repo)
 	ui.Steps(initNextSteps(repo, services)...)
 	return 0, nil
@@ -965,6 +972,11 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	// A queue is a directory (.agent/tasks), so check for one with isTaskDir — fileExists is
 	// false for a directory and used to reject every folder queue, so the loop never ran.
 	if !slices.ContainsFunc(hosts, isTaskDir) {
+		if len(hosts) > 0 {
+			if lf := legacyTasksFile(hosts[0]); lf != "" {
+				return -1, legacyMigrateErr(repo, lf, queues[0])
+			}
+		}
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	if !box.ImageExists(a.rt, img) {

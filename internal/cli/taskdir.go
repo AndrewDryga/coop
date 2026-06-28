@@ -63,6 +63,18 @@ func isTaskDir(path string) bool {
 	return err == nil && fi.IsDir()
 }
 
+// legacyTasksFile returns the path to a coop-v2 `.agent/TASKS.md` sitting beside the (v3) folder
+// queue dir, or "" if none. An upgrading customer is pointed at MIGRATING.md instead of being told
+// to `coop init` — which would scaffold an EMPTY queue next to their populated legacy file and read
+// as "v3 ate my tasks". queueRoot is the queue dir (…/.agent/tasks); the legacy file is its sibling.
+func legacyTasksFile(queueRoot string) string {
+	p := filepath.Join(filepath.Dir(queueRoot), "TASKS.md")
+	if fileExists(p) {
+		return p
+	}
+	return ""
+}
+
 // subtaskRe matches a markdown checkbox list item (a subtask) and captures its marker.
 // It allows leading indentation so nested steps still count; the marker is one char.
 var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)
@@ -74,11 +86,30 @@ var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)
 func splitFrontmatter(content string) (fields map[string]string, body string) {
 	fields = map[string]string{}
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+	// The frontmatter is the first `---` fence — but `coop tasks add` seeds task.md with a leading
+	// `<!-- … -->` header (and a hand-written file may have blank lines) before it, so skip those
+	// first. Without this a seeded task's title/labels/status field would go unparsed.
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[start]), "<!--") {
+		for start < len(lines) {
+			closed := strings.Contains(lines[start], "-->")
+			start++
+			if closed {
+				break
+			}
+		}
+		for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+			start++
+		}
+	}
+	if start >= len(lines) || strings.TrimSpace(lines[start]) != "---" {
 		return fields, content
 	}
 	end := -1
-	for i := 1; i < len(lines); i++ {
+	for i := start + 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) == "---" {
 			end = i
 			break
@@ -87,7 +118,7 @@ func splitFrontmatter(content string) (fields map[string]string, body string) {
 	if end < 0 {
 		return fields, content // no closing fence — treat the whole thing as body
 	}
-	for _, l := range lines[1:end] {
+	for _, l := range lines[start+1 : end] {
 		t := strings.TrimSpace(l)
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
@@ -167,6 +198,7 @@ func parseTaskFolder(dir, state string) (taskItem, bool) {
 	if title == "" {
 		title = id
 	}
+	title = sanitizeCell(title) // task.md can be agent-authored — keep control chars/ANSI out of output
 	return taskItem{
 		ID:          id,
 		Title:       title,

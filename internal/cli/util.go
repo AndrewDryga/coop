@@ -116,6 +116,19 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
+// sanitizeCell strips control characters (notably ESC, 0x1b) from a one-line display string so a
+// task title or decision text — which can come from an untrusted agent's task.md — can't inject
+// ANSI escapes into coop's output: corrupting a redirect/pipe, or spoofing the colored UI on a
+// terminal. Single-line cells carry no legitimate control chars, so all of them are dropped.
+func sanitizeCell(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
 func levenshtein(a, b string) int {
 	ra, rb := []rune(a), []rune(b)

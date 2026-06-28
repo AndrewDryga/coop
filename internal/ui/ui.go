@@ -39,7 +39,7 @@ var (
 )
 
 func init() {
-	if IsTerminal(os.Stderr) {
+	if colorEnabled(os.Stderr) {
 		cGreen, cRed, cYellow, cCyan = codeGreen, codeRed, codeYellow, codeCyan
 		cMagenta, cDim, cBold, cReset = codeMagenta, codeDim, codeBold, codeReset
 		cGray = codeGray
@@ -58,13 +58,31 @@ func IsTerminal(f *os.File) bool {
 	return isTerminalFd(f.Fd())
 }
 
+// colorEnabled reports whether ANSI color should be emitted for stream f: f must be a terminal
+// AND NO_COLOR must be unset. NO_COLOR follows the no-color.org convention — its mere presence
+// (any value, including empty) disables color — so `NO_COLOR=1 coop …` is plain everywhere.
+func colorEnabled(f *os.File) bool {
+	if _, off := os.LookupEnv("NO_COLOR"); off {
+		return false
+	}
+	return IsTerminal(f)
+}
+
+// TermWidthRaw returns f's terminal column count, or 0 when it can't be determined (not a
+// terminal, or the ioctl is unavailable) — letting a caller distinguish "unknown" from a real
+// narrow width and choose its own fallback. TermWidth defaults the unknown case to 80.
+func TermWidthRaw(f *os.File) int {
+	if f == nil {
+		return 0
+	}
+	return termWidthFd(f.Fd())
+}
+
 // TermWidth returns f's terminal column count, or 80 when it can't be determined (not a
 // terminal, or the ioctl is unavailable) so callers always have a usable width.
 func TermWidth(f *os.File) int {
-	if f != nil {
-		if w := termWidthFd(f.Fd()); w > 0 {
-			return w
-		}
+	if w := TermWidthRaw(f); w > 0 {
+		return w
 	}
 	return 80
 }
@@ -130,7 +148,7 @@ func Cross() string { return cRed + "✗" + cReset }
 type Palette struct{ on bool }
 
 // For returns a Palette that emits color iff f is a real terminal.
-func For(f *os.File) Palette { return Palette{on: IsTerminal(f)} }
+func For(f *os.File) Palette { return Palette{on: colorEnabled(f)} }
 
 // Enabled reports whether this palette emits color (its stream is a terminal) — for callers
 // that add adornments meant only for a human at a terminal (rules, banners), not a pipe.
