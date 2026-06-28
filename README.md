@@ -635,13 +635,13 @@ coop loop codex           # …or pick the model: claude (default), codex, or ge
 ```
 
 A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
-in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `xx_done/` (the numeric prefix sorts
+in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix sorts
 `ls` in lifecycle order; `coop tasks` shows the clean names). `loop` starts a fresh agent
 per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
 in `10_in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini`
 to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
 command if you need something custom. When the queue empties, a fresh auditor re-checks
-every task in `xx_done/` against the git log and reopens anything that doesn't hold up.
+every task in `99_done/` against the git log and reopens anything that doesn't hold up.
 
 Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
 starts working: it unblocks any `50_blocked/` task whose `decision.md` now has an answer —
@@ -675,7 +675,7 @@ except `rules/`, the shared knowledge base, which is committed.
 
 | File | What it's for |
 |---|---|
-| `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`xx_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
+| `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
 | `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; one item per `##` section, never auto-worked, a human promotes one into `tasks/00_todo/` |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
 

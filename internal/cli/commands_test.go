@@ -62,8 +62,8 @@ func TestLoopPreflightAndAuditFolder(t *testing.T) {
 		}
 	}
 	aud := loopAuditPrompt("/repo", []string{".agent/tasks"})
-	if !strings.Contains(aud, "xx_done/") || !strings.Contains(aud, "coop tasks claim") {
-		t.Errorf("audit prompt should re-check xx_done/ and reopen via claim:\n%s", aud)
+	if !strings.Contains(aud, "99_done/") || !strings.Contains(aud, "coop tasks claim") {
+		t.Errorf("audit prompt should re-check 99_done/ and reopen via claim:\n%s", aud)
 	}
 }
 

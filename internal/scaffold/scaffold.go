@@ -35,7 +35,7 @@ func Init(repo, stack string, gateLangs []string) error {
 		filepath.Join(repo, ".agent", "tasks", "00_todo"),
 		filepath.Join(repo, ".agent", "tasks", "10_in_progress"),
 		filepath.Join(repo, ".agent", "tasks", "50_blocked"),
-		filepath.Join(repo, ".agent", "tasks", "xx_done"),
+		filepath.Join(repo, ".agent", "tasks", "99_done"),
 		filepath.Join(repo, ".claude", "hooks"),
 		filepath.Join(repo, ".codex"),
 		filepath.Join(repo, ".gemini"),

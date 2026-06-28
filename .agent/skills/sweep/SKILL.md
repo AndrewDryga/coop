@@ -40,8 +40,8 @@ Build *to* them, then *check the diff against them*.
    the house rules. Fix what you find; iterate until you'd defend it.
 5. **Commit** — one focused commit for this task; keep the task's `state.md` (resume
    snapshot) and `log.md` (journal — the *what + why*) current.
-6. **Done** — `coop tasks done <id>` (moves it to `xx_done/`; the move ships in the
-   commit). A finished task is **moved**, never deleted — leave it in `xx_done/`; never run
+6. **Done** — `coop tasks done <id>` (moves it to `99_done/`; the move ships in the
+   commit). A finished task is **moved**, never deleted — leave it in `99_done/`; never run
    `coop tasks remove` (pruning the archive is the human's call). Blocked instead? `coop tasks
    block <id>` and fill in its `decision.md` (the question · options · recommendation), then move on.
 7. Spot unrelated work? Drop it in `.agent/BACKLOG.md` and return to the queue —
@@ -49,7 +49,7 @@ Build *to* them, then *check the diff against them*.
 
 ## 3. Finish
 - When `00_todo/` and `10_in_progress/` are empty, `rm -f .agent/active` to disarm, then run
-  a completeness pass: re-check every task you moved to `xx_done/` against `git log` —
+  a completeness pass: re-check every task you moved to `99_done/` against `git log` —
   gate green *and* a commit exists. Reopen anything that doesn't hold up with
   `coop tasks claim <id>` (back to `10_in_progress/`), and go again.
 - Report: tasks shipped, anything parked in `BACKLOG.md` or `50_blocked/`, gate status.

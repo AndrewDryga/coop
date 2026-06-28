@@ -238,7 +238,7 @@ var commandHelp = map[string]string{
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
   split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
 
-  A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ xx_done/, the
+  A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
   Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
   done, never delete it, so 'coop tasks remove --all-done' is how you prune the archive.

@@ -24,14 +24,13 @@ const tasksRoot = ".agent/tasks"
 // Task state directories, in lifecycle order. The directory name IS the status. Each
 // carries a numeric sort-key prefix so a plain `ls .agent/tasks` lists the states in
 // lifecycle order (todo → in_progress → blocked → done) instead of alphabetically. The
-// gaps (00/10/50) leave room to slot a new state between two; done uses "xx_" so it always
-// sorts last (digits sort before letters) — and as a nod to the [x] that once marked a task
-// done. stateLabel strips the prefix for human-facing output; paths use the dir name.
+// gaps (00/10/50) leave room to slot a new state between two; done uses "99_" so it always
+// sorts last. stateLabel strips the prefix for human-facing output; paths use the dir name.
 const (
 	stateTodo       = "00_todo"
 	stateInProgress = "10_in_progress"
 	stateBlocked    = "50_blocked"
-	stateDone       = "xx_done"
+	stateDone       = "99_done"
 )
 
 // taskStates is the canonical ordered set of state directories.
@@ -250,7 +249,7 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 	}
 	parent := filepath.Dir(root)
 	// Pre-clean each slice so a RE-split regenerates from the current source instead of merging into
-	// a stale one: without this, a task already worked in a slice (moved to its xx_done/) plus a fresh
+	// a stale one: without this, a task already worked in a slice (moved to its 99_done/) plus a fresh
 	// todo copy of the same id would leave the id in two states in one slice — and a loop on it would
 	// re-run completed work. Slices are disposable copies of the (untouched) source, safe to rebuild.
 	for _, name := range names {
@@ -290,7 +289,7 @@ func stateOrder(state string) int {
 }
 
 // stateLabel is a state's human-readable name with the on-disk sort prefix stripped
-// ("00_todo" → "todo", "xx_done" → "done"). Output uses it; filesystem paths use the
+// ("00_todo" → "todo", "99_done" → "done"). Output uses it; filesystem paths use the
 // dir name verbatim (so a path coop prints is one you can actually cd into).
 func stateLabel(state string) string {
 	if _, name, ok := strings.Cut(state, "_"); ok {

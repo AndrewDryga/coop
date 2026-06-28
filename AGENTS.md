@@ -3,7 +3,7 @@
 
 ## BOOT — on a fresh start or after compaction, read in order:
 1. this file
-2. .agent/tasks/      (the queue + recent xx_done/ — what's left and what shipped; start at .agent/tasks/README.md)
+2. .agent/tasks/      (the queue + recent 99_done/ — what's left and what shipped; start at .agent/tasks/README.md)
 
 ## How we build (the creed)
 - **Boring first.** Reach for the dull, proven shape; clever earns its place only when boring can't do the job — and you can say *why* in one sentence.
@@ -23,10 +23,10 @@
 `<format-check> && <build --warnings-as-errors> && <tests>`
 
 ## The contract
-- A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `xx_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change — use `coop tasks`, never a manual `mv`. There is no status field and no fifth state.
-- **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `xx_done/` is the archive. Anything not ready to work belongs in `BACKLOG.md`, never as a task folder.
+- A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change — use `coop tasks`, never a manual `mv`. There is no status field and no fifth state.
+- **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. Anything not ready to work belongs in `BACKLOG.md`, never as a task folder.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
-- `coop tasks done <id>` (moves it to `xx_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why) — the folder move ships in that commit.
+- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why) — the folder move ships in that commit.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
 - One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
@@ -36,7 +36,7 @@
 ## The .agent/ working state
 Durable working memory the BOOT protocol reads back. Only `rules/` is committed;
 the rest is local (git-ignored) so it never creates commit noise or merge churn.
-- `tasks/` — the work queue: one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`xx_done/`.
+- `tasks/` — the work queue: one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`.
   See `tasks/README.md` for the layout and the per-task files (`task.md`, plus optional
   `spec.md`, `log.md`, `state.md`, `decision.md`, `screenshots/`, `artifacts/`). `coop tasks`
   lists and moves them.
@@ -46,7 +46,7 @@ the rest is local (git-ignored) so it never creates commit noise or merge churn.
   final step when the task is done, so the next iteration — a *different* agent resuming the same
   `10_in_progress/` task, or you after a review — resumes from the note instead of re-deriving it
   from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
-  travels with the task to `xx_done/`.
+  travels with the task to `99_done/`.
 - `BACKLOG.md` — anything noted but not scheduled: discovered work, chores, and product
   ideas. One item per `##` section (the file's header carries a template), captured then left — not auto-worked, not scanned by
   the Stop hook. A human promotes an item into `tasks/00_todo/` (a real task folder) when it's

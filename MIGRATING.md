@@ -6,7 +6,7 @@ Older coop repos kept the work queue in a single `.agent/TASKS.md` (with
 `[ ]`/`[w]`/`[x]`/`[B]` checkboxes) plus a global `.agent/PENDING_DECISIONS.md`.
 As of coop v3, that layout is **no longer read** — the format is a **folder per
 task** under `.agent/tasks/`, where a task's state is its directory (`00_todo/` ·
-`10_in_progress/` · `50_blocked/` · `xx_done/`; the numeric prefix just sorts `ls`
+`10_in_progress/` · `50_blocked/` · `99_done/`; the numeric prefix just sorts `ls`
 in lifecycle order). Convert once with the prompt below; there is no fallback.
 
 To convert, paste the prompt below to any coding agent (Claude, Codex, Gemini, …)
@@ -33,7 +33,7 @@ SOURCE
 TARGET — a folder per task; the task's STATE is its directory (the NN_ prefix is
 part of the directory name — use it verbatim):
   `- [ ]` → `.agent/tasks/00_todo/`        `- [w]` → `.agent/tasks/10_in_progress/`
-  `- [B]` → `.agent/tasks/50_blocked/`      `- [x]` → `.agent/tasks/xx_done/`
+  `- [B]` → `.agent/tasks/50_blocked/`      `- [x]` → `.agent/tasks/99_done/`
 
 FOR EACH TASK
 1. id = `YYYY-MM-DD-<slug>`: use a date from the task body if it has one, else

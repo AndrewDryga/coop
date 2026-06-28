@@ -53,9 +53,8 @@ func TestStateDirOrderingInvariant(t *testing.T) {
 			t.Fatalf("state dirs don't sort in lifecycle order:\n sorted   = %v\n lifecycle= %v", sorted, taskStates)
 		}
 	}
-	// done must be last even if a future state were slotted in with a high numeric prefix —
-	// "xx_" sorts after any digit prefix.
-	if taskStates[len(taskStates)-1] != stateDone || stateDone != "xx_done" {
+	// done uses the highest prefix (99_) so it always sorts last.
+	if taskStates[len(taskStates)-1] != stateDone || stateDone != "99_done" {
 		t.Errorf("done (%q) must sort last", stateDone)
 	}
 	want := map[string]string{stateTodo: "todo", stateInProgress: "in_progress", stateBlocked: "blocked", stateDone: "done"}
@@ -106,8 +105,8 @@ func TestIntegrationLifecycleViaDispatcher(t *testing.T) {
 	if code, err := a.cmdTasks([]string{"done", id}); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
-	if !isTaskDir(filepath.Join(root, "xx_done", id)) {
-		t.Error("done did not move the folder to xx_done/")
+	if !isTaskDir(filepath.Join(root, "99_done", id)) {
+		t.Error("done did not move the folder to 99_done/")
 	}
 	// move-don't-delete: done leaves the task on disk (the shipped record).
 	if got := readTaskTree(root); len(got) != 1 || got[0].State != stateDone {
@@ -204,7 +203,7 @@ func TestIntegrationListShowsCleanLabels(t *testing.T) {
 	if !strings.Contains(out, "todo (1)") || !strings.Contains(out, "in_progress (1)") {
 		t.Errorf("list should head groups with clean labels:\n%s", out)
 	}
-	for _, leaked := range []string{"00_todo", "10_in_progress", "50_blocked", "xx_done"} {
+	for _, leaked := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done"} {
 		if strings.Contains(out, leaked) {
 			t.Errorf("on-disk prefix %q leaked into list output:\n%s", leaked, out)
 		}
@@ -280,7 +279,7 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 }
 
 // TestIntegrationDoneTasksAreNotActionable is the loop-safety side of move-don't-delete:
-// xx_done/ grows without bound, but only todo/in_progress count as actionable, so the loop's
+// 99_done/ grows without bound, but only todo/in_progress count as actionable, so the loop's
 // stop condition (commands.go: c.Todo+c.Doing == 0) still fires.
 func TestIntegrationDoneTasksAreNotActionable(t *testing.T) {
 	root := t.TempDir()

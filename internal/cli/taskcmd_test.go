@@ -285,7 +285,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 }
 
 // An id is a unique handle: re-adding a title whose id already exists in ANY state (e.g. a
-// shipped task in xx_done/) must be rejected, not create a second folder that shadows the first.
+// shipped task in 99_done/) must be rejected, not create a second folder that shadows the first.
 func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	root := t.TempDir()
 	if code, err := tasksFolderAdd(root, []string{"redo me"}); code != 0 || err != nil {
@@ -295,7 +295,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
-	// Same title → same id, but it now lives in xx_done/ — the re-add must fail.
+	// Same title → same id, but it now lives in 99_done/ — the re-add must fail.
 	if code, err := tasksFolderAdd(root, []string{"redo me"}); code == 0 || err == nil {
 		t.Fatalf("re-add of a shipped id should be rejected, got (%d, %v)", code, err)
 	}
@@ -312,7 +312,7 @@ func TestMoveTaskDirRefusesDuplicateDest(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-01-x", "task.md"), "# x\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-01-x", "task.md"), "# x\n")
 	// `done` resolves the in_progress copy (read-side dedup keeps earliest); moving it onto the
-	// existing xx_done copy must surface a clean "already exists", not crash or strand.
+	// existing 99_done copy must surface a clean "already exists", not crash or strand.
 	code, err := tasksFolderMove(root, []string{"2026-01-01-x"}, stateDone, "done", "done")
 	if code == 0 || err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("move onto a duplicate dest = (%d, %v), want a clean 'already exists' error", code, err)

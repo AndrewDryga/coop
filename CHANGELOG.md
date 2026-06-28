@@ -6,24 +6,24 @@
 
 - **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
   The work queue is one folder per task under four state directories — `00_todo/` ·
-  `10_in_progress/` · `50_blocked/` · `xx_done/` — and a task's workflow state is simply which
+  `10_in_progress/` · `50_blocked/` · `99_done/` — and a task's workflow state is simply which
   directory it sits in. There is no `status:` field and **no legacy fallback**: coop no longer
   reads a single-file `TASKS.md`.
 
   *Why it's better.* A finished task physically leaves the queue (its folder moves to
-  `xx_done/`), so the "done but never pruned" rot that bloated a single `TASKS.md` is gone and
+  `99_done/`), so the "done but never pruned" rot that bloated a single `TASKS.md` is gone and
   the loop never re-scans shipped work. State can't drift from reality, because the directory
   *is* the state — every transition is an atomic folder move (`os.Rename`) that git records as a
   rename. Each task carries its own design (`spec.md`), working journal (`log.md`), resume note
   (`state.md`), pending decision (`decision.md`, replacing the global `PENDING_DECISIONS.md`),
   and `screenshots/`/`artifacts/` instead of everything piling into shared top-level files. The
   numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
-  lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`xx_` keeps
+  lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`99_` keeps
   done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
   `add`/`claim`/`block`/`unblock`/`done`/`remove`/`list`/`lint`/`decisions` — and the loop, `coop
   status`, `coop fleet`, the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
   checklist inside `task.md`; the frontmatter is sync-ready for GitHub Issues / Jira. A finished
-  task is **moved** to `xx_done/`, never deleted: the loop and `/sweep` only ever move tasks
+  task is **moved** to `99_done/`, never deleted: the loop and `/sweep` only ever move tasks
   between states, so done tasks accumulate as the shipped record until you prune them by hand with
   `coop tasks remove --all-done` (or `coop tasks remove <id>` for one).
 
@@ -40,7 +40,7 @@
   Ignore the legend, the `[E]` example, and any `- [ ]` lines inside ``` fenced code blocks.
   TARGET: a folder per task; the task's STATE is its directory (use the NN_ prefix verbatim):
     `- [ ]` -> `.agent/tasks/00_todo/`      `- [w]` -> `.agent/tasks/10_in_progress/`
-    `- [B]` -> `.agent/tasks/50_blocked/`    `- [x]` -> `.agent/tasks/xx_done/`
+    `- [B]` -> `.agent/tasks/50_blocked/`    `- [x]` -> `.agent/tasks/99_done/`
   For each task write `.agent/tasks/<state>/<YYYY-MM-DD-slug>/task.md`: frontmatter (id, title,
   labels, updated) + the body mapped into **Context** / **Acceptance criteria** / **Approach**
   and a `## Subtasks` checklist; never add a `status:` field. For a `[B]` task also write
