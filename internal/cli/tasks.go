@@ -131,12 +131,17 @@ func tasksListAll(repo string, rels []string) (int, error) {
 		}
 		fmt.Println(ui.Bold("# " + rel))
 		root := filepath.Join(repo, rel)
-		if !isTaskDir(root) {
-			ui.Info("  (no task queue here yet)")
-			continue
-		}
-		if _, err := tasksFolderList(root); err != nil {
-			return -1, err
+		// Empty/absent queues print a plain gray line (not ui.Info) so the whole roll-up stays one
+		// clean stdout block — no "coop:" prefix mid-list, and `coop tasks ls > file` keeps it all.
+		switch {
+		case !isTaskDir(root):
+			fmt.Println(ui.Gray("  (no task queue here yet)"))
+		case len(readTaskTree(root)) == 0:
+			fmt.Println(ui.Gray("  (no tasks)"))
+		default:
+			if _, err := tasksFolderList(root); err != nil {
+				return -1, err
+			}
 		}
 	}
 	return 0, nil
