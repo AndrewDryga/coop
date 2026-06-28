@@ -129,7 +129,7 @@ func (s *scaffolder) rel(p string) string {
 
 func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
-		ui.Detail("kept existing %s", filepath.Base(dest))
+		ui.Detail("kept existing %s", s.rel(dest))
 		return nil // present: don't even read the template
 	}
 	data, err := templates.ReadFile(embedPath)
@@ -150,7 +150,7 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 // two IfAbsent wrappers, which differ only in their byte source.
 func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
-		ui.Detail("kept existing %s", filepath.Base(dest))
+		ui.Detail("kept existing %s", s.rel(dest))
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -176,7 +176,7 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 	case isLink && current == target:
 		// Already the symlink we'd create — a re-run is a no-op, so say so rather than report
 		// "linked" (an action verb that reads like a rewrite) on every subsequent init.
-		ui.Detail("kept existing %s", filepath.Base(link))
+		ui.Detail("kept existing %s", s.rel(link))
 	case os.IsNotExist(err), isLink:
 		_ = os.Remove(link)
 		if err := os.Symlink(target, link); err != nil {
@@ -184,7 +184,7 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 		}
 		ui.Detail("linked %s -> %s", s.rel(link), target)
 	default:
-		ui.Detail("kept existing %s (real file, not a symlink)", filepath.Base(link))
+		ui.Detail("kept existing %s (real file, not a symlink)", s.rel(link))
 	}
 	return nil
 }
