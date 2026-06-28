@@ -131,7 +131,7 @@ func tasksListAll(repo string, rels []string) (int, error) {
 		if i > 0 {
 			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
-		fmt.Println(p.Bold("# " + rel))
+		fmt.Println(banner(p, rel))
 		root := filepath.Join(repo, rel)
 		// Empty/absent queues print a plain gray line (not ui.Info) so the whole roll-up stays one
 		// clean stdout block — no "coop:" prefix mid-list, and `coop tasks ls > file` keeps it all.
@@ -163,7 +163,7 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
 		first = false
-		fmt.Println(p.Bold("# " + rel))
+		fmt.Println(banner(p, rel))
 		if _, err := tasksFolderDecisions(root); err != nil {
 			return -1, err
 		}

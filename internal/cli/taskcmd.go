@@ -411,7 +411,11 @@ func tasksFolderList(root string) (int, error) {
 		paintCount(c.Blocked, p.Red) + " blocked",
 		paintCount(c.Done, p.Green) + " done",
 	}, p.Dim(" · "))
-	fmt.Printf("\n  %s\n", summary)
+	fmt.Print("\n")
+	if p.Enabled() {
+		fmt.Printf("  %s\n", p.Dim(strings.Repeat("─", bannerWidth()-2))) // footer rule, right-aligned to the header's
+	}
+	fmt.Printf("  %s\n", summary)
 	return 0, nil
 }
 
@@ -443,6 +447,36 @@ func listTitleWidth() int {
 		w = 120
 	}
 	return w - 22 // 2-space indent + the "  [n/m]  ⚠ decision" suffix
+}
+
+// bannerWidth is the column span for the list's header/footer rules — the terminal width,
+// clamped like listTitleWidth so a rule neither overruns a narrow pane nor stretches across an
+// ultra-wide one. Only consulted on a terminal (rules are drawn only when color is on).
+func bannerWidth() int {
+	w := ui.TermWidth(os.Stdout)
+	switch {
+	case w < 40:
+		return 80
+	case w > 120:
+		return 120
+	}
+	return w
+}
+
+// banner renders a queue's section header for the monorepo roll-up. On a terminal it's a cyan
+// marker + bold path + a dim rule filling the width — a clean divider between queues; piped, it
+// falls back to a plain "# path" so a redirect stays simple (and the roll-up tests see a stable
+// label). The matching footer rule is drawn under each queue's summary in tasksFolderList.
+func banner(p ui.Palette, path string) string {
+	if !p.Enabled() {
+		return "# " + path
+	}
+	visible := "▸ " + path + " "
+	rule := ""
+	if pad := bannerWidth() - len([]rune(visible)); pad > 0 {
+		rule = p.Dim(strings.Repeat("─", pad))
+	}
+	return p.Cyan("▸") + " " + p.Bold(path) + " " + rule
 }
 
 // listSuffix renders a task's at-a-glance extras: subtask progress (green once every box is

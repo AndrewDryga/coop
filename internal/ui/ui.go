@@ -132,6 +132,10 @@ type Palette struct{ on bool }
 // For returns a Palette that emits color iff f is a real terminal.
 func For(f *os.File) Palette { return Palette{on: IsTerminal(f)} }
 
+// Enabled reports whether this palette emits color (its stream is a terminal) — for callers
+// that add adornments meant only for a human at a terminal (rules, banners), not a pipe.
+func (p Palette) Enabled() bool { return p.on }
+
 func (p Palette) paint(code, s string) string {
 	if !p.on {
 		return s
