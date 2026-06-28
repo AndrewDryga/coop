@@ -387,15 +387,18 @@ func tasksFolderList(root string) (int, error) {
 			continue
 		}
 		if !first {
-			fmt.Println()
+			fmt.Print("\n\n") // two blank lines between state sections
 		}
 		first = false
 		fmt.Printf("%s (%d)\n", ui.Bold(stateLabel(state)), len(ts))
-		for _, t := range ts {
+		for i, t := range ts {
+			if i > 0 {
+				fmt.Println() // one blank line between tasks
+			}
 			// Title-first (what a human scans), then the markers; the id — a long machine handle
-			// you only need to `claim`/`done` — drops to a dim second line so it doesn't drown it.
+			// you only need to `claim`/`done` — drops to a gray second line so it doesn't drown it.
 			fmt.Printf("  %s%s\n", truncate(t.Title, listTitleWidth()), listSuffix(t))
-			fmt.Printf("    %s\n", ui.Dim(t.ID))
+			fmt.Printf("    %s\n", ui.Gray(t.ID))
 		}
 	}
 	c, _ := taskTreeCounts(items)

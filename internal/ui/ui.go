@@ -17,6 +17,7 @@ var (
 	cCyan    string
 	cMagenta string
 	cDim     string
+	cGray    string
 	cBold    string
 	cReset   string
 )
@@ -25,6 +26,7 @@ func init() {
 	if IsTerminal(os.Stderr) {
 		cGreen, cRed, cYellow, cCyan = "\033[32m", "\033[31m", "\033[33m", "\033[36m"
 		cMagenta, cDim, cBold, cReset = "\033[35m", "\033[2m", "\033[1m", "\033[0m"
+		cGray = "\033[90m" // bright black — a true gray, vs cDim's terminal-dependent "faint"
 	}
 }
 
@@ -85,6 +87,7 @@ func Steps(steps ...string) {
 // Color wrappers, used to compose richer output (e.g. the doctor report).
 func Bold(s string) string    { return cBold + s + cReset }
 func Dim(s string) string     { return cDim + s + cReset }
+func Gray(s string) string    { return cGray + s + cReset }
 func Green(s string) string   { return cGreen + s + cReset }
 func Red(s string) string     { return cRed + s + cReset }
 func Yellow(s string) string  { return cYellow + s + cReset }

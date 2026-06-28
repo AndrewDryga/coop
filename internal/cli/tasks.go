@@ -127,7 +127,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 func tasksListAll(repo string, rels []string) (int, error) {
 	for i, rel := range rels {
 		if i > 0 {
-			fmt.Println()
+			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
 		fmt.Println(ui.Bold("# " + rel))
 		root := filepath.Join(repo, rel)
@@ -152,7 +152,7 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 			continue
 		}
 		if !first {
-			fmt.Println()
+			fmt.Print("\n\n\n") // three blank lines between different files' output
 		}
 		first = false
 		fmt.Println(ui.Bold("# " + rel))
