@@ -399,17 +399,17 @@ func tasksFolderList(root string) (int, error) {
 				fmt.Println() // one blank line between tasks
 			}
 			// Title-first (what a human scans), wrapped across as many lines as it needs so the
-			// whole title is always readable — the markers hang off the last line. The id, a long
-			// machine handle you only need to `claim`/`done`, drops to a faint line below.
-			tlines := wrapWords(t.Title, titleWrapWidth())
-			for li, tl := range tlines {
-				if li == len(tlines)-1 {
-					fmt.Printf("  %s%s\n", tl, listSuffix(p, t))
-				} else {
-					fmt.Printf("  %s\n", tl)
-				}
+			// whole title is readable and uncluttered. The id — a long machine handle you only
+			// need to `claim`/`done` — drops to a faint line below, led by the at-a-glance markers
+			// (subtask count, blocked flag), so the title carries no trailing noise.
+			for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
+				fmt.Printf("  %s\n", tl)
 			}
-			fmt.Printf("    %s\n", p.Faint(t.ID))
+			if m := listMarkers(p, t); m != "" {
+				fmt.Printf("    %s  %s\n", m, p.Faint(t.ID))
+			} else {
+				fmt.Printf("    %s\n", p.Faint(t.ID))
+			}
 		}
 	}
 	c, _ := taskTreeCounts(items)
@@ -493,23 +493,24 @@ func banner(p ui.Palette, path string) string {
 	return p.Cyan("▸") + " " + p.Bold(path) + " " + rule
 }
 
-// listSuffix renders a task's at-a-glance extras: subtask progress (green once every box is
-// checked, else dim so an unfinished task doesn't shout) and a red flag on a blocked task.
-func listSuffix(p ui.Palette, t taskItem) string {
-	s := ""
+// listMarkers renders a task's at-a-glance markers — subtask progress (green once every box is
+// checked, else dim so an unfinished task doesn't shout) and a red flag on a blocked task — joined
+// with two spaces, or "" if none. They lead the id line, so the wrapped title above stays clean.
+func listMarkers(p ui.Palette, t taskItem) string {
+	var parts []string
 	if n := len(t.Subtasks); n > 0 {
 		done := t.doneSubtasks()
 		prog := fmt.Sprintf("[%d/%d]", done, n)
 		if done == n {
-			s += "  " + p.Green(prog)
+			parts = append(parts, p.Green(prog))
 		} else {
-			s += "  " + p.Dim(prog)
+			parts = append(parts, p.Dim(prog))
 		}
 	}
 	if t.State == stateBlocked {
-		s += "  " + p.Red("⚠ decision")
+		parts = append(parts, p.Red("⚠ decision"))
 	}
-	return s
+	return strings.Join(parts, "  ")
 }
 
 func tasksFolderDecisions(root string) (int, error) {
