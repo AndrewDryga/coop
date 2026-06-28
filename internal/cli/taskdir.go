@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -93,10 +94,26 @@ func splitFrontmatter(content string) (fields map[string]string, body string) {
 			continue
 		}
 		if k, v, ok := strings.Cut(t, ":"); ok {
-			fields[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			fields[strings.TrimSpace(k)] = unquoteScalar(strings.TrimSpace(v))
 		}
 	}
 	return fields, strings.Join(lines[end+1:], "\n")
+}
+
+// unquoteScalar strips a YAML scalar's surrounding quotes. A title that opens with a flow
+// indicator — `title: "[DEAD] …"` — MUST be quoted in the frontmatter, so the raw value arrives
+// with the quotes; return the text the author meant. Stdlib-only (no YAML dependency).
+func unquoteScalar(v string) string {
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		if s, err := strconv.Unquote(v); err == nil { // handles \" \\ \n … for the common case
+			return s
+		}
+		return v[1 : len(v)-1] // a malformed escape: at least drop the outer quotes
+	}
+	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
+		return strings.ReplaceAll(v[1:len(v)-1], "''", "'") // YAML single-quote: '' is an escaped '
+	}
+	return v
 }
 
 // firstH1 returns the first level-1 markdown heading in body (outside code fences), or "".

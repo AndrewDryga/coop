@@ -392,13 +392,31 @@ func tasksFolderList(root string) (int, error) {
 		first = false
 		fmt.Printf("%s (%d)\n", ui.Bold(stateLabel(state)), len(ts))
 		for _, t := range ts {
-			fmt.Printf("  - %s  %s%s\n", t.ID, truncate(t.Title, 56), listSuffix(t))
+			// Title-first (what a human scans), then the markers; the id — a long machine handle
+			// you only need to `claim`/`done` — drops to a dim second line so it doesn't drown it.
+			fmt.Printf("  %s%s\n", truncate(t.Title, listTitleWidth()), listSuffix(t))
+			fmt.Printf("    %s\n", ui.Dim(t.ID))
 		}
 	}
 	c, _ := taskTreeCounts(items)
 	fmt.Printf("\n  %d todo · %s in progress · %s blocked · %s done\n",
 		c.Todo, paintCount(c.Doing, ui.Yellow), paintCount(c.Blocked, ui.Red), paintCount(c.Done, ui.Green))
 	return 0, nil
+}
+
+// listTitleWidth caps a task title to the terminal width (less the indent and the short
+// progress/decision suffix), so titles read fully on a normal/wide terminal instead of a fixed
+// 56. Falls back to a sane width when stdout isn't a terminal, and won't run to the edge of an
+// ultra-wide one.
+func listTitleWidth() int {
+	w := ui.TermWidth(os.Stdout)
+	switch {
+	case w < 40:
+		w = 100 // not a terminal / unknown
+	case w > 120:
+		w = 120
+	}
+	return w - 22 // 2-space indent + the "  [n/m]  ⚠ decision" suffix
 }
 
 // listSuffix renders a task's at-a-glance extras: subtask progress and a blocked flag.

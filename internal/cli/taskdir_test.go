@@ -29,6 +29,12 @@ func TestSplitFrontmatter(t *testing.T) {
 		t.Errorf("body H1 = %q", got)
 	}
 
+	// A YAML-quoted scalar is unquoted — a title opening with a flow indicator ([) MUST be quoted,
+	// so it arrives with quotes and must be stripped (else the list shows literal "…").
+	if fq, _ := splitFrontmatter("---\ntitle: \"[DEAD] approvals reason\"\n---\nbody\n"); fq["title"] != "[DEAD] approvals reason" {
+		t.Errorf("quoted title not unquoted: %q", fq["title"])
+	}
+
 	// No header → all body, no fields.
 	f2, b2 := splitFrontmatter("# Just a title\ntext")
 	if len(f2) != 0 || b2 != "# Just a title\ntext" {
@@ -38,6 +44,21 @@ func TestSplitFrontmatter(t *testing.T) {
 	f3, b3 := splitFrontmatter("---\nid: x\nno closing fence\n")
 	if len(f3) != 0 || b3 == "" {
 		t.Errorf("unterminated header should fall back to body: fields=%v", f3)
+	}
+}
+
+func TestUnquoteScalar(t *testing.T) {
+	cases := map[string]string{
+		`"[DEAD] foo"`: `[DEAD] foo`, // double-quoted (required for a leading [)
+		`'it''s ok'`:   `it's ok`,    // single-quoted: '' is an escaped '
+		`plain`:        `plain`,      // unquoted → as-is
+		`[a, b]`:       `[a, b]`,     // a bare flow value isn't quoted → untouched
+		`""`:           ``,           // empty quoted
+	}
+	for in, want := range cases {
+		if got := unquoteScalar(in); got != want {
+			t.Errorf("unquoteScalar(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
