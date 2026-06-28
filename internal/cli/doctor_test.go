@@ -1,11 +1,33 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+// probeWhy turns a failed probe's stderr/error into a short " : <last line>" suffix.
+func TestProbeWhy(t *testing.T) {
+	cases := []struct {
+		errOut string
+		err    error
+		want   string
+	}{
+		{"", nil, ""},
+		{"boom", nil, ": boom"},
+		{"line1\nlast line", nil, ": last line"}, // only the last stderr line
+		{"  \n  trailing  ", nil, ": trailing"},
+		{"", errors.New("run failed"), ": run failed"}, // fall back to the run error
+		{"stderr wins", errors.New("ignored"), ": stderr wins"},
+	}
+	for _, c := range cases {
+		if got := probeWhy(c.errOut, c.err); got != c.want {
+			t.Errorf("probeWhy(%q, %v) = %q, want %q", c.errOut, c.err, got, c.want)
+		}
+	}
+}
 
 // The doctor mounts its fixture into a box that runs the probe as a uid which may not own it;
 // under --cap-drop ALL (no CAP_DAC_OVERRIDE) the box reaches it only if it's world-readable. Guard

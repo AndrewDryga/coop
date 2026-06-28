@@ -13,8 +13,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// doctorProbe runs inside the box against the fixture and reports, line by line,
-// whether each secret is shadowed and each non-secret stays visible.
+// doctorProbe runs inside the box against the fixture and reports, line by line: whether each
+// secret is shadowed and each non-secret stays visible, then the box's privilege posture
+// (uid/caps/pids) as RESULT UID/CAPS/PIDS lines for the host to interpret.
 const doctorProbe = `#!/bin/sh
 cd /workspace 2>/dev/null || { echo "RESULT FAIL workspace was not mounted"; exit 1; }
 empty() { [ -f "$1" ] && [ ! -s "$1" ]; }
@@ -41,9 +42,10 @@ type report struct{ pass, fail int }
 func (r *report) ok(msg string) { r.pass++; fmt.Printf("  %s %s\n", ui.Check(), msg) }
 func (r *report) no(msg string) { r.fail++; fmt.Printf("  %s %s\n", ui.Cross(), msg) }
 
-// cmdDoctor proves isolation by attacking it: it builds a fixture repo full of
-// secrets, runs the box against it, and checks that every secret is shadowed
-// inside the sandbox and absent from a clone handoff.
+// cmdDoctor proves isolation by attacking it: it builds a fixture repo full of secrets and runs
+// the box against it, checking that secrets are shadowed inside the sandbox, the box is locked
+// down (non-root, capabilities dropped, pids-limited), egress fails closed, a box scoped to one
+// agent can't see a peer's credentials, and nothing leaks into a clone handoff.
 func (a *app) cmdDoctor(args []string) (int, error) {
 	if err := rejectArgs("doctor", args); err != nil {
 		return 2, err
@@ -57,25 +59,14 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	}
 	defer os.RemoveAll(fixture)
 
-	// The probe lives outside the fixture: it must not appear in /workspace, or
-	// its own "hunter2" grep pattern would trip the secret-value check.
-	probeFile, err := os.CreateTemp("", "coop-probe-*.sh")
+	// The probe lives outside the fixture: it must not appear in /workspace, or its own "hunter2"
+	// grep pattern would trip the secret-value check. World-readable so the box can run it as a
+	// uid that may not own it under --cap-drop ALL (see writeProbeFile).
+	probe, cleanup, err := writeProbeFile(doctorProbe)
 	if err != nil {
 		return -1, err
 	}
-	probe := probeFile.Name()
-	probeFile.Close()
-	defer os.Remove(probe)
-	if err := os.WriteFile(probe, []byte(doctorProbe), 0o644); err != nil {
-		return -1, err
-	}
-	// CreateTemp made the file 0600 and WriteFile won't widen an existing file's mode. The box runs
-	// the probe as a uid that may not own it and, under --cap-drop ALL, without CAP_DAC_OVERRIDE to
-	// bypass the read check (alpine-as-root on rootful Linux Docker is exactly this) — so `sh
-	// /probe.sh` would silently read nothing. Make it world-readable.
-	if err := os.Chmod(probe, 0o644); err != nil {
-		return -1, err
-	}
+	defer cleanup()
 
 	rep := &report{}
 	// Prefer the real box image — it carries coop's non-root USER (node) and full toolchain, so
@@ -105,25 +96,14 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		ExtraArgs: []string{"-v", probe + ":/probe.sh:ro"},
 	})
 	if runErr != nil || out.Len() == 0 {
-		// Surface WHY: an opaque "failed to run" sent us hunting through CI logs for the cause once
-		// already. Show the runtime's own complaint (its last stderr line), or the run error.
-		why := strings.TrimSpace(errOut.String())
-		if why == "" && runErr != nil {
-			why = runErr.Error()
-		}
-		msg := "the sandbox produced no output (the container failed to run)"
-		if why != "" {
-			lines := strings.Split(why, "\n")
-			msg += ": " + strings.TrimSpace(lines[len(lines)-1])
-		}
-		rep.no(msg)
+		// Surface WHY: an opaque "failed to run" sent us hunting through CI logs for the cause once.
+		rep.no("the sandbox produced no output (the container failed to run)" + probeWhy(errOut.String(), runErr))
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if recordResult(rep, line) {
+			continue
+		}
 		switch {
-		case strings.HasPrefix(line, "RESULT PASS "):
-			rep.ok(strings.TrimPrefix(line, "RESULT PASS "))
-		case strings.HasPrefix(line, "RESULT FAIL "):
-			rep.no(strings.TrimPrefix(line, "RESULT FAIL "))
 		case strings.HasPrefix(line, "RESULT UID "):
 			doctorCheckUID(rep, strings.TrimPrefix(line, "RESULT UID "), usingReal)
 		case strings.HasPrefix(line, "RESULT CAPS "):
@@ -138,6 +118,12 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	// come up with only loopback, proving the egress toggle cuts outbound regardless of the request.
 	fmt.Printf("\n%s\n", ui.Bold("egress (fail-closed)"))
 	doctorCheckEgress(rep, a, fixture, img)
+
+	// --- credential scope ---
+	// A box scoped to one agent must see only that agent's credential home and API key, never a
+	// peer's — proving credentialScope + the env-file filtering (alias and bare keys included).
+	fmt.Printf("\n%s\n", ui.Bold("credential scope"))
+	doctorCheckCredScope(rep, a, fixture, img)
 
 	// --- on the host: the clone handoff ---
 	fmt.Printf("\n%s\n", ui.Bold("on the host (the clone handoff)"))
@@ -251,15 +237,125 @@ func doctorCheckEgress(rep *report, a *app, fixture, img string) {
 	case len(ifaces) == 1 && ifaces[0] == "lo":
 		rep.ok("COOP_EGRESS=none cuts the box off the network (loopback only)")
 	default:
-		why := strings.TrimSpace(errOut.String())
-		if why == "" && err != nil {
-			why = err.Error()
+		rep.no("could not verify the offline box's network" + probeWhy(errOut.String(), err))
+	}
+}
+
+// writeProbeFile writes a probe script to a world-readable temp file, so the box can run it as a
+// uid that may not own it (and, under --cap-drop ALL, can't bypass the read check). Returns the
+// path and a cleanup func.
+func writeProbeFile(content string) (string, func(), error) {
+	f, err := os.CreateTemp("", "coop-probe-*.sh")
+	if err != nil {
+		return "", func() {}, err
+	}
+	path := f.Name()
+	_ = f.Close()
+	cleanup := func() { _ = os.Remove(path) }
+	// CreateTemp made it 0600 and WriteFile won't widen an existing file's mode, so chmod after.
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
+}
+
+// recordResult applies a "RESULT PASS|FAIL <msg>" probe line to the report, returning whether it
+// matched one (so the caller can handle other RESULT kinds, e.g. UID/CAPS/PIDS).
+func recordResult(rep *report, line string) bool {
+	switch {
+	case strings.HasPrefix(line, "RESULT PASS "):
+		rep.ok(strings.TrimPrefix(line, "RESULT PASS "))
+	case strings.HasPrefix(line, "RESULT FAIL "):
+		rep.no(strings.TrimPrefix(line, "RESULT FAIL "))
+	default:
+		return false
+	}
+	return true
+}
+
+// probeWhy turns a no-output probe run into a short " : <reason>" suffix — the runtime's last
+// stderr line, or the run error — so an opaque failure says why instead of just "no output".
+func probeWhy(errOut string, runErr error) string {
+	why := strings.TrimSpace(errOut)
+	if why == "" && runErr != nil {
+		why = runErr.Error()
+	}
+	if why == "" {
+		return ""
+	}
+	return ": " + strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:])
+}
+
+// doctorCredProbe checks, inside a box scoped to claude, that only claude's credential home and
+// API key are visible — never a peer's. home is the box's home path (cfg.HomeInBox).
+func doctorCredProbe(home string) string {
+	return fmt.Sprintf(`#!/bin/sh
+[ -f "%[1]s/.claude/.credentials.json" ]         && echo "RESULT PASS the scoped agent's own credential home is mounted"  || echo "RESULT FAIL the scoped agent's credential home is missing"
+[ ! -e "%[1]s/.codex/auth.json" ]                && echo "RESULT PASS a peer agent's credential home is NOT mounted"      || echo "RESULT FAIL codex credentials leaked into a claude-scoped box"
+[ ! -e "%[1]s/.gemini/gemini-credentials.json" ] && echo "RESULT PASS a second peer's credential home is NOT mounted"     || echo "RESULT FAIL gemini credentials leaked into a claude-scoped box"
+[ -n "$ANTHROPIC_API_KEY" ] && echo "RESULT PASS the scoped agent's API key is in the env"   || echo "RESULT FAIL the scoped agent's API key is missing from the env"
+[ -z "$OPENAI_API_KEY" ]    && echo "RESULT PASS a peer's API key is stripped from the env"   || echo "RESULT FAIL OPENAI_API_KEY (a peer's) leaked into a claude-scoped box"
+[ -z "$GOOGLE_API_KEY" ]    && echo "RESULT PASS a peer's alias key (bare) is stripped"       || echo "RESULT FAIL GOOGLE_API_KEY (a peer alias) leaked into a claude-scoped box"
+`, home)
+}
+
+// doctorCheckCredScope proves the credential boundary: a box scoped to one agent sees only that
+// agent's credential home and API key, never a peer's. It seeds a throwaway config home with a
+// fake credential for every agent and an env file holding every agent's key (including a peer's
+// alias, given bare to also exercise docker's env-file import), runs a claude-scoped box, and
+// checks what's visible — exercising credentialScope, the home mounts, and writeFilteredEnvFile.
+func doctorCheckCredScope(rep *report, a *app, fixture, img string) {
+	cfgDir, err := os.MkdirTemp("", "coop-doctor-cred-")
+	if err != nil {
+		rep.no("could not stage the credential fixture" + probeWhy("", err))
+		return
+	}
+	defer os.RemoveAll(cfgDir)
+	if err := os.Chmod(cfgDir, 0o755); err != nil { // box reads it as a non-owner uid
+		rep.no("credential fixture" + probeWhy("", err))
+		return
+	}
+	credCfg := *a.cfg
+	credCfg.ConfigDir = cfgDir
+	credCfg.MCPFile = filepath.Join(cfgDir, "mcp.json") // absent → no MCP wiring to stand up
+	// Seed a fake credential per agent at its real mount source (cfg.AgentDir), so a claude-scoped
+	// run mounts claude's and leaves the peers' behind.
+	for agent, file := range map[string]string{"claude": ".credentials.json", "codex": "auth.json", "gemini": "gemini-credentials.json"} {
+		dir := credCfg.AgentDir(agent)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			rep.no("credential fixture" + probeWhy("", err))
+			return
 		}
-		msg := "could not verify the offline box's network"
-		if why != "" {
-			msg += ": " + strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:])
-		}
-		rep.no(msg)
+		_ = os.WriteFile(filepath.Join(dir, file), []byte(`{"token":"hunter2"}`), 0o644)
+	}
+	// ANTHROPIC is claude's (in scope); OPENAI is codex's; GOOGLE is one of gemini's keys, given
+	// bare so the filter must drop a peer's alias AND a bare (env-imported) line.
+	_ = os.WriteFile(credCfg.EnvFile(), []byte("ANTHROPIC_API_KEY=hunter2\nOPENAI_API_KEY=hunter2\nGOOGLE_API_KEY\n"), 0o644)
+
+	probe, cleanup, err := writeProbeFile(doctorCredProbe(credCfg.HomeInBox))
+	if err != nil {
+		rep.no("credential fixture" + probeWhy("", err))
+		return
+	}
+	defer cleanup()
+
+	var out, errOut bytes.Buffer
+	_, runErr := box.Run(&credCfg, a.rt, box.RunSpec{
+		Image: img, Repo: fixture, Agent: "claude", Homes: true,
+		Cmd: []string{"sh", "/credprobe.sh"}, Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
+		ExtraArgs: []string{"-v", probe + ":/credprobe.sh:ro"},
+	})
+	if runErr != nil || out.Len() == 0 {
+		rep.no("the credential-scope box produced no output" + probeWhy(errOut.String(), runErr))
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		recordResult(rep, line)
 	}
 }
 
