@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/taskstate"
 )
 
 // The folder-based task system. A task is a FOLDER under .agent/tasks/<state>/<id>/
@@ -21,20 +23,21 @@ import (
 // tasksRoot is the repo-relative task queue directory every reader works against.
 const tasksRoot = ".agent/tasks"
 
-// Task state directories, in lifecycle order. The directory name IS the status. Each
-// carries a numeric sort-key prefix so a plain `ls .agent/tasks` lists the states in
-// lifecycle order (todo → in_progress → blocked → done) instead of alphabetically. The
-// gaps (00/10/50) leave room to slot a new state between two; done uses "99_" so it always
-// sorts last. stateLabel strips the prefix for human-facing output; paths use the dir name.
+// Task state directories, in lifecycle order. The directory name IS the status. Each carries a
+// numeric sort-key prefix so a plain `ls .agent/tasks` lists the states in lifecycle order
+// (todo → in_progress → blocked → done) instead of alphabetically; done uses "99_" so it always
+// sorts last. The names live in internal/taskstate — the one source the scaffold shares (cli
+// imports scaffold, so scaffold can't import back) — and these are local aliases so call sites
+// read unchanged. stateLabel strips the prefix for human-facing output; paths use the dir name.
 const (
-	stateTodo       = "00_todo"
-	stateInProgress = "10_in_progress"
-	stateBlocked    = "50_blocked"
-	stateDone       = "99_done"
+	stateTodo       = taskstate.Todo
+	stateInProgress = taskstate.InProgress
+	stateBlocked    = taskstate.Blocked
+	stateDone       = taskstate.Done
 )
 
 // taskStates is the canonical ordered set of state directories.
-var taskStates = []string{stateTodo, stateInProgress, stateBlocked, stateDone}
+var taskStates = taskstate.All
 
 // taskItem is one parsed task folder.
 type taskItem struct {

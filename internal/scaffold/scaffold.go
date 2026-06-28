@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/taskstate"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -27,19 +28,19 @@ var templates embed.FS
 // next-step actions. Existing files are never clobbered.
 func Init(repo, stack string, gateLangs []string) error {
 	s := &scaffolder{repo: repo}
-	if err := mkdirs(
+	dirs := []string{
 		filepath.Join(repo, ".agent", "rules"),
 		filepath.Join(repo, ".agent", "skills"),
-		// State dirs carry a numeric sort prefix so `ls .agent/tasks` lists them in lifecycle
-		// order; names must match the cli package's state constants (taskdir.go) verbatim.
-		filepath.Join(repo, ".agent", "tasks", "00_todo"),
-		filepath.Join(repo, ".agent", "tasks", "10_in_progress"),
-		filepath.Join(repo, ".agent", "tasks", "50_blocked"),
-		filepath.Join(repo, ".agent", "tasks", "99_done"),
 		filepath.Join(repo, ".claude", "hooks"),
 		filepath.Join(repo, ".codex"),
 		filepath.Join(repo, ".gemini"),
-	); err != nil {
+	}
+	// The task-queue state dirs come from the shared taskstate package, so `coop init` can never
+	// scaffold a name the cli can't read. The numeric prefix sorts `ls .agent/tasks` by lifecycle.
+	for _, st := range taskstate.All {
+		dirs = append(dirs, filepath.Join(repo, ".agent", "tasks", st))
+	}
+	if err := mkdirs(dirs...); err != nil {
 		return err
 	}
 
