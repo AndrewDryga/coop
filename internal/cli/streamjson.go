@@ -151,14 +151,17 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 // reliable source; it lands right after the iteration banner, before the agent's first move.
 func (d *streamDecoder) system(ev *streamEvent) {
 	if ev.Subtype == "init" && ev.Model != "" {
-		line := "· model " + ev.Model
-		if d.agent != "" {
-			line = fmt.Sprintf("· using %s model %s", d.agent, ev.Model)
-			if d.profile != "" {
-				line += " profile " + d.profile
-			}
+		if d.agent == "" {
+			d.emit(ui.Dim("· model " + ev.Model))
+			return
 		}
-		d.emit(ui.Dim(line))
+		// Dim the labels (· using / model / profile) but leave the values — agent, model, profile —
+		// at normal brightness, so they stand out a touch against the otherwise-faint line.
+		line := ui.Dim("· using ") + d.agent + ui.Dim(" model ") + ev.Model
+		if d.profile != "" {
+			line += ui.Dim(" profile ") + d.profile
+		}
+		d.emit(line)
 	}
 }
 
