@@ -88,6 +88,11 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		case "list", "ls":
 			return tasksListAll(repo, rels)
 		case "decisions":
+			for _, f := range rest[1:] {
+				if f == "-i" || f == "--interactive" {
+					return 2, errors.New("coop tasks decisions -i works one queue at a time — pass a single --tasks <dir>")
+				}
+			}
 			return tasksDecisionsAll(repo, rels)
 		case "":
 			return groupHelp("tasks")
@@ -196,7 +201,7 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 		}
 		first = false
 		fmt.Println(banner(p, rel))
-		if _, err := tasksFolderDecisions(root); err != nil {
+		if _, err := tasksFolderDecisions(root, nil); err != nil {
 			return -1, err
 		}
 	}

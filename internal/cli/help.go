@@ -97,7 +97,7 @@ func helpText(cfg *config.Config) string {
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks list", "show the queue, grouped by state")
 	row("coop tasks add \"<title>\"", "add a task; claim/block/unblock/done move it through its states")
-	row("coop tasks decisions", "show what's blocked on a human decision")
+	row("coop tasks decisions", "show what's blocked on a human decision (-i to answer them)")
 
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
@@ -259,7 +259,7 @@ var commandHelp = map[string]string{
   unblock <id>     move it back to todo (claim it to start); add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)
   rm <id>          delete a task folder; --all-done clears the whole done archive
-  decisions        list the open decisions (one per blocked task)
+  decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
   split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
 

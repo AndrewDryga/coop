@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -48,7 +50,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "split":
 		return tasksFolderSplit(repo, root, args)
 	case "decisions":
-		return tasksFolderDecisions(root)
+		return tasksFolderDecisions(root, args)
 	default:
 		return 2, unknownErr("tasks command", sub,
 			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "rm", "split", "decisions"})
@@ -232,19 +234,9 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if t.State != stateBlocked {
 		return 1, fmt.Errorf("%s is not blocked (it's %s) — nothing to unblock", t.ID, stateLabel(t.State))
 	}
-	// An optional inline answer is recorded into decision.md's Resolution before the move, so
-	// deciding is one command — no open-file/edit/save round-trip — and the answer rides along in
-	// the task's audit trail to 99_done/.
+	// The optional inline answer makes deciding one command — no open-file/edit/save round-trip.
 	answer := strings.TrimSpace(strings.Join(args[1:], " "))
-	if answer != "" {
-		if err := recordResolution(filepath.Join(t.Dir, "decision.md"), answer); err != nil {
-			return -1, err
-		}
-	}
-	// Back to 00_todo/, NOT 10_in_progress/: in_progress is the "an agent is on this" lock, taken by
-	// `claim`. A just-unblocked task has nobody on it, so it belongs in the queue as available work —
-	// the loop (or a person) picks it up and claims it. The resolved decision.md rides along.
-	if err := moveTaskDir(root, t, stateTodo); err != nil {
+	if err := resolveAndUnblock(root, t, answer); err != nil {
 		return -1, err
 	}
 	if answer != "" {
@@ -291,6 +283,19 @@ func decisionResolved(decPath string) bool {
 		}
 	}
 	return false
+}
+
+// resolveAndUnblock records answer (if non-empty) into the task's decision.md, then returns the
+// task to 00_todo/ — NOT 10_in_progress/: in_progress is the "an agent is on this" lock taken by
+// `claim`, so a just-unblocked task with nobody on it belongs in the queue as available work; the
+// resolved decision.md rides along as the audit trail. Shared by `unblock` and the -i browser.
+func resolveAndUnblock(root string, t taskItem, answer string) error {
+	if answer != "" {
+		if err := recordResolution(filepath.Join(t.Dir, "decision.md"), answer); err != nil {
+			return err
+		}
+	}
+	return moveTaskDir(root, t, stateTodo)
 }
 
 // moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
@@ -572,19 +577,34 @@ func listMarkers(p ui.Palette, t taskItem) string {
 	return strings.Join(parts, "  ")
 }
 
-func tasksFolderDecisions(root string) (int, error) {
-	items := readTaskTree(root)
-	p := ui.For(os.Stdout)
-	n := 0
-	for _, t := range items {
-		if t.State != stateBlocked {
-			continue
+func tasksFolderDecisions(root string, args []string) (int, error) {
+	interactive := false
+	for _, a := range args {
+		switch a {
+		case "-i", "--interactive":
+			interactive = true
+		default:
+			return 2, fmt.Errorf("coop tasks decisions: unknown flag %q (only -i / --interactive)", a)
 		}
-		n++
+	}
+	var decisions []taskItem
+	for _, t := range readTaskTree(root) {
+		if t.State == stateBlocked {
+			decisions = append(decisions, t)
+		}
+	}
+	if len(decisions) == 0 {
+		ui.OK("no open decisions — nothing is blocked")
+		return 0, nil
+	}
+	if interactive {
+		return decisionsInteractive(root, decisions)
+	}
+	p := ui.For(os.Stdout)
+	for n, t := range decisions {
 		question := t.Title
 		rec := ""
-		dec := readFileString(filepath.Join(t.Dir, "decision.md"))
-		for _, line := range strings.Split(dec, "\n") {
+		for _, line := range strings.Split(readFileString(filepath.Join(t.Dir, "decision.md")), "\n") {
 			if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
 				question = strings.TrimSpace(q)
 			}
@@ -592,7 +612,7 @@ func tasksFolderDecisions(root string) (int, error) {
 				rec = strings.TrimSpace(r)
 			}
 		}
-		if n > 1 {
+		if n > 0 {
 			fmt.Println() // each decision is its own block
 		}
 		// Question first (what you weigh), the id gray below (the handle you `unblock` with),
@@ -603,13 +623,115 @@ func tasksFolderDecisions(root string) (int, error) {
 			fmt.Printf("    %s %s\n", p.Dim("rec:"), sanitizeCell(rec))
 		}
 	}
-	if n == 0 {
-		ui.OK("no open decisions — nothing is blocked")
-		return 0, nil
-	}
 	fmt.Println() // a blank line sets the footer apart from the last decision
-	ui.Note(`%s — answer with 'coop tasks unblock <id> "<answer>"' (or edit its decision.md, then unblock)`, ui.Count(n, "open decision"))
+	ui.Note(`%s — answer with 'coop tasks unblock <id> "<answer>"', or 'coop tasks decisions -i' to answer interactively`, ui.Count(len(decisions), "open decision"))
 	return 0, nil
+}
+
+// decisionsInteractive walks the open decisions one at a time on a tty (`coop tasks decisions -i`):
+// each is shown in full, an answer is read and recorded (unblocking the task), and :n / :p move
+// between them, :q stops. It needs a real terminal — in a pipe or the unattended loop there's
+// nobody to answer, so it errors instead of hanging.
+func decisionsInteractive(root string, decisions []taskItem) (int, error) {
+	if !ui.IsTerminal(os.Stdin) {
+		return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
+	}
+	return runDecisionBrowser(root, decisions, os.Stdin, os.Stdout)
+}
+
+// runDecisionBrowser is the interactive loop with its I/O injected, so it can be driven in a test.
+func runDecisionBrowser(root string, decisions []taskItem, in io.Reader, out io.Writer) (int, error) {
+	p := ui.For(os.Stdout)
+	sc := bufio.NewScanner(in)
+	answered := 0
+	for i := 0; i >= 0; {
+		t, err := findTask(root, decisions[i].ID)
+		if err != nil {
+			return -1, err
+		}
+		decPath := filepath.Join(t.Dir, "decision.md")
+		fmt.Fprintf(out, "\n%s\n", p.Dim(fmt.Sprintf("── decision %d of %d · %s ──", i+1, len(decisions), t.ID)))
+		fprintDecisionBody(out, p, readFileString(decPath))
+		if decisionResolved(decPath) {
+			fmt.Fprintln(out, p.Green("✓ answered")+p.Dim(" — type a new answer to change it"))
+		}
+		fmt.Fprint(out, p.Dim("answer (Enter=skip · :n next · :p prev · :q quit): "))
+		if !sc.Scan() {
+			break // EOF / ^D ends the session
+		}
+		switch line := strings.TrimSpace(sc.Text()); line {
+		case ":q", ":quit":
+			i = -1
+		case ":p":
+			if i > 0 {
+				i--
+			}
+		case ":n", "":
+			i++
+		default:
+			if t.State == stateBlocked {
+				if err := resolveAndUnblock(root, t, line); err != nil {
+					return -1, err
+				}
+				answered++
+			} else if err := recordResolution(decPath, line); err != nil {
+				return -1, err
+			}
+			fmt.Fprintln(out, p.Green("✓ recorded"))
+			i++
+		}
+		if i >= len(decisions) {
+			i = -1 // past the last decision → done
+		}
+	}
+	if answered > 0 {
+		ui.OK("answered %s — back in todo (claim to start)", ui.Count(answered, "decision"))
+	} else {
+		ui.Note("no decisions answered — all still blocked")
+	}
+	return 0, nil
+}
+
+// fprintDecisionBody renders a decision.md for the browser: HTML comments stripped, the
+// `# Decision:` question bold, the Blocks / Resolution / `---` lines dropped (the id is in the
+// header and the answer is what we're collecting), and the rest indented.
+func fprintDecisionBody(out io.Writer, p ui.Palette, content string) {
+	prevBlank := false
+	for _, raw := range strings.Split(stripHTMLComments(content), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			prevBlank = true
+			continue
+		}
+		if strings.HasPrefix(line, "**Resolution:**") || strings.HasPrefix(line, "**Blocks:**") || line == "---" {
+			continue
+		}
+		if prevBlank {
+			fmt.Fprintln(out)
+		}
+		prevBlank = false
+		if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
+			fmt.Fprintln(out, p.Bold(strings.TrimSpace(q)))
+		} else {
+			fmt.Fprintln(out, "  "+line)
+		}
+	}
+}
+
+// stripHTMLComments removes <!-- … --> spans (the per-file header coop seeds and the inline
+// placeholder on the Resolution line), so the browser shows only human-meaningful content.
+func stripHTMLComments(s string) string {
+	for {
+		i := strings.Index(s, "<!--")
+		if i < 0 {
+			return s
+		}
+		end := strings.Index(s[i:], "-->")
+		if end < 0 {
+			return s[:i] // unterminated — drop the rest
+		}
+		s = s[:i] + s[i+end+len("-->"):]
+	}
 }
 
 func tasksFolderLint(root string) (int, error) {

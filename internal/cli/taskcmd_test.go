@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -317,6 +318,70 @@ func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	// the resolved decision.md riding along must NOT make the todo task lint-dirty
 	if code, err := tasksFolderLint(root); code != 0 || err != nil {
 		t.Errorf("unblocked task with a resolved decision should lint clean, got code=%d err=%v", code, err)
+	}
+}
+
+func TestStripHTMLComments(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"a <!-- x --> b", "a  b"},
+		{"<!-- only -->", ""},
+		{"line1\n<!-- multi\nline -->\nline2", "line1\n\nline2"},
+		{"text <!-- unterminated", "text "},
+		{"no comment", "no comment"},
+	} {
+		if got := stripHTMLComments(c.in); got != c.want {
+			t.Errorf("stripHTMLComments(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// runDecisionBrowser: :n skips the first decision, then a typed answer resolves the second;
+// answering the last one auto-finishes. The answered task moves to todo with its recorded answer;
+// the skipped one stays blocked. I/O is injected so no real terminal is needed.
+func TestRunDecisionBrowser(t *testing.T) {
+	root := t.TempDir()
+	for _, title := range []string{"alpha", "beta"} {
+		if code, err := tasksFolderAdd(root, []string{title}); code != 0 || err != nil {
+			t.Fatalf("add %s: code=%d err=%v", title, code, err)
+		}
+	}
+	for _, it := range readTaskTree(root) {
+		if code, err := tasksFolderBlock(root, []string{it.ID}); code != 0 || err != nil {
+			t.Fatalf("block %s: code=%d err=%v", it.ID, code, err)
+		}
+	}
+	var decisions []taskItem
+	for _, it := range readTaskTree(root) {
+		if it.State == stateBlocked {
+			decisions = append(decisions, it)
+		}
+	}
+	if len(decisions) != 2 {
+		t.Fatalf("want 2 blocked decisions, got %d", len(decisions))
+	}
+	in := strings.NewReader(":n\nSQLite it is\n")
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser(root, decisions, in, &out); code != 0 || err != nil {
+		t.Fatalf("browser: code=%d err=%v", code, err)
+	}
+	if a, _ := findTask(root, decisions[0].ID); a.State != stateBlocked {
+		t.Errorf("skipped decision should stay blocked, got %s", a.State)
+	}
+	b, err := findTask(root, decisions[1].ID)
+	if err != nil || b.State != stateTodo {
+		t.Fatalf("answered decision should be in todo, got %v (err %v)", b.State, err)
+	}
+	if dec := readFileString(filepath.Join(b.Dir, "decision.md")); !strings.Contains(dec, "**Resolution:** SQLite it is") {
+		t.Errorf("answer not recorded into the answered decision:\n%s", dec)
+	}
+	if !strings.Contains(out.String(), "decision 1 of 2") {
+		t.Errorf("browser output missing the position header:\n%s", out.String())
+	}
+}
+
+func TestDecisionsUnknownFlag(t *testing.T) {
+	if code, err := tasksFolderDecisions(t.TempDir(), []string{"--bogus"}); code != 2 || err == nil {
+		t.Errorf("unknown decisions flag should be a usage error (2), got (%d, %v)", code, err)
 	}
 }
 
