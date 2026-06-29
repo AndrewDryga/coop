@@ -149,6 +149,9 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 // actually working — the agent's default, a --model override, or whatever the account tier
 // resolves to. coop doesn't pick the model, so the agent's own init report is the one
 // reliable source; it lands right after the iteration banner, before the agent's first move.
+// The id is shown verbatim, suffix and all — e.g. the `[1m]` 1M-context tier reads like an
+// ANSI bold code (ESC[1m) but is literal text; normalizing it would risk misrepresenting the
+// model, so we deliberately don't.
 func (d *streamDecoder) system(ev *streamEvent) {
 	if ev.Subtype == "init" && ev.Model != "" {
 		if d.agent == "" {
