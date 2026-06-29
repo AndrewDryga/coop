@@ -241,13 +241,16 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
-	if err := moveTaskDir(root, t, stateInProgress); err != nil {
+	// Back to 00_todo/, NOT 10_in_progress/: in_progress is the "an agent is on this" lock, taken by
+	// `claim`. A just-unblocked task has nobody on it, so it belongs in the queue as available work —
+	// the loop (or a person) picks it up and claims it. The resolved decision.md rides along.
+	if err := moveTaskDir(root, t, stateTodo); err != nil {
 		return -1, err
 	}
 	if answer != "" {
-		ui.OK("unblocked %s — recorded your answer in decision.md, now in progress", t.ID)
+		ui.OK("unblocked %s — recorded your answer in decision.md, back in todo (claim it to start)", t.ID)
 	} else {
-		ui.OK("unblocked %s — now in progress", t.ID)
+		ui.OK("unblocked %s — back in todo (claim it to start)", t.ID)
 	}
 	return 0, nil
 }
@@ -274,6 +277,20 @@ func recordResolution(decPath, answer string) error {
 		out = strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
 	}
 	return os.WriteFile(decPath, []byte(out), 0o644)
+}
+
+// decisionResolved reports whether a decision.md has a filled-in Resolution (a human's answer),
+// as opposed to the empty/placeholder line `coop tasks block` seeds. lint uses it: a resolved
+// decision rides along on an unblocked (todo) task as its audit trail, but an unresolved one on a
+// non-blocked task is the inconsistency to flag.
+func decisionResolved(decPath string) bool {
+	for _, line := range strings.Split(readFileString(decPath), "\n") {
+		if r, ok := strings.CutPrefix(line, "**Resolution:**"); ok {
+			r = strings.TrimSpace(r)
+			return r != "" && !strings.HasPrefix(r, "<!--")
+		}
+	}
+	return false
 }
 
 // moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
@@ -590,6 +607,7 @@ func tasksFolderDecisions(root string) (int, error) {
 		ui.OK("no open decisions — nothing is blocked")
 		return 0, nil
 	}
+	fmt.Println() // a blank line sets the footer apart from the last decision
 	ui.Note(`%s — answer with 'coop tasks unblock <id> "<answer>"' (or edit its decision.md, then unblock)`, ui.Count(n, "open decision"))
 	return 0, nil
 }
@@ -600,13 +618,14 @@ func tasksFolderLint(root string) (int, error) {
 	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", id, msg)) }
 	for _, t := range items {
 		body := readFileString(filepath.Join(t.Dir, "task.md"))
-		// blocked ⇒ a decision.md is present; a todo shouldn't carry one (it'd be blocked).
-		// A resolved decision.md may ride along through in_progress→done as the audit trail.
+		// blocked ⇒ a decision.md is present. A RESOLVED decision.md rides along as the audit trail
+		// once unblocked (todo→in_progress→done); only an UNRESOLVED one on a non-blocked task is the
+		// inconsistency — an open one-way door waiting in the queue instead of parked in 50_blocked/.
 		if t.State == stateBlocked && !t.HasDecision {
 			add(t.ID, "blocked but has no decision.md — add one, or unblock it")
 		}
-		if t.State == stateTodo && t.HasDecision {
-			add(t.ID, "has a decision.md but is todo — an open decision means it should be blocked")
+		if t.State == stateTodo && t.HasDecision && !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
+			add(t.ID, "has an unresolved decision.md but is todo — block it (or resolve it and unblock)")
 		}
 		// a status field is forbidden — the directory IS the status
 		if fields, _ := splitFrontmatter(body); fields["status"] != "" {

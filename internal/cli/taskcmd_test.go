@@ -96,14 +96,14 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Error("decision.md not created on block")
 	}
 
-	// unblock → in_progress (decision.md rides along)
+	// unblock → todo (available again; the in_progress lock is taken by claim), decision.md rides along
 	if code, err := tasksFolderUnblock(root, []string{id}); code != 0 || err != nil {
 		t.Fatalf("unblock: code=%d err=%v", code, err)
 	}
-	if readTaskTree(root)[0].State != stateInProgress {
-		t.Fatal("after unblock, not in_progress")
+	if readTaskTree(root)[0].State != stateTodo {
+		t.Fatal("after unblock, not back in todo")
 	}
-	// unblocking a non-blocked task is an error (it's in_progress now), not a silent reopen.
+	// unblocking a non-blocked task is an error (it's in todo now), not a silent reopen.
 	if code, err := tasksFolderUnblock(root, []string{id}); code == 0 || err == nil {
 		t.Errorf("unblock of a non-blocked task should error, got (%d, %v)", code, err)
 	}
@@ -299,10 +299,10 @@ func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	if code, err := tasksFolderUnblock(root, []string{id, "B", "—", "go", "SQLite"}); code != 0 || err != nil {
 		t.Fatalf("unblock+answer: code=%d err=%v", code, err)
 	}
-	if readTaskTree(root)[0].State != stateInProgress {
-		t.Fatal("after unblock, not in_progress")
+	if readTaskTree(root)[0].State != stateTodo {
+		t.Fatal("after unblock, not back in todo")
 	}
-	dec := readFileString(filepath.Join(root, stateInProgress, id, "decision.md"))
+	dec := readFileString(filepath.Join(root, stateTodo, id, "decision.md"))
 	if !strings.Contains(dec, "**Resolution:** B — go SQLite\n") {
 		t.Errorf("answer not recorded into Resolution:\n%s", dec)
 	}
@@ -313,6 +313,10 @@ func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 		if !strings.Contains(dec, want) {
 			t.Errorf("decision.md lost %q after recording the answer:\n%s", want, dec)
 		}
+	}
+	// the resolved decision.md riding along must NOT make the todo task lint-dirty
+	if code, err := tasksFolderLint(root); code != 0 || err != nil {
+		t.Errorf("unblocked task with a resolved decision should lint clean, got code=%d err=%v", code, err)
 	}
 }
 

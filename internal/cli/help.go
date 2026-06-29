@@ -256,7 +256,7 @@ var commandHelp = map[string]string{
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
-  unblock <id>     move it back to in_progress; add "<answer>" to record it in decision.md too
+  unblock <id>     move it back to todo (claim it to start); add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)
   rm <id>          delete a task folder; --all-done clears the whole done archive
   decisions        list the open decisions (one per blocked task)
