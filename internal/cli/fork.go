@@ -624,7 +624,7 @@ func (a *app) forkReview(args []string) (int, error) {
 			_ = gitInteractive(repo, append(cargs, "difftool", "HEAD..."+ref)...)
 		} else {
 			ui.Info("no global git diff.tool set — showing the diff (--tool ignores repo config, for safety)")
-			_ = gitInteractive(repo, "diff", "HEAD..."+ref)
+			_ = gitInteractive(repo, "diff", "--no-ext-diff", "HEAD..."+ref) // internal diff (see default case)
 		}
 		return 0, nil
 	case stat:
@@ -632,7 +632,10 @@ func (a *app) forkReview(args []string) (int, error) {
 	case a.cfg.ReviewCmd != "": // a user-defined review command
 		return a.runReviewCmd(repo, ws, name, ref)
 	default:
-		_ = gitInteractive(repo, "diff", "HEAD..."+ref)
+		// --no-ext-diff: a broken diff.external / GIT_EXTERNAL_DIFF in the host environment would
+		// otherwise make the diff "external diff died" (the -c diff.external= hardening blanks the
+		// config but can't override the env var). Force git's internal diff so review always renders.
+		_ = gitInteractive(repo, "diff", "--no-ext-diff", "HEAD..."+ref)
 		return 0, nil
 	}
 }
