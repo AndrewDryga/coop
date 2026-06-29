@@ -86,7 +86,7 @@ func (s forkStatus) activeCell() string {
 
 // fleetSnapshot rolls up where the work stands: one progress line per fork plus totals (or the
 // local queue when there are no forks), so an overnight run can be checked at a glance without
-// tailing N logs. It's the one-shot fallback for the live `coop tasks watch` board — printed when
+// tailing N logs. It's the one-shot fallback for the live `coop fleet watch` board — printed when
 // there's no TTY to animate, or no forks to watch.
 func (a *app) fleetSnapshot(repo string) (int, error) {
 	names := forkNames(repo)

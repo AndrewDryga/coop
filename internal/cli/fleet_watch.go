@@ -74,7 +74,7 @@ func keepLastGood(fresh, prev fleetRow) fleetRow {
 	return fresh
 }
 
-// fleetWatch renders the live `coop tasks watch` board — every fork's progress, refreshed by polling
+// fleetWatch renders the live `coop fleet watch` board — every fork's progress, refreshed by polling
 // the same per-fork queue/pidfiles the snapshot reads plus the tail of each fork's log. It is
 // read-only: it auto-exits with a final summary frame once the fleet is finished (nothing running,
 // nothing left to start), and Ctrl-C exits 0 anytime. Without a TTY to animate, or with no forks to
@@ -85,7 +85,7 @@ func (a *app) fleetWatch() (int, error) {
 		return -1, err
 	}
 	// No TTY to animate, or no forks to watch (a lone local loop) → the one-shot roll-up, which
-	// still reports the local queue. Keeps `coop tasks watch` pipe-safe and useful before a fleet.
+	// still reports the local queue. Keeps `coop fleet watch` pipe-safe and useful before a fleet.
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkNames(repo)) == 0 {
 		return a.fleetSnapshot(repo)
 	}
