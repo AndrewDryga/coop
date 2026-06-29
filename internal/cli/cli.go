@@ -226,9 +226,10 @@ func isKnownCommand(cmd string) bool {
 // and how to run an actual command in the box (which is no longer implicit).
 func unknownCommandErr(argv []string) error {
 	sub := argv[0]
-	if sub == "status" { // removed: the live board folded into `coop tasks watch`
-		return fmt.Errorf("coop status was removed — the fleet board is now `coop fleet watch` " +
-			"(snapshot: `coop fork ls`); watch the task queue with `coop tasks watch`")
+	if sub == "status" { // removed — replaced by the task board (the default) + the per-fork fleet board
+		return fmt.Errorf("coop status was removed — watch the work with `coop tasks watch` " +
+			"(the queue + any active forks, deduped); for the per-fork fleet board use `coop fleet watch` " +
+			"(snapshot: `coop fork ls`)")
 	}
 	msg := fmt.Sprintf("unknown command %q", sub)
 	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)

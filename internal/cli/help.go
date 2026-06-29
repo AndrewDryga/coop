@@ -229,7 +229,7 @@ var commandHelp = map[string]string{
   down           stop the fleet's running loops
   split <n>      split the task queue into n fork slices, then write .agent/fleet
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
-                 done; Ctrl-C anytime)
+                 done; Ctrl-C anytime). Task-centric view: coop tasks watch
   prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
                  unmerged — pass --force to remove those too)
 
@@ -246,7 +246,8 @@ var commandHelp = map[string]string{
   Usage: coop tasks [--tasks <path>]... <command>
 
   ls [--all]       list tasks by state, with counts (recent done capped; --all shows all)
-  watch            live board: the queue + any active forks, deduped by id (auto-exits when done)
+  watch            live board: the queue + any active forks, deduped by id (auto-exits when done).
+                   Per-fork fleet view: coop fleet watch
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
