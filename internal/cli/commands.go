@@ -1047,11 +1047,8 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		// Run this iteration on the pool's active subscription; the mount and the agent
 		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
 		a.cfg.SetActiveProfile(agent, pool.active())
-		banner := progressBanner(n, c, active)
-		if pool.rotates() {
-			banner += fmt.Sprintf(" · profile %s", pool.active())
-		}
-		ui.Info("%s", banner)
+		// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
+		ui.Info("%s", progressBanner(n, c, active))
 		code, out, err := a.runIteration(repo, img, agent, forkName, iterCmd(work), hosts, sink)
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
