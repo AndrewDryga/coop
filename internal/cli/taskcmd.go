@@ -493,17 +493,22 @@ func banner(p ui.Palette, path string) string {
 	return p.Cyan("▸") + " " + p.Bold(path) + " " + rule
 }
 
-// listMarkers renders a task's at-a-glance markers — subtask progress (plain, no state coloring:
-// the count is informational, not an alert) and a red flag on a blocked task — joined with two
-// spaces, or "" when there are none (a task with no subtasks shows no count). They lead the id
-// line, so the wrapped title above stays clean.
+// listMarkers renders a task's at-a-glance markers — subtask progress (plain while work remains,
+// gray once every box is checked so a finished count recedes) and a red ⚠ on a blocked task —
+// joined with two spaces, or "" when there are none (a task with no subtasks shows no count). They
+// lead the id line, so the wrapped title above stays clean.
 func listMarkers(p ui.Palette, t taskItem) string {
 	var parts []string
 	if n := len(t.Subtasks); n > 0 {
-		parts = append(parts, fmt.Sprintf("[%d/%d]", t.doneSubtasks(), n))
+		done := t.doneSubtasks()
+		prog := fmt.Sprintf("[%d/%d]", done, n)
+		if done == n {
+			prog = p.Gray(prog) // fully done — recede the count
+		}
+		parts = append(parts, prog)
 	}
 	if t.State == stateBlocked {
-		parts = append(parts, p.Red("⚠ decision"))
+		parts = append(parts, p.Red("⚠"))
 	}
 	return strings.Join(parts, "  ")
 }
