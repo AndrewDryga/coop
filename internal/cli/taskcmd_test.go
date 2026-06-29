@@ -97,8 +97,10 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Error("decision.md not created on block")
 	}
 
-	// unblock → todo (available again; the in_progress lock is taken by claim), decision.md rides along
-	if code, err := tasksFolderUnblock(root, []string{id}); code != 0 || err != nil {
+	// unblock WITH an answer → todo (available again; the in_progress lock is taken by claim), the
+	// resolved decision.md rides along. (A no-answer unblock of an unresolved decision is refused —
+	// covered by TestUnblockRequiresResolution.)
+	if code, err := tasksFolderUnblock(root, []string{id, "A — go with it"}); code != 0 || err != nil {
 		t.Fatalf("unblock: code=%d err=%v", code, err)
 	}
 	if readTaskTree(root)[0].State != stateTodo {
@@ -265,6 +267,39 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 
 // `coop tasks block` writes a decision.md that's self-documenting and easy for a human to
 // answer: the structured sections, a HUMAN reply marker, and the exact unblock command.
+// unblock must not drop a task into todo with an UNRESOLVED decision.md — that's the exact state
+// lint rejects ("unresolved decision.md but is todo"). With no inline answer and a placeholder
+// Resolution it refuses (task stays blocked); an inline answer resolves it and unblocks lint-clean.
+func TestUnblockRequiresResolution(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-pick", "task.md"),
+		"# Pick a backend\n\n**Acceptance criteria:** one is chosen and why is noted\n")
+	if code, err := tasksFolderBlock(root, []string{"pick"}); code != 0 || err != nil {
+		t.Fatalf("block: %d %v", code, err)
+	}
+	// No answer + placeholder Resolution → refuse, stay blocked (don't create a lint-rejected todo).
+	if code, err := tasksFolderUnblock(root, []string{"pick"}); code != 2 || err == nil {
+		t.Fatalf("unblock with no resolution: got (%d, %v), want (2, err)", code, err)
+	}
+	if readTaskTree(root)[0].State != stateBlocked {
+		t.Fatal("a refused unblock must leave the task blocked")
+	}
+	// With an inline answer → resolves the decision and unblocks to todo.
+	if code, err := tasksFolderUnblock(root, []string{"pick", "Postgres"}); code != 0 || err != nil {
+		t.Fatalf("unblock with answer: %d %v", code, err)
+	}
+	tk := readTaskTree(root)[0]
+	if tk.State != stateTodo {
+		t.Fatalf("after answered unblock, state=%s want todo", tk.State)
+	}
+	if !decisionResolved(filepath.Join(tk.Dir, "decision.md")) {
+		t.Error("decision.md should be resolved after an inline answer")
+	}
+	if code, _ := tasksFolderLint(root); code != 0 {
+		t.Error("an answered-unblock task must be lint-clean")
+	}
+}
+
 func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 	root := t.TempDir()
 	if code, err := tasksFolderAdd(root, []string{"pick the database"}); code != 0 || err != nil {

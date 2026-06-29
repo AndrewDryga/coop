@@ -236,6 +236,12 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	}
 	// The optional inline answer makes deciding one command — no open-file/edit/save round-trip.
 	answer := strings.TrimSpace(strings.Join(args[1:], " "))
+	// Don't unblock into a state lint rejects: a todo task with an UNRESOLVED decision.md is the
+	// inconsistency lint flags. Require a resolution — inline, or pre-written in decision.md — or
+	// the task stays blocked.
+	if answer == "" && t.HasDecision && !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
+		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
+	}
 	if err := resolveAndUnblock(root, t, answer); err != nil {
 		return -1, err
 	}
