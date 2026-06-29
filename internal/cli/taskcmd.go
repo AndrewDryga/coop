@@ -22,12 +22,61 @@ import (
 
 // cmdTasksFolder routes `coop tasks <sub>` against a folder-mode tree rooted at root
 // (absolute path to .agent/tasks). No sub-command lists the tree.
+// taskArgSpec declares a structured subcommand's allowed flags and max positional count.
+type taskArgSpec struct {
+	flags  []string
+	maxPos int
+}
+
+// taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
+// argument fails loudly instead of being silently ignored or mistaken for an id. add/unblock take
+// free-form text (a title / a human's answer) that may start with "-", and decisions self-validates,
+// so they're intentionally absent.
+var taskArgSpecs = map[string]taskArgSpec{
+	"ls": {[]string{"--all"}, 0}, "list": {[]string{"--all"}, 0},
+	"lint":  {nil, 0},
+	"claim": {nil, 1}, "start": {nil, 1},
+	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
+	"rm": {[]string{"--all-done"}, 1}, "remove": {[]string{"--all-done"}, 1},
+}
+
+// validateArgs enforces a subcommand's flags + positional count: any token starting with "-" must be
+// in allowedFlags, and at most maxPos positionals are allowed. So `coop tasks ls --done` or `coop
+// tasks claim a b` fails with a clear message rather than quietly doing the wrong thing.
+func validateArgs(cmd string, args, allowedFlags []string, maxPos int) error {
+	pos := 0
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && a != "-" {
+			if !slices.Contains(allowedFlags, a) {
+				hint := ""
+				if len(allowedFlags) > 0 {
+					hint = " (supported: " + strings.Join(allowedFlags, ", ") + ")"
+				}
+				return fmt.Errorf("coop %s: unknown flag %q%s", cmd, a, hint)
+			}
+			continue
+		}
+		pos++
+	}
+	if pos > maxPos {
+		return fmt.Errorf("coop %s: too many arguments (got %d, expected at most %d)", cmd, pos, maxPos)
+	}
+	return nil
+}
+
 func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	sub := ""
 	var args []string
 	if len(rest) > 0 {
 		sub = rest[0]
 		args = rest[1:]
+	}
+	// Reject unsupported flags / stray arguments up front for the structured subcommands (see
+	// taskArgSpecs); add/unblock/decisions handle their own free-form args.
+	if spec, ok := taskArgSpecs[sub]; ok {
+		if err := validateArgs("tasks "+sub, args, spec.flags, spec.maxPos); err != nil {
+			return 2, err
+		}
 	}
 	switch sub {
 	case "":

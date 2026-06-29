@@ -268,6 +268,29 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 
 // `coop tasks block` writes a decision.md that's self-documenting and easy for a human to
 // answer: the structured sections, a HUMAN reply marker, and the exact unblock command.
+func TestValidateArgs(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		flags   []string
+		maxPos  int
+		wantErr bool
+	}{
+		{"id positional", []string{"my-task"}, nil, 1, false},
+		{"allowed flag, no positional", []string{"--all"}, []string{"--all"}, 0, false},
+		{"unknown flag", []string{"--bogus"}, []string{"--all"}, 0, true},
+		{"flag where none allowed", []string{"--all"}, nil, 1, true},
+		{"too many positionals", []string{"a", "b"}, nil, 1, true},
+		{"allowed flag counts as 0 positionals", []string{"--all-done"}, []string{"--all-done"}, 1, false},
+		{"nothing", nil, []string{"--all"}, 0, false},
+	}
+	for _, tc := range cases {
+		if err := validateArgs("tasks x", tc.args, tc.flags, tc.maxPos); (err != nil) != tc.wantErr {
+			t.Errorf("%s: validateArgs err=%v, wantErr=%v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
 // `coop tasks ls` caps the (only-growing) done archive so live work isn't buried; --all shows all.
 func TestTasksFolderListCapsDone(t *testing.T) {
 	root := t.TempDir()
