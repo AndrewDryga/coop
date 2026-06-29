@@ -168,3 +168,53 @@ func TestGenerateCodexSkipsTransportlessServer(t *testing.T) {
 		t.Errorf("valid server should remain, got:\n%s", got)
 	}
 }
+
+// A canonical HTTP/SSE server ({type, url, headers}) passes through to gemini's settings.json
+// verbatim — gemini honors that exact shape (verified against `gemini mcp add -t http/-t sse`), so
+// the raw passthrough is gemini-native. Locked in so a future GenerateGemini refactor can't break it.
+func TestGenerateGeminiHTTPPassthrough(t *testing.T) {
+	src := `{ "mcpServers": {
+		"emisar": { "type": "http", "url": "https://emisar.dev/api/mcp/rpc", "headers": { "Authorization": "Bearer emk-x" } },
+		"legacy": { "type": "sse",  "url": "https://legacy.example/sse",      "headers": { "X-Api-Key": "k" } }
+	} }`
+	got, err := GenerateGemini(writeTmp(t, "mcp.json", src), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(got), &f); err != nil {
+		t.Fatalf("gemini settings not valid JSON: %v\n%s", err, got)
+	}
+	em := f.MCPServers["emisar"]
+	if em["type"] != "http" || em["url"] != "https://emisar.dev/api/mcp/rpc" {
+		t.Errorf("emisar type/url not preserved for gemini: %+v", em)
+	}
+	if h, ok := em["headers"].(map[string]any); !ok || h["Authorization"] != "Bearer emk-x" {
+		t.Errorf("emisar headers not preserved for gemini: %+v", em["headers"])
+	}
+	if f.MCPServers["legacy"]["type"] != "sse" {
+		t.Errorf("sse type not preserved for gemini: %+v", f.MCPServers["legacy"])
+	}
+}
+
+// Codex has no inline-header support, so a url server with headers but no bearer_token_env_var would
+// authenticate nowhere — GenerateCodex flags it rather than emit a silent unauthenticated url. A
+// bearer_token_env_var (codex's real mechanism) emits cleanly, with no notice.
+func TestGenerateCodexHTTPHeaders(t *testing.T) {
+	src := `{ "mcpServers": {
+		"hdronly": { "type": "http", "url": "https://a.example/mcp", "headers": { "Authorization": "Bearer x" } },
+		"bearer":  { "type": "http", "url": "https://b.example/mcp", "bearer_token_env_var": "B_TOKEN" }
+	} }`
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", src), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `bearer_token_env_var = "B_TOKEN"`) {
+		t.Errorf("expected bearer_token_env_var for the bearer server:\n%s", got)
+	}
+	if n := strings.Count(got, "# coop: codex can't use"); n != 1 {
+		t.Errorf("the header-gap notice should fire exactly once (only the headers-only server), got %d:\n%s", n, got)
+	}
+}

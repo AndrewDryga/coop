@@ -3,7 +3,8 @@
     "emisar": {
         "type": "http",
         "url": "https://emisar.dev/api/mcp/rpc",
-        "headers": { "Authorization": "Bearer emk-replace_with_your_token" }
+        "headers": { "Authorization": "Bearer emk-replace_with_your_token" },
+        "bearer_token_env_var": "EMISAR_API_KEY"
     },
     "context7": {
       "command": "npx",

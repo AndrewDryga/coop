@@ -20,12 +20,15 @@ import (
 	"strings"
 )
 
-// server is the typed view of one entry, sufficient to emit Codex TOML.
+// server is the typed view of one entry, sufficient to emit Codex TOML. Headers is the canonical
+// HTTP-auth field claude + gemini read directly; codex can't use it (it has no inline-header support,
+// only bearer_token_env_var / OAuth), so it's kept here only to flag that gap, not to emit.
 type server struct {
 	Command           string         `json:"command"`
 	Args              []string       `json:"args"`
 	Env               map[string]any `json:"env"`
 	URL               string         `json:"url"`
+	Headers           map[string]any `json:"headers"`
 	BearerTokenEnvVar string         `json:"bearer_token_env_var"`
 }
 
@@ -104,8 +107,15 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 	switch {
 	case s.URL != "": // streamable HTTP server
 		fmt.Fprintf(b, "url = %s\n", tomlString(s.URL))
-		if s.BearerTokenEnvVar != "" {
+		switch {
+		case s.BearerTokenEnvVar != "":
 			fmt.Fprintf(b, "bearer_token_env_var = %s\n", tomlString(s.BearerTokenEnvVar))
+		case len(s.Headers) > 0:
+			// Codex (unlike claude/gemini) has no inline-header support for HTTP MCP servers — only
+			// bearer_token_env_var / OAuth (codex 0.141.0 `mcp add --help`). It can't use the
+			// "headers" claude/gemini authenticate with, so flag the gap rather than emit a silent
+			// unauthenticated url that 401s mid-run.
+			b.WriteString("# coop: codex can't use this server's \"headers\" — set bearer_token_env_var to authenticate it\n")
 		}
 	case s.Command != "": // stdio server
 		fmt.Fprintf(b, "command = %s\n", tomlString(s.Command))

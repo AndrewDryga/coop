@@ -203,6 +203,13 @@
 - **`COOP_NO_ASDF=1` no longer breaks Node-based agent CLIs when the shared asdf volume has a
   stale Node shim.** The flag still skips `.tool-versions` provisioning, but the entrypoint now
   always repairs a broken bare `node` by selecting an installed asdf Node fallback when needed.
+- **Remote (HTTP/SSE) MCP servers in `mcp.json` are covered for every agent.** Besides stdio
+  servers, an HTTP server — `{ "type": "http", "url": …, "headers": … }` — reaches all three:
+  claude and gemini read the canonical `headers` directly, and codex (which has no inline-header
+  support — only `bearer_token_env_var` / OAuth) authenticates via `bearer_token_env_var`, so set
+  both on a server you want all three to use. coop now flags a codex HTTP server that carries
+  `headers` but no `bearer_token_env_var`, so the auth gap is visible instead of a silent 401. See
+  `agents/mcp.json.example`.
 
 ## 2.10.1
 
