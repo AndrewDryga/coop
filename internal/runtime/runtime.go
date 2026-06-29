@@ -59,7 +59,7 @@ func (r Runtime) EnsureDaemon() error {
 		return nil
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
-		return errors.New("docker is installed but not running — start Docker Desktop and retry")
+		return errors.New("docker is installed but its daemon isn't responding — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry")
 	}
 	return nil
 }

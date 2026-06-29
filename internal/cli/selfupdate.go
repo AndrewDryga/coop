@@ -72,7 +72,7 @@ func latestReleaseTag() (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub API returned %s", resp.Status)
+		return "", fmt.Errorf("couldn't check for a newer coop — GitHub returned %s (rate limit or network hiccup?); retry shortly, or update via your package manager / install.sh", resp.Status)
 	}
 	var rel struct {
 		TagName string `json:"tag_name"`
@@ -81,7 +81,7 @@ func latestReleaseTag() (string, error) {
 		return "", err
 	}
 	if rel.TagName == "" {
-		return "", fmt.Errorf("GitHub API response had no tag_name")
+		return "", fmt.Errorf("couldn't read the latest coop version from GitHub's response — retry shortly, or update via your package manager / install.sh")
 	}
 	return rel.TagName, nil
 }

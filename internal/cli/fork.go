@@ -376,7 +376,7 @@ func setupFork(repo, name string) (string, error) {
 		return ws, err
 	}
 	if err := gitClone(repo, ws); err != nil {
-		return ws, fmt.Errorf("git clone: %w", err)
+		return ws, fmt.Errorf("couldn't clone the repo into the fork workspace: %w", err)
 	}
 	_ = gitCheckoutNewBranch(ws, name) // branch may already exist in origin; fine
 	propagateGitEnv(repo, ws)
@@ -659,7 +659,7 @@ func (a *app) openInEditor(ws string) (int, error) {
 	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	if err := cmd.Run(); err != nil {
-		return 1, fmt.Errorf("open %q: %w", parts[0], err)
+		return 1, fmt.Errorf("couldn't launch your editor %q: %w — check $COOP_EDITOR / git core.editor", parts[0], err)
 	}
 	return 0, nil
 }

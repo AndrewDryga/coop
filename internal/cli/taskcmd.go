@@ -169,7 +169,7 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	}
 	slug := slugify(title)
 	if slug == "" {
-		return 2, errors.New("title has no usable letters/digits for a slug")
+		return 2, errors.New(`that title has no letters or digits to build a task id from — use a title with at least one word, e.g. coop tasks add "fix login retry"`)
 	}
 	id := time.Now().Format("2006-01-02") + "-" + slug
 	// An id is a stable, unique handle, so reject a collision in ANY state — not just todo/ —
