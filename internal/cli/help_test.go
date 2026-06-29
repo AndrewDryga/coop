@@ -42,7 +42,7 @@ func TestHelpTextAligned(t *testing.T) {
 	// Commands are listed individually, not collapsed into a "<verb>" placeholder.
 	for _, want := range []string{
 		"coop fork review <name>", "coop fork merge <name>", "coop fork stop <name>",
-		"coop doctor", "coop check-secrets", "coop tasks add|claim|block|done|list|…",
+		"coop doctor", "coop check-secrets", "coop tasks list", "coop tasks decisions",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing %q", want)
@@ -55,7 +55,7 @@ func TestHelpTextAligned(t *testing.T) {
 	if strings.Contains(out, "·") {
 		t.Errorf("help should not use · separators:\n%s", out)
 	}
-	for _, want := range []string{"AGENTS", "FORKS", "UNATTENDED", "SETUP & MAINTENANCE"} {
+	for _, want := range []string{"AGENTS", "FORKS", "UNATTENDED", "TASKS", "SETUP & MAINTENANCE"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing capitalized section header %q", want)
 		}

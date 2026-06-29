@@ -93,7 +93,11 @@ func helpText(cfg *config.Config) string {
 	row("coop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
 	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
 	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
-	row("coop tasks add|claim|block|done|list|…", "drive the .agent/tasks/ queue (folder per task)")
+
+	group("TASKS — a folder-per-task queue in .agent/tasks/")
+	row("coop tasks list", "show the queue, grouped by state")
+	row("coop tasks add \"<title>\"", "add a task; claim/block/unblock/done move it through its states")
+	row("coop tasks decisions", "show what's blocked on a human decision")
 
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
