@@ -391,7 +391,7 @@ def scene_secrets():
     c.line("config/credentials.yaml" + dim("  # a slash makes it a repo-relative path"), after=0.2)
     c.line("vault/" + dim("                   # a directory — its contents are hidden whole"), after=0.9)
     c.command("coop check-secrets")
-    c.line("  possible secret in config/legacy.rb:42 (high-entropy value assigned to 'api_key')", after=0.6)
+    c.line("  possible secret in config/legacy.rb:5 (high-entropy value assigned to 'api_key')", after=0.6)
     c.line(red("✗ 1 secret found in commit-candidate files (tracked + untracked; gitignored excluded) — remove them, or hide an intended file with a .coopignore entry"), after=0.7)
     c.command("echo $?")
     c.line("1", after=1.0)
