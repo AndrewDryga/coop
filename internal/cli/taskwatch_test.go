@@ -102,3 +102,26 @@ func TestTasksDrained(t *testing.T) {
 		}
 	}
 }
+
+func TestTasksWatchSettling(t *testing.T) {
+	drained := taskCounts{Done: 3}       // nothing todo/in-progress/blocked
+	live := taskCounts{Todo: 1, Done: 2} // work remains
+	cases := []struct {
+		name               string
+		c                  taskCounts
+		running            int
+		sawActive, sawFork bool
+		want               bool
+	}{
+		{"local queue all done, no forks → settle (exit)", drained, 0, false, false, true},
+		{"work remains → keep watching", live, 0, true, true, false},
+		{"a fork is running → keep watching", drained, 1, true, true, false},
+		{"fleet launched but not working yet (startup window) → keep watching", drained, 0, false, true, false},
+		{"fleet worked, then finished → settle (exit)", drained, 0, true, true, true},
+	}
+	for _, tc := range cases {
+		if got := tasksWatchSettling(tc.c, tc.running, tc.sawActive, tc.sawFork); got != tc.want {
+			t.Errorf("%s: tasksWatchSettling = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

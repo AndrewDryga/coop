@@ -38,7 +38,7 @@ var stateRank = map[string]int{stateTodo: 0, stateBlocked: 1, stateInProgress: 2
 // Unlike the per-fork fleet board, this is task-centric. It auto-exits only when everything is
 // drained; without a TTY it prints the list once (pipe-safe).
 func (a *app) tasksWatch(repo string, rels []string) (int, error) {
-	read := func() ([]watchSource, []mergedTask) {
+	read := func() ([]watchSource, []mergedTask, int, int) {
 		var sources []watchSource
 		merged := map[string]mergedTask{}
 		// add merges a source's tasks, keeping the most-advanced state per id; processed in order
@@ -57,9 +57,15 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 				add(rel, items, "")
 			}
 		}
-		for _, name := range forkNames(repo) {
+		names := forkNames(repo)
+		running := 0
+		for _, name := range names {
+			pid := forkRunningPid(repo, name)
+			if pid != 0 {
+				running++
+			}
 			items := readTaskTree(filepath.Join(forkWorkspace(repo, name), tasksRoot))
-			if len(items) == 0 && forkRunningPid(repo, name) == 0 {
+			if len(items) == 0 && pid == 0 {
 				continue // a dead, empty fork isn't part of the picture
 			}
 			add(name, items, name)
@@ -69,7 +75,7 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 			out = append(out, m)
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-		return sources, out
+		return sources, out, running, len(names)
 	}
 
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
@@ -79,7 +85,7 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 		}
 		return tasksListAll(repo, rels)
 	}
-	if _, merged := read(); len(merged) == 0 {
+	if _, merged, _, _ := read(); len(merged) == 0 {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
 	}
@@ -105,13 +111,21 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 	t := time.NewTicker(fleetPoll)
 	defer t.Stop()
 
+	sawActive, sawFork := false, false // the fleet's startup guard — see tasksWatchSettling
 	settled := 0
 	for spin := 0; ; spin++ {
-		sources, merged := read()
+		sources, merged, running, nForks := read()
+		c := mergedCounts(merged)
 		screen.Frame(tasksWatchFrame(sources, merged, spin))
-		// Auto-exit only when the merged set is fully drained — nothing todo, in progress, or
-		// blocked anywhere; held a few ticks so a torn read of a task move can't end it early.
-		if tasksDrained(mergedCounts(merged)) {
+		if running > 0 || c.Doing > 0 {
+			sawActive = true // a fork/loop is on it — work has started
+		}
+		if nForks > 0 {
+			sawFork = true // a fleet is in play, so an idle tick may be its startup window
+		}
+		// Held a few ticks so a torn read of a task move can't end it early; tasksWatchSettling adds
+		// the startup guard so a just-launched fleet doesn't conclude "drained" before it claims.
+		if tasksWatchSettling(c, running, sawActive, sawFork) {
 			settled++
 		} else {
 			settled = 0
@@ -143,6 +157,15 @@ func mergedCounts(merged []mergedTask) taskCounts {
 // a blocked or unfinished-but-idle queue is NOT drained, so the watch keeps running.
 func tasksDrained(c taskCounts) bool {
 	return c.Todo == 0 && c.Doing == 0 && c.Blocked == 0
+}
+
+// tasksWatchSettling reports whether this tick counts toward auto-exit: the queue is drained AND no
+// fork is running, AND — mirroring the fleet board's sawRunning guard — either work has already been
+// seen (sawActive) or no fork ever appeared (a plain local watch, nothing to wait for). The guard
+// stops a just-launched fleet, whose boxes are still spawning and whose queue reads idle for a tick,
+// from concluding "drained" and exiting in its startup window (fleetIdleExit is only ~1s of ticks).
+func tasksWatchSettling(c taskCounts, running int, sawActive, sawFork bool) bool {
+	return tasksDrained(c) && running == 0 && (sawActive || !sawFork)
 }
 
 // tasksWatchFrame renders the unified board. A single source leads with just the progress bar (no
