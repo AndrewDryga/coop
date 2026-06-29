@@ -73,6 +73,14 @@ def chk(msg):
     return "  " + green("✓") + " " + msg
 
 
+def model_line(agent="claude", model="claude-opus-4-8", profile="personal"):
+    """streamjson.go's init line: dim labels (· using / model / profile), normal-bright values."""
+    s = dim("· using ") + agent + dim(" model ") + model
+    if profile:
+        s += dim(" profile ") + profile
+    return s
+
+
 ICON_LLM = magenta("✦")  # streamjson.go: the agent's own voice
 SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]  # ui.SpinFrames
 
@@ -92,9 +100,12 @@ def badge(agent):
     return {"claude": _w("c", MAGENTA), "codex": _w("x", GREEN), "gemini": _w("g", YELLOW)}.get(agent, "?")
 
 
-def fleet_row(glyph, agent, name, done, total, doing, log=""):
-    """One coop fleet watch row: glyph · badge · name · bar · count · doing · last log."""
-    line = f"{glyph} {badge(agent)} {name:<14} {bar(done, total)} {done}/{total:<5} {doing}"
+def fleet_row(glyph, agent, name, done, total, doing, countw=3, log=""):
+    """One coop fleet watch row: glyph · badge · name · bar · count · doing · last log.
+    The count is left-padded to countw (the frame-global max width) so counts line up one
+    space past the bar, and there are two spaces before `doing` — matching fleet_watch.go."""
+    count = f"{done}/{total}"
+    line = f"{glyph} {badge(agent)} {name:<14} {bar(done, total)} {count:<{countw}}  {doing}"
     if log:
         line += "  " + dim(log)
     return line
@@ -204,27 +215,28 @@ def scene_loop():
     c = Cast("loop", cols=90, rows=27, title="coop loop — work the queue all night")
     c.command("coop loop")
     c.line(coop("starting unattended loop on .agent/tasks with claude — 0/7 done (Ctrl-C to stop)"), after=0.7)
-    c.line(coop("iteration 1 · 0/7 done · now: Add retry to the API client · " + dim("profile personal")), after=0.5)
+    c.line(coop("iteration 1 · 0/7 done · now: Add retry to the API client · profile personal"), after=0.5)
     c.line(coop("shadowed 4 secret path(s)"), after=0.5)
-    c.line(dim("· model claude-opus-4-8"), after=0.7)
+    c.line(model_line("claude", "claude-opus-4-8", "personal"), after=0.7)
     c.line(ICON_LLM + " I'll add exponential backoff to the client's request path. Reading it first.", after=0.8)
     c.line("▸ Read " + dim("internal/client.go"), after=0.6)
     c.line("✎ Edit " + dim("internal/client.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./...") + "   " + green("ok"), after=1.0)
+    c.line("⚙ Bash " + dim("go test ./..."), after=1.0)
     c.line(dim("· 3 turns · 14s · $0.07"), after=0.6)
-    c.line(coop("iteration 2 · 1/7 done · now: Cache the auth token · " + dim("profile personal")), after=0.5)
-    c.line(dim("· model claude-opus-4-8"), after=0.6)
+    c.line(coop("iteration 2 · 1/7 done · now: Cache the auth token · profile personal"), after=0.5)
+    c.line(model_line("claude", "claude-opus-4-8", "personal"), after=0.6)
     c.line(ICON_LLM + " The token is re-fetched every call. I'll memoize it with a TTL.", after=0.8)
     c.line("✎ Edit " + dim("internal/auth.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./...") + "   " + red("✗") + " " + dim("auth_test.go: token reused after expiry"), after=0.9)
+    c.line("⚙ Bash " + dim("go test ./..."), after=0.5)
+    c.line("  " + red("✗") + " Bash go test ./...: auth_test.go: token reused after expiry", after=0.9)
     c.line(ICON_LLM + " Good — the test caught an expiry bug. Fixing the TTL check.", after=0.8)
     c.line("✎ Edit " + dim("internal/auth.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./...") + "   " + green("ok"), after=1.0)
+    c.line("⚙ Bash " + dim("go test ./..."), after=1.0)
     c.line(dim("· 5 turns · 31s · $0.12"), after=0.7)
-    c.line(yellow("⚠ rate limited") + dim(" (five_hour) — resets Jun 20, 11:00pm"), after=0.4)
-    c.line(coop("claude profile 'personal' rate limited — switching to 'work'"), after=0.9)
-    c.line(coop("iteration 3 · 2/7 done · now: Document the retry policy · " + dim("profile work")), after=0.6)
-    c.line(dim("· model claude-opus-4-8"), after=0.6)
+    c.line(yellow("⚠ rate limited") + " (five_hour) — resets Jun 20, 11:00pm", after=0.4)
+    c.line(coop('claude profile "personal" rate limited — switching to "work"'), after=0.9)
+    c.line(coop("iteration 3 · 2/7 done · now: Document the retry policy · profile work"), after=0.6)
+    c.line(model_line("claude", "claude-opus-4-8", "work"), after=0.6)
     c.line(dim("       … 4 more iterations …"), after=1.1)
     c.line(coop("queue empty — running audit pass"), after=1.2)
     c.line(bold(green("✓ queue verified done — 7/7 in 7 iterations")), after=1.5)
@@ -233,34 +245,56 @@ def scene_loop():
 
 def scene_doctor():
     """Prove the box contains the agent — plant a decoy secret, attack, verify."""
-    c = Cast("doctor", rows=22, title="coop doctor — prove the isolation holds")
+    c = Cast("doctor", rows=32, title="coop doctor — prove the isolation holds")
     c.command("coop doctor")
-    c.line(bold("== coop doctor ==") + "  " + dim("(runtime: docker)"), after=0.6)
+    c.line(bold("== coop doctor ==") + "  " + dim("(runtime: docker, image: coop-box)"), after=0.6)
     c.line()
     c.line(bold("inside the sandbox"), after=0.3)
     for m in [
         ".env is shadowed (empty in the VM)",
+        ".envrc (direnv) is shadowed",
         "*.tfvars in a subdir is shadowed",
+        "a private key in a subdir is shadowed",
         ".coopignore shadows a custom path",
         "secrets/ is shadowed (empty)",
+        "a symlink to a secret reads empty",
         "writing the .env decoy is blocked",
         ".env.example template stays readable",
         "source files stay readable",
         "secret value appears nowhere the agent can read",
+        "the box runs as non-root (uid 1000)",
+        "all Linux capabilities dropped (CapEff=0)",
+        "pids-limit enforced (4096)",
     ]:
-        c.line(chk(m), after=0.22)
+        c.line(chk(m), after=0.14)
+    c.line(after=0.2)
+    c.line(bold("egress (fail-closed)"), after=0.3)
+    c.line(chk("COOP_EGRESS=none cuts the box off the network (loopback only)"), after=0.14)
+    c.line(after=0.2)
+    c.line(bold("credential scope"), after=0.3)
+    for m in [
+        "the scoped agent's own credential home is mounted",
+        "a peer agent's credential home is NOT mounted",
+        "a second peer's credential home is NOT mounted",
+        "the scoped agent's API key is in the env",
+        "a peer's API key is stripped from the env",
+        "a peer's alias key (bare) is stripped",
+    ]:
+        c.line(chk(m), after=0.14)
     c.line(after=0.2)
     c.line(bold("on the host (the clone handoff)"), after=0.3)
     for m in [
         "gitignored .env never enters a clone",
+        "gitignored .envrc never enters a clone",
         "gitignored secrets/ never enters a clone",
+        "gitignored deploy/ (private key) never enters a clone",
         "tracked source is present in the clone",
         "no secret value anywhere in the clone",
         "clone origin is a local path — there is nowhere to push",
     ]:
-        c.line(chk(m), after=0.22)
+        c.line(chk(m), after=0.14)
     c.line(after=0.4)
-    c.line(bold(green("✓ all 13 checks passed — the box contains the agent.")), after=1.4)
+    c.line(bold(green("✓ all 28 checks passed")) + " — the box contains the agent.", after=1.4)
     c.write()
 
 
@@ -268,30 +302,30 @@ def scene_fork():
     """Hand off work like a PR: open a fork, list, review the diff, land it."""
     c = Cast("fork", rows=26, title="coop fork — review and land like a PR")
     c.command("coop fork payments codex --loop -d --tasks .agent/tasks.payments")
-    c.line(coop("forking acme-api → ../acme-api-forks/payments " + dim("(secrets stay out of the clone)")), after=0.6)
+    c.line(coop("forking acme-api → ../acme-api-forks/payments (secrets are gitignored, so they don't come along)"), after=0.6)
     c.line(coop("started fork payments (codex) in the background"), after=0.5)
     c.line(coop("  coop fork logs payments -f   ·   coop fork stop payments"), after=1.0)
     c.command("coop fork ls")
     c.line(bold("  NAME       AGENT   BRANCH     STATE     TASKS    CHANGES      UPDATED"), after=0.3)
     c.line("  payments   codex   payments   " + green("running") + "   2/4      +86 -12      just now", after=1.1)
     c.command("coop fork review payments")
-    c.line(bold("review/payments ← payments  ·  3 commit(s), +86 -12 across 5 file(s)"), after=0.4)
+    c.line(coop("review/payments ← payments  ·  3 commit(s), +86 -12 across 5 file(s)"), after=0.4)
     c.line(bold("commits:"), after=0.2)
-    c.line(dim("  a1b2c3d  payments: verify the webhook signature against Stripe vectors"), after=0.15)
-    c.line(dim("  e4f5a6b  payments: idempotency key on charge-create"), after=0.15)
-    c.line(dim("  9c0d1e2  payments: dead-letter after 12 failed retries"), after=0.3)
+    c.line("  a1b2c3d  payments: verify the webhook signature against Stripe vectors", after=0.15)
+    c.line("  e4f5a6b  payments: idempotency key on charge-create", after=0.15)
+    c.line("  9c0d1e2  payments: dead-letter after 12 failed retries", after=0.3)
     c.line(bold("files:"), after=0.2)
-    c.line(dim("  M  internal/payments/webhook.go"), after=0.12)
-    c.line(dim("  A  internal/payments/idempotency.go"), after=0.12)
-    c.line(dim("  M  internal/payments/charge.go"), after=0.3)
+    c.line("  M  internal/payments/webhook.go", after=0.12)
+    c.line("  A  internal/payments/idempotency.go", after=0.12)
+    c.line("  M  internal/payments/charge.go", after=0.3)
     c.line(bold("why (latest task log):"), after=0.2)
-    c.line(dim("  - signatures checked against Stripe's published test vectors"), after=0.9)
+    c.line("  - signatures checked against Stripe's published test vectors", after=0.9)
     c.command("coop fork merge payments")
-    c.line(coop("rebase payments onto main — 4 commit(s), +112 -18"), after=0.5)
+    c.line(coop("rebase review/payments onto main — 4 commit(s), +112 -18"), after=0.5)
     c.line(coop("revalidating: make check"), after=1.1)
     c.line(coop("landing payments onto main"), after=0.5)
-    c.line(bold(green("✓ landed payments")), after=0.4)
-    c.line(coop("removed fork payments"), after=1.2)
+    c.line(green("✓") + " landed payments", after=0.4)
+    c.line(green("✓") + " removed fork payments", after=1.2)
     c.write()
 
 
@@ -300,7 +334,7 @@ def scene_fusion():
     c = Cast("fusion", rows=17, title="coop fusion — a council that argues before it commits")
     c.command('coop fusion claude -- -p "Design the webhook retry strategy"')
     c.line(coop("fusion: claude governs; peers codex + gemini consulted read-only"), after=0.7)
-    c.line(dim("· model claude-opus-4-8"), after=0.7)
+    c.line(model_line("claude", "claude-opus-4-8", ""), after=0.7)
     c.line(ICON_LLM + " Mapping the failure modes before proposing a strategy.", after=0.8)
     c.line("▸ Read " + dim("internal/webhook/deliver.go"), after=0.7)
     c.line(ICON_LLM + " This is a design call — consulting the council in parallel, read-only.", after=0.8)
@@ -311,7 +345,7 @@ def scene_fusion():
     c.line(ICON_LLM + " Synthesis: idempotency key (gemini) + capped backoff with jitter (codex).", after=0.8)
     c.line("✎ Write " + dim("internal/webhook/idempotency.go"), after=0.6)
     c.line("✎ Edit " + dim("internal/webhook/deliver.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./internal/webhook/...") + "   " + green("ok"), after=1.0)
+    c.line("⚙ Bash " + dim("go test ./internal/webhook/..."), after=1.0)
     c.line(dim("· 7 turns · 48s · $0.21"), after=1.3)
     c.write()
 
@@ -323,7 +357,7 @@ def scene_fleet():
     c.line(coop("started fork perf (codex) in the background"), after=0.35)
     c.line(coop("started fork deps (gemini) in the background"), after=0.35)
     c.line(coop("started fork docs (claude) in the background"), after=0.35)
-    c.line(coop("fleet up: 3 fork(s) detached — coop fleet watch · coop fork logs -f"), after=0.9)
+    c.line(green("✓") + " 3 forks detached — coop fork ls · coop fork logs -f", after=0.9)
     c.command("coop fleet watch", think=0.4)
     # The watch renders on the alternate screen (top/htop style), repainting in place.
     # Each frame: home + clear, then the dashboard — forks make progress and finish.
@@ -345,12 +379,13 @@ def scene_fleet():
         done = sum(f[2] for f in forks)
         total = sum(f[3] for f in forks)
         running = sum(1 for f in forks if f[2] < f[3])
+        countw = max(3, max(len(f"{f[2]}/{f[3]}") for f in forks))
         rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
         for name, agent, fd, ft, doing, log in forks:
             if fd >= ft:
-                rows.append(fleet_row(green("✓"), agent, name, fd, ft, green("✓ done")))
+                rows.append(fleet_row(green("✓"), agent, name, fd, ft, green("✓ done"), countw=countw))
             else:
-                rows.append(fleet_row(cyan(SPIN[spin % len(SPIN)]), agent, name, fd, ft, doing, log))
+                rows.append(fleet_row(cyan(SPIN[spin % len(SPIN)]), agent, name, fd, ft, doing, countw=countw, log=log))
         gl = green("✓") if running == 0 else cyan(SPIN[spin % len(SPIN)])
         rows += ["", f"{gl} {bar(done, total, 27)} {done}/{total} tasks · {running} running · 0 blocked"]
         c.raw("\x1b[H\x1b[2J")            # home + clear (alt-screen repaint)
@@ -368,8 +403,8 @@ def scene_secrets():
     c.line("config/credentials.yaml" + dim("  # a slash makes it a repo-relative path"), after=0.2)
     c.line("vault/" + dim("                   # a directory — its contents are hidden whole"), after=0.9)
     c.command("coop check-secrets")
-    c.line("  possible secret in " + bold("config/legacy.rb:42") + dim(" (high-entropy string)"), after=0.6)
-    c.line(coop("check-secrets: 1 finding(s) — remove it, or hide the file in .coopignore"), after=0.7)
+    c.line("  possible secret in config/legacy.rb:42 (high-entropy value assigned to 'api_key')", after=0.6)
+    c.line(red("✗ 1 secret found in commit-candidate files (tracked + untracked; gitignored excluded) — remove them, or hide an intended file with a .coopignore entry"), after=0.7)
     c.command("echo $?")
     c.line("1", after=1.0)
     c.write()
@@ -380,11 +415,11 @@ def scene_claude():
     c = Cast("claude", rows=10, title="coop claude — a sandboxed agent, brakes off")
     c.command('coop claude -- -p "Make the JSON logger redact auth headers"')
     c.line(coop("shadowed 4 secret path(s)"), after=0.6)
-    c.line(dim("· model claude-opus-4-8"), after=0.7)
+    c.line(model_line("claude", "claude-opus-4-8", "personal"), after=0.7)
     c.line(ICON_LLM + " I'll redact Authorization and Cookie headers before they reach the sink.", after=0.8)
     c.line("▸ Read " + dim("internal/log/json.go"), after=0.6)
     c.line("✎ Edit " + dim("internal/log/json.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./internal/log/...") + "   " + green("ok"), after=1.0)
+    c.line("⚙ Bash " + dim("go test ./internal/log/..."), after=1.0)
     c.line(dim("· 4 turns · 22s · $0.09"), after=1.2)
     c.write()
 
