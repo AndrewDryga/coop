@@ -4,13 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **`coop tasks watch` replaces `coop status`.** The live progress board now lives at
-  `coop tasks watch` — every agent's task progress, auto-exiting when the fleet's done. `coop status`
-  (and its `--watch` alias for `coop fleet watch`) is gone: it overlapped `coop fork ls` (the fork
-  snapshot) and `coop tasks ls` (the queue), and `--watch` was a straight alias. Without a TTY or any
-  forks, `coop tasks watch` prints the one-shot roll-up (the local queue included). Listing is
-  normalized too — `ls` is the canonical verb everywhere (`coop tasks ls`, `coop fork ls`), with
-  `list` kept as a forgiving alias, matching the `rm`/`remove` convention.
+- **New `coop tasks watch`; `coop status` removed.** `coop tasks watch` is a live, task-centric
+  board — the queue itself (in progress / todo / blocked) draining in place, with overall progress;
+  it auto-exits only when every task is done, and keeps watching a blocked or idle queue. The fleet's
+  per-fork board stays at `coop fleet watch` (snapshot: `coop fork ls`). `coop status` is gone: it was
+  a third entry point that overlapped `coop fork ls`, and its `--watch` was a straight alias for
+  `coop fleet watch`. Listing is normalized too — `ls` is the canonical verb everywhere
+  (`coop tasks ls`, `coop fork ls`), with `list` kept as a forgiving alias, matching `rm`/`remove`.
 
 - **New `/review-board` skill — the heavyweight, on-demand pre-merge review.** Convenes a
   board of expert hats (correctness, security, PM/UX/maintainer, and any hat the change

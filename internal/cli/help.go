@@ -95,7 +95,7 @@ func helpText(cfg *config.Config) string {
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks ls", "show the queue, grouped by state")
-	row("coop tasks watch", "live board of every agent's task progress (Ctrl-C; auto-exits)")
+	row("coop tasks watch", "live view of the task queue draining (auto-exits when all done)")
 	row("coop tasks add \"<title>\"", "add a task; claim/block/unblock/done move it through its states")
 	row("coop tasks decisions", "show what's blocked on a human decision (-i to answer them)")
 
@@ -246,7 +246,7 @@ var commandHelp = map[string]string{
   Usage: coop tasks [--tasks <path>]... <command>
 
   ls               list tasks by state (todo/in_progress/blocked/done), with counts
-  watch            live board of every agent's task progress (Ctrl-C; auto-exits when done)
+  watch            live view of the queue: in progress / todo / blocked (auto-exits when all done)
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub

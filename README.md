@@ -185,7 +185,7 @@ any of them.
 | `coop loop [agent] [--tasks <path>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
-| `coop tasks watch` | live board — every agent's task progress: running/idle, done/total, blockers, the task each is on (auto-exits when the fleet's done; Ctrl-C anytime) |
+| `coop tasks watch` | live view of the task queue draining — in progress / todo / blocked, with overall progress (auto-exits when every task's done; Ctrl-C anytime) |
 | `coop tasks add` · `claim` · `block` · `done` · `ls` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
 
 **Set up & maintain**
@@ -693,7 +693,7 @@ coop fork perf codex  --loop -d --tasks .agent/tasks.perf   # codex loops the pe
 coop fork deps gemini --loop -d --tasks .agent/tasks.deps   # gemini takes the deps slice
 coop fork docs claude --loop -d --tasks .agent/tasks.docs   # claude takes the docs
 
-coop tasks watch       # live board: every agent's progress (done/total), blockers, the task each is on
+coop fleet watch       # live board: every fork's progress (done/total), blockers, the task each is on
 coop fork ls           # snapshot: who's running, how big the diff, last activity
 coop fork logs -f      # tail every fork at once (compose-style, prefixed)
 coop fork stop perf    # halt one; coop fork logs perf -f to watch just it

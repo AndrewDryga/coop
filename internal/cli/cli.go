@@ -227,8 +227,8 @@ func isKnownCommand(cmd string) bool {
 func unknownCommandErr(argv []string) error {
 	sub := argv[0]
 	if sub == "status" { // removed: the live board folded into `coop tasks watch`
-		return fmt.Errorf("coop status was removed — the live board is now `coop tasks watch` " +
-			"(one-shot snapshot: `coop fork ls` for forks, `coop tasks ls` for the queue)")
+		return fmt.Errorf("coop status was removed — the fleet board is now `coop fleet watch` " +
+			"(snapshot: `coop fork ls`); watch the task queue with `coop tasks watch`")
 	}
 	msg := fmt.Sprintf("unknown command %q", sub)
 	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)

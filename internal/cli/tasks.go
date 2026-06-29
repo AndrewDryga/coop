@@ -68,12 +68,6 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if len(rest) > 0 && rest[0] == "watch" {
-		// The live board spans every fork + the local queue, so it's cross-cutting — not a
-		// single-queue op. fleetWatch resolves the repo and falls back to a one-shot roll-up
-		// without a TTY or forks.
-		return a.fleetWatch()
-	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -85,6 +79,14 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]
+	}
+	if sub == "watch" {
+		// The live board watches the queue(s) themselves draining — task-centric, across however
+		// many are configured — unlike the per-fork `coop fleet watch`.
+		if len(rels) == 0 {
+			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <dir>")
+		}
+		return a.tasksWatch(repo, rels)
 	}
 	if len(rels) > 1 {
 		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set
