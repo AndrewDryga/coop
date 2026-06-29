@@ -130,7 +130,7 @@ func (a *app) cmdPool(args []string) (int, error) {
 		if verb == "add" {
 			for _, p := range profiles { // a pool member you haven't signed into yet won't rotate
 				if !box.ProfileAuthed(a.cfg, agent, p) {
-					ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", agent, p, agent, p)
+					ui.Warn("%s profile %q isn't signed in — run: coop login %s --profile %s", agent, p, agent, p)
 				}
 			}
 		}
