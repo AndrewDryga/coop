@@ -39,7 +39,10 @@ to GitHub Issues / Jira. The templates below are what those commands write (minu
 ## task.md — the spec (REQUIRED)
 
 A fresh agent must be able to work the task from this file alone: the problem, the bar for
-"done", and the plan. Keep the body short; move a big design into `spec.md`.
+"done", and the plan. Keep the body short; move a big design into `spec.md`. A freshly-added
+task is a stub: whoever picks it up replaces every `<…>` placeholder *before* writing code —
+that thinking is step one — or `coop tasks block`s it if they can't yet. The generated
+header comment says exactly this, so the reminder travels with the task.
 
 **Template:**
 

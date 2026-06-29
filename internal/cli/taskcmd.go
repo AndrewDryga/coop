@@ -136,7 +136,11 @@ func slugify(s string) string {
 // 50_blocked/ (and a decision.md on a todo task is a lint error).
 func newTaskFiles(id, title, now string) map[string]string {
 	return map[string]string{
-		"task.md": "<!-- Task spec — a fresh agent must be able to work this from this file ALONE.\n" +
+		"task.md": "<!-- TASK SPEC — a fresh agent must work this from this file ALONE.\n" +
+			"     FIRST, BEFORE ANY CODE: replace every <…> placeholder below — the real problem and\n" +
+			"     where it lives (Context), what proves it's done incl. a green gate (Acceptance), and\n" +
+			"     the boring plan (Approach). This thinking IS step one, not a formality. Can't fill it\n" +
+			"     honestly? It isn't ready — run: coop tasks block " + id + "\n" +
 			"     Full format + examples: .agent/tasks/README.md -->\n" +
 			"---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
 			"# " + title + "\n\n" +
