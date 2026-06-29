@@ -140,15 +140,17 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mk(".gitignore", "secret.txt\n.env\n")
-	mk("secret.txt", "x") // gitignored, NOT shadowed → box-visible blind spot → counts
-	mk(".env", "x")       // gitignored AND shadowed → protected → must NOT count
-	mk("tracked.go", "x") // committed → in the default scan → not counted
+	mk(".gitignore", "secret.txt\n.env\n.agent/*\n")
+	mk("secret.txt", "x")             // gitignored, NOT shadowed → box-visible blind spot → counts
+	mk(".env", "x")                   // gitignored AND shadowed → protected → must NOT count
+	mk(".agent/state.md", "x")        // coop's own gitignored working state → must NOT count
+	mk(".agent/tasks/t/task.md", "x") // ditto, nested → must NOT count
+	mk("tracked.go", "x")             // committed → in the default scan → not counted
 	git(t, repo, "add", ".gitignore", "tracked.go")
 	git(t, repo, "commit", "-qm", "add")
 
 	if n := unscannedIgnoredCount(repo); n != 1 {
-		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env is shadowed, tracked.go committed)", n)
+		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env shadowed, .agent/* is coop's own state, tracked.go committed)", n)
 	}
 }
 

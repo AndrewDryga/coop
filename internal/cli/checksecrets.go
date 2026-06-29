@@ -89,11 +89,21 @@ func unscannedIgnoredCount(repo string) int {
 	shadowed := box.NewShadowDecider(repo)
 	n := 0
 	for _, r := range all {
-		if !inCommit[r] && !shadowed(r) { // box-visible, gitignored, not protected
-			n++
+		if inCommit[r] || shadowed(r) || coopState(r) {
+			continue // committed, secret-shadowed, or coop's own gitignored working state
 		}
+		n++ // box-visible, user-gitignored, unprotected → a real blind spot
 	}
 	return n
+}
+
+// coopState reports whether a repo-relative slash path is coop's OWN gitignored working
+// state — the `.agent/` queue, logs, and notes that `coop init` ignores (see scaffold's
+// .gitignore block) and a box reads on purpose. Those aren't user-secret blind spots, so
+// they must not inflate the "gitignored, not scanned" warning. (.agent/rules + .agent/skills
+// are tracked, so they're already excluded as commit candidates.)
+func coopState(rel string) bool {
+	return strings.HasPrefix(rel, ".agent/")
 }
 
 // scanVisibleTree runs the content scanner on each candidate file the box can see (see
