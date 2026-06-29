@@ -31,7 +31,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	switch sub {
 	case "":
 		return groupHelp("tasks") // bare `coop tasks` shows help, not an error (see rule)
-	case "list", "ls":
+	case "ls", "list":
 		return tasksFolderList(root)
 	case "lint":
 		return tasksFolderLint(root)
@@ -53,7 +53,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderDecisions(root, args)
 	default:
 		return 2, unknownErr("tasks command", sub,
-			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "rm", "split", "decisions"})
+			[]string{"ls", "lint", "add", "claim", "block", "unblock", "done", "rm", "split", "decisions"})
 	}
 }
 
@@ -62,7 +62,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // queue path. Keep in sync with the dispatch switch above.
 func isTasksSubcommand(s string) bool {
 	switch s {
-	case "list", "ls", "lint", "add", "claim", "start", "block", "unblock", "done", "remove", "rm", "split", "decisions":
+	case "ls", "list", "lint", "add", "claim", "start", "block", "unblock", "done", "remove", "rm", "split", "decisions":
 		return true
 	}
 	return false

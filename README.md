@@ -186,7 +186,7 @@ any of them.
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 | `coop status [-w]` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on (`-w` watches live) |
-| `coop tasks add` · `claim` · `block` · `done` · `list` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
+| `coop tasks add` · `claim` · `block` · `done` · `ls` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
 
 **Set up & maintain**
 

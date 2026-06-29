@@ -85,7 +85,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		// `coop loop`/`coop fleet` drain. The read-only roll-ups span them all (each under a header);
 		// the mutating commands need one unambiguous target.
 		switch sub {
-		case "list", "ls":
+		case "ls", "list":
 			return tasksListAll(repo, rels)
 		case "decisions":
 			for _, f := range rest[1:] {
@@ -97,7 +97,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		case "":
 			return groupHelp("tasks")
 		default:
-			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (list and decisions span all %d configured queues)", sub, len(rels))
+			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (ls and decisions span all %d configured queues)", sub, len(rels))
 		}
 	}
 	if len(rels) == 0 {

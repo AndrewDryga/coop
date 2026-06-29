@@ -95,7 +95,7 @@ func helpText(cfg *config.Config) string {
 	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
-	row("coop tasks list", "show the queue, grouped by state")
+	row("coop tasks ls", "show the queue, grouped by state")
 	row("coop tasks add \"<title>\"", "add a task; claim/block/unblock/done move it through its states")
 	row("coop tasks decisions", "show what's blocked on a human decision (-i to answer them)")
 
@@ -253,7 +253,7 @@ var commandHelp = map[string]string{
 
   Usage: coop tasks [--tasks <path>]... <command>
 
-  list             list tasks by state (todo/in_progress/blocked/done), with counts
+  ls               list tasks by state (todo/in_progress/blocked/done), with counts
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
@@ -269,7 +269,7 @@ var commandHelp = map[string]string{
   Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
   done, never delete it, so 'coop tasks rm --all-done' is how you prune the archive.
   Defaults to .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths
-  are repo-relative. With several queues configured (a monorepo), 'list' and 'decisions' roll
+  are repo-relative. With several queues configured (a monorepo), 'ls' and 'decisions' roll
   up across all of them; the mutating commands act on one queue, so pass a single --tasks.`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
