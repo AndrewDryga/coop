@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **New `/review-board` skill — the heavyweight, on-demand pre-merge review.** Convenes a
+  board of expert hats (correctness, security, PM/UX/maintainer, and any hat the change
+  earns) as parallel reviewers, checks the diff against the project's *own* `.agent/rules/`
+  and gate — no hardcoded laws — then synthesizes one ranked verdict and an ordered fix plan
+  you can queue with `coop tasks add`. Ships into new projects via `coop init`, and is
+  agent-agnostic: it falls back to a sequential pass where parallel subagents aren't available.
+
 - **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
   The work queue is one folder per task under four state directories — `00_todo/` ·
   `10_in_progress/` · `50_blocked/` · `99_done/` — and a task's workflow state is simply which
@@ -20,12 +27,12 @@
   numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
   lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`99_` keeps
   done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
-  `add`/`claim`/`block`/`unblock`/`done`/`remove`/`list`/`lint`/`decisions` — and the loop, `coop
+  `add`/`claim`/`block`/`unblock`/`done`/`rm`/`list`/`lint`/`decisions` — and the loop, `coop
   status`, `coop fleet`, the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
   checklist inside `task.md`; the frontmatter is sync-ready for GitHub Issues / Jira. A finished
   task is **moved** to `99_done/`, never deleted: the loop and `/sweep` only ever move tasks
   between states, so done tasks accumulate as the shipped record until you prune them by hand with
-  `coop tasks remove --all-done` (or `coop tasks remove <id>` for one).
+  `coop tasks rm --all-done` (or `coop tasks rm <id>` for one).
 
   *Migrating.* It's a one-time, content-preserving conversion an LLM handles well (the old task
   bodies are prose to map, not a rigid parse). Commit first, then paste the prompt below to any
@@ -66,6 +73,25 @@
   now print that group's help and exit 0 — the natural way to discover the subcommands. (`coop
   pool` and `coop profiles` already showed a sensible default view, so they're unchanged.)
 
+- **Readable, colorized output across the CLI.** `coop tasks` and `coop tasks decisions` render in
+  color — colored state headers, wrapped titles, a gray task id, and `[n/m]` subtask / `⚠` decision
+  markers — instead of a flat monochrome list, degrading cleanly on a narrow terminal or under
+  `NO_COLOR`. Command results now speak in one voice: a green `✓` for success, a yellow `⚠` for a
+  caution, a red `✗` for a failure, plain text for a neutral note — replacing the old
+  `coop: <command>: …` prefix that just echoed the command back at you (so `coop tasks lint` reads
+  `✓ no issues — 1 task checked`). The loop's per-iteration line reads `· using <agent> model
+  <model> profile <profile>` with the values lifted out of the dim label, and `coop fleet watch`
+  repaints only on a real change (no flicker), with the task counts aligned in a right-sized column.
+
+- **`rm` is the one verb for deleting things.** Every destructive subcommand advertises `rm` —
+  `coop tasks rm`, `coop fork rm`, `coop profiles rm`, `coop pool rm` — rather than `coop tasks`
+  alone advertising `remove`. `remove` still works everywhere as an accepted alias, so existing
+  habits and scripts don't break; it's just no longer the form shown in help or usage.
+
+- **Clearer `coop help`.** Tasks get their own `TASKS` section instead of one line under
+  `UNATTENDED`, and `coop up`/`coop down` name the actual services defined in `compose.agent.yml`,
+  dimmed (with a "none yet" hint) when there's no compose file to act on.
+
 - **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
   demand, so a monorepo can start a per-component queue without a root `coop init`; and `coop
   status` now reports the local queue's progress (done/total · blocked · the active task) when
@@ -75,9 +101,12 @@
   `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a short header
   that explains the file and its format — so dumping a resume snapshot, journaling the *why*, and
   answering a blocked one-way-door decision are all by-the-book without leaving the folder. The
-  `decision.md` carries an explicit "HUMAN: write your answer here, then `coop tasks unblock`"
-  marker, and `.agent/tasks/README.md` is the full reference: a description, template, and worked
-  example for every per-task file.
+  `task.md` header is a directive to the agent that picks the task up: *before any code*, replace
+  the `<…>` placeholders (Context / Acceptance / Approach) or block it — so a vague title can't be
+  coded against blind. A blocked decision is answerable in one step — `coop tasks unblock <id>
+  "<answer>"` writes the answer into `decision.md` (replacing its `HUMAN:` marker) and unblocks —
+  and `coop tasks decisions` prints each recommendation in full. `.agent/tasks/README.md` is the
+  full reference: a description, template, and worked example for every per-task file.
 
 - **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
   and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
@@ -106,6 +135,9 @@
   token and session history. It refuses to delete the marked default (set another first) and never
   touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
   earlier login layout, e.g. `coop profiles rm claude default`.
+- **`coop profiles` flags an expired login.** "signed in" used to mean only that a credentials file
+  existed, so an expired OAuth token read as fine yet 401'd mid-run. `coop profiles` now detects the
+  expired token and points you at `coop login <agent> --profile <name>` to refresh it.
 
 - **Security hardening (from an end-to-end audit).** Secret shadowing now covers `*.yaml`/`*.yml`
   credential files and matches filenames case-insensitively, so `config/credentials.yaml`, `.ENV`, and

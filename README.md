@@ -663,8 +663,9 @@ through the daily cap instead of burning retries against it.
 
 `init` also installs generic workflow skills into `.claude/skills/` (shared with
 Codex): `/spec` a multi-file change, `/work` it step-by-step against the gate, `/sweep`
-to drain `.agent/tasks/`, `/investigate` to root-cause a failure, and `/verify-api`
-before calling anything you're unsure of. Edit them freely — `init` won't overwrite a
+to drain `.agent/tasks/`, `/investigate` to root-cause a failure, `/verify-api`
+before calling anything you're unsure of, and `/review-board` for a thorough
+multi-hat review before landing. Edit them freely — `init` won't overwrite a
 skill you've changed.
 
 ### The `.agent/` working folder

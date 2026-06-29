@@ -170,7 +170,7 @@ func TestInit(t *testing.T) {
 	}
 
 	// Skills were copied into the canonical dir.
-	for _, s := range []string{"spec", "investigate"} {
+	for _, s := range []string{"spec", "investigate", "review-board"} {
 		if _, err := os.Stat(filepath.Join(repo, ".agent/skills", s, "SKILL.md")); err != nil {
 			t.Errorf("skill %s not copied: %v", s, err)
 		}
