@@ -353,46 +353,32 @@ def scene_fusion():
 
 
 def scene_fleet():
-    """Run several models at once; `coop fleet watch` is the live board (alt-screen)."""
-    c = Cast("fleet", cols=92, rows=12, title="coop fleet — many agents, one live board")
+    """Run several agents at once; `coop fleet watch` is the live board (alt-screen).
+    From a REAL `coop fleet up` + `coop fleet watch`: a claude `api` fork and a gemini `docs`
+    fork. api has finished and passed its audit; docs has done its task and is finishing its
+    audit — and its log line even surfaces a real gemini tool hiccup, shown as-is."""
+    c = Cast("fleet", cols=96, rows=11, title="coop fleet — many agents, one live board")
     c.command("coop fleet up")
-    c.line(coop("started fork perf (codex) in the background"), after=0.35)
-    c.line(coop("started fork deps (gemini) in the background"), after=0.35)
-    c.line(coop("started fork docs (claude) in the background"), after=0.35)
-    c.line(green("✓") + " 3 forks detached — coop fork ls · coop fork logs -f", after=0.9)
+    c.line(coop("forking acme-api → ../acme-api-forks/api (secrets are gitignored, so they don't come along)"), after=0.4)
+    c.line(coop("started fork api (claude) in the background"), after=0.3)
+    c.line(coop("forking acme-api → ../acme-api-forks/docs (secrets are gitignored, so they don't come along)"), after=0.4)
+    c.line(coop("started fork docs (gemini) in the background"), after=0.3)
+    c.line(green("✓") + " 2 forks detached — coop fork ls · coop fork logs -f", after=0.9)
     c.command("coop fleet watch", think=0.4)
-    # The watch renders on the alternate screen (top/htop style), repainting in place.
-    # Each frame: home + clear, then the dashboard — forks make progress and finish.
-    frames = [
-        (0, [("perf", "codex", 1, 3, "Cache the fragment", "⚙ go test ./..."),
-             ("deps", "gemini", 0, 2, "Bump axios to 1.x", "▸ Read package.json"),
-             ("docs", "claude", 2, 4, "Document the fleet", "✎ Edit README.md")], 1.3),
-        (3, [("perf", "codex", 2, 3, "Add backoff jitter", "✎ Edit retry.go"),
-             ("deps", "gemini", 1, 2, "Fix the breakage", "⚙ npm test"),
-             ("docs", "claude", 3, 4, "Document the fleet", "✦ the loop section")], 1.3),
-        (6, [("perf", "codex", 2, 3, "Add backoff jitter", "⚙ go test ./..."),
-             ("deps", "gemini", 2, 2, None, None),
-             ("docs", "claude", 4, 4, None, None)], 1.4),
-        (0, [("perf", "codex", 3, 3, None, None),
-             ("deps", "gemini", 2, 2, None, None),
-             ("docs", "claude", 4, 4, None, None)], 1.8),
-    ]
-    for spin, forks, hold in frames:
-        done = sum(f[2] for f in forks)
-        total = sum(f[3] for f in forks)
-        running = sum(1 for f in forks if f[2] < f[3])
-        countw = max(3, max(len(f"{f[2]}/{f[3]}") for f in forks))
-        rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
-        for name, agent, fd, ft, doing, log in forks:
-            if fd >= ft:
-                rows.append(fleet_row(green("✓"), agent, name, fd, ft, green("✓ done"), countw=countw))
-            else:
-                rows.append(fleet_row(cyan(SPIN[spin % len(SPIN)]), agent, name, fd, ft, doing, countw=countw, log=log))
-        gl = green("✓") if running == 0 else cyan(SPIN[spin % len(SPIN)])
-        rows += ["", f"{gl} {bar(done, total, 27)} {done}/{total} tasks · {running} running · 0 blocked"]
+    # The watch renders on the alternate screen (top/htop style), repainting in place. This is the
+    # real frame captured while docs finished its audit; the spinner cycles as it repaints.
+    for spin in range(6):
+        s = cyan(SPIN[spin % len(SPIN)])
+        rows = [bold("acme-api fleet") + " — 1 running, 0 blocked", ""]
+        rows.append(fleet_row(green("✓"), "claude", "api", 1, 1, green("✓ done"), countw=3,
+                              log="✓ queue verified done — 1/1 in 1 iterations"))
+        rows.append(fleet_row(s, "gemini", "docs", 1, 1, green("✓ done"), countw=3,
+                              log="Error executing tool list_directory: Error:…"))
+        rows += ["", f"{s} {bar(2, 2, 27)} 2/2 tasks · 1 running · 0 blocked"]
         c.raw("\x1b[H\x1b[2J")            # home + clear (alt-screen repaint)
         c.raw("\r\n".join(rows) + "\r\n")
-        c.sleep(hold)
+        c.sleep(0.5)
+    c.sleep(1.3)
     c.write()
 
 
