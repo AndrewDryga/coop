@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	fleetPoll   = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
-	fleetNameW  = 14                     // fork-name column width
-	fleetBarW   = 10                     // per-fork progress bar width
-	fleetCountW = 7                      // done/total column — room for three digits each side (999/999)
+	fleetPoll  = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
+	fleetNameW = 14                     // fork-name column width
+	fleetBarW  = 10                     // per-fork progress bar width
 )
 
 // fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
@@ -129,7 +128,10 @@ func (a *app) fleetWatch() (int, error) {
 // Pure (it takes the already-gathered rows) so it unit-tests without a real fleet.
 func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	var running, blocked, done, total int
-	body := make([]string, 0, len(rows))
+	// Size the done/total column to the widest count actually present (min "0/0"), so every count
+	// sits one space off its bar and the column that follows still lines up — instead of a fixed
+	// gap wide enough for "999/999" that no one has.
+	countW := len("0/0")
 	for _, r := range rows {
 		if r.running {
 			running++
@@ -137,15 +139,21 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 		blocked += r.counts.Blocked
 		done += r.counts.Done
 		total += r.counts.total()
-		body = append(body, fleetRowLine(r, spin))
+		if w := len(fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total())); w > countW {
+			countW = w
+		}
+	}
+	body := make([]string, 0, len(rows))
+	for _, r := range rows {
+		body = append(body, fleetRowLine(r, spin, countW))
 	}
 	frac := 0.0
 	if total > 0 {
 		frac = float64(done) / float64(total)
 	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
-	bar := fmt.Sprintf("%s %s %*s tasks · %d running · %s blocked",
-		stateGlyph(running > 0, done, total, spin), ui.ProgressBar(frac, fleetTotalBarW), fleetCountW, fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
+	bar := fmt.Sprintf("%s %s %s tasks · %d running · %s blocked",
+		stateGlyph(running > 0, done, total, spin), ui.ProgressBar(frac, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
 
 	out := make([]string, 0, len(body)+4)
 	out = append(out, header, "")
@@ -171,7 +179,7 @@ func stateGlyph(running bool, done, total, spin int) string {
 
 // fleetRowLine renders one fork's row: a state glyph (spinner running / ‖ idle / ✓ done), a
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
-func fleetRowLine(r fleetRow, spin int) string {
+func fleetRowLine(r fleetRow, spin, countW int) string {
 	total := r.counts.total()
 	allDone := total > 0 && r.counts.Done == total // "done" = every task in done/, not just "no todo/ left"
 	// stopped: the loop exited (not running) with tasks unfinished — it ran and quit at N/M. Distinct
@@ -205,8 +213,8 @@ func fleetRowLine(r fleetRow, spin int) string {
 	default:
 		doing = truncate(r.active, 32)
 	}
-	line := fmt.Sprintf("%s %s %-*s %s %*s  %s",
-		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), fleetCountW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
+	line := fmt.Sprintf("%s %s %-*s %s %-*s  %s",
+		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}

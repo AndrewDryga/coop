@@ -57,23 +57,28 @@ func TestFleetDashboard(t *testing.T) {
 		t.Errorf("bar right-edges misaligned: fork ] at col %d, global ] at col %d\n%q\n%q", a, b, forkRow, global)
 	}
 
-	// done/total counts right-align in one column — the per-fork rows AND the global roll-up.
-	// Take each count token's right edge (rune column); require a single shared column.
+	// done/total counts left-align in one column — they START one space after the bar (the bars are
+	// fixed-width, so the start column is shared by every per-fork row AND the global roll-up),
+	// instead of sitting behind a wide fixed gap. Take each count token's left edge (rune column).
 	countRe := regexp.MustCompile(`[0-9]+/[0-9]+`)
-	countEnd := func(line string) int {
+	countStart := func(line string) int {
 		if m := countRe.FindStringIndex(line); m != nil {
-			return len([]rune(line[:m[1]]))
+			return len([]rune(line[:m[0]]))
 		}
 		return -1
 	}
-	ends := map[int]bool{}
+	starts := map[int]bool{}
 	for _, l := range out {
-		if e := countEnd(l); e >= 0 {
-			ends[e] = true
+		if s := countStart(l); s >= 0 {
+			starts[s] = true
 		}
 	}
-	if len(ends) != 1 {
-		t.Errorf("done/total counts not right-aligned to one column: ends=%v\n%s", ends, joined)
+	if len(starts) != 1 {
+		t.Errorf("done/total counts not left-aligned to one column: starts=%v\n%s", starts, joined)
+	}
+	// and that column is exactly one space past the bar's ] — no wide gap.
+	if s, b := countStart(forkRow), barEnd(forkRow); s != b+2 {
+		t.Errorf("count should sit one space after the bar (] at col %d, count at col %d)\n%q", b, s, forkRow)
 	}
 }
 
@@ -110,7 +115,7 @@ func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
 // A fork whose loop exited with work left (ran, not running, not done) reads as "stopped" — not as
 // if it's still on its next task — so a fork that quit at 0/20 isn't mistaken for paused/working.
 func TestFleetRowStopped(t *testing.T) {
-	stopped := fleetRowLine(fleetRow{name: "codex3", agent: "codex", running: false, ran: true, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0)
+	stopped := fleetRowLine(fleetRow{name: "codex3", agent: "codex", running: false, ran: true, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0, 5)
 	if !strings.Contains(stopped, "stopped") {
 		t.Errorf("a stopped fork should say stopped:\n%q", stopped)
 	}
@@ -118,12 +123,12 @@ func TestFleetRowStopped(t *testing.T) {
 		t.Errorf("a stopped fork should not show its next task as if active:\n%q", stopped)
 	}
 	// A fork that never started (no log → ran=false) still shows its pending task, as before.
-	idle := fleetRowLine(fleetRow{name: "pending", agent: "gemini", running: false, ran: false, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0)
+	idle := fleetRowLine(fleetRow{name: "pending", agent: "gemini", running: false, ran: false, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0, 5)
 	if strings.Contains(idle, "stopped") || !strings.Contains(idle, "Task 1") {
 		t.Errorf("an idle, never-started fork should show its pending task, not 'stopped':\n%q", idle)
 	}
 	// A done fork is still ✓ done, never "stopped", even though it isn't running.
-	doneRow := fleetRowLine(fleetRow{name: "claude1", agent: "claude", running: false, ran: true, counts: taskCounts{Done: 20}, active: ""}, 0)
+	doneRow := fleetRowLine(fleetRow{name: "claude1", agent: "claude", running: false, ran: true, counts: taskCounts{Done: 20}, active: ""}, 0, 5)
 	if strings.Contains(doneRow, "stopped") || !strings.Contains(doneRow, "✓ done") {
 		t.Errorf("a finished fork should be ✓ done, not stopped:\n%q", doneRow)
 	}
@@ -143,7 +148,7 @@ func TestFleetRowBlockedNotDone(t *testing.T) {
 		{"never-ran, all blocked", fleetRow{name: "c", agent: "gemini", running: false, ran: false, counts: taskCounts{Blocked: 5}, active: ""}},
 	}
 	for _, c := range cases {
-		got := fleetRowLine(c.row, 0)
+		got := fleetRowLine(c.row, 0, 5)
 		if strings.Contains(got, "✓ done") {
 			t.Errorf("%s: a fork at %d/%d must not show ✓ done:\n%q", c.desc, c.row.counts.Done, c.row.counts.total(), got)
 		}
@@ -152,7 +157,7 @@ func TestFleetRowBlockedNotDone(t *testing.T) {
 		}
 	}
 	// Only a fork where every task is [x] is "done".
-	if got := fleetRowLine(fleetRow{name: "d", running: false, ran: true, counts: taskCounts{Done: 5}}, 0); !strings.Contains(got, "✓ done") {
+	if got := fleetRowLine(fleetRow{name: "d", running: false, ran: true, counts: taskCounts{Done: 5}}, 0, 5); !strings.Contains(got, "✓ done") {
 		t.Errorf("a fully-done fork should show ✓ done:\n%q", got)
 	}
 }
