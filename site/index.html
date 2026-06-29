@@ -215,11 +215,12 @@
                             <span class="kicker">The loop</span>
                             <h3>Drain the queue while you sleep</h3>
                             <p>
-                                Add tasks to <code>.agent/tasks/</code> (a folder
-                                per task) and walk away. A fresh agent per iteration
-                                (no context rot) claims each one,
-                                commits behind your gate, and won't quit while
-                                work remains.
+                                Add tasks with <code>coop tasks add</code> (or
+                                just ask your agent to add them) — one folder per
+                                task under <code>.agent/tasks/</code> — and walk
+                                away. A fresh agent per iteration (no context rot)
+                                claims each one, commits behind your gate, and
+                                won't quit while work remains.
                             </p>
                             <ul>
                                 <li>

@@ -62,7 +62,7 @@
 [2.85, "o", "\""]
 [3.1, "o", "\r\n"]
 [4.3, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m shadowed 4 secret path(s)\r\n"]
-[5.0, "o", "\u001b[2m· using \u001b[0mclaude\u001b[2m model \u001b[0mclaude-opus-4-8\u001b[2m profile \u001b[0mpersonal\r\n"]
+[5.0, "o", "\u001b[2m· using \u001b[0mclaude\u001b[2m model \u001b[0mclaude-opus-4-8\r\n"]
 [5.8, "o", "\u001b[35m✦\u001b[0m I'll redact Authorization and Cookie headers before they reach the sink.\r\n"]
 [6.4, "o", "▸ Read \u001b[2minternal/log/json.go\u001b[0m\r\n"]
 [7.1, "o", "✎ Edit \u001b[2minternal/log/json.go\u001b[0m\r\n"]
