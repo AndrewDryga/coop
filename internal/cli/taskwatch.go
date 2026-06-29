@@ -12,29 +12,40 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+// watchQueue is one configured task queue's live state for the board.
+type watchQueue struct {
+	rel    string // display path, e.g. ".agent/tasks" or ".agent/tasks.api"
+	items  []taskItem
+	counts taskCounts
+}
+
 // tasksWatch is the live `coop tasks watch` board: the task queue(s) themselves — in progress,
 // todo, and blocked — refreshed in place, so you can watch agents drain the backlog. Unlike the
 // per-fork fleet board (`coop fleet watch`), this is task-centric. It auto-exits ONLY when the
 // queue is fully drained — every task done — never on a partially-blocked or merely idle queue,
 // which it keeps watching until Ctrl-C. Without a TTY it prints the list once (pipe-safe).
 func (a *app) tasksWatch(repo string, rels []string) (int, error) {
-	roots := make([]string, len(rels))
-	for i, r := range rels {
-		roots[i] = filepath.Join(repo, r)
-	}
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
 		// Not a terminal: one-shot list, pipe-safe — exactly what `coop tasks ls` prints.
-		if len(roots) == 1 {
-			return tasksFolderList(roots[0])
+		if len(rels) == 1 {
+			return tasksFolderList(filepath.Join(repo, rels[0]))
 		}
 		return tasksListAll(repo, rels)
 	}
-	if c, _ := taskTreeCounts(readAllTasks(roots)); c.total() == 0 {
+	read := func() []watchQueue {
+		qs := make([]watchQueue, len(rels))
+		for i, rel := range rels {
+			items := readTaskTree(filepath.Join(repo, rel))
+			c, _ := taskTreeCounts(items)
+			qs[i] = watchQueue{rel: rel, items: items, counts: c}
+		}
+		return qs
+	}
+	if sumCounts(read()).total() == 0 {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
 	}
 
-	name := filepath.Base(repo)
 	screen := ui.NewAltScreen(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
 	screen.Enter()
 	// finalFrame prints AFTER screen.Leave (defers run LIFO — registered first, runs last) so the
@@ -58,19 +69,18 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 
 	settled := 0
 	for spin := 0; ; spin++ {
-		items := readAllTasks(roots)
-		c, _ := taskTreeCounts(items)
-		screen.Frame(tasksWatchFrame(name, items, c, spin))
+		qs := read()
+		screen.Frame(tasksWatchFrame(qs, spin))
 		// Auto-exit only when the queue is fully drained — nothing todo, in progress, or blocked,
 		// so every task is done. A blocked or unfinished-but-idle queue keeps watching (the work
 		// isn't done); held a few ticks so a torn read of a task move can't end it early.
-		if tasksDrained(c) {
+		if tasksDrained(sumCounts(qs)) {
 			settled++
 		} else {
 			settled = 0
 		}
 		if settled >= fleetIdleExit {
-			finalFrame = tasksWatchFrame(name, items, c, spin)
+			finalFrame = tasksWatchFrame(qs, spin)
 			return 0, nil
 		}
 		select {
@@ -81,14 +91,16 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 	}
 }
 
-// readAllTasks reads every configured queue's task tree into one combined list — a monorepo can
-// configure several (the common case is the single .agent/tasks).
-func readAllTasks(roots []string) []taskItem {
-	var all []taskItem
-	for _, root := range roots {
-		all = append(all, readTaskTree(root)...)
+// sumCounts totals the per-queue counts (a monorepo can configure several; the common case is one).
+func sumCounts(qs []watchQueue) taskCounts {
+	var c taskCounts
+	for _, q := range qs {
+		c.Todo += q.counts.Todo
+		c.Doing += q.counts.Doing
+		c.Done += q.counts.Done
+		c.Blocked += q.counts.Blocked
 	}
-	return all
+	return c
 }
 
 // tasksDrained reports whether the queue has no work left — nothing todo, in progress, or blocked,
@@ -98,26 +110,56 @@ func tasksDrained(c taskCounts) bool {
 	return c.Todo == 0 && c.Doing == 0 && c.Blocked == 0
 }
 
-// tasksWatchFrame renders the live task board: a header (repo + progress bar + done/total), then
-// the actionable tasks grouped by state — in progress (spinner), todo, blocked. Done is the header
-// count, not a list (it would only grow). Pure (takes the gathered items), so it unit-tests without
-// a terminal.
-func tasksWatchFrame(name string, items []taskItem, c taskCounts, spin int) []string {
+// tasksWatchFrame renders the live task board. A single queue leads with just the progress bar (no
+// label — you already typed `coop tasks watch`); several queues each get a progress line labeled
+// with their path, so you can tell them apart. Below, the actionable tasks group by state — in
+// progress (spinner), todo, blocked; done is the header count, not a list (it would only grow).
+// Pure (takes the gathered queues), so it unit-tests without a terminal.
+func tasksWatchFrame(qs []watchQueue, spin int) []string {
 	p := ui.For(os.Stdout)
+	if len(qs) == 1 {
+		out := []string{tasksProgressLine(p, "", qs[0].counts, spin), ""}
+		return append(out, taskSections(p, qs[0].items, spin)...)
+	}
+	w := 0
+	for _, q := range qs {
+		if len(q.rel) > w {
+			w = len(q.rel)
+		}
+	}
+	var out []string
+	var all []taskItem
+	for _, q := range qs {
+		out = append(out, tasksProgressLine(p, padRight(q.rel, w), q.counts, spin))
+		all = append(all, q.items...)
+	}
+	out = append(out, "")
+	return append(out, taskSections(p, all, spin)...)
+}
+
+// tasksProgressLine is one queue's header: a state glyph, an optional path label (only when several
+// queues need telling apart), the progress bar, and the done/total count.
+func tasksProgressLine(p ui.Palette, label string, c taskCounts, spin int) string {
 	frac := 0.0
 	if c.total() > 0 {
 		frac = float64(c.Done) / float64(c.total())
 	}
-	header := fmt.Sprintf("%s %s  %s  %s/%d done",
-		taskWatchGlyph(p, c, spin), p.Bold(name+" tasks"), ui.ProgressBar(frac, 22),
-		p.Green(fmt.Sprintf("%d", c.Done)), c.total())
-	out := []string{header, ""}
+	left := taskWatchGlyph(p, c, spin)
+	if label != "" {
+		left += " " + p.Bold(label)
+	}
+	return fmt.Sprintf("%s  %s  %s/%d done", left, ui.ProgressBar(frac, 22), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
+}
 
+// taskSections renders the actionable tasks grouped by state — in progress, todo, blocked — each
+// capped so a big backlog stays glanceable. Done tasks are omitted (they're the header count).
+func taskSections(p ui.Palette, items []taskItem, spin int) []string {
 	byState := map[string][]taskItem{}
 	for _, t := range items {
 		byState[t.State] = append(byState[t.State], t)
 	}
-	const perState = 8 // cap each section so a big backlog stays glanceable
+	const perState = 8
+	var out []string
 	for _, state := range []string{stateInProgress, stateTodo, stateBlocked} {
 		ts := byState[state]
 		if len(ts) == 0 {
@@ -136,7 +178,7 @@ func tasksWatchFrame(name string, items []taskItem, c taskCounts, spin int) []st
 	return out
 }
 
-// taskWatchGlyph leads the header: a spinner while anything's in progress, a green ✓ when every
+// taskWatchGlyph leads a queue's line: a spinner while anything's in progress, a green ✓ when every
 // task is done, else the idle pause mark.
 func taskWatchGlyph(p ui.Palette, c taskCounts, spin int) string {
 	switch {
