@@ -201,7 +201,7 @@ func tasksDecisionsAll(repo string, rels []string) (int, error) {
 		}
 	}
 	if first {
-		ui.Info("no open decisions across the %d configured queue(s)", len(rels))
+		ui.Note("no open decisions across the %d configured queue(s)", len(rels))
 	}
 	return 0, nil
 }

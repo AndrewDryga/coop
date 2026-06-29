@@ -93,6 +93,14 @@ func Info(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%s%scoop:%s %s\n", cBold, cCyan, cReset, fmt.Sprintf(format, a...))
 }
 
+// Note prints a plain status line to stderr — like Info but WITHOUT the "coop:" prefix. Use it for
+// a direct command's own result (e.g. the `coop tasks` family), where the user already knows coop
+// is speaking; the prefix earns its place only when coop's voice must stand out from OTHER output —
+// an agent's in a run/loop, or the block of dim Detail progress it anchors (see command-output-tiers).
+func Note(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "%s\n", fmt.Sprintf(format, a...))
+}
+
 // Error prints a red "coop:" error line to stderr. It does not exit.
 func Error(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%scoop: %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
