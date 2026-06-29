@@ -169,7 +169,7 @@ any of them.
 | Command | What it does |
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
-| `coop fork <name> <agent> --loop --tasks <path> [-d]` | loop a tasks file unattended in the fork (`-d`/`--detach` backgrounds it) |
+| `coop fork <name> <agent> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (defaults to `.agent/tasks`; `-d`/`--detach` backgrounds it) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
@@ -183,7 +183,7 @@ any of them.
 | Command | What it does |
 |---|---|
 | `coop loop [agent] [--tasks <path>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
-| `coop fork <name> <agent> --loop --tasks <path>` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--loop` requires `--tasks`) |
+| `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 | `coop status [-w]` | fleet roll-up — per fork: running/idle, tasks done/total, blockers, diff size, the task it's on (`-w` watches live) |
 | `coop tasks add` · `claim` · `block` · `done` · `list` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
@@ -272,10 +272,10 @@ back-compat alias). The agent defaults to `claude`; pass `codex` or `gemini` to 
 the model. A fork inherits your git identity, signing key, and global gitignore from
 the parent — so the agent can commit *as you* and ignores the same noise you do.
 
-**Loop one unattended.** Hand a fork a tasks file and it works the queue on its own:
+**Loop one unattended.** Point a fork at a task queue and it works it on its own:
 
 ```bash
-coop fork api codex --loop -d --tasks .agent/tasks   # -d detaches; tail it with coop fork logs api -f
+coop fork api codex --loop -d   # loops the repo's .agent/tasks; -d detaches — tail with coop fork logs api -f
 ```
 
 See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to run several at once.
@@ -699,8 +699,8 @@ coop fork logs -f      # tail every fork at once (compose-style, prefixed)
 coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
 ```
 
-`--loop` needs `--tasks <path>` — the path is explicit, never inferred from the
-fork name, so a fork and its task tree can be named independently. It seeds the fork's
+`--tasks <path>` is optional — it defaults to the repo's own `.agent/tasks`. Pass it (as
+above) to hand each fork a separate slice, named independently from the fork. It seeds the fork's
 queue from that tree (once — a resumed loop keeps its own progress) and runs the loop
 with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
 `../<repo>-forks/.coop/<name>.log`. When one finishes,

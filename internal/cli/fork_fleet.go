@@ -13,7 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// fleetEntry is one fork in the declarative fleet: a name, the model to run it, the tasks file
+// fleetEntry is one fork in the declarative fleet: a name, the model to run it, the tasks tree
 // that seeds its loop, and optionally the credential profile(s) its loop rotates (so a fleet can
 // put each fork on its own account instead of all contending for the repo pool's first profile).
 type fleetEntry struct {

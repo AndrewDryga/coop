@@ -157,7 +157,7 @@ func (a *app) forkPool(repo, agent, name string, profiles []string) (*profilePoo
 	return buildPool(a.cfg, repo, agent)
 }
 
-// runForkLoop seeds the fork's queue from the tasks file given to --tasks (only when
+// runForkLoop seeds the fork's queue from the tasks tree given to --tasks (only when
 // the fork has none yet, so a resumed loop keeps its own progress), then runs the
 // unattended loop with the chosen agent, capturing output to the fork's log.
 // detached=true means this process IS the background worker (its stdio is already the
