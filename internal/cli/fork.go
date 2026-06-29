@@ -65,7 +65,7 @@ func validForkName(name string) bool {
 func forkHelp() (int, error) {
 	rows := []struct{ cmd, desc string }{
 		{"coop fork <name> [agent]", "open or re-enter a fork and run an agent"},
-		{"coop fork <name> <agent> --loop", "loop the fork on a tasks file (-d detaches)"},
+		{"coop fork <name> <agent> --loop", "loop the fork on a tasks folder (-d detaches)"},
 		{"coop fork ls", "list this repo's forks"},
 		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
 		{"coop fork review <name>", "brief + diff (--stat, --tool, --open)"},
@@ -81,7 +81,7 @@ func forkHelp() (int, error) {
 		{"    --new", "start a fresh agent session on re-entry"},
 		{"    --fresh", "recreate the fork from scratch (new clone + session)"},
 		{"-d, --detach", "with --loop, run it in the background"},
-		{"-t, --tasks", "with --loop, the tasks file that seeds the queue (required)"},
+		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (required)"},
 		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
 		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
 		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
@@ -172,7 +172,7 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      string   // --tasks <path>: the tasks file to seed the loop's queue (required with --loop)
+	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (required with --loop)
 	profiles   []string // --profile <a,b>: the credential profile(s) this fork uses (a loop rotates them)
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
@@ -203,13 +203,13 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.loop = true
 		case x == "--tasks", x == "-t":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --tasks needs a path to a tasks file")
+				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
 			i++
 			fa.tasks = rest[i]
 		case strings.HasPrefix(x, "--tasks="):
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
-				return fa, errors.New("coop fork --tasks needs a path to a tasks file")
+				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
 		case x == "--profile":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
@@ -233,9 +233,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if !validForkName(fa.name) {
 		return fa, fmt.Errorf("invalid fork name %q (no slashes, not a reserved verb)", fa.name)
 	}
-	// A loop must say which tasks file seeds its queue — no implicit name→file mapping.
+	// A loop must say which tasks folder seeds its queue — no implicit name→file mapping.
 	if fa.loop && fa.tasks == "" {
-		return fa, fmt.Errorf("coop fork %s --loop needs --tasks <path> (the tasks file to seed the queue)", fa.name)
+		return fa, fmt.Errorf("coop fork %s --loop needs --tasks <path> (the tasks folder to seed the queue)", fa.name)
 	}
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
@@ -267,8 +267,8 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if err != nil {
 			return -1, err
 		}
-		if !fileExists(abs) {
-			return -1, fmt.Errorf("coop fork --tasks: no such file: %s", fa.tasks)
+		if !pathExists(abs) {
+			return -1, fmt.Errorf("coop fork --tasks: no such tasks folder: %s", fa.tasks)
 		}
 		fa.tasks = abs
 	}
