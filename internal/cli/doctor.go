@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -331,14 +332,18 @@ func doctorCheckCredScope(rep *report, a *app, fixture, img string) {
 	credCfg.ConfigDir = cfgDir
 	credCfg.MCPFile = filepath.Join(cfgDir, "mcp.json") // absent → no MCP wiring to stand up
 	// Seed a fake credential per agent at its real mount source (cfg.AgentDir), so a claude-scoped
-	// run mounts claude's and leaves the peers' behind.
-	for agent, file := range map[string]string{"claude": ".credentials.json", "codex": "auth.json", "gemini": "gemini-credentials.json"} {
-		dir := credCfg.AgentDir(agent)
+	// run mounts claude's and leaves the peers' behind. Each credential filename comes from the
+	// agent's own AuthMarker — the single place a cred filename lives (agents-are-one-file), so a
+	// new agent is exercised here automatically and this can't drift from the real mount.
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		credFile, _ := ag.AuthMarker()
+		dir := credCfg.AgentDir(name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			rep.no("credential fixture" + probeWhy("", err))
 			return
 		}
-		_ = os.WriteFile(filepath.Join(dir, file), []byte(`{"token":"hunter2"}`), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, credFile), []byte(`{"token":"hunter2"}`), 0o644)
 	}
 	// ANTHROPIC is claude's (in scope); OPENAI is codex's; GOOGLE is one of gemini's keys, given
 	// bare so the filter must drop a peer's alias AND a bare (env-imported) line.
