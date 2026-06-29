@@ -86,9 +86,9 @@ func (a *app) setProfileDefault(args []string) (int, error) {
 		return -1, err
 	}
 	if !box.ProfileAuthed(a.cfg, agent, name) {
-		ui.Info("note: %s profile %q isn't signed in yet — run: coop login %s --profile %s", agent, name, agent, name)
+		ui.Note("note: %s profile %q isn't signed in yet — run: coop login %s --profile %s", agent, name, agent, name)
 	}
-	ui.Info("%s default profile → %s", agent, name)
+	ui.Note("%s default profile → %s", agent, name)
 	return a.cmdProfiles([]string{agent})
 }
 
@@ -124,6 +124,6 @@ func (a *app) removeProfile(args []string) (int, error) {
 	if err := os.RemoveAll(dir); err != nil {
 		return -1, err
 	}
-	ui.Info("removed %s profile %q", agent, name)
+	ui.Note("removed %s profile %q", agent, name)
 	return a.cmdProfiles([]string{agent})
 }

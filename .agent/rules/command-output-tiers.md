@@ -11,10 +11,11 @@ tiers, so the log of what happened never drowns out what the user must do next:
   bold `next steps:` header, one cyan-`→` line per action. Assemble them in the CALLER from what
   actually landed (a build step only if a `Dockerfile.agent` exists, `coop up` only if services
   were added), not a fixed script — and never inline among the progress log.
-- **A standalone result** — a synchronous query/result command (the `coop tasks` family: `list`,
-  `decisions`, `lint`, `claim`, `done`, …) prints only its own outcome, with no agent output and no
-  dim progress block to stand out from, so it needs no `coop:` anchor either: use `ui.Note` — a
-  plain stderr line with NO prefix.
+- **A standalone result** — a synchronous query/result command (`coop tasks` …, `coop check-secrets`,
+  `coop profiles` …) prints only its own outcome, with no agent output and no dim progress block to
+  stand out from, so it needs no `coop:` anchor either: use `ui.Note` — a plain stderr line with NO
+  prefix. (A command that interleaves with an agent — fork/loop/run — or runs multi-step still uses
+  `ui.Info`.)
 
 **Why:** the user pasted 28 identical `coop:` lines and said "it makes it very hard to see what
 user needs to do and what is actual log… add some spacing, coloring and formatting." A flat,
@@ -25,7 +26,8 @@ nothing else writing to the terminal, is exactly that clear case.
 
 **How to apply:**
 - Routine per-file/per-step progress → `ui.Detail` (dim, indented, no prefix), never `ui.Info`.
-- Standalone command results (the `coop tasks` family) → `ui.Note` (plain, no prefix), never `ui.Info`.
+- Standalone command results (`coop tasks`, `coop check-secrets`, `coop profiles`, …) → `ui.Note`
+  (plain, no prefix), never `ui.Info`.
 - Reserve `ui.Info` (the bold-cyan `coop:` prefix) for the summary anchor that CLOSES a dim progress
   block (e.g. `coop init`) and for the live loop, where it keeps coop's voice distinct from agent output.
 - Next-step actions → collect a `[]string` in the command and pass it to `ui.Steps`; derive each
