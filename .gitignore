@@ -7,6 +7,9 @@
 # the compiled binary (make build)
 /coop
 
+# python bytecode cache (tools/gen_casts.py)
+__pycache__/
+
 # coop working state (commit knowledge, ignore state)
 .agent/*
 !.agent/rules/

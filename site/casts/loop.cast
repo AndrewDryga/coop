@@ -11,7 +11,7 @@
 [0.725, "o", "p"]
 [0.975, "o", "\r\n"]
 [2.275, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m starting unattended loop on .agent/tasks with claude — 0/2 done (Ctrl-C to stop)\r\n"]
-[2.775, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m iteration 1 · 0/2 done · now: Add a Header method to Token · profile personal\r\n"]
+[2.775, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m iteration 1 · 0/2 done · now: Add a Header method to Token\r\n"]
 [3.475, "o", "\u001b[2m· using \u001b[0mclaude\u001b[2m model \u001b[0mclaude-opus-4-8[1m]\u001b[2m profile \u001b[0mpersonal\r\n"]
 [3.975, "o", "▸ Read \u001b[2mAGENTS.md\u001b[0m\r\n"]
 [4.475, "o", "⚙ Bash \u001b[2mfind .agent/tasks -maxdepth 2 -type d | sort\u001b[0m\r\n"]

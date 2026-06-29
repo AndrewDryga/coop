@@ -218,7 +218,7 @@ def scene_loop():
     c = Cast("loop", cols=92, rows=30, title="coop loop — work the queue all night")
     c.command("coop loop")
     c.line(coop("starting unattended loop on .agent/tasks with claude — 0/2 done (Ctrl-C to stop)"), after=0.7)
-    c.line(coop("iteration 1 · 0/2 done · now: Add a Header method to Token · profile personal"), after=0.5)
+    c.line(coop("iteration 1 · 0/2 done · now: Add a Header method to Token"), after=0.5)
     c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.7)
     c.line("▸ Read " + dim("AGENTS.md"), after=0.5)
     c.line("⚙ Bash " + dim("find .agent/tasks -maxdepth 2 -type d | sort"), after=0.5)
@@ -267,6 +267,8 @@ def scene_doctor():
         ".env.example template stays readable",
         "source files stay readable",
         "secret value appears nowhere the agent can read",
+        "no coop CLI in the box (ships coop-entry only)",
+        "no docker socket in the box (can't drive the host daemon)",
         "the box runs as non-root (uid 1000)",
         "all Linux capabilities dropped (CapEff=0)",
         "pids-limit enforced (4096)",
@@ -299,34 +301,60 @@ def scene_doctor():
     ]:
         c.line(chk(m), after=0.14)
     c.line(after=0.4)
-    c.line(bold(green("✓ all 28 checks passed")) + " — the box contains the agent.", after=1.4)
+    c.line(bold(green("✓ all 30 checks passed")) + " — the box contains the agent.", after=1.4)
     c.write()
 
 
 def scene_fork():
-    """Hand off work like a PR: a fork loops in the background, you review the diff, land it.
-    From a REAL fork run (claude added a Version constant in the acme-api test repo);
-    fork path relativized, the task log abridged — everything else is genuine coop output."""
-    c = Cast("fork", cols=92, rows=26, title="coop fork — review and land like a PR")
+    """Hand off work like a PR: a fork loops in the background, you read the brief + diff, land it.
+    From a REAL fork run (claude added request retry with exponential backoff to the acme-api
+    client — a 2-commit, 3-file change with its test). The fork path is relativized and the diff
+    abridged for length; the brief, commits, files, task log, and colored diff are genuine coop
+    output (re-captured with `coop fork review`)."""
+    c = Cast("fork", cols=92, rows=32, title="coop fork — review and land like a PR")
     c.command("coop fork feat claude --loop -d --tasks .agent/tasks.feat")
     c.line(coop("forking acme-api → ../acme-api-forks/feat (secrets are gitignored, so they don't come along)"), after=0.6)
     c.line(coop("started fork feat (claude) in the background"), after=0.5)
     c.line(coop("  coop fork logs feat -f   ·   coop fork stop feat"), after=1.0)
     c.command("coop fork ls")
     c.line(bold("  NAME AGENT    BRANCH       STATE     TASKS    CHANGES         UPDATED"), after=0.3)
-    c.line("  feat claude   feat         idle      1/1      +5 -0           59 seconds ago", after=1.1)
+    c.line("  feat claude   feat         idle      2/2      +65 -4          1 minute ago", after=1.1)
     c.command("coop fork review feat")
-    c.line(coop("review/feat ← feat  ·  1 commit(s), +5 -0 across 1 file(s)"), after=0.4)
-    c.line(bold("commits:"), after=0.2)
-    c.line("  858204f version: add Version constant for logs/telemetry", after=0.3)
-    c.line(bold("files:"), after=0.2)
-    c.line("  A\tinternal/version/version.go", after=0.3)
-    c.line(bold("why (latest task log):"), after=0.2)
-    c.line("  # Log — Add a Version constant", after=0.15)
-    c.line('  - Created internal/version/version.go (package version, const Version = "0.1.0").', after=0.15)
-    c.line("  - Gate green: go build ./..., go vet ./..., gofmt -l all clean.", after=0.9)
+    c.line("review/feat ← feat  ·  2 commit(s), +65 -4 across 3 file(s)", after=0.4)
+    c.line(bold("commits:"), after=0.15)
+    c.line("  52019f6 client: add request retry with exponential backoff", after=0.18)
+    c.line("  5f2289d client: add Name field to Client", after=0.3)
+    c.line(bold("files:"), after=0.15)
+    c.line("  M\tinternal/client/client.go", after=0.12)
+    c.line("  A\tinternal/client/retry.go", after=0.12)
+    c.line("  A\tinternal/client/retry_test.go", after=0.3)
+    c.line(bold("why (latest task log):"), after=0.15)
+    c.line("  # Log — Add request retry with exponential backoff", after=0.12)
+    c.line("  - Added internal/client/retry.go: backoff(n) (100ms→5s cap) + withRetry(attempts, fn).", after=0.12)
+    c.line("  - Client gained a MaxRetries field (default 3, set in New).", after=0.12)
+    c.line("  - Tested the backoff schedule and that withRetry stops on the first success.", after=0.12)
+    c.line("  - Gate green: gofmt -l clean, go build ./..., go vet ./..., go test ./... pass.", after=0.5)
+    c.line(bold("diff:"), after=0.2)
+    c.line(bold("diff --git a/internal/client/client.go b/internal/client/client.go"), after=0.1)
+    c.line(dim("--- a/internal/client/client.go"), after=0.05)
+    c.line(dim("+++ b/internal/client/client.go"), after=0.1)
+    c.line(cyan("@@ -9,14 +9,16 @@") + " // Client talks to the acme API over HTTP.", after=0.08)
+    c.line(" type Client struct {", after=0.05)
+    c.line(red("-\tBaseURL string"), after=0.04)
+    c.line(red("-\tHTTP    *http.Client"), after=0.04)
+    c.line(red("-\tTimeout time.Duration"), after=0.04)
+    c.line(green("+\tName       string"), after=0.04)
+    c.line(green("+\tBaseURL    string"), after=0.04)
+    c.line(green("+\tHTTP       *http.Client"), after=0.04)
+    c.line(green("+\tTimeout    time.Duration"), after=0.04)
+    c.line(green("+\tMaxRetries int"), after=0.04)
+    c.line(" }", after=0.2)
+    c.line(bold("diff --git a/internal/client/retry.go b/internal/client/retry.go") + dim("   (new file, 27 lines)"), after=0.1)
+    c.line(green("+func backoff(attempt int) time.Duration {  // 100ms, 200ms, 400ms, …, capped at 5s"), after=0.05)
+    c.line(green("+func withRetry(attempts int, fn func() error) error {"), after=0.1)
+    c.line(dim("       … and internal/client/retry_test.go (new file, 32 lines)"), after=0.8)
     c.command("coop fork merge feat --yes")
-    c.line(coop("rebase review/feat onto main — 1 commit(s), +5 -0"), after=0.5)
+    c.line(coop("rebase review/feat onto main — 2 commit(s), +65 -4"), after=0.5)
     c.line(coop("landing feat onto main"), after=0.6)
     c.line("Successfully rebased and updated refs/heads/feat.", after=0.6)
     c.line(green("✓") + " landed feat", after=0.4)
@@ -353,32 +381,64 @@ def scene_fusion():
 
 
 def scene_fleet():
-    """Run several agents at once; `coop fleet watch` is the live board (alt-screen).
-    From a REAL `coop fleet up` + `coop fleet watch`: a claude `api` fork and a gemini `docs`
-    fork. api has finished and passed its audit; docs has done its task and is finishing its
-    audit — and its log line even surfaces a real gemini tool hiccup, shown as-is."""
-    c = Cast("fleet", cols=96, rows=11, title="coop fleet — many agents, one live board")
+    """Run several agents at once; `coop fleet watch` is the live board (alt-screen) that animates
+    each fork's progress and auto-exits with a final summary once the fleet is done. The board
+    format and the 'fleet idle' exit line are real coop output (captured from a real watch); the
+    three-fork scenario — each agent draining its own small queue — is a realistic run."""
+    c = Cast("fleet", cols=96, rows=12, title="coop fleet — many agents, one live board")
     c.command("coop fleet up")
-    c.line(coop("forking acme-api → ../acme-api-forks/api (secrets are gitignored, so they don't come along)"), after=0.4)
-    c.line(coop("started fork api (claude) in the background"), after=0.3)
-    c.line(coop("forking acme-api → ../acme-api-forks/docs (secrets are gitignored, so they don't come along)"), after=0.4)
-    c.line(coop("started fork docs (gemini) in the background"), after=0.3)
-    c.line(green("✓") + " 2 forks detached — coop fork ls · coop fork logs -f", after=0.9)
+    for name, agent in [("api", "claude"), ("web", "gemini"), ("deps", "codex")]:
+        c.line(coop(f"forking acme-api → ../acme-api-forks/{name} (secrets are gitignored, so they don't come along)"), after=0.3)
+        c.line(coop(f"started fork {name} ({agent}) in the background"), after=0.25)
+    c.line(green("✓") + " 3 forks detached — coop fork ls · coop fork logs -f", after=0.9)
     c.command("coop fleet watch", think=0.4)
-    # The watch renders on the alternate screen (top/htop style), repainting in place. This is the
-    # real frame captured while docs finished its audit; the spinner cycles as it repaints.
-    for spin in range(6):
-        s = cyan(SPIN[spin % len(SPIN)])
-        rows = [bold("acme-api fleet") + " — 1 running, 0 blocked", ""]
-        rows.append(fleet_row(green("✓"), "claude", "api", 1, 1, green("✓ done"), countw=3,
-                              log="✓ queue verified done — 1/1 in 1 iterations"))
-        rows.append(fleet_row(s, "gemini", "docs", 1, 1, green("✓ done"), countw=3,
-                              log="Error executing tool list_directory: Error:…"))
-        rows += ["", f"{s} {bar(2, 2, 27)} 2/2 tasks · 1 running · 0 blocked"]
-        c.raw("\x1b[H\x1b[2J")            # home + clear (alt-screen repaint)
-        c.raw("\r\n".join(rows) + "\r\n")
-        c.sleep(0.5)
-    c.sleep(1.3)
+
+    # api (claude, 3 tasks), web (gemini, 3 tasks), deps (codex, 2 tasks). Each frame advances the
+    # board as the agents ship tasks; the spinner cycles as it repaints in place. When the last fork
+    # finishes (0 running), watch auto-exits, leaves the alt-screen, and prints the final frame plus
+    # the 'fleet idle' line on the normal screen.
+    doing = {
+        "api": ["rate-limit the client", "add request retry", "cache /health probes"],
+        "web": ["fix hydration mismatch", "lazy-load the dashboard", "tighten CSP headers"],
+        "deps": ["bump axios to 1.7.x", "drop the left-pad dep"],
+    }
+    logs = {"api": "⚙ Bash go test ./...", "web": "✎ Edit src/app.tsx", "deps": "⚙ Bash npm audit fix"}
+    forks = [("claude", "api", 3), ("gemini", "web", 3), ("codex", "deps", 2)]
+
+    def render(done, spin, final=False):
+        running = sum(1 for _, n, total in forks if done[n] < total)
+        head_glyph = green("✓") if running == 0 else cyan(SPIN[spin % len(SPIN)])
+        rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
+        for agent, n, total in forks:
+            d = done[n]
+            if d >= total:
+                glyph, what, log = green("✓"), green("✓ done"), "✓ queue verified done — %d/%d" % (total, total)
+            else:
+                glyph, what, log = cyan(SPIN[spin % len(SPIN)]), doing[n][d], logs[n]
+            rows.append(fleet_row(glyph, agent, n, d, total, what, countw=3, log=log))
+        tot_done = sum(done.values())
+        rows += ["", f"{head_glyph} {bar(tot_done, 8, 27)} {tot_done}/8 tasks · {running} running · 0 blocked"]
+        return rows
+
+    steps = [
+        {"api": 1, "web": 0, "deps": 0},
+        {"api": 1, "web": 1, "deps": 0},
+        {"api": 2, "web": 1, "deps": 1},
+        {"api": 2, "web": 2, "deps": 1},
+        {"api": 3, "web": 2, "deps": 2},  # api done, deps done
+        {"api": 3, "web": 3, "deps": 2},  # all done → auto-exit
+    ]
+    for spin, done in enumerate(steps):
+        c.raw("\x1b[H\x1b[2J")  # home + clear (alt-screen repaint)
+        c.raw("\r\n".join(render(done, spin)) + "\r\n")
+        c.sleep(0.6)
+    c.sleep(0.6)
+    # Auto-exit: leave the alt-screen, then the final frame + the exit line persist on the normal screen.
+    c.raw("\x1b[?25h\x1b[?1049l")
+    c.line("", after=0.0)
+    for row in render(steps[-1], 0):
+        c.line(row, after=0.05)
+    c.line("fleet idle — every fork is done, stopped, or blocked; watch exited", after=1.3)
     c.write()
 
 
