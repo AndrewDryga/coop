@@ -141,8 +141,9 @@ reviewer (or the next agent) needs. Add to the bottom; never rewrite it. This is
 
 A task goes to `50_blocked/` when it hits a choice that's expensive to undo and needs a human.
 `coop tasks block <id>` creates this file; the agent fills the question, options, and a
-recommendation; **the human writes the Resolution and runs `coop tasks unblock <id>`.**
-`coop tasks decisions` lists every open one with its recommendation.
+recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
+or do both at once with `coop tasks unblock <id> "<answer>"`.**
+`coop tasks decisions` lists every open one with its full recommendation.
 
 **Template:**
 
@@ -160,7 +161,7 @@ recommendation; **the human writes the Resolution and runs `coop tasks unblock <
 
     ---
 
-    **Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock <id> -->
+    **Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock <id> — or pass it inline -->
 
 **Example** (agent filled, awaiting the human):
 
@@ -179,7 +180,7 @@ recommendation; **the human writes the Resolution and runs `coop tasks unblock <
 
     ---
 
-    **Resolution:** A — go with env-only.    ← the human writes this, then `coop tasks unblock <id>`
+    **Resolution:** A — go with env-only.    ← human writes this + `coop tasks unblock <id>`, or in one step: `coop tasks unblock <id> "A — env-only"`
 
 ---
 

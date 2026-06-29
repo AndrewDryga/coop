@@ -223,7 +223,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 // actually blocked, so a fat-fingered id can't silently reopen a done (or todo) task.
 func tasksFolderUnblock(root string, args []string) (int, error) {
 	if len(args) < 1 {
-		return 2, errors.New("usage: coop tasks unblock <id>")
+		return 2, errors.New(`usage: coop tasks unblock <id> [answer]`)
 	}
 	t, err := findTask(root, args[0])
 	if err != nil {
@@ -232,11 +232,48 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if t.State != stateBlocked {
 		return 1, fmt.Errorf("%s is not blocked (it's %s) — nothing to unblock", t.ID, stateLabel(t.State))
 	}
+	// An optional inline answer is recorded into decision.md's Resolution before the move, so
+	// deciding is one command — no open-file/edit/save round-trip — and the answer rides along in
+	// the task's audit trail to 99_done/.
+	answer := strings.TrimSpace(strings.Join(args[1:], " "))
+	if answer != "" {
+		if err := recordResolution(filepath.Join(t.Dir, "decision.md"), answer); err != nil {
+			return -1, err
+		}
+	}
 	if err := moveTaskDir(root, t, stateInProgress); err != nil {
 		return -1, err
 	}
-	ui.OK("unblocked %s — now in progress", t.ID)
+	if answer != "" {
+		ui.OK("unblocked %s — recorded your answer in decision.md, now in progress", t.ID)
+	} else {
+		ui.OK("unblocked %s — now in progress", t.ID)
+	}
 	return 0, nil
+}
+
+// recordResolution writes a human's answer into decision.md's "**Resolution:**" line so that
+// `coop tasks unblock <id> <answer>` resolves the decision in one step. It replaces an existing
+// Resolution line in place (dropping the placeholder), or appends one if the file has none.
+func recordResolution(decPath, answer string) error {
+	line := "**Resolution:** " + answer
+	body := readFileString(decPath)
+	lines := strings.Split(body, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "**Resolution:**") {
+			lines[i] = line
+			out := strings.Join(lines, "\n")
+			if !strings.HasSuffix(out, "\n") {
+				out += "\n"
+			}
+			return os.WriteFile(decPath, []byte(out), 0o644)
+		}
+	}
+	out := line + "\n"
+	if strings.TrimSpace(body) != "" {
+		out = strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
+	}
+	return os.WriteFile(decPath, []byte(out), 0o644)
 }
 
 // moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
@@ -275,8 +312,9 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	dec := filepath.Join(root, stateBlocked, t.ID, "decision.md")
 	if !fileExists(dec) {
 		stub := "<!-- A one-way-door choice that blocks this task. The agent fills The decision,\n" +
-			"     Options, and Recommendation; a HUMAN writes Resolution, then runs:\n" +
-			"       coop tasks unblock " + t.ID + " -->\n\n" +
+			"     Options, and Recommendation; a HUMAN decides — either write Resolution below and\n" +
+			"     run 'coop tasks unblock " + t.ID + "', or do both in one step:\n" +
+			"       coop tasks unblock " + t.ID + " \"A — go with Postgres\" -->\n\n" +
 			"# Decision: " + t.Title + "?\n\n" +
 			"**Blocks:** this task (`" + t.ID + "`).\n\n" +
 			"**The decision:** <what must be chosen, and why it can't be undone cheaply>\n\n" +
@@ -285,7 +323,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			"- **B — <name>:** <consequence>\n\n" +
 			"**Recommendation:** <the agent's pick + one line why>\n\n" +
 			"---\n\n" +
-			"**Resolution:** <!-- HUMAN: your answer here (e.g. \"A — go with Postgres\"), then: coop tasks unblock " + t.ID + " -->\n"
+			"**Resolution:** <!-- HUMAN: your answer (e.g. \"A — go with Postgres\"); or pass it inline to 'coop tasks unblock " + t.ID + "' -->\n"
 		if err := os.WriteFile(dec, []byte(stub), 0o644); err != nil {
 			return -1, err
 		}
@@ -545,14 +583,14 @@ func tasksFolderDecisions(root string) (int, error) {
 		fmt.Printf("%s %s\n", p.Red("⚠"), p.Bold(sanitizeCell(question)))
 		fmt.Printf("    %s\n", p.Faint(t.ID))
 		if rec != "" {
-			fmt.Printf("    %s %s\n", p.Dim("rec:"), truncate(sanitizeCell(rec), 80))
+			fmt.Printf("    %s %s\n", p.Dim("rec:"), sanitizeCell(rec))
 		}
 	}
 	if n == 0 {
 		ui.OK("no open decisions — nothing is blocked")
 		return 0, nil
 	}
-	ui.Note("%s — resolve each in its decision.md, then 'coop tasks unblock <id>'", ui.Count(n, "open decision"))
+	ui.Note(`%s — answer with 'coop tasks unblock <id> "<answer>"' (or edit its decision.md, then unblock)`, ui.Count(n, "open decision"))
 	return 0, nil
 }
 

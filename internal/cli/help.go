@@ -256,9 +256,9 @@ var commandHelp = map[string]string{
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
-  unblock <id>     move it back to in_progress once the decision is made
+  unblock <id>     move it back to in_progress; add "<answer>" to record it in decision.md too
   done <id>        move it to done (the archive)
-  remove <id>      delete a task folder; --all-done clears the whole done archive
+  rm <id>          delete a task folder; --all-done clears the whole done archive
   decisions        list the open decisions (one per blocked task)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
   split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)

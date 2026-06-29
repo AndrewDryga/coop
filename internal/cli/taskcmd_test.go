@@ -284,6 +284,38 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 	}
 }
 
+// `coop tasks unblock <id> <answer>` records the answer into decision.md's Resolution (replacing
+// the HUMAN placeholder) and moves the task to in_progress — deciding it in one command. The rest
+// of the decision.md survives the edit and the updated file rides along to the new state.
+func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"pick the db"}); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	id := readTaskTree(root)[0].ID
+	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
+		t.Fatalf("block: code=%d err=%v", code, err)
+	}
+	if code, err := tasksFolderUnblock(root, []string{id, "B", "—", "go", "SQLite"}); code != 0 || err != nil {
+		t.Fatalf("unblock+answer: code=%d err=%v", code, err)
+	}
+	if readTaskTree(root)[0].State != stateInProgress {
+		t.Fatal("after unblock, not in_progress")
+	}
+	dec := readFileString(filepath.Join(root, stateInProgress, id, "decision.md"))
+	if !strings.Contains(dec, "**Resolution:** B — go SQLite\n") {
+		t.Errorf("answer not recorded into Resolution:\n%s", dec)
+	}
+	if strings.Contains(dec, "your answer") {
+		t.Errorf("inline answer should replace the placeholder, not leave it:\n%s", dec)
+	}
+	for _, want := range []string{"# Decision:", "**Options:**", "**Recommendation:**"} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decision.md lost %q after recording the answer:\n%s", want, dec)
+		}
+	}
+}
+
 // An id is a unique handle: re-adding a title whose id already exists in ANY state (e.g. a
 // shipped task in 99_done/) must be rejected, not create a second folder that shadows the first.
 func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
