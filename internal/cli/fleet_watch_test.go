@@ -241,3 +241,51 @@ func TestKeepLastGood(t *testing.T) {
 		t.Errorf("first-tick empty fork should stay empty: got %+v", first)
 	}
 }
+
+// A fork whose loop is alive but hasn't finished copying its --tasks slice yet (0 tasks, running)
+// reads as "starting", not "(no queue)" — that empty state is transient seeding, not a real absence
+// of work. A non-running fork with no queue is still "(no queue)".
+func TestFleetRowStarting(t *testing.T) {
+	starting := fleetRowLine(fleetRow{name: "api", agent: "claude", running: true, counts: taskCounts{}}, 0, 5)
+	if !strings.Contains(starting, "starting") {
+		t.Errorf("a running fork still seeding its queue should read 'starting':\n%q", starting)
+	}
+	if strings.Contains(starting, "(no queue)") {
+		t.Errorf("a seeding fork must not read '(no queue)':\n%q", starting)
+	}
+	noQueue := fleetRowLine(fleetRow{name: "shell", agent: "codex", running: false, counts: taskCounts{}}, 0, 5)
+	if !strings.Contains(noQueue, "(no queue)") {
+		t.Errorf("a non-running fork with no queue should read '(no queue)':\n%q", noQueue)
+	}
+}
+
+// fleetSettled is the startup-safe auto-exit predicate: true only when every fork has finished and
+// nothing is left to start (so watch can exit even when launched on an already-done fleet).
+func TestFleetSettled(t *testing.T) {
+	// Every fork seeded a queue and none is running → finished.
+	if !fleetSettled([]fleetRow{
+		{name: "a", running: false, ran: true, counts: taskCounts{Done: 5}},
+		{name: "b", running: false, ran: true, counts: taskCounts{Done: 2, Blocked: 1}},
+	}) {
+		t.Error("all forks done/blocked and idle → settled")
+	}
+	// One still running → not settled.
+	if fleetSettled([]fleetRow{{name: "a", running: true, counts: taskCounts{Todo: 3}}}) {
+		t.Error("a running fork → not settled")
+	}
+	// A fork that hasn't seeded a queue and never ran (could be starting) → not settled.
+	if fleetSettled([]fleetRow{
+		{name: "a", running: false, ran: true, counts: taskCounts{Done: 5}},
+		{name: "b", running: false, ran: false, counts: taskCounts{}},
+	}) {
+		t.Error("an unseeded, never-ran fork blocks the 'finished' conclusion")
+	}
+	// A seeded-empty fork that ran and exited (0 tasks, ran) is finished, not blocking.
+	if !fleetSettled([]fleetRow{{name: "a", running: false, ran: true, counts: taskCounts{}}}) {
+		t.Error("a fork that ran an empty queue and exited → settled")
+	}
+	// No forks → not settled (nothing to conclude).
+	if fleetSettled(nil) {
+		t.Error("empty fleet → not settled")
+	}
+}

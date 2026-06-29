@@ -228,7 +228,8 @@ var commandHelp = map[string]string{
   up             start every fork in the fleet, looping its tasks, detached
   down           stop the fleet's running loops
   split <n>      split the task queue into n fork slices, then write .agent/fleet
-  watch          live dashboard: every fork's progress, refreshing (Ctrl-C to exit)
+  watch          live dashboard of every fork's progress (auto-exits when the fleet's
+                 done; Ctrl-C anytime)
   prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
                  unmerged — pass --force to remove those too)
 

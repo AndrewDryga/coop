@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	fleetPoll  = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
-	fleetNameW = 14                     // fork-name column width
-	fleetBarW  = 10                     // per-fork progress bar width
+	fleetPoll     = 400 * time.Millisecond // how often the watch dashboard re-reads each fork
+	fleetNameW    = 14                     // fork-name column width
+	fleetBarW     = 10                     // per-fork progress bar width
+	fleetIdleExit = 3                      // consecutive 0-running ticks before watch auto-exits
 )
 
 // fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
@@ -75,8 +76,9 @@ func keepLastGood(fresh, prev fleetRow) fleetRow {
 
 // fleetWatch renders a live dashboard of every fork's progress, refreshed by polling the same
 // per-fork queue/pidfiles `coop status` reads plus the tail of each fork's log — a live `coop
-// status`. It is read-only: Ctrl-C clears the display and exits 0. Without a terminal it prints
-// a single `coop status` snapshot instead, so it stays pipe-safe.
+// status`. It is read-only: it auto-exits with a final summary frame once the fleet is finished
+// (nothing running, nothing left to start), and Ctrl-C exits 0 anytime. Without a terminal it
+// prints a single `coop status` snapshot instead, so it stays pipe-safe.
 func (a *app) fleetWatch() (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -96,6 +98,19 @@ func (a *app) fleetWatch() (int, error) {
 	// buffer has no scrollback to pollute and is restored on exit.
 	screen := ui.NewAltScreen(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
 	screen.Enter()
+	// finalFrame is set only on auto-exit; it's printed AFTER screen.Leave so the summary lands on
+	// the normal screen (defers run LIFO — this is registered first, so it runs last). A Ctrl-C exit
+	// leaves it nil and prints nothing.
+	var finalFrame []string
+	defer func() {
+		if finalFrame == nil {
+			return
+		}
+		for _, line := range finalFrame {
+			fmt.Println(line)
+		}
+		ui.Note("fleet idle — every fork is done, stopped, or blocked; watch exited")
+	}()
 	defer screen.Leave()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -105,23 +120,68 @@ func (a *app) fleetWatch() (int, error) {
 
 	name := filepath.Base(repo)
 	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn task-tree read
+	sawRunning := false           // seen any fork running? — so we don't auto-exit during the startup window
+	settled := 0                  // consecutive ticks with nothing running and nothing left to start
 	for spin := 0; ; spin++ {
 		names := forkNames(repo) // re-read so a fork added/removed mid-watch shows up
 		rows := make([]fleetRow, len(names))
 		next := make(map[string]fleetRow, len(names)) // rebuilt each tick so a removed fork's row drops out
+		running := 0
 		for i, n := range names {
 			row := keepLastGood(gatherFleetRow(repo, n), prev[n])
 			next[n] = row
 			rows[i] = row
+			if row.running {
+				running++
+			}
 		}
 		prev = next
 		screen.Frame(fleetDashboard(name, rows, spin))
+
+		// Auto-exit once the fleet is finished — nothing running and nothing left to start — held a
+		// few ticks so a torn pidfile read can't end the watch early. We only conclude "finished"
+		// after a fork has been seen running (the live case), or when every fork is already terminal
+		// at startup (fleetSettled); never during the startup window, where loops are still launching
+		// and momentarily read as 0 running.
+		if running > 0 {
+			sawRunning = true
+		}
+		if running == 0 && (sawRunning || fleetSettled(rows)) {
+			settled++
+		} else {
+			settled = 0
+		}
+		if settled >= fleetIdleExit {
+			finalFrame = fleetDashboard(name, rows, spin)
+			return 0, nil
+		}
+
 		select {
 		case <-sig:
 			return 0, nil // defer screen.Leave() restores the prior screen
 		case <-t.C:
 		}
 	}
+}
+
+// fleetSettled reports whether every fork has finished and nothing is left to start: none is
+// running and none is still seeding/pending its first run. It's the startup-safe way to auto-exit
+// when watch is launched on an already-finished fleet (nothing was ever seen running) — a fork
+// that hasn't seeded a queue and never ran (total 0, !ran) might just be starting, so it blocks the
+// conclusion until it either runs or finishes.
+func fleetSettled(rows []fleetRow) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	for _, r := range rows {
+		if r.running {
+			return false
+		}
+		if r.counts.total() == 0 && !r.ran {
+			return false // not yet seeded (startup) or an interactive fork — can't conclude "finished"
+		}
+	}
+	return true
 }
 
 // fleetDashboard renders the watch view: a header, one row per fork, and a global progress bar.
@@ -202,6 +262,8 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	}
 	var doing string // a terminal/non-actionable state wins; else the task it's on or will take next
 	switch {
+	case total == 0 && r.running:
+		doing = "starting" // loop is alive and still seeding its queue (the --tasks copy) — transient
 	case total == 0:
 		doing = "(no queue)"
 	case allDone:
