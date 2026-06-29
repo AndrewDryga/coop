@@ -118,7 +118,7 @@ func tasksDrained(c taskCounts) bool {
 func tasksWatchFrame(qs []watchQueue, spin int) []string {
 	p := ui.For(os.Stdout)
 	if len(qs) == 1 {
-		out := []string{tasksProgressLine(p, "", qs[0].counts, spin), ""}
+		out := []string{tasksProgressLine(p, "", qs[0].counts), ""}
 		return append(out, taskSections(p, qs[0].items, spin)...)
 	}
 	w := 0
@@ -130,25 +130,26 @@ func tasksWatchFrame(qs []watchQueue, spin int) []string {
 	var out []string
 	var all []taskItem
 	for _, q := range qs {
-		out = append(out, tasksProgressLine(p, padRight(q.rel, w), q.counts, spin))
+		out = append(out, tasksProgressLine(p, padRight(q.rel, w), q.counts))
 		all = append(all, q.items...)
 	}
 	out = append(out, "")
 	return append(out, taskSections(p, all, spin)...)
 }
 
-// tasksProgressLine is one queue's header: a state glyph, an optional path label (only when several
-// queues need telling apart), the progress bar, and the done/total count.
-func tasksProgressLine(p ui.Palette, label string, c taskCounts, spin int) string {
+// tasksProgressLine is one queue's header: an optional path label (only when several queues need
+// telling apart), the progress bar, and the done/total count. No status glyph — the bar, the count,
+// and the in-progress section already convey state (a task queue has no run-state of its own).
+func tasksProgressLine(p ui.Palette, label string, c taskCounts) string {
 	frac := 0.0
 	if c.total() > 0 {
 		frac = float64(c.Done) / float64(c.total())
 	}
-	left := taskWatchGlyph(p, c, spin)
+	prefix := ""
 	if label != "" {
-		left += " " + p.Bold(label)
+		prefix = p.Bold(label) + "  "
 	}
-	return fmt.Sprintf("%s  %s  %s/%d done", left, ui.ProgressBar(frac, 22), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
+	return fmt.Sprintf("%s%s  %s/%d done", prefix, ui.ProgressBar(frac, 22), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
 }
 
 // taskSections renders the actionable tasks grouped by state — in progress, todo, blocked — each
@@ -176,19 +177,6 @@ func taskSections(p ui.Palette, items []taskItem, spin int) []string {
 		out = append(out, "")
 	}
 	return out
-}
-
-// taskWatchGlyph leads a queue's line: a spinner while anything's in progress, a green ✓ when every
-// task is done, else the idle pause mark.
-func taskWatchGlyph(p ui.Palette, c taskCounts, spin int) string {
-	switch {
-	case c.Doing > 0:
-		return p.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)])
-	case c.total() > 0 && c.Done == c.total():
-		return p.Green("✓")
-	default:
-		return "‖"
-	}
 }
 
 // taskWatchMarker is the per-task bullet: a spinner for in-progress (it's being worked), a red flag
