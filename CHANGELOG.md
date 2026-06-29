@@ -39,8 +39,8 @@
   numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
   lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`99_` keeps
   done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
-  `add`/`claim`/`block`/`unblock`/`done`/`rm`/`list`/`lint`/`decisions` — and the loop, `coop
-  status`, `coop fleet`, the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
+  `add`/`claim`/`block`/`unblock`/`done`/`rm`/`ls`/`lint`/`decisions` — and the loop, `coop fleet`,
+  the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
   checklist inside `task.md`. A finished
   task is **moved** to `99_done/`, never deleted: the loop and `/sweep` only ever move tasks
   between states, so done tasks accumulate as the shipped record until you prune them by hand with
@@ -105,9 +105,8 @@
   dimmed (with a "none yet" hint) when there's no compose file to act on.
 
 - **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
-  demand, so a monorepo can start a per-component queue without a root `coop init`; and `coop
-  status` now reports the local queue's progress (done/total · blocked · the active task) when
-  you're running a single loop with no forks, instead of just "no forks yet".
+  demand, so a monorepo can start a per-component queue without a root `coop init`. (The single-loop
+  progress view — done/total · blocked · the active task — is now part of `coop tasks watch`.)
 
 - **Self-documenting task files, and a first-class blocked-decision flow.** `coop tasks add` seeds
   `task.md` + `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a
@@ -183,7 +182,7 @@
   if an agent left another checked out. The unattended loop no longer false-"stall"s when it's parking
   one-way-door tasks into `50_blocked/` (progress = done *or* blocked), parses minute/hour `retry-after`
   hints, and falls back to backoff on an unrecognized reset timezone instead of waking hours early.
-  `coop status`/`fleet watch` counts no longer briefly inflate on a torn read of a task move. A
+  `coop tasks watch`/`fleet watch` counts no longer briefly inflate on a torn read of a task move. A
   duplicate fork name with whitespace/`=`, a duplicate profile in `--profile a,a`, and a duplicate task
   id across states are all rejected/de-duped.
 - **CLI consistency (audit).** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
