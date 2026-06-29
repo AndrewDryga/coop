@@ -3,12 +3,9 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -91,55 +88,25 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 	}
 
 	screen := ui.NewAltScreen(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
-	screen.Enter()
-	// finalFrame prints AFTER screen.Leave (defers run LIFO — registered first, runs last) so the
-	// closing summary lands on the normal screen. A Ctrl-C exit leaves it nil and prints nothing.
-	var finalFrame []string
-	defer func() {
-		if finalFrame == nil {
-			return
-		}
-		for _, l := range finalFrame {
-			fmt.Println(l)
-		}
-		ui.OK("queue drained — every task is done")
-	}()
-	defer screen.Leave()
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sig)
-	t := time.NewTicker(fleetPoll)
-	defer t.Stop()
-
 	sawActive, sawFork := false, false // the fleet's startup guard — see tasksWatchSettling
-	settled := 0
-	for spin := 0; ; spin++ {
+	tick := func(spin int) ([]string, bool) {
 		sources, merged, running, nForks := read()
 		c := mergedCounts(merged)
-		screen.Frame(tasksWatchFrame(sources, merged, spin))
+		frame := tasksWatchFrame(sources, merged, spin)
+		screen.Frame(frame)
 		if running > 0 || c.Doing > 0 {
 			sawActive = true // a fork/loop is on it — work has started
 		}
 		if nForks > 0 {
 			sawFork = true // a fleet is in play, so an idle tick may be its startup window
 		}
-		// Held a few ticks so a torn read of a task move can't end it early; tasksWatchSettling adds
-		// the startup guard so a just-launched fleet doesn't conclude "drained" before it claims.
-		if tasksWatchSettling(c, running, sawActive, sawFork) {
-			settled++
-		} else {
-			settled = 0
-		}
-		if settled >= fleetIdleExit {
-			finalFrame = tasksWatchFrame(sources, merged, spin)
-			return 0, nil
-		}
-		select {
-		case <-sig:
-			return 0, nil
-		case <-t.C:
-		}
+		// tasksWatchSettling holds the auto-exit a few ticks against a torn read and adds the startup
+		// guard so a just-launched fleet doesn't conclude "drained" before it claims.
+		return frame, tasksWatchSettling(c, running, sawActive, sawFork)
 	}
+	return runWatchLoop(screen, tick, func() {
+		ui.OK("queue drained — every task is done")
+	})
 }
 
 // mergedCounts tallies the deduped task set — each task counted once, by its winning state.
@@ -163,7 +130,7 @@ func tasksDrained(c taskCounts) bool {
 // fork is running, AND — mirroring the fleet board's sawRunning guard — either work has already been
 // seen (sawActive) or no fork ever appeared (a plain local watch, nothing to wait for). The guard
 // stops a just-launched fleet, whose boxes are still spawning and whose queue reads idle for a tick,
-// from concluding "drained" and exiting in its startup window (fleetIdleExit is only ~1s of ticks).
+// from concluding "drained" and exiting in its startup window (watchIdleExit is only ~1s of ticks).
 func tasksWatchSettling(c taskCounts, running int, sawActive, sawFork bool) bool {
 	return tasksDrained(c) && running == 0 && (sawActive || !sawFork)
 }
