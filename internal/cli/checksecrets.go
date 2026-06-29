@@ -45,7 +45,7 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	scope := "commit-candidate files (tracked + untracked; gitignored excluded)"
+	scope := "commit-candidate files + coop's .agent/ state (other gitignored paths excluded)"
 	if includeIgnored {
 		scope = "the full visible tree (including gitignored files)"
 	}
@@ -78,32 +78,23 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 // assurance. Returns 0 when git is unavailable (both sets fall back to the same full walk).
 func unscannedIgnoredCount(repo string) int {
 	all, err1 := candidateFiles(repo, true)
-	committed, err2 := candidateFiles(repo, false)
+	scanned, err2 := candidateFiles(repo, false)
 	if err1 != nil || err2 != nil {
 		return 0
 	}
-	inCommit := make(map[string]bool, len(committed))
-	for _, r := range committed {
-		inCommit[r] = true
+	inScan := make(map[string]bool, len(scanned))
+	for _, r := range scanned {
+		inScan[r] = true
 	}
 	shadowed := box.NewShadowDecider(repo)
 	n := 0
 	for _, r := range all {
-		if inCommit[r] || shadowed(r) || coopState(r) {
-			continue // committed, secret-shadowed, or coop's own gitignored working state
+		if inScan[r] || shadowed(r) {
+			continue // already scanned by default (incl. coop's .agent/ state), or secret-shadowed
 		}
 		n++ // box-visible, user-gitignored, unprotected → a real blind spot
 	}
 	return n
-}
-
-// coopState reports whether a repo-relative slash path is coop's OWN gitignored working
-// state — the `.agent/` queue, logs, and notes that `coop init` ignores (see scaffold's
-// .gitignore block) and a box reads on purpose. Those aren't user-secret blind spots, so
-// they must not inflate the "gitignored, not scanned" warning. (.agent/rules + .agent/skills
-// are tracked, so they're already excluded as commit candidates.)
-func coopState(rel string) bool {
-	return strings.HasPrefix(rel, ".agent/")
 }
 
 // scanVisibleTree runs the content scanner on each candidate file the box can see (see
@@ -154,11 +145,36 @@ func candidateFiles(repo string, includeIgnored bool) ([]string, error) {
 					rels = append(rels, p)
 				}
 			}
+			// Also scan coop's own gitignored .agent/ working state — the box reads it (the task
+			// queue + agent notes), so a secret pasted into .agent/.../log.md, state.md, or
+			// BACKLOG.md is a real exposure the commit-candidate set (gitignored excluded) misses.
+			rels = append(rels, ignoredAgentFiles(repo)...)
 			return rels, nil
 		}
-		// git unavailable / not a work tree → fall through to the full walk.
+		// git unavailable / not a work tree → fall through to the full walk (covers .agent too).
 	}
 	return walkVisibleTree(repo)
+}
+
+// ignoredAgentFiles lists the gitignored files under .agent/ — coop's own working state (the task
+// queue, logs, notes) that `coop init` ignores but a box still reads. check-secrets scans them by
+// default, so a secret pasted into agent prose isn't a silent, box-readable leak. Empty when git is
+// unavailable or .agent/ has no ignored files (e.g. a repo that doesn't gitignore it — then they're
+// already untracked/tracked and in the default set). .agent/rules + .agent/skills are tracked, so
+// they arrive via --cached, not here.
+func ignoredAgentFiles(repo string) []string {
+	args := gitArgs(repo, []string{"ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ".agent"})
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil
+	}
+	var rels []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			rels = append(rels, p)
+		}
+	}
+	return rels
 }
 
 // skipScanDir is the set of directory names a full-tree scan prunes: .git plus the obvious

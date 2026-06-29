@@ -143,14 +143,45 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 	mk(".gitignore", "secret.txt\n.env\n.agent/*\n")
 	mk("secret.txt", "x")             // gitignored, NOT shadowed → box-visible blind spot → counts
 	mk(".env", "x")                   // gitignored AND shadowed → protected → must NOT count
-	mk(".agent/state.md", "x")        // coop's own gitignored working state → must NOT count
-	mk(".agent/tasks/t/task.md", "x") // ditto, nested → must NOT count
+	mk(".agent/state.md", "x")        // coop's .agent/ state → scanned by default → not "unscanned"
+	mk(".agent/tasks/t/task.md", "x") // ditto, nested → scanned by default, not counted
 	mk("tracked.go", "x")             // committed → in the default scan → not counted
 	git(t, repo, "add", ".gitignore", "tracked.go")
 	git(t, repo, "commit", "-qm", "add")
 
 	if n := unscannedIgnoredCount(repo); n != 1 {
-		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env shadowed, .agent/* is coop's own state, tracked.go committed)", n)
+		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env shadowed, .agent/* now scanned by default, tracked.go committed)", n)
+	}
+}
+
+// .agent/ is coop's gitignored working state, but the box reads it — so a secret pasted into an
+// agent note/log there must be caught by the DEFAULT scan, not hidden behind --include-ignored.
+func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	mk := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".gitignore", ".agent/*\n!.agent/rules/\n")
+	mk(".agent/tasks/2026-01-01-x/log.md", "pasted token: ghp_abcdefghijklmnopqrstuvwxyz0123456789\n")
+	git(t, repo, "add", ".gitignore")
+	git(t, repo, "commit", "-qm", "init")
+
+	findings, err := scanVisibleTree(repo, false) // DEFAULT scan, no --include-ignored
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j := strings.Join(findings, "\n"); !strings.Contains(j, ".agent/tasks/2026-01-01-x/log.md") {
+		t.Errorf("default scan must catch a secret in .agent/ (the box reads it):\n%s", j)
 	}
 }
 
