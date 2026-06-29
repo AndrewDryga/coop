@@ -19,8 +19,11 @@ func TestTasksWatchFrame(t *testing.T) {
 	c, _ := taskTreeCounts(items)
 	joined := strings.Join(tasksWatchFrame([]watchQueue{{rel: ".agent/tasks", items: items, counts: c}}, 0), "\n")
 
-	if !strings.Contains(joined, "2/6 done") {
-		t.Errorf("header should show 2/6 done:\n%s", joined)
+	// The counter breaks down per state (each colored), not just done/total.
+	for _, want := range []string{"2 todo", "1 in_progress", "1 blocked", "2 done"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("counter should show %q:\n%s", want, joined)
+		}
 	}
 	// A single queue carries no path label — the bar leads, no text to its left.
 	if strings.Contains(joined, ".agent/tasks") {
@@ -50,7 +53,7 @@ func TestTasksWatchFrameMultiQueue(t *testing.T) {
 		{rel: ".agent/tasks.api", items: api, counts: ca},
 		{rel: ".agent/tasks.docs", items: docs, counts: cd},
 	}, 0), "\n")
-	for _, want := range []string{".agent/tasks.api", ".agent/tasks.docs", "0/1 done", "1/1 done", "API thing"} {
+	for _, want := range []string{".agent/tasks.api", ".agent/tasks.docs", "1 todo", "1 done", "API thing"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("multi-queue frame missing %q:\n%s", want, joined)
 		}

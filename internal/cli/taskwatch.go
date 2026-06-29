@@ -138,8 +138,8 @@ func tasksWatchFrame(qs []watchQueue, spin int) []string {
 }
 
 // tasksProgressLine is one queue's header: an optional path label (only when several queues need
-// telling apart), the progress bar, and the done/total count. No status glyph — the bar, the count,
-// and the in-progress section already convey state (a task queue has no run-state of its own).
+// telling apart), the progress bar, and the per-state counts (todo · in_progress · blocked · done,
+// each in the state's color). No status glyph — the bar and counts already convey state.
 func tasksProgressLine(p ui.Palette, label string, c taskCounts) string {
 	frac := 0.0
 	if c.total() > 0 {
@@ -149,7 +149,27 @@ func tasksProgressLine(p ui.Palette, label string, c taskCounts) string {
 	if label != "" {
 		prefix = p.Bold(label) + "  "
 	}
-	return fmt.Sprintf("%s%s  %s/%d done", prefix, ui.ProgressBar(frac, 22), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
+	return fmt.Sprintf("%s%s  %s", prefix, ui.ProgressBar(frac, 22), tasksCountSummary(p, c))
+}
+
+// tasksCountSummary is the per-state breakdown shown after the bar — todo · in_progress · blocked ·
+// done — each painted by the shared state key (cyan / yellow / red / green), so a glance maps color
+// to state. Every state shows, even at zero, so the colors read as a consistent legend.
+func tasksCountSummary(p ui.Palette, c taskCounts) string {
+	cells := []struct {
+		state string
+		n     int
+	}{
+		{stateTodo, c.Todo},
+		{stateInProgress, c.Doing},
+		{stateBlocked, c.Blocked},
+		{stateDone, c.Done},
+	}
+	out := make([]string, len(cells))
+	for i, cell := range cells {
+		out[i] = paintState(p, cell.state, fmt.Sprintf("%d %s", cell.n, stateLabel(cell.state)))
+	}
+	return strings.Join(out, p.Dim(" · "))
 }
 
 // taskSections renders the actionable tasks grouped by state — in progress, todo, blocked — each
