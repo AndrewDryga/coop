@@ -40,13 +40,13 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 		}
 	}
 
-	// --loop without --tasks is rejected (no implicit name→file mapping), as is --tasks
-	// without --loop.
-	if _, err := parseForkCreate([]string{"perf", "--loop"}); err == nil {
-		t.Error("parseForkCreate(--loop, no --tasks): want error")
+	// --loop / -d without --tasks is allowed now — forkCreate defaults it to the repo's
+	// .agent/tasks (it knows the repo). --tasks without --loop is still an error.
+	if _, err := parseForkCreate([]string{"perf", "--loop"}); err != nil {
+		t.Errorf("parseForkCreate(--loop, no --tasks): want no error (defaults later), got %v", err)
 	}
-	if _, err := parseForkCreate([]string{"perf", "-d"}); err == nil {
-		t.Error("parseForkCreate(-d, no --tasks): want error")
+	if _, err := parseForkCreate([]string{"perf", "-d"}); err != nil {
+		t.Errorf("parseForkCreate(-d, no --tasks): want no error (defaults later), got %v", err)
 	}
 	if _, err := parseForkCreate([]string{"perf", "--tasks", "q.md"}); err == nil {
 		t.Error("parseForkCreate(--tasks without --loop): want error")

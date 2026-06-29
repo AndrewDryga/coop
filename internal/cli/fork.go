@@ -81,7 +81,7 @@ func forkHelp() (int, error) {
 		{"    --new", "start a fresh agent session on re-entry"},
 		{"    --fresh", "recreate the fork from scratch (new clone + session)"},
 		{"-d, --detach", "with --loop, run it in the background"},
-		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (required)"},
+		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
 		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
 		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
 		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
@@ -172,7 +172,7 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (required with --loop)
+	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
 	profiles   []string // --profile <a,b>: the credential profile(s) this fork uses (a loop rotates them)
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
@@ -233,10 +233,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if !validForkName(fa.name) {
 		return fa, fmt.Errorf("invalid fork name %q (no slashes, not a reserved verb)", fa.name)
 	}
-	// A loop must say which tasks folder seeds its queue — no implicit name→file mapping.
-	if fa.loop && fa.tasks == "" {
-		return fa, fmt.Errorf("coop fork %s --loop needs --tasks <path> (the tasks folder to seed the queue)", fa.name)
-	}
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
 	}
@@ -261,6 +257,15 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if !slices.Contains(a.cfg.Profiles(fa.agent), p) {
 			return 2, fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", fa.agent, p, fa.agent, p)
 		}
+	}
+	// --loop with no --tasks defaults to the repo's own queue (.agent/tasks); per-fork slices are
+	// the explicit case. resolveImage below re-resolves the repo, but that does image work too.
+	if fa.loop && fa.tasks == "" {
+		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+		if err != nil {
+			return -1, err
+		}
+		fa.tasks = filepath.Join(repo, ".agent", "tasks")
 	}
 	if fa.tasks != "" { // resolve to an absolute path now, so a detached worker still finds it
 		abs, err := filepath.Abs(fa.tasks)
