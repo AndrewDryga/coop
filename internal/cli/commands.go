@@ -804,9 +804,10 @@ func (a *app) writeMCPStub() error {
 		return nil
 	}
 	if fileExists(path) {
-		// init --help promises it seeds mcp.json; on a re-run say we kept it, so the file gets a
-		// line like every other scaffolded path instead of silently vanishing from the output.
-		ui.Detail("kept existing %s", filepath.Base(path))
+		// mcp.json is the GLOBAL shared MCP config, not part of this repo's scaffold — when it already
+		// exists `coop init` changed nothing, so say nothing. (A "kept existing mcp.json" line during a
+		// fresh repo's init reads as if it were a repo file; the e2e review flagged it as misleading.)
+		// The "wrote" line below still fires the one time init actually seeds it.
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
