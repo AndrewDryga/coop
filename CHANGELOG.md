@@ -20,8 +20,9 @@
   *Why it's better.* A finished task physically leaves the queue (its folder moves to
   `99_done/`), so the "done but never pruned" rot that bloated a single `TASKS.md` is gone and
   the loop never re-scans shipped work. State can't drift from reality, because the directory
-  *is* the state — every transition is an atomic folder move (`os.Rename`) that git records as a
-  rename. Each task carries its own design (`spec.md`), working journal (`log.md`), resume note
+  *is* the state — every transition is an atomic folder move (`os.Rename`) in `.agent/tasks`,
+  which `coop init` keeps as gitignored local working state (not versioned). Each task carries
+  its own design (`spec.md`), working journal (`log.md`), resume note
   (`state.md`), pending decision (`decision.md`, replacing the global `PENDING_DECISIONS.md`),
   and `screenshots/`/`artifacts/` instead of everything piling into shared top-level files. The
   numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
@@ -29,7 +30,7 @@
   done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
   `add`/`claim`/`block`/`unblock`/`done`/`rm`/`list`/`lint`/`decisions` — and the loop, `coop
   status`, `coop fleet`, the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
-  checklist inside `task.md`; the frontmatter is sync-ready for GitHub Issues / Jira. A finished
+  checklist inside `task.md`. A finished
   task is **moved** to `99_done/`, never deleted: the loop and `/sweep` only ever move tasks
   between states, so done tasks accumulate as the shipped record until you prune them by hand with
   `coop tasks rm --all-done` (or `coop tasks rm <id>` for one).

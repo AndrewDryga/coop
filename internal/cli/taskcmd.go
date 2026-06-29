@@ -16,7 +16,7 @@ import (
 )
 
 // Folder-mode `coop tasks` subcommands. A task's state is its parent directory, so every
-// transition is a folder move (atomic os.Rename); git records the rename at commit time.
+// transition is a folder move (atomic os.Rename) in gitignored local working state.
 // Dispatched from cmdTasks when the resolved source is a .agent/tasks directory.
 
 // cmdTasksFolder routes `coop tasks <sub>` against a folder-mode tree rooted at root

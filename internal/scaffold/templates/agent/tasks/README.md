@@ -31,8 +31,8 @@ archive is a manual, human step: `coop tasks rm --all-done`.
 `coop tasks add "<title>"` seeds **task.md + log.md + state.md**, each opening with a short
 HTML-comment header that explains the file (so it's self-documenting, yet renders clean once
 filled). `coop tasks block <id>` adds **decision.md**. You add `spec.md` yourself (or via
-`/spec`) only when the design is substantial. Every file is plain markdown, so it syncs cleanly
-to GitHub Issues / Jira. The templates below are what those commands write (minus the header).
+`/spec`) only when the design is substantial. Every file is plain markdown. The templates below
+are what those commands write (minus the header).
 
 ---
 
@@ -200,7 +200,7 @@ Both are git-ignored, so they never bloat a commit.
 
 ## Rules
 
-- One task = one outcome = one commit. The move to `99_done/` ships in that commit.
+- One task = one outcome = one commit (the code change). The `99_done/` move itself is local — the queue is gitignored.
 - Claim with `coop tasks claim <id>` BEFORE you start.
 - Blocked? `coop tasks block <id>`, then fill in `50_blocked/<id>/decision.md`.
 - Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted.

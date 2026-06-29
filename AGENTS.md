@@ -26,7 +26,7 @@
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change — use `coop tasks`, never a manual `mv`. There is no status field and no fifth state.
 - **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. Anything not ready to work belongs in `BACKLOG.md`, never as a task folder.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
-- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why) — the folder move ships in that commit.
+- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why). The folder move is local — the queue is gitignored working state, not part of the commit.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
 - One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
