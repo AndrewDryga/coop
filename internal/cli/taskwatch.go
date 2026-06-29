@@ -75,7 +75,7 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
 		// Not a terminal: one-shot list, pipe-safe — exactly what `coop tasks ls` prints.
 		if len(rels) == 1 {
-			return tasksFolderList(filepath.Join(repo, rels[0]))
+			return tasksFolderList(filepath.Join(repo, rels[0]), false)
 		}
 		return tasksListAll(repo, rels)
 	}

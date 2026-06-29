@@ -245,7 +245,7 @@ var commandHelp = map[string]string{
 
   Usage: coop tasks [--tasks <path>]... <command>
 
-  ls               list tasks by state (todo/in_progress/blocked/done), with counts
+  ls [--all]       list tasks by state, with counts (recent done capped; --all shows all)
   watch            live board: the queue + any active forks, deduped by id (auto-exits when done)
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)

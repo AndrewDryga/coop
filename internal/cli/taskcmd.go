@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "":
 		return groupHelp("tasks") // bare `coop tasks` shows help, not an error (see rule)
 	case "ls", "list":
-		return tasksFolderList(root)
+		return tasksFolderList(root, slices.Contains(args, "--all"))
 	case "lint":
 		return tasksFolderLint(root)
 	case "add":
@@ -439,7 +440,12 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	return 0, nil
 }
 
-func tasksFolderList(root string) (int, error) {
+// doneListCap caps how many of the (oldest-first sorted) done tasks `coop tasks ls` shows — the
+// done archive only grows, and the live todo/in-progress/blocked work shouldn't scroll off below it.
+// The full count stays in the section header + summary; `--all` shows everything.
+const doneListCap = 5
+
+func tasksFolderList(root string, all bool) (int, error) {
 	items := readTaskTree(root)
 	if len(items) == 0 {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
@@ -464,6 +470,11 @@ func tasksFolderList(root string) (int, error) {
 		// The state label is colored by state (the shared key — cyan todo · yellow in progress ·
 		// red blocked · green done), so a section is findable by its color; the count rides dim.
 		fmt.Printf("%s %s\n", p.Bold(paintState(p, state, stateLabel(state))), p.Dim(fmt.Sprintf("(%d)", len(ts))))
+		if state == stateDone && !all && len(ts) > doneListCap {
+			// Show only the most recent (the tail — folders sort oldest-first); elide the rest.
+			fmt.Printf("  %s\n", p.Faint(fmt.Sprintf("… +%d earlier — coop tasks ls --all", len(ts)-doneListCap)))
+			ts = ts[len(ts)-doneListCap:]
+		}
 		for i, t := range ts {
 			if i > 0 {
 				fmt.Println() // one blank line between tasks

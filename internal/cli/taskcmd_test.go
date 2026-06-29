@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -267,6 +268,30 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 
 // `coop tasks block` writes a decision.md that's self-documenting and easy for a human to
 // answer: the structured sections, a HUMAN reply marker, and the exact unblock command.
+// `coop tasks ls` caps the (only-growing) done archive so live work isn't buried; --all shows all.
+func TestTasksFolderListCapsDone(t *testing.T) {
+	root := t.TempDir()
+	for i := 1; i <= 7; i++ {
+		writeTaskFile(t, filepath.Join(root, stateDone, fmt.Sprintf("2026-01-%02d-done%d", i, i), "task.md"), fmt.Sprintf("# Done task %d\n", i))
+	}
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-02-01-live", "task.md"), "# Live work\n")
+
+	capped := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	if !strings.Contains(capped, "+2 earlier") { // 7 done, cap 5 → 2 elided
+		t.Errorf("default ls should cap done with '+2 earlier':\n%s", capped)
+	}
+	if strings.Contains(capped, "Done task 1") || strings.Contains(capped, "Done task 2") { // oldest hidden
+		t.Errorf("the 2 oldest done should be elided:\n%s", capped)
+	}
+	if !strings.Contains(capped, "Done task 7") || !strings.Contains(capped, "Live work") {
+		t.Errorf("recent done + live work must still show:\n%s", capped)
+	}
+	all := captureStdout(t, func() { _, _ = tasksFolderList(root, true) })
+	if !strings.Contains(all, "Done task 1") || strings.Contains(all, "earlier") {
+		t.Errorf("--all should show every done with no elision:\n%s", all)
+	}
+}
+
 // unblock must not drop a task into todo with an UNRESOLVED decision.md — that's the exact state
 // lint rejects ("unresolved decision.md but is todo"). With no inline answer and a placeholder
 // Resolution it refuses (task stays blocked); an inline answer resolves it and unblocks lint-clean.

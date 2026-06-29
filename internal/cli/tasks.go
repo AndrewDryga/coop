@@ -174,7 +174,7 @@ func tasksListAll(repo string, rels []string) (int, error) {
 		case len(readTaskTree(root)) == 0:
 			fmt.Println(p.Gray("  (no tasks)"))
 		default:
-			if _, err := tasksFolderList(root); err != nil {
+			if _, err := tasksFolderList(root, false); err != nil {
 				return -1, err
 			}
 		}
