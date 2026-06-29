@@ -185,7 +185,7 @@ any of them.
 | `coop loop [agent] [--tasks <path>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
-| `coop tasks watch` | live view of the task queue draining — in progress / todo / blocked, with overall progress (auto-exits when every task's done; Ctrl-C anytime) |
+| `coop tasks watch` | live board of the task queue + any active forks, merged and deduped by id — in progress (with the fork that claimed it), todo, blocked (auto-exits when every task's done; Ctrl-C anytime) |
 | `coop tasks add` · `claim` · `block` · `done` · `ls` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
 
 **Set up & maintain**

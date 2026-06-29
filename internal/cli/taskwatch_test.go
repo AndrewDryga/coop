@@ -5,8 +5,16 @@ import (
 	"testing"
 )
 
-// A single queue leads with just the progress bar (no path label), then the actionable tasks
-// grouped by state. Done tasks are a header count, never a list.
+func merge(items []taskItem) []mergedTask {
+	out := make([]mergedTask, len(items))
+	for i, t := range items {
+		out[i] = mergedTask{taskItem: t}
+	}
+	return out
+}
+
+// A single source leads with just the progress bar + per-state colored counter, then the actionable
+// tasks grouped by state. Done tasks are a header count, never a list; nothing is fork-attributed.
 func TestTasksWatchFrame(t *testing.T) {
 	items := []taskItem{
 		{ID: "a", Title: "Wire auth", State: stateInProgress},
@@ -17,24 +25,22 @@ func TestTasksWatchFrame(t *testing.T) {
 		{ID: "f", Title: "another done", State: stateDone},
 	}
 	c, _ := taskTreeCounts(items)
-	joined := strings.Join(tasksWatchFrame([]watchQueue{{rel: ".agent/tasks", items: items, counts: c}}, 0), "\n")
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0), "\n")
 
-	// The counter breaks down per state (each colored), not just done/total.
 	for _, want := range []string{"2 todo", "1 in_progress", "1 blocked", "2 done"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("counter should show %q:\n%s", want, joined)
 		}
 	}
-	// A single queue carries no path label — the bar leads, no text to its left.
-	if strings.Contains(joined, ".agent/tasks") {
-		t.Errorf("a single queue should not show its path label:\n%s", joined)
+	// A single source carries no path label and no fork attribution — the bar leads.
+	if strings.Contains(joined, ".agent/tasks") || strings.Contains(joined, "←") {
+		t.Errorf("a single source should show no label and no attribution:\n%s", joined)
 	}
-	for _, want := range []string{"in_progress", "todo", "blocked", "Wire auth", "Add retries", "Bump deps", "Pick a queue backend"} {
+	for _, want := range []string{"in_progress", "todo", "blocked", "Wire auth", "Add retries", "Pick a queue backend"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("frame missing %q:\n%s", want, joined)
 		}
 	}
-	// Done is a count, not a list — its titles never appear (they'd only grow the board).
 	for _, gone := range []string{"shipped thing", "another done"} {
 		if strings.Contains(joined, gone) {
 			t.Errorf("done task %q must not be listed:\n%s", gone, joined)
@@ -42,20 +48,20 @@ func TestTasksWatchFrame(t *testing.T) {
 	}
 }
 
-// Several queues each get a progress line labeled with their path (left of the bar), so a monorepo
-// watcher can tell them apart.
-func TestTasksWatchFrameMultiQueue(t *testing.T) {
-	api := []taskItem{{ID: "a", Title: "API thing", State: stateTodo}}
-	docs := []taskItem{{ID: "b", Title: "Docs thing", State: stateDone}}
-	ca, _ := taskTreeCounts(api)
-	cd, _ := taskTreeCounts(docs)
-	joined := strings.Join(tasksWatchFrame([]watchQueue{
-		{rel: ".agent/tasks.api", items: api, counts: ca},
-		{rel: ".agent/tasks.docs", items: docs, counts: cd},
-	}, 0), "\n")
-	for _, want := range []string{".agent/tasks.api", ".agent/tasks.docs", "1 todo", "1 done", "API thing"} {
+// Several sources — a local queue and a fork — each get a labeled progress line, and an in-progress
+// task a fork claimed is tagged with it.
+func TestTasksWatchFrameMergesForks(t *testing.T) {
+	local := []taskItem{{ID: "a", Title: "Local thing", State: stateTodo}}
+	forked := []taskItem{{ID: "b", Title: "Wire auth", State: stateInProgress}}
+	cl, _ := taskTreeCounts(local)
+	cf, _ := taskTreeCounts(forked)
+	sources := []watchSource{{label: ".agent/tasks", counts: cl}, {label: "api", counts: cf}}
+	merged := []mergedTask{{taskItem: local[0]}, {taskItem: forked[0], fork: "api"}}
+	joined := strings.Join(tasksWatchFrame(sources, merged, 0), "\n")
+
+	for _, want := range []string{".agent/tasks", "api", "Local thing", "Wire auth", "← api"} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("multi-queue frame missing %q:\n%s", want, joined)
+			t.Errorf("multi-source frame missing %q:\n%s", want, joined)
 		}
 	}
 }
@@ -67,7 +73,7 @@ func TestTasksWatchFrameCapsLongBacklog(t *testing.T) {
 		items = append(items, taskItem{ID: string(rune('a' + i)), Title: "task " + string(rune('A'+i)), State: stateTodo})
 	}
 	c, _ := taskTreeCounts(items)
-	joined := strings.Join(tasksWatchFrame([]watchQueue{{rel: ".agent/tasks", items: items, counts: c}}, 0), "\n")
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0), "\n")
 	if !strings.Contains(joined, "+3 more") { // 11 todo, cap 8 → 3 elided
 		t.Errorf("a >8 backlog should elide with '+3 more':\n%s", joined)
 	}
@@ -76,9 +82,15 @@ func TestTasksWatchFrameCapsLongBacklog(t *testing.T) {
 	}
 }
 
-// tasksDrained is the auto-exit condition: true only when nothing is todo, in progress, or blocked
-// (every task done, or none). A blocked or unfinished queue is NOT drained — the watch keeps going.
+// mergedCounts tallies the deduped set; tasksDrained is the auto-exit condition (nothing todo, in
+// progress, or blocked — every task done, or none). A blocked or unfinished queue is NOT drained.
 func TestTasksDrained(t *testing.T) {
+	if c := mergedCounts([]mergedTask{
+		{taskItem: taskItem{State: stateDone}},
+		{taskItem: taskItem{State: stateBlocked}},
+	}); c.Done != 1 || c.Blocked != 1 {
+		t.Errorf("mergedCounts = %+v, want Done=1 Blocked=1", c)
+	}
 	for _, c := range []taskCounts{{}, {Done: 5}} {
 		if !tasksDrained(c) {
 			t.Errorf("tasksDrained(%+v) = false, want true", c)

@@ -6,11 +6,14 @@
 
 - **New `coop tasks watch`; `coop status` removed.** `coop tasks watch` is a live, task-centric
   board — the queue itself (in progress / todo / blocked) draining in place, with overall progress;
-  it auto-exits only when every task is done, and keeps watching a blocked or idle queue. The fleet's
-  per-fork board stays at `coop fleet watch` (snapshot: `coop fork ls`). `coop status` is gone: it was
-  a third entry point that overlapped `coop fork ls`, and its `--watch` was a straight alias for
-  `coop fleet watch`. Listing is normalized too — `ls` is the canonical verb everywhere
-  (`coop tasks ls`, `coop fork ls`), with `list` kept as a forgiving alias, matching `rm`/`remove`.
+  it auto-exits only when every task is done, and keeps watching a blocked or idle queue. With a
+  fleet running it merges in every active fork and the tasks it claimed — one view, deduped by task
+  id, with each in-progress task tagged by the fork on it — so it's the single place to see all the
+  work and who's doing what. The fleet's per-fork board stays at `coop fleet watch` (snapshot:
+  `coop fork ls`). `coop status` is gone: it was a third entry point that overlapped `coop fork ls`,
+  and its `--watch` was a straight alias for `coop fleet watch`. Listing is normalized too — `ls` is
+  the canonical verb everywhere (`coop tasks ls`, `coop fork ls`), with `list` kept as a forgiving
+  alias, matching `rm`/`remove`.
 
 - **New `/review-board` skill — the heavyweight, on-demand pre-merge review.** Convenes a
   board of expert hats (correctness, security, PM/UX/maintainer, and any hat the change
