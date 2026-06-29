@@ -335,23 +335,20 @@ def scene_fork():
 
 
 def scene_fusion():
-    """A governed council: one model leads, the others advise, the lead synthesizes."""
-    c = Cast("fusion", rows=17, title="coop fusion — a council that argues before it commits")
-    c.command('coop fusion claude -- -p "Design the webhook retry strategy"')
-    c.line(coop("fusion: claude governs; peers codex + gemini consulted read-only"), after=0.7)
-    c.line(model_line("claude", "claude-opus-4-8", ""), after=0.7)
-    c.line(ICON_LLM + " Mapping the failure modes before proposing a strategy.", after=0.8)
-    c.line("▸ Read " + dim("internal/webhook/deliver.go"), after=0.7)
-    c.line(ICON_LLM + " This is a design call — consulting the council in parallel, read-only.", after=0.8)
-    c.line("⚙ Bash " + dim('codex exec -s read-only "retry strategy for webhook delivery?"'), after=0.5)
-    c.line("⚙ Bash " + dim('gemini --approval-mode plan -p "retry strategy for webhook delivery?"'), after=1.1)
-    c.line(dim("  codex  → exponential backoff + jitter, cap at 24h, dead-letter after 12 tries"), after=0.5)
-    c.line(dim("  gemini → idempotency keys are the real fix; retries are secondary"), after=0.8)
-    c.line(ICON_LLM + " Synthesis: idempotency key (gemini) + capped backoff with jitter (codex).", after=0.8)
-    c.line("✎ Write " + dim("internal/webhook/idempotency.go"), after=0.6)
-    c.line("✎ Edit " + dim("internal/webhook/deliver.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./internal/webhook/..."), after=1.0)
-    c.line(dim("· 7 turns · 48s · $0.21"), after=1.3)
+    """A governed council: one model leads, the others advise read-only, the lead decides.
+    From a REAL `coop fusion claude -p` run — claude consulted codex + gemini, then decided
+    (note the honest peer outcome: gemini concurred, codex flaked — coop reports it as-is)."""
+    c = Cast("fusion", cols=96, rows=15, title="coop fusion — a council that argues before it commits")
+    c.command('coop fusion claude -p "Design Client.Ping\'s retry policy — consult your peers, decide, document it"')
+    c.line(coop("fusion: claude governs; peers codex + gemini consulted read-only"), after=0.8)
+    c.line(coop("shadowed 2 secret path(s)"), after=0.7)
+    c.line(after=0.6)
+    c.line("Gate is green (gofmt clean, `go vet`/`go build`/`go test ./...` all pass).", after=1.1)
+    c.line(after=0.4)
+    c.line("I gave `Client.Ping` **no internal retries** and documented why on the function — a liveness probe", after=0.5)
+    c.line("must report the API's immediate, unmasked state, and its callers (readiness checks, monitors, CLI", after=0.5)
+    c.line("health commands) already own their own polling cadence (Gemini concurred; Codex was unavailable", after=0.5)
+    c.line("after three attempts).", after=1.3)
     c.write()
 
 
@@ -416,16 +413,15 @@ def scene_secrets():
 
 
 def scene_claude():
-    """One sandboxed agent — its autonomous flags, your secrets shadowed."""
-    c = Cast("claude", rows=10, title="coop claude — a sandboxed agent, brakes off")
-    c.command('coop claude -- -p "Make the JSON logger redact auth headers"')
-    c.line(coop("shadowed 4 secret path(s)"), after=0.6)
-    c.line(model_line("claude", "claude-opus-4-8", ""), after=0.7)
-    c.line(ICON_LLM + " I'll redact Authorization and Cookie headers before they reach the sink.", after=0.8)
-    c.line("▸ Read " + dim("internal/log/json.go"), after=0.6)
-    c.line("✎ Edit " + dim("internal/log/json.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./internal/log/..."), after=1.0)
-    c.line(dim("· 4 turns · 22s · $0.09"), after=1.2)
+    """One sandboxed agent, brakes off — your secrets shadowed. From a REAL `coop claude -p` run:
+    print mode runs the task and prints the result (no streamed tool view — that's the loop only)."""
+    c = Cast("claude", cols=92, rows=11, title="coop claude — a sandboxed agent, brakes off")
+    c.command('coop claude -p "Add a Timeout field to Client (30s default), keep the gate green"')
+    c.line(coop("shadowed 2 secret path(s)"), after=0.9)
+    c.line(after=0.7)
+    c.line("Gate is green (gofmt clean, vet/build/tests pass).", after=1.1)
+    c.line(after=0.4)
+    c.line("I added a `Timeout time.Duration` field to `Client` and set it to `30 * time.Second` in `New()`.", after=1.3)
     c.write()
 
 
