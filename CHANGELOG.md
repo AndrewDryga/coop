@@ -210,6 +210,12 @@
   both on a server you want all three to use. coop now flags a codex HTTP server that carries
   `headers` but no `bearer_token_env_var`, so the auth gap is visible instead of a silent 401. See
   `agents/mcp.json.example`.
+- **The unattended loop's live view no longer garbles.** The bottom status bar was overprinted by
+  coop's own `coop:` lines and the sibling-services startup; those now scroll cleanly above the bar
+  (ui routes them through it), the auto-start no longer dumps docker compose's repainting progress
+  (it's discarded — `coop up` shows it), and the streamed Bash activity shows the real command
+  instead of the `cd …` an agent prefixes to reach a monorepo subdir. The loop prompt also reminds
+  the agent to read a file before editing it.
 
 ## 2.10.1
 

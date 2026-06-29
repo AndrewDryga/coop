@@ -306,7 +306,6 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
 	if autoUpServices(cfg, spec, rt.Name) {
 		if cf := ComposeFile(spec.Repo); cf != "" {
-			var out, errw io.Writer = io.Discard, io.Discard
 			if !spec.Quiet {
 				// compose interpolates host paths/${VARS} and coop runs it on the HOST, automatically,
 				// every launch — so an agent-authored (untracked) compose.agent.yml is a side door
@@ -315,10 +314,12 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 					ui.Info("note: %s is untracked in git — coop auto-starts it on your host, and an agent can author one; review it", filepath.Base(cf))
 				}
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))
-				out, errw = os.Stderr, os.Stderr
 			}
-			if err := EnsureServices(rt, spec.Repo, out, errw); err != nil {
-				ui.Info("services: auto-start failed (%v) — continuing without them", err)
+			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
+			// the loop's live bar. coop's status line says what happened; `coop up` shows the live
+			// output (and the real error) when you need to diagnose a failure.
+			if err := EnsureServices(rt, spec.Repo, io.Discard, io.Discard); err != nil {
+				ui.Info("services: auto-start failed (%v) — continuing without them (run 'coop up' to see why)", err)
 			}
 		}
 	}

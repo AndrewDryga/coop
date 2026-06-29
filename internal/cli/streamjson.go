@@ -219,7 +219,7 @@ func toolDisplay(name string, input json.RawMessage) (glyph, label string) {
 	_ = json.Unmarshal(input, &in)
 	switch name {
 	case "Bash":
-		return "⚙", firstLine(in.Command)
+		return "⚙", firstLine(stripLeadingCD(in.Command))
 	case "Edit", "Write", "NotebookEdit":
 		return "✎", in.FilePath
 	case "Read":
@@ -238,6 +238,34 @@ func firstLine(s string) string {
 		return strings.TrimSpace(s[:i])
 	}
 	return s
+}
+
+// stripLeadingCD removes leading `cd <dir> &&` clauses (or a first line that's only `cd <dir>`) so a
+// streamed Bash line shows the command that did the work, not the chdir an agent prefixes to reach a
+// monorepo subdir — otherwise a whole run reads as identical `cd …/portal` lines. A bare `cd <dir>`
+// with nothing after it is left as-is (that IS the command).
+func stripLeadingCD(cmd string) string {
+	for {
+		s := strings.TrimLeft(cmd, " \t")
+		if !strings.HasPrefix(s, "cd ") {
+			return cmd
+		}
+		cut := -1
+		if i := strings.Index(s, " && "); i >= 0 { // one-liner: `cd X && rest`
+			cut = i + len(" && ")
+		}
+		if i := strings.IndexByte(s, '\n'); i >= 0 && (cut < 0 || i < cut) { // multi-line: `cd X` then rest
+			cut = i + 1
+		}
+		if cut < 0 {
+			return cmd
+		}
+		rest := strings.TrimSpace(s[cut:])
+		if rest == "" {
+			return cmd
+		}
+		cmd = rest // loop to peel another leading cd (e.g. `cd a && cd b && cmd`)
+	}
 }
 
 // rawText renders a tool_result's content — a JSON string, or an array of {type,text} blocks

@@ -87,10 +87,28 @@ func TermWidth(f *os.File) int {
 	return 80
 }
 
+// liveSink, when set, receives each ui status line (trailing newline trimmed) instead of os.Stderr,
+// so a live region — the loop's bottom bar — can scroll it cleanly into the history above itself
+// rather than have it overprint the bar. The owner sets it while the region is up, clears it after.
+var liveSink func(string)
+
+// SetLiveSink routes ui status lines through fn (a live region's funnel); nil restores os.Stderr.
+func SetLiveSink(fn func(string)) { liveSink = fn }
+
+// emit writes one fully-formatted ui line: through the live sink if active (the region positions
+// lines itself, so the trailing newline is trimmed), else straight to stderr.
+func emit(s string) {
+	if liveSink != nil {
+		liveSink(strings.TrimRight(s, "\n"))
+		return
+	}
+	fmt.Fprint(os.Stderr, s)
+}
+
 // Info prints a "coop:" progress line to stderr, the prefix bold cyan so coop's own voice
 // stands out from the agent's output in a busy live view.
 func Info(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%s%scoop:%s %s\n", cBold, cCyan, cReset, fmt.Sprintf(format, a...))
+	emit(fmt.Sprintf("%s%scoop:%s %s\n", cBold, cCyan, cReset, fmt.Sprintf(format, a...)))
 }
 
 // Note prints a plain status line to stderr — like Info but WITHOUT the "coop:" prefix. Use it for
@@ -98,19 +116,19 @@ func Info(format string, a ...any) {
 // is speaking; the prefix earns its place only when coop's voice must stand out from OTHER output —
 // an agent's in a run/loop, or the block of dim Detail progress it anchors (see command-output-tiers).
 func Note(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%s\n", fmt.Sprintf(format, a...))
+	emit(fmt.Sprintf("%s\n", fmt.Sprintf(format, a...)))
 }
 
 // OK prints a success result to stderr, led by a green ✓ — for a command's positive outcome. No
 // "coop:" prefix (the user invoked it); the message states the result, not the command name.
 func OK(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%s✓%s %s\n", cGreen, cReset, fmt.Sprintf(format, a...))
+	emit(fmt.Sprintf("%s✓%s %s\n", cGreen, cReset, fmt.Sprintf(format, a...)))
 }
 
 // Warn prints a caution to stderr, led by a yellow ⚠ — a non-fatal heads-up (a blind spot, a
 // not-yet-done precondition) the user should know about but that didn't fail the command.
 func Warn(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%s⚠%s %s\n", cYellow, cReset, fmt.Sprintf(format, a...))
+	emit(fmt.Sprintf("%s⚠%s %s\n", cYellow, cReset, fmt.Sprintf(format, a...)))
 }
 
 // Count renders a number with its noun, pluralized — Count(1, "task") = "1 task", Count(2, "task")
@@ -129,14 +147,14 @@ func Count(n int, singular string, plural ...string) string {
 // Error prints a failure to stderr, led by a red ✗. It does not exit. The dispatcher routes every
 // returned error here, so a good message says what failed and how to fix it — not just what.
 func Error(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%s✗ %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
+	emit(fmt.Sprintf("%s✗ %s%s\n", cRed, fmt.Sprintf(format, a...), cReset))
 }
 
 // Detail prints an indented, faint sub-step (no "coop:" prefix) — the routine per-file progress
 // under a command like `coop init`, so a long run reads as one quiet block instead of repeating
 // the prefix on every line. The faint log recedes behind the Info anchors and Steps that matter.
 func Detail(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "  %s%s%s\n", cDim, fmt.Sprintf(format, a...), cReset)
+	emit(fmt.Sprintf("  %s%s%s\n", cDim, fmt.Sprintf(format, a...), cReset))
 }
 
 // Steps prints a blank line, a bold "next steps:" header, then each action on its own cyan-arrow
