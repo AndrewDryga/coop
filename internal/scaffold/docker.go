@@ -120,6 +120,12 @@ func composeServices(path string) []string {
 	return names
 }
 
+// ComposeServiceNames is the exported reader for composeServices — the service names actually
+// defined in the compose file at path (nil if there's no file or no services), e.g. for `coop help`
+// to list what `coop up` would start. Distinct from the ComposeServices var (the offerable menu):
+// picking "postgres" writes a service named "db", so the real name comes from the file.
+func ComposeServiceNames(path string) []string { return composeServices(path) }
+
 // dockerfileSuggestion is the "base the box on your image" template; %s is the agent npm
 // package list (from agents.Packages(), so it never drifts from the asdf image).
 const dockerfileSuggestion = `

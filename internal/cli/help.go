@@ -7,7 +7,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -51,6 +53,16 @@ func helpText(cfg *config.Config) string {
 		}
 		fmt.Fprintf(&b, "  %s%s%s\n", cmd, strings.Repeat(" ", gap), desc)
 	}
+	// dimRow is row for a command not available in this repo right now (e.g. `coop up` with no
+	// compose.agent.yml) — the whole line recedes (gap computed on plain text, then dimmed, so the
+	// command column still aligns). Dim is a no-op when color is off, so a pipe keeps the text.
+	dimRow := func(cmd, desc string) {
+		gap := 34 - utf8.RuneCountInString(cmd)
+		if gap < 2 {
+			gap = 2
+		}
+		fmt.Fprintf(&b, "  %s\n", ui.Dim(cmd+strings.Repeat(" ", gap)+desc))
+	}
 
 	fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", ui.Bold("coop"), resolveVersion())
 	fmt.Fprint(&b, "Usage: coop <command> [args]\n")
@@ -87,8 +99,17 @@ func helpText(cfg *config.Config) string {
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box image fresh (latest base + agents)")
-	row("coop up", "start sibling services (db, redis)")
-	row("coop down", "stop sibling services")
+	// `coop up`/`down` act on this repo's compose.agent.yml — name its real services, and dim the
+	// pair when there's no compose file to act on. Repo resolution is best-effort (help runs
+	// anywhere; outside a repo, or with no compose, the rows dim).
+	repo, _ := box.ResolveRepo(cfg.RepoOverride)
+	if services := scaffold.ComposeServiceNames(box.ComposeFile(repo)); len(services) > 0 {
+		row("coop up", "start the compose.agent.yml services ("+strings.Join(services, ", ")+")")
+		row("coop down", "stop the compose.agent.yml services")
+	} else {
+		dimRow("coop up", "start sibling services (none in compose.agent.yml yet)")
+		dimRow("coop down", "stop sibling services")
+	}
 	row("coop doctor", "prove isolation — attack the box, check it holds")
 	row("coop check-secrets", "scan the working tree for committed secrets")
 	row("coop help", "this help")

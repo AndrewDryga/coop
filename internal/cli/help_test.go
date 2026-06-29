@@ -1,11 +1,31 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+// `coop up`/`down` in the top-level help are compose-aware: they name the repo's real service keys
+// when a compose.agent.yml is present, and fall back to a "none" wording (dimmed on a tty) when it
+// isn't — so the help never advertises generic services that aren't actually defined.
+func TestHelpUpDownComposeAware(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "compose.agent.yml"),
+		[]byte("services:\n  db:\n    image: postgres\n  redis:\n    image: redis\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := helpText(&config.Config{RepoOverride: repo, BoxHome: "/b", ConfigDir: "/c"})
+	if !strings.Contains(got, "compose.agent.yml services (db, redis)") {
+		t.Errorf("up should name the real services from the compose file:\n%s", got)
+	}
+	if got := helpText(&config.Config{RepoOverride: t.TempDir(), BoxHome: "/b", ConfigDir: "/c"}); !strings.Contains(got, "none in compose.agent.yml") {
+		t.Errorf("up should say none when there is no compose file:\n%s", got)
+	}
+}
 
 func TestHelpTextAligned(t *testing.T) {
 	out := helpText(&config.Config{BoxHome: "/home/u/.config/coop", ConfigDir: "/home/u/.config/coop/agents"})
