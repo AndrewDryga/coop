@@ -55,7 +55,7 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	noteUnscanned := func() {
 		if !includeIgnored {
 			if n := unscannedIgnoredCount(repo); n > 0 {
-				ui.Warn("%d gitignored file(s) weren't scanned, but a box can still read them — rescan with --include-ignored to cover them", n)
+				ui.Warn("%s not scanned, but a box can read them anyway — rescan with --include-ignored to cover them", ui.Count(n, "gitignored file"))
 			}
 		}
 	}
@@ -67,7 +67,7 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	for _, f := range findings {
 		fmt.Printf("  %s\n", f)
 	}
-	ui.Error("%d secret(s) found in %s — remove them, or hide an intended file with a .coopignore entry", len(findings), scope)
+	ui.Error("%s found in %s — remove them, or hide an intended file with a .coopignore entry", ui.Count(len(findings), "secret"), scope)
 	noteUnscanned()
 	return 1, nil
 }

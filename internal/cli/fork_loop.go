@@ -370,7 +370,7 @@ func (a *app) forkStop(args []string) (int, error) {
 	// SIGKILL): the box is labeled coop.fork=<name>, so remove exactly this fork's container(s).
 	// rm -f (not just kill) so the orphan doesn't linger Exited — its run client is dead and won't.
 	if n := a.rt.RemoveByLabel(box.LabelFork, name); n > 0 {
-		ui.Info("  removed %d orphaned box container(s)", n)
+		ui.Info("  removed %s", ui.Count(n, "orphaned box container"))
 	}
 	_ = os.Remove(forkPid(repo, name))
 	ui.OK("stopped fork %s", name)

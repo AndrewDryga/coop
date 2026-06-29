@@ -361,7 +361,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	// in-flight work and orphans the worker. Skip those with a notice and land the rest.
 	skip := map[string]bool{}
 	if live := runningForkNames(repo, names); len(live) > 0 {
-		ui.Info("skipping %d still-running fork(s): %s — stop them (coop fleet down) to land", len(live), strings.Join(live, ", "))
+		ui.Info("skipping %s: %s — stop them (coop fleet down) to land", ui.Count(len(live), "still-running fork"), strings.Join(live, ", "))
 		for _, n := range live {
 			skip[n] = true
 		}
@@ -373,7 +373,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
-	if !approve(fmt.Sprintf("rebase and land up to %d fork(s)? each that lands is then deleted", len(names)-len(skip)), yes) {
+	if !approve(fmt.Sprintf("rebase and land up to %s? each that lands is then deleted", ui.Count(len(names)-len(skip), "fork")), yes) {
 		return 0, nil
 	}
 	var landed []string

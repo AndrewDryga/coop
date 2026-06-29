@@ -135,8 +135,8 @@ func (a *app) cmdStatus(args []string) (int, error) {
 		totalTasks += s.Counts.total()
 	}
 
-	fmt.Printf("%s — %d fork(s), %d running, %d blocked\n\n",
-		ui.Bold(filepath.Base(repo)+" fleet"), len(names), running, blocked)
+	fmt.Printf("%s — %s, %d running, %d blocked\n\n",
+		ui.Bold(filepath.Base(repo)+" fleet"), ui.Count(len(names), "fork"), running, blocked)
 	// Size the NAME column to the longest fork name (clamped + rune-padded) so a long name keeps
 	// every later column aligned under its header — see forkLs.
 	nw := colWidth(names, len("NAME"), 24)

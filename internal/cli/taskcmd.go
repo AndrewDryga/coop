@@ -309,10 +309,10 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 			removed++
 		}
 		if removed == 0 {
-			ui.Note("no done task(s) to remove")
+			ui.Note("no done tasks to remove")
 			return 0, nil
 		}
-		ui.OK("removed %d done task(s)", removed)
+		ui.OK("removed %s", ui.Count(removed, "done task"))
 		return 0, nil
 	}
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
@@ -348,7 +348,7 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 		return -1, err
 	}
 	if total == 0 {
-		ui.Note("no todo task(s) to split")
+		ui.Note("no todo tasks to split")
 		return 0, nil
 	}
 	wrote := 0
@@ -356,11 +356,11 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 		if rel == "" {
 			continue
 		}
-		ui.Note("wrote %s (%d task(s))", rel, counts[i])
+		ui.Note("wrote %s (%s)", rel, ui.Count(counts[i], "task"))
 		wrote++
 	}
 	if wrote < n {
-		ui.Warn("only %d todo task(s) — wrote %d slice(s), not the %d requested", total, wrote, n)
+		ui.Warn("only %s — wrote %s, not the %d requested", ui.Count(total, "todo task"), ui.Count(wrote, "slice"), n)
 	}
 	// The slices are COPIES; the source .agent/tasks is untouched. Say which to run so a
 	// later loop doesn't process every task twice.
@@ -548,7 +548,7 @@ func tasksFolderDecisions(root string) (int, error) {
 		ui.OK("no open decisions — nothing is blocked")
 		return 0, nil
 	}
-	ui.Note("%d open decision(s) — resolve each in its decision.md, then 'coop tasks unblock <id>'", n)
+	ui.Note("%s — resolve each in its decision.md, then 'coop tasks unblock <id>'", ui.Count(n, "open decision"))
 	return 0, nil
 }
 
@@ -579,13 +579,13 @@ func tasksFolderLint(root string) (int, error) {
 		if len(items) == 0 {
 			ui.Note("no tasks to check")
 		} else {
-			ui.OK("no issues — %d task(s) checked", len(items))
+			ui.OK("no issues — %s checked", ui.Count(len(items), "task"))
 		}
 		return 0, nil
 	}
 	for _, f := range findings {
 		fmt.Println(f)
 	}
-	ui.Error("%d issue(s) across %d task(s) — fix the above", len(findings), len(items))
+	ui.Error("%s across %s — fix the above", ui.Count(len(findings), "issue"), ui.Count(len(items), "task"))
 	return 1, nil
 }

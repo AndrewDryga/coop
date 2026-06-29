@@ -556,10 +556,10 @@ func (a *app) recycleBoxes() {
 	total := a.rt.CountByLabel(box.LabelKey, box.LabelBox)
 	supervised := a.rt.CountByLabel(box.LabelSupervised, box.LabelOn)
 	if n := a.rt.KillByLabel(box.LabelSupervised, box.LabelOn); n > 0 {
-		ui.Info("restarted %d supervised session(s) onto the new image", n)
+		ui.Info("restarted %s onto the new image", ui.Count(n, "supervised session"))
 	}
 	if others := total - supervised; others > 0 {
-		ui.Info("%d other running container(s) keep the old image until they restart", others)
+		ui.Info("%s still on the old image until restarted", ui.Count(others, "other running container"))
 	}
 }
 
