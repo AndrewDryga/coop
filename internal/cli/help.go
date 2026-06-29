@@ -227,7 +227,7 @@ var commandHelp = map[string]string{
   init           write a .agent/fleet template
   up             start every fork in the fleet, looping its tasks, detached
   down           stop the fleet's running loops
-  split <n>      split the task queue into n fork slices, then write .agent/fleet
+  split <n>      slice the queue into n forks (= coop tasks split) + write .agent/fleet
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
                  done; Ctrl-C anytime). Task-centric view: coop tasks watch
   prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
@@ -256,7 +256,7 @@ var commandHelp = map[string]string{
   rm <id>          delete a task folder; --all-done clears the whole done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
-  split <n>        split the todo tasks into n per-fork slices (.agent/tasks.N)
+  split <n>        slice the todo tasks into n trees (.agent/tasks.N); coop fleet split makes a fleet
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
