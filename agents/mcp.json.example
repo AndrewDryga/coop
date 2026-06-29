@@ -1,5 +1,10 @@
 {
   "mcpServers": {
+    "emisar": {
+        "type": "http",
+        "url": "https://emisar.dev/api/mcp/rpc",
+        "headers": { "Authorization": "Bearer emk-replace_with_your_token" }
+    },
     "context7": {
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"]

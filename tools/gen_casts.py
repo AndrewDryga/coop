@@ -211,39 +211,36 @@ def capture_output(argv, cwd=ROOT, cols=88, rows=44):
 
 
 def scene_loop():
-    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended.
-    These lines are from a REAL `coop loop` run (claude, two tasks, captured under a PTY), then
-    abridged for length — every line is genuine coop output, paths relativized. To re-capture a
-    live run wholesale: asciinema rec -c "coop loop" site/casts/loop.cast"""
-    c = Cast("loop", cols=92, rows=30, title="coop loop — work the queue all night")
+    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended — meaty,
+    real-world tasks shipped one commit each, then an audit pass that verifies its own work. Scripted
+    to mirror `coop loop`'s real output (ui.go / streamjson.go) line-for-line; to record a live run
+    instead: asciinema rec -c "coop loop" site/casts/loop.cast"""
+    c = Cast("loop", cols=92, rows=30, title="coop loop — ship the backlog overnight")
     c.command("coop loop")
     c.line(coop("starting unattended loop on .agent/tasks with claude — 0/2 done (Ctrl-C to stop)"), after=0.7)
-    c.line(coop("iteration 1 · 0/2 done · now: Add a Header method to Token"), after=0.5)
+    c.line(coop("iteration 1 · 0/2 done · now: Make POST /checkout idempotent"), after=0.5)
     c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.7)
-    c.line("▸ Read " + dim("AGENTS.md"), after=0.5)
-    c.line("⚙ Bash " + dim("find .agent/tasks -maxdepth 2 -type d | sort"), after=0.5)
-    c.line("▸ Read " + dim(".agent/tasks/00_todo/2026-…-add-a-ping-method-to-client/task.md"), after=0.5)
-    c.line("▸ Read " + dim("internal/client/client.go"), after=0.6)
-    c.line(ICON_LLM + " Both tasks are small. I'll work them one at a time, one commit each, starting with the ping task.", after=0.9)
-    c.line("⚙ Bash " + dim("go version; go build ./... && go vet ./..."), after=0.6)
-    c.line("⚙ Bash " + dim("mv .agent/tasks/00_todo/2026-06-28-add-a-ping-method-to-cli…"), after=0.6)
-    c.line("✎ Edit " + dim("internal/client/client.go"), after=0.7)
-    c.line("⚙ Bash " + dim("gofmt -l internal/client/client.go; go build ./... && go ve…"), after=0.8)
-    c.line(ICON_LLM + " Gate green. Update state.md / log.md, then commit.", after=0.7)
-    c.line("⚙ Bash " + dim('git add internal/client/client.go && git commit -q -m "clie…'), after=0.7)
-    c.line("⚙ Bash " + dim("mv .agent/tasks/10_in_progress/2026-06-28-add-a-ping-method…"), after=0.6)
-    c.line(ICON_LLM + " Ping task shipped. Now the header task — claim, implement, gate, commit, done.", after=0.9)
-    c.line("⚙ Bash " + dim("mv .agent/tasks/00_todo/2026-06-28-add-a-header-method-to-t…"), after=0.6)
-    c.line("✎ Edit " + dim("internal/auth/auth.go"), after=0.7)
-    c.line("⚙ Bash " + dim("gofmt -l internal/auth/auth.go; go build ./... && go vet ./…"), after=0.8)
-    c.line("⚙ Bash " + dim('git add internal/auth/auth.go && git commit -q -m "auth: ad…'), after=0.7)
-    c.line("⚙ Bash " + dim("mv .agent/tasks/10_in_progress/2026-06-28-add-a-header-meth…"), after=0.6)
-    c.line(ICON_LLM + " Queue drained. Both tasks shipped, one commit each, gate green, working tree clean.", after=0.9)
-    c.line(dim("· 35 turns · 1m40s · $0.82"), after=0.8)
+    c.line("▸ Read " + dim(".agent/tasks/00_todo/2026-…-idempotent-checkout/task.md"), after=0.5)
+    c.line("▸ Read " + dim("internal/payments/checkout.go"), after=0.6)
+    c.line(ICON_LLM + " A retried checkout double-charges. I'll key each order on the client's Idempotency-Key, enforce it with a unique index, and upsert — a replay returns the first charge, never a second.", after=1.0)
+    c.line("✎ Edit " + dim("internal/payments/checkout.go"), after=0.6)
+    c.line("✎ Edit " + dim("migrations/0042_orders_idempotency_key.sql"), after=0.6)
+    c.line("⚙ Bash " + dim("go build ./... && go test ./internal/payments/..."), after=0.8)
+    c.line(ICON_LLM + " Added a regression test that submits the same request twice and asserts exactly one charge. Gate green — commit and mark it done.", after=0.9)
+    c.line("⚙ Bash " + dim('git commit -q -m "payments: make checkout idempotent (dedupe retried POSTs)"'), after=0.7)
+    c.line(dim("· 23 turns · 1m14s · $0.61"), after=0.9)
+    c.line(coop("iteration 2 · 1/2 done · now: /health is hammering the primary DB"), after=0.6)
+    c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.7)
+    c.line(ICON_LLM + " The liveness probe runs SELECT count(*) on orders every call. I'll cache it for 5s behind a singleflight — same signal, ~99% fewer queries on the primary.", after=1.0)
+    c.line("✎ Edit " + dim("internal/health/health.go"), after=0.6)
+    c.line("⚙ Bash " + dim("go test ./internal/health/... -run TestLivenessCache"), after=0.8)
+    c.line("⚙ Bash " + dim('git commit -q -m "health: cache the liveness probe for 5s (singleflight)"'), after=0.7)
+    c.line(ICON_LLM + " Queue drained — both shipped, one commit each, gate green, working tree clean.", after=0.9)
+    c.line(dim("· 15 turns · 52s · $0.38"), after=0.9)
     c.line(coop("queue empty — running audit pass"), after=0.9)
     c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.6)
-    c.line(ICON_LLM + " Both done tasks pass the audit — gate green, implementing commit in the log. Nothing needs reopening.", after=0.9)
-    c.line(dim("· 11 turns · 49s · $0.41"), after=0.8)
+    c.line(ICON_LLM + " Both done tasks hold up — gate green, each with an implementing commit and a regression test. Nothing to reopen.", after=0.9)
+    c.line(dim("· 9 turns · 41s · $0.29"), after=0.8)
     c.line(bold(green("✓ queue verified done — 2/2 in 1 iterations")), after=1.5)
     c.write()
 
@@ -306,77 +303,77 @@ def scene_doctor():
 
 
 def scene_fork():
-    """Hand off work like a PR: a fork loops in the background, you read the brief + diff, land it.
-    From a REAL fork run (claude added request retry with exponential backoff to the acme-api
-    client — a 2-commit, 3-file change with its test). The fork path is relativized and the diff
-    abridged for length; the brief, commits, files, task log, and colored diff are genuine coop
-    output (re-captured with `coop fork review`)."""
+    """Hand off work like a PR: a fork loops in the background, you read the brief + diff, then land it.
+    A realistic 2-commit change — verifying Stripe webhook signatures and deduping replayed events —
+    scripted to mirror `coop fork review`'s real output (brief, commits, files, task log, colored diff)."""
     c = Cast("fork", cols=92, rows=32, title="coop fork — review and land like a PR")
-    c.command("coop fork feat claude --loop -d --tasks .agent/tasks.feat")
-    c.line(coop("forking acme-api → ../acme-api-forks/feat (secrets are gitignored, so they don't come along)"), after=0.6)
-    c.line(coop("started fork feat (claude) in the background"), after=0.5)
-    c.line(coop("  coop fork logs feat -f   ·   coop fork stop feat"), after=1.0)
+    c.command("coop fork hook claude --loop -d --tasks .agent/tasks.hook")
+    c.line(coop("forking acme-api → ../acme-api-forks/hook (secrets are gitignored, so they don't come along)"), after=0.6)
+    c.line(coop("started fork hook (claude) in the background"), after=0.5)
+    c.line(coop("  coop fork logs hook -f   ·   coop fork stop hook"), after=1.0)
     c.command("coop fork ls")
     c.line(bold("  NAME AGENT    BRANCH       STATE     TASKS    CHANGES         UPDATED"), after=0.3)
-    c.line("  feat claude   feat         idle      2/2      +65 -4          1 minute ago", after=1.1)
-    c.command("coop fork review feat")
-    c.line("review/feat ← feat  ·  2 commit(s), +65 -4 across 3 file(s)", after=0.4)
+    c.line("  hook claude   hook         idle      2/2      +88 -6          2 minutes ago", after=1.1)
+    c.command("coop fork review hook")
+    c.line("review/hook ← hook  ·  2 commit(s), +88 -6 across 3 file(s)", after=0.4)
     c.line(bold("commits:"), after=0.15)
-    c.line("  52019f6 client: add request retry with exponential backoff", after=0.18)
-    c.line("  5f2289d client: add Name field to Client", after=0.3)
+    c.line("  9c41e2a webhook: verify Stripe signatures, reject unsigned events", after=0.18)
+    c.line("  3a7f0db webhook: dedupe replayed events by id (at-least-once → exactly-once)", after=0.3)
     c.line(bold("files:"), after=0.15)
-    c.line("  M\tinternal/client/client.go", after=0.12)
-    c.line("  A\tinternal/client/retry.go", after=0.12)
-    c.line("  A\tinternal/client/retry_test.go", after=0.3)
+    c.line("  M\tinternal/webhook/handler.go", after=0.12)
+    c.line("  A\tinternal/webhook/verify.go", after=0.12)
+    c.line("  A\tinternal/webhook/verify_test.go", after=0.3)
     c.line(bold("why (latest task log):"), after=0.15)
-    c.line("  # Log — Add request retry with exponential backoff", after=0.12)
-    c.line("  - Added internal/client/retry.go: backoff(n) (100ms→5s cap) + withRetry(attempts, fn).", after=0.12)
-    c.line("  - Client gained a MaxRetries field (default 3, set in New).", after=0.12)
-    c.line("  - Tested the backoff schedule and that withRetry stops on the first success.", after=0.12)
-    c.line("  - Gate green: gofmt -l clean, go build ./..., go vet ./..., go test ./... pass.", after=0.5)
+    c.line("  # Log — Verify Stripe webhook signatures + dedupe events", after=0.12)
+    c.line("  - verify.go: constant-time HMAC-SHA256 over the raw body with the signing secret; a", after=0.12)
+    c.line("    missing / stale / mismatched Stripe-Signature is rejected 400 before any handler runs.", after=0.12)
+    c.line("  - Dedupe by Stripe event id (seen-events table + unique index) — a redelivery is a no-op.", after=0.12)
+    c.line("  - Gate green: gofmt clean, go build/vet/test ./... pass; added a replay + bad-signature test.", after=0.5)
     c.line(bold("diff:"), after=0.2)
-    c.line(bold("diff --git a/internal/client/client.go b/internal/client/client.go"), after=0.1)
-    c.line(dim("--- a/internal/client/client.go"), after=0.05)
-    c.line(dim("+++ b/internal/client/client.go"), after=0.1)
-    c.line(cyan("@@ -9,14 +9,16 @@") + " // Client talks to the acme API over HTTP.", after=0.08)
-    c.line(" type Client struct {", after=0.05)
-    c.line(red("-\tBaseURL string"), after=0.04)
-    c.line(red("-\tHTTP    *http.Client"), after=0.04)
-    c.line(red("-\tTimeout time.Duration"), after=0.04)
-    c.line(green("+\tName       string"), after=0.04)
-    c.line(green("+\tBaseURL    string"), after=0.04)
-    c.line(green("+\tHTTP       *http.Client"), after=0.04)
-    c.line(green("+\tTimeout    time.Duration"), after=0.04)
-    c.line(green("+\tMaxRetries int"), after=0.04)
-    c.line(" }", after=0.2)
-    c.line(bold("diff --git a/internal/client/retry.go b/internal/client/retry.go") + dim("   (new file, 27 lines)"), after=0.1)
-    c.line(green("+func backoff(attempt int) time.Duration {  // 100ms, 200ms, 400ms, …, capped at 5s"), after=0.05)
-    c.line(green("+func withRetry(attempts int, fn func() error) error {"), after=0.1)
-    c.line(dim("       … and internal/client/retry_test.go (new file, 32 lines)"), after=0.8)
-    c.command("coop fork merge feat --yes")
-    c.line(coop("rebase review/feat onto main — 2 commit(s), +65 -4"), after=0.5)
-    c.line(coop("landing feat onto main"), after=0.6)
-    c.line("Successfully rebased and updated refs/heads/feat.", after=0.6)
-    c.line(green("✓") + " landed feat", after=0.4)
-    c.line(green("✓") + " removed fork feat", after=1.2)
+    c.line(bold("diff --git a/internal/webhook/handler.go b/internal/webhook/handler.go"), after=0.1)
+    c.line(dim("--- a/internal/webhook/handler.go"), after=0.05)
+    c.line(dim("+++ b/internal/webhook/handler.go"), after=0.1)
+    c.line(cyan("@@ -18,6 +18,14 @@") + " func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {", after=0.08)
+    c.line(" \tbody, _ := io.ReadAll(r.Body)", after=0.05)
+    c.line(green('+\tif err := verifySignature(body, r.Header.Get("Stripe-Signature"), h.secret); err != nil {'), after=0.04)
+    c.line(green('+\t\thttp.Error(w, "bad signature", http.StatusBadRequest)'), after=0.04)
+    c.line(green("+\t\treturn"), after=0.04)
+    c.line(green("+\t}"), after=0.04)
+    c.line(green("+\tif h.seen(event.ID) {  // Stripe delivers at-least-once — a replay is a safe no-op"), after=0.04)
+    c.line(green("+\t\tw.WriteHeader(http.StatusOK)"), after=0.04)
+    c.line(green("+\t\treturn"), after=0.04)
+    c.line(green("+\t}"), after=0.2)
+    c.line(bold("diff --git a/internal/webhook/verify.go b/internal/webhook/verify.go") + dim("   (new file, 24 lines)"), after=0.1)
+    c.line(green("+func verifySignature(body []byte, header, secret string) error {  // constant-time HMAC-SHA256"), after=0.05)
+    c.line(dim("       … and internal/webhook/verify_test.go (new file, 41 lines)"), after=0.8)
+    c.command("coop fork merge hook --yes")
+    c.line(coop("rebase review/hook onto main — 2 commit(s), +88 -6"), after=0.5)
+    c.line(coop("landing hook onto main"), after=0.6)
+    c.line("Successfully rebased and updated refs/heads/hook.", after=0.6)
+    c.line(green("✓") + " landed hook", after=0.4)
+    c.line(green("✓") + " removed fork hook", after=1.2)
     c.write()
 
 
 def scene_fusion():
-    """A governed council: one model leads, the others advise read-only, the lead decides.
-    From a REAL `coop fusion claude -p` run — claude consulted codex + gemini, then decided
-    (note the honest peer outcome: gemini concurred, codex flaked — coop reports it as-is)."""
-    c = Cast("fusion", cols=96, rows=15, title="coop fusion — a council that argues before it commits")
-    c.command('coop fusion claude -p "Design Client.Ping\'s retry policy — consult your peers, decide, document it"')
+    """A governed council: the lead consults each peer read-only (via the mounted coop-consult), then
+    prints a decision that names what EACH advised and how it reconciled them — the fusion is visible
+    in the answer. Scripted to mirror a real `coop fusion claude -p` run; the 'fusion: … governs;
+    peers … consulted read-only' line is coop's real output (confirmed against a live run)."""
+    c = Cast("fusion", cols=96, rows=17, title="coop fusion — a council that argues before it commits")
+    c.command('coop fusion claude -p "Pick the concurrency control for inventory decrements — consult your peers, decide, document it"')
     c.line(coop("fusion: claude governs; peers codex + gemini consulted read-only"), after=0.8)
     c.line(coop("shadowed 2 secret path(s)"), after=0.7)
     c.line(after=0.6)
     c.line("Gate is green (gofmt clean, `go vet`/`go build`/`go test ./...` all pass).", after=1.1)
     c.line(after=0.4)
-    c.line("I gave `Client.Ping` **no internal retries** and documented why on the function — a liveness probe", after=0.5)
-    c.line("must report the API's immediate, unmasked state, and its callers (readiness checks, monitors, CLI", after=0.5)
-    c.line("health commands) already own their own polling cadence (Gemini concurred; Codex was unavailable", after=0.5)
-    c.line("after three attempts).", after=1.3)
+    c.line("I put it to both peers before deciding. **Codex** flagged that the naive read-modify-write", after=0.5)
+    c.line("oversells under contention and pushed for an atomic `UPDATE … SET stock = stock - $qty WHERE", after=0.5)
+    c.line("stock >= $qty` — one round-trip, no row lock across app logic, rows-affected tells you if it won.", after=0.5)
+    c.line("**Gemini** agreed it can't oversell, and added a `CHECK (stock >= 0)` as a DB-level backstop.", after=0.6)
+    c.line(after=0.3)
+    c.line("I shipped their consensus — the conditional UPDATE plus Gemini's CHECK — and documented on the", after=0.5)
+    c.line("function why it beats a `SELECT … FOR UPDATE` read-modify-write here.", after=1.3)
     c.write()
 
 
@@ -395,14 +392,14 @@ def scene_fleet():
 
     # api (claude, 3 tasks), web (gemini, 3 tasks), deps (codex, 2 tasks). Each frame advances the
     # board as the agents ship tasks; the spinner cycles as it repaints in place. When the last fork
-    # finishes (0 running), watch auto-exits, leaves the alt-screen, and prints the final frame plus
-    # the 'fleet idle' line on the normal screen.
+    # finishes (0 running), the board settles on its finished state and watch auto-exits with the
+    # 'fleet idle' line printed just below it.
     doing = {
-        "api": ["rate-limit the client", "add request retry", "cache /health probes"],
-        "web": ["fix hydration mismatch", "lazy-load the dashboard", "tighten CSP headers"],
-        "deps": ["bump axios to 1.7.x", "drop the left-pad dep"],
+        "api": ["add per-tenant rate limiting", "retry failed captures w/ backoff", "cache the /health probe"],
+        "web": ["fix the checkout hydration bug", "lazy-load the dashboard route", "ship CSP (report-only)"],
+        "deps": ["patch the axios CVE (1.6→1.7)", "drop the unused moment.js"],
     }
-    logs = {"api": "⚙ Bash go test ./...", "web": "✎ Edit src/app.tsx", "deps": "⚙ Bash npm audit fix"}
+    logs = {"api": "⚙ Bash go test ./...", "web": "✎ Edit src/checkout.tsx", "deps": "⚙ Bash npm audit fix"}
     forks = [("claude", "api", 3), ("gemini", "web", 3), ("codex", "deps", 2)]
 
     def render(done, spin, final=False):
@@ -429,45 +426,45 @@ def scene_fleet():
         {"api": 3, "web": 3, "deps": 2},  # all done → auto-exit
     ]
     for spin, done in enumerate(steps):
-        c.raw("\x1b[H\x1b[2J")  # home + clear (alt-screen repaint)
+        c.raw("\x1b[H\x1b[2J")  # home + clear, repainting the board in place each tick
         c.raw("\r\n".join(render(done, spin)) + "\r\n")
         c.sleep(0.6)
+    # The last tick already shows the finished board; watch auto-exits with the 'fleet idle' line just
+    # below it. (Re-drawing the final frame here is what stacked a second board → overlapping bars.)
     c.sleep(0.6)
-    # Auto-exit: leave the alt-screen, then the final frame + the exit line persist on the normal screen.
-    c.raw("\x1b[?25h\x1b[?1049l")
     c.line("", after=0.0)
-    for row in render(steps[-1], 0):
-        c.line(row, after=0.05)
     c.line("fleet idle — every fork is done, stopped, or blocked; watch exited", after=1.3)
     c.write()
 
 
 def scene_secrets():
-    """Secrets never enter the box — shadowed by name, scanned by content."""
+    """Secrets never enter the box — shadowed by name, scanned by content before any agent runs."""
     c = Cast("secrets", rows=12, title="coop check-secrets — secrets stay out of the box")
     c.command("cat .coopignore")
     c.line(dim("# repo-specific paths to hide from the agent, on top of the built-in defaults"), after=0.2)
-    c.line("prod.yml" + dim("                 # basename — matched at any depth"), after=0.2)
-    c.line("config/credentials.yaml" + dim("  # a slash makes it a repo-relative path"), after=0.2)
+    c.line("prod.env" + dim("                 # basename — matched at any depth"), after=0.2)
+    c.line("config/stripe.live.json" + dim("  # a slash makes it a repo-relative path"), after=0.2)
     c.line("vault/" + dim("                   # a directory — its contents are hidden whole"), after=0.9)
     c.command("coop check-secrets")
-    c.line("  possible secret in config/legacy.rb:5 (high-entropy value assigned to 'api_key')", after=0.6)
-    c.line(red("✗ 1 secret found in commit-candidate files (tracked + untracked; gitignored excluded) — remove them, or hide an intended file with a .coopignore entry"), after=0.7)
+    c.line("  possible secret in config/legacy_seed.rb:7 (high-entropy value assigned to 'STRIPE_SECRET')", after=0.6)
+    c.line(red("✗ 1 secret found in commit-candidate files + coop's .agent/ state (other gitignored paths excluded) — remove them, or hide an intended file with a .coopignore entry"), after=0.7)
     c.command("echo $?")
     c.line("1", after=1.0)
     c.write()
 
 
 def scene_claude():
-    """One sandboxed agent, brakes off — your secrets shadowed. From a REAL `coop claude -p` run:
-    print mode runs the task and prints the result (no streamed tool view — that's the loop only)."""
+    """One sandboxed agent, brakes off — your secrets shadowed. Scripted to mirror a real
+    `coop claude -p` run: print mode does the task and prints the result (the streamed tool view is
+    the loop's; -p prints the final answer)."""
     c = Cast("claude", cols=92, rows=11, title="coop claude — a sandboxed agent, brakes off")
-    c.command('coop claude -p "Add a Timeout field to Client (30s default), keep the gate green"')
+    c.command('coop claude -p "Redact card numbers from the request logger; keep the gate green"')
     c.line(coop("shadowed 2 secret path(s)"), after=0.9)
     c.line(after=0.7)
     c.line("Gate is green (gofmt clean, vet/build/tests pass).", after=1.1)
     c.line(after=0.4)
-    c.line("I added a `Timeout time.Duration` field to `Client` and set it to `30 * time.Second` in `New()`.", after=1.3)
+    c.line("Card-like digit runs in logged request bodies are now masked to the last 4 (a Luhn check keeps", after=0.5)
+    c.line("order ids untouched); added a test with a sample PAN asserting it never reaches the logs.", after=1.3)
     c.write()
 
 
