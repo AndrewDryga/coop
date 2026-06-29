@@ -355,7 +355,7 @@ func TestForkMergeQueue(t *testing.T) {
 
 // Task (security 1): every host-side git command coop runs against the PARENT repo must be
 // hardened too — the parent's .git (config + hooks) is agent-writable on a normal box run, so a
-// poisoned knob must not execute host code when coop status/merges/diffs it. Each case fires a
+// poisoned knob must not execute host code when coop reads/merges/diffs it. Each case fires a
 // positive control with genuinely raw git, so a green test means the hardening works, not a dead
 // trap. (Forks were already covered by TestMergeOneIgnoresForkBooby; this guards the parent.)
 func TestHostGitHardeningOnPoisonedParent(t *testing.T) {

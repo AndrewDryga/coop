@@ -13,7 +13,7 @@ func TestNearestCommand(t *testing.T) {
 		ok   bool
 	}{
 		{"check-secret", "check-secrets", true}, // dropped a trailing char
-		{"staus", "status", true},               // a missing char
+		{"task", "tasks", true},                 // a missing char
 		{"dctor", "doctor", true},               // a missing char
 		{"claud", "claude", true},               // agent name
 		{"npm", "", false},                      // too short for a fuzzy match

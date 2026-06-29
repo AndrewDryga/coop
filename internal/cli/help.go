@@ -92,10 +92,10 @@ func helpText(cfg *config.Config) string {
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
 	row("coop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
 	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
-	row("coop status [--watch]", "fleet roll-up: per-fork progress, running/idle, blockers")
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks ls", "show the queue, grouped by state")
+	row("coop tasks watch", "live board of every agent's task progress (Ctrl-C; auto-exits)")
 	row("coop tasks add \"<title>\"", "add a task; claim/block/unblock/done move it through its states")
 	row("coop tasks decisions", "show what's blocked on a human decision (-i to answer them)")
 
@@ -241,19 +241,12 @@ var commandHelp = map[string]string{
 
   List forks: coop fork ls`,
 
-	"status": `coop status — fleet roll-up: where every fork stands, without tailing N logs.
-
-  Usage: coop status [--watch]
-
-  Per fork: running/idle, tasks done/total, blockers, diff size, and the task
-  it's on — plus fleet totals. Reads queues, git, and loop state; no daemon.
-  --watch (-w) refreshes it live as a dashboard (same as 'coop fleet watch').`,
-
 	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
   Usage: coop tasks [--tasks <path>]... <command>
 
   ls               list tasks by state (todo/in_progress/blocked/done), with counts
+  watch            live board of every agent's task progress (Ctrl-C; auto-exits when done)
   add "<title>"    scaffold a new task folder (lands in todo)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub

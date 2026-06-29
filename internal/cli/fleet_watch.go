@@ -29,7 +29,7 @@ const fleetTotalBarW = fleetNameW + fleetBarW + 3
 
 // fleetRow is one fork's fast-changing state for the live dashboard. It reads only the cheap
 // sources (the queue file, the pidfile, the log tail) so the dashboard can refresh several
-// times a second without the per-tick git subprocesses `coop status` runs for its snapshot.
+// times a second without the per-tick git subprocesses the fleetSnapshot roll-up runs.
 type fleetRow struct {
 	name    string
 	agent   string
@@ -74,22 +74,20 @@ func keepLastGood(fresh, prev fleetRow) fleetRow {
 	return fresh
 }
 
-// fleetWatch renders a live dashboard of every fork's progress, refreshed by polling the same
-// per-fork queue/pidfiles `coop status` reads plus the tail of each fork's log — a live `coop
-// status`. It is read-only: it auto-exits with a final summary frame once the fleet is finished
-// (nothing running, nothing left to start), and Ctrl-C exits 0 anytime. Without a terminal it
-// prints a single `coop status` snapshot instead, so it stays pipe-safe.
+// fleetWatch renders the live `coop tasks watch` board — every fork's progress, refreshed by polling
+// the same per-fork queue/pidfiles the snapshot reads plus the tail of each fork's log. It is
+// read-only: it auto-exits with a final summary frame once the fleet is finished (nothing running,
+// nothing left to start), and Ctrl-C exits 0 anytime. Without a TTY to animate, or with no forks to
+// watch, it prints a single fleetSnapshot roll-up instead — so it stays pipe-safe and useful solo.
 func (a *app) fleetWatch() (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
-		return a.cmdStatus(nil) // not a terminal: one snapshot
-	}
-	if len(forkNames(repo)) == 0 {
-		ui.Info("no forks yet — open one with 'coop fork <name>' or a fleet with 'coop fleet up'")
-		return 0, nil
+	// No TTY to animate, or no forks to watch (a lone local loop) → the one-shot roll-up, which
+	// still reports the local queue. Keeps `coop tasks watch` pipe-safe and useful before a fleet.
+	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkNames(repo)) == 0 {
+		return a.fleetSnapshot(repo)
 	}
 
 	// Render on the alternate screen (like top/htop). A bottom-pinned region repaints by counting

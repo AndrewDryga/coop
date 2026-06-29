@@ -68,6 +68,12 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	if len(rest) > 0 && rest[0] == "watch" {
+		// The live board spans every fork + the local queue, so it's cross-cutting — not a
+		// single-queue op. fleetWatch resolves the repo and falls back to a one-shot roll-up
+		// without a TTY or forks.
+		return a.fleetWatch()
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

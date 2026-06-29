@@ -62,7 +62,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // queue path. Keep in sync with the dispatch switch above.
 func isTasksSubcommand(s string) bool {
 	switch s {
-	case "ls", "list", "lint", "add", "claim", "start", "block", "unblock", "done", "remove", "rm", "split", "decisions":
+	case "ls", "list", "lint", "add", "claim", "start", "block", "unblock", "done", "remove", "rm", "split", "decisions", "watch":
 		return true
 	}
 	return false

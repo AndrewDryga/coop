@@ -138,8 +138,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdFork(rest)
 	case "fleet":
 		return a.cmdFleet(rest)
-	case "status":
-		return a.cmdStatus(rest)
 	case "tasks":
 		return a.cmdTasks(rest)
 	case "loop":
@@ -172,7 +170,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
-	"run", "shell", "login", "profiles", "pool", "acp", "fusion", "fork", "fleet", "status", "tasks",
+	"run", "shell", "login", "profiles", "pool", "acp", "fusion", "fork", "fleet", "tasks",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "help", "version",
 }
 
@@ -228,6 +226,10 @@ func isKnownCommand(cmd string) bool {
 // and how to run an actual command in the box (which is no longer implicit).
 func unknownCommandErr(argv []string) error {
 	sub := argv[0]
+	if sub == "status" { // removed: the live board folded into `coop tasks watch`
+		return fmt.Errorf("coop status was removed — the live board is now `coop tasks watch` " +
+			"(one-shot snapshot: `coop fork ls` for forks, `coop tasks ls` for the queue)")
+	}
 	msg := fmt.Sprintf("unknown command %q", sub)
 	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
 	if guess, ok := nearestCommand(sub, candidates); ok {

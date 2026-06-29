@@ -220,7 +220,7 @@ func readTaskTree(root string) []taskItem {
 	// The four ReadDir calls below aren't one atomic snapshot, so a task being moved between state
 	// dirs (an os.Rename) can be read in BOTH — once in the source dir, once in the destination.
 	// Dedup by id, keeping the first (lifecycle-earliest) occurrence, so a torn read can't inflate
-	// the counts (coop status / fleet watch) or flash a false "✓ done" as the last task finishes.
+	// the counts (coop tasks watch) or flash a false "✓ done" as the last task finishes.
 	seen := map[string]bool{}
 	for _, state := range taskStates {
 		stateDir := filepath.Join(root, state)

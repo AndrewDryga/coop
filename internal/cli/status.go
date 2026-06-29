@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -85,28 +84,15 @@ func (s forkStatus) activeCell() string {
 	}
 }
 
-// cmdStatus rolls up the fleet: one progress line per fork plus totals, so an overnight
-// run can be checked at a glance without tailing N logs.
-func (a *app) cmdStatus(args []string) (int, error) {
-	watch := false
-	for _, x := range args {
-		if x == "--watch" || x == "-w" {
-			watch = true
-			continue
-		}
-		return 2, fmt.Errorf("coop status: unexpected argument %q (usage: coop status [-w|--watch])", x)
-	}
-	if watch {
-		return a.fleetWatch() // live, refreshing dashboard (alias for `coop fleet watch`)
-	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
+// fleetSnapshot rolls up where the work stands: one progress line per fork plus totals (or the
+// local queue when there are no forks), so an overnight run can be checked at a glance without
+// tailing N logs. It's the one-shot fallback for the live `coop tasks watch` board — printed when
+// there's no TTY to animate, or no forks to watch.
+func (a *app) fleetSnapshot(repo string) (int, error) {
 	names := forkNames(repo)
 	if len(names) == 0 {
 		// No forks — but in the single-loop workflow there's still a local queue to report.
-		// Show its progress instead of a bare "no forks", so `coop status` is useful either way.
+		// Show its progress instead of a bare "no forks", so the snapshot is useful either way.
 		if rels, err := taskQueues(a.cfg, repo, nil); err == nil && len(rels) > 0 {
 			abs := make([]string, len(rels))
 			for i, r := range rels {

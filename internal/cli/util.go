@@ -214,7 +214,7 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 // rejectArgs returns a usage error when a command that takes no arguments is given some,
 // so a stray token fails clearly instead of being silently ignored. (A `help`/`--help`
 // arg is intercepted earlier, so it never reaches here.) No leading "coop " — ui.Error already
-// prefixes "coop:", so this would otherwise double it ("coop: coop status …").
+// prefixes "coop:", so this would otherwise double it ("coop: coop doctor …").
 func rejectArgs(cmd string, args []string) error {
 	if len(args) == 0 {
 		return nil

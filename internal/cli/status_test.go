@@ -31,16 +31,6 @@ func TestActiveCell(t *testing.T) {
 	}
 }
 
-// `coop status` (watch or not) rejects a stray argument instead of silently ignoring it.
-func TestStatusRejectsStrayArgs(t *testing.T) {
-	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	for _, args := range [][]string{{"bogus"}, {"-w", "bogus"}, {"bogus", "--watch"}} {
-		if code, err := a.cmdStatus(args); code != 2 || err == nil {
-			t.Errorf("cmdStatus(%v) = (%d, %v), want (2, usage error)", args, code, err)
-		}
-	}
-}
-
 // captureStderr returns whatever fn writes to os.Stderr (ui.Info goes there).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
@@ -57,10 +47,10 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(out)
 }
 
-// TestStatusShowsLocalQueueWhenNoForks: with no forks but a local queue, `coop status` reports
-// the local queue's progress (the single-loop workflow) instead of a bare "no forks yet"; an
-// empty repo still gets the plain message.
-func TestStatusShowsLocalQueueWhenNoForks(t *testing.T) {
+// TestSnapshotShowsLocalQueueWhenNoForks: with no forks but a local queue, the roll-up `coop tasks
+// watch` falls back to (fleetSnapshot) reports the local queue's progress (the single-loop workflow)
+// instead of a bare "no forks yet"; an empty repo still gets the plain message.
+func TestSnapshotShowsLocalQueueWhenNoForks(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, tasksRoot)
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# Wire auth\n")
@@ -68,18 +58,18 @@ func TestStatusShowsLocalQueueWhenNoForks(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot}}}
 
 	out := captureStderr(t, func() {
-		if code, err := a.cmdStatus(nil); code != 0 || err != nil {
-			t.Fatalf("status: code=%d err=%v", code, err)
+		if code, err := a.fleetSnapshot(repo); code != 0 || err != nil {
+			t.Fatalf("snapshot: code=%d err=%v", code, err)
 		}
 	})
 	if !strings.Contains(out, "local queue:") || !strings.Contains(out, "1/2 done") {
-		t.Errorf("status with no forks should report the local queue progress:\n%s", out)
+		t.Errorf("snapshot with no forks should report the local queue progress:\n%s", out)
 	}
 
 	// No forks AND no queue → the plain message stays.
 	empty := t.TempDir()
 	b := &app{cfg: &config.Config{RepoOverride: empty, TasksFiles: []string{tasksRoot}}}
-	out2 := captureStderr(t, func() { _, _ = b.cmdStatus(nil) })
+	out2 := captureStderr(t, func() { _, _ = b.fleetSnapshot(empty) })
 	if !strings.Contains(out2, "no forks yet") {
 		t.Errorf("an empty repo should still show 'no forks yet':\n%s", out2)
 	}
