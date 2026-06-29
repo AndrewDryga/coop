@@ -13,21 +13,29 @@ tiers, so the log of what happened never drowns out what the user must do next:
   were added), not a fixed script — and never inline among the progress log.
 - **A standalone result** — a synchronous query/result command (`coop tasks` …, `coop check-secrets`,
   `coop profiles` …) prints only its own outcome, with no agent output and no dim progress block to
-  stand out from, so it needs no `coop:` anchor either: use `ui.Note` — a plain stderr line with NO
-  prefix. (A command that interleaves with an agent — fork/loop/run — or runs multi-step still uses
-  `ui.Info`.)
+  stand out from, so it needs no `coop:` anchor. Voice it by outcome, with NO prefix and NO
+  command-name echo: `ui.OK` (green ✓) a success, `ui.Warn` (yellow ⚠) a non-fatal caution,
+  `ui.Error` (red ✗) a failure, `ui.Note` (plain) a neutral note. State the *result* — `tasks lint:
+  clean` becomes `✓ no issues — 12 tasks checked`. (A command that interleaves with an agent —
+  fork/loop/run — or runs multi-step still uses the `coop:`-prefixed `ui.Info`.)
 
 **Why:** the user pasted 28 identical `coop:` lines and said "it makes it very hard to see what
 user needs to do and what is actual log… add some spacing, coloring and formatting." A flat,
 uniformly-prefixed stream buries the 3 lines that matter behind 25 that don't. Later, on
 `coop tasks decisions` printing `coop: no open decisions — nothing is blocked`, the user said the
 prefix is "not needed when it's clear what outputs it" — a command you invoked directly, with
-nothing else writing to the terminal, is exactly that clear case.
+nothing else writing to the terminal, is exactly that clear case. Then, on `coop tasks lint`
+printing `coop: tasks lint: clean`, the user said it's "not human readable — prefix, then task name
+again" and asked for nice outputs and super-clear errors — hence the ✓/⚠/✗ result glyphs, dropping
+the command-name echo, and errors that name the fix.
 
 **How to apply:**
 - Routine per-file/per-step progress → `ui.Detail` (dim, indented, no prefix), never `ui.Info`.
-- Standalone command results (`coop tasks`, `coop check-secrets`, `coop profiles`, …) → `ui.Note`
-  (plain, no prefix), never `ui.Info`.
+- Standalone command results (`coop tasks`, `coop check-secrets`, `coop profiles`, …) → a glyph
+  helper by outcome: `ui.OK` ✓ / `ui.Warn` ⚠ / `ui.Error` ✗ / `ui.Note` (neutral). Never `ui.Info`,
+  and never echo the command name you were invoked as (no `tasks lint:` / `check-secrets:` prefix).
+- Errors (every returned error reaches the user through `ui.Error`'s red ✗) say what failed AND how
+  to fix it — name the file/flag and the exact command to run, not just the symptom.
 - Reserve `ui.Info` (the bold-cyan `coop:` prefix) for the summary anchor that CLOSES a dim progress
   block (e.g. `coop init`) and for the live loop, where it keeps coop's voice distinct from agent output.
 - Next-step actions → collect a `[]string` in the command and pass it to `ui.Steps`; derive each

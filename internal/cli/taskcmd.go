@@ -189,7 +189,7 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
-	ui.Note("added %s/%s — fill in task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md are seeded", stateTodo, id)
+	ui.OK("added %s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id)
 	return 0, nil
 }
 
@@ -211,7 +211,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 	if err := moveTaskDir(root, t, newState); err != nil {
 		return -1, err
 	}
-	ui.Note("%s %s (now %s)", pastVerb, t.ID, stateLabel(newState))
+	ui.OK("%s %s", pastVerb, t.ID)
 	return 0, nil
 }
 
@@ -231,7 +231,7 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if err := moveTaskDir(root, t, stateInProgress); err != nil {
 		return -1, err
 	}
-	ui.Note("unblocked %s (now %s)", t.ID, stateLabel(stateInProgress))
+	ui.OK("unblocked %s — now in progress", t.ID)
 	return 0, nil
 }
 
@@ -286,7 +286,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
-	ui.Note("blocked %s — fill in %s/%s/decision.md, then a human writes Resolution and runs 'coop tasks unblock %s'", t.ID, stateBlocked, t.ID, t.ID)
+	ui.OK("blocked %s — fill in its decision.md, then a human resolves it and runs 'coop tasks unblock %s'", t.ID, t.ID)
 	return 0, nil
 }
 
@@ -312,7 +312,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 			ui.Note("no done task(s) to remove")
 			return 0, nil
 		}
-		ui.Note("removed %d done task(s)", removed)
+		ui.OK("removed %d done task(s)", removed)
 		return 0, nil
 	}
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
@@ -325,7 +325,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	if err := os.RemoveAll(t.Dir); err != nil {
 		return -1, err
 	}
-	ui.Note("removed %s (was %s — note why in the commit)", t.ID, stateLabel(t.State))
+	ui.OK("removed %s (was %s — note why in the commit)", t.ID, stateLabel(t.State))
 	return 0, nil
 }
 
@@ -360,7 +360,7 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 		wrote++
 	}
 	if wrote < n {
-		ui.Note("only %d todo task(s) — wrote %d slice(s), not the %d requested", total, wrote, n)
+		ui.Warn("only %d todo task(s) — wrote %d slice(s), not the %d requested", total, wrote, n)
 	}
 	// The slices are COPIES; the source .agent/tasks is untouched. Say which to run so a
 	// later loop doesn't process every task twice.
@@ -545,10 +545,10 @@ func tasksFolderDecisions(root string) (int, error) {
 		}
 	}
 	if n == 0 {
-		ui.Note("no open decisions — nothing is blocked")
+		ui.OK("no open decisions — nothing is blocked")
 		return 0, nil
 	}
-	ui.Note("%d open decision(s) — resolve each %s/<id>/decision.md, then 'coop tasks unblock <id>'", n, stateBlocked)
+	ui.Note("%d open decision(s) — resolve each in its decision.md, then 'coop tasks unblock <id>'", n)
 	return 0, nil
 }
 
@@ -576,12 +576,16 @@ func tasksFolderLint(root string) (int, error) {
 		}
 	}
 	if len(findings) == 0 {
-		ui.Note("tasks lint: clean")
+		if len(items) == 0 {
+			ui.Note("no tasks to check")
+		} else {
+			ui.OK("no issues — %d task(s) checked", len(items))
+		}
 		return 0, nil
 	}
 	for _, f := range findings {
 		fmt.Println(f)
 	}
-	ui.Note("tasks lint: %d finding(s)", len(findings))
+	ui.Error("%d issue(s) across %d task(s) — fix the above", len(findings), len(items))
 	return 1, nil
 }

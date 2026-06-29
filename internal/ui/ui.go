@@ -101,9 +101,22 @@ func Note(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%s\n", fmt.Sprintf(format, a...))
 }
 
-// Error prints a red "coop:" error line to stderr. It does not exit.
+// OK prints a success result to stderr, led by a green ✓ — for a command's positive outcome. No
+// "coop:" prefix (the user invoked it); the message states the result, not the command name.
+func OK(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "%s✓%s %s\n", cGreen, cReset, fmt.Sprintf(format, a...))
+}
+
+// Warn prints a caution to stderr, led by a yellow ⚠ — a non-fatal heads-up (a blind spot, a
+// not-yet-done precondition) the user should know about but that didn't fail the command.
+func Warn(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "%s⚠%s %s\n", cYellow, cReset, fmt.Sprintf(format, a...))
+}
+
+// Error prints a failure to stderr, led by a red ✗. It does not exit. The dispatcher routes every
+// returned error here, so a good message says what failed and how to fix it — not just what.
 func Error(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "%scoop: %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
+	fmt.Fprintf(os.Stderr, "%s✗ %s%s\n", cRed, fmt.Sprintf(format, a...), cReset)
 }
 
 // Detail prints an indented, faint sub-step (no "coop:" prefix) — the routine per-file progress

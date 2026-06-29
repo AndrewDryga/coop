@@ -55,19 +55,19 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	noteUnscanned := func() {
 		if !includeIgnored {
 			if n := unscannedIgnoredCount(repo); n > 0 {
-				ui.Note("check-secrets: %d gitignored file(s) weren't scanned, but a box can still read them — rescan with --include-ignored to cover them", n)
+				ui.Warn("%d gitignored file(s) weren't scanned, but a box can still read them — rescan with --include-ignored to cover them", n)
 			}
 		}
 	}
 	if len(findings) == 0 {
-		ui.Note("check-secrets: no secrets found — scanned %s", scope)
+		ui.OK("no secrets found — scanned %s", scope)
 		noteUnscanned()
 		return 0, nil
 	}
 	for _, f := range findings {
 		fmt.Printf("  %s\n", f)
 	}
-	ui.Note("check-secrets: %d finding(s) in %s — remove the secret, or if intended hide the file with a .coopignore entry", len(findings), scope)
+	ui.Error("%d secret(s) found in %s — remove them, or hide an intended file with a .coopignore entry", len(findings), scope)
 	noteUnscanned()
 	return 1, nil
 }
