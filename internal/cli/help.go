@@ -262,7 +262,7 @@ var commandHelp = map[string]string{
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
   Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
-  done, never delete it, so 'coop tasks remove --all-done' is how you prune the archive.
+  done, never delete it, so 'coop tasks rm --all-done' is how you prune the archive.
   Defaults to .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths
   are repo-relative. With several queues configured (a monorepo), 'list' and 'decisions' roll
   up across all of them; the mutating commands act on one queue, so pass a single --tasks.`,

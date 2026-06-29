@@ -114,7 +114,7 @@ func (a *app) cmdPool(args []string) (int, error) {
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
-	case "add", "rm":
+	case "add", "rm", "remove":
 		if len(rest) < 2 {
 			return 2, fmt.Errorf("usage: coop pool %s <agent> <profile...>", verb)
 		}

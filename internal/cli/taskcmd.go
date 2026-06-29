@@ -43,7 +43,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderUnblock(root, args)
 	case "done":
 		return tasksFolderMove(root, args, stateDone, "done", "done")
-	case "remove", "rm":
+	case "rm", "remove":
 		return tasksFolderRemove(root, args)
 	case "split":
 		return tasksFolderSplit(repo, root, args)
@@ -51,7 +51,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderDecisions(root)
 	default:
 		return 2, unknownErr("tasks command", sub,
-			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "remove", "split", "decisions"})
+			[]string{"list", "lint", "add", "claim", "block", "unblock", "done", "rm", "split", "decisions"})
 	}
 }
 
@@ -295,7 +295,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 // loop and skills only ever MOVE a finished task to 99_done/, never delete it, so done
 // tasks accumulate until someone prunes them with this.
 func tasksFolderRemove(root string, args []string) (int, error) {
-	const usage = "usage: coop tasks remove <id>  |  coop tasks remove --all-done"
+	const usage = "usage: coop tasks rm <id>  |  coop tasks rm --all-done"
 	if len(args) == 1 && args[0] == "--all-done" {
 		items := readTaskTree(root)
 		removed := 0

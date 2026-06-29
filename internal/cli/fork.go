@@ -123,7 +123,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 		return a.forkReview(args[1:])
 	case "merge":
 		return a.forkMerge(args[1:])
-	case "rm":
+	case "rm", "remove":
 		return a.forkRm(args[1:])
 	case "open":
 		return a.forkOpenEditor(args[1:])

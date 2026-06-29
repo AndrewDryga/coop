@@ -15,7 +15,7 @@ A state change is a folder move — use the commands, not a manual `mv`:
 `coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>`.
 The directory IS the status; there is no status field to keep in sync. A finished task is
 **moved** to `99_done/`, never deleted — agents only move tasks between states. Pruning the
-archive is a manual, human step: `coop tasks remove --all-done`.
+archive is a manual, human step: `coop tasks rm --all-done`.
 
 ## A task folder (`<id>` is `YYYY-MM-DD-<slug>`)
 
@@ -200,8 +200,8 @@ Both are git-ignored, so they never bloat a commit.
 - Claim with `coop tasks claim <id>` BEFORE you start.
 - Blocked? `coop tasks block <id>`, then fill in `50_blocked/<id>/decision.md`.
 - Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted.
-- Pruning the archive is a manual, human step: `coop tasks remove --all-done` (or
-  `coop tasks remove <id>` for one). The loop and `/sweep` never do this.
+- Pruning the archive is a manual, human step: `coop tasks rm --all-done` (or
+  `coop tasks rm <id>` for one). The loop and `/sweep` never do this.
 - A todo task must NOT carry a `decision.md` (that means it's blocked); a blocked one MUST.
 - Never add a `status:` field — the directory IS the status. `coop tasks lint` checks this.
 - Counts / subtask progress / the blocked list are DERIVED — `coop tasks`,

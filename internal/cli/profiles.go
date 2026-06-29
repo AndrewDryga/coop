@@ -20,7 +20,7 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 	if len(args) > 0 && args[0] == "default" {
 		return a.setProfileDefault(args[1:])
 	}
-	if len(args) > 0 && args[0] == "rm" {
+	if len(args) > 0 && (args[0] == "rm" || args[0] == "remove") {
 		return a.removeProfile(args[1:])
 	}
 	names := agents.Names()

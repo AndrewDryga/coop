@@ -42,7 +42,7 @@ Build *to* them, then *check the diff against them*.
    snapshot) and `log.md` (journal — the *what + why*) current.
 6. **Done** — `coop tasks done <id>` (moves it to `99_done/`; the move ships in the
    commit). A finished task is **moved**, never deleted — leave it in `99_done/`; never run
-   `coop tasks remove` (pruning the archive is the human's call). Blocked instead? `coop tasks
+   `coop tasks rm` (pruning the archive is the human's call). Blocked instead? `coop tasks
    block <id>` and fill in its `decision.md` (the question · options · recommendation), then move on.
 7. Spot unrelated work? Drop it in `.agent/BACKLOG.md` and return to the queue —
    don't derail the current task.
