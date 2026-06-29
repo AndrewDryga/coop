@@ -213,6 +213,10 @@ func (c *Config) activeProfile(agent string) string {
 	return c.DefaultProfileOf(agent)
 }
 
+// ActiveProfile is the exported reader for activeProfile — the profile a run of agent resolves
+// to right now. Used for display (the run/loop banner names which profile is in play).
+func (c *Config) ActiveProfile(agent string) string { return c.activeProfile(agent) }
+
 // DefaultsFile marks each agent's default profile (KEY=VALUE, agent=profile): the profile
 // an interactive run uses when none is given on the CLI. Managed by `coop profiles default`.
 func (c *Config) DefaultsFile() string { return filepath.Join(c.ConfigDir, "defaults") }

@@ -25,14 +25,16 @@ const llmIcon = "✦"
 // are deliberately NOT sent to tail: they're the agent's own work and can contain strings
 // like "429" that would false-match the limit markers.
 type streamDecoder struct {
-	out  io.Writer         // rendered activity lines → terminal (+ fork log)
-	tail io.Writer         // human text → the rate-limit detector's tail
-	buf  []byte            // partial trailing line carried between Writes
-	tool map[string]string // tool_use id → label, to name a failed tool_result
+	out     io.Writer         // rendered activity lines → terminal (+ fork log)
+	tail    io.Writer         // human text → the rate-limit detector's tail
+	agent   string            // the agent whose stream this is (e.g. claude), for the model line
+	profile string            // the credential profile in play, for the model line
+	buf     []byte            // partial trailing line carried between Writes
+	tool    map[string]string // tool_use id → label, to name a failed tool_result
 }
 
-func newStreamDecoder(out, tail io.Writer) *streamDecoder {
-	return &streamDecoder{out: out, tail: tail, tool: map[string]string{}}
+func newStreamDecoder(out, tail io.Writer, agent, profile string) *streamDecoder {
+	return &streamDecoder{out: out, tail: tail, agent: agent, profile: profile, tool: map[string]string{}}
 }
 
 func (d *streamDecoder) Write(p []byte) (int, error) {
@@ -149,7 +151,14 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 // reliable source; it lands right after the iteration banner, before the agent's first move.
 func (d *streamDecoder) system(ev *streamEvent) {
 	if ev.Subtype == "init" && ev.Model != "" {
-		d.emit(ui.Dim("· model " + ev.Model))
+		line := "· model " + ev.Model
+		if d.agent != "" {
+			line = fmt.Sprintf("· using %s model %s", d.agent, ev.Model)
+			if d.profile != "" {
+				line += " profile " + d.profile
+			}
+		}
+		d.emit(ui.Dim(line))
 	}
 }
 

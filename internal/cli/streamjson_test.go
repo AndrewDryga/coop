@@ -22,7 +22,7 @@ func TestStreamDecoder(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":8269,"total_cost_usd":0.1117,"result":"done"}`,
 	}
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail)
+	d := newStreamDecoder(&out, &tail, "", "")
 	// Feed in two chunks split mid-line to exercise the partial-line buffer.
 	blob := strings.Join(lines, "\n") + "\n"
 	cut := len(blob) / 2
@@ -58,12 +58,30 @@ func TestStreamDecoder(t *testing.T) {
 	}
 }
 
+// The init model line names the agent and profile in play when given them, so a loop iteration
+// shows "using claude model … profile personal"; with neither it falls back to "· model …".
+func TestStreamDecoderModelLine(t *testing.T) {
+	init := `{"type":"system","subtype":"init","model":"claude-opus-4-8[1m]"}` + "\n"
+	var out, tail bytes.Buffer
+	d := newStreamDecoder(&out, &tail, "claude", "personal")
+	_, _ = d.Write([]byte(init))
+	if got := out.String(); !strings.Contains(got, "· using claude model claude-opus-4-8[1m] profile personal") {
+		t.Errorf("with agent+profile, model line = %q", got)
+	}
+	var out2, tail2 bytes.Buffer
+	d2 := newStreamDecoder(&out2, &tail2, "", "")
+	_, _ = d2.Write([]byte(init))
+	if got := out2.String(); !strings.Contains(got, "· model claude-opus-4-8[1m]") {
+		t.Errorf("without agent/profile, model line = %q (want the bare fallback)", got)
+	}
+}
+
 func TestStreamDecoderRateLimit(t *testing.T) {
 	now := time.Now()
 	// A blocking rate_limit_event is translated into the text detectLimit understands, with the
 	// reset epoch, so the loop waits until then instead of failing the run.
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail)
+	d := newStreamDecoder(&out, &tail, "", "")
 	_, _ = d.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 	if !strings.Contains(tail.String(), "usage limit reached|1781877000") {
 		t.Fatalf("blocking limit not written to tail: %q", tail.String())
@@ -78,7 +96,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// Informational statuses every run emits must not trip the detector.
 	for _, st := range []string{"allowed", "warning", "queued"} {
 		var o, tl bytes.Buffer
-		nd := newStreamDecoder(&o, &tl)
+		nd := newStreamDecoder(&o, &tl, "", "")
 		_, _ = nd.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"` + st + `","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 		if detectLimit(tl.String(), now).limited {
 			t.Errorf("status %q should not trip the limit detector (tail=%q)", st, tl.String())
@@ -99,7 +117,7 @@ func TestStreamDecoderModel(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newStreamDecoder(&out, &tail)
+			d := newStreamDecoder(&out, &tail, "", "")
 			_, _ = d.Write([]byte(c.line + "\n"))
 			d.flush()
 			if c.want == "" {
