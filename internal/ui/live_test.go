@@ -102,6 +102,27 @@ func TestRegion(t *testing.T) {
 	}
 }
 
+// An identical frame must not repaint — a static dashboard (nothing running, so no spinner) then
+// sits still instead of flickering every poll; any change (or a width change) still repaints.
+func TestAltScreenSkipsUnchangedFrame(t *testing.T) {
+	var buf strings.Builder
+	s := NewAltScreen(&buf, func() int { return 40 })
+	s.Frame([]string{"a", "b"})
+	if buf.Len() == 0 {
+		t.Fatal("first frame should paint")
+	}
+	buf.Reset()
+	s.Frame([]string{"a", "b"}) // identical → skip
+	if buf.Len() != 0 {
+		t.Errorf("an unchanged frame must not repaint, wrote %q", buf.String())
+	}
+	buf.Reset()
+	s.Frame([]string{"a", "c"}) // changed → repaint
+	if buf.Len() == 0 {
+		t.Error("a changed frame must repaint")
+	}
+}
+
 func TestAltScreen(t *testing.T) {
 	var buf strings.Builder
 	s := NewAltScreen(&buf, func() int { return 40 })

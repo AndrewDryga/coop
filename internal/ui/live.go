@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -81,6 +82,8 @@ func (r *Region) eraseLocked() {
 type AltScreen struct {
 	w     io.Writer
 	width func() int
+	last  []string // the last painted frame — skip the repaint when nothing changed (no flicker)
+	lastW int      // terminal width at the last paint — a resize forces a repaint
 }
 
 // NewAltScreen writes to w, sizing each frame's lines with width (called per repaint, so a
@@ -97,6 +100,12 @@ func (s *AltScreen) Enter() { fmt.Fprint(s.w, "\033[?1049h\033[?25l") }
 // lines left over from a taller previous frame.
 func (s *AltScreen) Frame(lines []string) {
 	w := s.width()
+	// Nothing changed since the last paint (same content, same width) → don't repaint. A static
+	// dashboard (no fork running, so no spinner animating) then sits still instead of flickering
+	// every poll; a resize or any content change still repaints.
+	if w == s.lastW && slices.Equal(lines, s.last) {
+		return
+	}
 	var b strings.Builder
 	b.WriteString("\033[H") // cursor home
 	for i, line := range lines {
@@ -107,6 +116,8 @@ func (s *AltScreen) Frame(lines []string) {
 	}
 	b.WriteString("\033[J") // clear anything below — a frame shorter than the last
 	fmt.Fprint(s.w, b.String())
+	s.last = append(s.last[:0], lines...)
+	s.lastW = w
 }
 
 // Leave shows the cursor and restores the screen that was active before Enter.
