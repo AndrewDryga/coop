@@ -554,6 +554,14 @@ func tasksFolderList(root string, all bool) (int, error) {
 		fmt.Printf("  %s\n", p.Dim(strings.Repeat("─", bannerWidth()-2))) // footer rule, right-aligned to the header's
 	}
 	fmt.Printf("  %s\n", summary)
+	// Explain the per-task [n/m] marker for a first-time reader — but only when a task actually has
+	// subtasks, so the common (subtask-free) listing stays uncluttered.
+	for _, t := range items {
+		if len(t.Subtasks) > 0 {
+			fmt.Printf("  %s\n", p.Dim("[checked/total] = subtasks"))
+			break
+		}
+	}
 	return 0, nil
 }
 

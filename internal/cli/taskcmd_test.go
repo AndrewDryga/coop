@@ -292,6 +292,26 @@ func TestValidateArgs(t *testing.T) {
 }
 
 // `coop tasks ls` caps the (only-growing) done archive so live work isn't buried; --all shows all.
+func TestTasksFolderListSubtaskLegend(t *testing.T) {
+	// A task WITH subtasks → the [n/m] marker AND a one-line legend explaining it.
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# A\n\n## Subtasks\n- [ ] one\n- [x] two\n")
+	out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	if !strings.Contains(out, "[1/2]") {
+		t.Errorf("expected the [1/2] subtask marker:\n%s", out)
+	}
+	if !strings.Contains(out, "= subtasks") {
+		t.Errorf("a task with subtasks should show the legend:\n%s", out)
+	}
+	// A task WITHOUT subtasks → no legend, so the common listing stays uncluttered.
+	bare := t.TempDir()
+	writeTaskFile(t, filepath.Join(bare, stateTodo, "2026-01-01-b", "task.md"), "# B\n\nno checkboxes here\n")
+	out2 := captureStdout(t, func() { _, _ = tasksFolderList(bare, false) })
+	if strings.Contains(out2, "= subtasks") {
+		t.Errorf("a subtask-free listing must not show the legend:\n%s", out2)
+	}
+}
+
 func TestTasksFolderListCapsDone(t *testing.T) {
 	root := t.TempDir()
 	for i := 1; i <= 7; i++ {
