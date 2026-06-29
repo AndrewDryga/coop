@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 3.0.0
 
 - **New `coop tasks watch`; `coop status` removed.** `coop tasks watch` is a live, task-centric
