@@ -1,9 +1,11 @@
 package box
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -23,6 +25,31 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 		return true
 	}
 	return fileExists(filepath.Join(cfg.AgentProfileDir(agent, profile), file))
+}
+
+// ProfileTokenExpiry returns when agent's named-profile credential expires, and whether that's
+// knowable. Only an OAuth login carries a readable expiry — claude's .credentials.json
+// (claudeAiOauth.expiresAt, ms epoch); an API-key login or another agent returns ok=false (nothing
+// to check). ProfileAuthed is a presence heuristic and can't tell a live token from an expired one
+// that's still on disk; this can, so callers (e.g. `coop profiles`) don't report a dead token as
+// "signed in" — the exact trap behind a "signed in but 401" run.
+func ProfileTokenExpiry(cfg *config.Config, agent, profile string) (time.Time, bool) {
+	if agent != "claude" {
+		return time.Time{}, false
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.AgentProfileDir(agent, profile), ".credentials.json"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	var c struct {
+		ClaudeAiOauth struct {
+			ExpiresAt int64 `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &c) != nil || c.ClaudeAiOauth.ExpiresAt == 0 {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(c.ClaudeAiOauth.ExpiresAt), true
 }
 
 // EnsureProfilesDir prepares agent's credential vault for the named-profile layout, run

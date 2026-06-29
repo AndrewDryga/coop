@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -48,6 +49,11 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			status := ui.Dim("not signed in")
 			if box.ProfileAuthed(a.cfg, agent, p) {
 				status = ui.Green("signed in")
+				// "signed in" only means a creds file exists — an OAuth token can be expired but
+				// present, which reads as fine yet 401s in a run. Flag the expired case with the fix.
+				if exp, ok := box.ProfileTokenExpiry(a.cfg, agent, p); ok && time.Now().After(exp) {
+					status = ui.Yellow("token expired — re-login: coop login " + agent + " --profile " + p)
+				}
 			}
 			tag := ""
 			if p == def {
