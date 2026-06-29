@@ -31,6 +31,12 @@ if echo x >> .env 2>/dev/null; then echo "RESULT FAIL the .env decoy is writable
 [ -s .env.example ] && echo "RESULT PASS .env.example template stays readable" || echo "RESULT FAIL .env.example was hidden"
 [ -s src/app.js ]   && echo "RESULT PASS source files stay readable"           || echo "RESULT FAIL source files were hidden"
 if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL secret value reachable in the tree"; else echo "RESULT PASS secret value appears nowhere the agent can read"; fi
+# No host control plane: the agent must not be able to drive the host. The box ships only coop-entry
+# (the entrypoint), never the orchestration CLI, and coop never mounts the docker socket. (If a
+# tasks-only coop ever lands in the box, change this to assert THAT can't reach Docker — see the
+# in-box-coop-tasks task.)
+command -v coop >/dev/null 2>&1 && echo "RESULT FAIL the coop CLI is in the box (a path to the host control plane)" || echo "RESULT PASS no coop CLI in the box (ships coop-entry only)"
+[ -S /var/run/docker.sock ] && echo "RESULT FAIL a docker socket is mounted in the box (host escape)" || echo "RESULT PASS no docker socket in the box (can't drive the host daemon)"
 # Privilege posture (interpreted on the host — it depends on the image and runtime).
 echo "RESULT UID $(id -u)"
 echo "RESULT CAPS $(awk '/^CapEff/{print $2}' /proc/self/status 2>/dev/null)"
@@ -43,9 +49,10 @@ func (r *report) ok(msg string) { r.pass++; fmt.Printf("  %s %s\n", ui.Check(), 
 func (r *report) no(msg string) { r.fail++; fmt.Printf("  %s %s\n", ui.Cross(), msg) }
 
 // cmdDoctor proves isolation by attacking it: it builds a fixture repo full of secrets and runs
-// the box against it, checking that secrets are shadowed inside the sandbox, the box is locked
-// down (non-root, capabilities dropped, pids-limited), egress fails closed, a box scoped to one
-// agent can't see a peer's credentials, and nothing leaks into a clone handoff.
+// the box against it, checking that secrets are shadowed inside the sandbox, the box has no path to
+// the host control plane (no coop CLI, no docker socket), the box is locked down (non-root,
+// capabilities dropped, pids-limited), egress fails closed, a box scoped to one agent can't see a
+// peer's credentials, and nothing leaks into a clone handoff.
 func (a *app) cmdDoctor(args []string) (int, error) {
 	if err := rejectArgs("doctor", args); err != nil {
 		return 2, err
