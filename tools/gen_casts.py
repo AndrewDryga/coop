@@ -73,7 +73,7 @@ def chk(msg):
     return "  " + green("✓") + " " + msg
 
 
-def model_line(agent="claude", model="claude-opus-4-8", profile="personal"):
+def model_line(agent="claude", model="claude-opus-4-8[1m]", profile="personal"):
     """streamjson.go's init line: dim labels (· using / model / profile), normal-bright values."""
     s = dim("· using ") + agent + dim(" model ") + model
     if profile:
@@ -211,35 +211,40 @@ def capture_output(argv, cwd=ROOT, cols=88, rows=44):
 
 
 def scene_loop():
-    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended."""
-    c = Cast("loop", cols=90, rows=27, title="coop loop — work the queue all night")
+    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended.
+    These lines are from a REAL `coop loop` run (claude, two tasks, captured under a PTY), then
+    abridged for length — every line is genuine coop output, paths relativized. To re-capture a
+    live run wholesale: asciinema rec -c "coop loop" site/casts/loop.cast"""
+    c = Cast("loop", cols=92, rows=30, title="coop loop — work the queue all night")
     c.command("coop loop")
-    c.line(coop("starting unattended loop on .agent/tasks with claude — 0/7 done (Ctrl-C to stop)"), after=0.7)
-    c.line(coop("iteration 1 · 0/7 done · now: Add retry to the API client"), after=0.5)
-    c.line(coop("shadowed 4 secret path(s)"), after=0.5)
-    c.line(model_line("claude", "claude-opus-4-8", ""), after=0.7)
-    c.line(ICON_LLM + " I'll add exponential backoff to the client's request path. Reading it first.", after=0.8)
-    c.line("▸ Read " + dim("internal/client.go"), after=0.6)
-    c.line("✎ Edit " + dim("internal/client.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./..."), after=1.0)
-    c.line(dim("· 3 turns · 14s · $0.07"), after=0.6)
-    c.line(coop("iteration 2 · 1/7 done · now: Cache the auth token"), after=0.5)
-    c.line(model_line("claude", "claude-opus-4-8", ""), after=0.6)
-    c.line(ICON_LLM + " The token is re-fetched every call. I'll memoize it with a TTL.", after=0.8)
-    c.line("✎ Edit " + dim("internal/auth.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./..."), after=0.5)
-    c.line("  " + red("✗") + " Bash go test ./...: auth_test.go: token reused after expiry", after=0.9)
-    c.line(ICON_LLM + " Good — the test caught an expiry bug. Fixing the TTL check.", after=0.8)
-    c.line("✎ Edit " + dim("internal/auth.go"), after=0.7)
-    c.line("⚙ Bash " + dim("go test ./..."), after=1.0)
-    c.line(dim("· 5 turns · 31s · $0.12"), after=0.7)
-    c.line(yellow("⚠ rate limited") + " (five_hour) — resets Jun 20, 11:00pm", after=0.4)
-    c.line(coop("model rate limited — waiting 5h0m0s, until Fri 23:00 MDT, then continuing"), after=0.9)
-    c.line(coop("iteration 3 · 2/7 done · now: Document the retry policy"), after=0.6)
-    c.line(model_line("claude", "claude-opus-4-8", ""), after=0.6)
-    c.line(dim("       … 4 more iterations …"), after=1.1)
-    c.line(coop("queue empty — running audit pass"), after=1.2)
-    c.line(bold(green("✓ queue verified done — 7/7 in 7 iterations")), after=1.5)
+    c.line(coop("starting unattended loop on .agent/tasks with claude — 0/2 done (Ctrl-C to stop)"), after=0.7)
+    c.line(coop("iteration 1 · 0/2 done · now: Add a Header method to Token · profile personal"), after=0.5)
+    c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.7)
+    c.line("▸ Read " + dim("AGENTS.md"), after=0.5)
+    c.line("⚙ Bash " + dim("find .agent/tasks -maxdepth 2 -type d | sort"), after=0.5)
+    c.line("▸ Read " + dim(".agent/tasks/00_todo/2026-…-add-a-ping-method-to-client/task.md"), after=0.5)
+    c.line("▸ Read " + dim("internal/client/client.go"), after=0.6)
+    c.line(ICON_LLM + " Both tasks are small. I'll work them one at a time, one commit each, starting with the ping task.", after=0.9)
+    c.line("⚙ Bash " + dim("go version; go build ./... && go vet ./..."), after=0.6)
+    c.line("⚙ Bash " + dim("mv .agent/tasks/00_todo/2026-06-28-add-a-ping-method-to-cli…"), after=0.6)
+    c.line("✎ Edit " + dim("internal/client/client.go"), after=0.7)
+    c.line("⚙ Bash " + dim("gofmt -l internal/client/client.go; go build ./... && go ve…"), after=0.8)
+    c.line(ICON_LLM + " Gate green. Update state.md / log.md, then commit.", after=0.7)
+    c.line("⚙ Bash " + dim('git add internal/client/client.go && git commit -q -m "clie…'), after=0.7)
+    c.line("⚙ Bash " + dim("mv .agent/tasks/10_in_progress/2026-06-28-add-a-ping-method…"), after=0.6)
+    c.line(ICON_LLM + " Ping task shipped. Now the header task — claim, implement, gate, commit, done.", after=0.9)
+    c.line("⚙ Bash " + dim("mv .agent/tasks/00_todo/2026-06-28-add-a-header-method-to-t…"), after=0.6)
+    c.line("✎ Edit " + dim("internal/auth/auth.go"), after=0.7)
+    c.line("⚙ Bash " + dim("gofmt -l internal/auth/auth.go; go build ./... && go vet ./…"), after=0.8)
+    c.line("⚙ Bash " + dim('git add internal/auth/auth.go && git commit -q -m "auth: ad…'), after=0.7)
+    c.line("⚙ Bash " + dim("mv .agent/tasks/10_in_progress/2026-06-28-add-a-header-meth…"), after=0.6)
+    c.line(ICON_LLM + " Queue drained. Both tasks shipped, one commit each, gate green, working tree clean.", after=0.9)
+    c.line(dim("· 35 turns · 1m40s · $0.82"), after=0.8)
+    c.line(coop("queue empty — running audit pass"), after=0.9)
+    c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.6)
+    c.line(ICON_LLM + " Both done tasks pass the audit — gate green, implementing commit in the log. Nothing needs reopening.", after=0.9)
+    c.line(dim("· 11 turns · 49s · $0.41"), after=0.8)
+    c.line(bold(green("✓ queue verified done — 2/2 in 1 iterations")), after=1.5)
     c.write()
 
 
