@@ -97,16 +97,18 @@
   status` now reports the local queue's progress (done/total · blocked · the active task) when
   you're running a single loop with no forks, instead of just "no forks yet".
 
-- **Self-documenting task files + a reference README.** `coop tasks add` now seeds `task.md` +
-  `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a short header
-  that explains the file and its format — so dumping a resume snapshot, journaling the *why*, and
-  answering a blocked one-way-door decision are all by-the-book without leaving the folder. The
-  `task.md` header is a directive to the agent that picks the task up: *before any code*, replace
-  the `<…>` placeholders (Context / Acceptance / Approach) or block it — so a vague title can't be
-  coded against blind. A blocked decision is answerable in one step — `coop tasks unblock <id>
-  "<answer>"` writes the answer into `decision.md` (replacing its `HUMAN:` marker) and unblocks —
-  and `coop tasks decisions` prints each recommendation in full. `.agent/tasks/README.md` is the
-  full reference: a description, template, and worked example for every per-task file.
+- **Self-documenting task files, and a first-class blocked-decision flow.** `coop tasks add` seeds
+  `task.md` + `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a
+  short header that explains the file and its format — so a resume snapshot, the *why* journal, and
+  a blocked one-way-door decision are all by-the-book without leaving the folder. The `task.md`
+  header directs the agent that picks the task up to replace its `<…>` placeholders (Context /
+  Acceptance / Approach) *before* writing code, or block it — so a vague title can't be coded
+  against blind. A blocked decision is then resolved from the CLI: `coop tasks decisions` lists the
+  open ones with their full recommendation, or `-i` walks them one at a time to answer in place;
+  answering — inline with `coop tasks unblock <id> "<answer>"` or at the interactive prompt —
+  records the answer into `decision.md` and returns the task to `todo` for the loop to pick up.
+  `.agent/tasks/README.md` is the full reference: a description, template, and worked example for
+  every per-task file.
 
 - **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
   and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
