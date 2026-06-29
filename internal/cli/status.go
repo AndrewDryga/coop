@@ -113,8 +113,8 @@ func (a *app) cmdStatus(args []string) (int, error) {
 				abs[i] = filepath.Join(repo, r)
 			}
 			if c, active := queueProgress(abs); c.total() > 0 {
-				ui.Info("%s — local queue: %s", ui.Bold(filepath.Base(repo)), progressLine(c, active))
-				ui.Info("  no forks yet — 'coop fork <name>' or 'coop fleet up' to run several in parallel")
+				ui.Note("%s — local queue: %s", ui.Bold(filepath.Base(repo)), progressLine(c, active))
+				ui.Note("  no forks yet — 'coop fork <name>' or 'coop fleet up' to run several in parallel")
 				return 0, nil
 			}
 		}

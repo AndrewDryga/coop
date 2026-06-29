@@ -369,8 +369,11 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
 }
 
 func forkNextSteps(name string) {
-	ui.Info("review · merge · discard:")
-	ui.Info("  coop fork review %s   coop fork merge %s   coop fork rm %s", name, name, name)
+	ui.Steps(
+		fmt.Sprintf("coop fork review %s", name),
+		fmt.Sprintf("coop fork merge %s", name),
+		fmt.Sprintf("coop fork rm %s", name),
+	)
 }
 
 // setupFork creates the clone and its branch (the git half of forkCreate, with no
@@ -623,7 +626,7 @@ func (a *app) forkReview(args []string) (int, error) {
 			cargs = append(cargs, "-c", "difftool."+t+".cmd="+gitGlobalOut("difftool."+t+".cmd"))
 			_ = gitInteractive(repo, append(cargs, "difftool", "HEAD..."+ref)...)
 		} else {
-			ui.Info("no global git diff.tool set — showing the diff (--tool ignores repo config, for safety)")
+			ui.Note("no global git diff.tool set — showing the diff (--tool ignores repo config, for safety)")
 			_ = gitInteractive(repo, "diff", "--no-ext-diff", "HEAD..."+ref) // internal diff (see default case)
 		}
 		return 0, nil
@@ -663,7 +666,7 @@ func (a *app) openInEditor(ws string) (int, error) {
 		return 1, errors.New("no editor found — set $COOP_EDITOR, git config core.editor, or $VISUAL/$EDITOR (or install code/cursor/zed/idea)")
 	}
 	parts := append(strings.Fields(editor), ws)
-	ui.Info("opening %s in %s", ws, parts[0])
+	ui.Note("opening %s in %s", ws, parts[0])
 	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	if err := cmd.Run(); err != nil {
@@ -752,7 +755,7 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 		nfiles = len(strings.Split(files, "\n"))
 	}
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
-	ui.Info("%s ← %s  ·  %s commit(s), +%d -%d across %d file(s)", ref, name, ahead, ins, del, nfiles)
+	ui.Note("%s ← %s  ·  %s commit(s), +%d -%d across %d file(s)", ref, name, ahead, ins, del, nfiles)
 	if log := gitOut(repo, "log", "--oneline", "--no-decorate", "HEAD.."+ref); log != "" {
 		fmt.Println(ui.Bold("commits:"))
 		fmt.Println(indent(log))

@@ -766,7 +766,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		if r, err := filepath.Rel(repo, lf); err == nil {
 			rel = r
 		}
-		ui.Info("note: a legacy %s is present — v3 uses a folder per task and did NOT migrate it; convert it with MIGRATING.md", rel)
+		ui.Warn("a legacy %s is present — v3 uses a folder per task and did NOT migrate it; convert it with MIGRATING.md", rel)
 	}
 	scaffold.SuggestDocker(repo)
 	ui.Steps(initNextSteps(repo, services)...)
