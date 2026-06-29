@@ -109,7 +109,7 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err
 	}
-	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), args...), tool, consult)
+	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, consult)
 }
 
 // selectRunProfile points cfg at the credential profile chosen with --profile for a run of tool
@@ -152,6 +152,21 @@ func extractBoolFlag(args []string, flag string) (found bool, rest []string) {
 // consult its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
 func extractConsult(args []string) (consult bool, rest []string) {
 	return extractBoolFlag(args, "--consult")
+}
+
+// dropDashDash removes the first "--" from args. coop uses "--" to mark the end of ITS own flags;
+// the separator must not reach the agent. Without this, `coop claude -- -p "x"` runs claude with
+// `-- -p "x"` — the agent reads everything after `--` as positional, so `-p` stops being a flag
+// (and `coop codex -- --profile w` never reaches codex's own --profile). It's stripped only here,
+// after every coop-flag extractor has run, since those need the `--` to know where coop's flags end.
+func dropDashDash(args []string) []string {
+	for i, a := range args {
+		if a == "--" {
+			out := append([]string{}, args[:i]...)
+			return append(out, args[i+1:]...)
+		}
+	}
+	return args
 }
 
 // defaultCmd is the agent's autonomous interactive command; an unknown name runs as a
@@ -502,7 +517,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 		return -1, err
 	}
 	// The governor's autonomous default command, plus any extra args you pass through.
-	cmd := append(append([]string{}, a.defaultCmd(governor)...), rest...)
+	cmd := append(append([]string{}, a.defaultCmd(governor)...), dropDashDash(rest)...)
 	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
 		strings.Join(fusion.Peers(governor, agents.Names()), " + "))
 	return box.Run(a.cfg, a.rt, box.RunSpec{

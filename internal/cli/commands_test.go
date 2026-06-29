@@ -35,6 +35,21 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 }
 
+// coop's "--" separator must be consumed, not forwarded to the agent: `coop claude -- -p x` must
+// reach the agent as `-p x`, not `-- -p x` (which the agent reads as positional, dropping the flag).
+func TestDropDashDash(t *testing.T) {
+	for _, c := range []struct{ in, want []string }{
+		{[]string{"-p", "x"}, []string{"-p", "x"}},                           // no --: unchanged
+		{[]string{"--", "-p", "x"}, []string{"-p", "x"}},                     // leading -- stripped
+		{[]string{"a", "--", "b", "--", "c"}, []string{"a", "b", "--", "c"}}, // only the first --
+		{[]string{"--"}, []string{}},                                         // lone --
+	} {
+		if got := dropDashDash(c.in); !slices.Equal(got, c.want) {
+			t.Errorf("dropDashDash(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 // TestLoopWorkPromptFolderWorkflow: the work prompt drives the folder queue — claim/done/block
 // via `coop tasks`, resume an interrupted in_progress task from its state.md + the git diff, and
 // finalize state.md (never blank it) so a different agent or a review can pick up next iteration.
