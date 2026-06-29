@@ -118,7 +118,7 @@ func (a *app) cmdStatus(args []string) (int, error) {
 				return 0, nil
 			}
 		}
-		ui.Info("no forks yet — open one with 'coop fork <name>' or a fleet with 'coop fleet up'")
+		ui.Note("no forks yet — open one with 'coop fork <name>' or a fleet with 'coop fleet up'")
 		return 0, nil
 	}
 

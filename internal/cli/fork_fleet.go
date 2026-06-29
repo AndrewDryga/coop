@@ -151,7 +151,7 @@ func (a *app) fleetInit() (int, error) {
 	if err := os.WriteFile(path, []byte(fleetTemplate), 0o644); err != nil {
 		return -1, err
 	}
-	ui.Info("wrote .agent/fleet — add a fork per line, then 'coop fleet up'")
+	ui.OK("wrote .agent/fleet — add a fork per line, then 'coop fleet up'")
 	return 0, nil
 }
 
@@ -194,7 +194,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 	started := 0
 	for _, e := range fleet {
 		if pid := forkRunningPid(repo, e.name); pid != 0 {
-			ui.Info("fork %s already running (pid %d) — skipping", e.name, pid)
+			ui.Note("fork %s already running (pid %d) — skipping", e.name, pid)
 			continue // idempotent: re-running `fleet up` leaves live loops alone
 		}
 		tasks := e.tasks // fleet paths are repo-relative; make them absolute for the fork
@@ -210,7 +210,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 		}
 		started++
 	}
-	ui.Info("fleet up: %d fork(s) detached — coop fork ls · coop fork logs -f", started)
+	ui.OK("%s detached — coop fork ls · coop fork logs -f", ui.Count(started, "fork"))
 	if prune {
 		if err := a.pruneFleet(repo, force); err != nil {
 			return -1, err
@@ -242,7 +242,7 @@ func (a *app) fleetDown(args []string) (int, error) {
 			}
 		}
 	}
-	ui.Info("fleet down: stopped %d", stopped)
+	ui.OK("stopped %s", ui.Count(stopped, "fork"))
 	// `down` only stops forks listed in .agent/fleet — surface a running fork that isn't (removed
 	// from the file, or started by hand) rather than leave it silently running.
 	for _, n := range fleetOrphans(names, forkNames(repo)) {
@@ -328,19 +328,19 @@ func (a *app) pruneFleet(repo string, force bool) error {
 	}
 	orphans := fleetOrphans(names, forkNames(repo))
 	if len(orphans) == 0 {
-		ui.Info("nothing to prune — every fork is in .agent/fleet")
+		ui.Note("nothing to prune — every fork is in .agent/fleet")
 		return nil
 	}
 	removed, kept := 0, 0
 	for _, n := range orphans {
 		if forkRunningPid(repo, n) != 0 {
-			ui.Info("kept %s — still running (coop fork stop %s first)", n, n)
+			ui.Warn("kept %s — still running (coop fork stop %s first)", n, n)
 			kept++
 			continue
 		}
 		ws := forkWorkspace(repo, n)
 		if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
-			ui.Info("kept %s — %s", n, err)
+			ui.Warn("kept %s — %s", n, err)
 			kept++
 			continue
 		}
@@ -349,13 +349,13 @@ func (a *app) pruneFleet(repo string, force bool) error {
 			kept++
 			continue
 		}
-		ui.Info("removed %s", n)
+		ui.OK("removed %s", n)
 		removed++
 	}
 	if kept > 0 {
-		ui.Info("pruned %d fork(s), kept %d", removed, kept)
+		ui.OK("pruned %s, kept %d", ui.Count(removed, "fork"), kept)
 	} else {
-		ui.Info("pruned %d fork(s)", removed)
+		ui.OK("pruned %s", ui.Count(removed, "fork"))
 	}
 	return nil
 }
@@ -405,7 +405,7 @@ func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, e
 		return -1, err
 	}
 	if total == 0 {
-		ui.Info("no todo task(s) to split")
+		ui.Note("no todo tasks to split")
 		return 0, nil
 	}
 	var fleetLines []string
@@ -413,7 +413,7 @@ func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, e
 		if written[i] == "" {
 			continue
 		}
-		ui.Info("wrote %s (%d task(s))", written[i], counts[i])
+		ui.Note("wrote %s (%s)", written[i], ui.Count(counts[i], "task"))
 		fleetLines = append(fleetLines, fmt.Sprintf("%s %s %s", names[i], agts[i], written[i]))
 	}
 	// Don't clobber a hand-authored .agent/fleet — print the lines to reconcile instead.
@@ -423,10 +423,10 @@ func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, e
 		if err := os.WriteFile(fleetFile(repo), []byte(out), 0o644); err != nil {
 			return -1, err
 		}
-		ui.Info("wrote .agent/fleet — review the slices, then 'coop fleet up'")
+		ui.OK("wrote .agent/fleet — review the slices, then 'coop fleet up'")
 		return 0, nil
 	}
-	ui.Info("mechanical round-robin split — .agent/fleet exists, so reconcile these lines:")
+	ui.Note(".agent/fleet already exists — add these lines to it yourself:")
 	for _, l := range fleetLines {
 		fmt.Printf("  %s\n", l)
 	}

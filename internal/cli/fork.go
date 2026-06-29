@@ -535,7 +535,7 @@ func (a *app) forkLs(args []string) (int, error) {
 	}
 	names := forkNames(repo)
 	if len(names) == 0 {
-		ui.Info("no forks yet — open one with 'coop fork <name>'")
+		ui.Note("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
 	}
 	// Size the NAME column to the longest fork name (clamped). Rune-pad EVERY cell (padRight) rather
@@ -825,7 +825,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	if err := destroyFork(repo, name); err != nil {
 		return -1, err
 	}
-	ui.Info("removed fork %s", name)
+	ui.OK("removed fork %s", name)
 	return 0, nil
 }
 

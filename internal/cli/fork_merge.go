@@ -337,12 +337,12 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !landed {
 		return 1, nil
 	}
-	ui.Info("%s", ui.Green("✓ landed "+name))
+	ui.OK("landed %s", name)
 	if approve("remove the fork?", yes) {
 		if err := destroyFork(repo, name); err != nil {
 			return -1, err
 		}
-		ui.Info("removed fork %s", name)
+		ui.OK("removed fork %s", name)
 	}
 	return 0, nil
 }
@@ -395,11 +395,11 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 			return 1, nil
 		}
 		if ok {
-			ui.Info("%s", ui.Green("✓ landed "+n))
+			ui.OK("landed %s", n)
 			_ = destroyFork(repo, n)
 			landed = append(landed, n)
 		}
 	}
-	ui.Info("rebase queue: %d landed", len(landed))
+	ui.OK("%s landed", ui.Count(len(landed), "fork"))
 	return 0, nil
 }

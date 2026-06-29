@@ -275,7 +275,7 @@ func (a *app) forkLogs(args []string) (int, error) {
 	}
 	names := forkNames(repo)
 	if len(names) == 0 {
-		ui.Info("no forks yet")
+		ui.Note("no forks yet")
 		return 0, nil
 	}
 	if !follow {
@@ -373,7 +373,7 @@ func (a *app) forkStop(args []string) (int, error) {
 		ui.Info("  removed %d orphaned box container(s)", n)
 	}
 	_ = os.Remove(forkPid(repo, name))
-	ui.Info("stopped fork %s", name)
+	ui.OK("stopped fork %s", name)
 	return 0, nil
 }
 

@@ -113,6 +113,19 @@ func Warn(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%s⚠%s %s\n", cYellow, cReset, fmt.Sprintf(format, a...))
 }
 
+// Count renders a number with its noun, pluralized — Count(1, "task") = "1 task", Count(2, "task")
+// = "2 tasks". Pass an explicit plural for an irregular noun: Count(2, "box", "boxes") = "2 boxes".
+// Use it for human counts in results so output reads "2 forks", not "2 fork(s)".
+func Count(n int, singular string, plural ...string) string {
+	noun := singular + "s"
+	if n == 1 {
+		noun = singular
+	} else if len(plural) > 0 {
+		noun = plural[0]
+	}
+	return fmt.Sprintf("%d %s", n, noun)
+}
+
 // Error prints a failure to stderr, led by a red ✗. It does not exit. The dispatcher routes every
 // returned error here, so a good message says what failed and how to fix it — not just what.
 func Error(format string, a ...any) {
