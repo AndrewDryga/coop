@@ -6,24 +6,6 @@
 
 ## 3.0.0
 
-- **New `coop tasks watch`; `coop status` removed.** `coop tasks watch` is a live, task-centric
-  board — the queue itself (in progress / todo / blocked) draining in place, with overall progress;
-  it auto-exits only when every task is done, and keeps watching a blocked or idle queue. With a
-  fleet running it merges in every active fork and the tasks it claimed — one view, deduped by task
-  id, with each in-progress task tagged by the fork on it — so it's the single place to see all the
-  work and who's doing what. The fleet's per-fork board stays at `coop fleet watch` (snapshot:
-  `coop fork ls`). `coop status` is gone: it was a third entry point that overlapped `coop fork ls`,
-  and its `--watch` was a straight alias for `coop fleet watch`. Listing is normalized too — `ls` is
-  the canonical verb everywhere (`coop tasks ls`, `coop fork ls`), with `list` kept as a forgiving
-  alias, matching `rm`/`remove`.
-
-- **New `/review-board` skill — the heavyweight, on-demand pre-merge review.** Convenes a
-  board of expert hats (correctness, security, PM/UX/maintainer, and any hat the change
-  earns) as parallel reviewers, checks the diff against the project's *own* `.agent/rules/`
-  and gate — no hardcoded laws — then synthesizes one ranked verdict and an ordered fix plan
-  you can queue with `coop tasks add`. Ships into new projects via `coop init`, and is
-  agent-agnostic: it falls back to a sequential pass where parallel subagents aren't available.
-
 - **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
   The work queue is one folder per task under four state directories — `00_todo/` ·
   `10_in_progress/` · `50_blocked/` · `99_done/` — and a task's workflow state is simply which
@@ -70,6 +52,17 @@
   and report the tasks migrated per state.
   ```
 
+- **New `coop tasks watch`; `coop status` removed.** `coop tasks watch` is a live, task-centric
+  board — the queue itself (in progress / todo / blocked) draining in place, with overall progress;
+  it auto-exits only when every task is done, and keeps watching a blocked or idle queue. With a
+  fleet running it merges in every active fork and the tasks it claimed — one view, deduped by task
+  id, with each in-progress task tagged by the fork on it — so it's the single place to see all the
+  work and who's doing what. The fleet's per-fork board stays at `coop fleet watch` (snapshot:
+  `coop fork ls`). `coop status` is gone: it was a third entry point that overlapped `coop fork ls`,
+  and its `--watch` was a straight alias for `coop fleet watch`. Listing is normalized too — `ls` is
+  the canonical verb everywhere (`coop tasks ls`, `coop fork ls`), with `list` kept as a forgiving
+  alias, matching `rm`/`remove`.
+
 - **The loop hands off mid-task through a per-task `state.md`.** Each `coop loop` iteration runs a
   fresh headless agent with no memory of the last, so a task interrupted mid-flight used to be
   resumed only by reverse-engineering the uncommitted `git diff`. Now the work prompt has the agent
@@ -81,34 +74,6 @@
   between iterations. The agent finalizes the note as its last step on a task — even when done — so
   a review can reopen it and the next agent picks up the requested changes from the note rather than
   the diff.
-
-- **A bare command group prints its help instead of an error.** `coop tasks` and `coop fleet`
-  with no subcommand used to fail with an "unknown command" error built from an empty token; they
-  now print that group's help and exit 0 — the natural way to discover the subcommands. (`coop
-  pool` and `coop profiles` already showed a sensible default view, so they're unchanged.)
-
-- **Readable, colorized output across the CLI.** `coop tasks` and `coop tasks decisions` render in
-  color — colored state headers, wrapped titles, a gray task id, and `[n/m]` subtask / `⚠` decision
-  markers — instead of a flat monochrome list, degrading cleanly on a narrow terminal or under
-  `NO_COLOR`. Command results now speak in one voice: a green `✓` for success, a yellow `⚠` for a
-  caution, a red `✗` for a failure, plain text for a neutral note — replacing the old
-  `coop: <command>: …` prefix that just echoed the command back at you (so `coop tasks lint` reads
-  `✓ no issues — 1 task checked`). The loop's per-iteration line reads `· using <agent> model
-  <model> profile <profile>` with the values lifted out of the dim label, and `coop fleet watch`
-  repaints only on a real change (no flicker), with the task counts aligned in a right-sized column.
-
-- **`rm` is the one verb for deleting things.** Every destructive subcommand advertises `rm` —
-  `coop tasks rm`, `coop fork rm`, `coop profiles rm`, `coop pool rm` — rather than `coop tasks`
-  alone advertising `remove`. `remove` still works everywhere as an accepted alias, so existing
-  habits and scripts don't break; it's just no longer the form shown in help or usage.
-
-- **Clearer `coop help`.** Tasks get their own `TASKS` section instead of one line under
-  `UNATTENDED`, and `coop up`/`coop down` name the actual services defined in `compose.agent.yml`,
-  dimmed (with a "none yet" hint) when there's no compose file to act on.
-
-- **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
-  demand, so a monorepo can start a per-component queue without a root `coop init`. (The single-loop
-  progress view — done/total · blocked · the active task — is now part of `coop tasks watch`.)
 
 - **Self-documenting task files, and a first-class blocked-decision flow.** `coop tasks add` seeds
   `task.md` + `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a
@@ -123,12 +88,28 @@
   `.agent/tasks/README.md` is the full reference: a description, template, and worked example for
   every per-task file.
 
-- **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
-  and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
-  its runtime has one, batch independent read-only work, and use native subagents or task workers for
-  research and second opinions while keeping writes serialized in the current checkout. The wording is
-  capability-based so Claude, Codex, and Gemini use their native equivalents without inventing
-  unavailable slash commands or trying to run host-side Coop commands from inside the box.
+- **New `/review-board` skill — the heavyweight, on-demand pre-merge review.** Convenes a
+  board of expert hats (correctness, security, PM/UX/maintainer, and any hat the change
+  earns) as parallel reviewers, checks the diff against the project's *own* `.agent/rules/`
+  and gate — no hardcoded laws — then synthesizes one ranked verdict and an ordered fix plan
+  you can queue with `coop tasks add`. Ships into new projects via `coop init`, and is
+  agent-agnostic: it falls back to a sequential pass where parallel subagents aren't available.
+
+- **Security hardening (from end-to-end and multi-agent audits).** Secret shadowing now covers
+  `*.yaml`/`*.yml` credential files and matches filenames case-insensitively, so
+  `config/credentials.yaml`, `.ENV`, and `ID_RSA` no longer slip into the box (notably on
+  case-insensitive filesystems); a template/sample suffix (`*.example`/`*.sample`/`*.template`) no
+  longer un-shadows a private-key pattern, so `id_rsa.example` stays shadowed — only exact public
+  CA-bundle names still override `*.pem`. The fork **merge gate** now reuses that same shadow denylist
+  instead of a separate regex that had drifted, so `kubeconfig`, `.npmrc`, `.netrc`,
+  `service_account.json`, `*.kdbx`, etc. can no longer land silently on `coop fork merge`. `coop
+  check-secrets` (and the merge gate) also flag `secret_key_base`/`master_key`/`encryption_key`, a
+  password embedded in a connection-string URL (`postgres://user:pw@host`), and GitHub fine-grained
+  tokens (`github_pat_…`), and note how many gitignored-but-box-visible files the default scan
+  skipped. `COOP_EGRESS` fails closed — an unrecognized value (a typo like `None`) is treated as
+  offline, and the box forces `--network none` for any egress value other than an explicit `open`
+  (defense in depth at the boundary). `coop login --profile` rejects a traversal/collision name, so
+  credentials can't be written outside the agent vault.
 
 - **Per-fork credential profiles in `.agent/fleet`.** Add `profile=<name>` (or `profile=a,b`) to a
   fleet line — e.g. `api codex .agent/tasks.api profile=work` — to put that fork's loop on specific
@@ -138,6 +119,7 @@
   validates the profiles up front. Also exposed on `coop fork <name> <agent> --loop --tasks <p>
   --profile a,b` (and a single `--profile` on an interactive fork). Forks with no `profile=` keep
   rotating the repo pool / all signed-in profiles as before.
+
 - **Pick a credential profile for a single run with `--profile <name>`.** Previously `--profile` only
   worked for `coop login`; on a run it was forwarded to the agent and rejected. Now `coop claude
   --profile work` runs that one session on the `work` profile without changing the default
@@ -146,48 +128,41 @@
   to different accounts). coop consumes the flag only before a `--`, so an agent's own `--profile` is
   still reachable as `coop codex -- --profile <name>`; a nonexistent profile errors instead of
   creating an empty husk dir.
-- **Delete a stored profile with `coop profiles rm <agent> <profile>`.** Removes that profile's login
-  token and session history. It refuses to delete the marked default (set another first) and never
-  touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
-  earlier login layout, e.g. `coop profiles rm claude default`.
+
 - **`coop profiles` flags an expired login.** "signed in" used to mean only that a credentials file
   existed, so an expired OAuth token read as fine yet 401'd mid-run. `coop profiles` now detects the
   expired token and points you at `coop login <agent> --profile <name>` to refresh it.
 
-- **Security hardening (from an end-to-end audit).** Secret shadowing now covers `*.yaml`/`*.yml`
-  credential files and matches filenames case-insensitively, so `config/credentials.yaml`, `.ENV`, and
-  `ID_RSA` no longer slip into the box (notably on case-insensitive filesystems). `COOP_EGRESS` fails
-  closed — an unrecognized value (a typo like `None`) is treated as offline instead of silently
-  granting full network. `coop login --profile` rejects a traversal/collision name, so credentials
-  can't be written outside the agent vault. `coop check-secrets` also flags
-  `secret_key_base`/`master_key`/`encryption_key` and notes how many gitignored-but-box-visible files
-  the default scan skipped.
-- **Security hardening (multi-agent audit sweep).** A template/sample SUFFIX (`*.example`/`*.sample`/
-  `*.template`) no longer un-shadows a private-key pattern, so a file named `id_rsa.example` (a real
-  key under a template name) is shadowed from the box — only exact public CA-bundle names still
-  override `*.pem`. `coop check-secrets` (and the fork merge gate) now flag a password embedded in a
-  connection-string URL (`postgres://user:pw@host`) and GitHub fine-grained tokens (`github_pat_…`).
-  The fork **merge gate** now reuses the same shadow denylist that hides secrets from the box, instead
-  of a separate regex that had drifted — so `kubeconfig`, `.npmrc`, `.netrc`, `service_account.json`,
-  `*.kdbx`, etc. can no longer land silently on `coop fork merge`. The box also forces `--network none`
-  for any egress value other than an explicit `open` (defense in depth at the boundary).
-- **Reliability fixes (audit).** Concurrent
-  `coop pool add` / `coop profiles default` no longer lose updates (writes are locked + atomic).
-  Regenerating a Codex MCP config no longer drops a user's own `[mcp_servers_backup]`-style tables, and
-  numeric MCP env values render as plain digits. `coop fork --profile <typo>` fails before cloning (no
-  stray fork), and a fork can't be named `acp`. Fusion's governor is told to consult only
-  authenticated peers.
-- **Reliability fixes (multi-agent audit sweep).** `coop fork -d` now claims its pidfile atomically
-  (and the worker owns it on exit), so two concurrent detaches can't start two loops racing one
-  worktree; `coop fork stop` confirms the worker is dead (escalating to SIGKILL) before clearing the
-  pidfile. `coop fork merge` rebases the fork's branch by name, so it can't sign/land the wrong branch
-  if an agent left another checked out. The unattended loop no longer false-"stall"s when it's parking
-  one-way-door tasks into `50_blocked/` (progress = done *or* blocked), parses minute/hour `retry-after`
-  hints, and falls back to backoff on an unrecognized reset timezone instead of waking hours early.
-  `coop tasks watch`/`fleet watch` counts no longer briefly inflate on a torn read of a task move. A
-  duplicate fork name with whitespace/`=`, a duplicate profile in `--profile a,a`, and a duplicate task
-  id across states are all rejected/de-duped.
-- **CLI consistency (audit).** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
+- **Delete a stored profile with `coop profiles rm <agent> <profile>`.** Removes that profile's login
+  token and session history. It refuses to delete the marked default (set another first) and never
+  touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
+  earlier login layout, e.g. `coop profiles rm claude default`.
+
+- **Remote (HTTP/SSE) MCP servers in `mcp.json` are covered for every agent.** Besides stdio
+  servers, an HTTP server — `{ "type": "http", "url": …, "headers": … }` — reaches all three:
+  claude and gemini read the canonical `headers` directly, and codex (which has no inline-header
+  support — only `bearer_token_env_var` / OAuth) authenticates via `bearer_token_env_var`, so set
+  both on a server you want all three to use. coop now flags a codex HTTP server that carries
+  `headers` but no `bearer_token_env_var`, so the auth gap is visible instead of a silent 401. See
+  `agents/mcp.json.example`.
+
+- **Reliability fixes (from end-to-end and multi-agent audits).** Concurrent `coop pool add` /
+  `coop profiles default` no longer lose updates (writes are locked + atomic), and `coop fork -d`
+  claims its pidfile atomically (the worker owns it on exit) so two concurrent detaches can't start
+  two loops racing one worktree; `coop fork stop` confirms the worker is dead (escalating to SIGKILL)
+  before clearing the pidfile. `coop fork merge` rebases the fork's branch by name, so it can't
+  sign/land the wrong branch if an agent left another checked out. `coop fork --profile <typo>` fails
+  before cloning (no stray fork), a fork can't be named `acp`, and a duplicate fork name with
+  whitespace/`=`, a duplicate profile in `--profile a,a`, and a duplicate task id across states are
+  all rejected/de-duped. Regenerating a Codex MCP config no longer drops a user's own
+  `[mcp_servers_backup]`-style tables, and numeric MCP env values render as plain digits. The
+  unattended loop no longer false-"stall"s when it's parking one-way-door tasks into `50_blocked/`
+  (progress = done *or* blocked), parses minute/hour `retry-after` hints, and falls back to backoff
+  on an unrecognized reset timezone instead of waking hours early; `coop tasks watch`/`fleet watch`
+  counts no longer briefly inflate on a torn read of a task move. Fusion's governor is told to consult
+  only authenticated peers.
+
+- **CLI consistency.** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
   malformed arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
   error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
   honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet; and
@@ -200,16 +175,21 @@
   a coop source change. Codex profiles are also hardened before launch with a best-effort SQLite
   trigger that ignores inserts into `logs_2.sqlite`'s feedback-log table (openai/codex#28224);
   sessions, auth, MCP config, and memories are left alone.
+
 - **`COOP_NO_ASDF=1` no longer breaks Node-based agent CLIs when the shared asdf volume has a
   stale Node shim.** The flag still skips `.tool-versions` provisioning, but the entrypoint now
   always repairs a broken bare `node` by selecting an installed asdf Node fallback when needed.
-- **Remote (HTTP/SSE) MCP servers in `mcp.json` are covered for every agent.** Besides stdio
-  servers, an HTTP server — `{ "type": "http", "url": …, "headers": … }` — reaches all three:
-  claude and gemini read the canonical `headers` directly, and codex (which has no inline-header
-  support — only `bearer_token_env_var` / OAuth) authenticates via `bearer_token_env_var`, so set
-  both on a server you want all three to use. coop now flags a codex HTTP server that carries
-  `headers` but no `bearer_token_env_var`, so the auth gap is visible instead of a silent 401. See
-  `agents/mcp.json.example`.
+
+- **Readable, colorized output across the CLI.** `coop tasks` and `coop tasks decisions` render in
+  color — colored state headers, wrapped titles, a gray task id, and `[n/m]` subtask / `⚠` decision
+  markers — instead of a flat monochrome list, degrading cleanly on a narrow terminal or under
+  `NO_COLOR`. Command results now speak in one voice: a green `✓` for success, a yellow `⚠` for a
+  caution, a red `✗` for a failure, plain text for a neutral note — replacing the old
+  `coop: <command>: …` prefix that just echoed the command back at you (so `coop tasks lint` reads
+  `✓ no issues — 1 task checked`). The loop's per-iteration line reads `· using <agent> model
+  <model> profile <profile>` with the values lifted out of the dim label, and `coop fleet watch`
+  repaints only on a real change (no flicker), with the task counts aligned in a right-sized column.
+
 - **The unattended loop's live view no longer garbles.** The bottom status bar was overprinted by
   coop's own `coop:` lines and the sibling-services startup; those now scroll cleanly above the bar
   (ui routes them through it), the auto-start no longer dumps docker compose's repainting progress
@@ -217,6 +197,31 @@
   instead of the `cd …` an agent prefixes to reach a monorepo subdir. The bar also skips a repaint
   when nothing changed (same content + width), like `coop fleet watch`, so it sits still instead of
   flickering. The loop prompt also reminds the agent to read a file before editing it.
+
+- **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
+  and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
+  its runtime has one, batch independent read-only work, and use native subagents or task workers for
+  research and second opinions while keeping writes serialized in the current checkout. The wording is
+  capability-based so Claude, Codex, and Gemini use their native equivalents without inventing
+  unavailable slash commands or trying to run host-side Coop commands from inside the box.
+
+- **`rm` is the one verb for deleting things.** Every destructive subcommand advertises `rm` —
+  `coop tasks rm`, `coop fork rm`, `coop profiles rm`, `coop pool rm` — rather than `coop tasks`
+  alone advertising `remove`. `remove` still works everywhere as an accepted alias, so existing
+  habits and scripts don't break; it's just no longer the form shown in help or usage.
+
+- **Clearer `coop help`.** Tasks get their own `TASKS` section instead of one line under
+  `UNATTENDED`, and `coop up`/`coop down` name the actual services defined in `compose.agent.yml`,
+  dimmed (with a "none yet" hint) when there's no compose file to act on.
+
+- **A bare command group prints its help instead of an error.** `coop tasks` and `coop fleet`
+  with no subcommand used to fail with an "unknown command" error built from an empty token; they
+  now print that group's help and exit 0 — the natural way to discover the subcommands. (`coop
+  pool` and `coop profiles` already showed a sensible default view, so they're unchanged.)
+
+- **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
+  demand, so a monorepo can start a per-component queue without a root `coop init`. (The single-loop
+  progress view — done/total · blocked · the active task — is now part of `coop tasks watch`.)
 
 ## 2.10.1
 
