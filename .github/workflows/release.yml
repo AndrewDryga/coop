@@ -35,6 +35,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Cryptographic proof each archive was built by this workflow. Verify with:
       #   gh attestation verify coop_<ver>_<os>_<arch>.tar.gz --repo AndrewDryga/coop
-      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: 'dist/coop_*.tar.gz'
