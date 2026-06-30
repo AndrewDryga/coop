@@ -214,8 +214,9 @@
   coop's own `coop:` lines and the sibling-services startup; those now scroll cleanly above the bar
   (ui routes them through it), the auto-start no longer dumps docker compose's repainting progress
   (it's discarded — `coop up` shows it), and the streamed Bash activity shows the real command
-  instead of the `cd …` an agent prefixes to reach a monorepo subdir. The loop prompt also reminds
-  the agent to read a file before editing it.
+  instead of the `cd …` an agent prefixes to reach a monorepo subdir. The bar also skips a repaint
+  when nothing changed (same content + width), like `coop fleet watch`, so it sits still instead of
+  flickering. The loop prompt also reminds the agent to read a file before editing it.
 
 ## 2.10.1
 

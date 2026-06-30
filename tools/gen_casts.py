@@ -210,38 +210,101 @@ def capture_output(argv, cwd=ROOT, cols=88, rows=44):
 # ===========================================================================
 
 
+class LoopBar:
+    """Simulates internal/ui Region: a bottom-pinned status line (spinner · progress bar · done/total
+    · now: <task> · elapsed) that the loop's activity scrolls above, repainted in place — what an
+    interactive `coop loop` shows. scroll() funnels one activity line into the history above the bar;
+    tick() animates the spinner/clock without new output; set() advances the progress."""
+
+    def __init__(self, cast, total):
+        self.c, self.total = cast, total
+        self.done, self.active, self.spin, self.t, self.shown = 0, "", 0, 0.0, False
+
+    def _line(self):
+        el = "%d:%02d" % (int(self.t) // 60, int(self.t) % 60)
+        prog = green(str(self.done)) + "/%d done" % self.total
+        if self.active:
+            prog += " · now: " + self.active
+        return "%s %s %s %s" % (cyan(SPIN[self.spin % len(SPIN)]), bar(self.done, self.total, 20), prog, dim(el))
+
+    def _paint(self, history=""):
+        if self.shown:
+            self.c.raw("\r\x1b[J")  # Region.eraseLocked: CR + erase to end, wiping the current bar
+        for ln in (history.split("\n") if history else []):
+            self.c.raw("\x1b[K" + ln + "\r\n")  # scroll one line into the history above the bar
+        self.c.raw("\x1b[K" + self._line())  # redraw the pinned bar; cursor stays on it
+        self.shown = True
+
+    def show(self):
+        self._paint()
+
+    def scroll(self, line, after=0.5):
+        self.c.sleep(after)
+        self.spin += 1
+        self.t += after
+        self._paint(line)
+
+    def tick(self, n=1, after=0.13):
+        for _ in range(n):
+            self.c.sleep(after)
+            self.spin += 1
+            self.t += after
+            self._paint()
+
+    def set(self, done=None, active=None):
+        if done is not None:
+            self.done = done
+        if active is not None:
+            self.active = active
+
+    def clear(self, after=0.4):
+        self.c.sleep(after)
+        if self.shown:
+            self.c.raw("\r\x1b[J")
+            self.shown = False
+
+
 def scene_loop():
-    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended — meaty,
-    real-world tasks shipped one commit each, then an audit pass that verifies its own work. Scripted
-    to mirror `coop loop`'s real output (ui.go / streamjson.go) line-for-line; to record a live run
-    instead: asciinema rec -c "coop loop" site/casts/loop.cast"""
-    c = Cast("loop", cols=92, rows=30, title="coop loop — ship the backlog overnight")
+    """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended, with the
+    live bottom bar (spinner · progress · done/total · now: <task> · elapsed) pinned below the
+    scrolling activity — exactly what an interactive `coop loop` shows. Three small, real tasks ship
+    one commit each, then an audit pass verifies the work. Scripted to mirror ui.go's Region +
+    streamjson.go; to record a live run instead: asciinema rec -c "coop loop" site/casts/loop.cast"""
+    c = Cast("loop", cols=92, rows=26, title="coop loop — ship the backlog overnight")
     c.command("coop loop")
-    c.line(coop("starting unattended loop on .agent/tasks with claude — 0/2 done (Ctrl-C to stop)"), after=0.7)
-    c.line(coop("iteration 1 · 0/2 done · now: Make POST /checkout idempotent"), after=0.5)
-    c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.7)
-    c.line("▸ Read " + dim(".agent/tasks/00_todo/2026-…-idempotent-checkout/task.md"), after=0.5)
-    c.line("▸ Read " + dim("internal/payments/checkout.go"), after=0.6)
-    c.line(ICON_LLM + " A retried checkout double-charges. I'll key each order on the client's Idempotency-Key, enforce it with a unique index, and upsert — a replay returns the first charge, never a second.", after=1.0)
-    c.line("✎ Edit " + dim("internal/payments/checkout.go"), after=0.6)
-    c.line("✎ Edit " + dim("migrations/0042_orders_idempotency_key.sql"), after=0.6)
-    c.line("⚙ Bash " + dim("go build ./... && go test ./internal/payments/..."), after=0.8)
-    c.line(ICON_LLM + " Added a regression test that submits the same request twice and asserts exactly one charge. Gate green — commit and mark it done.", after=0.9)
-    c.line("⚙ Bash " + dim('git commit -q -m "payments: make checkout idempotent (dedupe retried POSTs)"'), after=0.7)
-    c.line(dim("· 23 turns · 1m14s · $0.61"), after=0.9)
-    c.line(coop("iteration 2 · 1/2 done · now: /health is hammering the primary DB"), after=0.6)
-    c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.7)
-    c.line(ICON_LLM + " The liveness probe runs SELECT count(*) on orders every call. I'll cache it for 5s behind a singleflight — same signal, ~99% fewer queries on the primary.", after=1.0)
-    c.line("✎ Edit " + dim("internal/health/health.go"), after=0.6)
-    c.line("⚙ Bash " + dim("go test ./internal/health/... -run TestLivenessCache"), after=0.8)
-    c.line("⚙ Bash " + dim('git commit -q -m "health: cache the liveness probe for 5s (singleflight)"'), after=0.7)
-    c.line(ICON_LLM + " Queue drained — both shipped, one commit each, gate green, working tree clean.", after=0.9)
-    c.line(dim("· 15 turns · 52s · $0.38"), after=0.9)
-    c.line(coop("queue empty — running audit pass"), after=0.9)
-    c.line(model_line("claude", "claude-opus-4-8[1m]", "personal"), after=0.6)
-    c.line(ICON_LLM + " Both done tasks hold up — gate green, each with an implementing commit and a regression test. Nothing to reopen.", after=0.9)
-    c.line(dim("· 9 turns · 41s · $0.29"), after=0.8)
-    c.line(bold(green("✓ queue verified done — 2/2 in 1 iterations")), after=1.5)
+    c.line(coop("starting unattended loop on .agent/tasks with claude — 0/3 done (Ctrl-C to stop)"), after=0.5)
+    lb = LoopBar(c, total=3)
+    lb.set(active="Make POST /checkout idempotent")
+    lb.show()
+    lb.tick(1)
+
+    lb.scroll(coop("iteration 1 · 0/3 done · now: Make POST /checkout idempotent"))
+    lb.scroll(model_line("claude", "claude-opus-4-8[1m]", "personal"))
+    lb.scroll(ICON_LLM + " A retried checkout double-charges — I'll key each order on the Idempotency-Key + a unique index, so a replay returns the first charge. Added a double-submit test; gate green.", after=0.9)
+    lb.scroll("✎ Edit " + dim("internal/payments/checkout.go"))
+    lb.scroll("⚙ Bash " + dim('git commit -q -m "payments: make checkout idempotent"'))
+    lb.set(done=1, active="Cache the /health DB probe")
+    lb.tick(2)
+
+    lb.scroll(coop("iteration 2 · 1/3 done · now: Cache the /health DB probe"))
+    lb.scroll(ICON_LLM + " The liveness probe COUNTs orders on every call — caching it 5s behind a singleflight drops ~99% of that load off the primary.", after=0.9)
+    lb.scroll("✎ Edit " + dim("internal/health/health.go"))
+    lb.scroll("⚙ Bash " + dim('git commit -q -m "health: cache the liveness probe (singleflight)"'))
+    lb.set(done=2, active="Rate-limit the public API")
+    lb.tick(2)
+
+    lb.scroll(coop("iteration 3 · 2/3 done · now: Rate-limit the public API"))
+    lb.scroll(ICON_LLM + " A per-token sliding window (Redis) returns 429 + Retry-After, opt-in per route so internal callers stay unthrottled.", after=0.9)
+    lb.scroll("✎ Edit " + dim("internal/middleware/ratelimit.go"))
+    lb.scroll("⚙ Bash " + dim('git commit -q -m "api: per-token rate limiting"'))
+    lb.set(done=3, active="")
+    lb.tick(2)
+
+    lb.scroll(coop("queue empty — running audit pass"), after=0.6)
+    lb.scroll(ICON_LLM + " All three hold up — gate green, each with a commit and a regression test. Nothing to reopen.", after=0.9)
+    lb.tick(2)
+    lb.clear()
+    c.line(bold(green("✓ queue verified done — 3/3 in 1 iterations")), after=1.4)
     c.write()
 
 

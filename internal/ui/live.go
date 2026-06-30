@@ -18,10 +18,12 @@ var SpinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 // shared primitive behind the loop's live progress bar and `coop fleet watch`. Methods are
 // safe for concurrent use. Callers build a Region only when the target is a real terminal.
 type Region struct {
-	w     io.Writer
-	width func() int
-	mu    sync.Mutex
-	shown int // region lines currently on screen
+	w         io.Writer
+	width     func() int
+	mu        sync.Mutex
+	shown     int      // region lines currently on screen
+	lastLines []string // the last region content painted — skip an identical repaint (no flicker)
+	lastW     int      // terminal width at the last paint — a resize forces a repaint
 }
 
 // NewRegion writes to w, sizing region lines with width (called on each repaint, so a resized
@@ -36,13 +38,19 @@ func NewRegion(w io.Writer, width func() int) *Region {
 func (r *Region) Update(history string, region []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	w := r.width()
+	// Nothing new — no history to scroll, same region content + width → skip the repaint (matches
+	// AltScreen.Frame), so a static bar or a no-op progress poll sits still instead of flickering.
+	// Any real change — new history, new content, or a resize — falls through and repaints.
+	if history == "" && w == r.lastW && slices.Equal(region, r.lastLines) {
+		return
+	}
 	r.eraseLocked()
 	if history != "" {
 		for _, line := range strings.Split(strings.TrimRight(history, "\n"), "\n") {
 			fmt.Fprint(r.w, "\033[K"+line+"\n")
 		}
 	}
-	w := r.width()
 	for i, line := range region {
 		if i > 0 {
 			fmt.Fprint(r.w, "\n")
@@ -50,6 +58,8 @@ func (r *Region) Update(history string, region []string) {
 		fmt.Fprint(r.w, "\033[K"+clip(line, w-1))
 	}
 	r.shown = len(region)
+	r.lastLines = append(r.lastLines[:0], region...)
+	r.lastW = w
 }
 
 // Clear erases the region so normal output resumes on a clean line.
@@ -57,6 +67,7 @@ func (r *Region) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.eraseLocked()
+	r.lastLines = nil // a cleared region must repaint on the next Update, not skip it as "unchanged"
 }
 
 // eraseLocked moves the cursor to the region's top-left and clears it and everything below.
