@@ -751,7 +751,10 @@ func runDecisionBrowser(root string, decisions []taskItem, in io.Reader, out io.
 			} else if err := recordResolution(decPath, line); err != nil {
 				return -1, err
 			}
-			fmt.Fprintln(out, p.Green("✓ recorded"))
+			// No per-answer confirmation line: auto-advancing to the next decision (its "── decision
+			// N ──" header, drawn below) is the acknowledgement, and a "✓ recorded" line would just
+			// scroll onto that header. Re-viewing with :p shows the "✓ answered" marker, and the
+			// closing summary counts what was answered.
 			i++
 		}
 		if i >= len(decisions) {
