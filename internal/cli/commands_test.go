@@ -50,16 +50,17 @@ func TestDropDashDash(t *testing.T) {
 	}
 }
 
-// TestLoopWorkPromptFolderWorkflow: the work prompt drives the folder queue — claim/done/block
-// via `coop tasks`, resume an interrupted in_progress task from its state.md + the git diff, and
-// finalize state.md (never blank it) so a different agent or a review can pick up next iteration.
+// TestLoopWorkPromptFolderWorkflow: the work prompt drives the folder queue — claim/done/block by
+// moving the folder (coop isn't in the box), resume an interrupted in_progress task from its
+// state.md + the git diff, finalize state.md (never blank it), and work ONE task per run then stop
+// so the loop re-invokes a fresh agent for the next — not one agent draining the queue itself.
 func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	work := loopWorkPrompt("/repo", []string{".agent/tasks"})
 	for _, want := range []string{
 		"is NOT installed", "moving its folder into 10_in_progress/", "into 99_done/", "into 50_blocked/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
 		"state.md", "resume note", "final step", "finished state",
-		"Finish the in_progress task", "Do not stop while",
+		"Work exactly ONE task per run", "the loop's job, not yours",
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("folder work prompt missing %q:\n%s", want, work)

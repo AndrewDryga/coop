@@ -31,7 +31,7 @@
 - One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
 - **Tasks are self-contained.** A task's `task.md` gets read by a fresh agent after a compaction or in a new session — so it can't lean on prior chat, a past review, or memory not in the repo. Each states: the problem + context, acceptance criteria, an approach (or a `spec.md`), and its subtasks. If it can't stand on its own with just the BOOT files, it isn't ready for the queue.
-- Never stop while `00_todo/` or `10_in_progress/` has a task.
+- **In `coop loop`, work one task per iteration, then stop.** The loop re-invokes a fresh agent until `00_todo/` and `10_in_progress/` are empty — finishing the queue is the *loop's* job across iterations, not one agent draining it in a single run. (Interactive `/sweep` is the exception: it drains the queue in one session. Never stop while `00_todo/` or `10_in_progress/` has a task during a /sweep)
 
 ## The .agent/ working state
 Durable working memory the BOOT protocol reads back. Only `rules/` is committed;
