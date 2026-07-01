@@ -350,14 +350,22 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 // spec.Workdir (doctor's self-contained fixture) or COOP_WORKDIR (cfg.Workdir)
 // overrides it, in that order.
 func resolveWorkdir(spec RunSpec, cfg *config.Config) string {
-	switch {
-	case spec.Workdir != "":
+	if spec.Workdir != "" {
 		return spec.Workdir
-	case cfg.Workdir != "":
-		return cfg.Workdir
-	default:
-		return spec.Repo
 	}
+	return Workdir(cfg, spec.Repo)
+}
+
+// Workdir reports where a repo mounts inside the box for a normal run (the agent's cwd):
+// the COOP_WORKDIR override if set, else the repo's own host path. It is the single source
+// of truth for that decision so callers outside box — the loop's stream decoder, which
+// shows tool-call paths relative to this root — stay in step with the real mount. The
+// doctor's spec.Workdir fixture override isn't a normal-run concern, so it's not reflected.
+func Workdir(cfg *config.Config, repo string) string {
+	if cfg != nil && cfg.Workdir != "" {
+		return cfg.Workdir
+	}
+	return repo
 }
 
 // boxEnvNote is the always-present environment briefing every agent receives up front, so it

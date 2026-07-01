@@ -23,7 +23,7 @@ func TestStripLeadingCD(t *testing.T) {
 
 // The user-visible result: the Bash tool line shows the real command, not the chdir.
 func TestBashDisplayStripsCD(t *testing.T) {
-	if _, label := toolDisplay("Bash", []byte(`{"command":"cd /Users/x/portal && mix test"}`)); label != "mix test" {
+	if _, label, _ := toolDisplay("", "Bash", []byte(`{"command":"cd /Users/x/portal && mix test"}`)); label != "mix test" {
 		t.Errorf("Bash display = %q, want %q", label, "mix test")
 	}
 }

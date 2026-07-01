@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,12 +30,13 @@ type streamDecoder struct {
 	tail    io.Writer         // human text → the rate-limit detector's tail
 	agent   string            // the agent whose stream this is (e.g. claude), for the model line
 	profile string            // the credential profile in play, for the model line
+	root    string            // the repo's in-box mount; tool paths show relative to it (empty = off)
 	buf     []byte            // partial trailing line carried between Writes
 	tool    map[string]string // tool_use id → label, to name a failed tool_result
 }
 
-func newStreamDecoder(out, tail io.Writer, agent, profile string) *streamDecoder {
-	return &streamDecoder{out: out, tail: tail, agent: agent, profile: profile, tool: map[string]string{}}
+func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
+	return &streamDecoder{out: out, tail: tail, agent: agent, profile: profile, root: root, tool: map[string]string{}}
 }
 
 func (d *streamDecoder) Write(p []byte) (int, error) {
@@ -112,10 +114,17 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 				d.toTail(t)                           // the tail (limit detection) gets the plain text
 			}
 		case "tool_use":
-			glyph, label := toolDisplay(b.Name, b.Input)
+			glyph, label, outside := toolDisplay(d.root, b.Name, b.Input)
 			line := glyph + " " + b.Name
 			if label != "" {
-				line += " " + ui.Dim(truncate(label, 60))
+				shown := truncate(label, 60)
+				if outside {
+					// The agent reached outside the repo tree — flag it (⚠) and highlight the
+					// path yellow, vs the dim repo-relative path an in-tree call shows.
+					line += " " + ui.Yellow("⚠ "+shown)
+				} else {
+					line += " " + ui.Dim(shown)
+				}
 			}
 			d.emit(line)
 			d.tool[b.ID] = strings.TrimSpace(b.Name + " " + label)
@@ -213,22 +222,42 @@ func blockingLimitStatus(s string) bool {
 	return false
 }
 
-// toolDisplay picks a glyph and a one-line summary for a tool call from its input.
-func toolDisplay(name string, input json.RawMessage) (glyph, label string) {
+// toolDisplay picks a glyph and a one-line summary for a tool call from its input. For the
+// file tools it shows the path repo-relative (against root) and reports outside=true when the
+// path escapes the repo tree, so the caller can flag it. Non-path tools are never "outside".
+func toolDisplay(root, name string, input json.RawMessage) (glyph, label string, outside bool) {
 	var in toolInput
 	_ = json.Unmarshal(input, &in)
 	switch name {
 	case "Bash":
-		return "⚙", firstLine(stripLeadingCD(in.Command))
+		return "⚙", firstLine(stripLeadingCD(in.Command)), false
 	case "Edit", "Write", "NotebookEdit":
-		return "✎", in.FilePath
+		rel, inside := repoRel(root, in.FilePath)
+		return "✎", rel, !inside
 	case "Read":
-		return "▸", in.FilePath
+		rel, inside := repoRel(root, in.FilePath)
+		return "▸", rel, !inside
 	case "Grep", "Glob":
-		return "⌕", in.Pattern
+		return "⌕", in.Pattern, false
 	default:
-		return "·", in.Description
+		return "·", in.Description, false
 	}
+}
+
+// repoRel renders an absolute in-box file path relative to the repo root when it falls inside
+// it, so a tool line reads `internal/cli/streamjson.go` instead of the whole mount path. A path
+// OUTSIDE the repo is returned unchanged with inside=false (the caller flags it); a non-absolute
+// path — already short and relative to the agent's cwd, the repo — is left as-is. root is the
+// repo's in-box mount (box.Workdir); an empty root disables both relativizing and flagging.
+func repoRel(root, p string) (rel string, inside bool) {
+	if root == "" || p == "" || !filepath.IsAbs(p) {
+		return p, true
+	}
+	r, err := filepath.Rel(root, p)
+	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return p, false // escapes the repo tree
+	}
+	return r, true
 }
 
 // firstLine is s trimmed to its first non-empty line.

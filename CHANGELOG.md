@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop activity shows tool paths repo-relative, and flags anything outside the repo.** In the
+  live `coop loop` view, a file tool's path now renders relative to the repo root —
+  `✎ Edit internal/cli/streamjson.go` instead of the full container mount path. When the agent
+  reads or writes a path *outside* the repo tree, the line keeps the whole path and is flagged
+  with a yellow `⚠`, so an escape from the working tree stands out at a glance. The root is the
+  repo's real in-box mount (`box.Workdir`), so the inside/outside call matches where the repo
+  actually lives in the box — and a shared string prefix (`…/proj-x` vs `…/proj`) is never
+  mistaken for containment.
+
 ## 3.0.0
 
 - **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**

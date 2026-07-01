@@ -1168,7 +1168,7 @@ func (a *app) runIteration(repo, img, agent, forkName string, cmd, hosts []strin
 	var stdoutW io.Writer
 	var dec *streamDecoder
 	if slices.Contains(cmd, "stream-json") {
-		dec = newStreamDecoder(io.MultiWriter(outWs...), tail, agent, a.cfg.ActiveProfile(agent))
+		dec = newStreamDecoder(io.MultiWriter(outWs...), tail, agent, a.cfg.ActiveProfile(agent), box.Workdir(a.cfg, repo))
 		stdoutW = dec
 	} else {
 		stdoutW = io.MultiWriter(append(outWs, tail)...)

@@ -22,7 +22,7 @@ func TestStreamDecoder(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":8269,"total_cost_usd":0.1117,"result":"done"}`,
 	}
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "", "")
+	d := newStreamDecoder(&out, &tail, "", "", "")
 	// Feed in two chunks split mid-line to exercise the partial-line buffer.
 	blob := strings.Join(lines, "\n") + "\n"
 	cut := len(blob) / 2
@@ -63,13 +63,13 @@ func TestStreamDecoder(t *testing.T) {
 func TestStreamDecoderModelLine(t *testing.T) {
 	init := `{"type":"system","subtype":"init","model":"claude-opus-4-8[1m]"}` + "\n"
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "personal")
+	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
 	_, _ = d.Write([]byte(init))
 	if got := out.String(); !strings.Contains(got, "· using claude model claude-opus-4-8[1m] profile personal") {
 		t.Errorf("with agent+profile, model line = %q", got)
 	}
 	var out2, tail2 bytes.Buffer
-	d2 := newStreamDecoder(&out2, &tail2, "", "")
+	d2 := newStreamDecoder(&out2, &tail2, "", "", "")
 	_, _ = d2.Write([]byte(init))
 	if got := out2.String(); !strings.Contains(got, "· model claude-opus-4-8[1m]") {
 		t.Errorf("without agent/profile, model line = %q (want the bare fallback)", got)
@@ -81,7 +81,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// A blocking rate_limit_event is translated into the text detectLimit understands, with the
 	// reset epoch, so the loop waits until then instead of failing the run.
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "", "")
+	d := newStreamDecoder(&out, &tail, "", "", "")
 	_, _ = d.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 	if !strings.Contains(tail.String(), "usage limit reached|1781877000") {
 		t.Fatalf("blocking limit not written to tail: %q", tail.String())
@@ -96,7 +96,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// Informational statuses every run emits must not trip the detector.
 	for _, st := range []string{"allowed", "warning", "queued"} {
 		var o, tl bytes.Buffer
-		nd := newStreamDecoder(&o, &tl, "", "")
+		nd := newStreamDecoder(&o, &tl, "", "", "")
 		_, _ = nd.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"` + st + `","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 		if detectLimit(tl.String(), now).limited {
 			t.Errorf("status %q should not trip the limit detector (tail=%q)", st, tl.String())
@@ -117,7 +117,7 @@ func TestStreamDecoderModel(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "", "")
+			d := newStreamDecoder(&out, &tail, "", "", "")
 			_, _ = d.Write([]byte(c.line + "\n"))
 			d.flush()
 			if c.want == "" {
@@ -129,6 +129,71 @@ func TestStreamDecoderModel(t *testing.T) {
 			}
 			if tail.Len() != 0 {
 				t.Errorf("system event leaked into rate-limit tail: %q", tail.String())
+			}
+		})
+	}
+}
+
+func TestRepoRel(t *testing.T) {
+	const root = "/home/u/proj"
+	cases := []struct {
+		name, root, path, wantRel string
+		wantInside                bool
+	}{
+		{"inside, absolute", root, "/home/u/proj/internal/cli/streamjson.go", "internal/cli/streamjson.go", true},
+		{"the repo root itself", root, "/home/u/proj", ".", true},
+		{"outside, a sibling", root, "/home/u/other/secret.txt", "/home/u/other/secret.txt", false},
+		{"outside, the parent", root, "/home/u", "/home/u", false},
+		// A shared string prefix is NOT containment: /home/u/proj-x is outside /home/u/proj.
+		{"outside, prefix-not-child", root, "/home/u/proj-x/f", "/home/u/proj-x/f", false},
+		{"relative path left as-is", root, "internal/x.go", "internal/x.go", true},
+		{"empty root disables", "", "/home/u/proj/x.go", "/home/u/proj/x.go", true},
+		{"empty path", root, "", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rel, inside := repoRel(c.root, c.path)
+			if rel != c.wantRel || inside != c.wantInside {
+				t.Errorf("repoRel(%q, %q) = (%q, %v), want (%q, %v)", c.root, c.path, rel, inside, c.wantRel, c.wantInside)
+			}
+		})
+	}
+}
+
+// With a repo root set, a file tool inside the tree shows a repo-relative path (no mount
+// prefix, no flag); one that escapes it keeps its full path and is flagged with a ⚠.
+func TestStreamDecoderRepoPaths(t *testing.T) {
+	const root = "/home/u/proj"
+	cases := []struct {
+		name, event, want string
+		warn              bool
+	}{
+		{
+			"in-repo path is relativized, not flagged",
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"Edit","input":{"file_path":"/home/u/proj/internal/cli/streamjson.go"}}]}}`,
+			"internal/cli/streamjson.go", false,
+		},
+		{
+			"out-of-repo path keeps its full path and is flagged",
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b","name":"Read","input":{"file_path":"/etc/passwd"}}]}}`,
+			"/etc/passwd", true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			d := newStreamDecoder(&out, &tail, "claude", "", root)
+			_, _ = d.Write([]byte(c.event + "\n"))
+			d.flush()
+			o := out.String()
+			if !strings.Contains(o, c.want) {
+				t.Errorf("rendered line missing %q:\n%s", c.want, o)
+			}
+			if got := strings.Contains(o, "⚠"); got != c.warn {
+				t.Errorf("outside-repo ⚠ flag = %v, want %v:\n%s", got, c.warn, o)
+			}
+			if !c.warn && strings.Contains(o, root) {
+				t.Errorf("the repo mount prefix leaked into an in-repo line:\n%s", o)
 			}
 		})
 	}
