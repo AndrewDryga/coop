@@ -274,13 +274,13 @@ func parseProfileList(s string) []string {
 // the pool, points cfg at the new active profile (so the next iteration mounts and runs it),
 // and either switches immediately (resetting the wait counter, since a free rotation is
 // progress) or, when every profile is limited, sleeps until the soonest reset.
-func (a *app) rotateOnLimit(agent string, pool *profilePool, resetAt time.Time, waits *int) {
+func (a *app) rotateOnLimit(agent string, pool *profilePool, resetAt time.Time, waits *int, wake <-chan struct{}) {
 	prev := pool.active()
 	sleep, until := pool.onLimit(resetAt, *waits, time.Now())
 	a.cfg.SetActiveProfile(agent, pool.active())
 	if sleep > 0 {
 		ui.Info("all %d %s profiles are rate limited — waiting for the soonest reset", len(pool.profiles), agent)
-		sleepForLimit(sleep, until)
+		sleepForLimit(sleep, until, wake)
 		return
 	}
 	ui.Info("%s profile %q rate limited — switching to %q", agent, prev, pool.active())

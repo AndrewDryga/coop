@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,6 +57,11 @@ type RunSpec struct {
 	Stdout    io.Writer // capture output (doctor); nil means inherit os.Stdout
 	Stderr    io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
 	ExtraArgs []string  // extra runtime args for this run (e.g. doctor's probe mount)
+
+	// Ctx, when non-nil, makes the run cancelable: the container runs in its own process group
+	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets this so a second Ctrl-C
+	// stops the current iteration now; every other caller leaves it nil — the plain, today's run.
+	Ctx context.Context
 
 	// FusionGovernor, when set, marks this run as fusion mode: the named agent
 	// governs (fronts the session) and gets the fusion instruction merged into its
@@ -339,6 +345,9 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 
 	limits := boxLimits(cfg, rt.Name)
 	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, envFile, limits...)
+	if spec.Ctx != nil {
+		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
+	}
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 

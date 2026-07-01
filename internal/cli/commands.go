@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -972,6 +973,21 @@ func absJoin(repo string, queues []string) string {
 // forkName is non-empty only for a detached fork loop — it labels each iteration's box so
 // `coop fork stop` can tear the container down by label (see RunSpec.ForkName); the local
 // `coop loop` passes "".
+// watchInterrupt turns a stream of interrupt signals into the loop's two-stage stop: the first
+// signal calls onSoft (finish the current iteration, then stop before the next), the second calls
+// onHard (stop now). Pulled out of loop() so the escalation is unit-testable with a plain channel;
+// it returns when the channel is closed (loop() stops delivery and closes it on exit).
+func watchInterrupt(sig <-chan os.Signal, onSoft, onHard func()) {
+	if _, ok := <-sig; !ok {
+		return
+	}
+	onSoft()
+	if _, ok := <-sig; !ok {
+		return
+	}
+	onHard()
+}
+
 func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues []string, sink io.Writer, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
@@ -1016,6 +1032,33 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		}
 		return cmd
 	}
+	// Soft interrupt for a foreground, non-fork loop: the first Ctrl-C finishes the current
+	// iteration then stops before the next; a second stops now (tears the box down). A detached
+	// fork has no stdin tty and is stopped by `coop fork stop` (SIGTERM), so it never installs
+	// this — and we watch SIGINT ONLY, leaving that SIGTERM teardown untouched. iterCtx stays nil
+	// otherwise, so every non-foreground run keeps the plain, uninterruptible box.
+	var softStop atomic.Bool
+	wake := make(chan struct{}) // closed on the first Ctrl-C so any in-progress wait returns at once
+	var iterCtx context.Context
+	if forkName == "" && ui.IsTerminal(os.Stdin) {
+		ctx, cancel := context.WithCancel(context.Background())
+		iterCtx = ctx
+		defer cancel()
+		sig := make(chan os.Signal, 2)
+		signal.Notify(sig, os.Interrupt)
+		defer func() { signal.Stop(sig); close(sig) }()
+		go watchInterrupt(sig,
+			func() {
+				softStop.Store(true)
+				close(wake)
+				ui.Info("⏸ finishing this iteration, then stopping — Ctrl-C again to stop now")
+			},
+			func() {
+				ui.Info("■ stopping now")
+				cancel()
+			})
+	}
+
 	// Pre-flight: one best-effort housekeeping pass before working the queue — unblock any
 	// task whose decision.md now has a filled-in Resolution. It works no task and deletes
 	// nothing: done tasks are pruned only by a human (`coop tasks rm --all-done`), never
@@ -1023,19 +1066,28 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	// (not the agent's headless form). Best-effort like the audit pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
+	stopHint := "Ctrl-C to stop"
+	if iterCtx != nil {
+		stopHint = "Ctrl-C to stop after this task, again to stop now"
+	}
 	if len(custom) == 0 {
-		ui.Info("starting unattended loop on %s with %s — %d/%d done (Ctrl-C to stop)", label, agent, c0.Done, c0.total())
+		ui.Info("starting unattended loop on %s with %s — %d/%d done (%s)", label, agent, c0.Done, c0.total(), stopHint)
 	} else {
-		ui.Info("starting unattended loop on %s — %d/%d done (Ctrl-C to stop)", label, c0.Done, c0.total())
+		ui.Info("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.total(), stopHint)
 	}
 	fails, waits, completed, stalls := 0, 0, 0, 0
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	for n := 1; ; {
+		// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
+		// below — stops here, before the next task is claimed.
+		if softStop.Load() {
+			break
+		}
 		// Surface queue progress + the task being worked, so a long run shows movement
 		// instead of a bare counter (the same queueProgress `coop tasks` uses).
 		c, active := queueProgress(hosts)
@@ -1050,7 +1102,16 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		a.cfg.SetActiveProfile(agent, pool.active())
 		// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 		ui.Info("%s", progressBanner(n, c, active))
-		code, out, err := a.runIteration(repo, img, agent, forkName, iterCmd(work), hosts, sink)
+		code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink)
+		// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
+		if iterCtx != nil && iterCtx.Err() != nil {
+			break
+		}
+		// A first Ctrl-C during this iteration: it ran to completion, so stop before the next
+		// (don't fall through to the retry/wait accounting).
+		if softStop.Load() {
+			break
+		}
 		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
@@ -1083,13 +1144,13 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 			// the pool, switch to another subscription and retry immediately; otherwise wait
 			// for the reset. Either way the same iteration is retried, not burned.
 			if pool.rotates() {
-				a.rotateOnLimit(agent, pool, resetAt, &waits)
+				a.rotateOnLimit(agent, pool, resetAt, &waits, wake)
 			} else {
-				sleepForLimit(wait, resetAt)
+				sleepForLimit(wait, resetAt, wake)
 			}
 		case actRetry:
 			ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
-			time.Sleep(10 * time.Second)
+			sleepOrWake(10*time.Second, wake)
 		case actStop:
 			if waits > maxLimitWaits {
 				return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
@@ -1097,9 +1158,16 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 			return code, fmt.Errorf("iteration failed %d times since the last success — stopping", fails)
 		}
 	}
+	// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
+	// audit pass and the drain summary — the queue isn't done, the user asked to stop.
+	if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+		cf, _ := queueProgress(hosts)
+		fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
+		return 0, nil
+	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(repo, img, agent, forkName, iterCmd(audit), hosts, sink)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(audit), hosts, sink)
 	}
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -1137,7 +1205,7 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // live bar watches for task progress. In a fully interactive run the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view);
 // otherwise it goes straight to the terminal unchanged.
-func (a *app) runIteration(repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 
@@ -1187,6 +1255,7 @@ func (a *app) runIteration(repo, img, agent, forkName string, cmd, hosts []strin
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),
+		Ctx:    ctx,
 	})
 	if live {
 		close(stop)

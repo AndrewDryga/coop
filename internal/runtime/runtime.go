@@ -3,13 +3,20 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
+
+// killGrace is how long a canceled RunInterruptible waits after SIGTERM for the box to exit
+// before escalating to SIGKILL — matches `coop fork stop`'s grace.
+const killGrace = 3 * time.Second
 
 // Runtime is a resolved container CLI (e.g. "docker").
 type Runtime struct {
@@ -71,7 +78,58 @@ func (r Runtime) EnsureDaemon() error {
 func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	err := cmd.Run()
+	return exitCode(r.Name, cmd.Run())
+}
+
+// RunInterruptible is Run for a cancelable box. The child runs in its OWN process group, so a
+// Ctrl-C the terminal delivers to coop's foreground group does NOT reach it — that's what lets
+// the loop's first Ctrl-C be a soft stop that finishes the current iteration. Canceling ctx (the
+// second Ctrl-C) tears the box down: SIGTERM first — which a runtime forwards to the container so
+// `--rm` removes it (a bare SIGKILL would orphan it, see box.assembleArgs) — a short grace, then
+// SIGKILL. The signal targets the whole group (-pid) so no runtime helper is left behind.
+func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	cmd := exec.Command(r.Name, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return -1, fmt.Errorf("%s: %w", r.Name, err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-ctx.Done():
+		killGroup(cmd.Process.Pid, done)
+		return -1, ctx.Err()
+	case err := <-done:
+		return exitCode(r.Name, err)
+	}
+}
+
+// killGroup tears down the process group led by pid: SIGTERM, a short grace to exit, then SIGKILL
+// if it's still alive. It signals the whole group (-pid), falling back to the bare pid, and drains
+// done so the child is always reaped (no zombie). Mirrors `coop fork stop`.
+func killGroup(pid int, done <-chan error) {
+	signalGroup(pid, syscall.SIGTERM)
+	select {
+	case <-done:
+		return
+	case <-time.After(killGrace):
+	}
+	signalGroup(pid, syscall.SIGKILL)
+	<-done
+}
+
+// signalGroup sends sig to the whole process group led by pid (-pid), falling back to the bare
+// pid if the group send fails (e.g. the leader already exited).
+func signalGroup(pid int, sig syscall.Signal) {
+	if syscall.Kill(-pid, sig) != nil {
+		_ = syscall.Kill(pid, sig)
+	}
+}
+
+// exitCode maps a cmd.Run/Wait error to coop's convention: a clean exit is (0, nil), a non-zero
+// exit is (code, nil) — the command ran to completion — and a start/other failure is (-1, err).
+func exitCode(name string, err error) (int, error) {
 	if err == nil {
 		return 0, nil
 	}
@@ -79,7 +137,7 @@ func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) 
 	if errors.As(err, &ee) {
 		return ee.ExitCode(), nil
 	}
-	return -1, fmt.Errorf("%s: %w", r.Name, err)
+	return -1, fmt.Errorf("%s: %w", name, err)
 }
 
 // Silent reports whether an invocation succeeds, discarding its output. Used for

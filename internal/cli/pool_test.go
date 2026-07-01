@@ -222,7 +222,7 @@ func TestRotateOnLimitSwitchesProfile(t *testing.T) {
 	waits := 3
 	// work is limited (resets far ahead) while personal is free → switch now, don't sleep,
 	// reset the wait counter, and point cfg at the new profile for the next iteration.
-	a.rotateOnLimit("claude", pool, time.Now().Add(time.Hour), &waits)
+	a.rotateOnLimit("claude", pool, time.Now().Add(time.Hour), &waits, nil)
 	if pool.active() != "personal" {
 		t.Errorf("pool active = %q, want personal", pool.active())
 	}

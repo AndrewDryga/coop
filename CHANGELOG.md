@@ -4,6 +4,20 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
+  on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
+  loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C
+  again to stop now — the running box is torn down cleanly (SIGTERM then SIGKILL of its whole
+  process group, so no container is orphaned). The rate-limit and retry waits wake on the stop too,
+  so Ctrl-C stays responsive even during a long wait.
+
+  *Why it's better.* The old Ctrl-C was a hard kill — it tore the box down mid-iteration, losing
+  the in-flight turn's uncommitted work. The soft stop lets the agent reach a clean, committed
+  checkpoint before the loop exits. It works by running each iteration's box in its own process
+  group, so the terminal's Ctrl-C reaches only coop, which then decides whether to let the box
+  finish (first press) or tear it down (second). Detached fork loops are unaffected — they have no
+  terminal and are still stopped with `coop fork stop`.
+
 - **Loop activity shows tool paths repo-relative, and flags anything outside the repo.** In the
   live `coop loop` view, a file tool's path now renders relative to the repo root —
   `✎ Edit internal/cli/streamjson.go` instead of the full container mount path. When the agent

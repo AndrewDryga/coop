@@ -176,10 +176,28 @@ func limitWait(hint limitHint, attempt int, now time.Time) time.Duration {
 	return d
 }
 
+// sleepOrWake waits up to d, returning early with false if wake fires (or is closed) — so the
+// loop's pauses end promptly when a stop is requested, now that the loop catches SIGINT instead
+// of dying on it. A nil wake never fires; true means it slept the full d.
+func sleepOrWake(d time.Duration, wake <-chan struct{}) bool {
+	if d <= 0 {
+		return true
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-wake:
+		return false
+	}
+}
+
 // sleepForLimit pauses for the rate limit, narrating so a long wait visibly
-// stays alive (and so an unattended log shows why nothing is happening). It is
-// interruptible with Ctrl-C like the rest of the loop.
-func sleepForLimit(wait time.Duration, resetAt time.Time) {
+// stays alive (and so an unattended log shows why nothing is happening). It
+// returns early when wake fires — the loop's soft-stop path — so a Ctrl-C during
+// a long wait takes effect instead of hanging until the reset.
+func sleepForLimit(wait time.Duration, resetAt time.Time, wake <-chan struct{}) {
 	wait = wait.Round(time.Second)
 	if wait <= 0 {
 		return
@@ -202,11 +220,13 @@ func sleepForLimit(wait time.Duration, resetAt time.Time) {
 		remaining := time.Until(deadline)
 		if remaining <= tick {
 			if remaining > 0 {
-				time.Sleep(remaining)
+				sleepOrWake(remaining, wake)
 			}
 			return
 		}
-		time.Sleep(tick)
+		if !sleepOrWake(tick, wake) {
+			return // stop requested — bail out of the wait
+		}
 		ui.Info("  …%s remaining", time.Until(deadline).Round(time.Minute))
 	}
 }

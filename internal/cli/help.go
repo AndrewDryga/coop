@@ -288,6 +288,10 @@ var commandHelp = map[string]string{
   auditor re-checks every shipped task. On a rate limit it switches to another
   signed-in profile (see 'coop pool'), or waits out the reset when there's only one.
 
+  Ctrl-C is a soft stop: the current iteration finishes and commits, then the loop
+  stops before claiming the next task. Press Ctrl-C again to stop now (tearing the
+  running box down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
+
   Defaults to .agent/tasks/. Repeat --tasks (or set COOP_TASKS) to drain several
   queues at once — the loop keeps going while any
   has unfinished work, so one loop can cover a monorepo's components. The whole repo is

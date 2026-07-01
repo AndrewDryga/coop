@@ -1,9 +1,16 @@
 package runtime
 
 import (
+	"context"
+	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // Detect validates a COOP_RUNTIME override up front, so a bogus value fails clearly here instead
@@ -47,6 +54,70 @@ func TestRunExitCodes(t *testing.T) {
 	if _, err := (Runtime{Name: "agent-no-such-binary-xyz"}).Run(nil, nil, nil); err == nil {
 		t.Error("missing binary should return a start error")
 	}
+}
+
+func TestRunInterruptible(t *testing.T) {
+	// Exit-code parity with Run, using a shell as a stand-in runtime (no daemon needed).
+	if code, err := (Runtime{Name: "sh"}).RunInterruptible(context.Background(), nil, nil, nil, "-c", "exit 7"); err != nil || code != 7 {
+		t.Fatalf("sh -c 'exit 7' -> code=%d err=%v, want 7,nil", code, err)
+	}
+}
+
+func TestRunInterruptibleCancelKillsGroup(t *testing.T) {
+	// Canceling the context must tear down the WHOLE process group, not just the direct child:
+	// sh backgrounds `sleep 30` (a grandchild), records its pid, then waits. A child-only kill
+	// would orphan the sleep; a group kill (what Setpgid + kill(-pid) buys) reaps it too.
+	pidfile := filepath.Join(t.TempDir(), "gpid")
+	script := "sleep 30 & echo $! > " + pidfile + "; wait"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		(Runtime{Name: "sh"}).RunInterruptible(ctx, nil, nil, nil, "-c", script)
+		close(done)
+	}()
+
+	gpid := 0
+	for i := 0; i < 300 && gpid == 0; i++ {
+		if b, err := os.ReadFile(pidfile); err == nil {
+			gpid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+		if gpid == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if gpid == 0 {
+		t.Fatal("grandchild pid never recorded — script didn't start")
+	}
+	if err := syscall.Kill(gpid, 0); err != nil {
+		t.Fatalf("grandchild %d should be alive before cancel: %v", gpid, err)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(killGrace + 5*time.Second):
+		t.Fatal("RunInterruptible did not return after cancel")
+	}
+	if elapsed := time.Since(start); elapsed > killGrace+5*time.Second {
+		t.Fatalf("cancel took %v — the 30s sleep wasn't cut short", elapsed)
+	}
+	// The grandchild must be gone — proof the process group was signaled, not just the child.
+	if err := waitGone(gpid, 3*time.Second); err != nil {
+		t.Fatalf("grandchild %d survived cancel (process group not torn down): %v", gpid, err)
+	}
+}
+
+// waitGone polls until pid is no longer signalable (gone) or the deadline passes.
+func waitGone(pid int, d time.Duration) error {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(pid, 0) != nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return errors.New("process still alive")
 }
 
 func TestSilent(t *testing.T) {
