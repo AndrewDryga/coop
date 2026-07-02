@@ -113,7 +113,7 @@ curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | 
 # ^ installs the binary, and (if a runtime is present) builds the box + runs coop doctor
 
 cd ~/code/your-repo          # 1. any git repo
-coop doctor                  # 2. prove isolation holds (builds the box first if needed)
+coop doctor                  # 2. prove isolation holds (run 'coop build' first if needed)
 coop login claude            # 3. authenticate once (token persists; paste-code, no browser needed)
 coop claude                  # 4. a sandboxed agent, brakes off, your secrets shadowed
 coop fork feature claude     # 5. or hand off a branch: agent works in a throwaway clone…
@@ -1028,7 +1028,7 @@ five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -
 | Symptom | Fix |
 |---|---|
 | **"no container runtime found"** | Install Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman, then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
-| **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `Dockerfile.agent` (its own image). `coop doctor` builds it too. |
+| **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `Dockerfile.agent` (its own image). |
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |

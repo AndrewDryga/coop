@@ -86,6 +86,12 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		img = "alpine"
 	}
 	fmt.Printf("%s  %s\n", ui.Bold("== coop doctor =="), ui.Dim(fmt.Sprintf("(runtime: %s, image: %s)", a.rt.Name, img)))
+	if !usingReal {
+		// doctor never builds — with no image it probes a stock alpine stand-in, which lacks coop's
+		// non-root USER and toolchain (the USER check is skipped). Say so loudly, not in a dim aside,
+		// so a newcomer doesn't read a green bill of health and then hit a failing `coop claude`.
+		fmt.Printf("  %s %s\n", ui.Yellow("⚠"), ui.Yellow("real box image not built — probing a stock alpine stand-in, so the USER/toolchain checks are skipped. Run 'coop build', then re-run 'coop doctor'."))
+	}
 
 	// The OCI privilege limits (cap-drop ALL, pids, no-new-privileges) are docker/podman-only
 	// (box.boxLimits). On any other runtime they're simply not applied, so the uid/caps checks

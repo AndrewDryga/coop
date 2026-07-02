@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop doctor` warns loudly when it's probing an alpine stand-in.** With no box image built,
+  doctor falls back to a stock `alpine` (skipping the non-root USER and toolchain checks) — it only
+  disclosed this in a dim aside, so a newcomer read a green bill of health and then hit a failing
+  `coop claude`. It now prints a yellow ⚠ telling you to run `coop build` and re-run. The docs that
+  claimed `coop doctor` "builds the box" (it never did) are corrected.
+
 - **BREAKING — `coop loop` exits 3 when it stops with work blocked on a human decision.** Every loop
   outcome used to exit 0, so cron/fleet/CI couldn't tell "queue drained" from "stalled on a blocked
   task" without scraping stderr. The exit contract is now `0` verified done (or the audit reopened
