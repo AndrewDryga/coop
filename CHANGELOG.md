@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks path <id>` prints a task's resolved folder.** The companion to `coop fork path`:
+  resolve a task by id or slug fragment and print its directory, so `cat "$(coop tasks path
+  <id>)/task.md"` works from a shell or hook instead of hunting the four state dirs by hand. It
+  spans configured queues like the other id commands.
+
 - **Security — fork commands reject a name that escapes the forks directory.** `coop fork rm ..`
   `filepath.Join`-cleaned the name before deleting, so `..` resolved to the parent of all your
   projects and `os.RemoveAll` wiped it — a live, unrecoverable data-loss bug. Every name-taking

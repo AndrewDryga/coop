@@ -101,7 +101,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "start", "block", "unblock", "done", "rm", "remove":
+		case "claim", "start", "block", "unblock", "done", "path", "rm", "remove":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return groupHelp("tasks")

@@ -289,6 +289,7 @@ var commandHelp = map[string]string{
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to todo (claim it to start); add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)
+  path <id>        print a task's resolved folder path
   rm <id>          delete a task folder; --all-done clears the whole done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,6 +62,38 @@ func TestFindTask(t *testing.T) {
 	// An empty fragment must error, not substring-match every task.
 	if _, err := findTask(root, ""); err == nil {
 		t.Errorf("empty id should error, not match everything")
+	}
+}
+
+// `coop tasks path <id>` prints the resolved folder (reusing findTask) so a hook or human can
+// `cat "$(coop tasks path <id>)/task.md"`; absent/ambiguous ids error like the other id commands.
+func TestTasksFolderPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, stateTodo, "2026-01-01-alpha")
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# a\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-alpine", "task.md"), "# b\n")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, err := tasksFolderPath(root, []string{"alpha"}) // 'alpha' is a unique substring (alpine lacks it)
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if code != 0 || err != nil {
+		t.Fatalf("tasks path alpha = (%d, %v), want (0, nil)", code, err)
+	}
+	if got := strings.TrimSpace(string(out)); got != dir {
+		t.Errorf("printed %q, want the task's dir %q", got, dir)
+	}
+	if code, err := tasksFolderPath(root, []string{"alp"}); code == 0 || err == nil { // ambiguous
+		t.Errorf("ambiguous 'alp' = (%d, %v), want an error", code, err)
+	}
+	if code, err := tasksFolderPath(root, []string{"zzz"}); code == 0 || err == nil { // absent
+		t.Errorf("absent 'zzz' = (%d, %v), want an error", code, err)
+	}
+	if code, _ := tasksFolderPath(root, nil); code != 2 { // no id → usage
+		t.Errorf("no id = %d, want 2 (usage)", code)
 	}
 }
 

@@ -35,7 +35,7 @@ type taskArgSpec struct {
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls": {[]string{"--all"}, 0}, "list": {[]string{"--all"}, 0},
 	"lint":  {nil, 0},
-	"claim": {nil, 1}, "start": {nil, 1},
+	"claim": {nil, 1}, "start": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
 	"rm": {[]string{"--all-done"}, 1}, "remove": {[]string{"--all-done"}, 1},
 }
@@ -95,6 +95,8 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderUnblock(root, args)
 	case "done":
 		return tasksFolderMove(root, args, stateDone, "done", "done")
+	case "path":
+		return tasksFolderPath(root, args)
 	case "rm", "remove":
 		return tasksFolderRemove(root, args)
 	case "split":
@@ -103,7 +105,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderDecisions(root, args)
 	default:
 		return 2, unknownErr("tasks command", sub,
-			[]string{"ls", "lint", "add", "claim", "block", "unblock", "done", "rm", "split", "decisions"})
+			[]string{"ls", "lint", "add", "claim", "block", "unblock", "done", "path", "rm", "split", "decisions"})
 	}
 }
 
@@ -112,7 +114,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // queue path. Keep in sync with the dispatch switch above.
 func isTasksSubcommand(s string) bool {
 	switch s {
-	case "ls", "list", "lint", "add", "claim", "start", "block", "unblock", "done", "remove", "rm", "split", "decisions", "watch":
+	case "ls", "list", "lint", "add", "claim", "start", "block", "unblock", "done", "path", "remove", "rm", "split", "decisions", "watch":
 		return true
 	}
 	return false
@@ -268,6 +270,21 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 		return -1, err
 	}
 	ui.OK("%s %s", pastVerb, t.ID)
+	return 0, nil
+}
+
+// tasksFolderPath prints a task's resolved folder — the id-command companion to `coop fork path`,
+// so `cat "$(coop tasks path <id>)/task.md"` works for humans and hooks. Reuses findTask, so a slug
+// fragment resolves and an absent/ambiguous id errors exactly like claim/done.
+func tasksFolderPath(root string, args []string) (int, error) {
+	if len(args) < 1 {
+		return 2, errors.New("usage: coop tasks path <id>")
+	}
+	t, err := findTask(root, args[0])
+	if err != nil {
+		return 1, err
+	}
+	fmt.Println(t.Dir)
 	return 0, nil
 }
 
