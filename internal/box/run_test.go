@@ -260,6 +260,45 @@ func TestInstructionPlan(t *testing.T) {
 	}
 }
 
+// TestLeadInstructionMount: a consult lead is ALWAYS excluded from instructionPlan, so it must
+// still receive its base instructions here even with no authenticated peer — otherwise it would
+// run with none (no box env note, no INSTRUCTIONS.md). With a peer authed, the second-opinion
+// directive is injected and coop-consult is wired.
+func TestLeadInstructionMount(t *testing.T) {
+	dir := t.TempDir()
+	// Only claude signed in → authedPeers(claude) is empty.
+	if err := os.MkdirAll(filepath.Join(dir, "claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claude", ".credentials.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
+
+	content, file, wired, ok := leadInstructionMount(cfg, "claude")
+	if !ok || file != "CLAUDE.md" {
+		t.Fatalf("leadInstructionMount ok=%v file=%q, want true CLAUDE.md", ok, file)
+	}
+	if !strings.Contains(content, "Environment (coop box)") {
+		t.Errorf("a consult lead with no peers must still get the box env note, got:\n%s", content)
+	}
+	if wired {
+		t.Error("no authed peer → no consult directive, so wired must be false")
+	}
+
+	// With a peer signed in, the directive is injected and coop-consult is wired.
+	if err := os.WriteFile(filepath.Join(dir, "env"), []byte("OPENAI_API_KEY=real\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content, _, wired, _ = leadInstructionMount(cfg, "claude")
+	if !wired {
+		t.Error("with an authed peer, expected the consult directive to be wired")
+	}
+	if !strings.Contains(content, "second opinion") {
+		t.Errorf("with an authed peer, expected the second-opinion directive, got:\n%s", content)
+	}
+}
+
 // TestAgentBaseInstructions: the box env note is always present and comes first; the user's
 // shared INSTRUCTIONS.md, when present, follows it.
 func TestAgentBaseInstructions(t *testing.T) {

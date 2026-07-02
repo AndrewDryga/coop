@@ -221,21 +221,19 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// Second opinions: a normal lead may consult its authenticated peers read-only
 	// on hard calls. The directive is merged into the lead's instruction file only
 	// (so peers it spawns read their normal instructions and never recurse), and
-	// only when a peer is actually authenticated — otherwise there's nothing to
-	// consult and nothing is injected. (Fusion's stronger directive takes over when
-	// FusionGovernor is set, so the two never both apply.)
+	// only when a peer is actually authenticated. With NO authed peer the lead still
+	// gets its base instructions mounted here (the box env note + the user's) — it is
+	// excluded from instructionPlan as the lead, so mounting nothing would leave it
+	// running with no instructions at all. (Fusion's stronger directive takes over
+	// when FusionGovernor is set, so the two never both apply.)
 	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
-		if peers := authedPeers(cfg, spec.ConsultLead); len(peers) > 0 {
-			if file := instructionFile(spec.ConsultLead); file != "" {
-				base := agentBaseInstructions(cfg, spec.ConsultLead, file)
-				content := fusion.LeadInstructions(base, peers)
-				if p, err := writeTempFile(content); err != nil {
-					ui.Info("consult: skipped instruction wiring: %v", err)
-				} else {
-					tmpFiles = append(tmpFiles, p)
-					fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
-					consultWired = true
-				}
+		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead); ok {
+			if p, err := writeTempFile(content); err != nil {
+				ui.Info("consult: skipped instruction wiring: %v", err)
+			} else {
+				tmpFiles = append(tmpFiles, p)
+				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
+				consultWired = wired
 			}
 		}
 	}
@@ -439,6 +437,24 @@ func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
 		}
 	}
 	return out
+}
+
+// leadInstructionMount builds the instruction file a consult lead receives: its base
+// instructions (the box env note + the user's) plus the optional second-opinion directive
+// naming any authenticated peers. content is ALWAYS at least the base — the lead is excluded
+// from instructionPlan (it is meant to get this augmented file instead), so returning nothing
+// would leave it running with no instructions at all. wired reports whether a consult directive
+// was actually injected, so the caller mounts coop-consult only when there is a peer to consult.
+// ok is false only when the agent has no native instruction file. Pure, so the "no authed peer
+// still mounts the base" invariant is unit-tested without a container.
+func leadInstructionMount(cfg *config.Config, lead string) (content, file string, wired, ok bool) {
+	file = instructionFile(lead)
+	if file == "" {
+		return "", "", false, false
+	}
+	base := agentBaseInstructions(cfg, lead, file)
+	peers := authedPeers(cfg, lead)
+	return fusion.LeadInstructions(base, peers), file, len(peers) > 0, true
 }
 
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an

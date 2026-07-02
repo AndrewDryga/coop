@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fixed: a fork (or `coop <agent> --consult`) with only one agent signed in launched with no
+  instructions at all.** The lead agent's global instruction file — its `CLAUDE.md` / `AGENTS.md` /
+  `GEMINI.md`, carrying the box environment briefing and your shared `INSTRUCTIONS.md` — was
+  silently not mounted whenever the lead had no authenticated peer to consult. Since `coop fork`
+  always runs the agent as a consult lead, a single-agent `coop fork <name>` gave the agent none of
+  that context (it would rediscover the box the hard way, e.g. investigating the expected missing
+  bubblewrap). The lead now always receives its base instructions; the read-only consult directive
+  is still added only when a peer is actually signed in.
+
 - **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
   on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
   loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C
