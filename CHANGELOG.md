@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`:d` in `coop tasks decisions -i` marks a task done.** When a blocked decision's real answer is
+  "already handled," you no longer have to answer → unblock → claim → done: type `:d` (or `:d
+  <reason>` to record why in `decision.md`) to move the task straight to `99_done/`. The walker's key
+  legend is colorized to match.
+
 - **Clearer errors, and consistent split-slice naming.** `coop up` with no compose now points at
   `coop init --services postgres,redis` (not `--stack`, which only scaffolds an asdf Dockerfile);
   a missing `.agent/fleet` points at `coop fleet init`; and `coop tasks split` now names its slices

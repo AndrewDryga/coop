@@ -759,7 +759,7 @@ func decisionsInteractive(root string, decisions []taskItem) (int, error) {
 func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
 	p := ui.For(os.Stdout)
 	sc := bufio.NewScanner(in)
-	answered := 0
+	answered, doneCount := 0, 0
 	for i := 0; i >= 0; {
 		ref := refs[i]
 		t, err := findTask(ref.root, ref.id)
@@ -776,11 +776,32 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		if decisionResolved(decPath) {
 			fmt.Fprintln(out, p.Green("✓ answered")+p.Dim(" — type a new answer to change it"))
 		}
-		fmt.Fprint(out, p.Dim("answer (Enter=skip · :n next · :p prev · :q quit): "))
+		key := func(k string) string { return p.Cyan(k) }
+		fmt.Fprintf(out, "%s%s%s%s%s%s%s%s%s%s%s",
+			p.Dim("answer ("), key("Enter"), p.Dim("=skip · "), key(":d"), p.Dim(" done · "),
+			key(":n"), p.Dim(" next · "), key(":p"), p.Dim(" prev · "), key(":q"), p.Dim(" quit): "))
 		if !sc.Scan() {
 			break // EOF / ^D ends the session
 		}
-		switch line := strings.TrimSpace(sc.Text()); line {
+		line := strings.TrimSpace(sc.Text())
+		// :d [reason] marks the current task done — done is terminal, so a reason is optional. Record
+		// the reason into decision.md first (if given), then move the folder to 99_done/.
+		if line == ":d" || strings.HasPrefix(line, ":d ") {
+			if reason := strings.TrimSpace(strings.TrimPrefix(line, ":d")); reason != "" {
+				if err := recordResolution(decPath, reason); err != nil {
+					return -1, err
+				}
+			}
+			if err := moveTaskDir(ref.root, t, stateDone); err != nil {
+				return -1, err
+			}
+			doneCount++
+			if i++; i >= len(refs) {
+				i = -1
+			}
+			continue
+		}
+		switch line {
 		case ":q", ":quit":
 			i = -1
 		case ":p":
@@ -808,9 +829,14 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			i = -1 // past the last decision → done
 		}
 	}
-	if answered > 0 {
+	switch {
+	case answered > 0 && doneCount > 0:
+		ui.OK("answered %s (back in todo) · marked %s done", ui.Count(answered, "decision"), ui.Count(doneCount, "task"))
+	case answered > 0:
 		ui.OK("answered %s — back in todo (claim to start)", ui.Count(answered, "decision"))
-	} else {
+	case doneCount > 0:
+		ui.OK("marked %s done", ui.Count(doneCount, "task"))
+	default:
 		ui.Note("no decisions answered — all still blocked")
 	}
 	return 0, nil

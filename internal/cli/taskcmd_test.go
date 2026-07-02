@@ -519,6 +519,45 @@ func TestRunDecisionBrowser(t *testing.T) {
 	}
 }
 
+// runDecisionBrowser: :d marks the current task done (99_done/) — a reason is optional since done is
+// terminal. `:d <reason>` records the reason into decision.md first; a bare `:d` just moves it.
+func TestRunDecisionBrowserMarkDone(t *testing.T) {
+	root := t.TempDir()
+	for _, title := range []string{"alpha", "beta"} {
+		if code, err := tasksFolderAdd(root, []string{title}); code != 0 || err != nil {
+			t.Fatalf("add %s: code=%d err=%v", title, code, err)
+		}
+	}
+	for _, it := range readTaskTree(root) {
+		if code, err := tasksFolderBlock(root, []string{it.ID}); code != 0 || err != nil {
+			t.Fatalf("block %s: code=%d err=%v", it.ID, code, err)
+		}
+	}
+	var decisions []taskItem
+	for _, it := range readTaskTree(root) {
+		if it.State == stateBlocked {
+			decisions = append(decisions, it)
+		}
+	}
+	if len(decisions) != 2 {
+		t.Fatalf("want 2 blocked decisions, got %d", len(decisions))
+	}
+	in := strings.NewReader(":d already published\n:d\n") // first: reason recorded; second: bare :d
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
+		t.Fatalf("browser: code=%d err=%v", code, err)
+	}
+	for _, d := range decisions {
+		if got, err := findTask(root, d.ID); err != nil || got.State != stateDone {
+			t.Errorf(":d should move %s to done, got %v (err %v)", d.ID, got.State, err)
+		}
+	}
+	first, _ := findTask(root, decisions[0].ID)
+	if dec := readFileString(filepath.Join(first.Dir, "decision.md")); !strings.Contains(dec, "**Resolution:** already published") {
+		t.Errorf(":d <reason> should record the reason first:\n%s", dec)
+	}
+}
+
 // TestRunDecisionBrowserSpansQueues: one browser session walks decisions from SEVERAL queues —
 // each ref carries its own root (the answer moves the task within the right queue) and a label
 // naming the queue in the header, so a monorepo answers everything in one sitting.
