@@ -383,6 +383,13 @@ non-interactive shell (CI, a pipe) there's no one to answer, and merge refuses
 rather than landing on the default — pass `--yes` (`-y`) to confirm landing and
 removal up front. `--yes` also skips the prompts interactively.
 
+Merging lands code, not queue state. A fork's loop works a *copy* of the task queue
+(`.agent/` is gitignored, seeded when the fork is created), so after a merge the parent's
+`.agent/tasks/00_todo/` still lists the tasks the fork finished. Mark them done or remove
+them — `coop tasks done <id>` / `coop tasks rm <id>` — so a later `coop loop` doesn't
+re-claim finished work (redoing a done task makes an empty commit, which fails). While forks
+run, `coop tasks watch` shows the deduped truth across the parent and its forks.
+
 ### Drive a fork from Zed (ACP)
 
 `coop fork <name> acp [agent]` fronts a fork as an [ACP](#drive-it-from-zed-acp) agent

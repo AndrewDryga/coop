@@ -457,6 +457,13 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         red. A content scan also flags any secret-shaped or
                         oversized files on the way in.
                     </p>
+                    <p>
+                        Landing brings over <em>code</em>, not queue state: a fork
+                        works a copy of the <code>.agent/tasks/</code> queue, so after a
+                        merge the parent still lists the tasks the fork finished — mark them
+                        done or remove them, and run <code>coop tasks watch</code> for the
+                        deduped view across the parent and its forks while they run.
+                    </p>
                     <figure class="cast-figure">
                         <div class="term">
                             <div class="term-bar">
