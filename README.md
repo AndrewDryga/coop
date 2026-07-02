@@ -1033,6 +1033,7 @@ five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
 | **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
 | **"box image is stale … run 'coop build'"** | You changed `Dockerfile.agent` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
+| **A scaffolded `db` (postgres:18) exits 1 on `coop up`** | Scaffolds from before this fix mounted `pgdata` at `/var/lib/postgresql/data`, which postgres 18+ refuses (it wants a single mount at `/var/lib/postgresql`). Edit `compose.agent.yml` and move the mount up one level. New scaffolds are already fixed. |
 
 ## Layout & development
 

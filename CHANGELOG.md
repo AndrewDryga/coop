@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Scaffolded `postgres:18` services start out of the box.** `coop init --services postgres`
+  mounted the data volume at `/var/lib/postgresql/data`, which the postgres 18+ image refuses — the
+  container exited 1, and auto-up (`COOP_AUTO_UP=1`) silently continued without the database. The
+  scaffold now mounts `pgdata` at `/var/lib/postgresql`. Already scaffolded before the fix? Move the
+  mount up one level (see Troubleshooting).
+
 - **`coop loop` no longer reports "queue verified done" when the audit reopened work.** The
   end-of-run audit reopens failed done tasks by moving them into `10_in_progress/`, but the closing
   banner checked `00_todo/` only — so it printed a green "verified done" over a queue that still had
