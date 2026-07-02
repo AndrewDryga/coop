@@ -195,6 +195,20 @@ func TestExtractConsult(t *testing.T) {
 	}
 }
 
+// TestExtractProfileAbsentIsEmpty: with no --profile, extractProfile returns "" — the
+// caller (loginTo) then resolves the agent's MARKED default. Returning the literal
+// "default" here made a bare `coop login claude` re-auth (and keep re-creating) a husk
+// profile named "default" while runs used the marked profile's expired token.
+func TestExtractProfileAbsentIsEmpty(t *testing.T) {
+	profile, rest, err := extractProfile([]string{"claude"})
+	if err != nil || profile != "" || !slices.Equal(rest, []string{"claude"}) {
+		t.Errorf("extractProfile(claude) = (%q, %v, %v), want (\"\", [claude], nil)", profile, rest, err)
+	}
+	if profile, _, _ := extractProfile([]string{"claude", "--profile", "work"}); profile != "work" {
+		t.Errorf("explicit --profile = %q, want work", profile)
+	}
+}
+
 func TestExtractRunProfile(t *testing.T) {
 	cases := []struct {
 		name        string

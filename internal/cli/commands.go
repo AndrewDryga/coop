@@ -238,11 +238,11 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 }
 
 // extractProfile pulls coop's own `--profile <name>` (or `--profile=<name>`) flag out of
-// args, returning the chosen credential profile (config.DefaultProfile if absent) and the
-// remaining args. It lets a login target one of several stored subscriptions. A `--profile`
-// with no value is an error, not a silent fall-back to the default.
+// args, returning the chosen credential profile ("" if absent — the caller resolves the
+// agent's MARKED default, not a profile literally named "default") and the remaining args.
+// It lets a login target one of several stored subscriptions. A `--profile` with no value
+// is an error, not a silent fall-back to the default.
 func extractProfile(args []string) (profile string, rest []string, err error) {
-	profile = config.DefaultProfile
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
 			if e != nil {
@@ -314,7 +314,11 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		return 2, unknownErr("agent", tool, agents.Names())
 	}
 	if profile == "" {
-		profile = config.DefaultProfile
+		// A bare `coop login claude` refreshes the profile your runs actually USE — the marked
+		// default — not a profile literally named "default". Targeting the literal name both
+		// re-authed the wrong slot (runs kept using the marked profile's expired token) and
+		// kept re-creating a husk "default" dir the user had deleted.
+		profile = a.cfg.DefaultProfileOf(tool)
 	}
 	// Validate the profile name (a static arg) before the environment checks below, so a traversal
 	// name like "../../x" can't escape the vault and fails the same way piped or at a tty.

@@ -260,6 +260,29 @@ func TestInstructionPlan(t *testing.T) {
 	}
 }
 
+// TestEnsureAgentHomesScoped: a run pre-creates home dirs ONLY for the agents it mounts
+// (credentialScope) — pre-creating every agent's active-profile dir was a husk factory: a
+// deleted profile dir (an empty "default") reappeared on every box run, even runs that
+// never involved that agent. A raw run (no agent) creates nothing.
+func TestEnsureAgentHomesScoped(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "claude"}, "/workspace")
+	if !dirExists(filepath.Join(dir, "claude")) {
+		t.Error("the launched agent's home was not created")
+	}
+	for _, other := range []string{"codex", "gemini"} {
+		if dirExists(filepath.Join(dir, other)) {
+			t.Errorf("%s's home was created for a claude-only run — the husk-profile factory is back", other)
+		}
+	}
+	raw := t.TempDir()
+	ensureAgentHomes(&config.Config{ConfigDir: raw}, RunSpec{Homes: true}, "/workspace")
+	if entries, _ := os.ReadDir(raw); len(entries) != 0 {
+		t.Errorf("a raw run (no agent) created agent homes: %v", entries)
+	}
+}
+
 // TestModelEnvArgs: a scoped agent's resolved model is exported into the box — its own env
 // var (claude's ANTHROPIC_MODEL, for the flagless ACP adapter) always, and COOP_MODEL_<AGENT>
 // only on a fusion/consult run (where the coop-consult wrapper expands it into each peer's

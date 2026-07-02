@@ -145,19 +145,12 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		stderr = os.Stderr
 	}
 
-	// Ensure the per-agent home dirs exist and pre-answer first-run prompts —
+	// Ensure the mounted agents' home dirs exist and pre-answer first-run prompts —
 	// Claude's theme/trust/bypass and Codex's directory-trust — BEFORE generating
 	// MCP configs, so a fresh box is ready to work and the generated Codex config
 	// carries the trust entry on the very first run.
 	if spec.Homes {
-		for _, name := range agents.Names() {
-			// Best-effort: EnsureDefaults below is best-effort too, and a real failure to make the
-			// vault surfaces with a clearer error when its home is mounted. 0o700 — owner-only.
-			_ = os.MkdirAll(cfg.AgentDir(name), 0o700)
-			if ag, ok := agents.Get(name); ok {
-				ag.EnsureDefaults(cfg, workdir)
-			}
-		}
+		ensureAgentHomes(cfg, spec, workdir)
 	}
 
 	// Generate MCP configs into temp files that live for the container's run.
@@ -347,6 +340,24 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 	}
 	return rt.Run(stdin, stdout, stderr, args...)
+}
+
+// ensureAgentHomes pre-creates the credential-home dir and first-run defaults for exactly
+// the agents this run MOUNTS (credentialScope: the launched agent, plus authed peers under
+// fusion/consult) — not every agent. Pre-creating all three was a husk factory: every box
+// run materialized each agent's active-profile dir, so a profile the user deleted (an empty
+// "default" showing "not signed in" in `coop profiles`) kept reappearing, seeded with
+// EnsureDefaults' settings files, recreated by runs that never involved that agent. An
+// out-of-scope agent has no home mounted, so nothing in the box reads the dir anyway.
+// Best-effort: EnsureDefaults is best-effort too, and a real failure to make the vault
+// surfaces with a clearer error when its home is mounted. 0o700 — owner-only.
+func ensureAgentHomes(cfg *config.Config, spec RunSpec, workdir string) {
+	for _, name := range credentialScope(cfg, spec) {
+		_ = os.MkdirAll(cfg.AgentDir(name), 0o700)
+		if ag, ok := agents.Get(name); ok {
+			ag.EnsureDefaults(cfg, workdir)
+		}
+	}
 }
 
 // resolveWorkdir picks where the repo mounts inside the box — and thus the

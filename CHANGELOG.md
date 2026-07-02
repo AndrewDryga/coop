@@ -34,6 +34,17 @@
   own configured model. One gap, by design: codex under ACP keeps reading its model from its own
   `config.toml` (its adapter takes no flags and codex has no model env var).
 
+- **Fixed: a deleted profile named "default" kept reappearing (empty, "not signed in").**
+  Every box run pre-created the active-profile dir for ALL THREE agents — even agents the run
+  never touched — and with no profile marked default (or via a bare `coop login <agent>`, which
+  targeted a profile literally named "default"), that materialized a husk `default` dir seeded
+  with settings files, resurrecting it after every deletion. Three changes close it: a run now
+  pre-creates homes only for the agents it actually mounts (the launched agent plus authed
+  fusion/consult peers); a bare `coop login <agent>` signs into the agent's MARKED default
+  profile — the one your runs actually use, so re-authing an expired subscription lands in the
+  right slot instead of a fresh "default"; and a custom-`COOP_LOOP_CMD` loop pins the marked
+  default too.
+
 - **Fixed: a fork (or `coop <agent> --consult`) with only one agent signed in launched with no
   instructions at all.** The lead agent's global instruction file — its `CLAUDE.md` / `AGENTS.md` /
   `GEMINI.md`, carrying the box environment briefing and your shared `INSTRUCTIONS.md` — was

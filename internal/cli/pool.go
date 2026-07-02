@@ -225,9 +225,10 @@ func newProfilePool(profiles []string) *profilePool {
 // profiles, preserving order, and errors if none are — the loop can't run unauthenticated.
 func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
 	if len(cfg.LoopCmd) > 0 {
-		// A custom COOP_LOOP_CMD may not be an agent at all — keep today's behavior: the
-		// default profile, no rotation, no auth gate.
-		return newProfilePool([]string{config.DefaultProfile}), nil
+		// A custom COOP_LOOP_CMD may not be an agent at all — no rotation, no auth gate, just
+		// the agent's MARKED default profile (not the literal "default", which would re-create
+		// a husk profile dir every iteration for a user whose default is a named profile).
+		return newProfilePool([]string{cfg.DefaultProfileOf(agent)}), nil
 	}
 	names, err := repoPool(cfg, repo, agent)
 	if err != nil {
