@@ -4,122 +4,6 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **`coop tasks` works across every configured queue.** With several queues (a monorepo's
-  `COOP_TASKS`, or repeated `--tasks`), only `ls` and the non-interactive `decisions` used to roll
-  up — everything else bailed with "works one queue at a time". Now `decisions -i` walks every
-  queue's open decisions in one interactive session (each header names the queue), `lint` rolls up
-  with the worst exit code, `rm --all-done` clears every archive, and the id-addressed commands
-  (`claim`/`block`/`unblock`/`done`/`rm <id>`) find their task in whichever queue holds it — same
-  exact-then-substring matching as before, erroring only when an id matches in more than one queue
-  (`split` slices share ids with their source, so acting on an arbitrary copy would touch the wrong
-  tree). Only `add` and `split` still need a single `--tasks`, since they create into a queue.
-
-- **The orchestrator pattern, scaffolded and documented.** `coop init` now writes two starter
-  subagents alongside the skills: `.claude/agents/deep-reasoner.md` (pinned to Opus — reasoning-heavy
-  phases: architecture, complex debugging, algorithm design) and `.claude/agents/fast-worker.md`
-  (pinned to Sonnet — mechanical, fully-specified work). They're native Claude Code subagents whose
-  descriptions route delegation automatically, so a lead running on a bigger model (`coop claude
-  --model claude-fable-5 --consult`) spends its own tokens on planning and synthesis while each
-  delegated turn bills at the subagent's cheaper model. The README's new "orchestrator pattern"
-  recipe ties it together with the existing pieces: per-profile model marks for the lead, and
-  codex/gemini as read-only peer engineers via `coop-consult` under `--consult`/fusion — including
-  the gotcha that a plain run deliberately doesn't mount peer credentials, so peers only answer in
-  a consult/fusion box. Existing files are never clobbered; edit the subagents freely.
-
-  And the pattern now runs unattended: **`coop loop --consult`** (and
-  `coop fork <name> <agent> --loop --consult`) opts every iteration into peer consultation — the
-  box mounts the authed peers' credentials and the `coop-consult` wrapper, so a headless lead can
-  get second opinions on hard calls. A fleet opts in per fork with **`consult=1`** on its
-  `.agent/fleet` line. Off by default everywhere, since it widens each iteration's credential
-  scope to the authed peers.
-
-- **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**
-  Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
-  --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp
-  claude --model sonnet`, and a fleet line's `model=` option. For standing defaults, mark a model
-  per credential profile with `coop profiles claude work model opus` (`--clear` unmarks; the mark
-  is a profile attribute, so `coop profiles` owns editing it and shows it) — e.g. the work
-  subscription always on the big model, the personal one on a cheap one; the loop's profile
-  rotation then switches models with the account. `COOP_<AGENT>_MODEL` sets an agent-wide default
-  and `COOP_LOOP_MODEL` a loop-only one (so overnight runs grind on a cheaper model than your
-  interactive sessions). `coop models [agent]` is the model menu — one line per agent with its
-  known models (examples — any id the CLI accepts works; coop never validates one) and a short
-  how-to; each profile's mark shows as a column in `coop profiles`.
-
-- **`coop profiles` gained a path grammar** — each token narrows: `coop profiles` lists every
-  agent, `coop profiles claude` one agent, `coop profiles claude personal` shows that profile,
-  and a trailing attribute edits one property of it: `model [<m> | --clear]`, `default` (mark it
-  what a plain `coop claude` runs), `rm`. So profile edits read as a path — `coop profiles
-  claude personal model opus-4.8` — instead of a verb sandwich (`coop profiles default claude
-  default` read like a stutter). The old verb-first forms (`coop profiles default|rm <agent>
-  <profile>`) still work.
-
-  *How it reaches every feature.* The precedence is most-specific-first: `--model` ›
-  `COOP_LOOP_MODEL` (loop runs) › the profile's mark › `COOP_<AGENT>_MODEL` › a model baked into
-  `COOP_<AGENT>_CMD` › the agent CLI's own default. The resolved model rides each agent's command
-  as its native `--model` flag (interactive, headless loop iterations, fork session resume, the
-  fusion governor, gemini's ACP), is exported as the agent's own model env var for flagless
-  adapter binaries (claude-agent-acp reads `ANTHROPIC_MODEL`), and reaches fusion/consult *peers*
-  via `COOP_MODEL_<AGENT>` vars the `coop-consult` wrapper expands — so each peer answers on its
-  own configured model. One gap, by design: codex under ACP keeps reading its model from its own
-  `config.toml` (its adapter takes no flags and codex has no model env var).
-
-- **Fixed: a deleted profile named "default" kept reappearing (empty, "not signed in").**
-  Every box run pre-created the active-profile dir for ALL THREE agents — even agents the run
-  never touched — and with no profile marked default (or via a bare `coop login <agent>`, which
-  targeted a profile literally named "default"), that materialized a husk `default` dir seeded
-  with settings files, resurrecting it after every deletion. Three changes close it: a run now
-  pre-creates homes only for the agents it actually mounts (the launched agent plus authed
-  fusion/consult peers); a bare `coop login <agent>` signs into the agent's MARKED default
-  profile — the one your runs actually use, so re-authing an expired subscription lands in the
-  right slot instead of a fresh "default"; and a custom-`COOP_LOOP_CMD` loop pins the marked
-  default too.
-
-- **Fixed: a fork (or `coop <agent> --consult`) with only one agent signed in launched with no
-  instructions at all.** The lead agent's global instruction file — its `CLAUDE.md` / `AGENTS.md` /
-  `GEMINI.md`, carrying the box environment briefing and your shared `INSTRUCTIONS.md` — was
-  silently not mounted whenever the lead had no authenticated peer to consult. Since `coop fork`
-  always runs the agent as a consult lead, a single-agent `coop fork <name>` gave the agent none of
-  that context (it would rediscover the box the hard way, e.g. investigating the expected missing
-  bubblewrap). The lead now always receives its base instructions; the read-only consult directive
-  is still added only when a peer is actually signed in.
-
-- **Fixed: an unrelated number containing `429` could stall the loop as if rate limited.** The
-  loop's rate-limit detector matched the bare substring `429`, so a failed iteration whose output
-  happened to contain e.g. `1429 files` was treated as an HTTP 429 and made the loop wait. It now
-  matches the status only as a standalone `429`.
-
-- **A foreground `coop fork <name> --loop` now gets the same Ctrl-C soft stop as `coop loop`.**
-  The graceful-stop handler was gated to exclude every fork, though its rationale only covered
-  *detached* workers (which have no terminal); a foreground fork loop was hard-killed mid-iteration.
-  It's now keyed on owning a terminal, so a foreground fork loop finishes the current task then
-  stops, while the detached worker (stdin is `/dev/null`) is still left to `coop fork stop`.
-
-- **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
-  on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
-  loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C
-  again to stop now — the running box is torn down cleanly (SIGTERM then SIGKILL of its whole
-  process group, so no container is orphaned). The rate-limit and retry waits wake on the stop too,
-  so Ctrl-C stays responsive even during a long wait.
-
-  *Why it's better.* The old Ctrl-C was a hard kill — it tore the box down mid-iteration, losing
-  the in-flight turn's uncommitted work. The soft stop lets the agent reach a clean, committed
-  checkpoint before the loop exits. It works by running each iteration's box in its own process
-  group, so the terminal's Ctrl-C reaches only coop, which then decides whether to let the box
-  finish (first press) or tear it down (second). Detached fork loops are unaffected — they have no
-  terminal and are still stopped with `coop fork stop`.
-
-- **Loop activity shows tool paths repo-relative, and flags anything outside the repo.** In the
-  live `coop loop` view, a file tool's path now renders relative to the repo root —
-  `✎ Edit internal/cli/streamjson.go` instead of the full container mount path. When the agent
-  reads or writes a path *outside* the repo tree, the line keeps the whole path and is flagged
-  with a yellow `⚠`, so an escape from the working tree stands out at a glance. The root is the
-  repo's real in-box mount (`box.Workdir`), so the inside/outside call matches where the repo
-  actually lives in the box — and a shared string prefix (`…/proj-x` vs `…/proj`) is never
-  mistaken for containment.
-
-## 3.0.0
-
 - **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
   The work queue is one folder per task under four state directories — `00_todo/` ·
   `10_in_progress/` · `50_blocked/` · `99_done/` — and a task's workflow state is simply which
@@ -336,6 +220,121 @@
 - **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
   demand, so a monorepo can start a per-component queue without a root `coop init`. (The single-loop
   progress view — done/total · blocked · the active task — is now part of `coop tasks watch`.)
+
+
+- **`coop tasks` works across every configured queue.** With several queues (a monorepo's
+  `COOP_TASKS`, or repeated `--tasks`), only `ls` and the non-interactive `decisions` used to roll
+  up — everything else bailed with "works one queue at a time". Now `decisions -i` walks every
+  queue's open decisions in one interactive session (each header names the queue), `lint` rolls up
+  with the worst exit code, `rm --all-done` clears every archive, and the id-addressed commands
+  (`claim`/`block`/`unblock`/`done`/`rm <id>`) find their task in whichever queue holds it — same
+  exact-then-substring matching as before, erroring only when an id matches in more than one queue
+  (`split` slices share ids with their source, so acting on an arbitrary copy would touch the wrong
+  tree). Only `add` and `split` still need a single `--tasks`, since they create into a queue.
+
+- **The orchestrator pattern, scaffolded and documented.** `coop init` now writes two starter
+  subagents alongside the skills: `.claude/agents/deep-reasoner.md` (pinned to Opus — reasoning-heavy
+  phases: architecture, complex debugging, algorithm design) and `.claude/agents/fast-worker.md`
+  (pinned to Sonnet — mechanical, fully-specified work). They're native Claude Code subagents whose
+  descriptions route delegation automatically, so a lead running on a bigger model (`coop claude
+  --model claude-fable-5 --consult`) spends its own tokens on planning and synthesis while each
+  delegated turn bills at the subagent's cheaper model. The README's new "orchestrator pattern"
+  recipe ties it together with the existing pieces: per-profile model marks for the lead, and
+  codex/gemini as read-only peer engineers via `coop-consult` under `--consult`/fusion — including
+  the gotcha that a plain run deliberately doesn't mount peer credentials, so peers only answer in
+  a consult/fusion box. Existing files are never clobbered; edit the subagents freely.
+
+  And the pattern now runs unattended: **`coop loop --consult`** (and
+  `coop fork <name> <agent> --loop --consult`) opts every iteration into peer consultation — the
+  box mounts the authed peers' credentials and the `coop-consult` wrapper, so a headless lead can
+  get second opinions on hard calls. A fleet opts in per fork with **`consult=1`** on its
+  `.agent/fleet` line. Off by default everywhere, since it widens each iteration's credential
+  scope to the authed peers.
+
+- **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**
+  Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
+  --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp
+  claude --model sonnet`, and a fleet line's `model=` option. For standing defaults, mark a model
+  per credential profile with `coop profiles claude work model opus` (`--clear` unmarks; the mark
+  is a profile attribute, so `coop profiles` owns editing it and shows it) — e.g. the work
+  subscription always on the big model, the personal one on a cheap one; the loop's profile
+  rotation then switches models with the account. `COOP_<AGENT>_MODEL` sets an agent-wide default
+  and `COOP_LOOP_MODEL` a loop-only one (so overnight runs grind on a cheaper model than your
+  interactive sessions). `coop models [agent]` is the model menu — one line per agent with its
+  known models (examples — any id the CLI accepts works; coop never validates one) and a short
+  how-to; each profile's mark shows as a column in `coop profiles`.
+
+- **`coop profiles` gained a path grammar** — each token narrows: `coop profiles` lists every
+  agent, `coop profiles claude` one agent, `coop profiles claude personal` shows that profile,
+  and a trailing attribute edits one property of it: `model [<m> | --clear]`, `default` (mark it
+  what a plain `coop claude` runs), `rm`. So profile edits read as a path — `coop profiles
+  claude personal model opus-4.8` — instead of a verb sandwich (`coop profiles default claude
+  default` read like a stutter). The old verb-first forms (`coop profiles default|rm <agent>
+  <profile>`) still work.
+
+  *How it reaches every feature.* The precedence is most-specific-first: `--model` ›
+  `COOP_LOOP_MODEL` (loop runs) › the profile's mark › `COOP_<AGENT>_MODEL` › a model baked into
+  `COOP_<AGENT>_CMD` › the agent CLI's own default. The resolved model rides each agent's command
+  as its native `--model` flag (interactive, headless loop iterations, fork session resume, the
+  fusion governor, gemini's ACP), is exported as the agent's own model env var for flagless
+  adapter binaries (claude-agent-acp reads `ANTHROPIC_MODEL`), and reaches fusion/consult *peers*
+  via `COOP_MODEL_<AGENT>` vars the `coop-consult` wrapper expands — so each peer answers on its
+  own configured model. One gap, by design: codex under ACP keeps reading its model from its own
+  `config.toml` (its adapter takes no flags and codex has no model env var).
+
+- **Fixed: a deleted profile named "default" kept reappearing (empty, "not signed in").**
+  Every box run pre-created the active-profile dir for ALL THREE agents — even agents the run
+  never touched — and with no profile marked default (or via a bare `coop login <agent>`, which
+  targeted a profile literally named "default"), that materialized a husk `default` dir seeded
+  with settings files, resurrecting it after every deletion. Three changes close it: a run now
+  pre-creates homes only for the agents it actually mounts (the launched agent plus authed
+  fusion/consult peers); a bare `coop login <agent>` signs into the agent's MARKED default
+  profile — the one your runs actually use, so re-authing an expired subscription lands in the
+  right slot instead of a fresh "default"; and a custom-`COOP_LOOP_CMD` loop pins the marked
+  default too.
+
+- **Fixed: a fork (or `coop <agent> --consult`) with only one agent signed in launched with no
+  instructions at all.** The lead agent's global instruction file — its `CLAUDE.md` / `AGENTS.md` /
+  `GEMINI.md`, carrying the box environment briefing and your shared `INSTRUCTIONS.md` — was
+  silently not mounted whenever the lead had no authenticated peer to consult. Since `coop fork`
+  always runs the agent as a consult lead, a single-agent `coop fork <name>` gave the agent none of
+  that context (it would rediscover the box the hard way, e.g. investigating the expected missing
+  bubblewrap). The lead now always receives its base instructions; the read-only consult directive
+  is still added only when a peer is actually signed in.
+
+- **Fixed: an unrelated number containing `429` could stall the loop as if rate limited.** The
+  loop's rate-limit detector matched the bare substring `429`, so a failed iteration whose output
+  happened to contain e.g. `1429 files` was treated as an HTTP 429 and made the loop wait. It now
+  matches the status only as a standalone `429`.
+
+- **A foreground `coop fork <name> --loop` now gets the same Ctrl-C soft stop as `coop loop`.**
+  The graceful-stop handler was gated to exclude every fork, though its rationale only covered
+  *detached* workers (which have no terminal); a foreground fork loop was hard-killed mid-iteration.
+  It's now keyed on owning a terminal, so a foreground fork loop finishes the current task then
+  stops, while the detached worker (stdin is `/dev/null`) is still left to `coop fork stop`.
+
+- **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
+  on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
+  loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C
+  again to stop now — the running box is torn down cleanly (SIGTERM then SIGKILL of its whole
+  process group, so no container is orphaned). The rate-limit and retry waits wake on the stop too,
+  so Ctrl-C stays responsive even during a long wait.
+
+  *Why it's better.* The old Ctrl-C was a hard kill — it tore the box down mid-iteration, losing
+  the in-flight turn's uncommitted work. The soft stop lets the agent reach a clean, committed
+  checkpoint before the loop exits. It works by running each iteration's box in its own process
+  group, so the terminal's Ctrl-C reaches only coop, which then decides whether to let the box
+  finish (first press) or tear it down (second). Detached fork loops are unaffected — they have no
+  terminal and are still stopped with `coop fork stop`.
+
+- **Loop activity shows tool paths repo-relative, and flags anything outside the repo.** In the
+  live `coop loop` view, a file tool's path now renders relative to the repo root —
+  `✎ Edit internal/cli/streamjson.go` instead of the full container mount path. When the agent
+  reads or writes a path *outside* the repo tree, the line keeps the whole path and is flagged
+  with a yellow `⚠`, so an escape from the working tree stands out at a glance. The root is the
+  repo's real in-box mount (`box.Workdir`), so the inside/outside call matches where the repo
+  actually lives in the box — and a shared string prefix (`…/proj-x` vs `…/proj`) is never
+  mistaken for containment.
 
 ## 2.10.1
 
