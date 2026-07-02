@@ -53,6 +53,10 @@ func Main(argv []string) int {
 		// `coop help <cmd>` shows that command's help — same as `coop <cmd> --help`. Bare `coop
 		// help` (or -h/--help) is the top-level reference.
 		if argv[0] == "help" && len(argv) > 1 {
+			if argv[1] == "loop" && len(argv) > 2 && argv[2] == "pool" { // canonical `coop help loop pool` → the pool page
+				printCommandHelp(commandHelp["pool"])
+				return 0
+			}
 			return helpForCommand(argv[1])
 		}
 		printHelp(config.Load())
@@ -77,6 +81,12 @@ func Main(argv []string) int {
 		if argv[0] == "fork" || argv[0] == "clone" {
 			code, _ := forkHelp()
 			return code
+		}
+		// `coop loop pool [verb] --help` is the canonical spelling of the pool command (the pool is the
+		// loop's setting); route it to the pool page, not loop's — this intercept otherwise keys on argv[0].
+		if argv[0] == "loop" && len(argv) > 1 && argv[1] == "pool" {
+			printCommandHelp(commandHelp["pool"])
+			return 0
 		}
 		if h, ok := commandHelp[argv[0]]; ok {
 			printCommandHelp(h)

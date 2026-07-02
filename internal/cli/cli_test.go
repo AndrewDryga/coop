@@ -23,6 +23,30 @@ func TestRejectArgs(t *testing.T) {
 // TestMainCommandHelpArg verifies `coop <cmd> help` prints that command's help (like
 // --help) and exits 0 without a runtime — it returns from the help block before runtime
 // detection, so a bare `help` arg is never silently swallowed and the build never runs.
+// `coop loop pool …` is the canonical spelling (the pool is the loop's setting), so its help must
+// reach the pool page — not loop's — whether asked via `--help` or `coop help loop pool`. Regression:
+// the help intercept keyed on argv[0] alone, so the canonical form printed loop's page and only the
+// deprecated `coop pool --help` alias reached the pool page.
+func TestMainLoopPoolHelpRoutesToPoolPage(t *testing.T) {
+	const poolMarker = "which profiles this repo's loops rotate" // unique to commandHelp["pool"]
+	for _, argv := range [][]string{
+		{"loop", "pool", "--help"},
+		{"loop", "pool", "add", "--help"},
+		{"help", "loop", "pool"},
+	} {
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		code := Main(argv)
+		_ = w.Close()
+		os.Stdout = old
+		out, _ := io.ReadAll(r)
+		if code != 0 || !strings.Contains(string(out), poolMarker) {
+			t.Errorf("coop %s = exit %d; want the pool page; got:\n%s", strings.Join(argv, " "), code, out)
+		}
+	}
+}
+
 func TestMainCommandHelpArg(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
