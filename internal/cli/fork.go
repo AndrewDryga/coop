@@ -84,6 +84,7 @@ func forkHelp() (int, error) {
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
 		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
 		{"    --model", "model for this fork's agent (see 'coop models')"},
+		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
 		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
 		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
@@ -176,6 +177,7 @@ type forkArgs struct {
 	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
 	profiles   []string // --profile <a,b>: the credential profile(s) this fork uses (a loop rotates them)
 	model      string   // --model <m>: the model this fork's agent runs (beats profile/agent defaults)
+	consult    bool     // --consult: loop iterations may ask the authed peers (interactive forks always may)
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
 
@@ -235,6 +237,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.model = strings.TrimPrefix(x, "--model="); fa.model == "" {
 				return fa, errors.New("coop fork --model needs a model name")
 			}
+		case x == "--consult":
+			fa.consult = true
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true
@@ -247,6 +251,12 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
+	}
+	// An interactive fork is ALWAYS a consult lead (forkCreate sets it unconditionally), so the
+	// flag only means something for a loop — accepting it elsewhere would imply it toggles a thing
+	// it doesn't.
+	if fa.consult && !fa.loop {
+		return fa, errors.New("coop fork --consult only applies with --loop (an interactive fork may always consult its peers)")
 	}
 	// Several profiles only make sense for a loop (it rotates them on a limit); a single
 	// interactive session runs on exactly one.
@@ -323,11 +333,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.loop {
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, false)
 		}
 	}
 	// A single --profile pins this interactive session's credential profile.

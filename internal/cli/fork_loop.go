@@ -163,8 +163,9 @@ func (a *app) forkPool(repo, agent, name string, profiles []string) (*profilePoo
 // detached=true means this process IS the background worker (its stdio is already the
 // log, and it owns the pidfile). tasks is an absolute path resolved by the caller;
 // model is the fork's --model / fleet model= choice ("" falls back to COOP_LOOP_MODEL,
-// then the profile/agent defaults — see applyLoopModel).
-func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string, model string, detached bool) (int, error) {
+// then the profile/agent defaults — see applyLoopModel); consult opts each iteration
+// into peer consultation (see app.loop).
+func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string, model string, consult, detached bool) (int, error) {
 	// Seed the fork's queue from the --tasks source tree into the worktree's .agent/tasks (only
 	// when the fork has none yet, so a resumed loop keeps its own progress). The source is a task
 	// tree — the repo's .agent/tasks or a per-fork .agent/tasks.<name> slice from fleet split.
@@ -204,7 +205,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 	a.applyLoopModel(agent, model)
 	// A fork works its own seeded queue (the .agent/tasks tree) in the worktree.
 	forkQueue := []string{forkRel}
-	code, err := a.loop(ws, img, agent, name, pool, forkQueue, sink, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
+	code, err := a.loop(ws, img, agent, name, pool, forkQueue, sink, consult, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}
@@ -213,9 +214,9 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 
 // detachForkLoop re-execs coop as a session-leader background worker whose stdio is
 // the fork's log, records its pid, and returns immediately. tasks is an absolute path
-// (resolved by the caller) forwarded so the worker seeds the same queue; model is
-// forwarded too, so the worker runs the fork's chosen model.
-func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string, model string) (int, error) {
+// (resolved by the caller) forwarded so the worker seeds the same queue; model and
+// consult are forwarded too, so the worker runs the fork's chosen model and peer scope.
+func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string, model string, consult bool) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
@@ -241,6 +242,9 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string,
 	}
 	if model != "" {
 		reExec = append(reExec, "--model", model)
+	}
+	if consult {
+		reExec = append(reExec, "--consult")
 	}
 	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork

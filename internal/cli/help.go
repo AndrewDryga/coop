@@ -315,7 +315,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m>] [--preflight] [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m>] [--consult] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, an
   auditor re-checks every shipped task. On a rate limit it switches to another
@@ -325,6 +325,12 @@ var commandHelp = map[string]string{
   so overnight runs can grind on a cheaper model than your interactive sessions.
   With neither, each iteration uses the rotated profile's marked default
   ('coop models'), then COOP_<AGENT>_MODEL.
+
+  --consult lets each iteration ask the other signed-in agents for a read-only
+  second opinion (coop-consult on PATH, peers' credentials mounted) — the
+  orchestrator pattern running unattended. Off by default: it widens each box's
+  credential scope to the authed peers. Also on fork loops:
+  coop fork <name> <agent> --loop --consult.
 
   Ctrl-C is a soft stop: the current iteration finishes and commits, then the loop
   stops before claiming the next task. Press Ctrl-C again to stop now (tearing the

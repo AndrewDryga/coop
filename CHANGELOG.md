@@ -16,6 +16,12 @@
   the gotcha that a plain run deliberately doesn't mount peer credentials, so peers only answer in
   a consult/fusion box. Existing files are never clobbered; edit the subagents freely.
 
+  And the pattern now runs unattended: **`coop loop --consult`** (and
+  `coop fork <name> <agent> --loop --consult`) opts every iteration into peer consultation — the
+  box mounts the authed peers' credentials and the `coop-consult` wrapper, so a headless lead can
+  get second opinions on hard calls. Off by default, since it widens each iteration's credential
+  scope to the authed peers.
+
 - **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**
   Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
   --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp

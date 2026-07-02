@@ -136,6 +136,18 @@ func TestParseForkCreate(t *testing.T) {
 	}
 }
 
+// TestParseForkCreateConsult: --consult rides a loop fork's args; on a non-loop fork it's
+// rejected — an interactive fork may ALWAYS consult, so accepting the flag there would imply
+// it toggles something it doesn't.
+func TestParseForkCreateConsult(t *testing.T) {
+	if fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult"}); err != nil || !fa.consult {
+		t.Errorf("parseForkCreate --loop --consult = ({consult:%v}, %v), want true", fa.consult, err)
+	}
+	if _, err := parseForkCreate([]string{"perf", "--consult"}); err == nil {
+		t.Error("parseForkCreate: --consult without --loop must error (interactive forks always consult)")
+	}
+}
+
 // TestParseForkCreateModel: --model rides forkArgs in both forms; a bare --model errors.
 func TestParseForkCreateModel(t *testing.T) {
 	if fa, err := parseForkCreate([]string{"perf", "codex", "--model", "gpt-5"}); err != nil || fa.model != "gpt-5" {

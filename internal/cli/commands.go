@@ -930,7 +930,7 @@ func loopAgent(args []string) (string, error) {
 	agent, set := agents.Default(), false
 	for _, x := range args {
 		if !agents.Valid(x) {
-			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <dir>] [--model <m>] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <dir>] [--model <m>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
 		}
 		if set {
 			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
@@ -945,7 +945,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	agent, model, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
+	agent, model, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
 	}
@@ -963,7 +963,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	}
 	a.applyLoopModel(agent, model)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, "", pool, queues, nil, debugOnFail, preflight) // local loop: no fork label
+	return a.loop(repo, img, agent, "", pool, queues, nil, consult, debugOnFail, preflight) // local loop: no fork label
 }
 
 // applyLoopModel pins the loop's model: an explicit --model wins, else COOP_LOOP_MODEL (the
@@ -980,22 +980,24 @@ func (a *app) applyLoopModel(agent, model string) {
 	}
 }
 
-// parseLoopArgs pulls the --model <m>, --debug-on-fail (alias --debug), and
+// parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail (alias --debug), and
 // --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
 // one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
-func parseLoopArgs(args []string, def bool) (agent, model string, debugOnFail, preflight bool, err error) {
+func parseLoopArgs(args []string, def bool) (agent, model string, consult, debugOnFail, preflight bool, err error) {
 	preflight = def
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--model"); ok {
 			if e != nil {
-				return "", "", false, false, e
+				return "", "", false, false, false, e
 			}
 			model = v
 			i += n - 1
 			continue
 		}
 		switch x := args[i]; x {
+		case "--consult":
+			consult = true
 		case "--debug-on-fail", "--debug":
 			debugOnFail = true
 		case "--preflight":
@@ -1007,7 +1009,7 @@ func parseLoopArgs(args []string, def bool) (agent, model string, debugOnFail, p
 		}
 	}
 	agent, err = loopAgent(rest)
-	return agent, model, debugOnFail, preflight, err
+	return agent, model, consult, debugOnFail, preflight, err
 }
 
 // loopWorkPrompt and loopAuditPrompt name the queue dir(s) the iteration works as ABSOLUTE
@@ -1066,7 +1068,11 @@ func watchInterrupt(sig <-chan os.Signal, onSoft, onHard func()) {
 	onHard()
 }
 
-func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues []string, sink io.Writer, debugOnFail, preflight bool) (int, error) {
+// consult opts every iteration into the second-opinion directive: the box mounts the authed
+// peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
+// on hard calls — the orchestrator pattern running headless. Off by default: it widens the
+// credential scope, so mounting peers into every loop box stays a deliberate choice.
+func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues []string, sink io.Writer, consult, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -1145,7 +1151,7 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	// (not the agent's headless form). Best-effort like the audit pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink, consult)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1181,7 +1187,7 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		a.cfg.SetActiveProfile(agent, pool.active())
 		// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 		ui.Info("%s", progressBanner(n, c, active))
-		code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink)
+		code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, consult)
 		// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 		if iterCtx != nil && iterCtx.Err() != nil {
 			break
@@ -1246,7 +1252,7 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	}
 	if len(custom) == 0 {
 		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(audit), hosts, sink)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(audit), hosts, sink, consult)
 	}
 	if anyTodo() {
 		ui.Info("audit reopened items — run 'coop loop' again")
@@ -1284,7 +1290,7 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // live bar watches for task progress. In a fully interactive run the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view);
 // otherwise it goes straight to the terminal unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer) (code int, output string, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, consult bool) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 
@@ -1329,8 +1335,14 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
 		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
+	// --consult makes each iteration a consult lead: box.Run then mounts the authed peers'
+	// credentials, the coop-consult wrapper, and the second-opinion directive.
+	lead := ""
+	if consult {
+		lead = agent
+	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),

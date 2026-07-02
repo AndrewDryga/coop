@@ -184,7 +184,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--tasks <path>] [--model <m>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
+| `coop loop [agent] [--tasks <path>] [--model <m>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--consult` lets iterations ask the [peer agents](#the-orchestrator-pattern) read-only; `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 | `coop tasks watch` | live board of the task queue + any active forks, merged and deduped by id — in progress (with the fork that claimed it), todo, blocked (auto-exits when every task's done; Ctrl-C anytime) |
@@ -538,11 +538,12 @@ coop claude --consult                                # run it; --consult mounts 
   parallel, without showing either the other's answer, then synthesize. (This is the
   move coop's fusion directive already teaches its governor.)
 
-The same arrangement runs unattended: `coop loop --model claude-fable-5` makes every
-iteration orchestrate this way, and the committed subagents ride along into forks and
-fleets. Prefer `coop-consult` over vendor cross-agent plugins in the box: nothing to
-install, peers stay read-only (one writer per tree), and the credential scoping is
-already handled.
+The same arrangement runs unattended: `coop loop --model claude-fable-5 --consult`
+makes every iteration orchestrate this way — the pinned subagents ride along in the
+repo, and `--consult` mounts the peers into each iteration's box (fork loops take it
+too: `coop fork <name> claude --loop --consult`). Prefer `coop-consult` over vendor
+cross-agent plugins in the box: nothing to install, peers stay read-only (one writer
+per tree), and the credential scoping is already handled.
 
 ### Instructions, one source of truth
 
