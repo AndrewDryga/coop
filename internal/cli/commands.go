@@ -1098,6 +1098,9 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	if !box.ImageExists(a.rt, img) {
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
+	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
+	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.
+	defer armKeepAwake(a.cfg)()
 	custom := a.cfg.LoopCmd
 	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
 	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. The

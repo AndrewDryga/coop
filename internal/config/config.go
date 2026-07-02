@@ -31,11 +31,12 @@ type Config struct {
 	ImageOverride string // COOP_IMAGE — overrides image selection
 	AgentPackages string // COOP_AGENT_PACKAGES — pin/override the global agent+ACP npm specs (e.g. "@anthropic-ai/claude-code@1.2.3 …")
 
-	Homes     bool // COOP_HOMES — mount the per-agent home dirs
-	Network   bool // COOP_NETWORK — join the sibling-services network
-	AutoUp    bool // COOP_AUTO_UP — auto-start sibling services (compose up) before a box when a compose file is present
-	Cache     bool // COOP_CACHE — mount the shared dependency cache volume
-	Preflight bool // COOP_PREFLIGHT — run a one-shot cleanup pass (log/tasks/decisions) before `coop loop`
+	Homes      bool // COOP_HOMES — mount the per-agent home dirs
+	Network    bool // COOP_NETWORK — join the sibling-services network
+	AutoUp     bool // COOP_AUTO_UP — auto-start sibling services (compose up) before a box when a compose file is present
+	Cache      bool // COOP_CACHE — mount the shared dependency cache volume
+	Preflight  bool // COOP_PREFLIGHT — run a one-shot cleanup pass (log/tasks/decisions) before `coop loop`
+	Caffeinate bool // COOP_CAFFEINATE — hold a system sleep inhibitor (caffeinate on macOS) while a loop runs
 
 	ServicesNet  string   // COOP_SERVICES_NET — override the services network name
 	LoopModel    string   // COOP_LOOP_MODEL — model for loop iterations (falls back to the per-agent default)
@@ -132,11 +133,12 @@ func Load() *Config {
 		ImageOverride: get("COOP_IMAGE", ""),
 		AgentPackages: get("COOP_AGENT_PACKAGES", ""),
 
-		Homes:     flag("COOP_HOMES"),
-		Network:   flag("COOP_NETWORK"),
-		AutoUp:    flag("COOP_AUTO_UP"),
-		Cache:     flag("COOP_CACHE"),
-		Preflight: flagOff("COOP_PREFLIGHT"),
+		Homes:      flag("COOP_HOMES"),
+		Network:    flag("COOP_NETWORK"),
+		AutoUp:     flag("COOP_AUTO_UP"),
+		Cache:      flag("COOP_CACHE"),
+		Preflight:  flagOff("COOP_PREFLIGHT"),
+		Caffeinate: flag("COOP_CAFFEINATE"),
 
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
 		LoopModel:    get("COOP_LOOP_MODEL", ""),

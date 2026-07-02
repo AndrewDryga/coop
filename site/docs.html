@@ -940,6 +940,15 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                                 runs on a cheaper model than interactive ones
                             </td>
                         </tr>
+                        <tr>
+                            <td><code>COOP_CAFFEINATE</code></td>
+                            <td>
+                                on by default: while a loop runs, hold a sleep
+                                inhibitor (macOS <code>caffeinate</code>) so the
+                                machine doesn't idle-sleep mid-drain; set
+                                <code>0</code> to disable
+                            </td>
+                        </tr>
                     </table>
                     <p>
                         On Docker and Podman the box additionally runs with

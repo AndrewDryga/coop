@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop` keeps the machine awake while it runs.** An overnight drain is pointless if the
+  laptop idle-sleeps midway through it, so the loop now holds a system sleep inhibitor for its
+  duration — macOS `caffeinate -i -m -s`, tied to coop's own process (`-w`) so it self-releases
+  even on a hard kill, and released the moment the loop returns. Best-effort (a missing tool just
+  runs the loop unchanged) and on by default; set `COOP_CAFFEINATE=0` to opt out. Covers `coop
+  loop` and fork loops (foreground and detached). The display is deliberately left free to sleep.
+
 - **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
   The work queue is one folder per task under four state directories — `00_todo/` ·
   `10_in_progress/` · `50_blocked/` · `99_done/` — and a task's workflow state is simply which

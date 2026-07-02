@@ -336,6 +336,9 @@ var commandHelp = map[string]string{
   credential scope to the authed peers. Also on fork loops:
   coop fork <name> <agent> --loop --consult.
 
+  On macOS, coop holds a caffeinate assertion for the run so the machine doesn't
+  idle-sleep mid-drain and stall an overnight loop (COOP_CAFFEINATE=0 to disable).
+
   Ctrl-C is a soft stop: the current iteration finishes and commits, then the loop
   stops before claiming the next task. Press Ctrl-C again to stop now (tearing the
   running box down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
