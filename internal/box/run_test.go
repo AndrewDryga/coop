@@ -284,7 +284,7 @@ func TestEnsureAgentHomesScoped(t *testing.T) {
 }
 
 // TestModelEnvArgs: a scoped agent's resolved model is exported into the box — its own env
-// var (claude's ANTHROPIC_MODEL, for the flagless ACP adapter) always, and COOP_MODEL_<AGENT>
+// var (claude's ANTHROPIC_MODEL, for the flagless ACP adapter) always, and COOP_PEER_MODEL_<AGENT>
 // only on a fusion/consult run (where the coop-consult wrapper expands it into each peer's
 // --model). No resolved model → nothing exported; codex has no ModelEnv, so only the wrapper var.
 func TestModelEnvArgs(t *testing.T) {
@@ -307,7 +307,7 @@ func TestModelEnvArgs(t *testing.T) {
 	// A consult run exports the wrapper var per scoped agent too; codex (no ModelEnv) gets
 	// only the wrapper var.
 	got = modelEnvArgs(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude", "codex"})
-	want := []string{"-e", "ANTHROPIC_MODEL=opus", "-e", "COOP_MODEL_CLAUDE=opus", "-e", "COOP_MODEL_CODEX=gpt-5"}
+	want := []string{"-e", "ANTHROPIC_MODEL=opus", "-e", "COOP_PEER_MODEL_CLAUDE=opus", "-e", "COOP_PEER_MODEL_CODEX=gpt-5"}
 	if !slices.Equal(got, want) {
 		t.Errorf("consult run env args = %v, want %v", got, want)
 	}

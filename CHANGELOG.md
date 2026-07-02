@@ -325,7 +325,7 @@
   as its native `--model` flag (interactive, headless loop iterations, fork session resume, the
   fusion governor, gemini's ACP), is exported as the agent's own model env var for flagless
   adapter binaries (claude-agent-acp reads `ANTHROPIC_MODEL`), and reaches fusion/consult *peers*
-  via `COOP_MODEL_<AGENT>` vars the `coop-consult` wrapper expands — so each peer answers on its
+  via `COOP_PEER_MODEL_<AGENT>` vars the `coop-consult` wrapper expands — so each peer answers on its
   own configured model. One gap, by design: codex under ACP keeps reading its model from its own
   `config.toml` (its adapter takes no flags and codex has no model env var).
 

@@ -147,11 +147,11 @@ func TestConsultWrapperMatchesAdapters(t *testing.T) {
 	}
 }
 
-// TestConsultWrapperCarriesModelOverrides: each peer invocation expands COOP_MODEL_<PEER>
+// TestConsultWrapperCarriesModelOverrides: each peer invocation expands COOP_PEER_MODEL_<PEER>
 // into its --model flag (box.Run exports the var when a model is configured), in the fresh
 // AND resume forms — so a profile-marked / COOP_<AGENT>_MODEL model reaches consults too.
 func TestConsultWrapperCarriesModelOverrides(t *testing.T) {
-	for _, v := range []string{"COOP_MODEL_CLAUDE", "COOP_MODEL_GEMINI", "COOP_MODEL_CODEX"} {
+	for _, v := range []string{"COOP_PEER_MODEL_CLAUDE", "COOP_PEER_MODEL_GEMINI", "COOP_PEER_MODEL_CODEX"} {
 		want := "${" + v + `:+--model "$` + v + `"}`
 		if n := strings.Count(ConsultWrapper, want); n < 2 {
 			t.Errorf("wrapper expands %s %d time(s), want it in both the fresh and resume invocations", v, n)

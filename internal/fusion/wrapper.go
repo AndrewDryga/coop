@@ -27,7 +27,7 @@ const ConsultWrapper = `#!/bin/sh
 # prompts with awkward quoting). The first line printed is the session status to read.
 # Each consult is time-bounded (default 30m; set COOP_CONSULT_TIMEOUT in seconds to change);
 # a peer that doesn't answer in time is skipped with a notice so you synthesize from whoever did.
-# A peer's model comes from COOP_MODEL_<PEER> (exported by coop when one is configured —
+# A peer's model comes from COOP_PEER_MODEL_<PEER> (exported by coop when one is configured —
 # the profile's marked default or COOP_<AGENT>_MODEL), expanded into its --model flag below.
 set -u
 
@@ -83,9 +83,9 @@ case "$mode" in
 		id=$(cat "$idfile")
 		echo "[$peer: continued — recalls your earlier consult; send only the delta]"
 		case "$peer" in
-		claude) run claude -p --permission-mode plan --resume "$id" ${COOP_MODEL_CLAUDE:+--model "$COOP_MODEL_CLAUDE"} "$prompt" ;;
-		gemini) run gemini --approval-mode plan --resume "$id" ${COOP_MODEL_GEMINI:+--model "$COOP_MODEL_GEMINI"} -p "$prompt" ;;
-		codex) out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${COOP_MODEL_CODEX:+--model "$COOP_MODEL_CODEX"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st" ;;
+		claude) run claude -p --permission-mode plan --resume "$id" ${COOP_PEER_MODEL_CLAUDE:+--model "$COOP_PEER_MODEL_CLAUDE"} "$prompt" ;;
+		gemini) run gemini --approval-mode plan --resume "$id" ${COOP_PEER_MODEL_GEMINI:+--model "$COOP_PEER_MODEL_GEMINI"} -p "$prompt" ;;
+		codex) out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${COOP_PEER_MODEL_CODEX:+--model "$COOP_PEER_MODEL_CODEX"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st" ;;
 		*) die "unknown peer: $peer" ;;
 		esac
 		exit
@@ -101,14 +101,14 @@ id=$(new_id)
 case "$peer" in
 claude)
 	printf '%s' "$id" >"$idfile"
-	run claude -p --permission-mode plan --session-id "$id" ${COOP_MODEL_CLAUDE:+--model "$COOP_MODEL_CLAUDE"} "$prompt"
+	run claude -p --permission-mode plan --session-id "$id" ${COOP_PEER_MODEL_CLAUDE:+--model "$COOP_PEER_MODEL_CLAUDE"} "$prompt"
 	;;
 gemini)
 	printf '%s' "$id" >"$idfile"
-	run gemini --approval-mode plan --session-id "$id" ${COOP_MODEL_GEMINI:+--model "$COOP_MODEL_GEMINI"} -p "$prompt"
+	run gemini --approval-mode plan --session-id "$id" ${COOP_PEER_MODEL_GEMINI:+--model "$COOP_PEER_MODEL_GEMINI"} -p "$prompt"
 	;;
 codex)
-	out=$(run codex exec -s read-only ${COOP_MODEL_CODEX:+--model "$COOP_MODEL_CODEX"} --json "$prompt"); st=$?
+	out=$(run codex exec -s read-only ${COOP_PEER_MODEL_CODEX:+--model "$COOP_PEER_MODEL_CODEX"} --json "$prompt"); st=$?
 	# Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
 	# and writing an empty idfile would make the next --continue run "codex exec resume ''".
 	tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
