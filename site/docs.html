@@ -588,6 +588,21 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         switches to it and keeps going. An overnight run rides
                         straight through the limit instead of dying on it.
                     </p>
+                    <p>
+                        <strong>It parks a decision instead of guessing.</strong> On
+                        a one-way-door call it shouldn't make alone, the agent moves
+                        the task to <code>50_blocked/</code> and writes a
+                        <code>decision.md</code> (the question, options, its
+                        recommendation) rather than picking blind. When nothing else
+                        is actionable the loop stops and exits <code>3</code>, so
+                        cron/CI can tell "stalled on a decision" from "done." Answer
+                        them with <code>coop tasks decisions -i</code> — it walks each
+                        open decision, records your answer, and unblocks the task —
+                        then re-run <code>coop loop</code> (or start it with
+                        <code>--preflight</code> to unblock already-answered ones
+                        first). <code>coop tasks watch</code> shows the live board —
+                        the queue plus any running forks, deduped — while it works.
+                    </p>
                     <div class="why">
                         <span class="why-label">Good fits</span>
                         <p>

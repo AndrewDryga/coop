@@ -60,8 +60,8 @@ func TestHelpTextAligned(t *testing.T) {
 			t.Errorf("help missing capitalized section header %q", want)
 		}
 	}
-	// Docs points at the repo (a clickable URL), not the bare words "the README".
-	if !strings.Contains(out, "https://github.com/AndrewDryga/coop") {
-		t.Errorf("help footer should link to the repo:\n%s", out)
+	// Docs points at the readable docs site (a clickable URL), not the bare words "the README".
+	if !strings.Contains(out, "https://coop.dryga.com") {
+		t.Errorf("help footer should link to the docs site:\n%s", out)
 	}
 }
