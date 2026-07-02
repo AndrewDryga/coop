@@ -82,6 +82,36 @@ func TestTasksWatchFrameCapsLongBacklog(t *testing.T) {
 	}
 }
 
+// The board is one queue-ordered list (no per-state group headers), and the cap NEVER hides active
+// work: with a long todo backlog plus an in-progress and a blocked task, both of those always show
+// and only the cold todo tail elides.
+func TestTasksWatchQueueNeverElidesActive(t *testing.T) {
+	items := []taskItem{
+		{ID: "run", Title: "RUNNING NOW", State: stateInProgress},
+		{ID: "blk", Title: "BLOCKED DECISION", State: stateBlocked},
+	}
+	for i := 0; i < 30; i++ { // a backlog well past the todo cap
+		items = append(items, taskItem{ID: string(rune('a' + i)), Title: "todo " + string(rune('A'+i)), State: stateTodo})
+	}
+	c, _ := taskTreeCounts(items)
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0), "\n")
+	if !strings.Contains(joined, "RUNNING NOW") {
+		t.Errorf("in-progress task must never be elided behind the cap:\n%s", joined)
+	}
+	if !strings.Contains(joined, "BLOCKED DECISION") {
+		t.Errorf("blocked task must never be elided behind the cap:\n%s", joined)
+	}
+	if !strings.Contains(joined, "more") { // 30 todo > cap → the todo tail elides
+		t.Errorf("the todo backlog should still elide with a +N more tail:\n%s", joined)
+	}
+	// One flat list — no "todo (30)" / "in_progress (1)" group-header format.
+	for _, hdr := range []string{"todo (30)", "in_progress (1)", "blocked (1)"} {
+		if strings.Contains(joined, hdr) {
+			t.Errorf("expected a single list, found a group header %q:\n%s", hdr, joined)
+		}
+	}
+}
+
 // mergedCounts tallies the deduped set; tasksDrained is the auto-exit condition (nothing todo, in
 // progress, or blocked — every task done, or none). A blocked or unfinished queue is NOT drained.
 func TestTasksDrained(t *testing.T) {

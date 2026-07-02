@@ -157,7 +157,7 @@ func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin int) []str
 		}
 	}
 	out = append(out, "")
-	return append(out, mergedSections(p, merged, spin)...)
+	return append(out, mergedQueue(p, merged, spin)...)
 }
 
 // tasksProgressLine is the overall header: the merged progress bar and the per-state counts (each in
@@ -199,48 +199,52 @@ func tasksCountSummary(p ui.Palette, c taskCounts) string {
 	return strings.Join(out, p.Dim(" · "))
 }
 
-// mergedSections renders the deduped tasks grouped by state — in progress, todo, blocked — each
-// capped so a big backlog stays glanceable. An in-progress task claimed by a fork is tagged with
-// it (← name). Done tasks are omitted (they're the header count).
-func mergedSections(p ui.Palette, merged []mergedTask, spin int) []string {
+// mergedQueue renders the deduped tasks as ONE queue-ordered list — in_progress (being worked), then
+// todo (up next), then blocked (parked) — with no per-state group headers: each row's icon+color
+// (taskWatchMarker) carries its state, matching the top counter legend. Active work (in_progress and
+// blocked) is never elided; only the cold todo backlog tail is capped so the board stays glanceable.
+// An in-progress task claimed by a fork is tagged (← name). Done tasks are omitted (header count).
+func mergedQueue(p ui.Palette, merged []mergedTask, spin int) []string {
 	byState := map[string][]mergedTask{}
 	for _, m := range merged {
 		byState[m.State] = append(byState[m.State], m)
 	}
-	const perState = 8
+	const todoCap = 8 // cap only the cold todo backlog; in_progress + blocked always show in full
 	var out []string
-	for _, state := range []string{stateInProgress, stateTodo, stateBlocked} {
-		ms := byState[state]
-		if len(ms) == 0 {
-			continue
+	emit := func(m mergedTask) {
+		line := "  " + taskWatchMarker(p, m.State, spin) + " " + truncate(oneLineTitle(m.Title), 58)
+		if m.fork != "" && m.State == stateInProgress {
+			line += p.Dim("  ← " + m.fork)
 		}
-		out = append(out, p.Bold(paintState(p, state, stateLabel(state)))+p.Dim(fmt.Sprintf(" (%d)", len(ms))))
-		for i, m := range ms {
-			if i >= perState {
-				out = append(out, p.Dim(fmt.Sprintf("    … +%d more", len(ms)-perState)))
-				break
-			}
-			line := "  " + taskWatchMarker(p, state, spin) + " " + truncate(oneLineTitle(m.Title), 58)
-			if m.fork != "" && state == stateInProgress {
-				line += p.Dim("  ← " + m.fork)
-			}
-			out = append(out, line)
+		out = append(out, line)
+	}
+	for _, m := range byState[stateInProgress] { // being worked — never elided
+		emit(m)
+	}
+	todo := byState[stateTodo]
+	for i, m := range todo {
+		if i >= todoCap {
+			out = append(out, p.Dim(fmt.Sprintf("  … +%d more", len(todo)-todoCap)))
+			break
 		}
-		out = append(out, "")
+		emit(m)
+	}
+	for _, m := range byState[stateBlocked] { // parked on a decision — never elided
+		emit(m)
 	}
 	return out
 }
 
-// taskWatchMarker is the per-task bullet: a spinner for in-progress (it's being worked), a red flag
-// for blocked, a faint dot for todo.
+// taskWatchMarker is the per-task icon, colored to match the top counter legend (paintState): a
+// yellow spinner for in-progress (being worked), a red flag for blocked, a cyan hollow dot for todo.
 func taskWatchMarker(p ui.Palette, state string, spin int) string {
 	switch state {
 	case stateInProgress:
-		return p.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)])
+		return p.Yellow(ui.SpinFrames[spin%len(ui.SpinFrames)])
 	case stateBlocked:
 		return p.Red("⚑")
-	default:
-		return p.Dim("·")
+	default: // todo
+		return p.Cyan("○")
 	}
 }
 

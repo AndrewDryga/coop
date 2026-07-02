@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks watch` is one queue-ordered list.** The live board split tasks into per-state
+  sections; it now shows a single list — in progress, then todo, then blocked — with each row's icon
+  colored to match the top counter (in-progress yellow, todo cyan, blocked red). Active work
+  (in-progress and blocked) is never hidden behind the `+N more` cap; only the todo backlog tail is.
+
 - **Bare `coop tasks` now lists the queue.** It printed the help page, yet the docs, MIGRATING
   guide, scaffold templates, and its own error strings all call bare `coop tasks` "the listing." It
   now lists (like `coop profiles`); `coop tasks --help` (or `coop tasks help`) still shows the
