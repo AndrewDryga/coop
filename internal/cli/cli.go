@@ -202,9 +202,6 @@ func helpForCommand(cmd string) int {
 		// to `coop help --help`, which these have no underlying CLI for).
 		printHelp(config.Load())
 		return 0
-	case cmd == "version":
-		fmt.Println("coop version — print coop's version.")
-		return 0
 	case commandHelp[cmd] != "":
 		printCommandHelp(commandHelp[cmd])
 		return 0

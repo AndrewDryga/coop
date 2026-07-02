@@ -161,7 +161,7 @@ any of them.
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
 | `coop run -- <cmd>` | run any command in the box (raw — none of coop's agent flags) |
 | `coop shell` | a shell in the box, to look around |
-| `coop acp [agent\|fusion] [--supervise]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); `--supervise` keeps the editor connected across a box restart |
+| `coop acp [agent\|fusion] [--profile <name>] [--model <m>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
 | `coop <any launch> --model <m>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
 | `coop models [agent]` | the model menu per agent; mark a profile's model with `coop profiles <agent> <profile> model <m>` ([details](#picking-models)) |

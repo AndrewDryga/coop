@@ -229,13 +229,19 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--supervise]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--model <m>] [--supervise] [--consult]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
 
   --profile <name> pins the session to one credential profile, so an editor can run
   two entries on different accounts, e.g. ["acp","claude","--profile","work"].
+
+  --model <m> pins the session's model (see 'coop models'), e.g.
+  ["acp","claude","--model","opus"].
+
+  --consult lets the session ask the other signed-in agents for a read-only second
+  opinion (their credentials are mounted) — the orchestrator pattern, from your editor.
 
   --supervise keeps the editor connected across a box restart: it runs the agent
   in a child and, if the container dies, starts a new one and replays the ACP
@@ -244,10 +250,12 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini] [--model <m>] [args...]
+  Usage: coop fusion [claude|codex|gemini] [--profile <name>] [--model <m>] [args...]
 
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
   writes. Lighter, opt-in variant: coop <agent> --consult
+
+  --profile <name> pins the governor's credential profile; each peer keeps its own.
 
   --model picks the governor's model; each peer keeps its own default (its
   profile's mark or COOP_<AGENT>_MODEL — see 'coop models').
@@ -434,6 +442,13 @@ var commandHelp = map[string]string{
 
   A dev/source build, an already-current binary, or a coop installed somewhere
   unwritable (a package-manager prefix) skips the self-update with a note.`,
+
+	"version": `coop version — print coop's version and exit.
+
+  Usage: coop version
+
+  Prints coop's build version (git tag or commit). Takes no arguments; -v and
+  --version are aliases.`,
 }
 
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,
