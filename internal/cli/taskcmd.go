@@ -417,16 +417,9 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 func tasksFolderRemove(root string, args []string) (int, error) {
 	const usage = "usage: coop tasks rm <id>  |  coop tasks rm --all-done"
 	if len(args) == 1 && args[0] == "--all-done" {
-		items := readTaskTree(root)
-		removed := 0
-		for _, t := range items {
-			if t.State != stateDone {
-				continue
-			}
-			if err := os.RemoveAll(t.Dir); err != nil {
-				return -1, err
-			}
-			removed++
+		removed, err := removeAllDone(root)
+		if err != nil {
+			return -1, err
 		}
 		if removed == 0 {
 			ui.Note("no done tasks to remove")
@@ -447,6 +440,22 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	}
 	ui.OK("removed %s (was %s — note why in the commit)", t.ID, stateLabel(t.State))
 	return 0, nil
+}
+
+// removeAllDone deletes every task folder in root's 99_done/ archive, returning how many went.
+// Shared by the single-queue `rm --all-done` and the multi-queue roll-up.
+func removeAllDone(root string) (int, error) {
+	removed := 0
+	for _, t := range readTaskTree(root) {
+		if t.State != stateDone {
+			continue
+		}
+		if err := os.RemoveAll(t.Dir); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.1 …
@@ -702,6 +711,20 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 	return 0, nil
 }
 
+// decisionRef locates one open decision for the browser: the queue root that owns it, the task
+// id (re-resolved on each visit, so a concurrent move is caught), and a display label naming the
+// queue in a multi-queue session ("" when there is only one queue — no label needed).
+type decisionRef struct{ root, label, id string }
+
+// decisionRefs turns one queue's blocked tasks into browser refs, labeled for the roll-up.
+func decisionRefs(root, label string, decisions []taskItem) []decisionRef {
+	refs := make([]decisionRef, len(decisions))
+	for i, t := range decisions {
+		refs[i] = decisionRef{root: root, label: label, id: t.ID}
+	}
+	return refs
+}
+
 // decisionsInteractive walks the open decisions one at a time on a tty (`coop tasks decisions -i`):
 // each is shown in full, an answer is read and recorded (unblocking the task), and :n / :p move
 // between them, :q stops. It needs a real terminal — in a pipe or the unattended loop there's
@@ -710,21 +733,27 @@ func decisionsInteractive(root string, decisions []taskItem) (int, error) {
 	if !ui.IsTerminal(os.Stdin) {
 		return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
 	}
-	return runDecisionBrowser(root, decisions, os.Stdin, os.Stdout)
+	return runDecisionBrowser(decisionRefs(root, "", decisions), os.Stdin, os.Stdout)
 }
 
-// runDecisionBrowser is the interactive loop with its I/O injected, so it can be driven in a test.
-func runDecisionBrowser(root string, decisions []taskItem, in io.Reader, out io.Writer) (int, error) {
+// runDecisionBrowser is the interactive loop with its I/O injected, so it can be driven in a
+// test. Each ref carries its own queue root, so one session can span several queues.
+func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
 	p := ui.For(os.Stdout)
 	sc := bufio.NewScanner(in)
 	answered := 0
 	for i := 0; i >= 0; {
-		t, err := findTask(root, decisions[i].ID)
+		ref := refs[i]
+		t, err := findTask(ref.root, ref.id)
 		if err != nil {
 			return -1, err
 		}
 		decPath := filepath.Join(t.Dir, "decision.md")
-		fmt.Fprintf(out, "\n%s\n", p.Dim(fmt.Sprintf("── decision %d of %d · %s ──", i+1, len(decisions), t.ID)))
+		where := t.ID
+		if ref.label != "" {
+			where = ref.label + " · " + t.ID // say which queue this decision lives in
+		}
+		fmt.Fprintf(out, "\n%s\n", p.Dim(fmt.Sprintf("── decision %d of %d · %s ──", i+1, len(refs), where)))
 		fprintDecisionBody(out, p, readFileString(decPath))
 		if decisionResolved(decPath) {
 			fmt.Fprintln(out, p.Green("✓ answered")+p.Dim(" — type a new answer to change it"))
@@ -744,7 +773,7 @@ func runDecisionBrowser(root string, decisions []taskItem, in io.Reader, out io.
 			i++
 		default:
 			if t.State == stateBlocked {
-				if err := resolveAndUnblock(root, t, line); err != nil {
+				if err := resolveAndUnblock(ref.root, t, line); err != nil {
 					return -1, err
 				}
 				answered++
@@ -757,7 +786,7 @@ func runDecisionBrowser(root string, decisions []taskItem, in io.Reader, out io.
 			// closing summary counts what was answered.
 			i++
 		}
-		if i >= len(decisions) {
+		if i >= len(refs) {
 			i = -1 // past the last decision → done
 		}
 	}

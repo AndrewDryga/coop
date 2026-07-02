@@ -464,8 +464,11 @@ func TestRunDecisionBrowser(t *testing.T) {
 	}
 	in := strings.NewReader(":n\nSQLite it is\n")
 	var out bytes.Buffer
-	if code, err := runDecisionBrowser(root, decisions, in, &out); code != 0 || err != nil {
+	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
+	}
+	if strings.Contains(out.String(), " · · ") {
+		t.Errorf("single-queue browser must not render an empty queue label:\n%s", out.String())
 	}
 	if a, _ := findTask(root, decisions[0].ID); a.State != stateBlocked {
 		t.Errorf("skipped decision should stay blocked, got %s", a.State)
@@ -479,6 +482,43 @@ func TestRunDecisionBrowser(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "decision 1 of 2") {
 		t.Errorf("browser output missing the position header:\n%s", out.String())
+	}
+}
+
+// TestRunDecisionBrowserSpansQueues: one browser session walks decisions from SEVERAL queues —
+// each ref carries its own root (the answer moves the task within the right queue) and a label
+// naming the queue in the header, so a monorepo answers everything in one sitting.
+func TestRunDecisionBrowserSpansQueues(t *testing.T) {
+	rootA, rootB := t.TempDir(), t.TempDir()
+	var refs []decisionRef
+	for _, q := range []struct{ root, label, title string }{
+		{rootA, "a/.agent/tasks", "alpha"},
+		{rootB, "b/.agent/tasks", "beta"},
+	} {
+		if code, err := tasksFolderAdd(q.root, []string{q.title}); code != 0 || err != nil {
+			t.Fatalf("add %s: code=%d err=%v", q.title, code, err)
+		}
+		it := readTaskTree(q.root)[0]
+		if code, err := tasksFolderBlock(q.root, []string{it.ID}); code != 0 || err != nil {
+			t.Fatalf("block %s: code=%d err=%v", it.ID, code, err)
+		}
+		refs = append(refs, decisionRef{root: q.root, label: q.label, id: it.ID})
+	}
+	in := strings.NewReader("go with A\ngo with B\n")
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser(refs, in, &out); code != 0 || err != nil {
+		t.Fatalf("browser: code=%d err=%v", code, err)
+	}
+	for i, root := range []string{rootA, rootB} {
+		it, err := findTask(root, refs[i].id)
+		if err != nil || it.State != stateTodo {
+			t.Errorf("queue %d: answered decision should be in todo, got %v (err %v)", i, it.State, err)
+		}
+	}
+	for _, label := range []string{"a/.agent/tasks · ", "b/.agent/tasks · "} {
+		if !strings.Contains(out.String(), label) {
+			t.Errorf("browser header missing queue label %q:\n%s", label, out.String())
+		}
 	}
 }
 

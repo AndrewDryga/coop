@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks` works across every configured queue.** With several queues (a monorepo's
+  `COOP_TASKS`, or repeated `--tasks`), only `ls` and the non-interactive `decisions` used to roll
+  up — everything else bailed with "works one queue at a time". Now `decisions -i` walks every
+  queue's open decisions in one interactive session (each header names the queue), `lint` rolls up
+  with the worst exit code, `rm --all-done` clears every archive, and the id-addressed commands
+  (`claim`/`block`/`unblock`/`done`/`rm <id>`) find their task in whichever queue holds it — same
+  exact-then-substring matching as before, erroring only when an id matches in more than one queue
+  (`split` slices share ids with their source, so acting on an arbitrary copy would touch the wrong
+  tree). Only `add` and `split` still need a single `--tasks`, since they create into a queue.
+
 - **The orchestrator pattern, scaffolded and documented.** `coop init` now writes two starter
   subagents alongside the skills: `.claude/agents/deep-reasoner.md` (pinned to Opus — reasoning-heavy
   phases: architecture, complex debugging, algorithm design) and `.claude/agents/fast-worker.md`

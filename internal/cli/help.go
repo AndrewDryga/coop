@@ -297,8 +297,11 @@ var commandHelp = map[string]string{
   Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
   done, never delete it, so 'coop tasks rm --all-done' is how you prune the archive.
   Defaults to .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths
-  are repo-relative. With several queues configured (a monorepo), 'ls' and 'decisions' roll
-  up across all of them; the mutating commands act on one queue, so pass a single --tasks.`,
+  are repo-relative. With several queues configured (a monorepo), ls, lint, and decisions
+  (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
+  rm) find their task in whichever queue holds it — erroring only when an id matches in
+  more than one queue (split slices share ids with their source). Only add and split need
+  a single --tasks, since they create into a queue.`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 

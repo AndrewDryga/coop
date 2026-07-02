@@ -130,8 +130,8 @@ func TestIntegrationLifecycleViaDispatcher(t *testing.T) {
 
 // TestIntegrationSecondaryQueueBootstrap covers the monorepo path: `add` bootstraps a
 // secondary --tasks queue on demand (since `coop init` only scaffolds the root), while a
-// non-add command on a missing queue errors instead of silently creating it, and two --tasks
-// flags are a single-queue usage error.
+// non-add command on a missing queue errors instead of silently creating it, and an id
+// command across several queues errors cleanly when the id exists in none of them.
 func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	repo := t.TempDir()
 	a := appFor(repo)
@@ -151,10 +151,11 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 		t.Error("list wrongly created the missing queue dir")
 	}
 
-	// Two queues at once is a usage error for a MUTATING command — it needs one target. (The
-	// read-only list/decisions roll up across both; see TestIntegrationMultiQueueRollup.)
-	if code, _ := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "done", "x"}); code != 2 {
-		t.Errorf("two --tasks on a mutating command should be a usage error (2), got %d", code)
+	// An id command across two queues resolves the task itself; an id found NOWHERE errors
+	// (naming the queue count) without creating anything. (`add`, which creates into a queue,
+	// still needs one target; see TestIntegrationMultiQueueRollup.)
+	if code, err := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "done", "x"}); code != 1 || err == nil || !strings.Contains(err.Error(), "2 configured queues") {
+		t.Errorf("cross-queue done on a missing id should error naming the queues, got code=%d err=%v", code, err)
 	}
 
 	// `coop tasks --tasks done` swallows `done` as the queue path; rather than silently
@@ -165,18 +166,22 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	}
 }
 
-// TestIntegrationMultiQueueRollup: `coop tasks list`/`decisions` roll up across several configured
-// queues (a monorepo with a per-project .agent/tasks), each under its header; a mutating command
-// across multiple queues still errors (one unambiguous target at a time).
+// TestIntegrationMultiQueueRollup: `coop tasks list`/`decisions`/`lint` roll up across several
+// configured queues (a monorepo with a per-project .agent/tasks), each under its header, and the
+// id-addressed commands find their task in whichever queue holds it — erroring only when the id
+// matches in more than one queue, or the target queue is genuinely ambiguous (add).
 func TestIntegrationMultiQueueRollup(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, "a", tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# X\n")
 	writeTaskFile(t, filepath.Join(repo, "b", tasksRoot, stateDone, "2026-01-02-y", "task.md"), "# Y\n")
 	a := appFor(repo)
 	twoQueues := []string{"--tasks", "a/" + tasksRoot, "--tasks", "b/" + tasksRoot}
+	run := func(args ...string) (int, error) {
+		return a.cmdTasks(append(append([]string{}, twoQueues...), args...))
+	}
 
 	out := captureStdout(t, func() {
-		if code, err := a.cmdTasks(append(append([]string{}, twoQueues...), "list")); code != 0 || err != nil {
+		if code, err := run("list"); code != 0 || err != nil {
 			t.Fatalf("multi-queue list: code=%d err=%v", code, err)
 		}
 	})
@@ -185,9 +190,32 @@ func TestIntegrationMultiQueueRollup(t *testing.T) {
 			t.Errorf("multi-queue list missing %q:\n%s", want, out)
 		}
 	}
-	// A mutating command across two queues is rejected (needs one target).
-	if code, err := a.cmdTasks(append(append([]string{}, twoQueues...), "claim", "x")); code != 2 || err == nil {
-		t.Errorf("multi-queue claim should be a usage error (one queue at a time), got code=%d err=%v", code, err)
+
+	// An id-addressed command finds its task across the queues and acts on the right one.
+	if code, err := run("claim", "x"); code != 0 || err != nil {
+		t.Errorf("multi-queue claim should resolve the queue holding the id, got code=%d err=%v", code, err)
+	}
+	if it, err := findTask(filepath.Join(repo, "a", tasksRoot), "2026-01-01-x"); err != nil || it.State != stateInProgress {
+		t.Errorf("claim should have moved the task in queue a: state=%v err=%v", it.State, err)
+	}
+	// An id present in BOTH queues (split makes such copies) is refused, naming the queues.
+	writeTaskFile(t, filepath.Join(repo, "b", tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# X copy\n")
+	if code, err := run("done", "2026-01-01-x"); code != 1 || err == nil || !strings.Contains(err.Error(), "a/"+tasksRoot) {
+		t.Errorf("ambiguous cross-queue id should error naming the queues, got code=%d err=%v", code, err)
+	}
+	// lint rolls up, and the exit code is the worst queue's (the seeded tasks lack acceptance
+	// criteria, so both queues flag issues → exit 1).
+	lintOut := captureStdout(t, func() {
+		if code, err := run("lint"); code != 1 || err != nil {
+			t.Errorf("multi-queue lint should aggregate to exit 1, got code=%d err=%v", code, err)
+		}
+	})
+	if !strings.Contains(lintOut, "2026-01-01-x") {
+		t.Errorf("multi-queue lint missing findings:\n%s", lintOut)
+	}
+	// add still needs one unambiguous target queue.
+	if code, err := run("add", "new thing"); code != 2 || err == nil {
+		t.Errorf("multi-queue add should still require a single --tasks, got code=%d err=%v", code, err)
 	}
 }
 

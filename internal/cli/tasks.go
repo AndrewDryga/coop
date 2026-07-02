@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -90,22 +91,22 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	}
 	if len(rels) > 1 {
 		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set
-		// `coop loop`/`coop fleet` drain. The read-only roll-ups span them all (each under a header);
-		// the mutating commands need one unambiguous target.
+		// `coop loop`/`coop fleet` drain. The roll-ups span them all (each under a header) and the
+		// id-addressed commands find their task in whichever queue holds it; only the commands that
+		// CREATE into a queue (add, split) need one unambiguous target.
 		switch sub {
 		case "ls", "list":
 			return tasksListAll(repo, rels)
+		case "lint":
+			return tasksLintAll(repo, rels)
 		case "decisions":
-			for _, f := range rest[1:] {
-				if f == "-i" || f == "--interactive" {
-					return 2, errors.New("coop tasks decisions -i works one queue at a time — pass a single --tasks <dir>")
-				}
-			}
-			return tasksDecisionsAll(repo, rels)
+			return tasksDecisionsAll(repo, rels, rest[1:])
+		case "claim", "start", "block", "unblock", "done", "rm", "remove":
+			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return groupHelp("tasks")
 		default:
-			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (ls and decisions span all %d configured queues)", sub, len(rels))
+			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (ls, lint, decisions, and the id commands span all %d configured queues)", sub, len(rels))
 		}
 	}
 	if len(rels) == 0 {
@@ -182,9 +183,152 @@ func tasksListAll(repo string, rels []string) (int, error) {
 	return 0, nil
 }
 
+// tasksAcrossQueues routes an id-addressed subcommand (claim/block/unblock/done/rm) when several
+// queues are configured: find which queue holds the id, then run the normal single-queue handler
+// against that queue — so `coop tasks done <id>` just works in a monorepo. `rm --all-done` is the
+// id-less exception: it clears every queue's done archive.
+func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (int, error) {
+	args := rest[1:]
+	if (sub == "rm" || sub == "remove") && slices.Contains(args, "--all-done") {
+		removed := 0
+		for _, rel := range rels {
+			n, err := removeAllDone(filepath.Join(repo, rel))
+			if err != nil {
+				return -1, err
+			}
+			removed += n
+		}
+		if removed == 0 {
+			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
+			return 0, nil
+		}
+		ui.OK("removed %s across %s", ui.Count(removed, "done task"), ui.Count(len(rels), "queue"))
+		return 0, nil
+	}
+	// The id is the first positional token; with none, delegate as-is so the subcommand's own
+	// usage error (e.g. "usage: coop tasks claim <id>") is what the user sees.
+	id := ""
+	for _, x := range args {
+		if !strings.HasPrefix(x, "-") {
+			id = x
+			break
+		}
+	}
+	if id == "" {
+		return cmdTasksFolder(repo, filepath.Join(repo, rels[0]), rest)
+	}
+	rel, err := queueOfTask(repo, rels, id)
+	if err != nil {
+		return 1, err
+	}
+	return cmdTasksFolder(repo, filepath.Join(repo, rel), rest)
+}
+
+// queueOfTask finds which configured queue holds the task id — the multi-queue analog of
+// findTask, with the same precedence (an exact id match beats substring matches). It errors when
+// the id is absent everywhere, or matches in more than one queue: `coop tasks split` copies tasks
+// into slices WITH their ids, so duplicates across queues are real — acting on an arbitrary one
+// would silently touch the wrong tree.
+func queueOfTask(repo string, rels []string, id string) (string, error) {
+	type hit struct{ rel, id string }
+	var exact, subs []hit
+	for _, rel := range rels {
+		for _, t := range readTaskTree(filepath.Join(repo, rel)) {
+			switch {
+			case t.ID == id:
+				exact = append(exact, hit{rel, t.ID})
+			case strings.Contains(t.ID, id):
+				subs = append(subs, hit{rel, t.ID})
+			}
+		}
+	}
+	pick := exact
+	if len(pick) == 0 {
+		pick = subs
+	}
+	switch len(pick) {
+	case 1:
+		return pick[0].rel, nil
+	case 0:
+		return "", fmt.Errorf("no task matching %q in any of the %d configured queues (run 'coop tasks' to list)", id, len(rels))
+	}
+	where := make([]string, len(pick))
+	for i, h := range pick {
+		where[i] = h.rel + ": " + h.id
+	}
+	return "", fmt.Errorf("%q matches %d tasks across the queues (%s) — pass a single --tasks <dir> to pick one", id, len(pick), strings.Join(where, ", "))
+}
+
+// tasksLintAll rolls `coop tasks lint` up across the configured queues, each under its banner.
+// The exit code is the worst of the per-queue runs, so CI still fails on any issue anywhere.
+func tasksLintAll(repo string, rels []string) (int, error) {
+	p := ui.For(os.Stdout)
+	worst := 0
+	first := true
+	for _, rel := range rels {
+		root := filepath.Join(repo, rel)
+		if !isTaskDir(root) {
+			continue
+		}
+		if !first {
+			fmt.Print("\n\n\n") // three blank lines between different queues' output
+		}
+		first = false
+		fmt.Println(banner(p, rel))
+		code, err := tasksFolderLint(root)
+		if err != nil {
+			return code, err
+		}
+		if code > worst {
+			worst = code
+		}
+	}
+	if first {
+		ui.Note("no task queues found across %s", ui.Count(len(rels), "configured path"))
+	}
+	return worst, nil
+}
+
 // tasksDecisionsAll rolls up `coop tasks decisions` across several configured queues, each under
-// its header (only queues that exist are shown).
-func tasksDecisionsAll(repo string, rels []string) (int, error) {
+// its header (only queues that exist are shown); -i walks every queue's open decisions in one
+// interactive session, each header naming the queue the decision lives in.
+func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
+	interactive := false
+	for _, a := range args {
+		switch a {
+		case "-i", "--interactive":
+			interactive = true
+		default:
+			return 2, fmt.Errorf("coop tasks decisions: unknown flag %q (only -i / --interactive)", a)
+		}
+	}
+	if interactive {
+		var refs []decisionRef
+		for _, rel := range rels {
+			root := filepath.Join(repo, rel)
+			if !isTaskDir(root) {
+				continue
+			}
+			for _, t := range readTaskTree(root) {
+				if t.State == stateBlocked {
+					refs = append(refs, decisionRef{root: root, label: rel, id: t.ID})
+				}
+			}
+		}
+		if len(refs) == 0 {
+			ui.OK("no open decisions — nothing is blocked")
+			return 0, nil
+		}
+		if !ui.IsTerminal(os.Stdin) {
+			return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
+		}
+		return runDecisionBrowser(refs, os.Stdin, os.Stdout)
+	}
+	return tasksDecisionsRollup(repo, rels)
+}
+
+// tasksDecisionsRollup is the non-interactive multi-queue decisions listing.
+func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 	p := ui.For(os.Stdout)
 	first := true
 	for _, rel := range rels {
