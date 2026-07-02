@@ -86,6 +86,7 @@
                 <a href="#loop">The loop</a>
                 <a href="#fleet">A fleet</a>
                 <a href="#profiles">Profiles &amp; failover</a>
+                <a href="#models">Pick the model</a>
                 <h5>Integrate</h5>
                 <a href="#zed">Editors (Zed)</a>
                 <a href="#toolchain">Toolchain &amp; services</a>
@@ -562,7 +563,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         class="code"
                     ><span class="k">coop</span> init             <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
 <span class="k">coop</span> tasks add <span class="s">"…"</span>  <span class="t"># a folder per task under .agent/tasks/</span>
-<span class="k">coop</span> loop             <span class="t"># disposable agents drain the queue, then audit</span></pre>
+<span class="k">coop</span> loop             <span class="t"># disposable agents drain the queue, then audit</span>
+<span class="k">coop</span> loop --model claude-fable-5 --consult  <span class="t"># pin its model; let it ask the peers</span></pre>
                     <p>
                         <strong>It checks its own work.</strong> When the list
                         is empty, coop starts one more agent as an auditor. It
@@ -672,6 +674,13 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> fleet up         <span class="t"># start every fork in .agent/fleet, detached</span>
 <span class="k">coop</span> fleet watch      <span class="t"># the live dashboard</span>
 <span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>
+                    <p>
+                        Each <code>.agent/fleet</code> line carries per-fork
+                        options: <code>profile=a,b</code> puts its loop on its
+                        own account(s), <code>model=…</code> picks its model,
+                        and <code>consult=1</code> lets its iterations ask the
+                        other signed-in agents for a read-only second opinion.
+                    </p>
                     <div class="why">
                         <span class="why-label">Why run a fleet</span>
                         <p>
@@ -737,6 +746,44 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         using — never your whole vault. Switching mid-run loses
                         nothing: each iteration is a fresh run, and the queue
                         plus git carry the progress.
+                    </p>
+                </section>
+
+                <section class="doc-section" id="models">
+                    <h2>Pick the model</h2>
+                    <p class="section-lead">
+                        Every launch takes <code>--model</code>; standing
+                        defaults live on profiles — so the loop's failover
+                        switches models along with the account.
+                    </p>
+                    <pre
+                        class="code"
+                    ><span class="k">coop</span> claude --model opus              <span class="t"># one run on the big model</span>
+<span class="k">coop</span> profiles claude work model opus  <span class="t"># every run on this profile uses opus</span>
+<span class="k">coop</span> models                           <span class="t"># the menu per agent + what each profile runs</span>
+<span class="k">coop</span> loop --model claude-fable-5      <span class="t"># pin an unattended run's model</span></pre>
+                    <p>
+                        Precedence is most-specific-first: the
+                        <code>--model</code> flag, then
+                        <code>COOP_LOOP_MODEL</code> (loop runs only), then the
+                        profile's mark, then <code>COOP_&lt;AGENT&gt;_MODEL</code>.
+                        Coop never validates a model id — whatever the agent's
+                        own CLI accepts works, and a bad one fails loudly in the
+                        agent's own error, so new models work the day they ship.
+                    </p>
+                    <p>
+                        This is what makes the
+                        <strong>orchestrator pattern</strong> cheap to run.
+                        <code>coop init</code> scaffolds two starter subagents:
+                        <code>deep-reasoner</code> (pinned to Opus — architecture,
+                        complex debugging) and <code>fast-worker</code> (pinned
+                        to Sonnet — mechanical work). A lead on a bigger model
+                        spends its tokens on planning and synthesis while each
+                        delegated turn bills at the subagent's cheaper model.
+                        Add <code>--consult</code> (or <code>consult=1</code> on
+                        a fleet line) and the lead can also ask codex and gemini
+                        read-only — peer engineers with different blind spots,
+                        no plugins required.
                     </p>
                 </section>
 
@@ -877,6 +924,20 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <td>
                                 which model leads <code>coop fusion</code> by
                                 default
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>COOP_&lt;AGENT&gt;_MODEL</code></td>
+                            <td>
+                                an agent's default model everywhere it runs
+                                (e.g. <code>COOP_CLAUDE_MODEL=opus</code>)
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>COOP_LOOP_MODEL</code></td>
+                            <td>
+                                the model for loop iterations only — overnight
+                                runs on a cheaper model than interactive ones
                             </td>
                         </tr>
                     </table>
