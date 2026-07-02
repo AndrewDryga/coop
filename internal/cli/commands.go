@@ -723,7 +723,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	}
 	file := box.ComposeFile(repo)
 	if file == "" {
-		return -1, errors.New("no compose.agent.yml — run 'coop init --stack <name>' to scaffold one")
+		return -1, errors.New("no compose.agent.yml — run 'coop init --services postgres,redis' to scaffold one")
 	}
 	proj := box.ServicesProject(repo)
 	rel, _ := filepath.Rel(repo, file)

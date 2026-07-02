@@ -817,7 +817,7 @@ core  claude .agent/tasks.core   model=claude-fable-5  consult=1
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
 `coop fleet down` stops them. To bootstrap that file, `coop fleet split <n>` mechanically
-round-robins your `.agent/tasks/` todo folders into per-fork `.agent/tasks.<n>/` slices and writes a
+round-robins your `.agent/tasks/` todo folders into per-fork `.agent/tasks.slice<n>/` slices and writes a
 matching `.agent/fleet` with each slice's explicit path (use an agent for *semantic*
 slicing). It won't clobber a fleet you've already written — it prints the lines to
 reconcile instead.

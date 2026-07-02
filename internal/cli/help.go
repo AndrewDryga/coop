@@ -294,7 +294,7 @@ var commandHelp = map[string]string{
   rm <id>          delete a task folder; --all-done clears the whole done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
-  split <n>        slice the todo tasks into n trees (.agent/tasks.N); coop fleet split makes a fleet
+  split <n>        slice the todo tasks into n trees (.agent/tasks.sliceN); coop fleet split makes a fleet
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.

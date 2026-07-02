@@ -475,8 +475,9 @@ func removeAllDone(root string) (int, error) {
 	return removed, nil
 }
 
-// tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.1 …
-// .agent/tasks.n), as COPIES — the source is untouched. Loop one fork per slice.
+// tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.slice1 …
+// .agent/tasks.slicen), as COPIES — the source is untouched. Loop one fork per slice. The
+// slice<n> naming matches `coop fleet split` so the two stay consistent.
 func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, errors.New("usage: coop tasks split <n>")
@@ -487,7 +488,7 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	}
 	names := make([]string, n)
 	for i := range names {
-		names[i] = strconv.Itoa(i + 1)
+		names[i] = "slice" + strconv.Itoa(i+1)
 	}
 	written, counts, total, err := splitTodoFolders(repo, root, names)
 	if err != nil {
@@ -511,7 +512,7 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	// The slices are COPIES; the source .agent/tasks is untouched. Say which to run so a
 	// later loop doesn't process every task twice.
 	ui.Note("the slices are copies — .agent/tasks is unchanged; loop one fork per slice")
-	ui.Note("e.g. coop fork s1 --loop --tasks .agent/tasks.1 ; don't also loop .agent/tasks, or each task runs twice")
+	ui.Note("e.g. coop fork slice1 --loop --tasks .agent/tasks.slice1 ; don't also loop .agent/tasks, or each task runs twice")
 	return 0, nil
 }
 

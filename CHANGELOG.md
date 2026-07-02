@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Clearer errors, and consistent split-slice naming.** `coop up` with no compose now points at
+  `coop init --services postgres,redis` (not `--stack`, which only scaffolds an asdf Dockerfile);
+  a missing `.agent/fleet` points at `coop fleet init`; and `coop tasks split` now names its slices
+  `.agent/tasks.slice<n>` to match `coop fleet split` (the two were `tasks.<n>` vs `tasks.slice<n>`).
+
 - **`coop doctor` warns loudly when it's probing an alpine stand-in.** With no box image built,
   doctor falls back to a stock `alpine` (skipping the non-root USER and toolchain checks) — it only
   disclosed this in a dim aside, so a newcomer read a green bill of health and then hit a failing

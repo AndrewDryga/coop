@@ -238,7 +238,7 @@ func TestTasksFolderSplitCommand(t *testing.T) {
 	if code, err := tasksFolderSplit(repo, root, []string{"2"}); code != 0 || err != nil {
 		t.Fatalf("split 2: code=%d err=%v", code, err)
 	}
-	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.1")) || !isTaskDir(filepath.Join(repo, ".agent", "tasks.2")) {
+	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1")) || !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice2")) {
 		t.Error("split did not create both slice dirs")
 	}
 	if code, _ := tasksFolderSplit(repo, root, []string{"0"}); code != 2 {

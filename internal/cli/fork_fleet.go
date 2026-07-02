@@ -102,7 +102,7 @@ func parseFleet(data string) ([]fleetEntry, error) {
 func (a *app) loadFleet(repo string) ([]fleetEntry, error) {
 	data, err := os.ReadFile(fleetFile(repo))
 	if err != nil {
-		return nil, errors.New("no .agent/fleet — declare one fork per line: <name> [agent]")
+		return nil, errors.New("no .agent/fleet — run 'coop fleet init' to scaffold one")
 	}
 	return parseFleet(string(data))
 }
