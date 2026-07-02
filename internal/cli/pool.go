@@ -169,7 +169,8 @@ func (a *app) showPool(repo string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	fmt.Println(ui.Bold(filepath.Base(repo) + " — loop rotation pool"))
+	p := ui.For(os.Stdout) // stdout view — keep pipes clean
+	fmt.Println(p.Bold(filepath.Base(repo) + " — loop rotation pool"))
 	byAgent := reg[repo]
 	if len(byAgent) == 0 {
 		fmt.Println("  none set — the loop rotates across ALL signed-in profiles")

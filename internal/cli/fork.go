@@ -578,7 +578,7 @@ func (a *app) forkLs(args []string) (int, error) {
 	const format = "  %s %s %s %s %s %s %s\n"
 	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
 	// escape bytes inside the width count and misalign the header against the rows.
-	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), "UPDATED")))
+	fmt.Print(ui.For(os.Stdout).Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), "UPDATED")))
 	for _, n := range names {
 		s := gatherForkStatus(repo, n)
 		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), s.Updated)

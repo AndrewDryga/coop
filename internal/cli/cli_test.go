@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestRejectArgs(t *testing.T) {
@@ -43,6 +45,39 @@ func TestMainLoopPoolHelpRoutesToPoolPage(t *testing.T) {
 		out, _ := io.ReadAll(r)
 		if code != 0 || !strings.Contains(string(out), poolMarker) {
 			t.Errorf("coop %s = exit %d; want the pool page; got:\n%s", strings.Join(argv, " "), code, out)
+		}
+	}
+}
+
+// The stdout "views" must gate color on stdout (ui.For(os.Stdout)), not on stderr (the package-level
+// ui.Bold/ui.Dim), so `coop profiles | grep` / `coop help | cat` from an interactive shell get clean
+// text. In `go test` both streams are non-tty, so this locks the non-tty-clean invariant; it can't
+// reproduce the stderr-tty/stdout-pipe split without a pty (that repro is in the task log). fork ls
+// needs a live fork to print its header, so it's covered by review — its header uses the same one-liner.
+func TestStdoutViewsNoANSI(t *testing.T) {
+	if s := helpText(&config.Config{}); strings.ContainsRune(s, '\x1b') {
+		t.Errorf("helpText leaked ESC:\n%q", s)
+	}
+	capture := func(fn func()) string {
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		fn()
+		_ = w.Close()
+		os.Stdout = old
+		out, _ := io.ReadAll(r)
+		return string(out)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	views := map[string]func(){
+		"commandHelp": func() { printCommandHelp(commandHelp["tasks"]) },
+		"models":      func() { _, _ = a.cmdModels(nil) },
+		"profiles":    func() { _, _ = a.cmdProfiles(nil) },
+		"loop pool":   func() { _, _ = a.showPool(t.TempDir()) },
+	}
+	for name, fn := range views {
+		if out := capture(fn); strings.ContainsRune(out, '\x1b') {
+			t.Errorf("%s leaked ESC into piped stdout:\n%q", name, out)
 		}
 	}
 }

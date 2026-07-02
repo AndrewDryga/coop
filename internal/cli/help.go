@@ -43,7 +43,8 @@ func groupHelp(cmd string) (int, error) {
 // and the README, so this stays a clean, scannable overview.
 func helpText(cfg *config.Config) string {
 	var b strings.Builder
-	group := func(label string) { fmt.Fprintf(&b, "\n%s\n", ui.Bold(label)) }
+	p := ui.For(os.Stdout) // help is a stdout view — gate color on stdout so a pipe stays clean
+	group := func(label string) { fmt.Fprintf(&b, "\n%s\n", p.Bold(label)) }
 	// row keeps a column gap even when a command is long, so a description never glues to it.
 	// Width is counted in runes, not bytes, so a command with a "…" doesn't shift its column.
 	row := func(cmd, desc string) {
@@ -61,10 +62,10 @@ func helpText(cfg *config.Config) string {
 		if gap < 2 {
 			gap = 2
 		}
-		fmt.Fprintf(&b, "  %s\n", ui.Dim(cmd+strings.Repeat(" ", gap)+desc))
+		fmt.Fprintf(&b, "  %s\n", p.Dim(cmd+strings.Repeat(" ", gap)+desc))
 	}
 
-	fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", ui.Bold("coop"), resolveVersion())
+	fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
 	fmt.Fprint(&b, "Usage: coop <command> [args]\n")
 
 	group("AGENTS")
@@ -434,10 +435,11 @@ var commandHelp = map[string]string{
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,
 // then a pointer to the full command list.
 func printCommandHelp(text string) {
+	p := ui.For(os.Stdout) // stdout view — keep pipes clean
 	if i := strings.IndexByte(text, '\n'); i >= 0 {
-		fmt.Println(ui.Bold(text[:i]) + text[i:])
+		fmt.Println(p.Bold(text[:i]) + text[i:])
 	} else {
-		fmt.Println(ui.Bold(text))
+		fmt.Println(p.Bold(text))
 	}
 	fmt.Println("\nRun 'coop help' for all commands.")
 }

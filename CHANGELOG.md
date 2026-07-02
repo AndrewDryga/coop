@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Stdout views stay clean when piped.** `coop help`, a command's `--help` page, `coop profiles`,
+  `coop models`, `coop fork ls`, and `coop loop pool` colored their output through the stderr-gated
+  helpers, so `coop profiles | grep` or `coop fork ls | wc -l` from an interactive shell received raw
+  ANSI escapes. They now gate color on stdout (via `ui.For(os.Stdout)`), so a pipe or redirect gets
+  plain text.
+
 - **Scaffolded `postgres:18` services start out of the box.** `coop init --services postgres`
   mounted the data volume at `/var/lib/postgresql/data`, which the postgres 18+ image refuses — the
   container exited 1, and auto-up (`COOP_AUTO_UP=1`) silently continued without the database. The

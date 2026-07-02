@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -24,27 +25,28 @@ func (a *app) cmdModels(args []string) (int, error) {
 			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [agent]; mark a profile's model with 'coop profiles <agent> <profile> model <m>')", args[1])
 		}
 	}
+	p := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
 	w := colWidth(names, 0, 12)
 	for _, agent := range names {
 		ag, _ := agents.Get(agent)
-		line := "  " + ui.Bold(padRight(agent, w)) + "  " + strings.Join(ag.Models(), ui.Dim(" · "))
+		line := "  " + p.Bold(padRight(agent, w)) + "  " + strings.Join(ag.Models(), p.Dim(" · "))
 		// The agent-wide env default is config, not repo state — surface it only when set.
 		if def := a.cfg.AgentModelDefault(agent); def != "" {
-			line += ui.Dim("  — default: "+def) + ui.Dim(" (COOP_"+strings.ToUpper(agent)+"_MODEL)")
+			line += p.Dim("  — default: "+def) + p.Dim(" (COOP_"+strings.ToUpper(agent)+"_MODEL)")
 		}
 		fmt.Println(line)
 	}
 	// A short how-to instead of a wall: the queried agent (or the first) seeds the examples.
 	ex, _ := agents.Get(names[0])
 	model := ex.Models()[0]
-	pad := func(s string) string { return ui.Dim(padRight(s, 13)) }
+	pad := func(s string) string { return p.Dim(padRight(s, 13)) }
 	fmt.Println()
-	fmt.Println(ui.Dim("  these are examples — any model id the agent's CLI accepts works"))
-	fmt.Printf("  %s coop %s --model %s%s\n", pad("one run"), names[0], model, ui.Dim("   (fusion, fork, loop, acp take it too)"))
-	fmt.Printf("  %s coop profiles %s <profile> model %s%s\n", pad("per profile"), names[0], model, ui.Dim("   (shown in: coop profiles)"))
-	fmt.Printf("  %s COOP_%s_MODEL=%s%s\n", pad("everywhere"), strings.ToUpper(names[0]), model, ui.Dim("   (loop runs only: COOP_LOOP_MODEL)"))
+	fmt.Println(p.Dim("  these are examples — any model id the agent's CLI accepts works"))
+	fmt.Printf("  %s coop %s --model %s%s\n", pad("one run"), names[0], model, p.Dim("   (fusion, fork, loop, acp take it too)"))
+	fmt.Printf("  %s coop profiles %s <profile> model %s%s\n", pad("per profile"), names[0], model, p.Dim("   (shown in: coop profiles)"))
+	fmt.Printf("  %s COOP_%s_MODEL=%s%s\n", pad("everywhere"), strings.ToUpper(names[0]), model, p.Dim("   (loop runs only: COOP_LOOP_MODEL)"))
 	if lm := a.cfg.LoopModel; lm != "" {
-		fmt.Println(ui.Dim("  loop model pinned: " + lm + " (COOP_LOOP_MODEL) — overrides profile marks on loop runs"))
+		fmt.Println(p.Dim("  loop model pinned: " + lm + " (COOP_LOOP_MODEL) — overrides profile marks on loop runs"))
 	}
 	return 0, nil
 }

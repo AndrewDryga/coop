@@ -59,6 +59,7 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			}
 		}
 	}
+	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean (p is the profile loop var below)
 	width := colWidth(allProfiles, 0, 40)
 	statusW := len("not signed in") // the widest short status label
 	modelW := colWidth(allModels, 1, 24)
@@ -68,7 +69,7 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			fmt.Println() // a blank line between agents, so each block scans on its own
 		}
 		first = false
-		fmt.Println(ui.Bold(agent))
+		fmt.Println(pal.Bold(agent))
 		profiles := a.cfg.Profiles(agent)
 		if len(profiles) == 0 {
 			fmt.Printf("  no profiles — run: coop login %s [--profile <name>]\n", agent)
@@ -84,22 +85,22 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			model := a.cfg.ProfileModelOf(agent, p)
 			modelCell := padRight(model, modelW)
 			if model == "" {
-				modelCell = ui.Dim(padRight("—", modelW))
+				modelCell = pal.Dim(padRight("—", modelW))
 			}
 			tag := ""
 			if p == def {
-				tag = ui.Dim("  (default)")
+				tag = pal.Dim("  (default)")
 			}
 			// Pad the plain strings (rune-aware), then style — never color inside a width.
-			fmt.Printf("  %s  %s  %s%s\n", padRight(p, width), paintStatus(padRight(label, statusW)), modelCell, tag)
+			fmt.Printf("  %s  %s  %s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), modelCell, tag)
 		}
 		for _, p := range relogin {
-			fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+" --profile "+p))
+			fmt.Printf("  %s\n", pal.Dim("↻ re-login: coop login "+agent+" --profile "+p))
 		}
 		// Surface a dangling default: the marked (or built-in) default points at a profile that
 		// doesn't exist, so an interactive run would land on nothing. Don't leave it silent.
 		if !slices.Contains(profiles, def) {
-			fmt.Printf("  %s\n", ui.Dim(fmt.Sprintf("default → %s (missing — set one: coop profiles %s <name> default)", def, agent)))
+			fmt.Printf("  %s\n", pal.Dim(fmt.Sprintf("default → %s (missing — set one: coop profiles %s <name> default)", def, agent)))
 		}
 	}
 	return 0, nil
@@ -120,14 +121,14 @@ func (a *app) profileState(agent, p string) (label string, expired bool) {
 
 // paintStatus colors a profileState label (possibly padded): green signed in, yellow
 // expired, dim otherwise.
-func paintStatus(label string) string {
+func paintStatus(pal ui.Palette, label string) string {
 	switch strings.TrimSpace(label) {
 	case "signed in":
-		return ui.Green(label)
+		return pal.Green(label)
 	case "token expired":
-		return ui.Yellow(label)
+		return pal.Yellow(label)
 	default:
-		return ui.Dim(label)
+		return pal.Dim(label)
 	}
 }
 
@@ -187,9 +188,10 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	if err := a.requireProfile(agent, profile); err != nil {
 		return 2, err
 	}
-	fmt.Println(ui.Bold(agent + " / " + profile))
+	pal := ui.For(os.Stdout)
+	fmt.Println(pal.Bold(agent + " / " + profile))
 	label, expired := a.profileState(agent, profile)
-	fmt.Printf("  status     %s\n", paintStatus(label))
+	fmt.Printf("  status     %s\n", paintStatus(pal, label))
 	def := "no"
 	if profile == a.cfg.DefaultProfileOf(agent) {
 		def = "yes"
