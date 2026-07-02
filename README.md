@@ -455,8 +455,8 @@ extra setup it rotates across all of an agent's signed-in profiles; to narrow a 
 chosen set, give it a pool:
 
 ```bash
-coop pool add claude work personal     # this repo's loop rotates just these two
-coop pool                              # show the pool (coop pool clear claude to reset)
+coop loop pool add claude work personal   # this repo's loop rotates just these two
+coop loop pool                             # show the pool (coop loop pool clear claude to reset)
 ```
 
 Which profile a plain interactive `coop claude` uses is a mark you set, not a magic

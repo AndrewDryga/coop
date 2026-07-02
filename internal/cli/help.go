@@ -92,7 +92,7 @@ func helpText(cfg *config.Config) string {
 
 	group("UNATTENDED")
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
-	row("coop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
+	row("coop loop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
 	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
@@ -160,7 +160,7 @@ var commandHelp = map[string]string{
 
   --profile <name> signs in a second (or third) account into a named profile, so
   one agent can hold several subscriptions. The unattended loop rotates across a
-  repo's profiles when one is rate limited (see 'coop pool'). Without --profile
+  repo's profiles when one is rate limited (see 'coop loop pool'). Without --profile
   the sign-in targets the default profile.`,
 
 	"profiles": `coop profiles — list credential profiles; a path grammar edits one.
@@ -174,7 +174,7 @@ var commandHelp = map[string]string{
   (signed in? default? marked model?), a profile shows its detail, and a trailing
   attribute reads or writes one property of it. A profile is one subscription;
   add more with 'coop login <agent> --profile <name>', then let the loop rotate
-  across them on a rate limit ('coop pool').
+  across them on a rate limit ('coop loop pool').
 
   model [<m> | --clear]  the profile's default model — every run on that profile
                          (interactive, loop, fork, consult peer) uses it unless
@@ -212,17 +212,19 @@ var commandHelp = map[string]string{
   agent CLI's own default. coop never validates a model id — a bad one fails in
   the agent's own error.`,
 
-	"pool": `coop pool — which credential profiles this repo's loop rotates.
+	"pool": `coop loop pool (alias: coop pool) — which profiles this repo's loops rotate.
 
-  Usage: coop pool                          show this repo's pool
-         coop pool add <agent> <profile…>   add profiles to the rotation
-         coop pool rm  <agent> <profile…>   remove profiles
-         coop pool clear <agent>            drop the agent's pool
+  Usage: coop loop pool                          show this repo's pool
+         coop loop pool add <agent> <profile…>   add profiles to the rotation
+         coop loop pool rm  <agent> <profile…>   remove profiles
+         coop loop pool clear <agent>            drop the agent's pool
 
-  When the unattended loop hits a rate/usage limit it switches to another profile in
+  When an unattended loop hits a rate/usage limit it switches to another profile in
   the pool and keeps going, so a long run survives a subscription cap. With no pool
   set the loop rotates across ALL signed-in profiles for the agent; a pool narrows
-  that to a chosen set. Pools are per-repo and stored outside the repo (names only).`,
+  that to a chosen set. Pools are per-repo and stored outside the repo (names only).
+  It's a setting of the loop — hence the home under 'coop loop'; the old top-level
+  'coop pool' still works as an alias.`,
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
@@ -323,7 +325,7 @@ var commandHelp = map[string]string{
 
   A fresh agent per iteration works the todo tasks; when the queue empties, an
   auditor re-checks every shipped task. On a rate limit it switches to another
-  signed-in profile (see 'coop pool'), or waits out the reset when there's only one.
+  signed-in profile (see 'coop loop pool'), or waits out the reset when there's only one.
 
   --model <m> pins the loop's model; COOP_LOOP_MODEL is its standing default —
   so overnight runs can grind on a cheaper model than your interactive sessions.

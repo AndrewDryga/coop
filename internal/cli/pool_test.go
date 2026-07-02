@@ -110,6 +110,18 @@ func TestCmdPoolDenials(t *testing.T) {
 	}
 }
 
+// `coop loop pool …` is the documented home — the rotation pool is a setting of the loop —
+// and it routes to the same command the top-level `coop pool` alias reaches.
+func TestLoopPoolSubcommand(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
+	if code, err := a.cmdLoop([]string{"pool"}); code != 0 || err != nil {
+		t.Fatalf("coop loop pool: code=%d err=%v, want the pool listing", code, err)
+	}
+	if code, err := a.cmdLoop([]string{"pool", "frobnicate"}); code != 2 || err == nil {
+		t.Errorf("coop loop pool frobnicate: code=%d err=%v, want the pool command's own rejection", code, err)
+	}
+}
+
 func TestProfilePoolSingle(t *testing.T) {
 	now := time.Unix(1000, 0)
 	p := newProfilePool([]string{"only"})

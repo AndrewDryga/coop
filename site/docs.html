@@ -731,12 +731,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     ><span class="k">coop</span> login claude --profile work       <span class="t"># a second account…</span>
 <span class="k">coop</span> login claude --profile personal   <span class="t"># …and a third</span>
 <span class="k">coop</span> profiles                          <span class="t"># list them and which are signed in</span>
-<span class="k">coop</span> pool add claude work personal     <span class="t"># rotate just these for this repo's loop</span>
-<span class="k">coop</span> pool                              <span class="t"># show the pool (coop pool clear claude resets)</span></pre>
+<span class="k">coop</span> loop pool add claude work personal    <span class="t"># rotate just these for this repo's loop</span>
+<span class="k">coop</span> loop pool                             <span class="t"># show the pool (coop loop pool clear claude resets)</span></pre>
                     <p>
                         By default a loop rotates through <em>every</em>
                         signed-in profile for its agent. To pin a repo to a
-                        subset, name them with <code>coop pool</code> — handy
+                        subset, name them with <code>coop loop pool</code> — handy
                         when one account is for this project and the others
                         aren't.
                     </p>

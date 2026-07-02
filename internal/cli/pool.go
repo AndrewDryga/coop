@@ -116,7 +116,7 @@ func (a *app) cmdPool(args []string) (int, error) {
 	switch verb {
 	case "add", "rm", "remove":
 		if len(rest) < 2 {
-			return 2, fmt.Errorf("usage: coop pool %s <agent> <profile...>", verb)
+			return 2, fmt.Errorf("usage: coop loop pool %s <agent> <profile...>", verb)
 		}
 		agent, profiles := rest[0], rest[1:]
 		if _, ok := agents.Get(agent); !ok {
@@ -150,7 +150,7 @@ func (a *app) cmdPool(args []string) (int, error) {
 		return a.showPool(repo)
 	case "clear":
 		if len(rest) != 1 {
-			return 2, errors.New("usage: coop pool clear <agent>")
+			return 2, errors.New("usage: coop loop pool clear <agent>")
 		}
 		if _, ok := agents.Get(rest[0]); !ok {
 			return 2, unknownErr("agent", rest[0], agents.Names())
@@ -173,7 +173,7 @@ func (a *app) showPool(repo string) (int, error) {
 	byAgent := reg[repo]
 	if len(byAgent) == 0 {
 		fmt.Println("  none set — the loop rotates across ALL signed-in profiles")
-		fmt.Println("  narrow it with: coop pool add <agent> <profile...>")
+		fmt.Println("  narrow it with: coop loop pool add <agent> <profile...>")
 		return 0, nil
 	}
 	for _, agent := range agents.Names() {

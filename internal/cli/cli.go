@@ -128,7 +128,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdProfiles(rest)
 	case "models":
 		return a.cmdModels(rest)
-	case "pool":
+	case "pool": // back-compat alias — the documented form is `coop loop pool` (it's the loop's setting)
 		return a.cmdPool(rest)
 	case "acp":
 		return a.cmdACP(rest)

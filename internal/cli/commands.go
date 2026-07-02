@@ -941,6 +941,11 @@ func loopAgent(args []string) (string, error) {
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
+	// The rotation pool is a SETTING of the loop, not a peer workflow, so it lives here:
+	// `coop loop pool [add|rm|clear]`. (`coop pool` remains a top-level back-compat alias.)
+	if len(args) > 0 && args[0] == "pool" {
+		return a.cmdPool(args[1:])
+	}
 	flags, rest, err := extractTasksFlags(args)
 	if err != nil {
 		return 2, err

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The rotation pool lives under the loop: `coop loop pool add|rm|clear`.** The pool is a
+  *setting* of the loop (which subscriptions it rotates on a rate limit), not a workflow of its
+  own, so it no longer sits beside `coop loop` as a top-level command. Same verbs, same storage;
+  `coop pool` still works as an undocumented alias, so nothing breaks.
+
 - **`coop loop` keeps the machine awake while it runs.** An overnight drain is pointless if the
   laptop idle-sleeps midway through it, so the loop now holds a system sleep inhibitor for its
   duration — macOS `caffeinate -i -m -s`, tied to coop's own process (`-w`) so it self-releases

@@ -537,7 +537,7 @@ func TestTopLevelListsAllGroupVerbs(t *testing.T) {
 	if !strings.Contains(h, "coop fleet init|up|down|split|watch|prune") {
 		t.Error("top-level fleet row should list every fleet verb (init/split were missing)")
 	}
-	if !strings.Contains(h, "coop pool add|rm|clear") {
-		t.Error("top-level pool row should list every pool verb (rm/clear were missing)")
+	if !strings.Contains(h, "coop loop pool add|rm|clear") {
+		t.Error("top-level pool row should list every pool verb (rm/clear were missing) at its loop home")
 	}
 }
