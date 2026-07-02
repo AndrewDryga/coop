@@ -164,7 +164,7 @@ any of them.
 | `coop acp [agent\|fusion] [--supervise]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); `--supervise` keeps the editor connected across a box restart |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
 | `coop <any launch> --model <m>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
-| `coop models [agent]` | list known models and what each profile runs; mark one with `coop profiles <agent> <profile> model <m>` ([details](#picking-models)) |
+| `coop models [agent]` | the model menu per agent; mark a profile's model with `coop profiles <agent> <profile> model <m>` ([details](#picking-models)) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
 
@@ -490,11 +490,14 @@ the work subscription always runs the big model and the personal one a cheap one
 the loop's profile rotation switches models with the account:
 
 ```bash
-coop models                              # list known models + what each profile runs
+coop models                              # the model menu per agent
 coop profiles claude work model opus     # every run on the work profile uses opus
 coop profiles claude personal model haiku
 coop profiles claude personal model --clear   # unmark (bare `model` prints the mark)
 ```
+
+`coop profiles` shows each profile's mark as a column, so one listing answers "which
+account, signed in, running what".
 
 Two env/conf knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`)
 is the agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so

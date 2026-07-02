@@ -74,7 +74,7 @@ func helpText(cfg *config.Config) string {
 	row("coop shell", "an interactive shell in the box")
 	row("coop login <agent> [--profile p]", "authenticate an agent (a profile = one subscription)")
 	row("coop profiles [agent]", "list stored credential profiles and which are signed in")
-	row("coop models [agent]", "list known models and what each profile runs")
+	row("coop models [agent]", "the model menu per agent (profile marks live in coop profiles)")
 	row("coop acp [agent|fusion]", "serve as an ACP agent over stdio (for editors like Zed)")
 	row("coop <agent> --consult", "add a read-only second opinion from the other agents on a hard call")
 	row("coop <agent> --model <m>", "run on a chosen model (works on fusion/fork/loop/acp too)")
@@ -194,14 +194,14 @@ var commandHelp = map[string]string{
   'coop acp <agent> --profile <name>' (so an editor entry can pin an account). An
   agent's own --profile goes after a --, e.g. 'coop codex -- --profile <name>'.`,
 
-	"models": `coop models [agent] — list known models and what each profile runs.
+	"models": `coop models [agent] — the model menu per agent.
 
   Usage: coop models [claude|codex|gemini]
 
-  A read-only view: each agent's known models (examples — model ids churn, so
-  ANY id the agent's CLI accepts works) and, per credential profile, the default
-  model marked for it. Mark one with 'coop profiles <agent> <profile> model
-  <model>' — the mark is a profile attribute, so profiles own the editing.
+  One line per agent with its known models (examples — model ids churn, so ANY
+  id the agent's CLI accepts works), then how to pick one. Per-profile marks
+  live in 'coop profiles' (shown as a column there); set one with
+  'coop profiles <agent> <profile> model <model>'.
 
   Pick per run instead with --model on any launch: 'coop claude --model fable',
   'coop fusion claude --model opus', 'coop loop --model haiku',

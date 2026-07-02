@@ -8,11 +8,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// cmdModels is the read-only models view: each agent's known models and which model each
-// credential profile is marked to run. It edits nothing — the mark is a PROFILE attribute,
-// so `coop profiles <agent> <profile> model <model>` sets it (and `coop profiles` shows it
-// too). The known list is a menu, not a gate: model ids churn faster than coop releases, so
-// any id the agent CLI accepts works with --model and coop never validates against it.
+// cmdModels is the model MENU: one line per agent with its known models, then a short
+// how-to. Per-profile marks live in `coop profiles` (the mark is a profile attribute) —
+// repeating them here buried the menu under a row per profile. The known list is examples,
+// not a gate: model ids churn faster than coop releases, so any id the agent CLI accepts
+// works with --model and coop never validates against it.
 func (a *app) cmdModels(args []string) (int, error) {
 	names := agents.Names()
 	if len(args) > 0 {
@@ -24,40 +24,27 @@ func (a *app) cmdModels(args []string) (int, error) {
 			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [agent]; mark a profile's model with 'coop profiles <agent> <profile> model <m>')", args[1])
 		}
 	}
+	w := colWidth(names, 0, 12)
 	for _, agent := range names {
 		ag, _ := agents.Get(agent)
-		fmt.Println(ui.Bold(agent))
-		fmt.Printf("  known models: %s  %s\n", strings.Join(ag.Models(), ", "), ui.Dim("(examples — any id the CLI accepts works)"))
+		line := "  " + ui.Bold(padRight(agent, w)) + "  " + strings.Join(ag.Models(), ui.Dim(" · "))
+		// The agent-wide env default is config, not repo state — surface it only when set.
 		if def := a.cfg.AgentModelDefault(agent); def != "" {
-			fmt.Printf("  agent-wide default: %s  %s\n", def, ui.Dim("(COOP_"+strings.ToUpper(agent)+"_MODEL)"))
+			line += ui.Dim("  — default: "+def) + ui.Dim(" (COOP_"+strings.ToUpper(agent)+"_MODEL)")
 		}
-		profiles := a.cfg.Profiles(agent)
-		if len(profiles) == 0 {
-			fmt.Printf("  no profiles — run: coop login %s [--profile <name>]\n", agent)
-			continue
-		}
-		width := colWidth(profiles, 0, 40)
-		markedDefault := a.cfg.DefaultProfileOf(agent)
-		for _, p := range profiles {
-			model := a.cfg.ProfileModelOf(agent, p)
-			cell := ui.Dim("—  (mark: coop profiles " + agent + " " + p + " model <model>)")
-			if model != "" {
-				cell = model
-			}
-			tag := ""
-			if p == markedDefault {
-				tag = ui.Dim("  (default profile)")
-			}
-			// Pad the plain name (rune-aware), then style the model cell — never color inside the width.
-			fmt.Printf("  %s  %s%s\n", padRight(p, width), cell, tag)
-		}
+		fmt.Println(line)
 	}
-	// The loop's own model override outranks every profile mark — say so when it's set, or a
-	// marked default that never seems to apply to `coop loop` reads as a bug.
+	// A short how-to instead of a wall: the queried agent (or the first) seeds the examples.
+	ex, _ := agents.Get(names[0])
+	model := ex.Models()[0]
+	pad := func(s string) string { return ui.Dim(padRight(s, 13)) }
+	fmt.Println()
+	fmt.Println(ui.Dim("  these are examples — any model id the agent's CLI accepts works"))
+	fmt.Printf("  %s coop %s --model %s%s\n", pad("one run"), names[0], model, ui.Dim("   (fusion, fork, loop, acp take it too)"))
+	fmt.Printf("  %s coop profiles %s <profile> model %s%s\n", pad("per profile"), names[0], model, ui.Dim("   (shown in: coop profiles)"))
+	fmt.Printf("  %s COOP_%s_MODEL=%s%s\n", pad("everywhere"), strings.ToUpper(names[0]), model, ui.Dim("   (loop runs only: COOP_LOOP_MODEL)"))
 	if lm := a.cfg.LoopModel; lm != "" {
-		ui.Note("loop runs override these with %s (COOP_LOOP_MODEL); --model on any run overrides everything", lm)
-	} else {
-		ui.Note("pick per run with --model on any launch (coop claude --model opus); precedence: --model > COOP_LOOP_MODEL (loop) > profile mark > COOP_<AGENT>_MODEL")
+		fmt.Println(ui.Dim("  loop model pinned: " + lm + " (COOP_LOOP_MODEL) — overrides profile marks on loop runs"))
 	}
 	return 0, nil
 }

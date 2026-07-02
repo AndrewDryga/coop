@@ -13,8 +13,9 @@
   subscription always on the big model, the personal one on a cheap one; the loop's profile
   rotation then switches models with the account. `COOP_<AGENT>_MODEL` sets an agent-wide default
   and `COOP_LOOP_MODEL` a loop-only one (so overnight runs grind on a cheaper model than your
-  interactive sessions). `coop models [agent]` is the read-only roll-up: known models (examples —
-  any id the CLI accepts works; coop never validates one) and what each profile runs.
+  interactive sessions). `coop models [agent]` is the model menu — one line per agent with its
+  known models (examples — any id the CLI accepts works; coop never validates one) and a short
+  how-to; each profile's mark shows as a column in `coop profiles`.
 
 - **`coop profiles` gained a path grammar** — each token narrows: `coop profiles` lists every
   agent, `coop profiles claude` one agent, `coop profiles claude personal` shows that profile,

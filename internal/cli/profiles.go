@@ -46,14 +46,28 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 		}
 		names = []string{args[0]}
 	}
-	// One width across every agent's profiles, so the "signed in" column lines up down the whole
-	// listing — not just within each agent's block.
-	var allProfiles []string
+	// One width per column across every agent's block, so the listing reads as one table:
+	// NAME · STATUS · MODEL · (default). The models are the per-profile marks; the status
+	// stays a short label — the re-login remedy for an expired token gets its own dim line
+	// under the block instead of blowing the row out sideways.
+	var allProfiles, allModels []string
 	for _, agent := range names {
-		allProfiles = append(allProfiles, a.cfg.Profiles(agent)...)
+		for _, p := range a.cfg.Profiles(agent) {
+			allProfiles = append(allProfiles, p)
+			if m := a.cfg.ProfileModelOf(agent, p); m != "" {
+				allModels = append(allModels, m)
+			}
+		}
 	}
 	width := colWidth(allProfiles, 0, 40)
+	statusW := len("not signed in") // the widest short status label
+	modelW := colWidth(allModels, 1, 24)
+	first := true
 	for _, agent := range names {
+		if !first {
+			fmt.Println() // a blank line between agents, so each block scans on its own
+		}
+		first = false
 		fmt.Println(ui.Bold(agent))
 		profiles := a.cfg.Profiles(agent)
 		if len(profiles) == 0 {
@@ -61,19 +75,26 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			continue
 		}
 		def := a.cfg.DefaultProfileOf(agent)
+		var relogin []string
 		for _, p := range profiles {
-			status := a.profileStatus(agent, p)
+			label, expired := a.profileState(agent, p)
+			if expired {
+				relogin = append(relogin, p)
+			}
+			model := a.cfg.ProfileModelOf(agent, p)
+			modelCell := padRight(model, modelW)
+			if model == "" {
+				modelCell = ui.Dim(padRight("—", modelW))
+			}
 			tag := ""
 			if p == def {
 				tag = ui.Dim("  (default)")
 			}
-			// The profile's marked default model rides along — it's a profile attribute,
-			// so this listing is where you check what each account runs.
-			if m := a.cfg.ProfileModelOf(agent, p); m != "" {
-				tag += ui.Dim("  · model " + m)
-			}
-			// Pad the plain name (rune-aware), then style the status — never color inside the width.
-			fmt.Printf("  %s  %s%s\n", padRight(p, width), status, tag)
+			// Pad the plain strings (rune-aware), then style — never color inside a width.
+			fmt.Printf("  %s  %s  %s%s\n", padRight(p, width), paintStatus(padRight(label, statusW)), modelCell, tag)
+		}
+		for _, p := range relogin {
+			fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+" --profile "+p))
 		}
 		// Surface a dangling default: the marked (or built-in) default points at a profile that
 		// doesn't exist, so an interactive run would land on nothing. Don't leave it silent.
@@ -84,17 +105,30 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 	return 0, nil
 }
 
-// profileStatus renders a profile's sign-in state, flagging a present-but-expired OAuth
-// token — "signed in" alone only means a creds file exists, which reads as fine yet 401s
-// in a run. Shared by the listing and the single-profile view.
-func (a *app) profileStatus(agent, p string) string {
+// profileState reports a profile's short sign-in label and whether its token is expired —
+// present but past expiry, which reads as signed in yet 401s in a run; the caller surfaces
+// the re-login remedy on its own line. Shared by the listing and the single-profile view.
+func (a *app) profileState(agent, p string) (label string, expired bool) {
 	if !box.ProfileAuthed(a.cfg, agent, p) {
-		return ui.Dim("not signed in")
+		return "not signed in", false
 	}
 	if exp, ok := box.ProfileTokenExpiry(a.cfg, agent, p); ok && time.Now().After(exp) {
-		return ui.Yellow("token expired — re-login: coop login " + agent + " --profile " + p)
+		return "token expired", true
 	}
-	return ui.Green("signed in")
+	return "signed in", false
+}
+
+// paintStatus colors a profileState label (possibly padded): green signed in, yellow
+// expired, dim otherwise.
+func paintStatus(label string) string {
+	switch strings.TrimSpace(label) {
+	case "signed in":
+		return ui.Green(label)
+	case "token expired":
+		return ui.Yellow(label)
+	default:
+		return ui.Dim(label)
+	}
 }
 
 // profilePath routes the path grammar's per-profile tail: bare shows the profile, an
@@ -154,7 +188,8 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 		return 2, err
 	}
 	fmt.Println(ui.Bold(agent + " / " + profile))
-	fmt.Printf("  status     %s\n", a.profileStatus(agent, profile))
+	label, expired := a.profileState(agent, profile)
+	fmt.Printf("  status     %s\n", paintStatus(label))
 	def := "no"
 	if profile == a.cfg.DefaultProfileOf(agent) {
 		def = "yes"
@@ -166,6 +201,9 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	}
 	fmt.Printf("  model      %s\n", model)
 	fmt.Printf("  dir        %s\n", a.cfg.AgentProfileDir(agent, profile))
+	if expired {
+		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+" --profile "+profile))
+	}
 	return 0, nil
 }
 

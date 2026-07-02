@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -110,6 +111,51 @@ func TestProfilesModelRejectsBadInput(t *testing.T) {
 		if code, err := a.cmdModels(args); code != 2 || err == nil {
 			t.Errorf("cmdModels(%v) = (%d, %v), want (2, error)", args, code, err)
 		}
+	}
+}
+
+// TestModelsIsAMenuNotAProfileDump: `coop models` shows the per-agent menu and how-to —
+// per-profile rows (and their repeated "mark:" hint) moved to `coop profiles`, which was
+// the dense wall the menu drowned under.
+func TestModelsIsAMenuNotAProfileDump(t *testing.T) {
+	a := modelsApp(t)
+	if err := a.cfg.SetProfileModel("claude", "work", "opus"); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if code, err := a.cmdModels(nil); code != 0 || err != nil {
+			t.Errorf("cmdModels = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{"fable", "gpt-5", "gemini-2.5-pro", "per profile", "--model"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("menu missing %q:\n%s", want, out)
+		}
+	}
+	// The old dump rendered one row per profile ("  work  … (mark: …)" + a "(default
+	// profile)" tag). "\n  work" anchors the profile name as a row, not a substring —
+	// the caption's "works" must not trip it.
+	for _, reject := range []string{"\n  work", "mark:", "(default profile)"} {
+		if strings.Contains(out, reject) {
+			t.Errorf("menu still dumps per-profile rows (%q):\n%s", reject, out)
+		}
+	}
+}
+
+// TestProfilesListsModelColumn: the profiles listing carries each profile's marked model
+// (a column, with — for unmarked) — that's where per-profile model state lives.
+func TestProfilesListsModelColumn(t *testing.T) {
+	a := modelsApp(t)
+	if err := a.cfg.SetProfileModel("claude", "work", "opus"); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if code, err := a.cmdProfiles([]string{"claude"}); code != 0 || err != nil {
+			t.Errorf("cmdProfiles = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "opus") {
+		t.Errorf("profiles listing missing the model column:\n%s", out)
 	}
 }
 
