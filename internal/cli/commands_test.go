@@ -107,31 +107,37 @@ func TestParseLoopArgs(t *testing.T) {
 		args          []string
 		def           bool // COOP_PREFLIGHT default
 		wantAgent     string
+		wantModel     string
 		wantDebug     bool
 		wantPreflight bool
 		wantErr       bool
 	}{
-		{nil, false, "claude", false, false, false},
-		{[]string{"codex"}, false, "codex", false, false, false},
-		{[]string{"--debug-on-fail"}, false, "claude", true, false, false},
-		{[]string{"gemini", "--debug"}, false, "gemini", true, false, false},
-		{[]string{"--debug-on-fail", "codex"}, false, "codex", true, false, false},
-		{[]string{"bogus"}, false, "", false, false, true},
+		{nil, false, "claude", "", false, false, false},
+		{[]string{"codex"}, false, "codex", "", false, false, false},
+		{[]string{"--debug-on-fail"}, false, "claude", "", true, false, false},
+		{[]string{"gemini", "--debug"}, false, "gemini", "", true, false, false},
+		{[]string{"--debug-on-fail", "codex"}, false, "codex", "", true, false, false},
+		{[]string{"bogus"}, false, "", "", false, false, true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
-		{[]string{"--preflight"}, false, "claude", false, true, false},
-		{[]string{"codex", "--preflight"}, false, "codex", false, true, false},
-		{nil, true, "claude", false, true, false},                         // COOP_PREFLIGHT=1 default
-		{[]string{"--no-preflight"}, true, "claude", false, false, false}, // flag overrides default-on
+		{[]string{"--preflight"}, false, "claude", "", false, true, false},
+		{[]string{"codex", "--preflight"}, false, "codex", "", false, true, false},
+		{nil, true, "claude", "", false, true, false},                         // COOP_PREFLIGHT=1 default
+		{[]string{"--no-preflight"}, true, "claude", "", false, false, false}, // flag overrides default-on
+		// --model pins the loop's model, space or equals form; a bare --model is an error.
+		{[]string{"--model", "haiku"}, false, "claude", "haiku", false, false, false},
+		{[]string{"codex", "--model=gpt-5"}, false, "codex", "gpt-5", false, false, false},
+		{[]string{"--model", "haiku", "--debug"}, false, "claude", "haiku", true, false, false},
+		{[]string{"--model"}, false, "", "", false, false, true},
 	}
 	for _, c := range cases {
-		agent, debug, preflight, err := parseLoopArgs(c.args, c.def)
+		agent, model, debug, preflight, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (agent != c.wantAgent || debug != c.wantDebug || preflight != c.wantPreflight) {
-			t.Errorf("parseLoopArgs(%v, def=%v) = (%q, debug=%v, preflight=%v), want (%q, %v, %v)",
-				c.args, c.def, agent, debug, preflight, c.wantAgent, c.wantDebug, c.wantPreflight)
+		if !c.wantErr && (agent != c.wantAgent || model != c.wantModel || debug != c.wantDebug || preflight != c.wantPreflight) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (%q, model=%q, debug=%v, preflight=%v), want (%q, %q, %v, %v)",
+				c.args, c.def, agent, model, debug, preflight, c.wantAgent, c.wantModel, c.wantDebug, c.wantPreflight)
 		}
 	}
 }

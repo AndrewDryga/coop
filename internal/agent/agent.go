@@ -6,6 +6,7 @@ package agent
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -18,8 +19,11 @@ type Agent interface {
 	Interactive(cfg *config.Config) []string
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).
 	Headless(cfg *config.Config, prompt string) []string
-	// ACP is the agent's ACP adapter command over stdio (for editors like Zed).
-	ACP() []string
+	// ACP is the agent's ACP adapter command over stdio (for editors like Zed). It takes
+	// cfg so an adapter that IS the agent's own binary (gemini --acp) can carry the
+	// resolved model flag; a separate adapter binary (claude-agent-acp, codex-acp) takes
+	// no flags — claude's picks the model up via ModelEnv instead.
+	ACP(cfg *config.Config) []string
 	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the coop-owned session id for this (fork, agent): agents that honor a preset
@@ -52,6 +56,16 @@ type Agent interface {
 	// out-of-scope agent's keys, so a peer's alternate token can't leak into a box that
 	// isn't authorized for it.
 	CredentialEnvKeys() []string
+	// Models is a short, curated list of model names this agent's CLI accepts — the menu
+	// `coop models` shows. Illustrative, not authoritative: model ids churn faster than
+	// coop releases, so ANY id the CLI accepts works with --model; coop never validates
+	// against this list.
+	Models() []string
+	// ModelEnv is the environment variable the agent's CLI reads a default model from
+	// ("" when it has none). box.Run exports it into the box when a model is resolved, so
+	// a separate adapter binary that takes no flags (claude-agent-acp) still honors the
+	// chosen model.
+	ModelEnv() string
 	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
 	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
 	MCP(cfg *config.Config) ([]MCPMount, error)
@@ -66,6 +80,27 @@ type Agent interface {
 
 // Default is the agent used when a command takes one but none is given.
 func Default() string { return "claude" }
+
+// withModel appends `--model <model>` to cmd — the flag all three CLIs accept, on their
+// main command and their exec/resume forms alike. A no-op when no model is chosen, or when
+// cmd already names one (a COOP_<AGENT>_CMD baking its own --model/-m stays authoritative;
+// appending a second would make clap-based CLIs like codex error on the duplicate).
+func withModel(cmd []string, model string) []string {
+	if model == "" || hasModelFlag(cmd) {
+		return cmd
+	}
+	return append(cmd, "--model", model)
+}
+
+// hasModelFlag reports whether cmd already carries a model flag (--model/-m, split or =-joined).
+func hasModelFlag(cmd []string) bool {
+	for _, a := range cmd {
+		if a == "--model" || a == "-m" || strings.HasPrefix(a, "--model=") || strings.HasPrefix(a, "-m=") {
+			return true
+		}
+	}
+	return false
+}
 
 // Packages is the union of every agent's npm packages, for the box image's install.
 func Packages() []string {

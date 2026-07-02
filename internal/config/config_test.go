@@ -290,6 +290,58 @@ func TestDefaultProfileMark(t *testing.T) {
 	}
 }
 
+// TestModelResolution: ModelFor's precedence — per-run selection > the active profile's
+// marked default > COOP_<AGENT>_MODEL — and that a mark persists, clears, and follows the
+// active profile (the loop's rotation picks up each profile's own mark).
+func TestModelResolution(t *testing.T) {
+	clearAgentEnv(t)
+	dir := t.TempDir()
+	c := &Config{ConfigDir: dir}
+
+	// Nothing chosen anywhere → "" (the agent CLI's own default).
+	if got := c.ModelFor("claude"); got != "" {
+		t.Errorf("ModelFor with nothing set = %q, want \"\"", got)
+	}
+	// Agent-wide env default.
+	t.Setenv("COOP_CLAUDE_MODEL", "sonnet")
+	if got := c.ModelFor("claude"); got != "sonnet" {
+		t.Errorf("ModelFor with env = %q, want sonnet", got)
+	}
+	// A profile mark beats the agent-wide default — for the ACTIVE profile only.
+	if err := c.SetProfileModel("claude", "work", "opus"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.ModelFor("claude"); got != "sonnet" {
+		t.Errorf("ModelFor on the default profile = %q, want sonnet (work's mark must not apply)", got)
+	}
+	c.SetActiveProfile("claude", "work")
+	if got := c.ModelFor("claude"); got != "opus" {
+		t.Errorf("ModelFor on profile work = %q, want its mark opus", got)
+	}
+	// A per-run selection (--model / COOP_LOOP_MODEL) beats everything.
+	c.SetActiveModel("claude", "fable")
+	if got := c.ModelFor("claude"); got != "fable" {
+		t.Errorf("ModelFor with active selection = %q, want fable", got)
+	}
+	c.SetActiveModel("claude", "") // clearing falls back to the profile mark
+	if got := c.ModelFor("claude"); got != "opus" {
+		t.Errorf("ModelFor after clearing selection = %q, want opus", got)
+	}
+	// The mark persists (a fresh load reads it back) and clears.
+	if m := loadConfFile(c.ModelsFile()); m["claude/work"] != "opus" {
+		t.Errorf("ModelsFile not persisted: %v", m)
+	}
+	if err := c.SetProfileModel("claude", "work", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.ModelFor("claude"); got != "sonnet" {
+		t.Errorf("ModelFor after clearing the mark = %q, want sonnet", got)
+	}
+	if m := loadConfFile(c.ModelsFile()); m["claude/work"] != "" {
+		t.Errorf("cleared mark still in ModelsFile: %v", m)
+	}
+}
+
 func TestTasksFiles(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

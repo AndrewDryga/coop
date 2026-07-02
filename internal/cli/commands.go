@@ -107,9 +107,18 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// `coop claude --model opus` picks the model for this run, beating the profile/agent
+	// defaults (see config.ModelFor). Consumed like --profile — read only before a `--` —
+	// though forwarding it would usually work too, since the adapters skip appending a
+	// second --model when one is already present.
+	model, args, err := extractRunModel(args)
+	if err != nil {
+		return 2, err
+	}
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err
 	}
+	a.selectRunModel(tool, model)
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, consult)
 }
 
@@ -130,6 +139,16 @@ func (a *app) selectRunProfile(tool, profile string) error {
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	return nil
+}
+
+// selectRunModel points cfg at the model chosen with --model for a run of tool (a no-op when
+// model is ""). Deliberately unvalidated: model ids churn faster than coop releases, so the
+// agent CLI stays the source of truth — a bad id fails loudly in the agent's own error.
+// Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP, and the fork paths.
+func (a *app) selectRunModel(tool, model string) {
+	if model != "" {
+		a.cfg.SetActiveModel(tool, model)
+	}
 }
 
 // extractBoolFlag pulls one of coop's own bool flags out of an agent's args (so it isn't
@@ -244,21 +263,35 @@ func extractProfile(args []string) (profile string, rest []string, err error) {
 // verbatim — so an agent's own --profile (e.g. codex's config.toml profile) is still reachable
 // as `coop codex -- --profile <name>`. A --profile with no value is an error, like login's.
 func extractRunProfile(args []string) (profile string, rest []string, err error) {
+	return extractRunValue(args, "--profile")
+}
+
+// extractRunModel pulls coop's own --model <name> (or --model=<name>) out of an agent RUN's
+// args, `--`-aware like extractRunProfile — so `coop codex -- --model x` still reaches codex's
+// own flag untouched. A --model with no value is an error, not a silent no-op.
+func extractRunModel(args []string) (model string, rest []string, err error) {
+	return extractRunValue(args, "--model")
+}
+
+// extractRunValue is the shared extractor behind extractRunProfile/extractRunModel: it pulls
+// one of coop's own value-bearing flags out of run args, stopping at "--" (everything after is
+// the agent's, forwarded verbatim).
+func extractRunValue(args []string, flag string) (val string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
-			return profile, append(rest, args[i:]...), nil
+			return val, append(rest, args[i:]...), nil
 		}
-		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
+		if v, n, ok, e := flagValue(args, i, flag); ok {
 			if e != nil {
 				return "", nil, e
 			}
-			profile = v
+			val = v
 			i += n - 1
 			continue
 		}
 		rest = append(rest, args[i])
 	}
-	return profile, rest, nil
+	return val, rest, nil
 }
 
 // validProfileName keeps a credential profile name to a single safe path segment, so a name passed
@@ -310,9 +343,9 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 }
 
 // acpCommand maps an agent to its ACP adapter command inside the box.
-func acpCommand(tool string) ([]string, bool) {
+func acpCommand(cfg *config.Config, tool string) ([]string, bool) {
 	if ag, ok := agents.Get(tool); ok {
-		return ag.ACP(), true
+		return ag.ACP(cfg), true
 	}
 	return nil, false
 }
@@ -342,6 +375,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// --model pins the session's model the same way, so an editor entry can run e.g.
+	// ["acp","claude","--model","opus"]. Applied before acpCommand builds the adapter
+	// command, so gemini's (its own binary) carries the flag; claude's separate adapter
+	// binary picks it up via ModelEnv in box.Run instead.
+	model, args, err := extractRunModel(args)
+	if err != nil {
+		return 2, err
+	}
 	tool := agents.Default()
 	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
 	if len(args) > 0 {
@@ -360,18 +401,21 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		tool = governor
 	}
-	cmd, ok := acpCommand(tool)
-	if !ok {
+	if !agents.Valid(tool) {
 		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
 	}
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile p])", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile p] [--model m])", leftover[0])
 	}
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err
 	}
+	a.selectRunModel(tool, model)
+	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
+	// the resolved model as a flag. tool passed agents.Valid above, so this can't miss.
+	cmd, _ := acpCommand(a.cfg, tool)
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
@@ -506,6 +550,12 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// --model picks the governor's model, same shape (`coop fusion claude --model opus`);
+	// the peers keep their own profile/agent defaults.
+	model, args, err := extractRunModel(args)
+	if err != nil {
+		return 2, err
+	}
 	governor, rest := a.parseGovernor(args)
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
@@ -513,6 +563,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err := a.selectRunProfile(governor, profile); err != nil {
 		return 2, err
 	}
+	a.selectRunModel(governor, model)
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
@@ -869,13 +920,13 @@ func promptGateLangs(in io.Reader) []string {
 	return chosen
 }
 
-// loopAgent picks the model for `coop loop [claude|codex|gemini]` (default claude),
+// loopAgent picks the agent for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
 func loopAgent(args []string) (string, error) {
 	agent, set := agents.Default(), false
 	for _, x := range args {
 		if !agents.Valid(x) {
-			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <dir>] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <dir>] [--model <m>] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
 		}
 		if set {
 			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
@@ -890,7 +941,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	agent, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
+	agent, model, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
 	}
@@ -906,18 +957,41 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	a.applyLoopModel(agent, model)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	return a.loop(repo, img, agent, "", pool, queues, nil, debugOnFail, preflight) // local loop: no fork label
 }
 
-// parseLoopArgs pulls the --debug-on-fail (alias --debug) and --preflight/--no-preflight
-// flags out of `coop loop` args; what remains must be at most one agent name. preflight
-// defaults to def (COOP_PREFLIGHT) and the flags override it.
-func parseLoopArgs(args []string, def bool) (agent string, debugOnFail, preflight bool, err error) {
+// applyLoopModel pins the loop's model: an explicit --model wins, else COOP_LOOP_MODEL (the
+// loop-specific default — so overnight runs can grind on a cheaper model than interactive
+// sessions). With neither, nothing is pinned: each iteration rebuilds its command, so the
+// rotated profile's marked model (or the agent default) resolves lazily per iteration.
+// Shared by `coop loop` and the fork loops.
+func (a *app) applyLoopModel(agent, model string) {
+	if model == "" {
+		model = a.cfg.LoopModel
+	}
+	if model != "" {
+		a.cfg.SetActiveModel(agent, model)
+	}
+}
+
+// parseLoopArgs pulls the --model <m>, --debug-on-fail (alias --debug), and
+// --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
+// one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
+func parseLoopArgs(args []string, def bool) (agent, model string, debugOnFail, preflight bool, err error) {
 	preflight = def
 	var rest []string
-	for _, x := range args {
-		switch x {
+	for i := 0; i < len(args); i++ {
+		if v, n, ok, e := flagValue(args, i, "--model"); ok {
+			if e != nil {
+				return "", "", false, false, e
+			}
+			model = v
+			i += n - 1
+			continue
+		}
+		switch x := args[i]; x {
 		case "--debug-on-fail", "--debug":
 			debugOnFail = true
 		case "--preflight":
@@ -929,7 +1003,7 @@ func parseLoopArgs(args []string, def bool) (agent string, debugOnFail, prefligh
 		}
 	}
 	agent, err = loopAgent(rest)
-	return agent, debugOnFail, preflight, err
+	return agent, model, debugOnFail, preflight, err
 }
 
 // loopWorkPrompt and loopAuditPrompt name the queue dir(s) the iteration works as ABSOLUTE

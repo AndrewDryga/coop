@@ -9,10 +9,13 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// cleanCmdEnv unsets the per-agent command overrides so the defaults are exercised.
+// cleanCmdEnv unsets the per-agent command and model overrides so the defaults are exercised.
 func cleanCmdEnv(t *testing.T) {
 	t.Helper()
-	for _, e := range []string{"COOP_CLAUDE_CMD", "COOP_CODEX_CMD", "COOP_GEMINI_CMD"} {
+	for _, e := range []string{
+		"COOP_CLAUDE_CMD", "COOP_CODEX_CMD", "COOP_GEMINI_CMD",
+		"COOP_CLAUDE_MODEL", "COOP_CODEX_MODEL", "COOP_GEMINI_MODEL",
+	} {
 		if v, ok := os.LookupEnv(e); ok {
 			os.Unsetenv(e)
 			t.Cleanup(func() { os.Setenv(e, v) })
@@ -88,11 +91,77 @@ func TestCommands(t *testing.T) {
 		if got := a.Headless(cfg, "go"); !slices.Equal(got, c.headless) {
 			t.Errorf("%s Headless = %v", c.name, got)
 		}
-		if got := a.ACP(); !slices.Equal(got, c.acp) {
+		if got := a.ACP(cfg); !slices.Equal(got, c.acp) {
 			t.Errorf("%s ACP = %v", c.name, got)
 		}
 		if got := a.ConsultCmd("q"); !slices.Equal(got, c.csult) {
 			t.Errorf("%s ConsultCmd = %v", c.name, got)
+		}
+	}
+}
+
+// TestModelSelection: a resolved model rides every command form as a --model flag; a
+// COOP_<AGENT>_CMD that bakes its own --model stays authoritative (no duplicate, which
+// clap-based CLIs reject); and every agent answers Models() (non-empty menu for `coop models`).
+func TestModelSelection(t *testing.T) {
+	cleanCmdEnv(t)
+	cfg := &config.Config{}
+	cfg.SetActiveModel("claude", "opus")
+	cfg.SetActiveModel("codex", "gpt-5")
+	cfg.SetActiveModel("gemini", "gemini-2.5-pro")
+	cases := []struct {
+		name                 string
+		interactive, acp     []string
+		headlessHasModelFlag bool
+	}{
+		{"claude", []string{"claude", "--dangerously-skip-permissions", "--model", "opus"}, []string{"claude-agent-acp"}, true},
+		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5"}, []string{"codex-acp"}, true},
+		// gemini's ACP is its own binary, so the model rides the ACP command too.
+		{"gemini", []string{"gemini", "--yolo", "--model", "gemini-2.5-pro"}, []string{"gemini", "--acp", "--model", "gemini-2.5-pro"}, true},
+	}
+	for _, c := range cases {
+		a, _ := Get(c.name)
+		if got := a.Interactive(cfg); !slices.Equal(got, c.interactive) {
+			t.Errorf("%s Interactive with model = %v, want %v", c.name, got, c.interactive)
+		}
+		if got := a.ACP(cfg); !slices.Equal(got, c.acp) {
+			t.Errorf("%s ACP with model = %v, want %v", c.name, got, c.acp)
+		}
+		if got := a.Headless(cfg, "go"); hasModelFlag(got) != c.headlessHasModelFlag {
+			t.Errorf("%s Headless with model = %v, want a --model flag", c.name, got)
+		}
+		if len(a.Models()) == 0 {
+			t.Errorf("%s Models() is empty — `coop models` would show nothing", c.name)
+		}
+	}
+	// An env-var default (COOP_<AGENT>_MODEL) reaches base() the same way.
+	cfg2 := &config.Config{}
+	t.Setenv("COOP_CLAUDE_MODEL", "haiku")
+	a, _ := Get("claude")
+	want := []string{"claude", "--dangerously-skip-permissions", "--model", "haiku"}
+	if got := a.Interactive(cfg2); !slices.Equal(got, want) {
+		t.Errorf("claude Interactive with COOP_CLAUDE_MODEL = %v, want %v", got, want)
+	}
+	// A CMD override that already names a model wins — no second --model is appended.
+	t.Setenv("COOP_CLAUDE_CMD", "claude --model sonnet")
+	want = []string{"claude", "--model", "sonnet"}
+	if got := a.Interactive(cfg2); !slices.Equal(got, want) {
+		t.Errorf("claude Interactive with a baked --model = %v, want %v (no duplicate)", got, want)
+	}
+}
+
+func TestWithModel(t *testing.T) {
+	if got := withModel([]string{"claude"}, ""); !slices.Equal(got, []string{"claude"}) {
+		t.Errorf("empty model must be a no-op, got %v", got)
+	}
+	for _, baked := range [][]string{
+		{"codex", "--model", "x"},
+		{"codex", "--model=x"},
+		{"codex", "-m", "x"},
+		{"codex", "-m=x"},
+	} {
+		if got := withModel(baked, "y"); !slices.Equal(got, baked) {
+			t.Errorf("withModel(%v) must not append a duplicate, got %v", baked, got)
 		}
 	}
 }

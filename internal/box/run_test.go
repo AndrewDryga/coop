@@ -260,6 +260,36 @@ func TestInstructionPlan(t *testing.T) {
 	}
 }
 
+// TestModelEnvArgs: a scoped agent's resolved model is exported into the box — its own env
+// var (claude's ANTHROPIC_MODEL, for the flagless ACP adapter) always, and COOP_MODEL_<AGENT>
+// only on a fusion/consult run (where the coop-consult wrapper expands it into each peer's
+// --model). No resolved model → nothing exported; codex has no ModelEnv, so only the wrapper var.
+func TestModelEnvArgs(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+
+	// No model anywhere → no env args at all.
+	if got := modelEnvArgs(cfg, RunSpec{Homes: true, Agent: "claude"}, []string{"claude"}); got != nil {
+		t.Errorf("no model → no env args, got %v", got)
+	}
+
+	cfg.SetActiveModel("claude", "opus")
+	cfg.SetActiveModel("codex", "gpt-5")
+
+	// A plain run exports the agent's own env var but NOT the wrapper var (no consult wired).
+	got := modelEnvArgs(cfg, RunSpec{Homes: true, Agent: "claude"}, []string{"claude"})
+	if want := []string{"-e", "ANTHROPIC_MODEL=opus"}; !slices.Equal(got, want) {
+		t.Errorf("plain run env args = %v, want %v", got, want)
+	}
+
+	// A consult run exports the wrapper var per scoped agent too; codex (no ModelEnv) gets
+	// only the wrapper var.
+	got = modelEnvArgs(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude", "codex"})
+	want := []string{"-e", "ANTHROPIC_MODEL=opus", "-e", "COOP_MODEL_CLAUDE=opus", "-e", "COOP_MODEL_CODEX=gpt-5"}
+	if !slices.Equal(got, want) {
+		t.Errorf("consult run env args = %v, want %v", got, want)
+	}
+}
+
 // TestLeadInstructionMount: a consult lead is ALWAYS excluded from instructionPlan, so it must
 // still receive its base instructions here even with no authenticated peer — otherwise it would
 // run with none (no box env note, no INSTRUCTIONS.md). With a peer authed, the second-opinion

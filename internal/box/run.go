@@ -514,6 +514,32 @@ func appendROMounts(args []string, ms []extraMount) []string {
 	return args
 }
 
+// modelEnvArgs exports each scoped agent's resolved model into the box, two ways: the agent's
+// own model env var (ModelEnv, e.g. claude's ANTHROPIC_MODEL) so a flagless adapter binary
+// (claude-agent-acp) still honors the choice, and — only on a fusion/consult run, where the
+// coop-consult wrapper exists — COOP_MODEL_<AGENT>, which the wrapper expands into each
+// peer's --model flag. Agents with no resolved model export nothing (the CLI's own default
+// runs); the primary agent's command already carries --model, which beats its env var.
+func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
+	consults := spec.FusionGovernor != "" || spec.ConsultLead != ""
+	var args []string
+	for _, agent := range scope {
+		model := cfg.ModelFor(agent)
+		if model == "" {
+			continue
+		}
+		if ag, ok := agents.Get(agent); ok {
+			if env := ag.ModelEnv(); env != "" {
+				args = append(args, "-e", env+"="+model)
+			}
+		}
+		if consults {
+			args = append(args, "-e", "COOP_MODEL_"+strings.ToUpper(agent)+"="+model)
+		}
+	}
+	return args
+}
+
 // assembleArgs builds the full container-runtime argument list. It is pure given
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
@@ -547,9 +573,11 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 	if spec.Homes {
 		// Only the launched agent's credential home (plus authenticated peers for
 		// fusion/consult) — never every agent's, so a plain run can't read the others'.
-		for _, agent := range credentialScope(cfg, spec) {
+		scope := credentialScope(cfg, spec)
+		for _, agent := range scope {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
 		}
+		args = append(args, modelEnvArgs(cfg, spec, scope)...)
 		// Claude keeps its account + onboarding state in $CLAUDE_CONFIG_DIR — by
 		// default ~/.claude.json in $HOME, which the disposable box would lose,
 		// re-prompting login every run. Point it at the mounted ~/.claude dir so

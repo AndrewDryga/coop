@@ -74,8 +74,10 @@ func helpText(cfg *config.Config) string {
 	row("coop shell", "an interactive shell in the box")
 	row("coop login <agent> [--profile p]", "authenticate an agent (a profile = one subscription)")
 	row("coop profiles [agent]", "list stored credential profiles and which are signed in")
+	row("coop models [agent]", "list known models and what each profile runs")
 	row("coop acp [agent|fusion]", "serve as an ACP agent over stdio (for editors like Zed)")
 	row("coop <agent> --consult", "add a read-only second opinion from the other agents on a hard call")
+	row("coop <agent> --model <m>", "run on a chosen model (works on fusion/fork/loop/acp too)")
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
@@ -161,27 +163,54 @@ var commandHelp = map[string]string{
   repo's profiles when one is rate limited (see 'coop pool'). Without --profile
   the sign-in targets the default profile.`,
 
-	"profiles": `coop profiles [agent] — list stored credential profiles.
+	"profiles": `coop profiles — list credential profiles; a path grammar edits one.
 
-  Usage: coop profiles [claude|codex|gemini]
-         coop profiles default <agent> <profile>
-         coop profiles rm <agent> <profile>
+  Usage: coop profiles [agent [profile]]
+         coop profiles <agent> <profile> model [<model> | --clear]
+         coop profiles <agent> <profile> default
+         coop profiles <agent> <profile> rm
 
-  Shows each agent's profiles and whether they're signed in. A profile is one
-  subscription; add more with 'coop login <agent> --profile <name>', then let the
-  loop rotate across them on a rate limit ('coop pool').
+  Each token narrows: no args lists every agent, an agent lists its profiles
+  (signed in? default? marked model?), a profile shows its detail, and a trailing
+  attribute reads or writes one property of it. A profile is one subscription;
+  add more with 'coop login <agent> --profile <name>', then let the loop rotate
+  across them on a rate limit ('coop pool').
 
-  'coop profiles default <agent> <profile>' marks which profile an interactive run
-  (plain 'coop claude') uses — so the default is a mark you set, not whichever one
-  happens to be named "default".
-
-  'coop profiles rm <agent> <profile>' deletes a stored profile (its login token and
-  session history). Set a different default first if you're removing the marked one.
+  model [<m> | --clear]  the profile's default model — every run on that profile
+                         (interactive, loop, fork, consult peer) uses it unless
+                         --model overrides; bare 'model' prints the current mark.
+                         E.g. work on the big model, personal on a cheap one:
+                             coop profiles claude work model opus
+                             coop profiles claude personal model haiku
+                         See 'coop models' for the menu and the precedence.
+  default                mark this profile as what a plain 'coop <agent>' runs —
+                         a mark you set, not whichever is named "default".
+  rm                     delete the profile (its login token, session history,
+                         and model mark). Set a different default first if
+                         you're removing the marked one.
 
   Run on a specific profile without changing the default — works on any agent launch:
   'coop claude --profile <name>', 'coop fusion <agent> --profile <name>', and
   'coop acp <agent> --profile <name>' (so an editor entry can pin an account). An
   agent's own --profile goes after a --, e.g. 'coop codex -- --profile <name>'.`,
+
+	"models": `coop models [agent] — list known models and what each profile runs.
+
+  Usage: coop models [claude|codex|gemini]
+
+  A read-only view: each agent's known models (examples — model ids churn, so
+  ANY id the agent's CLI accepts works) and, per credential profile, the default
+  model marked for it. Mark one with 'coop profiles <agent> <profile> model
+  <model>' — the mark is a profile attribute, so profiles own the editing.
+
+  Pick per run instead with --model on any launch: 'coop claude --model fable',
+  'coop fusion claude --model opus', 'coop loop --model haiku',
+  'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
+
+  Precedence: --model flag > COOP_LOOP_MODEL (loop runs) > the profile's mark >
+  COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
+  agent CLI's own default. coop never validates a model id — a bad one fails in
+  the agent's own error.`,
 
 	"pool": `coop pool — which credential profiles this repo's loop rotates.
 
@@ -212,13 +241,16 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini] [args...]
+  Usage: coop fusion [claude|codex|gemini] [--model <m>] [args...]
 
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
   writes. Lighter, opt-in variant: coop <agent> --consult
 
+  --model picks the governor's model; each peer keeps its own default (its
+  profile's mark or COOP_<AGENT>_MODEL — see 'coop models').
+
   Like coop <agent>, it forwards extra args to the governor — a leading agent name
-  picks the governor; anything else (e.g. --model opus, or after a --) passes through.`,
+  picks the governor; anything else (or anything after a --) passes through.`,
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
 
@@ -235,9 +267,10 @@ var commandHelp = map[string]string{
 
   up and down take --prune (with optional --force) to prune in the same step.
 
-  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b]". Add profile= to
-  put a fork's loop on specific account(s) — give each fork a different one so they
-  run in parallel instead of contending for the same rate limit.
+  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b] [model=m]". Add
+  profile= to put a fork's loop on specific account(s) — give each fork a different
+  one so they run in parallel instead of contending for the same rate limit. Add
+  model= to pick that fork's model (see 'coop models').
 
   List forks: coop fork ls`,
 
@@ -282,11 +315,16 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--preflight] [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m>] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, an
   auditor re-checks every shipped task. On a rate limit it switches to another
   signed-in profile (see 'coop pool'), or waits out the reset when there's only one.
+
+  --model <m> pins the loop's model; COOP_LOOP_MODEL is its standing default —
+  so overnight runs can grind on a cheaper model than your interactive sessions.
+  With neither, each iteration uses the rotated profile's marked default
+  ('coop models'), then COOP_<AGENT>_MODEL.
 
   Ctrl-C is a soft stop: the current iteration finishes and commits, then the loop
   stops before claiming the next task. Press Ctrl-C again to stop now (tearing the

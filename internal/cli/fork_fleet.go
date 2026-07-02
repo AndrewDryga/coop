@@ -13,18 +13,20 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// fleetEntry is one fork in the declarative fleet: a name, the model to run it, the tasks tree
+// fleetEntry is one fork in the declarative fleet: a name, the agent to run it, the tasks tree
 // that seeds its loop, and optionally the credential profile(s) its loop rotates (so a fleet can
-// put each fork on its own account instead of all contending for the repo pool's first profile).
+// put each fork on its own account instead of all contending for the repo pool's first profile)
+// and the model it runs (so e.g. a risky fork gets the big model and a chore fork a cheap one).
 type fleetEntry struct {
 	name     string
 	agent    string
 	tasks    string
 	profiles []string
+	model    string
 }
 
 // fleetLineShape is the one-line grammar shown in fleet parse errors.
-const fleetLineShape = "<name> [agent] <tasks-path> [profile=a,b]"
+const fleetLineShape = "<name> [agent] <tasks-path> [profile=a,b] [model=m]"
 
 // fleetFile is the declarative fleet: .agent/fleet, one fork per line as
 // "<name> [agent] <tasks-path>" (agent defaults to claude; the tasks path is required
@@ -65,8 +67,12 @@ func parseFleet(data string) ([]fleetEntry, error) {
 				if e.profiles = parseProfileList(val); len(e.profiles) == 0 {
 					return nil, fmt.Errorf("fleet: %q — profile= needs a name or comma-separated list", e.name)
 				}
+			case "model":
+				if e.model = strings.TrimSpace(val); e.model == "" {
+					return nil, fmt.Errorf("fleet: %q — model= needs a model name", e.name)
+				}
 			default:
-				return nil, fmt.Errorf("fleet: %q — unknown option %q (known: profile=)", e.name, key)
+				return nil, fmt.Errorf("fleet: %q — unknown option %q (known: profile=, model=)", e.name, key)
 			}
 		}
 		if !validForkName(e.name) {
@@ -120,17 +126,19 @@ func (a *app) cmdFleet(args []string) (int, error) {
 }
 
 // fleetTemplate seeds .agent/fleet with a documented, ready-to-edit format.
-const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path> [profile=a,b]
+const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path> [profile=a,b] [model=m]
 #   <name>        the fork's name (also its git branch)
 #   [agent]       claude (default), codex, or gemini
 #   <tasks-path>  the task tree that seeds the fork's loop (a dir, relative to the repo)
 #   profile=a,b   optional: the credential profile(s) this fork's loop uses (rotated on a
 #                 rate limit). Give each fork a DIFFERENT account so they run in parallel
 #                 instead of all contending for the same one. Omit to share the repo pool.
+#   model=m       optional: the model this fork runs (see 'coop models'). Omit for the
+#                 profile's marked default / COOP_LOOP_MODEL / the agent's own default.
 # Blank lines and #-comments are ignored.  Start the fleet with: coop fleet up
 #
 # Example:
-# api    codex   .agent/tasks.api   profile=work
+# api    codex   .agent/tasks.api   profile=work       model=gpt-5-codex
 # deps   gemini  .agent/tasks.deps  profile=personal,backup
 `
 
@@ -204,6 +212,9 @@ func (a *app) fleetUp(args []string) (int, error) {
 		forkArgs := []string{e.name, e.agent, "--loop", "-d", "--tasks", tasks}
 		if len(e.profiles) > 0 {
 			forkArgs = append(forkArgs, "--profile", strings.Join(e.profiles, ","))
+		}
+		if e.model != "" {
+			forkArgs = append(forkArgs, "--model", e.model)
 		}
 		if code, err := a.cmdFork(forkArgs); err != nil {
 			return code, fleetAbortErr(e.name, err, started)

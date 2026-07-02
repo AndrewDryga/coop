@@ -21,7 +21,7 @@ func (geminiAgent) base(cfg *config.Config) []string {
 	if len(b) == 0 { // match codex's guard: an empty override must still yield a runnable command
 		b = []string{"gemini"}
 	}
-	return b
+	return withModel(b, cfg.ModelFor("gemini"))
 }
 
 func (a geminiAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
@@ -30,7 +30,10 @@ func (a geminiAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }
 
-func (geminiAgent) ACP() []string { return []string{"gemini", "--acp"} }
+// ACP is gemini's own binary, so the resolved model rides along as its normal --model flag.
+func (geminiAgent) ACP(cfg *config.Config) []string {
+	return withModel([]string{"gemini", "--acp"}, cfg.ModelFor("gemini"))
+}
 
 func (geminiAgent) PresetSessionID() bool { return true }
 
@@ -79,6 +82,15 @@ func (geminiAgent) ConsultCmd(question string) []string {
 const geminiCLIPackage = "@google/gemini-cli@latest"
 
 func (geminiAgent) Packages() []string { return []string{geminiCLIPackage} }
+
+// Models are common Gemini model ids. Illustrative — any id the CLI accepts works.
+func (geminiAgent) Models() []string {
+	return []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+}
+
+// ModelEnv: the Gemini CLI reads its default model from GEMINI_MODEL; the flag in base()
+// covers coop-driven runs, this covers anything that takes no flags.
+func (geminiAgent) ModelEnv() string { return "GEMINI_MODEL" }
 
 func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
 

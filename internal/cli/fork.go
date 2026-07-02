@@ -83,6 +83,7 @@ func forkHelp() (int, error) {
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
 		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
+		{"    --model", "model for this fork's agent (see 'coop models')"},
 		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
 		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
@@ -174,6 +175,7 @@ type forkArgs struct {
 	detach     bool
 	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
 	profiles   []string // --profile <a,b>: the credential profile(s) this fork uses (a loop rotates them)
+	model      string   // --model <m>: the model this fork's agent runs (beats profile/agent defaults)
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
 
@@ -223,6 +225,16 @@ func parseForkCreate(args []string) (forkArgs, error) {
 				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
 			}
 			fa.profiles = addProfiles(fa.profiles, list)
+		case x == "--model":
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
+				return fa, errors.New("coop fork --model needs a model name")
+			}
+			i++
+			fa.model = rest[i]
+		case strings.HasPrefix(x, "--model="):
+			if fa.model = strings.TrimPrefix(x, "--model="); fa.model == "" {
+				return fa, errors.New("coop fork --model needs a model name")
+			}
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true
@@ -311,11 +323,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.loop {
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, false)
 		}
 	}
 	// A single --profile pins this interactive session's credential profile.
@@ -324,6 +336,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 2, err
 		}
 	}
+	// --model pins this interactive session's model (after the remembered-agent resolution
+	// above, so it lands on the agent that actually runs).
+	a.selectRunModel(fa.agent, fa.model)
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
 	// run when no session for this fork exists. See forkLaunchCmd.
@@ -685,16 +700,23 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	consult, rest := extractConsult(rest)
+	// --model pins the fork's ACP session model, like `coop acp --model` (an editor entry
+	// can carry it); applied before acpCommand so gemini's own-binary adapter takes the flag.
+	model, rest, err := extractRunModel(rest)
+	if err != nil {
+		return 2, err
+	}
 	agent := agents.Default()
 	for _, x := range rest {
 		switch {
 		case agents.Valid(x):
 			agent = x
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [%s]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--model m]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
-	cmd, ok := acpCommand(agent)
+	a.selectRunModel(agent, model)
+	cmd, ok := acpCommand(a.cfg, agent)
 	if !ok {
 		return 2, errors.New("usage: coop fork <name> acp [claude|codex|gemini]")
 	}

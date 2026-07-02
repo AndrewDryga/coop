@@ -4,6 +4,36 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**
+  Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
+  --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp
+  claude --model sonnet`, and a fleet line's `model=` option. For standing defaults, mark a model
+  per credential profile with `coop profiles claude work model opus` (`--clear` unmarks; the mark
+  is a profile attribute, so `coop profiles` owns editing it and shows it) — e.g. the work
+  subscription always on the big model, the personal one on a cheap one; the loop's profile
+  rotation then switches models with the account. `COOP_<AGENT>_MODEL` sets an agent-wide default
+  and `COOP_LOOP_MODEL` a loop-only one (so overnight runs grind on a cheaper model than your
+  interactive sessions). `coop models [agent]` is the read-only roll-up: known models (examples —
+  any id the CLI accepts works; coop never validates one) and what each profile runs.
+
+- **`coop profiles` gained a path grammar** — each token narrows: `coop profiles` lists every
+  agent, `coop profiles claude` one agent, `coop profiles claude personal` shows that profile,
+  and a trailing attribute edits one property of it: `model [<m> | --clear]`, `default` (mark it
+  what a plain `coop claude` runs), `rm`. So profile edits read as a path — `coop profiles
+  claude personal model opus-4.8` — instead of a verb sandwich (`coop profiles default claude
+  default` read like a stutter). The old verb-first forms (`coop profiles default|rm <agent>
+  <profile>`) still work.
+
+  *How it reaches every feature.* The precedence is most-specific-first: `--model` ›
+  `COOP_LOOP_MODEL` (loop runs) › the profile's mark › `COOP_<AGENT>_MODEL` › a model baked into
+  `COOP_<AGENT>_CMD` › the agent CLI's own default. The resolved model rides each agent's command
+  as its native `--model` flag (interactive, headless loop iterations, fork session resume, the
+  fusion governor, gemini's ACP), is exported as the agent's own model env var for flagless
+  adapter binaries (claude-agent-acp reads `ANTHROPIC_MODEL`), and reaches fusion/consult *peers*
+  via `COOP_MODEL_<AGENT>` vars the `coop-consult` wrapper expands — so each peer answers on its
+  own configured model. One gap, by design: codex under ACP keeps reading its model from its own
+  `config.toml` (its adapter takes no flags and codex has no model env var).
+
 - **Fixed: a fork (or `coop <agent> --consult`) with only one agent signed in launched with no
   instructions at all.** The lead agent's global instruction file — its `CLAUDE.md` / `AGENTS.md` /
   `GEMINI.md`, carrying the box environment briefing and your shared `INSTRUCTIONS.md` — was

@@ -30,13 +30,14 @@ func init() { register(codexAgent{}) }
 func (codexAgent) Name() string { return "codex" }
 
 // base guards against an empty COOP_CODEX_CMD override, since the exec/resume forms
-// index base[0].
+// index base[0]. The resolved model rides in base as a trailing --model, which codex
+// accepts on its main command and under exec/resume alike.
 func (codexAgent) base(cfg *config.Config) []string {
 	b := cfg.Cmd("COOP_CODEX_CMD", "codex --dangerously-bypass-approvals-and-sandbox")
 	if len(b) == 0 {
 		b = []string{"codex"}
 	}
-	return b
+	return withModel(b, cfg.ModelFor("codex"))
 }
 
 func (a codexAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
@@ -47,7 +48,9 @@ func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(append([]string{b[0], "exec"}, b[1:]...), prompt)
 }
 
-func (codexAgent) ACP() []string { return []string{"codex-acp"} }
+// ACP is a separate adapter binary that takes no agent flags, and codex reads no model
+// env var — its model under ACP comes from its own config.toml.
+func (codexAgent) ACP(*config.Config) []string { return []string{"codex-acp"} }
 
 // PresetSessionID is false: codex has no flag to start a session under a caller-chosen
 // id (it mints its own UUIDv7), so coop allocates none and Resume scans instead.
@@ -82,6 +85,15 @@ func (codexAgent) ConsultCmd(question string) []string {
 func (codexAgent) Packages() []string {
 	return []string{codexCLIPackage, codexACPPackage}
 }
+
+// Models are common codex model ids. Illustrative — any id the CLI accepts works.
+func (codexAgent) Models() []string {
+	return []string{"gpt-5-codex", "gpt-5", "o4-mini"}
+}
+
+// ModelEnv: codex reads no model env var (its default lives in config.toml), so the
+// flag in base() is the only coop-driven path.
+func (codexAgent) ModelEnv() string { return "" }
 
 func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 

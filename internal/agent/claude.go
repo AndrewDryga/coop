@@ -15,13 +15,14 @@ func init() { register(claudeAgent{}) }
 
 func (claudeAgent) Name() string { return "claude" }
 
-// base is claude's command plus --mcp-config when a shared mcp.json exists — claude
-// reads it directly, where gemini/codex get generated config files.
+// base is claude's command plus the resolved model and --mcp-config when a shared
+// mcp.json exists — claude reads it directly, where gemini/codex get generated config files.
 func (claudeAgent) base(cfg *config.Config) []string {
 	cmd := cfg.Cmd("COOP_CLAUDE_CMD", "claude --dangerously-skip-permissions")
 	if len(cmd) == 0 { // an explicitly-empty override would otherwise yield a no-executable argv
 		cmd = []string{"claude"}
 	}
+	cmd = withModel(cmd, cfg.ModelFor("claude"))
 	if cfg.MCPActive() {
 		cmd = append(cmd, "--mcp-config", cfg.MCPInBox)
 	}
@@ -34,7 +35,9 @@ func (a claudeAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }
 
-func (claudeAgent) ACP() []string { return []string{"claude-agent-acp"} }
+// ACP is a separate adapter binary that takes no agent flags — the chosen model reaches
+// the claude it spawns via ModelEnv (ANTHROPIC_MODEL), which box.Run exports.
+func (claudeAgent) ACP(*config.Config) []string { return []string{"claude-agent-acp"} }
 
 func (claudeAgent) PresetSessionID() bool { return true }
 
@@ -77,6 +80,16 @@ const (
 func (claudeAgent) Packages() []string {
 	return []string{claudeCLIPackage, claudeACPPackage}
 }
+
+// Models are the stable Claude Code aliases (each resolves to that family's current
+// model), plus full ids as examples. Illustrative — any id the CLI accepts works.
+func (claudeAgent) Models() []string {
+	return []string{"fable", "opus", "sonnet", "haiku", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"}
+}
+
+// ModelEnv: Claude Code reads its default model from ANTHROPIC_MODEL — how the model
+// reaches the claude-agent-acp adapter (and any claude subprocess) that takes no flags.
+func (claudeAgent) ModelEnv() string { return "ANTHROPIC_MODEL" }
 
 func (claudeAgent) InstructionFile() string { return "CLAUDE.md" }
 

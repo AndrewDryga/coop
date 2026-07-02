@@ -136,6 +136,22 @@ func TestParseForkCreate(t *testing.T) {
 	}
 }
 
+// TestParseForkCreateModel: --model rides forkArgs in both forms; a bare --model errors.
+func TestParseForkCreateModel(t *testing.T) {
+	if fa, err := parseForkCreate([]string{"perf", "codex", "--model", "gpt-5"}); err != nil || fa.model != "gpt-5" {
+		t.Errorf("parseForkCreate --model = ({model:%q}, %v), want gpt-5", fa.model, err)
+	}
+	if fa, err := parseForkCreate([]string{"perf", "--model=opus", "--loop"}); err != nil || fa.model != "opus" {
+		t.Errorf("parseForkCreate --model= = ({model:%q}, %v), want opus", fa.model, err)
+	}
+	if _, err := parseForkCreate([]string{"perf", "--model"}); err == nil {
+		t.Error("parseForkCreate: a bare --model must error, not silently pick nothing")
+	}
+	if _, err := parseForkCreate([]string{"perf", "--model="}); err == nil {
+		t.Error("parseForkCreate: an empty --model= must error")
+	}
+}
+
 func TestForkRmSafe(t *testing.T) {
 	tests := []struct {
 		unmerged, dirty, force bool

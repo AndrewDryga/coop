@@ -39,7 +39,7 @@ It's the working tooling behind two write-ups:
 - [Install](#install) · [Happy path](#happy-path-5-commands) · [Quickstart](#quickstart) · [Command reference](#command-reference)
 - [The sandbox](#the-sandbox) — what's mounted · secrets shadowed · git identity · `coop doctor`
 - [Forks](#forks-hand-off-work-like-a-pr) — open · review · land work like a contractor's PR
-- [Agents & config](#agents--config) — authentication · instructions · MCP servers
+- [Agents & config](#agents--config) — authentication · profiles · models · instructions · MCP servers
 - [Fusion](#fusion-a-governed-council) — a council of models that argues before it commits
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · a fleet
@@ -163,6 +163,8 @@ any of them.
 | `coop shell` | a shell in the box, to look around |
 | `coop acp [agent\|fusion] [--supervise]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); `--supervise` keeps the editor connected across a box restart |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
+| `coop <any launch> --model <m>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
+| `coop models [agent]` | list known models and what each profile runs; mark one with `coop profiles <agent> <profile> model <m>` ([details](#picking-models)) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
 
@@ -182,7 +184,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--tasks <path>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
+| `coop loop [agent] [--tasks <path>] [--model <m>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 | `coop tasks watch` | live board of the task queue + any active forks, merged and deduped by id — in progress (with the fork that claimed it), todo, blocked (auto-exits when every task's done; Ctrl-C anytime) |
@@ -458,16 +460,56 @@ coop pool                              # show the pool (coop pool clear claude t
 ```
 
 Which profile a plain interactive `coop claude` uses is a mark you set, not a magic
-name — so you can name them all meaningfully:
+name — so you can name them all meaningfully. Profile properties are edited as a path
+(`coop profiles <agent> <profile> <attribute> [value]`):
 
 ```bash
-coop profiles default claude personal  # `coop claude` now runs on the personal account
+coop profiles claude personal default  # `coop claude` now runs on the personal account
 ```
 
 Profiles live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
 the repo, and only the active one is mounted into the box — so a running agent sees just
 the account it's using, not your whole vault. Switching accounts loses no work: each loop
 iteration is a fresh run, and the queue plus git carry the progress.
+
+### Picking models
+
+Every launch takes `--model` — pick the model per run, on any path:
+
+```bash
+coop claude --model opus               # one big-model interactive session
+coop fusion claude --model fable       # the governor's model (peers keep their own)
+coop loop --model haiku                # a cheap overnight grind
+coop fork risky claude --model opus    # a careful fork on the big model
+coop acp claude --model sonnet         # pin an editor entry's model
+```
+
+For standing defaults, mark them instead of retyping. A **profile** carries its own
+default model (it's a profile attribute, edited like the other profile marks) — so e.g.
+the work subscription always runs the big model and the personal one a cheap one, and
+the loop's profile rotation switches models with the account:
+
+```bash
+coop models                              # list known models + what each profile runs
+coop profiles claude work model opus     # every run on the work profile uses opus
+coop profiles claude personal model haiku
+coop profiles claude personal model --clear   # unmark (bare `model` prints the mark)
+```
+
+Two env/conf knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`)
+is the agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so
+unattended runs can grind on a cheaper model than your interactive sessions. In a fleet,
+give a fork its own with `model=` on its `.agent/fleet` line. Precedence, most specific
+first: `--model` › `COOP_LOOP_MODEL` (loop runs) › the profile's mark › `COOP_<AGENT>_MODEL`
+› a model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
+
+The chosen model reaches consult peers and fusion advisors too (each peer resolves its
+own default), and `coop loop`'s live view prints the model each iteration actually ran —
+the agent's own init report, so it's ground truth, not coop's guess. coop never validates
+a model id: `coop models` shows *examples*, ids churn, and whatever the agent CLI accepts
+works — a bad one fails loudly in the agent's own error. (One gap: codex under ACP reads
+its model from its own `config.toml`; its adapter takes no flags and codex has no model
+env var.)
 
 ### Instructions, one source of truth
 
@@ -713,13 +755,15 @@ agents until *review*, not generation, is your bottleneck.
 the first conflict or red gate, leaving the rest untouched.
 
 **Declare the fleet once** in `.agent/fleet` (run `coop fleet init` for a template with
-the format documented inline), one fork per line as `<name> [agent] <tasks-path>` (agent
-defaults to `claude`; the path is relative to the repo root):
+the format documented inline), one fork per line as
+`<name> [agent] <tasks-path> [profile=a,b] [model=m]` (agent defaults to `claude`; the
+path is relative to the repo root; `profile=` puts the fork's loop on its own account(s),
+`model=` on its own model):
 
 ```
-perf  codex  .agent/tasks.perf
+perf  codex  .agent/tasks.perf   profile=work  model=gpt-5-codex
 deps  gemini .agent/tasks.deps
-docs         .agent/tasks.docs
+docs         .agent/tasks.docs   model=haiku
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
@@ -911,6 +955,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 |---|---|---|
 | `COOP_CONFIG_DIR` | `~/.config/coop/agents` | per-agent auth + settings folder |
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
+| `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
 | `COOP_FUSION_GOVERNOR` | `codex` | default leader for `coop fusion` |
 | `COOP_CONSULT_TIMEOUT` | `1800` | per-peer `coop-consult` timeout in seconds; a peer that doesn't answer in time is skipped so the lead synthesizes from whoever did |
 | `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
@@ -924,6 +969,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_EDITOR` | (detected) | editor for `coop fork review --open` |
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
+| `COOP_LOOP_MODEL` | — | model for loop iterations (overnight runs on a cheaper model than interactive) |
 | `COOP_TASKS` | `.agent/tasks` | the loop's task-queue dir (also the `--tasks` flag; repeat `--tasks` to drain several) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 

@@ -19,28 +19,34 @@ func TestParseFleet(t *testing.T) {
 		"deps gemini .agent/tasks.deps\n" +
 		"docs .agent/tasks.docs\n" + // agent omitted → claude
 		"api codex .agent/tasks.api profile=work\n" + // per-fork single profile
-		"web .agent/tasks.web profile=work,personal\n\n" // agent omitted + per-fork pool
+		"web .agent/tasks.web profile=work,personal\n" + // agent omitted + per-fork pool
+		"big claude .agent/tasks.big profile=work model=opus\n\n" // per-fork model
 	got, err := parseFleet(in)
 	if err != nil {
 		t.Fatalf("parseFleet: %v", err)
 	}
 	want := []fleetEntry{
-		{"perf", "codex", ".agent/tasks.perf", nil},
-		{"deps", "gemini", ".agent/tasks.deps", nil},
-		{"docs", "claude", ".agent/tasks.docs", nil},
-		{"api", "codex", ".agent/tasks.api", []string{"work"}},
-		{"web", "claude", ".agent/tasks.web", []string{"work", "personal"}},
+		{"perf", "codex", ".agent/tasks.perf", nil, ""},
+		{"deps", "gemini", ".agent/tasks.deps", nil, ""},
+		{"docs", "claude", ".agent/tasks.docs", nil, ""},
+		{"api", "codex", ".agent/tasks.api", []string{"work"}, ""},
+		{"web", "claude", ".agent/tasks.web", []string{"work", "personal"}, ""},
+		{"big", "claude", ".agent/tasks.big", []string{"work"}, "opus"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleet = %v, want %v", got, want)
 	}
-	// An unknown key=value option is rejected (only profile= is known).
+	// An unknown key=value option is rejected (only profile=/model= are known).
 	if _, err := parseFleet("api codex q.md bogus=1"); err == nil {
 		t.Error("parseFleet: want error for an unknown option key")
 	}
 	// profile= with no value is rejected, not a silent empty pool.
 	if _, err := parseFleet("api codex q.md profile="); err == nil {
 		t.Error("parseFleet: want error for an empty profile= value")
+	}
+	// model= with no value is rejected too.
+	if _, err := parseFleet("api codex q.md model="); err == nil {
+		t.Error("parseFleet: want error for an empty model= value")
 	}
 	if _, err := parseFleet("perf"); err == nil {
 		t.Error("parseFleet: want error when the tasks path is missing")
