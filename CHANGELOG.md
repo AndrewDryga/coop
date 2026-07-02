@@ -19,7 +19,8 @@
   And the pattern now runs unattended: **`coop loop --consult`** (and
   `coop fork <name> <agent> --loop --consult`) opts every iteration into peer consultation — the
   box mounts the authed peers' credentials and the `coop-consult` wrapper, so a headless lead can
-  get second opinions on hard calls. Off by default, since it widens each iteration's credential
+  get second opinions on hard calls. A fleet opts in per fork with **`consult=1`** on its
+  `.agent/fleet` line. Off by default everywhere, since it widens each iteration's credential
   scope to the authed peers.
 
 - **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**

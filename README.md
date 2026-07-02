@@ -541,9 +541,10 @@ coop claude --consult                                # run it; --consult mounts 
 The same arrangement runs unattended: `coop loop --model claude-fable-5 --consult`
 makes every iteration orchestrate this way — the pinned subagents ride along in the
 repo, and `--consult` mounts the peers into each iteration's box (fork loops take it
-too: `coop fork <name> claude --loop --consult`). Prefer `coop-consult` over vendor
-cross-agent plugins in the box: nothing to install, peers stay read-only (one writer
-per tree), and the credential scoping is already handled.
+too: `coop fork <name> claude --loop --consult`, and a fleet line opts in with
+`consult=1`). Prefer `coop-consult` over vendor cross-agent plugins in the box:
+nothing to install, peers stay read-only (one writer per tree), and the credential
+scoping is already handled.
 
 ### Instructions, one source of truth
 
@@ -790,14 +791,16 @@ the first conflict or red gate, leaving the rest untouched.
 
 **Declare the fleet once** in `.agent/fleet` (run `coop fleet init` for a template with
 the format documented inline), one fork per line as
-`<name> [agent] <tasks-path> [profile=a,b] [model=m]` (agent defaults to `claude`; the
-path is relative to the repo root; `profile=` puts the fork's loop on its own account(s),
-`model=` on its own model):
+`<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]` (agent defaults to
+`claude`; the path is relative to the repo root; `profile=` puts the fork's loop on its
+own account(s), `model=` on its own model, and `consult=1` lets its iterations ask the
+[peer agents](#the-orchestrator-pattern) read-only, like `coop loop --consult`):
 
 ```
 perf  codex  .agent/tasks.perf   profile=work  model=gpt-5-codex
 deps  gemini .agent/tasks.deps
 docs         .agent/tasks.docs   model=haiku
+core  claude .agent/tasks.core   model=claude-fable-5  consult=1
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and

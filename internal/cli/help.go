@@ -267,10 +267,11 @@ var commandHelp = map[string]string{
 
   up and down take --prune (with optional --force) to prune in the same step.
 
-  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b] [model=m]". Add
-  profile= to put a fork's loop on specific account(s) — give each fork a different
+  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]".
+  Add profile= to put a fork's loop on specific account(s) — give each fork a different
   one so they run in parallel instead of contending for the same rate limit. Add
-  model= to pick that fork's model (see 'coop models').
+  model= to pick that fork's model (see 'coop models'), and consult=1 to let its
+  iterations ask the other signed-in agents read-only (like coop loop --consult).
 
   List forks: coop fork ls`,
 
