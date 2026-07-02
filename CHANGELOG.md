@@ -13,6 +13,11 @@
   bubblewrap). The lead now always receives its base instructions; the read-only consult directive
   is still added only when a peer is actually signed in.
 
+- **Fixed: an unrelated number containing `429` could stall the loop as if rate limited.** The
+  loop's rate-limit detector matched the bare substring `429`, so a failed iteration whose output
+  happened to contain e.g. `1429 files` was treated as an HTTP 429 and made the loop wait. It now
+  matches the status only as a standalone `429`.
+
 - **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
   on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
   loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C

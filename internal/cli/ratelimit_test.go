@@ -52,6 +52,8 @@ func TestDetectLimit(t *testing.T) {
 			"flipped [x], committed abc123, done", false, time.Time{}},
 		{"unrelated failure",
 			"Error: file not found: foo.go", false, time.Time{}},
+		{"429 inside a larger number is not a limit",
+			"build failed: 1429 files scanned, exit 1", false, time.Time{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

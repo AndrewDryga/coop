@@ -35,8 +35,13 @@ var (
 	// Broad markers with no parseable reset — a limit we should back off from.
 	limitMarkers = []string{
 		"usage limit", "rate limit", "rate-limit", "rate limited",
-		"ratelimited", "overloaded", "quota", "429",
+		"ratelimited", "overloaded", "quota",
 	}
+	// The HTTP 429 status, matched with word boundaries. A bare Contains(lower, "429") also
+	// matched an unrelated number an agent happened to print — a line count ("1429 files"), a
+	// byte offset, a hash fragment ("…429…") — turning an ordinary failed iteration into a
+	// rate-limit wait. \b429\b fires only on the standalone status a real 429 is reported as.
+	status429Re = regexp.MustCompile(`\b429\b`)
 )
 
 // detectLimit inspects an iteration's captured output for a model rate/usage
@@ -89,6 +94,9 @@ func detectLimit(output string, now time.Time) limitHint {
 		if strings.Contains(lower, mark) {
 			return limitHint{limited: true}
 		}
+	}
+	if status429Re.MatchString(lower) {
+		return limitHint{limited: true}
 	}
 	return limitHint{}
 }
