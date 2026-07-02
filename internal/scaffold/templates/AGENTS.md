@@ -23,7 +23,7 @@
 `<format-check> && <build --warnings-as-errors> && <tests>`
 
 ## The contract
-- A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change — use `coop tasks`, never a manual `mv`. There is no status field and no fifth state.
+- A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.
 - **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. Anything not ready to work belongs in `BACKLOG.md`, never as a task folder.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
 - `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why). The folder move is local — the queue is gitignored working state, not part of the commit.
