@@ -12,6 +12,32 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+// The loop's closing banner must not claim "verified done" when the audit reopened work — which it
+// does by moving done tasks back into 10_in_progress/, not 00_todo/. Regression: the check looked at
+// 00_todo/ only, so a reopened task in in_progress fell through to the green "verified done".
+func TestLoopClosingBanner(t *testing.T) {
+	// Reopened INTO in_progress (the bug): not done, and names the count.
+	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "audit reopened") ||
+		!strings.Contains(b, "3 tasks") || strings.Contains(b, "verified done") {
+		t.Errorf("reopened-into-in_progress banner = %q", b)
+	}
+	// Reopened into todo: same outcome, singular count.
+	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "audit reopened") ||
+		!strings.Contains(b, "1 task") || strings.Contains(b, "verified done") {
+		t.Errorf("reopened-into-todo banner = %q", b)
+	}
+	// Nothing reopened, some blocked on a decision: not done.
+	if b := loopClosingBanner(taskCounts{Done: 3, Blocked: 2}, 3); !strings.Contains(b, "blocked on a decision") ||
+		strings.Contains(b, "verified done") {
+		t.Errorf("blocked banner = %q", b)
+	}
+	// Clean audit: verified done, unchanged.
+	if b := loopClosingBanner(taskCounts{Done: 5}, 5); !strings.Contains(b, "queue verified done") ||
+		!strings.Contains(b, "5/5") {
+		t.Errorf("clean banner = %q", b)
+	}
+}
+
 // The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
 // read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fleet forks
 // unable to read their own queue (claude resolved it against cwd and was fine).

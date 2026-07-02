@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop` no longer reports "queue verified done" when the audit reopened work.** The
+  end-of-run audit reopens failed done tasks by moving them into `10_in_progress/`, but the closing
+  banner checked `00_todo/` only — so it printed a green "verified done" over a queue that still had
+  reopened work, and an unattended user (or a wrapper keying off the message) walked away. It now
+  counts everything actionable and prints `⚠ audit reopened N task(s) — run 'coop loop' to work them`.
+
 - **`coop tasks path <id>` prints a task's resolved folder.** The companion to `coop fork path`:
   resolve a task by id or slug fragment and print its directory, so `cat "$(coop tasks path
   <id>)/task.md"` works from a shell or hook instead of hunting the four state dirs by hand. It

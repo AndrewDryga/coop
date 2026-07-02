@@ -1082,14 +1082,6 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
 	}
-	anyTodo := func() bool {
-		for _, h := range hosts {
-			if queueHasTodo(h) {
-				return true
-			}
-		}
-		return false
-	}
 	// A queue is a directory (.agent/tasks), so check for one with isTaskDir — fileExists is
 	// false for a directory and used to reject every folder queue, so the loop never ran.
 	if !slices.ContainsFunc(hosts, isTaskDir) {
@@ -1262,23 +1254,36 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		ui.Info("queue empty — running audit pass")
 		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(audit), hosts, sink, consult)
 	}
-	if anyTodo() {
-		ui.Info("audit reopened items — run 'coop loop' again")
-	} else if cf, _ := queueProgress(hosts); cf.Blocked > 0 {
-		// The loop stops when nothing is actionable (todo+in_progress empty), but tasks parked in
-		// 50_blocked/ on a human decision are NOT done — don't report success.
-		fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf(
+	// Re-read the queue AFTER the audit: it may have reopened done tasks into 10_in_progress/. The
+	// audit runs only once the work loop drained the queue, so anything now actionable was reopened
+	// just now — the banner must not claim success. (The old check saw 00_todo/ only and missed
+	// reopens, which land in 10_in_progress/.)
+	cf, _ := queueProgress(hosts)
+	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
+	return 0, nil
+}
+
+// loopClosingBanner picks the loop's final line from the post-audit queue counts: reopened work
+// (todo, or reopened into in_progress) and tasks blocked on a human decision are NOT "done", so only
+// a truly drained queue earns the green "verified done". Pure, so the outcomes are unit-tested
+// without running the loop.
+func loopClosingBanner(cf taskCounts, completed int) string {
+	switch {
+	case cf.Todo+cf.Doing > 0:
+		return ui.Bold(ui.Yellow(fmt.Sprintf(
+			"⚠ audit reopened %s — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
+	case cf.Blocked > 0:
+		// Tasks parked in 50_blocked/ on a human decision are NOT done — don't report success.
+		return ui.Bold(ui.Yellow(fmt.Sprintf(
 			"stopped — %d/%d done, %d blocked on a decision; resolve them (coop tasks decisions), then re-run",
-			cf.Done, cf.total(), cf.Blocked))))
-	} else {
-		cf, _ := queueProgress(hosts)
+			cf.Done, cf.total(), cf.Blocked)))
+	default:
 		msg := fmt.Sprintf("✓ queue verified done — %d/%d", cf.Done, cf.total())
 		if completed > 0 {
 			msg += fmt.Sprintf(" in %d iterations", completed)
 		}
-		fmt.Fprintln(os.Stderr, ui.Bold(ui.Green(msg)))
+		return ui.Bold(ui.Green(msg))
 	}
-	return 0, nil
 }
 
 // debugShell opens an interactive shell in the box against the same repo/image as the
