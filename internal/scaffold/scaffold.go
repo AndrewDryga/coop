@@ -53,6 +53,12 @@ func Init(repo, stack string, gateLangs []string) error {
 		{filepath.Join(repo, ".agent", "BACKLOG.md"), "templates/agent/BACKLOG.md", 0o644},
 		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
 		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
+		// Starter subagents for the orchestrator pattern: the lead delegates reasoning-heavy
+		// phases to an Opus-pinned specialist and mechanical work to a Sonnet-pinned one, so
+		// the big model's tokens go to planning and synthesis. Native Claude Code files — the
+		// description frontmatter routes delegation, so they're inert until a task fits.
+		{filepath.Join(repo, ".claude", "agents", "deep-reasoner.md"), "templates/claude/agents/deep-reasoner.md", 0o644},
+		{filepath.Join(repo, ".claude", "agents", "fast-worker.md"), "templates/claude/agents/fast-worker.md", 0o644},
 		// commit-gate.sh is generated per-stack in installGitHooks, not copied verbatim.
 	}
 	for _, f := range files {

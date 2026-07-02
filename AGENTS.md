@@ -19,6 +19,21 @@
 - **Keep writes serialized in this checkout.** Native workers are for thinking unless the runtime proves they have separate workspaces. Never let two workers edit the same checkout at once.
 - **Use real capabilities only.** If a named feature does not exist in your runtime, do the closest safe thing with the tools you actually have; do not invent slash commands, tools, or worker APIs.
 
+## Orchestration — spend the big model where it matters
+When you lead a session here, you orchestrate: plan, decompose, synthesize, make the final
+calls, and keep your own context lean by delegating. Route by the nature of the work:
+- **deep-reasoner** (`.claude/agents/`, pinned to Opus) — reasoning-heavy phases: architecture
+  calls, complex or intermittent bugs, algorithm design. It returns a conclusion; you act on it.
+- **fast-worker** (pinned to Sonnet) — mechanical, fully-specified work: boilerplate, repetitive
+  edits, test scaffolding, formatting.
+- **codex and gemini are peer engineers, not reviewers** — different training, different blind
+  spots. When the session has `coop-consult` on PATH (a `--consult` or fusion box), ask them
+  read-only with a self-contained prompt: `coop-consult codex --fresh "…"` /
+  `coop-consult gemini --fresh "…"`. Without it, skip peers — don't improvise a substitute.
+- **High-stakes decisions:** task deep-reasoner AND a peer on the same problem in parallel,
+  without showing either the other's answer, then synthesize the best of both.
+The single-writer rule above still holds: advisors and peers think; you edit, gate, and commit.
+
 ## The gate (adapt to this repo)
 `<format-check> && <build --warnings-as-errors> && <tests>`
 

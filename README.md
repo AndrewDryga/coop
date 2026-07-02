@@ -194,7 +194,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills (and optionally a toolchain) |
+| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and [starter subagents](#the-orchestrator-pattern) (and optionally a toolchain) |
 | `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [self-update coop + rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
@@ -513,6 +513,36 @@ a model id: `coop models` shows *examples*, ids churn, and whatever the agent CL
 works — a bad one fails loudly in the agent's own error. (One gap: codex under ACP reads
 its model from its own `config.toml`; its adapter takes no flags and codex has no model
 env var.)
+
+### The orchestrator pattern
+
+Put your strongest model in charge and let it spend the cheap tokens: the lead plans,
+decomposes, and synthesizes, while pinned subagents execute and cross-vendor peers give
+independent opinions. Everything below composes from pieces coop already has — no plugins.
+
+```bash
+coop profiles claude personal model claude-fable-5   # the lead's standing model
+coop claude --consult                                # run it; --consult mounts the peers
+```
+
+- **Tiered subagents** — `coop init` scaffolds `.claude/agents/deep-reasoner.md` (pinned
+  to Opus: architecture, complex debugging, algorithm design) and `fast-worker.md`
+  (pinned to Sonnet: boilerplate, tests, mechanical edits). They're native Claude Code
+  subagents: the lead auto-delegates on their descriptions, each turn bills at *its*
+  model, and the lead's context stays lean. Commit them; edit them freely.
+- **Peer engineers, not reviewers** — with `--consult` (or fusion), the lead can ask
+  codex and gemini read-only via `coop-consult <peer>`: different training, different
+  blind spots. **The `--consult` flag matters** — a plain `coop claude` deliberately
+  doesn't mount peer credentials, so peers only answer in a consult/fusion box.
+- **High-stakes calls** — task deep-reasoner *and* a peer on the same problem in
+  parallel, without showing either the other's answer, then synthesize. (This is the
+  move coop's fusion directive already teaches its governor.)
+
+The same arrangement runs unattended: `coop loop --model claude-fable-5` makes every
+iteration orchestrate this way, and the committed subagents ride along into forks and
+fleets. Prefer `coop-consult` over vendor cross-agent plugins in the box: nothing to
+install, peers stay read-only (one writer per tree), and the credential scoping is
+already handled.
 
 ### Instructions, one source of truth
 

@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The orchestrator pattern, scaffolded and documented.** `coop init` now writes two starter
+  subagents alongside the skills: `.claude/agents/deep-reasoner.md` (pinned to Opus — reasoning-heavy
+  phases: architecture, complex debugging, algorithm design) and `.claude/agents/fast-worker.md`
+  (pinned to Sonnet — mechanical, fully-specified work). They're native Claude Code subagents whose
+  descriptions route delegation automatically, so a lead running on a bigger model (`coop claude
+  --model claude-fable-5 --consult`) spends its own tokens on planning and synthesis while each
+  delegated turn bills at the subagent's cheaper model. The README's new "orchestrator pattern"
+  recipe ties it together with the existing pieces: per-profile model marks for the lead, and
+  codex/gemini as read-only peer engineers via `coop-consult` under `--consult`/fusion — including
+  the gotcha that a plain run deliberately doesn't mount peer credentials, so peers only answer in
+  a consult/fusion box. Existing files are never clobbered; edit the subagents freely.
+
 - **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**
   Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
   --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp

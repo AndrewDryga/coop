@@ -128,6 +128,7 @@ func TestInit(t *testing.T) {
 	for _, rel := range []string{
 		"AGENTS.md", ".agent/tasks/README.md", ".agent/BACKLOG.md",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
+		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
 		".githooks/pre-commit",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
@@ -137,6 +138,19 @@ func TestInit(t *testing.T) {
 		}
 		if fi.Size() == 0 {
 			t.Errorf("%s is empty", rel)
+		}
+	}
+
+	// The starter subagents carry the model tiering that is their whole point — the reasoning
+	// specialist pinned to Opus, the mechanical worker to Sonnet — via Claude Code's native
+	// frontmatter, so a lead on a bigger model spends its tokens on planning and synthesis.
+	for rel, model := range map[string]string{
+		".claude/agents/deep-reasoner.md": "model: opus",
+		".claude/agents/fast-worker.md":   "model: sonnet",
+	} {
+		data, _ := os.ReadFile(filepath.Join(repo, rel))
+		if !strings.Contains(string(data), model) {
+			t.Errorf("%s missing its %q pin:\n%s", rel, model, data)
 		}
 	}
 

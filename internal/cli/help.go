@@ -102,7 +102,7 @@ func helpText(cfg *config.Config) string {
 	row("coop tasks decisions", "show what's blocked on a human decision (-i to answer them)")
 
 	group("SETUP & MAINTENANCE")
-	row("coop init [--stack asdf]", "scaffold the queue, hooks, and skills")
+	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, and starter subagents")
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box image fresh (latest base + agents)")
 	// `coop up`/`down` act on this repo's compose.agent.yml — name its real services, and dim the
@@ -360,8 +360,12 @@ var commandHelp = map[string]string{
 
   Usage: coop init [--stack asdf] [--services postgres,redis]
 
-  Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, and the
-  workflow skills. The commit hooks' format gate matches the repo's stack —
+  Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, the
+  workflow skills, and two starter subagents for the orchestrator pattern —
+  .claude/agents/deep-reasoner.md (pinned to Opus, for reasoning-heavy phases)
+  and fast-worker.md (pinned to Sonnet, for mechanical work) — so a lead on a
+  bigger model spends its tokens on planning and synthesis (see the README's
+  "orchestrator pattern"). The commit hooks' format gate matches the repo's stack —
   detected from go.mod / *.tf / mix.exs / Cargo.toml or .tool-versions (gofmt,
   terraform fmt, mix format, cargo fmt). With nothing detected the gate is left
   neutral (it imposes no checks); at a terminal it asks which gate to add. A
