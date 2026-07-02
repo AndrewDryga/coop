@@ -1032,15 +1032,16 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		}
 		return cmd
 	}
-	// Soft interrupt for a foreground, non-fork loop: the first Ctrl-C finishes the current
-	// iteration then stops before the next; a second stops now (tears the box down). A detached
-	// fork has no stdin tty and is stopped by `coop fork stop` (SIGTERM), so it never installs
-	// this — and we watch SIGINT ONLY, leaving that SIGTERM teardown untouched. iterCtx stays nil
-	// otherwise, so every non-foreground run keeps the plain, uninterruptible box.
+	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
+	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
+	// stops before the next; a second stops now (tears the box down). A DETACHED fork worker has
+	// no stdin tty (its stdin is /dev/null) and is stopped by `coop fork stop` (SIGTERM), so the
+	// tty check below leaves it out — it keeps the plain, uninterruptible box and that SIGTERM
+	// teardown is untouched. We watch SIGINT only. iterCtx stays nil otherwise.
 	var softStop atomic.Bool
 	wake := make(chan struct{}) // closed on the first Ctrl-C so any in-progress wait returns at once
 	var iterCtx context.Context
-	if forkName == "" && ui.IsTerminal(os.Stdin) {
+	if ui.IsTerminal(os.Stdin) {
 		ctx, cancel := context.WithCancel(context.Background())
 		iterCtx = ctx
 		defer cancel()

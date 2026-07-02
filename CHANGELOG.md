@@ -18,6 +18,12 @@
   happened to contain e.g. `1429 files` was treated as an HTTP 429 and made the loop wait. It now
   matches the status only as a standalone `429`.
 
+- **A foreground `coop fork <name> --loop` now gets the same Ctrl-C soft stop as `coop loop`.**
+  The graceful-stop handler was gated to exclude every fork, though its rationale only covered
+  *detached* workers (which have no terminal); a foreground fork loop was hard-killed mid-iteration.
+  It's now keyed on owning a terminal, so a foreground fork loop finishes the current task then
+  stops, while the detached worker (stdin is `/dev/null`) is still left to `coop fork stop`.
+
 - **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
   on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
   loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C
