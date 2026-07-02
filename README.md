@@ -720,6 +720,11 @@ to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whol
 command if you need something custom. When the queue empties, a fresh auditor re-checks
 every task in `99_done/` against the git log and reopens anything that doesn't hold up.
 
+**Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
+queue is verified done (or the audit reopened work — run `coop loop` again); `1` a failure; `2` a
+usage error; `3` the loop stopped with a task blocked on a human decision (resolve with `coop tasks
+decisions`, then re-run).
+
 Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
 starts working: it unblocks any `50_blocked/` task whose `decision.md` now has an answer —
 so a fresh run starts from a tidy queue. It works no

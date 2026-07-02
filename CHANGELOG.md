@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **BREAKING — `coop loop` exits 3 when it stops with work blocked on a human decision.** Every loop
+  outcome used to exit 0, so cron/fleet/CI couldn't tell "queue drained" from "stalled on a blocked
+  task" without scraping stderr. The exit contract is now `0` verified done (or the audit reopened
+  work — re-run); `1` failure; `2` usage; `3` stopped with a task in `50_blocked/` and nothing else
+  actionable. A script that treated any non-zero loop exit as failure should special-case 3.
+
 - **Stdout views stay clean when piped.** `coop help`, a command's `--help` page, `coop profiles`,
   `coop models`, `coop fork ls`, and `coop loop pool` colored their output through the stderr-gated
   helpers, so `coop profiles | grep` or `coop fork ls | wc -l` from an interactive shell received raw

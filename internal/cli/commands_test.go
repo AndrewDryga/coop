@@ -38,6 +38,25 @@ func TestLoopClosingBanner(t *testing.T) {
 	}
 }
 
+// The loop's exit code lets cron/fleet/CI branch without parsing stderr: 3 iff it stopped with work
+// blocked on a human decision and nothing else actionable; 0 for verified-done and audit-reopened.
+func TestLoopExitCode(t *testing.T) {
+	cases := []struct {
+		cf   taskCounts
+		want int
+	}{
+		{taskCounts{Done: 3, Blocked: 2}, 3}, // blocked, nothing actionable → 3
+		{taskCounts{Done: 5}, 0},             // verified done → 0
+		{taskCounts{Done: 3, Doing: 1}, 0},   // audit reopened into in_progress → 0 by design
+		{taskCounts{Todo: 2, Blocked: 1}, 0}, // still actionable → 0, not 3
+	}
+	for _, c := range cases {
+		if got := loopExitCode(c.cf); got != c.want {
+			t.Errorf("loopExitCode(%+v) = %d, want %d", c.cf, got, c.want)
+		}
+	}
+}
+
 // The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
 // read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fleet forks
 // unable to read their own queue (claude resolved it against cwd and was fine).

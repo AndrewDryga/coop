@@ -1260,7 +1260,19 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	// reopens, which land in 10_in_progress/.)
 	cf, _ := queueProgress(hosts)
 	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
-	return 0, nil
+	return loopExitCode(cf), nil
+}
+
+// loopExitCode is the machine-readable companion to loopClosingBanner so cron/fleet/CI can branch on
+// the loop's outcome without parsing stderr prose: 3 when the loop stopped with work blocked on a
+// human decision and nothing else actionable, 0 otherwise — verified done, or an audit reopen, which
+// stays 0 by design (see the reopened-banner task). Failures (1) and usage errors (2) surface from
+// their own call sites, not here.
+func loopExitCode(cf taskCounts) int {
+	if cf.Todo+cf.Doing == 0 && cf.Blocked > 0 {
+		return 3
+	}
+	return 0
 }
 
 // loopClosingBanner picks the loop's final line from the post-audit queue counts: reopened work

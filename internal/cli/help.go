@@ -358,6 +358,10 @@ var commandHelp = map[string]string{
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 
+  Exit codes: 0 = queue verified done (or the audit reopened work — re-run); 1 = failure;
+  2 = usage; 3 = stopped with a task blocked on a human decision (resolve with
+  'coop tasks decisions', then re-run). So cron/CI can branch without parsing output.
+
   COOP_LOOP_CMD overrides the per-iteration command.`,
 
 	"up": `coop up — start the repo's sibling services so the box can reach them by name.
