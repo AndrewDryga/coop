@@ -83,5 +83,5 @@ Outputs: `favicon.svg` (primary), `favicon.ico` (16/32/48), `apple-touch-icon.pn
 (180), `icon-192/512.png` + `icon-maskable-512.png` (PWA), and `og-image.png`
 (1200×630, used for both Open Graph and Twitter). The `<head>` of each page wires
 these up alongside canonical, Open Graph, Twitter-card, and JSON-LD tags; edit the
-canonical/`og:url` base if the site ever moves off `andrewdryga.github.io/coop/`.
+canonical/`og:url` base (and `site/CNAME`) if the site ever moves off `coop.dryga.com`.
 
