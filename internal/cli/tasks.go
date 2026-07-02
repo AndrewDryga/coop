@@ -104,7 +104,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		case "claim", "start", "block", "unblock", "done", "path", "rm", "remove":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
-			return groupHelp("tasks")
+			return tasksListAll(repo, rels)
 		default:
 			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (ls, lint, decisions, and the id commands span all %d configured queues)", sub, len(rels))
 		}

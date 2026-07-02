@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Bare `coop tasks` now lists the queue.** It printed the help page, yet the docs, MIGRATING
+  guide, scaffold templates, and its own error strings all call bare `coop tasks` "the listing." It
+  now lists (like `coop profiles`); `coop tasks --help` (or `coop tasks help`) still shows the
+  reference.
+
 - **`:d` in `coop tasks decisions -i` marks a task done.** When a blocked decision's real answer is
   "already handled," you no longer have to answer → unblock → claim → done: type `:d` (or `:d
   <reason>` to record why in `decision.md`) to move the task straight to `99_done/`. The walker's key

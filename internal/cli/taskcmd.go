@@ -80,7 +80,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	}
 	switch sub {
 	case "":
-		return groupHelp("tasks") // bare `coop tasks` shows help, not an error (see rule)
+		return tasksFolderList(root, false) // bare `coop tasks` lists the queue (a useful default view; see rule)
 	case "ls", "list":
 		return tasksFolderList(root, slices.Contains(args, "--all"))
 	case "lint":

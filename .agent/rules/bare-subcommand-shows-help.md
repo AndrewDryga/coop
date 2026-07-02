@@ -15,7 +15,7 @@ Bare `coop` prints help; a bare group should match that.
   for a non-empty, unrecognized token.
 - A group that has a *useful default view* may show that instead of help — the
   invariant is "never the empty-token error," not "always help." Current sweep:
-  `tasks`, `fleet` → help; `pool` → shows the pool; `profiles` → lists profiles;
+  `fleet` → help; `pool` → shows the pool; `profiles` and `tasks` → list their queue;
   `fork` → `forkHelp`. None emits the empty-token error.
 - Not easily lintable (it needs flow analysis of each dispatcher), so this stays a
   reviewed rule; check it whenever you add or touch a subcommand group.
