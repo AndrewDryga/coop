@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Security — fork commands reject a name that escapes the forks directory.** `coop fork rm ..`
+  `filepath.Join`-cleaned the name before deleting, so `..` resolved to the parent of all your
+  projects and `os.RemoveAll` wiped it — a live, unrecoverable data-loss bug. Every name-taking
+  fork verb (`rm`, `stop`, `open`, `logs`, `review`, `path`, `merge`, and `--fresh`) now validates
+  the name up front and refuses anything that isn't a single safe path segment.
+
 - **The rotation pool lives under the loop: `coop loop pool add|rm|clear`.** The pool is a
   *setting* of the loop (which subscriptions it rotates on a rate limit), not a workflow of its
   own, so it no longer sits beside `coop loop` as a top-level command. Same verbs, same storage;

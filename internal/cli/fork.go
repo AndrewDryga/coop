@@ -625,6 +625,9 @@ func (a *app) forkReview(args []string) (int, error) {
 	if name == "" {
 		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open]")
 	}
+	if !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -843,6 +846,9 @@ func (a *app) forkRm(args []string) (int, error) {
 	if name == "" {
 		return 2, errors.New("usage: coop fork rm <name> [--force]")
 	}
+	if !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -879,13 +885,17 @@ func (a *app) forkPath(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
 		return 2, errors.New("usage: coop fork path <name>")
 	}
+	name := args[0]
+	if !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, args[0])
+	ws := forkWorkspace(repo, name)
 	if !pathExists(ws) {
-		return -1, fmt.Errorf("no such fork: %s", args[0])
+		return -1, fmt.Errorf("no such fork: %s", name)
 	}
 	fmt.Println(ws)
 	return 0, nil
@@ -899,6 +909,9 @@ func (a *app) forkOpenEditor(args []string) (int, error) {
 		return 2, errors.New("usage: coop fork open <name>")
 	}
 	name := args[0]
+	if !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

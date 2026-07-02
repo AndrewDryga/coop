@@ -290,6 +290,9 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !all && name == "" {
 		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
 	}
+	if !all && !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

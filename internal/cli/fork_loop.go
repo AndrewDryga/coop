@@ -273,6 +273,9 @@ func (a *app) forkLogs(args []string) (int, error) {
 			name = x
 		}
 	}
+	if name != "" && !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -349,6 +352,9 @@ func (a *app) forkStop(args []string) (int, error) {
 		return 2, errors.New("usage: coop fork stop <name>")
 	}
 	name := args[0]
+	if !validForkName(name) {
+		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

@@ -52,6 +52,33 @@ func TestValidForkName(t *testing.T) {
 	}
 }
 
+// Regression (P0 data-loss): a fork name that escapes the forks home (`..`, `../coop`) or isn't a
+// single safe segment (`.`, `a/b`) must be refused by EVERY name-taking verb before it can reach
+// forkWorkspace → destroyFork → os.RemoveAll. `coop fork rm ..` used to filepath.Join-clean to the
+// parent of all projects (pathExists true, so the "no such fork" guard missed it) and delete it.
+// Each guard runs before box.ResolveRepo, so an unsafe name returns without touching the filesystem.
+func TestForkVerbsRejectUnsafeName(t *testing.T) {
+	repo := t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	verbs := map[string]func([]string) (int, error){
+		"rm": a.forkRm, "stop": a.forkStop, "open": a.forkOpenEditor,
+		"logs": a.forkLogs, "review": a.forkReview, "path": a.forkPath, "merge": a.forkMerge,
+	}
+	for _, name := range []string{".", "..", "../coop", "a/b"} {
+		for verb, fn := range verbs {
+			code, err := fn([]string{name})
+			if code != 2 || err == nil || !strings.Contains(err.Error(), "invalid fork name") {
+				t.Errorf("fork %s %q = (%d, %v), want (2, invalid fork name)", verb, name, code, err)
+			}
+		}
+		// --fresh recreates a fork (clone + destroy); it routes through forkCreate, which rejects the
+		// name in parseForkCreate before any clone or destroy work — a refusal that creates nothing.
+		if code, err := a.cmdFork([]string{name, "--fresh"}); code != 2 || err == nil {
+			t.Errorf("fork %q --fresh = (%d, %v), want a refusal (2, err)", name, code, err)
+		}
+	}
+}
+
 // A typo'd --profile must fail (exit 2) before any image/clone work, so it never leaves a stray
 // fork behind. The check runs before resolveImage, so it returns without a runtime.
 func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {
