@@ -1064,4 +1064,3 @@ own box — gets the right `go`/`gofmt` automatically.
 The security-critical logic — secret enumeration (`internal/box/mounts.go`) and run-arg
 assembly (`internal/box/run.go`) — is pure and unit-tested without a runtime; `coop
 doctor` proves the whole thing end-to-end against the real box.
-</content>
