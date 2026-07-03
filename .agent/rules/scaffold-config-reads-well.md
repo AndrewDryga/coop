@@ -10,9 +10,19 @@ Files that `coop <x> init` writes for a human to open and edit (preset.yaml,
     agent: claude
 
 not `agent: claude   # REQUIRED — ...`. Trailing comments are harder to scan and
-force width games. Fold a note repeated across fields (the same enum on four
-`agent:` lines, "model is optional" on three roles) into the section header so the
-file stays short rather than repeating it inline.
+force width games. Separate items with newlines, not `·`/`|` inline separators — a
+comment block has vertical room, so one item per line (e.g. `Run:` / `Inspect:` /
+`Format:` labels, each on its own line) beats cramming several onto one with dots.
+
+**1a. Document EVERY field inline — don't bury field docs in a section header.**
+Each field gets its own leading comment, on the lead AND on every role. A section
+header covers section-level facts only (what the map is, the name rule); it is not
+where per-field docs go — a reader shouldn't have to scroll up to learn what a field
+does. Repeating a short common-field note across sibling roles (`# agent — one of:
+claude, codex, gemini.` on each) is fine and expected; a bare field is not. Keep
+each comment to one concise line to hold down the cost, and fold a field's mode/kind
+note into that field's comment (e.g. the "native subagent" explanation sits on
+`mode:`) rather than a separate block, so nothing is said twice.
 
 **2. Scaffolded content is a usable default, not a fill-in-the-blank.** What you
 generate must stand on its own for a generic project — real how-to-work guidance,
