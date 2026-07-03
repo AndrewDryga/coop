@@ -143,29 +143,15 @@ func runningForkNames(repo string, names []string) []string {
 	return live
 }
 
-// forkPool builds a fork's rotation pool: its explicit per-fork profiles (from .agent/fleet's
-// `profile=` or `coop fork --profile`) when given — so a fleet can put each fork on its own account
-// instead of all contending for the repo pool's first profile — else the repo pool / all signed-in.
-func (a *app) forkPool(repo, agent, name string, profiles []string) (*profilePool, error) {
-	if len(profiles) > 0 {
-		pool, err := authedPool(a.cfg, agent, profiles)
-		if err != nil {
-			return nil, fmt.Errorf("fork %s: %w", name, err)
-		}
-		return pool, nil
-	}
-	return buildPool(a.cfg, repo, agent)
-}
-
 // runForkLoop seeds the fork's queue from the tasks tree given to --tasks (only when
 // the fork has none yet, so a resumed loop keeps its own progress), then runs the
 // unattended loop with the chosen agent, capturing output to the fork's log.
 // detached=true means this process IS the background worker (its stdio is already the
 // log, and it owns the pidfile). tasks is an absolute path resolved by the caller;
-// model is the fork's --model / fleet model= choice ("" falls back to COOP_LOOP_MODEL,
-// then the profile/agent defaults — see applyLoopModel); consult opts each iteration
-// into peer consultation (see app.loop).
-func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string, model string, consult, detached bool) (int, error) {
+// credential/model are the fork's --credential/--model one-off (model@account allowed);
+// the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
+// ladder when neither flag is given; consult opts each iteration into peer consultation.
+func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string, consult, detached bool) (int, error) {
 	// Seed the fork's queue from the --tasks source tree into the worktree's .agent/tasks (only
 	// when the fork has none yet, so a resumed loop keeps its own progress). The source is a task
 	// tree — the repo's .agent/tasks or a per-fork .agent/tasks.<name> slice from fleet split.
@@ -203,14 +189,23 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 			}
 		}
 	}
-	pool, err := a.forkPool(repo, agent, name, profiles)
+	a.applyLoopModel(agent) // COOP_LOOP_MODEL → the fallback tier
+	// The fork's rotation ladder: a one-off --model/--credential wins; else its preset's models
+	// (a.preset, loaded by forkCreate); else the default (agent model across all accounts).
+	ladder, err := oneOffLadder(model, credential)
 	if err != nil {
 		return -1, err
 	}
-	a.applyLoopModel(agent, model)
+	if ladder == nil && a.preset != nil && agent == a.preset.LeadAgent {
+		ladder = a.preset.LeadModels
+	}
+	rot, err := a.buildRotation(agent, ladder)
+	if err != nil {
+		return -1, fmt.Errorf("fork %s: %w", name, err)
+	}
 	// A fork works its own seeded queue (the .agent/tasks tree) in the worktree.
 	forkQueue := []string{forkRel}
-	code, err := a.loop(ws, img, agent, name, pool, forkQueue, sink, consult, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
+	code, err := a.loop(ws, img, agent, name, rot, forkQueue, sink, consult, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}
@@ -221,7 +216,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 // the fork's log, records its pid, and returns immediately. tasks is an absolute path
 // (resolved by the caller) forwarded so the worker seeds the same queue; model, preset,
 // and consult are forwarded too, so the worker re-loads the same recipe and scope.
-func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string, model, presetName string, consult bool) (int, error) {
+func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, presetName string, consult bool) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
@@ -242,8 +237,8 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string,
 		return -1, fmt.Errorf("locate coop binary: %w", err)
 	}
 	reExec := []string{"fork", name, agent, "--loop", "--tasks", tasks, "--_detached"}
-	if len(profiles) > 0 {
-		reExec = append(reExec, "--credential", strings.Join(profiles, ","))
+	if credential != "" {
+		reExec = append(reExec, "--credential", credential)
 	}
 	if model != "" {
 		reExec = append(reExec, "--model", model)

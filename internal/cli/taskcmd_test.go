@@ -203,8 +203,8 @@ func TestTasksRemoveGate(t *testing.T) {
 	}
 }
 
-// `coop tasks clear` is the bulk-delete idiom shared with `coop loop pool clear`: it clears the done
-// archive (= `rm --all-done`), gated the same way — refuses without --yes in a non-TTY, deletes with it.
+// `coop tasks clear` is the bulk-delete idiom: it clears the done archive (= `rm --all-done`),
+// gated the same way as rm — refuses without --yes in a non-TTY, deletes with it.
 func TestTasksClear(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, stateDone, "d1", "task.md"), "# d\n")

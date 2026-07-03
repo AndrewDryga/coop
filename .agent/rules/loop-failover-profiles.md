@@ -20,9 +20,11 @@ adapter-interface change and no `RunSpec` change. The loop rotates by calling
 
 **Why it's safe and sealed:** only the active profile's dir is mounted at `~/.<agent>`, so
 a running agent can read just the one account it's using — never the rest of the vault.
-Profile *names* are the only thing stored per-repo (`pools.json`, keyed by repo path), and
-that lives outside the repo tree — a credential never lands where it could be committed
-(this is the tool whose job is catching exactly that).
+There is no per-repo pool file anymore: the rotation is expanded at loop start from the
+lead's `models:` ladder (a preset in the repo, or a one-off `--model`/`--credential`) against
+the signed-in accounts. A ladder names *accounts* (`model@account`), never their logins —
+the credentials themselves stay in the vault outside the repo, so nothing lands where it
+could be committed (this is the tool whose job is catching exactly that).
 
 **How to apply / extend:**
 - Anything that needs "the agent's home for this run" goes through `cfg.AgentDir`, never a
@@ -36,4 +38,5 @@ that lives outside the repo tree — a credential never lands where it could be 
   failure, not a limit, so it surfaces instead of rotating — intended for v1.
 - A free rotation resets the wait counter; only consecutive *all-profiles-limited* waits
   count toward the stop cap. Otherwise a healthy multi-account run would trip the cap.
-- Never put a credential (only profile names) in a repo or in `pools.json`.
+- Never put a credential in a repo. A preset's `models:` ladder may name accounts
+  (`model@account`), but the logins themselves stay in the vault, never committed.

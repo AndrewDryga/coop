@@ -497,7 +497,8 @@ func TestAssembleArgsEgress(t *testing.T) {
 // one role per mode, matching the docs' frontier recipe.
 func frontierPreset() *preset.Preset {
 	return &preset.Preset{
-		Name: "frontier", LeadAgent: "claude", LeadModel: "claude-fable-5",
+		Name: "frontier", LeadAgent: "claude",
+		LeadModels: []preset.ModelTarget{{Model: "claude-fable-5"}},
 		Roles: []preset.Role{
 			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5"},
 			{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Model: "gemini-3.5-flash"},

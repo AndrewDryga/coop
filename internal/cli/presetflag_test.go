@@ -12,9 +12,10 @@ import (
 
 func cliFrontier() *preset.Preset {
 	return &preset.Preset{
-		Name: "frontier", LeadAgent: "claude", LeadModel: "claude-fable-5", LeadCredentials: []string{"work"},
+		Name: "frontier", LeadAgent: "claude",
+		LeadModels: []preset.ModelTarget{{Model: "claude-fable-5", Credential: "work"}},
 		Roles: []preset.Role{
-			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5", Credentials: []string{"work"}},
+			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5"},
 			{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Model: "gemini-3.5-flash"},
 			{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", Subagent: "deep-reasoner"},
 		},
@@ -53,8 +54,8 @@ func TestApplyPresetPrecedence(t *testing.T) {
 	if got := a.cfg.ModelFor("gemini"); got != "gemini-3.5-flash" {
 		t.Errorf("fast model = %q, want gemini-3.5-flash", got)
 	}
-	if got := a.cfg.ActiveProfile("codex"); got != "work" {
-		t.Errorf("critic credential = %q, want work", got)
+	if got := a.cfg.ActiveProfile("codex"); got != "default" {
+		t.Errorf("critic credential = %q, want default (roles run on the agent's default account)", got)
 	}
 	if got := a.cfg.ActiveProfile("claude"); got != "work" {
 		t.Errorf("lead credential = %q, want work", got)
@@ -114,25 +115,22 @@ func TestPresetFlagParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fa.preset != "frontier" || len(fa.profiles) != 1 || fa.profiles[0] != "work" {
-		t.Errorf("fork parse: preset=%q profiles=%v", fa.preset, fa.profiles)
+	if fa.preset != "frontier" || fa.credential != "work" {
+		t.Errorf("fork parse: preset=%q credential=%q", fa.preset, fa.credential)
 	}
 	if _, err := parseForkCreate([]string{"api", "--loop", "--preset"}); err == nil {
 		t.Error("fork: a bare --preset must error")
 	}
 }
 
-// The loop's --credential spellings accumulate (singular and plural).
-func TestLoopCredentialAliases(t *testing.T) {
-	profiles, rest, err := extractLoopProfiles([]string{"claude", "--credential", "a", "--credentials=b,c", "--credential", "d"})
-	if err != nil {
-		t.Fatal(err)
+// The loop takes a single --credential (both spellings), leaving the rest for parseLoopArgs.
+func TestLoopCredential(t *testing.T) {
+	cred, rest, err := extractRunProfile([]string{"claude", "--credentials", "work", "--consult"})
+	if err != nil || cred != "work" {
+		t.Fatalf("extractRunProfile = (%q, %v)", cred, err)
 	}
-	if strings.Join(profiles, ",") != "a,b,c,d" {
-		t.Errorf("profiles = %v, want [a b c d]", profiles)
-	}
-	if strings.Join(rest, " ") != "claude" {
-		t.Errorf("rest = %v", rest)
+	if strings.Join(rest, " ") != "claude --consult" {
+		t.Errorf("rest = %v, want [claude --consult]", rest)
 	}
 }
 

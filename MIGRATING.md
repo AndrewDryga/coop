@@ -9,7 +9,7 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | `coop clone <name>` | `coop fork <name>` |
 | `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`) |
 | `--profile <name>` (login/launch flags) | `--credential <name>` — same value, new name; the old spelling errors with this rewrite. An agent's OWN `--profile` still passes through after a `--` |
-| `coop pool <add\|rm\|clear>` | `coop loop pool <add\|rm\|clear>` |
+| `coop pool <add\|rm\|clear>` | Retired — there is no persistent pool. A loop rotates the model-first `models:` ladder of its preset's lead (`coop help presets`); a bare model in that ladder fans out across every signed-in account, which is what the pool used to do. A stray `pools.json` is ignored. |
 | `coop profiles <default\|model\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|model\|rm>` (a path) |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |
@@ -27,13 +27,16 @@ forks:
   <name>:
     agent: <agent>            # omit to default (or to take a preset's lead)
     tasks: <tasks-path>
-    credentials: [a, b]       # was profile=a,b
-    model: <m>                # was model=m
+    credential: a             # was profile=a,b — a fork runs one account; for a
+                              #   multi-account rotation, point it at a preset instead
+    model: <m>                # was model=m — may be model@account
     consult: true             # was consult=1
 ```
 
-Delete `.agent/fleet` once translated. New per-fork key: `preset: <name>` (an
-orchestration preset from `.agent/presets/`; see `coop help presets`).
+Delete `.agent/fleet` once translated. A fork takes a single `model:`/`credential:`;
+for a full model-first ladder (fallbacks across models and accounts), set
+`preset: <name>` instead — an orchestration preset from `.agent/presets/` whose lead
+`models:` ladder the fork's loop rotates (see `coop help presets`).
 
 ## A legacy `.agent/TASKS.md` → the folder task system
 

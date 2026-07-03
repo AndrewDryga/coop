@@ -77,6 +77,17 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			continue
 		}
 		def := a.cfg.DefaultProfileOf(agent)
+		// List the marked default first, then the rest — the same order a loop's rotation fans
+		// out over accounts (accountsFor), so "see coop credentials" reflects the try order.
+		if slices.Contains(profiles, def) {
+			ordered := []string{def}
+			for _, p := range profiles {
+				if p != def {
+					ordered = append(ordered, p)
+				}
+			}
+			profiles = ordered
+		}
 		var relogin []string
 		for _, p := range profiles {
 			label, expired := a.profileState(agent, p)

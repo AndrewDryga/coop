@@ -34,8 +34,7 @@ func writePreset(t *testing.T, name, yaml string, files map[string]string) strin
 const frontierYAML = `
 lead:
   agent: claude
-  model: claude-fable-5
-  credentials: [work]
+  models: [claude-fable-5, claude-opus-4-8@work]
   prompt: lead.md
 
 roles:
@@ -51,14 +50,12 @@ roles:
     mode: consult
     agent: codex
     model: gpt-5.5
-    credentials: [work]
     when: [plan-review, security]
 
   fast:
     mode: delegate
     agent: gemini
     model: gemini-3.5-flash
-    credentials: [work]
     when: [boilerplate, bulk-edits]
     commit: never
     concurrent: never
@@ -75,11 +72,11 @@ func TestLoadFrontier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.LeadAgent != "claude" || p.LeadModel != "claude-fable-5" {
-		t.Errorf("lead = %s/%s", p.LeadAgent, p.LeadModel)
+	if p.LeadAgent != "claude" || p.LeadModel() != "claude-fable-5" {
+		t.Errorf("lead = %s/%s", p.LeadAgent, p.LeadModel())
 	}
-	if len(p.LeadCredentials) != 1 || p.LeadCredentials[0] != "work" {
-		t.Errorf("lead credentials = %v", p.LeadCredentials)
+	if len(p.LeadModels) != 2 || p.LeadModels[0].String() != "claude-fable-5" || p.LeadModels[1].String() != "claude-opus-4-8@work" {
+		t.Errorf("lead models = %v", p.LeadModels)
 	}
 	if p.LeadPromptText != "LEAD EXTRA" {
 		t.Errorf("lead prompt = %q", p.LeadPromptText)
@@ -119,12 +116,15 @@ func TestLoadValidation(t *testing.T) {
 		{"bad mode", "lead: {agent: claude}\nroles: {r: {mode: boss, agent: codex}}", nil, "not one of native, consult, delegate"},
 		{"missing prompt file", "lead: {agent: claude, prompt: lead.md}", nil, "does not exist"},
 		{"missing role prompt file", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, prompt: roles/r.md}}", nil, "does not exist"},
-		{"empty lead model", "lead: {agent: claude, model: \"\"}", nil, "model is empty"},
-		{"empty role model", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: \"\"}}", nil, "model is empty"},
-		{"empty credentials list", "lead: {agent: claude, credentials: []}", nil, "is empty"},
-		{"bad credential name", "lead: {agent: claude, credentials: [\"../x\"]}", nil, "invalid name"},
-		{"singular credential", "lead: {agent: claude, credential: work}", nil, "plural list form"},
-		{"singular role credential", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credential: work}}", nil, "plural list form"},
+		{"lead model retired", "lead: {agent: claude, model: opus}", nil, "retired"},
+		{"lead credentials retired", "lead: {agent: claude, credentials: [work]}", nil, "retired"},
+		{"empty models list", "lead: {agent: claude, models: []}", nil, "is empty"},
+		{"empty model in models", "lead: {agent: claude, models: [\"@work\"]}", nil, "invalid model"},
+		{"bad account in models", "lead: {agent: claude, models: [\"opus@../x\"]}", nil, "invalid account"},
+		{"empty account after at", "lead: {agent: claude, models: [\"opus@\"]}", nil, "empty account"},
+		{"unknown models key", "lead: {agent: claude, models: [{model: opus, acct: work}]}", nil, "unknown key"},
+		{"empty role model", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, model: \"\"}}", nil, "model is empty"},
+		{"role credentials rejected", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
 		{"native needs subagent", "lead: {agent: claude}\nroles: {r: {mode: native, agent: claude}}", nil, "needs subagent"},
 		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex, subagent: x}}", nil, "agent must be claude"},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},
@@ -215,8 +215,8 @@ func TestScaffold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the scaffolded template must load cleanly: %v", err)
 	}
-	if p.LeadAgent != "claude" || p.LeadModel != "claude-fable-5" {
-		t.Errorf("template lead = %s/%s", p.LeadAgent, p.LeadModel)
+	if p.LeadAgent != "claude" || p.LeadModel() != "claude-fable-5" {
+		t.Errorf("template lead = %s/%s", p.LeadAgent, p.LeadModel())
 	}
 	if len(p.Roles) != 3 || !p.HasConsult() || !p.HasDelegate() {
 		t.Errorf("template should carry all three role modes: %+v", p.Roles)

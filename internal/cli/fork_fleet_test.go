@@ -120,7 +120,7 @@ func TestFleetInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf(".agent/fleet.yaml not written: %v", err)
 	}
-	for _, want := range []string{"forks:", "tasks:", "credentials:", "preset:", "coop fleet up"} {
+	for _, want := range []string{"forks:", "tasks:", "credential:", "preset:", "coop fleet up"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("fleet template missing %q:\n%s", want, body)
 		}
@@ -156,12 +156,11 @@ forks:
   core:
     tasks: .agent/tasks.core
     preset: frontier
-    credentials: [work]
+    credential: work
   chores:
     agent: gemini
     tasks: .agent/tasks.chores
-    model: gemini-3.5-flash
-    credentials: [work, backup]
+    model: gemini-3.5-flash@work
     consult: false
   plain:
     tasks: .agent/tasks.plain
@@ -171,8 +170,8 @@ forks:
 		t.Fatal(err)
 	}
 	want := []fleetEntry{
-		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier", profiles: []string{"work"}},
-		{name: "chores", agent: "gemini", tasks: ".agent/tasks.chores", model: "gemini-3.5-flash", profiles: []string{"work", "backup"}},
+		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier", credential: "work"},
+		{name: "chores", agent: "gemini", tasks: ".agent/tasks.chores", model: "gemini-3.5-flash@work"},
 		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain", consult: true},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -180,44 +179,14 @@ forks:
 	}
 
 	for name, in := range map[string]string{
-		"malformed":     "forks: [\n",
-		"no forks map":  "other: {}\n",
-		"missing tasks": "forks:\n  a: {agent: claude}\n",
-		"unknown agent": "forks:\n  a: {agent: borg, tasks: t}\n",
-		"unknown field": "forks:\n  a: {tasks: t, profile: work}\n", // YAML uses credentials:, not the legacy profile=
-		"bad name":      "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
-		"duplicate":     "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
-		"empty cred":    "forks:\n  a: {tasks: t, credentials: [\"\"]}\n",
-	} {
-		if _, err := parseFleetYAML(in); err == nil {
-			t.Errorf("%s: want an error, got none", name)
-		}
-	}
-}
-
-// A fleet fork's credentials: list takes plain names, compact targets, and the
-// structured {name, model} form — all normalizing to the pool's credential[@model]
-// members, so a fleet can declare a same-account model-fallback chain.
-func TestParseFleetYAMLCredentialTargets(t *testing.T) {
-	got, err := parseFleetYAML(`
-forks:
-  core:
-    tasks: t
-    credentials:
-      - work
-      - work@opus
-      - {name: work, model: sonnet}
-`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"work", "work@opus", "work@sonnet"}; !reflect.DeepEqual(got[0].profiles, want) {
-		t.Errorf("credentials = %v, want %v", got[0].profiles, want)
-	}
-	for name, in := range map[string]string{
-		"unknown target key": "forks:\n  a: {tasks: t, credentials: [{name: w, mode: opus}]}\n",
-		"empty name":         "forks:\n  a: {tasks: t, credentials: [{model: opus}]}\n",
-		"list-form target":   "forks:\n  a: {tasks: t, credentials: [[w]]}\n",
+		"malformed":      "forks: [\n",
+		"no forks map":   "other: {}\n",
+		"missing tasks":  "forks:\n  a: {agent: claude}\n",
+		"unknown agent":  "forks:\n  a: {agent: borg, tasks: t}\n",
+		"unknown field":  "forks:\n  a: {tasks: t, credentials: [work]}\n", // v3: single credential:, not the plural list
+		"pre-v3 profile": "forks:\n  a: {tasks: t, profile: work}\n",
+		"bad name":       "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
+		"duplicate":      "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
 	} {
 		if _, err := parseFleetYAML(in); err == nil {
 			t.Errorf("%s: want an error, got none", name)

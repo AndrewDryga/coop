@@ -30,16 +30,16 @@ const (
 	ModeDelegate = "delegate" // a write-capable delegate via coop-delegate
 )
 
-// Role is one named role in a preset.
+// Role is one named role in a preset. A role has no credentials — it runs on its agent's
+// default (marked) account and never rotates; only the LEAD rotates (see LeadModels).
 type Role struct {
-	Name        string
-	Mode        string   // native | consult | delegate
-	Agent       string   // known agent
-	Model       string   // optional model id ("" = the agent's own default chain)
-	Credentials []string // optional credential names (accounts) this role runs on
-	When        []string // routing hints injected into the lead contract
-	Subagent    string   // native-only: the Claude subagent name (e.g. deep-reasoner)
-	PromptText  string   // roles/<name>.md content, appended to the generated contract
+	Name       string
+	Mode       string   // native | consult | delegate
+	Agent      string   // known agent
+	Model      string   // optional model id ("" = the agent's own default)
+	When       []string // routing hints injected into the lead contract
+	Subagent   string   // native-only: the Claude subagent name (e.g. deep-reasoner)
+	PromptText string   // roles/<name>.md content, appended to the generated contract
 }
 
 // Preset is a loaded, validated orchestration preset.
@@ -47,12 +47,25 @@ type Preset struct {
 	Name string
 	Dir  string // the preset folder on the host (for docs/errors)
 
-	LeadAgent       string
-	LeadModel       string
-	LeadCredentials []string
-	LeadPromptText  string // lead.md content, appended after the generated block
+	LeadAgent string
+	// LeadModels is the lead's fallback ladder (model-first). Each entry is a model with an
+	// optional account; a bare model fans out across all signed-in accounts at loop start, a
+	// pinned one runs that account only. The loop rotates the expansion on rate limits; a
+	// single non-loop run uses the first entry. Empty = the agent's default model, all accounts.
+	LeadModels     []ModelTarget
+	LeadPromptText string // lead.md content, appended after the generated block
 
 	Roles []Role // sorted by name for deterministic contracts
+}
+
+// LeadModel returns the lead's primary model — the first ladder entry's model, or "" when
+// no models are declared (the agent's default resolves). Used by the generated contract and
+// `coop presets`.
+func (p *Preset) LeadModel() string {
+	if len(p.LeadModels) == 0 {
+		return ""
+	}
+	return p.LeadModels[0].Model
 }
 
 // roleName limits role names to env-safe tokens: the delegate wrapper turns a role
@@ -67,24 +80,28 @@ type yamlPreset struct {
 }
 
 type yamlLead struct {
-	Agent       string    `yaml:"agent"`
-	Model       *string   `yaml:"model"`
-	Credentials *[]string `yaml:"credentials"`
-	Credential  *string   `yaml:"credential"` // rejected with a pointer to the plural
-	Prompt      string    `yaml:"prompt"`
+	Agent  string         `yaml:"agent"`
+	Models *[]ModelTarget `yaml:"models"`
+	Prompt string         `yaml:"prompt"`
+	// Retired shapes — rejected with the models: rewrite so a v2 preset fails loud, not silently.
+	Model       any `yaml:"model"`
+	Credentials any `yaml:"credentials"`
+	Credential  any `yaml:"credential"`
 }
 
 type yamlRole struct {
-	Mode        string    `yaml:"mode"`
-	Agent       string    `yaml:"agent"`
-	Model       *string   `yaml:"model"`
-	Credentials *[]string `yaml:"credentials"`
-	Credential  *string   `yaml:"credential"` // rejected with a pointer to the plural
-	When        []string  `yaml:"when"`
-	Prompt      string    `yaml:"prompt"`
-	Subagent    string    `yaml:"subagent"`
-	Commit      string    `yaml:"commit"`
-	Concurrent  string    `yaml:"concurrent"`
+	Mode       string   `yaml:"mode"`
+	Agent      string   `yaml:"agent"`
+	Model      *string  `yaml:"model"`
+	When       []string `yaml:"when"`
+	Prompt     string   `yaml:"prompt"`
+	Subagent   string   `yaml:"subagent"`
+	Commit     string   `yaml:"commit"`
+	Concurrent string   `yaml:"concurrent"`
+	// Roles run on their agent's default account — only the lead rotates. Credentials here are
+	// rejected with that pointer (not a cryptic unknown-field error).
+	Credentials any `yaml:"credentials"`
+	Credential  any `yaml:"credential"`
 	// Not implemented in v1 — they imply enforcement that doesn't exist yet, so
 	// setting them must fail loud instead of silently granting nothing.
 	Permissions any `yaml:"permissions"`
@@ -158,18 +175,18 @@ func Load(repo, name string) (*Preset, error) {
 		return nil, bad("lead.agent %q is not a known agent (use %s)", y.Lead.Agent, strings.Join(agents.Names(), ", "))
 	}
 	p.LeadAgent = y.Lead.Agent
-	if y.Lead.Credential != nil {
-		return nil, bad("lead.credential — use the plural list form: credentials: [name, ...]")
+	if y.Lead.Model != nil || y.Lead.Credentials != nil || y.Lead.Credential != nil {
+		return nil, bad("lead.model/credentials are retired — use one models: list, each entry model or model@account (e.g. models: [claude-fable-5, claude-opus-4-8@work])")
 	}
-	if y.Lead.Model != nil {
-		if *y.Lead.Model == "" {
-			return nil, bad("lead.model is empty — set a model id or drop the key")
+	if y.Lead.Models != nil {
+		if len(*y.Lead.Models) == 0 {
+			return nil, bad("lead.models is empty — list at least one model (optionally model@account), or drop the key")
 		}
-		p.LeadModel = *y.Lead.Model
-	}
-	if y.Lead.Credentials != nil {
-		if p.LeadCredentials, err = credentialList(*y.Lead.Credentials); err != nil {
-			return nil, bad("lead.credentials %v", err)
+		for i, t := range *y.Lead.Models {
+			if err := t.validate(); err != nil {
+				return nil, bad("lead.models[%d] %v", i, err)
+			}
+			p.LeadModels = append(p.LeadModels, t)
 		}
 	}
 	if p.LeadPromptText, err = promptText(p.Dir, y.Lead.Prompt); err != nil {
@@ -215,20 +232,14 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 		return r, bad("agent %q is not a known agent (use %s)", y.Agent, strings.Join(agents.Names(), ", "))
 	}
 	r.Agent = y.Agent
-	if y.Credential != nil {
-		return r, bad("credential — use the plural list form: credentials: [name, ...]")
+	if y.Credentials != nil || y.Credential != nil {
+		return r, bad("credentials only apply to the lead — a role runs on its agent's default account; put the rotation ladder in lead.models")
 	}
 	if y.Model != nil {
 		if *y.Model == "" {
 			return r, bad("model is empty — set a model id or drop the key")
 		}
 		r.Model = *y.Model
-	}
-	if y.Credentials != nil {
-		var err error
-		if r.Credentials, err = credentialList(*y.Credentials); err != nil {
-			return r, bad("credentials %v", err)
-		}
 	}
 	if y.Permissions != nil || y.WritePaths != nil || y.DenyPaths != nil {
 		return r, bad("permissions/write_paths/deny_paths are not supported — coop can't enforce path-level permissions yet, so declaring them would only pretend to")
@@ -268,20 +279,6 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 		return r, bad("prompt: %v", err)
 	}
 	return r, nil
-}
-
-// credentialList validates a credentials: list — present means non-empty, and every
-// name a single path-safe segment (they become profile directory names).
-func credentialList(names []string) ([]string, error) {
-	if len(names) == 0 {
-		return nil, fmt.Errorf("is empty — list at least one credential name, or drop the key")
-	}
-	for _, n := range names {
-		if n == "" || strings.ContainsAny(n, "/\\") || n == "." || n == ".." || strings.HasPrefix(n, "-") {
-			return nil, fmt.Errorf("has invalid name %q — use a single segment (no '/', '..', or leading '-')", n)
-		}
-	}
-	return names, nil
 }
 
 // promptText loads an optional Markdown prompt file (relative to the preset folder).

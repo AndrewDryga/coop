@@ -37,7 +37,6 @@ func TestCLIConformance(t *testing.T) {
 	t.Run("rm_no_remove_alias", func(t *testing.T) {
 		a := newApp()
 		closed := map[string]func([]string) (int, error){
-			"pool":  a.cmdPool,
 			"tasks": func(args []string) (int, error) { return cmdTasksFolder("", t.TempDir(), args) },
 		}
 		for name, run := range closed {

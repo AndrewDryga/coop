@@ -1,0 +1,34 @@
+# coop preset — an orchestration recipe: who leads, and which roles it routes work to.
+# Run it:   coop claude --preset frontier   ·   coop loop --preset frontier
+# Inspect:  coop presets frontier   ·   format reference: coop help presets
+
+lead:
+  agent: claude
+  # models is the lead's fallback ladder (model-first). A bare model runs on EVERY
+  # signed-in account (rotating on rate limit); model@account pins one. On a loop it
+  # rotates top-to-bottom; a single run uses the first. See: coop credentials.
+  models: [claude-fable-5, claude-opus-4-8@work]
+  # prompt: lead.md         # optional Markdown, appended to the generated contract
+
+roles:
+  thinker:                  # deep thinking + review, inside the lead's own session
+    mode: native
+    agent: claude
+    model: claude-opus-4-8
+    subagent: deep-reasoner # a .claude/agents/ subagent (coop init scaffolds this one)
+    when: [architecture, debugging, code-review, before-commit]
+
+  critic:                   # independent critique from another vendor — read-only
+    mode: consult
+    agent: codex
+    model: gpt-5.5          # a role runs on its agent's default account (coop credentials)
+    when: [plan-review, security, tradeoffs]
+
+  fast:                     # cheap mechanical work — write-capable via coop-delegate
+    mode: delegate
+    agent: gemini
+    model: gemini-3.5-flash
+    when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
+    commit: never           # it edits; the LEAD reviews the diff, runs the gate, commits
+    concurrent: never       # delegate runs are serialized
+    # prompt: roles/fast.md # optional Markdown, appended to this role's contract

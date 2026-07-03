@@ -13,7 +13,7 @@ new "profile" wording — or a surviving alias — re-muddies it; the user has d
 repeatedly that v3 carries NO legacy.
 
 **Internal code is exempt:** on-disk layout (`<agent>/profiles/<name>/`), Go identifiers
-(`ProfileAuthed`, `SetActiveProfile`, `profilePool`), and file names stay — renaming
+(`ProfileAuthed`, `SetActiveProfile`, `DefaultProfileOf`), and file names stay — renaming
 storage would force a data migration for zero user value. The boundary is what a USER
 reads.
 

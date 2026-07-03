@@ -11,22 +11,27 @@
   `--profile` flag is retired too — it errors with the rename (an agent's OWN `--profile` still
   passes through after a `--`). A new `coop presets [name]` command lists the repo's presets (a
   broken one shows its error) and shows one recipe in full; `coop presets init [name]` scaffolds
-  the documented frontier template, valid and runnable as written. On-disk storage is unchanged
-  (`<agent>/profiles/<name>/`, `pools.json`) — nothing to migrate.
+  the documented frontier template, valid and runnable as written. On-disk credential storage is
+  unchanged (`<agent>/profiles/<name>/`) — nothing to migrate.
 
-- **Model fallback in the rotation pool: `credential@model`.** A loop-pool member can now carry a
-  model, so a rate limit steps down on the SAME login before switching accounts:
-  `coop loop pool add claude work@opus work@sonnet other` falls back opus → sonnet with no re-auth,
-  then rotates to `other` — limits are tracked per target, so `work@sonnet` stays available while
-  `work@opus` cools down. Fleet forks take the same idea structurally
-  (`credentials: [{name: work, model: opus}, work@sonnet]`), `coop loop pool` renders the targets,
-  and `pools.json` stays a plain string list, so existing pools load unchanged. Model precedence is
-  now explicitly tiered: `--model`/fleet `model:` > the active target's model > the preset lead's
-  model > `COOP_LOOP_MODEL` > the credential's mark > `COOP_<AGENT>_MODEL` > the agent CLI default.
+- **BREAKING: loop pools are gone — a loop rotates a preset's model-first `models:` ladder.** The
+  persistent `coop loop pool` registry and `pools.json` are retired (`coop loop pool` tombstones; a
+  stray `pools.json` is ignored, no warning). The rotation now IS the `models:` ladder of the loop's
+  lead: each entry is `model` or `model@account`, and a BARE model fans out across every signed-in
+  account (default first, rotating on rate limit) — exactly what a pool used to do, so pools became
+  redundant. Fallbacks are the order you write them (`[claude-opus-4-8, claude-fable-5@work]` steps
+  opus → fable), and limits are keyed per (model, account), so `opus@personal` stays usable while
+  `opus@work` cools. This makes model the one axis everywhere: presets drop lead `model:`/`credentials:`
+  for one `models:` ladder, roles drop `credentials:` (they run on their agent's default account),
+  a fleet fork takes a single `model:`/`credential:` (a full ladder → a `preset:`), and `--model` gains
+  a `--model opus@work` shortcut (the `--credential work@opus` `@`-form is retired). Model precedence
+  is tiered: `--model`/fleet `model:` > the active ladder entry's model > `COOP_LOOP_MODEL`/preset >
+  the account's mark > `COOP_<AGENT>_MODEL` > the agent CLI default.
 
 - **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
-  (`.agent/presets/<name>/preset.yaml`) declares who leads and which roles it routes work to —
-  each role an agent + model + credentials + routing hints, in one of three modes: `native` (a
+  (`.agent/presets/<name>/preset.yaml`) declares who leads (a model-first `models:` ladder) and
+  which roles it routes work to — each role an agent + model + routing hints (a role runs on its
+  agent's default account), in one of three modes: `native` (a
   Claude subagent), `consult` (a read-only peer via coop-consult), or `delegate` (a NEW
   write-capable `coop-delegate` wrapper: it may edit the worktree but never commits — HEAD is
   compared before/after and a commit fails loud — and runs are serialized; the lead reviews the
@@ -42,7 +47,7 @@
 
 - **`.agent/fleet.yaml` is the fleet format.** `coop fleet init`/`split` write YAML, every fleet
   command reads it, and forks can reference presets (`preset: frontier`) with per-fork
-  `credentials:`/`model:`/`consult:` overriding the preset for that fork only. The pre-v3 one-line
+  `credential:`/`model:`/`consult:` overriding the preset for that fork only. The pre-v3 one-line
   `.agent/fleet` is NOT read — its presence (alone or alongside fleet.yaml) is an error until it's
   translated and deleted (see MIGRATING.md).
 
@@ -97,19 +102,19 @@
   verb added with no help row, or a re-minted retired alias fails CI. (Also documents the `clear`
   bulk-delete verb in `coop tasks --help`, which the test surfaced as undocumented.)
 
-- **Grammar consistency across launch paths.** `coop loop --profile <name>` now runs a one-off on the
-  given profile(s) without mutating the persistent `coop loop pool`, and `coop fork <name> acp
-  --profile` is accepted like plain `coop acp` (it was rejected). `coop fusion --consult` is a
-  documented no-op (a council always consults) instead of leaking coop's flag into the governor's CLI.
-  `coop fusion claude -- --help` now runs the agent's `--help` rather than coop's page (help detection
-  stops at `--`). `coop tasks clear` is added as the bulk-delete idiom shared with `coop loop pool
-  clear` (it clears the done archive, gated like `rm --all-done`). And usage strings now share one
-  placeholder lexicon (`<name>`/`<model>`/`<path>`/`<id>`, ASCII `...`) instead of spelling the same
-  value `p`/`m`/`<m>`/`<dir>` with mixed ellipses.
+- **Grammar consistency across launch paths.** `coop loop --credential <name>` runs a one-off on the
+  given account, and `coop fork <name> acp --credential` is accepted like plain `coop acp` (it was
+  rejected). `coop fusion --consult` is a documented no-op (a council always consults) instead of
+  leaking coop's flag into the governor's CLI. `coop fusion claude -- --help` now runs the agent's
+  `--help` rather than coop's page (help detection stops at `--`). `coop tasks clear` is added as a
+  bulk-delete idiom (it clears the done archive, gated like `rm --all-done`). And usage strings now
+  share one placeholder lexicon (`<name>`/`<model>`/`<path>`/`<id>`, ASCII `...`) instead of spelling
+  the same value `p`/`m`/`<m>`/`<dir>` with mixed ellipses.
 
 - **BREAKING: v3 has a clean CLI — no backward-compat aliases.** Renamed commands are retired with a
-  tombstone (exit 2 + the exact rewrite, one shared registry): `coop clone` (→ `coop fork`), top-level
-  `coop pool` (→ `coop loop pool`), the verb-first credential edits `coop profiles <default|model|rm>
+  tombstone (exit 2 + the exact rewrite, one shared registry): `coop clone` (→ `coop fork`),
+  `coop pool`/`coop loop pool` (retired — a loop rotates a preset's `models:` ladder), the
+  verb-first credential edits `coop profiles <default|model|rm>
   <agent> <profile>` (→ the path grammar `coop profiles <agent> <profile> <verb>`), `coop tasks start`
   (→ `claim`), and `coop loop --debug` (→ `--debug-on-fail`). And the forgiving *spelling* aliases are
   dropped too: **`ls` and `rm` are the only spellings** — `list`/`remove` are no longer accepted. See
@@ -216,9 +221,9 @@
   work — re-run); `1` failure; `2` usage; `3` stopped with a task in `50_blocked/` and nothing else
   actionable. A script that treated any non-zero loop exit as failure should special-case 3.
 
-- **Stdout views stay clean when piped.** `coop help`, a command's `--help` page, `coop profiles`,
-  `coop models`, `coop fork ls`, and `coop loop pool` colored their output through the stderr-gated
-  helpers, so `coop profiles | grep` or `coop fork ls | wc -l` from an interactive shell received raw
+- **Stdout views stay clean when piped.** `coop help`, a command's `--help` page, `coop credentials`,
+  `coop models`, and `coop fork ls` colored their output through the stderr-gated
+  helpers, so `coop credentials | grep` or `coop fork ls | wc -l` from an interactive shell received raw
   ANSI escapes. They now gate color on stdout (via `ui.For(os.Stdout)`), so a pipe or redirect gets
   plain text.
 
@@ -244,11 +249,6 @@
   projects and `os.RemoveAll` wiped it — a live, unrecoverable data-loss bug. Every name-taking
   fork verb (`rm`, `stop`, `open`, `logs`, `review`, `path`, `merge`, and `--fresh`) now validates
   the name up front and refuses anything that isn't a single safe path segment.
-
-- **The rotation pool lives under the loop: `coop loop pool add|rm|clear`.** The pool is a
-  *setting* of the loop (which subscriptions it rotates on a rate limit), not a workflow of its
-  own, so it no longer sits beside `coop loop` as a top-level command. Same verbs, same storage;
-  `coop pool` still works as an undocumented alias, so nothing breaks.
 
 - **`coop loop` keeps the machine awake while it runs.** An overnight drain is pointless if the
   laptop idle-sleeps midway through it, so the loop now holds a system sleep inhibitor for its

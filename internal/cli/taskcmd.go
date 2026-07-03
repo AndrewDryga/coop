@@ -102,7 +102,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderPath(root, args)
 	case "rm":
 		return tasksFolderRemove(root, args)
-	case "clear": // bulk-delete idiom shared with `coop loop pool clear`: clear the done archive
+	case "clear": // bulk-delete idiom: clear the done archive (like `rm --all-done`)
 		return tasksFolderRemove(root, append([]string{"--all-done"}, args...))
 	case "split":
 		return tasksFolderSplit(repo, root, args)

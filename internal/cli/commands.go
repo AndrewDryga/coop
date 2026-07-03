@@ -130,10 +130,9 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		return 2, err
 	}
 	a.applyPreset(p, tool)
-	if err := a.selectRunProfile(tool, profile); err != nil {
+	if err := a.applyOneOff(tool, model, profile); err != nil {
 		return 2, err
 	}
-	a.selectRunModel(tool, model)
 	a.nudgeIfUnauthed(tool)
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, consult)
 }
@@ -176,6 +175,27 @@ func (a *app) selectRunModel(tool, model string) {
 	if model != "" {
 		a.cfg.SetActiveModel(tool, model)
 	}
+}
+
+// applyOneOff applies a single run's --model/--credential to tool: --model may carry a
+// model@account shortcut (the only pair spelling, matching a preset ladder entry), and
+// --credential pins the account. Both empty is a no-op — the preset/default stands. It's
+// the single-run analog of the loop's oneOffLadder; a bad shape (e.g. an account given in
+// both --model's @ and --credential) errors.
+func (a *app) applyOneOff(tool, model, credential string) error {
+	ladder, err := oneOffLadder(model, credential)
+	if err != nil {
+		return err
+	}
+	if ladder == nil {
+		return nil
+	}
+	t := ladder[0]
+	if err := a.selectRunProfile(tool, t.Credential); err != nil {
+		return err
+	}
+	a.selectRunModel(tool, t.Model)
+	return nil
 }
 
 // extractBoolFlag pulls one of coop's own bool flags out of an agent's args (so it isn't
@@ -514,10 +534,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--credential <name>] [--model <model>] [--preset <name>])", leftover[0])
 	}
 	a.applyPreset(p, tool)
-	if err := a.selectRunProfile(tool, profile); err != nil {
+	if err := a.applyOneOff(tool, model, profile); err != nil {
 		return 2, err
 	}
-	a.selectRunModel(tool, model)
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
 	// the resolved model as a flag. tool passed agents.Valid above, so this can't miss.
 	cmd, _ := acpCommand(a.cfg, tool)
@@ -680,10 +699,9 @@ func (a *app) cmdFusion(args []string) (int, error) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
 	}
 	a.applyPreset(p, governor)
-	if err := a.selectRunProfile(governor, profile); err != nil {
+	if err := a.applyOneOff(governor, model, profile); err != nil {
 		return 2, err
 	}
-	a.selectRunModel(governor, model)
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
@@ -1116,16 +1134,15 @@ func loopAgent(args []string) (agent string, explicit bool, err error) {
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
-	// The rotation pool is a SETTING of the loop, not a peer workflow, so it lives here:
-	// `coop loop pool [add|rm|clear]` (the top-level `coop pool` alias was retired in v3).
-	if len(args) > 0 && args[0] == "pool" {
-		return a.cmdPool(args[1:])
+	if len(args) > 0 && args[0] == "pool" { // v3: the persistent pool is gone — rotation lives in a preset
+		note, _ := removedCommandNote("loop pool")
+		return 2, errors.New(note)
 	}
 	flags, rest, err := extractTasksFlags(args)
 	if err != nil {
 		return 2, err
 	}
-	profiles, rest, err := extractLoopProfiles(rest)
+	credential, rest, err := extractRunProfile(rest)
 	if err != nil {
 		return 2, err
 	}
@@ -1142,93 +1159,44 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	// --preset: the preset's lead agent is the default (an explicit agent still wins), its
-	// roles seed the run, and its lead model/credentials slot below explicit flags.
+	// roles seed the run, and its models ladder becomes the rotation (below explicit flags).
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
 		return 2, err
 	}
 	agent = presetLeadAgent(p, agent, agentSet)
 	a.applyPreset(p, agent)
+	a.applyLoopModel(agent) // COOP_LOOP_MODEL → the fallback tier (below a ladder target's model)
 	queues, err := taskQueues(a.cfg, repo, flags)
 	if err != nil {
 		return 2, err
 	}
-	// A one-off --credential runs on exactly the given credential(s) without touching the
-	// persistent pool; else the preset lead's credentials rotate; else the configured pool
-	// (repo pool, else all signed-in).
-	pool := (*profilePool)(nil)
-	switch {
-	case len(profiles) > 0:
-		pool, err = authedPool(a.cfg, agent, profiles)
-	case p != nil && agent == p.LeadAgent && len(p.LeadCredentials) > 0:
-		pool, err = authedPool(a.cfg, agent, p.LeadCredentials)
-	default:
-		pool, err = buildPool(a.cfg, repo, agent)
+	// The rotation ladder (model-first): a one-off --model/--credential wins; else the preset
+	// lead's models; else the default (agent model across all signed-in accounts). expandLadder
+	// turns it into the concrete (model, account) targets the loop cycles on rate limits.
+	ladder, err := oneOffLadder(model, credential)
+	if err != nil {
+		return 2, err
 	}
+	if ladder == nil && p != nil && agent == p.LeadAgent {
+		ladder = p.LeadModels
+	}
+	rot, err := a.buildRotation(agent, ladder)
 	if err != nil {
 		return -1, err
 	}
-	// Model precedence: explicit --model (the top tier), then the active pool TARGET's model
-	// (applied per rotation — see applyPoolTarget), then the preset's lead model (already in
-	// the fallback slot via applyPreset), then COOP_LOOP_MODEL (applyLoopModel below), then
-	// the profile mark / agent default at resolution time.
-	a.applyLoopModel(agent, model)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, "", pool, queues, nil, consult, debugOnFail, preflight) // local loop: no fork label
+	return a.loop(repo, img, agent, "", rot, queues, nil, consult, debugOnFail, preflight) // local loop: no fork label
 }
 
-// applyLoopModel pins the loop's model tiers: an explicit --model / fleet model= is the
-// top tier (it beats even a pool target's model); COOP_LOOP_MODEL is a standing default
-// BELOW any target model and below a preset lead's model (which applyPreset already put
-// in the fallback slot — don't overwrite it). With nothing set, each iteration resolves
-// lazily: the rotated target's model, then the credential's mark, then the agent default.
-// Shared by `coop loop` and the fork loops.
-func (a *app) applyLoopModel(agent, model string) {
-	if model != "" {
-		a.cfg.SetActiveModel(agent, model)
-		return
-	}
-	if a.cfg.LoopModel != "" && a.cfg.FallbackModel(agent) == "" {
+// applyLoopModel puts COOP_LOOP_MODEL in the fallback tier — the loop's standing default
+// model, used when a rotation entry carries no model of its own (a bare `models: [work]`
+// or the no-preset default). It sits below a ladder target's model and below an explicit
+// --model, and above the account's mark. Shared by `coop loop` and the fork loops.
+func (a *app) applyLoopModel(agent string) {
+	if a.cfg.LoopModel != "" {
 		a.cfg.SetFallbackModel(agent, a.cfg.LoopModel)
 	}
-}
-
-// extractLoopProfiles pulls --profile <a,b> / --profile=<a,b> (repeatable, accumulating like fork) out
-// of the loop args, so `coop loop --profile x` runs a ONE-OFF on x without mutating the persistent
-// pool (`coop loop pool …`) — the same credential-selection flag every other launch path takes.
-func extractLoopProfiles(args []string) (profiles, rest []string, err error) {
-	if err := rejectRetiredProfileFlag(args); err != nil {
-		return nil, nil, err
-	}
-	spellings := []string{"--credential", "--credentials"}
-	for i := 0; i < len(args); i++ {
-		x, matched := args[i], false
-		for _, flag := range spellings {
-			switch {
-			case x == flag:
-				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-					return nil, nil, fmt.Errorf("coop loop %s needs a credential name (or comma-separated list)", flag)
-				}
-				i++
-				profiles = addProfiles(profiles, parseProfileList(args[i]))
-				matched = true
-			case strings.HasPrefix(x, flag+"="):
-				list := parseProfileList(strings.TrimPrefix(x, flag+"="))
-				if len(list) == 0 {
-					return nil, nil, fmt.Errorf("coop loop %s needs a credential name (or comma-separated list)", flag)
-				}
-				profiles = addProfiles(profiles, list)
-				matched = true
-			}
-			if matched {
-				break
-			}
-		}
-		if !matched {
-			rest = append(rest, x)
-		}
-	}
-	return profiles, rest, nil
 }
 
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
@@ -1326,7 +1294,7 @@ func watchInterrupt(sig <-chan os.Signal, onSoft, onHard func()) {
 // peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
-func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues []string, sink io.Writer, consult, debugOnFail, preflight bool) (int, error) {
+func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, consult, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -1418,6 +1386,9 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	} else {
 		ui.Info("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.total(), stopHint)
 	}
+	if rot.rotates() {
+		ui.Info("rotating %d targets on rate limit: %s", len(rot.targets), strings.Join(rot.members(), ", "))
+	}
 	fails, waits, completed, stalls := 0, 0, 0, 0
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
@@ -1438,7 +1409,7 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		}
 		// Run this iteration on the pool's active target — its credential (the mount and the
 		// agent command both resolve cfg.AgentDir) and its model, if the target carries one.
-		a.applyPoolTarget(agent, pool)
+		a.applyTarget(agent, rot)
 		// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 		ui.Info("%s", progressBanner(n, c, active))
 		code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, consult)
@@ -1482,8 +1453,8 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 			// A rate/usage limit is expected on long runs. With more than one profile in
 			// the pool, switch to another subscription and retry immediately; otherwise wait
 			// for the reset. Either way the same iteration is retried, not burned.
-			if pool.rotates() {
-				a.rotateOnLimit(agent, pool, resetAt, &waits, wake)
+			if rot.rotates() {
+				a.rotateOnLimit(agent, rot, resetAt, &waits, wake)
 			} else {
 				sleepForLimit(wait, resetAt, wake)
 			}

@@ -1,7 +1,7 @@
 # Destructive subcommands use `rm` — the only spelling (no `remove` alias in v3)
 
 Every destructive subcommand uses `rm` as its verb — in the dispatch, `usage:` string, help row, and
-error suggestions: `coop fork rm`, `coop profiles rm`, `coop loop pool rm`, `coop tasks rm`. It is the
+error suggestions: `coop fork rm`, `coop credentials rm`, `coop tasks rm`. It is the
 ONLY accepted spelling: v3 keeps no `remove` alias.
 
 **Why:** the user ran `coop profiles rm` and noticed `coop tasks` advertised `remove` instead —

@@ -54,22 +54,19 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 		if r.Mode == preset.ModeNative || r.Agent == lead {
 			continue // the lead's own selection is handled below and must not be clobbered by a role
 		}
-		if len(r.Credentials) > 0 {
-			a.cfg.SetActiveProfile(r.Agent, r.Credentials[0])
-		}
 		if r.Model != "" {
-			a.cfg.SetActiveModel(r.Agent, r.Model)
+			a.cfg.SetActiveModel(r.Agent, r.Model) // the role runs on its agent's default account
 		}
 	}
-	if lead == p.LeadAgent {
-		if len(p.LeadCredentials) > 0 {
-			a.cfg.SetActiveProfile(lead, p.LeadCredentials[0])
+	if lead == p.LeadAgent && len(p.LeadModels) > 0 {
+		// A run that doesn't rotate (single, or the loop before its first applyTarget) uses the
+		// ladder's FIRST entry: its account if pinned (else the marked default), and its model in
+		// the target tier — below an explicit --model, above the account mark / COOP_LOOP_MODEL.
+		first := p.LeadModels[0]
+		if first.Credential != "" {
+			a.cfg.SetActiveProfile(lead, first.Credential)
 		}
-		if p.LeadModel != "" {
-			// The fallback tier, not the explicit one: an explicit --model must beat it, and so
-			// must a loop pool target's model (`work@sonnet` — the rate-limit model fallback).
-			a.cfg.SetFallbackModel(lead, p.LeadModel)
-		}
+		a.cfg.SetTargetModel(lead, first.Model)
 	}
 	a.preset = p
 }

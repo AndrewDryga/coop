@@ -36,7 +36,6 @@ FORKS — review and land work like a PR
 
 UNATTENDED
   coop loop [agent]                 work the queue(s) until done, then audit
-  coop loop pool add|rm|clear       subscriptions to rotate when rate-limited
   coop fleet init|up|down|split|watch|prune  parallel forks from .agent/fleet
 
 TASKS — a folder-per-task queue in .agent/tasks/
@@ -88,7 +87,7 @@ FLAGS (every short flag has a long form):
       --fresh     recreate the fork from scratch (refuses unmerged/dirty without --force)
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)
-      --credential  credential(s) for this fork (a,b rotates with --loop)
+      --credential  pin this fork's account (else the preset/default)
       --model     model for this fork's agent (see 'coop models')
       --preset    orchestration preset for this fork (see 'coop help presets')
       --consult   with --loop, iterations may consult the authed peers read-only
@@ -124,9 +123,9 @@ coop login <agent> — sign in to an agent (token persists in the config dir).
   refresh or switch accounts — e.g. after a usage limit.
 
   --credential <name> signs in a second (or third) account under a name, so
-  one agent can hold several subscriptions. The unattended loop rotates across a
-  repo's credentials when one is rate limited (see 'coop loop pool'). Without the
-  flag the sign-in targets the default credential.
+  one agent can hold several subscriptions. An unattended loop rotates across all
+  of them when one is rate limited (a bare model in a preset's models: ladder fans
+  out over every account). Without the flag the sign-in targets the default.
 
 coop credentials — list stored credentials; a path grammar edits one.
 
@@ -135,13 +134,13 @@ coop credentials — list stored credentials; a path grammar edits one.
          coop credentials <agent> <credential> default
          coop credentials <agent> <credential> rm
 
-  A CREDENTIAL is one stored account/login — its own rate-limit pool. (Orchestration
+  A CREDENTIAL is one stored account/login — a rate-limit slot. (Orchestration
   recipes are PRESETS; see coop help presets. 'coop profiles' was the pre-v3 name.)
   Each token narrows: no args lists every agent, an agent lists its credentials
   (signed in? default? marked model?), a credential shows its detail, and a trailing
   attribute reads or writes one property of it. A credential is one subscription;
-  add more with 'coop login <agent> --credential <name>', then let the loop rotate
-  across them on a rate limit ('coop loop pool').
+  add more with 'coop login <agent> --credential <name>', then an unattended loop
+  rotates across them on a rate limit (a bare model in a preset's models: ladder).
 
   model [<m> | --clear]  the credential's default model — every run on it
                          (interactive, loop, fork, consult peer) uses it unless
@@ -150,8 +149,9 @@ coop credentials — list stored credentials; a path grammar edits one.
                              coop credentials claude work model opus
                              coop credentials claude personal model haiku
                          See 'coop models' for the menu and the precedence.
-  default                mark this credential as what a plain 'coop <agent>' runs —
-                         a mark you set, not whichever is named "default".
+  default                mark this credential as what a plain 'coop <agent>' runs,
+                         and the account a loop's rotation starts on. A mark you
+                         set — the listing shows it first, tagged (default).
   rm                     delete the credential (its login token, session history,
                          and model mark). Set a different default first if
                          you're removing the marked one.
@@ -168,23 +168,24 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
          coop presets init [name]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
-  work to — each role an agent + model + credentials + routing hints. A CREDENTIAL
-  is just a stored account/login (a rate-limit slot; see coop credentials). Presets
-  reference credentials; they never store secrets.
+  work to — each role an agent + model + routing hints. The lead's models: list is
+  its fallback ladder (model-first): a bare model runs on EVERY signed-in account
+  (rotating on a rate limit), model@account pins one. On a loop it rotates the
+  ladder top-to-bottom; a single run uses the first entry. Accounts are your local
+  logins (see coop credentials) — presets name models, not secrets.
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
   An explicitly named agent wins over the preset's lead; explicit --model/
-  --credential win over the preset's values.
+  --credential win over the ladder.
 
   .agent/presets/frontier/preset.yaml:
 
     lead:
       agent: claude
-      model: claude-fable-5
-      credentials: [work]
-      prompt: lead.md            # optional Markdown, appended to the generated contract
-    roles:
+      models: [claude-fable-5, claude-opus-4-8@work]   # ladder: fable on all
+      prompt: lead.md            # accounts, then opus on work. Optional Markdown.
+    roles:                       # roles run on their agent's default account
       thinker:                   # native Claude subagent — deep thinking in-session
         mode: native
         agent: claude
@@ -195,13 +196,11 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
         mode: consult
         agent: codex
         model: gpt-5.5
-        credentials: [work]
         when: [plan-review, security]
       fast:                      # write-capable delegate via coop-delegate
         mode: delegate
         agent: gemini
         model: gemini-3.5-flash
-        credentials: [work]
         when: [boilerplate, bulk-edits, test-scaffolding]
         commit: never            # the delegate edits; the LEAD reviews, gates, commits
         concurrent: never        # delegate runs are serialized
@@ -211,7 +210,7 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   prompt files (lead.md, roles/<name>.md) append to the generated text, never
   replace it. A delegate may edit the worktree but must not commit — coop-delegate
   fails loud if HEAD moved — and the lead owns the diff review, the gate, and the
-  commit. Model ids for the recipe: coop models.
+  commit. Model ids for the recipe: coop models. Scaffold one: coop presets init.
 
 coop models [agent] — the model menu per agent.
 
@@ -226,11 +225,11 @@ coop models [agent] — the model menu per agent.
   'coop fusion claude --model opus', 'coop loop --model haiku',
   'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
 
-  Precedence: --model flag > the pool target's model (a loop's credential@model)
-  > the preset lead's model > COOP_LOOP_MODEL (loop runs) > the credential's mark >
-  COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
-  agent CLI's own default. coop never validates a model id — a bad one fails in
-  the agent's own error.
+  Precedence: --model flag > the active rotation entry's model (a loop stepping
+  through a preset's models: ladder) > COOP_LOOP_MODEL (loop runs) > the credential's
+  mark > COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
+  agent CLI's own default. --model may carry an account (--model opus@work). coop
+  never validates a model id — a bad one fails in the agent's own error.
 
 coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
@@ -290,19 +289,21 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
   up and down take --prune (with optional --force) to prune in the same step.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
-  loop) and may set agent:, preset: (an orchestration preset; its lead is the fork's
-  default agent), credentials: (rotated on a rate limit — give each fork a DIFFERENT
-  account so they run in parallel instead of contending; a member may carry a model
-  for same-account fallback: "work@opus" or {name: work, model: opus}), model:, and
-  consult: true (iterations may ask the other signed-in agents read-only):
+  loop) and may set agent:, preset: (an orchestration preset; its lead + models ladder
+  drive the fork), model: (a one-off model, may be model@account), credential: (pin an
+  account — give each fork a DIFFERENT one so they run in parallel), and consult: true
+  (iterations may ask the other signed-in agents read-only). A full fallback ladder
+  lives in a preset; per-fork model:/credential: are single one-off overrides:
 
     forks:
       core:
         tasks: .agent/tasks.core
         preset: frontier
-        credentials: [work]
+      perf:
+        tasks: .agent/tasks.perf
+        model: gpt-5.5@work
 
-  Per-fork credentials/model/consult override the preset for that fork only. The
+  Per-fork model:/credential:/consult: override the preset for that fork only. The
   pre-v3 one-line .agent/fleet is NOT read — its presence is an error until you
   translate it (see MIGRATING.md) and delete it. List forks: coop fork ls
 
@@ -337,20 +338,22 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
 coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <model>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m[@account]>] [--credential <name>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, an
-  auditor re-checks every shipped task. On a rate limit it switches to another
-  signed-in credential (see 'coop loop pool'), or waits out the reset when there's only one.
+  auditor re-checks every shipped task. On a rate limit it rotates to the next
+  target in its models ladder, or waits out the reset when they're all limited.
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
-  default agent, its lead credentials the rotation pool, and each iteration gets
-  the preset's role routing + wrappers ('coop help presets').
+  default agent, its models: ladder is the rotation, and each iteration gets the
+  preset's role routing + wrappers ('coop help presets'). With no preset, the loop
+  rotates the agent's default model across all signed-in accounts.
 
-  --model <m> pins the loop's model; else the preset lead's model; COOP_LOOP_MODEL
-  is the standing default below those — so overnight runs can grind on a cheaper
-  model than your interactive sessions. With none, each iteration uses the rotated
-  credential's marked default ('coop models'), then COOP_<AGENT>_MODEL.
+  --model <m[@account]> / --credential <name> are a one-off ladder for this run
+  (no preset needed): a bare --model fans across all accounts, --model opus@work
+  or --credential pins one. COOP_LOOP_MODEL is the standing model below a ladder
+  entry's own, then the account's marked default ('coop models'), then
+  COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
 
   --consult lets each iteration ask the other signed-in agents for a read-only
   second opinion (coop-consult on PATH, peers' credentials mounted) — the

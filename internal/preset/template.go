@@ -8,17 +8,18 @@ import (
 
 // Template is the scaffolded preset — the documented frontier recipe, ready to edit:
 // a big-model lead, a native deep-thinking subagent, a read-only cross-vendor critic,
-// and a cheap write-capable delegate. It must load cleanly as written (the test
-// guards it), so the credentials/prompt lines ship commented — uncommenting
-// credentials requires that account to be signed in, and a prompt: file must exist.
+// and a cheap write-capable delegate. It must load cleanly as written (the test guards
+// it), so the prompt: lines ship commented — a prompt file must exist to be referenced.
 const Template = `# coop preset — an orchestration recipe: who leads, and which roles it routes work to.
 # Run it:   coop claude --preset %[1]s   ·   coop loop --preset %[1]s
 # Inspect:  coop presets %[1]s   ·   format reference: coop help presets
 
 lead:
   agent: claude
-  model: claude-fable-5
-  # credentials: [work]     # the stored account(s) the lead runs on (see: coop credentials)
+  # models is the lead's fallback ladder (model-first). A bare model runs on EVERY
+  # signed-in account (rotating on rate limit); model@account pins one. On a loop it
+  # rotates top-to-bottom; a single run uses the first. See: coop credentials.
+  models: [claude-fable-5, claude-opus-4-8@work]
   # prompt: lead.md         # optional Markdown, appended to the generated contract
 
 roles:
@@ -32,15 +33,13 @@ roles:
   critic:                   # independent critique from another vendor — read-only
     mode: consult
     agent: codex
-    model: gpt-5.5
-    # credentials: [work]
+    model: gpt-5.5          # a role runs on its agent's default account (coop credentials)
     when: [plan-review, security, tradeoffs]
 
   fast:                     # cheap mechanical work — write-capable via coop-delegate
     mode: delegate
     agent: gemini
     model: gemini-3.5-flash
-    # credentials: [work]
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never           # it edits; the LEAD reviews the diff, runs the gate, commits
     concurrent: never       # delegate runs are serialized

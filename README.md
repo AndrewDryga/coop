@@ -459,17 +459,24 @@ coop credentials                          # list them and which are signed in
 ```
 
 When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to the
-next pool target and keeps going, only waiting once every target is limited. With no
-extra setup it rotates across all of an agent's signed-in credentials; to narrow a repo
-to a chosen set, give it a pool. A target can also carry a **model fallback** —
-`work@opus, work@sonnet` steps down to a cheaper model on the *same* login (no re-auth)
-before rotating to another account, and limits are tracked per target, so `work@sonnet`
-stays available while `work@opus` cools down:
+next target and keeps going, only waiting once every target is limited. There is no
+persistent pool to configure: the rotation *is* the model-first `models:` ladder of the
+loop's lead. With no preset it rotates the agent's default model across every signed-in
+account; a bare model in a ladder does the same, while a pinned `model@account` runs just
+one. Limits are tracked per (model, account), so `claude-opus-4-8@personal` stays usable
+while `claude-opus-4-8@work` cools down. A ladder gives you **fallbacks** in the order you
+write them — step to a cheaper model, another account, or both:
+
+```yaml
+# .agent/presets/frontier/preset.yaml — coop presets init scaffolds this
+lead:
+  agent: claude
+  models: [claude-opus-4-8, claude-fable-5@work]  # opus on all accounts, then fable on work
+```
 
 ```bash
-coop loop pool add claude work personal        # this repo's loop rotates two accounts
-coop loop pool add claude work@opus work@sonnet  # or: model fallback on one account first
-coop loop pool                                 # show the pool (coop loop pool clear claude to reset)
+coop loop --preset frontier   # rotates that ladder; coop presets shows every recipe
+coop loop --model opus@work    # or a one-off single target, no preset
 ```
 
 Which profile a plain interactive `coop claude` uses is a mark you set, not a magic
@@ -571,8 +578,10 @@ delegate via `coop-delegate`). `.agent/presets/frontier/preset.yaml`:
 ```yaml
 lead:
   agent: claude
-  model: claude-fable-5
-  credentials: [work]
+  # models is the lead's fallback ladder (model-first). A bare model runs on EVERY
+  # signed-in account (rotating on rate limit); model@account pins one. On a loop it
+  # rotates top-to-bottom; a single run uses the first.
+  models: [claude-fable-5, claude-opus-4-8@work]
   prompt: lead.md              # optional Markdown, appended to the generated contract
 
 roles:
@@ -587,15 +596,13 @@ roles:
   critic:                      # independent critique from another vendor, read-only
     mode: consult
     agent: codex
-    model: gpt-5.5
-    credentials: [work]
+    model: gpt-5.5             # a role runs on its agent's default account
     when: [plan-review, security, tradeoffs]
 
   fast:                        # cheap mechanical work, write-capable
     mode: delegate
     agent: gemini
     model: gemini-3.5-flash
-    credentials: [work]
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never              # it edits; the LEAD reviews the diff, gates, commits
     concurrent: never          # delegate runs are serialized
@@ -874,22 +881,22 @@ the first conflict or red gate, leaving the rest untouched.
 **Declare the fleet once** in `.agent/fleet.yaml` (run `coop fleet init` for a template
 with the format documented inline). Each fork needs `tasks:` (relative to the repo
 root) and may set `agent:`, `preset:` (an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file)
-— its lead becomes the fork's default agent), `credentials:` (its own account(s),
-rotated on a rate limit), `model:`, and `consult: true` (iterations may ask the
-[peer agents](#the-orchestrator-pattern) read-only). Per-fork values override the
-preset for that fork only:
+— its lead becomes the fork's default agent), `credential:` (pin one account; give each
+fork a different one so they don't contend), `model:` (may be `model@account`), and
+`consult: true` (iterations may ask the [peer agents](#the-orchestrator-pattern)
+read-only). A fork runs one model/credential — for a full rotation ladder, point it at a
+preset. Per-fork values override the preset for that fork only:
 
 ```yaml
 forks:
   core:
     tasks: .agent/tasks.core
     preset: frontier          # claude/fable lead + critic/fast roles, from the preset
-    credentials: [work]
+    credential: work
   perf:
     agent: codex
     tasks: .agent/tasks.perf
-    model: gpt-5.5
-    credentials: [work]
+    model: gpt-5.5@work
   deps:
     agent: gemini
     tasks: .agent/tasks.deps

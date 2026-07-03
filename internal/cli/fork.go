@@ -101,7 +101,7 @@ func forkHelpText(p ui.Palette) string {
 		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
-		{"    --credential", "credential(s) for this fork (a,b rotates with --loop)"},
+		{"    --credential", "pin this fork's account (else the preset/default)"},
 		{"    --model", "model for this fork's agent (see 'coop models')"},
 		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
 		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
@@ -204,12 +204,12 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
-	profiles   []string // --credential <a,b> (legacy --profile): the credential(s) this fork uses (a loop rotates them)
-	model      string   // --model <m>: the model this fork's agent runs (beats profile/agent defaults)
-	consult    bool     // --consult: loop iterations may ask the authed peers (interactive forks always may)
-	preset     string   // --preset <name>: the orchestration preset this fork's loop runs under
-	worker     bool     // internal: this process IS the detached loop worker (--_detached)
+	tasks      string // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
+	credential string // --credential <name>: pin the fork's account (else the ladder default)
+	model      string // --model <m[@account]>: the fork's model, optionally pinning the account
+	consult    bool   // --consult: loop iterations may ask the authed peers (interactive forks always may)
+	preset     string // --preset <name>: the orchestration preset this fork's loop runs under
+	worker     bool   // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
@@ -252,17 +252,16 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			return fa, retiredProfileFlagErr()
 		case x == "--credential", x == "--credentials":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, fmt.Errorf("coop fork %s needs a credential name (or comma-separated list)", x)
+				return fa, fmt.Errorf("coop fork %s needs an account name", x)
 			}
 			i++
-			fa.profiles = addProfiles(fa.profiles, parseProfileList(rest[i])) // repeated flags accumulate (deduped), not last-wins
+			fa.credential = rest[i]
 		case strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
-			_, val, _ := strings.Cut(x, "=")
-			list := parseProfileList(val)
-			if len(list) == 0 {
-				return fa, fmt.Errorf("coop fork %s needs a credential name (or comma-separated list)", strings.SplitN(x, "=", 2)[0])
+			if _, val, _ := strings.Cut(x, "="); val == "" {
+				return fa, fmt.Errorf("coop fork %s needs an account name", strings.SplitN(x, "=", 2)[0])
+			} else {
+				fa.credential = val
 			}
-			fa.profiles = addProfiles(fa.profiles, list)
 		case x == "--preset":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, errors.New("coop fork --preset needs a preset name")
@@ -304,11 +303,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if fa.consult && !fa.loop {
 		return fa, errors.New("coop fork --consult only applies with --loop (an interactive fork may always consult its peers)")
 	}
-	// Several profiles only make sense for a loop (it rotates them on a limit); a single
-	// interactive session runs on exactly one.
-	if len(fa.profiles) > 1 && !fa.loop {
-		return fa, errors.New("coop fork: multiple --credential values only apply with --loop (an interactive fork uses one credential)")
-	}
 	return fa, nil
 }
 
@@ -330,20 +324,14 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if !fa.agentSet {
 			fa.agent, fa.agentSet = p.LeadAgent, true // the preset's lead wins over the remembered agent
 		}
-		if fa.agent == p.LeadAgent && len(fa.profiles) == 0 {
-			fa.profiles = p.LeadCredentials // the lead's credentials become the fork's pool
-		}
-		// The lead's MODEL is not merged into fa.model — that's the explicit tier; applyPreset
-		// puts it in the fallback slot, where a pool target's model correctly beats it.
+		// The preset's models ladder drives the fork's rotation (built in runForkLoop from
+		// a.preset); credentials/model aren't merged into fa here.
 		a.applyPreset(p, fa.agent)
 	}
-	// Validate the requested credential(s) before any image/clone work, so a typo'd
-	// --credential fails fast and never leaves a stray fork behind (setupFork would
-	// otherwise clone first, then fail). A member may carry a model (credential@model).
-	for _, p := range fa.profiles {
-		if cred := parsePoolTarget(p).credential; !slices.Contains(a.cfg.Profiles(fa.agent), cred) {
-			return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", fa.agent, cred, fa.agent, cred)
-		}
+	// Validate a pinned --credential before any image/clone work, so a typo'd account fails
+	// fast and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
+	if fa.credential != "" && !slices.Contains(a.cfg.Profiles(fa.agent), fa.credential) {
+		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s --credential %s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
 	// --loop with no --tasks defaults to the repo's own queue (.agent/tasks); per-fork slices are
 	// the explicit case. resolveImage below re-resolves the repo, but that does image work too.
@@ -412,25 +400,18 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.loop {
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.consult, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.preset, fa.consult)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.preset, fa.consult)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.consult, false)
 		}
 	}
-	// A single --credential pins this interactive session's account; a credential@model
-	// member (pool grammar) also pins the target model, below an explicit --model.
-	if len(fa.profiles) == 1 {
-		t := parsePoolTarget(fa.profiles[0])
-		if err := a.selectRunProfile(fa.agent, t.credential); err != nil {
-			return 2, err
-		}
-		a.cfg.SetTargetModel(fa.agent, t.model)
+	// Pin this interactive session's account/model from --credential / --model (model@account
+	// shortcut allowed), below any preset the fork carries.
+	if err := a.applyOneOff(fa.agent, fa.model, fa.credential); err != nil {
+		return 2, err
 	}
-	// --model pins this interactive session's model (after the remembered-agent resolution
-	// above, so it lands on the agent that actually runs).
-	a.selectRunModel(fa.agent, fa.model)
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
 	// run when no session for this fork exists. See forkLaunchCmd.
@@ -850,10 +831,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--credential <name>] [--model <model>]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
-	if err := a.selectRunProfile(agent, profile); err != nil {
+	if err := a.applyOneOff(agent, model, profile); err != nil {
 		return 2, err
 	}
-	a.selectRunModel(agent, model)
 	cmd, ok := acpCommand(a.cfg, agent)
 	if !ok {
 		return 2, errors.New("usage: coop fork <name> acp [claude|codex|gemini]")

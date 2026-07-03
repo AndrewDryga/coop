@@ -15,20 +15,21 @@ import (
 )
 
 // fleetEntry is one fork in the declarative fleet: a name, the agent to run it, the tasks tree
-// that seeds its loop, and optionally the credential(s) its loop rotates (so a fleet can put
-// each fork on its own account instead of all contending for the repo pool's first one), the
-// model it runs (so e.g. a risky fork gets the big model and a chore fork a cheap one), the
-// orchestration preset it runs under, and whether its loop iterations may consult the authed
-// peers (the orchestrator pattern, headless). agent may be empty when a preset supplies the
-// lead. Per-fork credentials/model/consult override the preset for that fork only.
+// that seeds its loop, and optionally the single account it pins (so a fleet can put each fork
+// on its own credential instead of all contending for the same first one), the model it runs
+// (so e.g. a risky fork gets the big model and a chore fork a cheap one), the orchestration
+// preset it runs under, and whether its loop iterations may consult the authed peers (the
+// orchestrator pattern, headless). agent may be empty when a preset supplies the lead. A fork
+// takes one model/credential; a full rotation ladder lives in a preset. Per-fork
+// model/credential/consult override the preset for that fork only.
 type fleetEntry struct {
-	name     string
-	agent    string
-	tasks    string
-	profiles []string
-	model    string
-	preset   string
-	consult  bool
+	name       string
+	agent      string
+	tasks      string
+	model      string // --model one-off (may be model@account); a full ladder → use preset
+	credential string // --credential one-off (account)
+	preset     string
+	consult    bool
 }
 
 // fleetFile is the PRE-V3 one-line-per-fork fleet (.agent/fleet). It is never read —
@@ -37,60 +38,19 @@ type fleetEntry struct {
 func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet") }
 
 // fleetYAMLFile is the declarative fleet: .agent/fleet.yaml, a `forks:` map of fork
-// name → {tasks, agent, preset, credentials, model, consult}.
+// name → {tasks, agent, preset, credential, model, consult}.
 func fleetYAMLFile(repo string) string { return filepath.Join(repo, ".agent", "fleet.yaml") }
 
 // fleetForkYAML is one fork's YAML shape. Tasks is required; agent defaults to the
-// preset's lead when preset is set, else the default agent. Credentials/model/consult
+// preset's lead when preset is set, else the default agent. Model/credential/consult
 // override the preset for this fork only.
 type fleetForkYAML struct {
-	Agent       string           `yaml:"agent"`
-	Tasks       string           `yaml:"tasks"`
-	Preset      string           `yaml:"preset"`
-	Credentials []credentialYAML `yaml:"credentials"`
-	Model       string           `yaml:"model"`
-	Consult     bool             `yaml:"consult"`
-}
-
-// credentialYAML is one credential target in a fleet fork's credentials: list — a plain
-// name ("work", or the compact "work@opus"), or the structured form
-// {name: work, model: opus} for a model fallback member. Both normalize to the pool's
-// credential[@model] wire form.
-type credentialYAML struct {
-	Name  string
-	Model string
-}
-
-func (c *credentialYAML) UnmarshalYAML(n *yaml.Node) error {
-	if n.Kind == yaml.ScalarNode {
-		t := parsePoolTarget(n.Value)
-		c.Name, c.Model = t.credential, t.model
-		return nil
-	}
-	if n.Kind != yaml.MappingNode {
-		return fmt.Errorf("a credential is a name (\"work\", \"work@opus\") or {name: work, model: opus}")
-	}
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		switch key := n.Content[i].Value; key {
-		case "name", "model":
-		default:
-			return fmt.Errorf("credential: unknown key %q (known: name, model)", key)
-		}
-	}
-	var m struct {
-		Name  string `yaml:"name"`
-		Model string `yaml:"model"`
-	}
-	if err := n.Decode(&m); err != nil {
-		return err
-	}
-	c.Name, c.Model = m.Name, m.Model
-	return nil
-}
-
-// wire renders the target in the pool's credential[@model] member form.
-func (c credentialYAML) wire() string {
-	return poolTarget{credential: c.Name, model: c.Model}.String()
+	Agent      string `yaml:"agent"`
+	Tasks      string `yaml:"tasks"`
+	Preset     string `yaml:"preset"`
+	Model      string `yaml:"model"`      // one-off model (may be model@account); a ladder → preset
+	Credential string `yaml:"credential"` // one-off account
+	Consult    bool   `yaml:"consult"`
 }
 
 // parseFleetYAML parses .agent/fleet.yaml preserving the author's fork order (a plain
@@ -120,9 +80,9 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 		if node := doc.Forks.Content[i+1]; node.Kind == yaml.MappingNode {
 			for k := 0; k+1 < len(node.Content); k += 2 {
 				switch key := node.Content[k].Value; key {
-				case "agent", "tasks", "preset", "credentials", "model", "consult":
+				case "agent", "tasks", "preset", "model", "credential", "consult":
 				default:
-					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown key %q (known: agent, tasks, preset, credentials, model, consult)", name, key)
+					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown key %q (known: agent, tasks, preset, model, credential, consult)", name, key)
 				}
 			}
 		}
@@ -130,10 +90,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 		if err := doc.Forks.Content[i+1].Decode(&f); err != nil {
 			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %v", name, err)
 		}
-		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, model: f.Model, preset: f.Preset, consult: f.Consult}
-		for _, c := range f.Credentials {
-			e.profiles = append(e.profiles, c.wire())
-		}
+		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, model: f.Model, credential: f.Credential, preset: f.Preset, consult: f.Consult}
 		if !validForkName(e.name) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: invalid fork name %q", e.name)
 		}
@@ -149,11 +106,6 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 		}
 		if e.agent == "" && e.preset == "" {
 			e.agent = agents.Default() // no preset to supply a lead — claude, the standing default
-		}
-		for _, c := range e.profiles {
-			if parsePoolTarget(c).credential == "" {
-				return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: credentials has an empty name", e.name)
-			}
 		}
 		out = append(out, e)
 	}
@@ -212,14 +164,13 @@ const fleetTemplate = `# coop fleet — a declarative set of fork loops. Start i
 # Each fork under forks: needs tasks: (the task tree that seeds its loop, relative to
 # the repo). Everything else is optional:
 #   agent:        claude, codex, or gemini (defaults to the preset's lead, else claude)
-#   preset:       an orchestration preset from .agent/presets/<name>/ (lead, roles,
-#                 models, credentials — see 'coop help presets')
-#   credentials:  the credential(s) this fork's loop rotates on a rate limit. Give each
-#                 fork a DIFFERENT account so they run in parallel instead of contending.
-#                 A member may carry a model for same-account fallback — "work@opus" or
-#                 {name: work, model: opus} — tried in order before the next account.
-#                 Overrides the preset's lead credentials for this fork.
-#   model:        the model this fork runs (see 'coop models'); overrides the preset.
+#   preset:       an orchestration preset from .agent/presets/<name>/ (its lead + models
+#                 ladder drive the fork — see 'coop help presets'). A full model/account
+#                 fallback ladder lives in the preset, not here.
+#   model:        a one-off model for this fork (see 'coop models'); may pin an account as
+#                 model@account (e.g. gemini-3.5-flash@work). Overrides the preset.
+#   credential:   pin this fork's account. Give each fork a DIFFERENT one so they run in
+#                 parallel instead of contending for the same rate limit.
 #   consult:      true — iterations may ask the other signed-in agents for a read-only
 #                 second opinion (mounts their credentials into this fork's boxes).
 #
@@ -228,12 +179,10 @@ const fleetTemplate = `# coop fleet — a declarative set of fork loops. Start i
 #   core:
 #     tasks: .agent/tasks.core
 #     preset: frontier
-#     credentials: [work]
 #   chores:
 #     agent: gemini
 #     tasks: .agent/tasks.chores
-#     model: gemini-3.5-flash
-#     credentials: [work, backup]
+#     model: gemini-3.5-flash@work
 
 forks: {}
 `
@@ -292,10 +241,8 @@ func (a *app) fleetUp(args []string) (int, error) {
 		if e.agent == "" {
 			continue // the fork's preset supplies the lead; forkCreate validates after resolving it
 		}
-		for _, p := range e.profiles {
-			if cred := parsePoolTarget(p).credential; !box.ProfileAuthed(a.cfg, e.agent, cred) {
-				unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, cred))
-			}
+		if e.credential != "" && !box.ProfileAuthed(a.cfg, e.agent, e.credential) {
+			unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, e.credential))
 		}
 	}
 	if len(unsigned) > 0 {
@@ -319,8 +266,8 @@ func (a *app) fleetUp(args []string) (int, error) {
 		if e.preset != "" {
 			forkArgs = append(forkArgs, "--preset", e.preset)
 		}
-		if len(e.profiles) > 0 {
-			forkArgs = append(forkArgs, "--credential", strings.Join(e.profiles, ","))
+		if e.credential != "" {
+			forkArgs = append(forkArgs, "--credential", e.credential)
 		}
 		if e.model != "" {
 			forkArgs = append(forkArgs, "--model", e.model)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,27 +52,23 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 	}
 }
 
-func TestParseForkCreateProfiles(t *testing.T) {
-	// A loop fork may name several profiles (a per-fork rotation pool), space or = form.
-	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--tasks", "q.md", "--credential", "work,personal"})
+func TestParseForkCreateCredential(t *testing.T) {
+	// --credential pins a single account (space or = form); --model may carry a model@account.
+	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--tasks", "q.md", "--credential", "work", "--model", "opus@work"})
 	if err != nil {
-		t.Fatalf("parseForkCreate profiles err = %v", err)
+		t.Fatalf("parseForkCreate err = %v", err)
 	}
-	if got, want := fa.profiles, []string{"work", "personal"}; !slices.Equal(got, want) {
-		t.Errorf("profiles = %v, want %v", got, want)
+	if fa.credential != "work" || fa.model != "opus@work" {
+		t.Errorf("credential=%q model=%q, want work / opus@work", fa.credential, fa.model)
 	}
-	if fa2, err := parseForkCreate([]string{"perf", "--credential=work"}); err != nil || !slices.Equal(fa2.profiles, []string{"work"}) {
-		t.Errorf("--credential=work → profiles=%v err=%v, want [work]", fa2.profiles, err)
+	if fa2, err := parseForkCreate([]string{"perf", "--credential=work"}); err != nil || fa2.credential != "work" {
+		t.Errorf("--credential=work → credential=%q err=%v, want work", fa2.credential, err)
 	}
 	// The retired --profile spelling fails with the rewrite, both forms.
 	for _, args := range [][]string{{"perf", "--profile", "work"}, {"perf", "--profile=work"}} {
 		if _, err := parseForkCreate(args); err == nil || !strings.Contains(err.Error(), "--credential") {
 			t.Errorf("parseForkCreate(%v): the retired --profile must fail with the rewrite, got %v", args, err)
 		}
-	}
-	// A single profile is fine without --loop (an interactive fork uses one); several is not.
-	if _, err := parseForkCreate([]string{"perf", "--credential", "work,personal"}); err == nil {
-		t.Error("multiple --credential without --loop: want error")
 	}
 	if _, err := parseForkCreate([]string{"perf", "--credential"}); err == nil {
 		t.Error("--credential with no value: want error")
@@ -93,48 +88,6 @@ func TestForkStopMessages(t *testing.T) {
 	}
 	if code, err := a.forkStop([]string{"idle"}); code != 1 || err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Errorf("forkStop(idle) = (%d, %v), want (1, not running)", code, err)
-	}
-}
-
-func TestForkPool(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	signIn := func(p string) {
-		t.Helper()
-		dir := cfg.AgentProfileDir("claude", p)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	signIn("work")
-	signIn("personal")
-	a := &app{cfg: cfg}
-	repo := "/abs/repo"
-
-	// Explicit per-fork profiles → that exact pool, unsigned ones dropped.
-	pool, err := a.forkPool(repo, "claude", "api", []string{"work", "personal", "ghost"})
-	if err != nil {
-		t.Fatalf("forkPool: %v", err)
-	}
-	if !slices.Equal(pool.members(), []string{"work", "personal"}) {
-		t.Errorf("pool = %v, want [work personal] (ghost dropped)", pool.members())
-	}
-	// Every explicit profile unsigned → an error, so `coop fleet up` fails loud instead of looping
-	// a fork on a profile that can't authenticate.
-	if _, err := a.forkPool(repo, "claude", "api", []string{"ghost"}); err == nil {
-		t.Error("forkPool with only unsigned profiles should error")
-	}
-	// No explicit profiles → falls back to the repo pool / all signed-in.
-	pool, err = a.forkPool(repo, "claude", "api", nil)
-	if err != nil {
-		t.Fatalf("forkPool fallback: %v", err)
-	}
-	got := append([]string{}, pool.members()...)
-	slices.Sort(got)
-	if !slices.Equal(got, []string{"personal", "work"}) {
-		t.Errorf("fallback pool = %v, want both signed-in profiles", pool.members())
 	}
 }
 
@@ -251,7 +204,7 @@ func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{}}
-	code, err := a.detachForkLoop(repo, "perf", "claude", "", nil, "", "", false)
+	code, err := a.detachForkLoop(repo, "perf", "claude", "", "", "", "", false)
 	if err == nil {
 		t.Fatal("detachForkLoop started a second worker for an already-running fork")
 	}

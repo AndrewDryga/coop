@@ -191,27 +191,6 @@ func TestParseLoopArgs(t *testing.T) {
 	}
 }
 
-// `coop loop --credential a,b` (repeatable, accumulating) is pulled out for a one-off run; a
-// trailing flag with no value errors, and the retired --profile spelling fails with the rewrite.
-func TestExtractLoopProfiles(t *testing.T) {
-	profiles, rest, err := extractLoopProfiles([]string{"claude", "--credential", "a,b", "--consult", "--credential=c"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(profiles, ",") != "a,b,c" {
-		t.Errorf("profiles = %v, want [a b c]", profiles)
-	}
-	if strings.Join(rest, " ") != "claude --consult" {
-		t.Errorf("rest = %v, want [claude --consult]", rest)
-	}
-	if _, _, err := extractLoopProfiles([]string{"--credential"}); err == nil {
-		t.Error("a trailing --credential with no value should error")
-	}
-	if _, _, err := extractLoopProfiles([]string{"--profile", "a"}); err == nil || !strings.Contains(err.Error(), "--credential") {
-		t.Errorf("the retired --profile must fail with the rewrite, got %v", err)
-	}
-}
-
 func TestParseGovernor(t *testing.T) {
 	a := &app{cfg: &config.Config{FusionGovernor: "codex"}}
 	cases := []struct {
@@ -604,15 +583,12 @@ func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {
 	}
 }
 
-// The top-level fleet/pool summary lines must list every verb (init/split for fleet and rm/clear
-// for pool were omitted, hiding `coop fleet init` etc. from the main help).
+// The top-level fleet summary line must list every verb (init/split were omitted, hiding
+// `coop fleet init` etc. from the main help).
 func TestTopLevelListsAllGroupVerbs(t *testing.T) {
 	h := helpText(&config.Config{})
 	if !strings.Contains(h, "coop fleet init|up|down|split|watch|prune") {
 		t.Error("top-level fleet row should list every fleet verb (init/split were missing)")
-	}
-	if !strings.Contains(h, "coop loop pool add|rm|clear") {
-		t.Error("top-level pool row should list every pool verb (rm/clear were missing) at its loop home")
 	}
 }
 

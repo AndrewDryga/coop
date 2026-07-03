@@ -85,10 +85,6 @@ func Main(argv []string) int {
 				fmt.Print(RenderManual(cfg))
 				return 0
 			}
-			if argv[1] == "loop" && len(argv) > 2 && argv[2] == "pool" { // canonical `coop help loop pool` → the pool page
-				printCommandHelp(commandHelp["pool"])
-				return 0
-			}
 			return helpForCommand(argv[1])
 		}
 		printHelp(cfg)
@@ -113,12 +109,6 @@ func Main(argv []string) int {
 		if argv[0] == "fork" {
 			code, _ := forkHelp()
 			return code
-		}
-		// `coop loop pool [verb] --help` is the canonical spelling of the pool command (the pool is the
-		// loop's setting); route it to the pool page, not loop's — this intercept otherwise keys on argv[0].
-		if argv[0] == "loop" && len(argv) > 1 && argv[1] == "pool" {
-			printCommandHelp(commandHelp["pool"])
-			return 0
 		}
 		if h, ok := commandHelp[argv[0]]; ok {
 			printCommandHelp(h)
@@ -290,8 +280,8 @@ func removedCommandNote(cmd string) (string, bool) {
 			"(snapshot: `coop fork ls`)", true
 	case "clone": // v3: renamed-command aliases die loudly rather than living forever
 		return "coop clone was renamed to coop fork (v2.4) — run: coop fork <name>", true
-	case "pool":
-		return "coop pool moved under the loop — run: coop loop pool <add|rm|clear>", true
+	case "pool", "loop pool":
+		return "coop loop pool was retired in v3 — a loop's rotation lives in a preset's models: ladder (a bare model rotates all your accounts). See: coop help presets", true
 	case "tasks start":
 		return "coop tasks start was renamed to claim — run: coop tasks claim <id>", true
 	case "loop --debug":
