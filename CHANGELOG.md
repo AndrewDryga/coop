@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Site casts can't ship a dirty version anymore.** `make casts` regenerates the site's terminal
+  recordings, and the generator now refuses to capture the real `coop help` from an untagged or
+  `+dirty` binary (the live help.cast once shipped `coop v0.0.0-…+dirty` to every visitor). The
+  release checklist re-trues the casts at the tag, and the scripted loop scene's closing line now
+  reports a possible count (`3/3 in 3 iterations` — the loop works one task per iteration).
+
 - **The legacy flat credential vault is retired — one layout, migrated automatically.** Credentials
   and sessions now always live under `<config>/<agent>/profiles/<name>/`; the old flat
   `<config>/<agent>/` layout, where an un-named "default" login sat directly in the agent dir, is gone.

@@ -34,6 +34,9 @@ docs: ## Regenerate docs/cli.md + site/llms.txt from internal/cli (help.go is th
 docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)
 	@go run ./tools/gendocs -check
 
+casts: build ## Regenerate the site terminal casts (refuses a dirty/untagged ./coop; needs python3)
+	@python3 tools/gen_casts.py
+
 check: lint test docs-check ## What CI runs: lint + unit tests + CLI-docs freshness
 
 acp-e2e: install ## ACP supervise resume e2e (needs Docker + a built box + signed-in claude)
@@ -46,4 +49,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor check acp-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts check acp-e2e clean help

@@ -76,4 +76,4 @@
 [12.445, "o", "\r\u001b[J"]
 [12.445, "o", "\u001b[K\u001b[36m⠼\u001b[0m [\u001b[36m████████████████████\u001b[0m] \u001b[32m3\u001b[0m/3 done \u001b[2m0:10\u001b[0m"]
 [12.845, "o", "\r\u001b[J"]
-[14.245, "o", "\u001b[1m\u001b[32m✓ queue verified done — 3/3 in 1 iterations\u001b[0m\u001b[0m\r\n"]
+[14.245, "o", "\u001b[1m\u001b[32m✓ queue verified done — 3/3 in 3 iterations\u001b[0m\u001b[0m\r\n"]

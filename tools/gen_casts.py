@@ -304,7 +304,7 @@ def scene_loop():
     lb.scroll(ICON_LLM + " All three hold up — gate green, each with a commit and a regression test. Nothing to reopen.", after=0.9)
     lb.tick(2)
     lb.clear()
-    c.line(bold(green("✓ queue verified done — 3/3 in 1 iterations")), after=1.4)
+    c.line(bold(green("✓ queue verified done — 3/3 in 3 iterations")), after=1.4)
     c.write()
 
 
@@ -531,6 +531,35 @@ def scene_claude():
     c.write()
 
 
+def _coop_version(coop_bin):
+    """The version string `./coop version` reports (e.g. 'coop v3.0.0'), or '' if it won't run."""
+    import subprocess
+
+    try:
+        r = subprocess.run([str(coop_bin), "version"], cwd=str(ROOT),
+                           capture_output=True, text=True, timeout=10)
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+
+
+def _require_clean_coop():
+    """Refuse to capture help.cast from an untagged/dirty ./coop — the recording embeds the version
+    string, and a dev/+dirty binary shipped a `coop v0.0.0-...+dirty` line to the site once. A missing
+    binary is fine (scene_help just skips; scripted scenes carry no version); only a present-but-dirty
+    one is fatal, so `make casts` off a clean release tag just works."""
+    coop_bin = ROOT / "coop"
+    if not coop_bin.exists():
+        return
+    ver = _coop_version(coop_bin)
+    if (not ver) or ("dirty" in ver) or ("v0.0.0" in ver) or ver.split()[-1] in ("dev", "(devel)"):
+        sys.exit(
+            f"refusing to capture help.cast from an untagged/dirty coop ({ver or 'no version'}).\n"
+            "The cast records this version string, so the site would ship it. Regenerate from a\n"
+            "clean release tag (e.g. `git checkout v3.0.0 && make casts`)."
+        )
+
+
 def scene_help():
     """Real, colored `coop help`, captured under a PTY."""
     coop_bin = ROOT / "coop"
@@ -564,6 +593,8 @@ def main():
     unknown = [w for w in want if w not in SCENES]
     if unknown:
         sys.exit(f"unknown scene(s): {', '.join(unknown)}  (have: {', '.join(SCENES)})")
+    if "help" in want:
+        _require_clean_coop()  # fail fast, before any cast is written
     for name in want:
         SCENES[name]()
 

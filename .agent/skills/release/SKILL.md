@@ -38,6 +38,10 @@ each time — this is the contract; follow it.
 - Commit CHANGELOG-only: `changelog: finalize <version> (<one-line summary>)`.
 - Annotated tag on THAT finalize commit: `git tag -a "v<version>" -m "v<version>"`
   (tags are annotated and point at the finalize commit, never the re-open commit).
+- **Re-true the site casts now** — with HEAD at the tag, `./coop version` is the exact `v<version>`,
+  so `make casts` re-captures `site/casts/help.cast` with the release version, not a dev/dirty one
+  (it rebuilds `./coop` and refuses an untagged/`+dirty` binary). Commit the refreshed casts:
+  `casts: regenerate at v<version>`.
 - Re-open: add a fresh `## Unreleased` + the placeholder comment back; commit
   `changelog: open an Unreleased section after v<version>`.
 
