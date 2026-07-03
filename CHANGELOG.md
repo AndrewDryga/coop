@@ -4,10 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **`coop tasks watch` shows blocked work per queue.** The per-queue breakdown lines now include the
-  blocked count (in red) alongside done/total, and every progress bar (the overall one and each
-  queue's) renders blocked tasks as a red segment — so a parked queue is visible at a glance, not just
-  in the overall header.
+- **Progress bars show blocked work in red — everywhere.** Every coop progress bar (`coop tasks
+  watch`'s overall + per-queue bars, `coop fleet watch`'s fleet + per-fork bars, and the `coop loop`
+  live bar) now renders blocked tasks as a red segment (done cyan, blocked red, the rest empty) instead
+  of a done-only fill. `coop tasks watch`'s per-queue breakdown lines also print the blocked count in
+  red — so a queue parked on a decision is visible at a glance, not just in the overall header.
 
 - **Shell completions for bash and zsh.** `coop completion bash|zsh` prints a completion script (its
   commands and verbs come from the same source the dispatch and help do, so it can't drift), and a

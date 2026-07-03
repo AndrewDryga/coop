@@ -30,13 +30,9 @@ func newLoopBar(region *ui.Region, start time.Time, c taskCounts, active string)
 
 // line renders the bar from current state (caller holds b.mu).
 func (b *loopBar) line() string {
-	frac := 0.0
-	if t := b.c.total(); t > 0 {
-		frac = float64(b.c.Done) / float64(t)
-	}
 	return fmt.Sprintf("%s %s %s %s",
 		ui.Cyan(ui.SpinFrames[b.spin%len(ui.SpinFrames)]),
-		ui.ProgressBar(frac, 20),
+		ui.ProgressBarStates(b.c.Done, b.c.Blocked, b.c.total(), 20),
 		progressLine(b.c, b.active),
 		ui.Dim(elapsed(b.start)))
 }

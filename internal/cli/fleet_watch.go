@@ -165,13 +165,9 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	for _, r := range rows {
 		body = append(body, fleetRowLine(r, spin, countW))
 	}
-	frac := 0.0
-	if total > 0 {
-		frac = float64(done) / float64(total)
-	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
 	bar := fmt.Sprintf("%s %s %s tasks · %d running · %s blocked",
-		stateGlyph(running > 0, done, total, spin), ui.ProgressBar(frac, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
+		stateGlyph(running > 0, done, total, spin), ui.ProgressBarStates(done, blocked, total, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
 
 	out := make([]string, 0, len(body)+4)
 	out = append(out, header, "")
@@ -214,10 +210,6 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	case blocked:
 		glyph = ui.Red(glyph) // blocked: needs a human to clear the [B]
 	}
-	frac := 0.0
-	if total > 0 {
-		frac = float64(r.counts.Done) / float64(total)
-	}
 	var doing string // a terminal/non-actionable state wins; else the task it's on or will take next
 	switch {
 	case total == 0 && r.running:
@@ -234,7 +226,7 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 		doing = truncate(r.active, 32)
 	}
 	line := fmt.Sprintf("%s %s %-*s %s %-*s  %s",
-		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBar(frac, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
+		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBarStates(r.counts.Done, r.counts.Blocked, total, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}
