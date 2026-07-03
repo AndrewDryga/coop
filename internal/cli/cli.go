@@ -228,6 +228,9 @@ func helpForCommand(cmd string) int {
 	case commandHelp[cmd] != "":
 		printCommandHelp(commandHelp[cmd])
 		return 0
+	case agents.Valid(cmd): // `coop help claude` documents coop's wrapper flags; the agent's own --help forwards
+		printCommandHelp(agentHelp)
+		return 0
 	case isKnownCommand(cmd):
 		// The agents (claude/codex/gemini) forward --help to their own CLI, so coop keeps no
 		// static page — point there instead of inventing one.

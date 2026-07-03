@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -67,18 +68,23 @@ func helpText(cfg *config.Config) string {
 
 	fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
 	fmt.Fprint(&b, "Usage: coop <command> [args]\n")
+	// A newcomer (no agent signed in) gets the day-one order up front. Pure-local check (no runtime),
+	// so `coop help` still works before Docker exists — same state-aware style as the up/down rows below.
+	if !anyAgentSignedIn(cfg) {
+		fmt.Fprintf(&b, "\n%s  set up in order:  coop build → coop login <agent> → coop doctor\n", p.Bold("FIRST RUN"))
+	}
 
 	group("AGENTS")
-	row("coop claude|codex|gemini [args]", "a sandboxed agent (its autonomous flags + your args)")
-	row("coop fusion [agent]", "a council: one agent leads, the others advise, it synthesizes")
+	row("coop claude|codex|gemini [args]", "a sandboxed agent (its flags + your args)")
+	row("coop fusion [agent]", "one leads, the others advise + synthesize")
 	row("coop run -- <cmd...>", "run a raw command in the box")
 	row("coop shell", "an interactive shell in the box")
-	row("coop login <agent> [--profile p]", "authenticate an agent (a profile = one subscription)")
-	row("coop profiles [agent]", "list stored credential profiles and which are signed in")
-	row("coop models [agent]", "the model menu per agent (profile marks live in coop profiles)")
-	row("coop acp [agent|fusion]", "serve as an ACP agent over stdio (for editors like Zed)")
-	row("coop <agent> --consult", "add a read-only second opinion from the other agents on a hard call")
-	row("coop <agent> --model <m>", "run on a chosen model (works on fusion/fork/loop/acp too)")
+	row("coop login <agent> [--profile p]", "sign in an agent (profile = a subscription)")
+	row("coop profiles [agent]", "credential profiles + which are signed in")
+	row("coop models [agent]", "the model menu per agent")
+	row("coop acp [agent|fusion]", "serve as an editor agent (ACP; e.g. Zed)")
+	row("coop <agent> --consult", "a read-only second opinion from the others")
+	row("coop <agent> --model <m>", "run on a chosen model (fusion/fork/loop too)")
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
@@ -93,31 +99,31 @@ func helpText(cfg *config.Config) string {
 
 	group("UNATTENDED")
 	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
-	row("coop loop pool add|rm|clear", "pick which subscriptions the loop rotates on a rate limit")
-	row("coop fleet init|up|down|split|watch|prune", "drive a fleet of forks from .agent/fleet")
+	row("coop loop pool add|rm|clear", "subscriptions to rotate when rate-limited")
+	row("coop fleet init|up|down|split|watch|prune", "parallel forks from .agent/fleet")
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks ls", "show the queue, grouped by state")
-	row("coop tasks watch", "live board: the queue + any active forks, deduped (auto-exits when done)")
-	row("coop tasks add \"<title>\"", "add a task; claim/block/unblock/done move it through its states")
-	row("coop tasks decisions", "show what's blocked on a human decision (-i to answer them)")
+	row("coop tasks watch", "live board of the queue + active forks")
+	row("coop tasks add \"<title>\"", "add a task (then claim/block/unblock/done)")
+	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
 
 	group("SETUP & MAINTENANCE")
-	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, and starter subagents")
+	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, subagents")
 	row("coop build", "build the box image (stable, pinned)")
-	row("coop update", "self-update coop, then rebuild the box image fresh (latest base + agents)")
+	row("coop update", "self-update coop, then rebuild the box")
 	// `coop up`/`down` act on this repo's compose.agent.yml — name its real services, and dim the
 	// pair when there's no compose file to act on. Repo resolution is best-effort (help runs
 	// anywhere; outside a repo, or with no compose, the rows dim).
 	repo, _ := box.ResolveRepo(cfg.RepoOverride)
 	if services := scaffold.ComposeServiceNames(box.ComposeFile(repo)); len(services) > 0 {
-		row("coop up", "start the compose.agent.yml services ("+strings.Join(services, ", ")+")")
+		row("coop up", "compose.agent.yml services ("+strings.Join(services, ", ")+")")
 		row("coop down", "stop the compose.agent.yml services")
 	} else {
-		dimRow("coop up", "start sibling services (none in compose.agent.yml yet)")
+		dimRow("coop up", "none in compose.agent.yml yet")
 		dimRow("coop down", "stop sibling services")
 	}
-	row("coop doctor", "prove isolation — attack the box, check it holds")
+	row("coop doctor", "attack the box, prove isolation holds")
 	row("coop check-secrets", "scan the working tree for committed secrets")
 	row("coop help", "this help")
 	row("coop version", "print the version")
@@ -128,6 +134,23 @@ func helpText(cfg *config.Config) string {
 		tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
 
 	return b.String()
+}
+
+// anyAgentSignedIn reports whether any agent has a signed-in credential — its default/flat login or a
+// named profile. Pure-local (reads the config dir + env file, no runtime), so `coop help` can key its
+// FIRST RUN hint on it without breaking the runtime-free help path.
+func anyAgentSignedIn(cfg *config.Config) bool {
+	for _, agent := range agents.Names() {
+		if box.ProfileAuthed(cfg, agent, cfg.DefaultProfileOf(agent)) {
+			return true
+		}
+		for _, p := range cfg.Profiles(agent) {
+			if box.ProfileAuthed(cfg, agent, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // runHelp is `coop run`'s page. It's deliberately NOT in commandHelp: the dispatch's help check
@@ -141,9 +164,24 @@ const runHelp = `coop run — run a raw command in the box.
   and network as an agent. "coop run echo hi" works too; use -- when the command has
   flags coop would otherwise read (e.g. coop run -- npm test --watch).`
 
+// agentHelp is `coop help <agent>`: it documents coop's OWN wrapper flags (the ones coop consumes
+// before a --), since `coop <agent> --help` forwards to the agent's real CLI. Kept short per
+// help-output-style — the detail is in coop profiles / coop models.
+const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex, or gemini).
+
+  Usage: coop <agent> [coop flags] [-- <agent args>]
+
+  These flags are coop's own, read before a -- (everything after -- goes to the agent):
+    --profile <name>   run on a stored credential profile — one subscription (see coop profiles)
+    --model <name>     run on a chosen model (see coop models)
+    --consult          add a read-only second opinion from the other agents on a hard call
+    --                 pass the rest verbatim to the agent, e.g. coop claude -- --help
+
+  Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
+
 // commandHelp is the focused text for `coop <cmd> --help`, per subcommand. fork has its
-// own richer forkHelp, run has runHelp, and the agents aren't here so `--help` forwards to the
-// agent's own CLI. Each value's first line is the synopsis.
+// own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
+// the agent's own CLI). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
 	"shell": `coop shell — open an interactive shell in the box.
 

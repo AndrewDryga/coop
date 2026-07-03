@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A gentler first run.** `coop help` now leads with a FIRST RUN line — `coop build → coop login
+  <agent> → coop doctor` — until an agent is signed in (a pure-local check, so it still works before
+  Docker). `coop help <agent>` documents coop's own wrapper flags (`--profile`, `--model`,
+  `--consult`, `--`) instead of just punting to the agent's CLI, and a first `coop claude` with no
+  stored credential prints a one-line login nudge (TTY only, never blocks). Every top-level help line
+  now fits an 80-column terminal (was up to 109, wrapping the two-column layout), and the fleet/ACP
+  rows read in plain words instead of defining themselves.
+
 - **`coop fork ls`/`review` stop showing inherited state as fork activity.** A fresh fork's UPDATED
   column showed the base commit time it inherited from the clone (a seconds-old fork could read "3
   minutes ago"); it now shows the fork's own latest commit, falling back to the clone's age when the

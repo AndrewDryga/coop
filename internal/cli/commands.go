@@ -122,7 +122,19 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		return 2, err
 	}
 	a.selectRunModel(tool, model)
+	a.nudgeIfUnauthed(tool)
 	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, consult)
+}
+
+// nudgeIfUnauthed prints one heads-up (TTY only, never blocks) when the credential this run will use
+// isn't signed in — so a first `coop claude` names the fix instead of failing opaquely inside the box.
+func (a *app) nudgeIfUnauthed(tool string) {
+	if !ui.IsTerminal(os.Stdin) {
+		return
+	}
+	if !box.ProfileAuthed(a.cfg, tool, a.cfg.ActiveProfile(tool)) {
+		ui.Info("%s isn't signed in — run 'coop login %s' (first run: coop build → coop login → coop doctor)", tool, tool)
+	}
 }
 
 // selectRunProfile points cfg at the credential profile chosen with --profile for a run of tool

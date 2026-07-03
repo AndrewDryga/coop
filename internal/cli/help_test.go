@@ -65,3 +65,30 @@ func TestHelpTextAligned(t *testing.T) {
 		t.Errorf("help footer should link to the docs site:\n%s", out)
 	}
 }
+
+// Every top-level help line fits a stock 80-column terminal, so the two-column layout doesn't wrap.
+// Uses a no-compose repo (dim up/down rows) and no signed-in agent (FIRST RUN shown) — the widest
+// static shape. Short fixed config paths keep it deterministic: the footer's Config/Auth lines echo
+// the user's own (arbitrarily long) paths and aren't part of the two-column layout, so skip them.
+func TestHelpTextWidth(t *testing.T) {
+	out := helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Config ") || strings.HasPrefix(line, "Auth ") {
+			continue // user config paths, not layout rows
+		}
+		if n := len([]rune(line)); n > 80 {
+			t.Errorf("help line exceeds 80 cols (%d): %q", n, line)
+		}
+	}
+}
+
+// A newcomer with no agent signed in gets the day-one FIRST RUN hint; once signed in, it's gone.
+func TestHelpFirstRunHint(t *testing.T) {
+	fresh := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+	if anyAgentSignedIn(fresh) {
+		t.Fatal("a fresh temp config must report no signed-in agent")
+	}
+	if !strings.Contains(helpText(fresh), "FIRST RUN") {
+		t.Error("help with no signed-in agent should show the FIRST RUN hint")
+	}
+}
