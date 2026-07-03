@@ -971,6 +971,29 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                                 <code>0</code> to disable
                             </td>
                         </tr>
+                        <tr>
+                            <td><code>COOP_HOMES</code></td>
+                            <td>
+                                on by default: mount your per-agent home dirs
+                                into the box; <code>COOP_HOMES=0</code> keeps them
+                                out so an agent can't read your host agent configs
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>COOP_CONF</code></td>
+                            <td>
+                                relocate the <code>coop.conf</code> file coop
+                                reads its <code>COOP_*</code> defaults from
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>NO_COLOR</code></td>
+                            <td>
+                                present at any value disables ANSI color
+                                everywhere (<a href="https://no-color.org"
+                                    target="_blank" rel="noopener">no-color.org</a>)
+                            </td>
+                        </tr>
                     </table>
                     <p>
                         On Docker and Podman the box additionally runs with

@@ -986,8 +986,9 @@ turn them off.
 | `COOP_PIDS` | `4096` | box pids-limit (fork-bomb cap); `0`/`unlimited`/empty turns it off |
 | `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |
+| `COOP_HOMES` | `1` | mount your per-agent home dirs (auth + settings) into the box; `COOP_HOMES=0` keeps them out, so an agent can't read your host agent configs |
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
-| `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs |
+| `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read **in the box** — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
 | `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `compose.agent.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
@@ -1004,6 +1005,8 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | Var | Default | |
 |---|---|---|
 | `COOP_CONFIG_DIR` | `~/.config/coop/agents` | per-agent auth + settings folder |
+| `COOP_CONF` | `<config>/coop.conf` | relocate the `coop.conf` file coop reads its `COOP_*` defaults from |
+| `NO_COLOR` | — | present at any value (even empty) disables ANSI color everywhere ([no-color.org](https://no-color.org)) |
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
 | `COOP_FUSION_GOVERNOR` | `codex` | default leader for `coop fusion` |
@@ -1020,7 +1023,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
 | `COOP_LOOP_MODEL` | — | model for loop iterations (overnight runs on a cheaper model than interactive) |
-| `COOP_TASKS` | `.agent/tasks` | the loop's task-queue dir (also the `--tasks` flag; repeat `--tasks` to drain several) |
+| `COOP_TASKS` | `.agent/tasks` | the task queue dir(s) for `coop tasks` and the loop (space-separated for several). `--tasks` **replaces** this for a run (it doesn't merge); repeat `--tasks` to drain several |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
 
@@ -1030,6 +1033,16 @@ quotes group, `\` escapes), but no shell runs them (no globbing or `$VAR`). So q
 group as you'd expect — `COOP_GATE='bash -lc "make check && make lint"'` is three args, not
 five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -lc "…"`.
 (`COOP_REVIEW_CMD` is the exception — it *is* run via `sh -c`.)
+
+**Exit codes.** Every command follows one contract, so CI and scripts can branch without parsing
+output: `0` success · `1` a failure (or findings — e.g. `coop check-secrets` on a hit) · `2` a usage
+error (unknown command/flag or bad arguments). `coop loop` adds `3` — it stopped with a task blocked
+on a human decision (see [Exit codes](#unattended) above).
+
+**Why no `--json`?** coop's stdout is for a human at a terminal; its *exit codes* are the machine
+contract. The structured data a script would want already lives in files it can read directly — the
+task queue is folders under `.agent/tasks/`, a fork's state is its git worktree — so a `--json`
+surface would just be a second, drifting copy. Branch on exit codes; read the files.
 
 ## Troubleshooting
 

@@ -229,6 +229,34 @@ func TestRuntimeDetectIsLazy(t *testing.T) {
 	}
 }
 
+// The exit-code contract is coop's machine interface (CI/scripts branch on it): 0 success · 1 failure
+// or findings · 2 usage. Pin representative cases so it can't drift silently (documented in README).
+func TestExitCodeContract(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
+	// 2 — usage: an unknown command, and bad arguments.
+	if code, _ := a.dispatch([]string{"nonesuch-xyz"}); code != 2 {
+		t.Errorf("unknown command exit = %d, want 2", code)
+	}
+	if code, _ := a.dispatch([]string{"fork", "rm", "a", "b"}); code != 2 {
+		t.Errorf("bad-arguments exit = %d, want 2", code)
+	}
+	// 1 — failure: rm of a task that doesn't exist.
+	if code, _ := cmdTasksFolder("", t.TempDir(), []string{"rm", "no-such-task", "--yes"}); code != 1 {
+		t.Errorf("failure (no such task) exit = %d, want 1", code)
+	}
+	// 0 — success: a pure-local listing (stdout discarded).
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, _ := a.dispatch([]string{"models"})
+	_ = w.Close()
+	os.Stdout = old
+	_, _ = io.ReadAll(r)
+	if code != 0 {
+		t.Errorf("ok command exit = %d, want 0", code)
+	}
+}
+
 // v3 retires renamed-command aliases: each retired form exits 2 with a tombstone naming the rewrite,
 // via the one removedCommandNote registry.
 func TestV3RetiredForms(t *testing.T) {
