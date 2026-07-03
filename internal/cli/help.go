@@ -95,8 +95,8 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fusion [agent]", "one leads, the others advise + synthesize")
 	row("coop run -- <cmd...>", "run a raw command in the box")
 	row("coop shell", "an interactive shell in the box")
-	row("coop login <agent> [--profile <name>]", "sign in an agent (a subscription)")
-	row("coop profiles [agent]", "credential profiles + which are signed in")
+	row("coop login <agent> [--credential <name>]", "sign in an agent (a subscription)")
+	row("coop credentials [agent]", "stored credentials + which are signed in")
 	row("coop models [agent]", "the model menu per agent")
 	row("coop acp [agent|fusion]", "serve as an editor agent (ACP; e.g. Zed)")
 	row("coop <agent> --consult", "a read-only second opinion from the others")
@@ -211,13 +211,13 @@ const runHelp = `coop run — run a raw command in the box.
 
 // agentHelp is `coop help <agent>`: it documents coop's OWN wrapper flags (the ones coop consumes
 // before a --), since `coop <agent> --help` forwards to the agent's real CLI. Kept short per
-// help-output-style — the detail is in coop profiles / coop models.
+// help-output-style — the detail is in coop credentials / coop models.
 const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex, or gemini).
 
   Usage: coop <agent> [coop flags] [-- <agent args>]
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --credential <name>  run on a stored credential — one account/login (see coop profiles;
+    --credential <name>  run on a stored credential — one account/login (see coop credentials;
                          --profile is the legacy spelling)
     --model <name>       run on a chosen model (see coop models)
     --preset <name>      run under an orchestration preset from .agent/presets/<name>/
@@ -240,62 +240,66 @@ var commandHelp = map[string]string{
 
 	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
 
-  Usage: coop login <claude|codex|gemini> [--profile <name>]
+  Usage: coop login <claude|codex|gemini> [--credential <name>]
 
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
   refresh or switch accounts — e.g. after a usage limit.
 
-  --profile <name> signs in a second (or third) account into a named profile, so
+  --credential <name> (legacy --profile) signs in a second (or third) account
+  under a name, so
   one agent can hold several subscriptions. The unattended loop rotates across a
-  repo's profiles when one is rate limited (see 'coop loop pool'). Without --profile
-  the sign-in targets the default profile.`,
+  repo's credentials when one is rate limited (see 'coop loop pool'). Without the
+  flag the sign-in targets the default credential.`,
 
-	"profiles": `coop profiles — list credential profiles; a path grammar edits one.
+	"credentials": `coop credentials — list stored credentials; a path grammar edits one.
 
-  Usage: coop profiles [agent [profile]]
-         coop profiles <agent> <profile> model [<model> | --clear]
-         coop profiles <agent> <profile> default
-         coop profiles <agent> <profile> rm
+  Usage: coop credentials [agent [credential]]
+         coop credentials <agent> <credential> model [<model> | --clear]
+         coop credentials <agent> <credential> default
+         coop credentials <agent> <credential> rm
 
-  Each token narrows: no args lists every agent, an agent lists its profiles
-  (signed in? default? marked model?), a profile shows its detail, and a trailing
-  attribute reads or writes one property of it. A profile is one subscription;
-  add more with 'coop login <agent> --profile <name>', then let the loop rotate
+  A CREDENTIAL is one stored account/login — its own rate-limit pool. (Orchestration
+  recipes are PRESETS; see coop help presets. 'coop profiles' was the pre-v3 name.)
+  Each token narrows: no args lists every agent, an agent lists its credentials
+  (signed in? default? marked model?), a credential shows its detail, and a trailing
+  attribute reads or writes one property of it. A credential is one subscription;
+  add more with 'coop login <agent> --credential <name>', then let the loop rotate
   across them on a rate limit ('coop loop pool').
 
-  model [<m> | --clear]  the profile's default model — every run on that profile
+  model [<m> | --clear]  the credential's default model — every run on it
                          (interactive, loop, fork, consult peer) uses it unless
                          --model overrides; bare 'model' prints the current mark.
                          E.g. work on the big model, personal on a cheap one:
-                             coop profiles claude work model opus
-                             coop profiles claude personal model haiku
+                             coop credentials claude work model opus
+                             coop credentials claude personal model haiku
                          See 'coop models' for the menu and the precedence.
-  default                mark this profile as what a plain 'coop <agent>' runs —
+  default                mark this credential as what a plain 'coop <agent>' runs —
                          a mark you set, not whichever is named "default".
-  rm                     delete the profile (its login token, session history,
+  rm                     delete the credential (its login token, session history,
                          and model mark). Set a different default first if
                          you're removing the marked one.
 
-  Run on a specific profile without changing the default — works on any agent launch:
-  'coop claude --profile <name>', 'coop fusion <agent> --profile <name>', and
-  'coop acp <agent> --profile <name>' (so an editor entry can pin an account). An
-  agent's own --profile goes after a --, e.g. 'coop codex -- --profile <name>'.`,
+  Run on a specific credential without changing the default — works on any agent
+  launch: 'coop claude --credential <name>', 'coop fusion <agent> --credential
+  <name>', and 'coop acp <agent> --credential <name>' (so an editor entry can pin
+  an account; --profile stays a legacy alias). An agent's own --profile goes after
+  a --, e.g. 'coop codex -- --profile <name>'.`,
 
 	"models": `coop models [agent] — the model menu per agent.
 
   Usage: coop models [claude|codex|gemini]
 
   One line per agent with its known models (examples — model ids churn, so ANY
-  id the agent's CLI accepts works), then how to pick one. Per-profile marks
-  live in 'coop profiles' (shown as a column there); set one with
-  'coop profiles <agent> <profile> model <model>'.
+  id the agent's CLI accepts works), then how to pick one. Per-credential marks
+  live in 'coop credentials' (shown as a column there); set one with
+  'coop credentials <agent> <credential> model <model>'.
 
   Pick per run instead with --model on any launch: 'coop claude --model fable',
   'coop fusion claude --model opus', 'coop loop --model haiku',
   'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
 
   Precedence: --model flag > the pool target's model (a loop's credential@model)
-  > the preset lead's model > COOP_LOOP_MODEL (loop runs) > the profile's mark >
+  > the preset lead's model > COOP_LOOP_MODEL (loop runs) > the credential's mark >
   COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
   agent CLI's own default. coop never validates a model id — a bad one fails in
   the agent's own error.`,
@@ -367,7 +371,7 @@ var commandHelp = map[string]string{
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
   work to — each role an agent + model + credentials + routing hints. A CREDENTIAL
-  is just a stored account/login (a rate-limit slot; see coop profiles). Presets
+  is just a stored account/login (a rate-limit slot; see coop credentials). Presets
   reference credentials; they never store secrets.
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
@@ -625,7 +629,7 @@ var commandHelp = map[string]string{
   zsh:  coop completion zsh  > "${fpath[1]}/_coop"   (then restart your shell)
 
   Completes commands and verbs, and — via a hidden 'coop __complete' — live values
-  (fork names, task ids, credential profiles), all from local reads.`,
+  (fork names, task ids, credentials), all from local reads.`,
 }
 
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,

@@ -134,7 +134,7 @@ func (a *app) cmdPool(args []string) (int, error) {
 		if verb == "add" {
 			for _, m := range members { // a pool member you haven't signed into yet won't rotate
 				if t := parsePoolTarget(m); !box.ProfileAuthed(a.cfg, agent, t.credential) {
-					ui.Warn("%s credential %q isn't signed in — run: coop login %s --profile %s", agent, t.credential, agent, t.credential)
+					ui.Warn("%s credential %q isn't signed in — run: coop login %s --credential %s", agent, t.credential, agent, t.credential)
 				}
 			}
 		}
@@ -287,7 +287,7 @@ func authedPool(cfg *config.Config, agent string, members []string) (*profilePoo
 		}
 	}
 	if len(authed) == 0 {
-		return nil, fmt.Errorf("%s has no signed-in credential — run: coop login %s [--profile <name>]", agent, agent)
+		return nil, fmt.Errorf("%s has no signed-in credential — run: coop login %s [--credential <name>]", agent, agent)
 	}
 	return newProfilePool(authed), nil
 }

@@ -171,8 +171,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.runInBox([]string{a.cfg.Shell}, "", false)
 	case "login":
 		return a.cmdLogin(rest)
-	case "profiles":
-		return a.cmdProfiles(rest)
+	case "credentials":
+		return a.cmdCredentials(rest)
 	case "models":
 		return a.cmdModels(rest)
 	case "acp":
@@ -219,7 +219,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
-	"run", "shell", "login", "profiles", "models", "acp", "fusion", "fork", "fleet", "tasks",
+	"run", "shell", "login", "credentials", "models", "acp", "fusion", "fork", "fleet", "tasks",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "help", "version",
 }
 
@@ -294,9 +294,12 @@ func removedCommandNote(cmd string) (string, bool) {
 		return "coop tasks start was renamed to claim — run: coop tasks claim <id>", true
 	case "loop --debug":
 		return "coop loop --debug was renamed — use --debug-on-fail", true
+	case "profiles": // v3: the account concept is public-named credentials; presets carry the runtime recipe
+		return "coop profiles was renamed to coop credentials in v3 (a credential is a stored " +
+			"account/login; orchestration recipes are presets — see coop help presets) — run: coop credentials", true
 	case "profiles verb":
-		return "coop profiles edits read as a path now — run: coop profiles <agent> <profile> " +
-			"<default|model|rm> (e.g. coop profiles claude work default)", true
+		return "coop credentials edits read as a path — run: coop credentials <agent> <credential> " +
+			"<default|model|rm> (e.g. coop credentials claude work default)", true
 	}
 	return "", false
 }

@@ -152,17 +152,17 @@ func (a *app) nudgeIfUnauthed(tool string) {
 // selectRunProfile points cfg at the credential profile chosen with --profile for a run of tool
 // (a no-op when profile is ""). It requires the profile to already exist — a typo otherwise
 // silently creates an empty husk dir (box.Run pre-creates the active profile), the very clutter
-// `coop profiles rm` cleans up — and notes (without blocking) one that exists but isn't signed in.
+// `coop credentials rm` cleans up — and notes (without blocking) one that exists but isn't signed in.
 // Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP.
 func (a *app) selectRunProfile(tool, profile string) error {
 	if profile == "" {
 		return nil
 	}
 	if !slices.Contains(a.cfg.Profiles(tool), profile) {
-		return fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", tool, profile, tool, profile)
+		return fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", tool, profile, tool, profile)
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {
-		ui.Info("note: %s profile %q isn't signed in — run: coop login %s --profile %s", tool, profile, tool, profile)
+		ui.Info("note: %s credential %q isn't signed in — run: coop login %s --credential %s", tool, profile, tool, profile)
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	return nil
@@ -253,10 +253,10 @@ func (a *app) cmdLogin(args []string) (int, error) {
 	// browser and block); name it explicitly, like the help shows. A stray extra arg is a typo,
 	// not a second target, so reject it rather than silently ignore.
 	if len(rest) == 0 {
-		return 2, fmt.Errorf("usage: coop login <%s> [--profile <name>]", strings.Join(agents.Names(), "|"))
+		return 2, fmt.Errorf("usage: coop login <%s> [--credential <name>]", strings.Join(agents.Names(), "|"))
 	}
 	if len(rest) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s> [--profile <name>])", rest[1], strings.Join(agents.Names(), "|"))
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s> [--credential <name>])", rest[1], strings.Join(agents.Names(), "|"))
 	}
 	return a.loginTo(rest[0], profile)
 }
@@ -283,22 +283,28 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 	return "", 0, false, nil
 }
 
-// extractProfile pulls coop's own `--profile <name>` (or `--profile=<name>`) flag out of
-// args, returning the chosen credential profile ("" if absent — the caller resolves the
-// agent's MARKED default, not a profile literally named "default") and the remaining args.
-// It lets a login target one of several stored subscriptions. A `--profile` with no value
-// is an error, not a silent fall-back to the default.
+// extractProfile pulls coop's own `--credential <name>` (or `--credential=<name>`; the
+// plural and the legacy --profile spelling are aliases) out of login args, returning the
+// chosen credential ("" if absent — the caller resolves the agent's MARKED default, not
+// one literally named "default") and the remaining args. It lets a login target one of
+// several stored accounts. A flag with no value is an error, not a silent fall-back.
 func extractProfile(args []string) (profile string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
-		if v, n, ok, e := flagValue(args, i, "--profile"); ok {
-			if e != nil {
-				return "", nil, e
+		matched := false
+		for _, flag := range []string{"--credential", "--credentials", "--profile"} {
+			if v, n, ok, e := flagValue(args, i, flag); ok {
+				if e != nil {
+					return "", nil, e
+				}
+				profile = v
+				i += n - 1
+				matched = true
+				break
 			}
-			profile = v
-			i += n - 1
-			continue
 		}
-		rest = append(rest, args[i])
+		if !matched {
+			rest = append(rest, args[i])
+		}
 	}
 	return profile, rest, nil
 }
@@ -377,7 +383,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	// Validate the profile name (a static arg) before the environment checks below, so a traversal
 	// name like "../../x" can't escape the vault and fails the same way piped or at a tty.
 	if !validProfileName(profile) {
-		return 2, fmt.Errorf("invalid profile name %q — use a single segment (no '/', '..', or leading '-')", profile)
+		return 2, fmt.Errorf("invalid credential name %q — use a single segment (no '/', '..', or leading '-')", profile)
 	}
 	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
 	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
@@ -394,7 +400,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	a.cfg.SetActiveProfile(tool, profile)
 	where := ""
 	if profile != config.DefaultProfile {
-		where = fmt.Sprintf(" (profile %s)", profile)
+		where = fmt.Sprintf(" (credential %s)", profile)
 	}
 	ui.Info("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
 	return a.runInBox(ag.Login(a.cfg), tool, false) // mounts only the agent being logged in to

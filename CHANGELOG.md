@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **BREAKING: `coop profiles` is now `coop credentials`.** The split is complete: a CREDENTIAL is a
+  stored account/login (its own rate-limit pool); an orchestration recipe is a PRESET. The command,
+  help, and every hint now say credentials (`coop credentials claude work model opus`,
+  `coop login claude --credential work`); `coop profiles` tombstones with the rewrite, and
+  `--profile` remains a working alias of `--credential` on login/launch flags. On-disk storage is
+  unchanged (`<agent>/profiles/<name>/`, `pools.json`) — nothing to migrate.
+
 - **Model fallback in the rotation pool: `credential@model`.** A loop-pool member can now carry a
   model, so a rate limit steps down on the SAME login before switching accounts:
   `coop loop pool add claude work@opus work@sonnet other` falls back opus → sonnet with no re-auth,

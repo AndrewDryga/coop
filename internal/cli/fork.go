@@ -305,7 +305,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	// Several profiles only make sense for a loop (it rotates them on a limit); a single
 	// interactive session runs on exactly one.
 	if len(fa.profiles) > 1 && !fa.loop {
-		return fa, errors.New("coop fork: multiple --profile values only apply with --loop (an interactive fork uses one profile)")
+		return fa, errors.New("coop fork: multiple --credential values only apply with --loop (an interactive fork uses one credential)")
 	}
 	return fa, nil
 }
@@ -340,7 +340,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// otherwise clone first, then fail). A member may carry a model (credential@model).
 	for _, p := range fa.profiles {
 		if cred := parsePoolTarget(p).credential; !slices.Contains(a.cfg.Profiles(fa.agent), cred) {
-			return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --profile %s", fa.agent, cred, fa.agent, cred)
+			return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", fa.agent, cred, fa.agent, cred)
 		}
 	}
 	// --loop with no --tasks defaults to the repo's own queue (.agent/tasks); per-fork slices are
@@ -845,7 +845,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		case agents.Valid(x):
 			agent = x
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--profile <name>] [--model <model>]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--credential <name>] [--model <model>]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
 	if err := a.selectRunProfile(agent, profile); err != nil {

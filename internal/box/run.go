@@ -392,7 +392,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 // the agents this run MOUNTS (credentialScope: the launched agent, plus authed peers under
 // fusion/consult) — not every agent. Pre-creating all three was a husk factory: every box
 // run materialized each agent's active-profile dir, so a profile the user deleted (an empty
-// "default" showing "not signed in" in `coop profiles`) kept reappearing, seeded with
+// "default" showing "not signed in" in `coop credentials`) kept reappearing, seeded with
 // EnsureDefaults' settings files, recreated by runs that never involved that agent. An
 // out-of-scope agent has no home mounted, so nothing in the box reads the dir anyway.
 // Best-effort: EnsureDefaults is best-effort too, and a real failure to make the vault

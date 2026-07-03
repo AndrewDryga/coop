@@ -161,10 +161,10 @@ any of them.
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
 | `coop run -- <cmd>` | run any command in the box (raw — none of coop's agent flags) |
 | `coop shell` | a shell in the box, to look around |
-| `coop acp [agent\|fusion] [--profile <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
+| `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
 | `coop <any launch> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
-| `coop models [agent]` | the model menu per agent; mark a profile's model with `coop profiles <agent> <profile> model <m>` ([details](#picking-models)) |
+| `coop models [agent]` | the model menu per agent; mark a credential's model with `coop credentials <agent> <credential> model <m>` ([details](#picking-models)) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
 
@@ -450,13 +450,12 @@ sandbox, so trusting the one mounted repo is the intended posture.)
 
 One agent can hold several accounts as named **credentials** — each a stored login and
 its own rate-limit pool — so a long unattended run can ride through a subscription's cap
-instead of parking on it. (The storage and commands still say *profiles*; that's the
-legacy name for the same thing. Presets and fleet files use the `credentials` spelling.)
+instead of parking on it (`coop profiles` was the pre-v3 name for the same thing):
 
 ```bash
-coop login claude --profile work       # a second account…
-coop login claude --profile personal   # …and a third
-coop profiles                          # list them and which are signed in
+coop login claude --credential work       # a second account…
+coop login claude --credential personal   # …and a third
+coop credentials                          # list them and which are signed in
 ```
 
 When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to the
@@ -475,10 +474,10 @@ coop loop pool                                 # show the pool (coop loop pool c
 
 Which profile a plain interactive `coop claude` uses is a mark you set, not a magic
 name — so you can name them all meaningfully. Profile properties are edited as a path
-(`coop profiles <agent> <profile> <attribute> [value]`):
+(`coop credentials <agent> <credential> <attribute> [value]`):
 
 ```bash
-coop profiles claude personal default  # `coop claude` now runs on the personal account
+coop credentials claude personal default  # `coop claude` now runs on the personal account
 ```
 
 Profiles live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
@@ -505,12 +504,12 @@ the loop's profile rotation switches models with the account:
 
 ```bash
 coop models                              # the model menu per agent
-coop profiles claude work model opus     # every run on the work profile uses opus
-coop profiles claude personal model haiku
-coop profiles claude personal model --clear   # unmark (bare `model` prints the mark)
+coop credentials claude work model opus     # every run on the work credential uses opus
+coop credentials claude personal model haiku
+coop credentials claude personal model --clear   # unmark (bare `model` prints the mark)
 ```
 
-`coop profiles` shows each profile's mark as a column, so one listing answers "which
+`coop credentials` shows each credential's mark as a column, so one listing answers "which
 account, signed in, running what".
 
 Two env/conf knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`)
@@ -535,7 +534,7 @@ decomposes, and synthesizes, while pinned subagents execute and cross-vendor pee
 independent opinions. Everything below composes from pieces coop already has — no plugins.
 
 ```bash
-coop profiles claude personal model claude-fable-5   # the lead's standing model
+coop credentials claude personal model claude-fable-5   # the lead's standing model
 coop claude --consult                                # run it; --consult mounts the peers
 ```
 

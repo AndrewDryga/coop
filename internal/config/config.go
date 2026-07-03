@@ -230,7 +230,7 @@ func (c *Config) activeProfile(agent string) string {
 func (c *Config) ActiveProfile(agent string) string { return c.activeProfile(agent) }
 
 // DefaultsFile marks each agent's default profile (KEY=VALUE, agent=profile): the profile
-// an interactive run uses when none is given on the CLI. Managed by `coop profiles default`.
+// an interactive run uses when none is given on the CLI. Managed by `coop credentials default`.
 func (c *Config) DefaultsFile() string { return filepath.Join(c.ConfigDir, "defaults") }
 
 // DefaultProfileOf returns the profile marked default for agent, or the built-in
@@ -244,7 +244,7 @@ func (c *Config) DefaultProfileOf(agent string) string {
 
 // SetDefaultProfile marks name as agent's default profile, persisting it to DefaultsFile and
 // updating the in-memory view. The load→modify→write runs under WithLock so concurrent writers
-// (e.g. two `coop profiles default` for different agents) don't lose each other's edit.
+// (e.g. two `coop credentials default` for different agents) don't lose each other's edit.
 func (c *Config) SetDefaultProfile(agent, name string) error {
 	if err := os.MkdirAll(c.ConfigDir, 0o700); err != nil {
 		return err

@@ -100,7 +100,7 @@ func (a *app) completionCandidates(prev []string) []string {
 		if len(prev) == 1 {
 			return append([]string{"pool"}, agents.Names()...)
 		}
-	case "login", "profiles", "models", "fusion", "acp":
+	case "login", "credentials", "models", "fusion", "acp":
 		if len(prev) == 1 {
 			return agents.Names()
 		}

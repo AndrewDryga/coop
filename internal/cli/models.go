@@ -10,7 +10,7 @@ import (
 )
 
 // cmdModels is the model MENU: one line per agent with its known models, then a short
-// how-to. Per-profile marks live in `coop profiles` (the mark is a profile attribute) —
+// how-to. Per-profile marks live in `coop credentials` (the mark is a profile attribute) —
 // repeating them here buried the menu under a row per profile. The known list is examples,
 // not a gate: model ids churn faster than coop releases, so any id the agent CLI accepts
 // works with --model and coop never validates against it.
@@ -22,7 +22,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 		}
 		names = []string{args[0]}
 		if len(args) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [agent]; mark a profile's model with 'coop profiles <agent> <profile> model <m>')", args[1])
+			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [agent]; mark a profile's model with 'coop credentials <agent> <profile> model <m>')", args[1])
 		}
 	}
 	p := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
@@ -43,7 +43,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 	fmt.Println()
 	fmt.Println(p.Dim("  these are examples — any model id the agent's CLI accepts works"))
 	fmt.Printf("  %s coop %s --model %s%s\n", pad("one run"), names[0], model, p.Dim("   (fusion, fork, loop, acp take it too)"))
-	fmt.Printf("  %s coop profiles %s <profile> model %s%s\n", pad("per profile"), names[0], model, p.Dim("   (shown in: coop profiles)"))
+	fmt.Printf("  %s coop credentials %s <profile> model %s%s\n", pad("per profile"), names[0], model, p.Dim("   (shown in: coop credentials)"))
 	fmt.Printf("  %s COOP_%s_MODEL=%s%s\n", pad("everywhere"), strings.ToUpper(names[0]), model, p.Dim("   (loop runs only: COOP_LOOP_MODEL)"))
 	if lm := a.cfg.LoopModel; lm != "" {
 		fmt.Println(p.Dim("  loop model pinned: " + lm + " (COOP_LOOP_MODEL) — overrides profile marks on loop runs"))

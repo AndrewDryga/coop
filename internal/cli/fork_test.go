@@ -441,8 +441,8 @@ func TestLatestTaskLogOnlyDone(t *testing.T) {
 func TestForkACPAcceptsProfile(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	code, err := a.forkACP("myfork", []string{"claude", "--profile", "ghost"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "profile") {
-		t.Fatalf("fork acp --profile ghost = (%d, %v), want (2, a profile error)", code, err)
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "credential") {
+		t.Fatalf("fork acp --profile ghost = (%d, %v), want (2, a credential error)", code, err)
 	}
 	if strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:") {
 		t.Errorf("--profile should be accepted, not rejected as an argument: %v", err)

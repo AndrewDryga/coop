@@ -7,6 +7,7 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | Retired | Use |
 | --- | --- |
 | `coop clone <name>` | `coop fork <name>` |
+| `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`). `--profile` stays a working alias of `--credential` on login/launch flags |
 | `coop pool <add\|rm\|clear>` | `coop loop pool <add\|rm\|clear>` |
 | `coop profiles <default\|model\|rm> <agent> <profile>` | `coop profiles <agent> <profile> <default\|model\|rm>` |
 | `coop tasks start <id>` | `coop tasks claim <id>` |

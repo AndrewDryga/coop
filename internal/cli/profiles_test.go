@@ -28,13 +28,13 @@ func TestCmdProfiles(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, err := (&app{cfg: cfg}).cmdProfiles([]string{"claude"})
+	code, err := (&app{cfg: cfg}).cmdCredentials([]string{"claude"})
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 
 	if code != 0 || err != nil {
-		t.Fatalf("cmdProfiles: code=%d err=%v", code, err)
+		t.Fatalf("cmdCredentials: code=%d err=%v", code, err)
 	}
 	for _, want := range []string{"work", "signed in", "personal", "not signed in"} {
 		if !strings.Contains(string(out), want) {
@@ -56,7 +56,7 @@ func TestCmdProfilesDanglingDefault(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	(&app{cfg: cfg}).cmdProfiles([]string{"claude"})
+	(&app{cfg: cfg}).cmdCredentials([]string{"claude"})
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
@@ -69,15 +69,15 @@ func TestCmdProfilesDanglingDefault(t *testing.T) {
 // as an unknown agent (rule: `ls` is the list verb, it must lead somewhere useful).
 func TestProfilesLsRedirect(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	code, err := a.cmdProfiles([]string{"ls"}) // v3: only `ls` redirects; `list` reads as an unknown agent
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop profiles") {
-		t.Errorf("cmdProfiles([ls]) = (%d, %v), want (2, pointing at bare `coop profiles`)", code, err)
+	code, err := a.cmdCredentials([]string{"ls"}) // v3: only `ls` redirects; `list` reads as an unknown agent
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop credentials") {
+		t.Errorf("cmdCredentials([ls]) = (%d, %v), want (2, pointing at bare `coop credentials`)", code, err)
 	}
 }
 
 func TestCmdProfilesUnknownAgent(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.cmdProfiles([]string{"nope"}); code != 2 || err == nil {
+	if code, err := a.cmdCredentials([]string{"nope"}); code != 2 || err == nil {
 		t.Errorf("unknown agent: code=%d err=%v, want 2 + error", code, err)
 	}
 }
@@ -98,7 +98,7 @@ func TestCmdProfilesDefault(t *testing.T) {
 		{"unknown agent", []string{"nope", "work", "default"}},
 		{"unknown profile", []string{"claude", "ghost", "default"}},
 	} {
-		if code, err := a.cmdProfiles(tc.args); code != 2 || err == nil {
+		if code, err := a.cmdCredentials(tc.args); code != 2 || err == nil {
 			t.Errorf("%s: code=%d err=%v, want 2 + error", tc.name, code, err)
 		}
 	}
@@ -107,7 +107,7 @@ func TestCmdProfilesDefault(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, err := a.cmdProfiles([]string{"claude", "personal", "default"})
+	code, err := a.cmdCredentials([]string{"claude", "personal", "default"})
 	_ = w.Close()
 	os.Stdout = old
 	_, _ = io.ReadAll(r)
@@ -132,7 +132,7 @@ func TestProfilesRemoveGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: cfg}
-	code, err := a.cmdProfiles([]string{"claude", "work", "rm"}) // path grammar (verb-first retired)
+	code, err := a.cmdCredentials([]string{"claude", "work", "rm"}) // path grammar (verb-first retired)
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("profiles rm without --yes = (%d, %v), want (2, a refusal naming --yes)", code, err)
 	}
@@ -161,7 +161,7 @@ func TestRemoveProfile(t *testing.T) {
 		{"unknown profile", []string{"claude", "ghost", "rm"}},
 		{"refuses the marked default", []string{"claude", "personal", "rm"}},
 	} {
-		if code, err := a.cmdProfiles(tc.args); code != 2 || err == nil {
+		if code, err := a.cmdCredentials(tc.args); code != 2 || err == nil {
 			t.Errorf("%s: code=%d err=%v, want 2 + error", tc.name, code, err)
 		}
 	}
@@ -175,7 +175,7 @@ func TestRemoveProfile(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, err := a.cmdProfiles([]string{"claude", "default", "rm", "--yes"})
+	code, err := a.cmdCredentials([]string{"claude", "default", "rm", "--yes"})
 	_ = w.Close()
 	os.Stdout = old
 	_, _ = io.ReadAll(r)

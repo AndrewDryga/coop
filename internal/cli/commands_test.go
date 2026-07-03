@@ -554,8 +554,8 @@ func TestLoginRejectsBadProfileName(t *testing.T) {
 	// A traversal name must be rejected before any vault/dir work — and before the tty check, so it
 	// fails the same way piped or at a terminal.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "invalid profile name") {
-		t.Errorf("loginTo bad profile = (%d, %v), want (2, invalid profile name)", code, err)
+	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "invalid credential name") {
+		t.Errorf("loginTo bad credential = (%d, %v), want (2, invalid credential name)", code, err)
 	}
 }
 

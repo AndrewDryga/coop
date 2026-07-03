@@ -369,7 +369,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 		}
 	}
 	if len(unsigned) > 0 {
-		return 2, fmt.Errorf("fleet up: these profiles aren't signed in: %s — run: coop login <agent> --profile <name>", strings.Join(unsigned, ", "))
+		return 2, fmt.Errorf("fleet up: these credentials aren't signed in: %s — run: coop login <agent> --credential <name>", strings.Join(unsigned, ", "))
 	}
 	started := 0
 	for _, e := range fleet {

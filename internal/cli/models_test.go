@@ -26,7 +26,7 @@ func modelsApp(t *testing.T) *app {
 // bare `model` reads it, `--clear` removes it. The verb form stays a working alias.
 func TestProfilesModelMarkAndClear(t *testing.T) {
 	a := modelsApp(t)
-	if code, err := a.cmdProfiles([]string{"claude", "work", "model", "opus"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "work", "model", "opus"}); code != 0 || err != nil {
 		t.Fatalf("profiles <path> model = (%d, %v)", code, err)
 	}
 	if got := a.cfg.ProfileModelOf("claude", "work"); got != "opus" {
@@ -37,21 +37,21 @@ func TestProfilesModelMarkAndClear(t *testing.T) {
 		t.Errorf("ModelFor on the marked profile = %q, want opus", got)
 	}
 	// Bare `model` is the read (prints the mark; exercised for exit code here).
-	if code, err := a.cmdProfiles([]string{"claude", "work", "model"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "work", "model"}); code != 0 || err != nil {
 		t.Errorf("profiles <path> model (read) = (%d, %v)", code, err)
 	}
-	if code, err := a.cmdProfiles([]string{"claude", "work", "model", "--clear"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "work", "model", "--clear"}); code != 0 || err != nil {
 		t.Fatalf("profiles <path> model --clear = (%d, %v)", code, err)
 	}
 	if got := a.cfg.ProfileModelOf("claude", "work"); got != "" {
 		t.Errorf("mark after clear = %q, want \"\"", got)
 	}
 	// Clearing an unmarked profile is a friendly no-op, not an error.
-	if code, err := a.cmdProfiles([]string{"claude", "work", "model", "--clear"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "work", "model", "--clear"}); code != 0 || err != nil {
 		t.Errorf("clearing an unmarked profile = (%d, %v), want a no-op", code, err)
 	}
 	// The verb-first form is retired (v3): it now tombstones with the path-grammar rewrite.
-	if code, err := a.cmdProfiles([]string{"model", "claude", "work", "sonnet"}); code != 2 || err == nil {
+	if code, err := a.cmdCredentials([]string{"model", "claude", "work", "sonnet"}); code != 2 || err == nil {
 		t.Errorf("verb-first profiles model should be retired (exit 2), got (%d, %v)", code, err)
 	}
 }
@@ -64,10 +64,10 @@ func TestProfilePathGrammar(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(a.cfg.ConfigDir, "claude", "profiles", "personal"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.cmdProfiles([]string{"claude", "work"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "work"}); code != 0 || err != nil {
 		t.Errorf("profiles <agent> <profile> (show) = (%d, %v)", code, err)
 	}
-	if code, err := a.cmdProfiles([]string{"claude", "personal", "default"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "personal", "default"}); code != 0 || err != nil {
 		t.Fatalf("profiles <path> default = (%d, %v)", code, err)
 	}
 	if got := a.cfg.DefaultProfileOf("claude"); got != "personal" {
@@ -80,8 +80,8 @@ func TestProfilePathGrammar(t *testing.T) {
 		{"claude", "work", "default", "extra"}, // stray token
 		{"claude", "work", "model", "a", "b"},  // too many tokens
 	} {
-		if code, err := a.cmdProfiles(args); code != 2 || err == nil {
-			t.Errorf("cmdProfiles(%v) = (%d, %v), want (2, error)", args, code, err)
+		if code, err := a.cmdCredentials(args); code != 2 || err == nil {
+			t.Errorf("cmdCredentials(%v) = (%d, %v), want (2, error)", args, code, err)
 		}
 	}
 }
@@ -95,8 +95,8 @@ func TestProfilesModelRejectsBadInput(t *testing.T) {
 		{"claude", "work", "model", "two words"}, // whitespace would corrupt the models file
 	}
 	for _, args := range cases {
-		if code, err := a.cmdProfiles(args); code != 2 || err == nil {
-			t.Errorf("cmdProfiles(%v) = (%d, %v), want (2, error)", args, code, err)
+		if code, err := a.cmdCredentials(args); code != 2 || err == nil {
+			t.Errorf("cmdCredentials(%v) = (%d, %v), want (2, error)", args, code, err)
 		}
 	}
 	if got := readFileString(a.cfg.ModelsFile()); got != "" {
@@ -162,8 +162,8 @@ func TestProfilesListsModelColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
-		if code, err := a.cmdProfiles([]string{"claude"}); code != 0 || err != nil {
-			t.Errorf("cmdProfiles = (%d, %v)", code, err)
+		if code, err := a.cmdCredentials([]string{"claude"}); code != 0 || err != nil {
+			t.Errorf("cmdCredentials = (%d, %v)", code, err)
 		}
 	})
 	if !strings.Contains(out, "opus") {
@@ -182,7 +182,7 @@ func TestModelsMarkClearedOnProfileRemoval(t *testing.T) {
 	if err := a.cfg.SetProfileModel("claude", "work", "opus"); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.cmdProfiles([]string{"claude", "work", "rm", "--yes"}); code != 0 || err != nil {
+	if code, err := a.cmdCredentials([]string{"claude", "work", "rm", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("profiles rm = (%d, %v)", code, err)
 	}
 	if got := a.cfg.ProfileModelOf("claude", "work"); got != "" {

@@ -72,7 +72,7 @@ func TestStdoutViewsNoANSI(t *testing.T) {
 	views := map[string]func(){
 		"commandHelp": func() { printCommandHelp(commandHelp["tasks"]) },
 		"models":      func() { _, _ = a.cmdModels(nil) },
-		"profiles":    func() { _, _ = a.cmdProfiles(nil) },
+		"profiles":    func() { _, _ = a.cmdCredentials(nil) },
 		"loop pool":   func() { _, _ = a.showPool(t.TempDir()) },
 	}
 	for name, fn := range views {
@@ -260,21 +260,27 @@ func TestExitCodeContract(t *testing.T) {
 // v3 retires renamed-command aliases: each retired form exits 2 with a tombstone naming the rewrite,
 // via the one removedCommandNote registry.
 func TestV3RetiredForms(t *testing.T) {
-	for _, key := range []string{"clone", "pool", "tasks start", "loop --debug", "profiles verb"} {
+	for _, key := range []string{"clone", "pool", "tasks start", "loop --debug", "profiles", "profiles verb"} {
 		if note, ok := removedCommandNote(key); !ok || note == "" {
 			t.Errorf("removedCommandNote(%q) missing a tombstone", key)
 		}
 	}
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	// clone and top-level pool tombstone through dispatch (no runtime needed — they fall to default).
-	for _, argv := range [][]string{{"clone", "x"}, {"pool", "add", "p"}} {
-		if code, err := a.dispatch(argv); code != 2 || err == nil {
+	// clone, top-level pool, and profiles (renamed to credentials) tombstone through dispatch
+	// (no runtime needed — they fall to default).
+	for _, argv := range [][]string{{"clone", "x"}, {"pool", "add", "p"}, {"profiles"}, {"profiles", "claude"}} {
+		code, err := a.dispatch(argv)
+		if code != 2 || err == nil {
 			t.Errorf("dispatch(%v) = (%d, %v), want (2, a tombstone)", argv, code, err)
 		}
 	}
-	// verb-first profiles → tombstone (path grammar is the replacement).
-	if code, err := a.dispatch([]string{"profiles", "rm", "claude", "work"}); code != 2 || err == nil {
-		t.Errorf("verb-first profiles rm = (%d, %v), want (2, a tombstone)", code, err)
+	// The profiles tombstone names the replacement command.
+	if _, err := a.dispatch([]string{"profiles"}); err == nil || !strings.Contains(err.Error(), "coop credentials") {
+		t.Errorf("profiles tombstone should point at coop credentials, got: %v", err)
+	}
+	// verb-first credential edits → tombstone (path grammar is the replacement).
+	if code, err := a.cmdCredentials([]string{"rm", "claude", "work"}); code != 2 || err == nil {
+		t.Errorf("verb-first credentials rm = (%d, %v), want (2, a tombstone)", code, err)
 	}
 	// tasks start → tombstone (renamed to claim).
 	if code, err := cmdTasksFolder("", t.TempDir(), []string{"start", "x"}); code != 2 || err == nil {

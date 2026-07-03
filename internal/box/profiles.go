@@ -31,7 +31,7 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 // knowable. Only an OAuth login carries a readable expiry — claude's .credentials.json
 // (claudeAiOauth.expiresAt, ms epoch); an API-key login or another agent returns ok=false (nothing
 // to check). ProfileAuthed is a presence heuristic and can't tell a live token from an expired one
-// that's still on disk; this can, so callers (e.g. `coop profiles`) don't report a dead token as
+// that's still on disk; this can, so callers (e.g. `coop credentials`) don't report a dead token as
 // "signed in" — the exact trap behind a "signed in but 401" run.
 func ProfileTokenExpiry(cfg *config.Config, agent, profile string) (time.Time, bool) {
 	if agent != "claude" {
