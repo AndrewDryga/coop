@@ -601,7 +601,7 @@ var commandHelp = map[string]string{
   Usage: coop update [--self-only | --box-only | --check]
 
   First replaces the coop binary with the latest GitHub release — fetched and
-  verified the same way install.sh does (checksum + cosign), then swapped in
+  verified the same way the installer does (checksum + cosign), then swapped in
   atomically so replacing the running binary is safe. Then rebuilds the image like
   coop build but --pull --no-cache and unpinned, so the node base and agent CLIs
   jump to latest. Use coop build for a reproducible image. Supervised editor

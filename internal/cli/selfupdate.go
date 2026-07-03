@@ -72,7 +72,7 @@ func latestReleaseTag() (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("couldn't check for a newer coop — GitHub returned %s (rate limit or network hiccup?); retry shortly, or update via your package manager / install.sh", resp.Status)
+		return "", fmt.Errorf("couldn't check for a newer coop — GitHub returned %s (rate limit or network hiccup?); retry shortly, or reinstall from https://coop.dryga.com", resp.Status)
 	}
 	var rel struct {
 		TagName string `json:"tag_name"`
@@ -81,7 +81,7 @@ func latestReleaseTag() (string, error) {
 		return "", err
 	}
 	if rel.TagName == "" {
-		return "", fmt.Errorf("couldn't read the latest coop version from GitHub's response — retry shortly, or update via your package manager / install.sh")
+		return "", fmt.Errorf("couldn't read the latest coop version from GitHub's response — retry shortly, or reinstall from https://coop.dryga.com")
 	}
 	return rel.TagName, nil
 }
@@ -117,7 +117,7 @@ func selfUpdate(out io.Writer) (bool, error) {
 
 	binDir := filepath.Dir(exe)
 	if err := dirWritable(binDir); err != nil {
-		return false, fmt.Errorf("coop at %s is not writable (%v) — update it with the tool that installed it (your package manager, or re-run install.sh)", exe, err)
+		return false, fmt.Errorf("coop at %s is not writable (%v) — update it with the tool that installed it (your package manager, or reinstall from https://coop.dryga.com)", exe, err)
 	}
 
 	fmt.Fprintf(out, "coop: updating %s → %s\n", normalizeVersion(cur), normalizeVersion(latest))

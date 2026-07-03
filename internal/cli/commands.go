@@ -39,7 +39,7 @@ func (a *app) resolveImage() (repo, img string, err error) {
 	}
 	img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	if !box.ImageExists(a.rt, img) {
-		return "", "", fmt.Errorf("image %q not built — run 'coop build' (or ./install.sh)", img)
+		return "", "", fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
 	return repo, img, nil
 }
