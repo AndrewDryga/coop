@@ -31,7 +31,7 @@ func gatherForkStatus(repo, name string) forkStatus {
 		Name:    name,
 		Agent:   agent,
 		Branch:  forkBranch(ws),
-		Updated: forkUpdated(ws),
+		Updated: forkUpdated(repo, ws),
 		Active:  active,
 		Running: forkRunningPid(repo, name) != 0,
 		Ins:     ins,

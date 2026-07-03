@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -638,11 +639,37 @@ func (a *app) forkLs(args []string) (int, error) {
 // helpers — `diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
 func forkBranch(ws string) string { return gitOut(ws, "rev-parse", "--abbrev-ref", "HEAD") }
 
-func forkUpdated(ws string) string {
-	if rel := gitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
-		return rel
+func forkUpdated(repo, ws string) string {
+	// Show the fork's OWN latest commit. A fresh fork has none, so `git log -1` would report the base
+	// commit it inherited from the clone — misreading a seconds-old fork as hours/days stale (and a
+	// truly idle fork as fresh). When there are no commits beyond the base, fall back to the clone's
+	// own age instead of the inherited time.
+	if base := gitOut(repo, "rev-parse", "HEAD"); base != "" {
+		if n := gitOut(ws, "rev-list", "--count", base+"..HEAD"); n != "" && n != "0" {
+			if rel := gitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
+				return rel
+			}
+		}
+	}
+	if fi, err := os.Stat(ws); err == nil {
+		return relativeAge(fi.ModTime())
 	}
 	return "—"
+}
+
+// relativeAge renders how long ago t was in git's `%cr` idiom, for timestamps that aren't git commits
+// (a fork's clone time). Coarse buckets — it labels staleness, not exact durations.
+func relativeAge(t time.Time) string {
+	switch d := time.Since(t); {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return ui.Count(int(d.Minutes()), "minute") + " ago"
+	case d < 24*time.Hour:
+		return ui.Count(int(d.Hours()), "hour") + " ago"
+	default:
+		return ui.Count(int(d.Hours()/24), "day") + " ago"
+	}
 }
 
 // gitFetchInto fetches a fork's branch into review/<name> in the parent repo. The
@@ -849,6 +876,8 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 	if why := latestTaskLog(ws, 12); strings.TrimSpace(why) != "" {
 		fmt.Println(ui.Bold("why (latest task log):"))
 		fmt.Println(indent(why))
+	} else {
+		fmt.Printf("%s no completed task yet\n", ui.Bold("why:"))
 	}
 	fmt.Println(ui.Bold("diff:"))
 }

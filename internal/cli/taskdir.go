@@ -367,7 +367,11 @@ func wsTaskSource(ws string) string {
 // latestTaskLog returns the last n lines of the most-recently-modified per-task log.md under
 // ws's .agent/tasks tree (the agent's "why") — surfaced by `coop fork review`; "" if none.
 func latestTaskLog(ws string, n int) string {
-	matches, _ := filepath.Glob(filepath.Join(ws, tasksRoot, "*", "*", "log.md"))
+	// Only COMPLETED tasks (99_done): a fork's "why" is what it FINISHED. Scanning every state also
+	// picked up seeded 00_todo templates copied from the parent, whose mtimes can tie or beat the
+	// fork's own work — so a fresh fork's brief showed a pristine template. A seeded fork's 99_done is
+	// its own (slices seed only todo); empty means the fork hasn't finished anything (caller says so).
+	matches, _ := filepath.Glob(filepath.Join(ws, tasksRoot, stateDone, "*", "log.md"))
 	newest, newestMod := "", time.Time{}
 	for _, m := range matches {
 		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(newestMod) {

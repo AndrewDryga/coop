@@ -385,6 +385,55 @@ func TestForkFreshGuardsDirtyWork(t *testing.T) {
 	}
 }
 
+// `coop fork ls` UPDATED must reflect the fork's OWN activity, not the base commit time it inherited
+// from the clone — a fresh fork off a year-old base shows ~its creation, not "1 year ago".
+func TestForkUpdatedShowsOwnActivityNotInheritedBase(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	// Backdate the parent HEAD so an inherited base time would read as clearly stale.
+	old := exec.Command("git", "-C", repo, "commit", "--allow-empty", "-qm", "old base")
+	old.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_AUTHOR_DATE=2020-01-01T00:00:00", "GIT_COMMITTER_DATE=2020-01-01T00:00:00")
+	if out, err := old.CombinedOutput(); err != nil {
+		t.Fatalf("backdate base: %v\n%s", err, out)
+	}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if got := forkUpdated(repo, ws); strings.Contains(got, "year") {
+		t.Errorf("fresh fork UPDATED = %q, want ~creation time, not the inherited 2020 base commit", got)
+	}
+	// Its own commit is what should show once it works.
+	if err := os.WriteFile(filepath.Join(ws, "x.txt"), []byte("w\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "fork work")
+	if got := forkUpdated(repo, ws); got == "—" || strings.Contains(got, "year") {
+		t.Errorf("fork with its own commit should show that commit's recent time, got %q", got)
+	}
+}
+
+// review's "why" reads only COMPLETED (99_done) task logs, so a seeded 00_todo template — even with a
+// newer mtime — never masquerades as the fork's work; no completed task → empty (caller says none yet).
+func TestLatestTaskLogOnlyDone(t *testing.T) {
+	ws := t.TempDir()
+	writeTaskFile(t, filepath.Join(ws, tasksRoot, stateDone, "mine", "log.md"), "FORK OWN WORK\n")
+	writeTaskFile(t, filepath.Join(ws, tasksRoot, stateTodo, "seed", "log.md"), "SEEDED TEMPLATE\n") // newer mtime
+	if got := latestTaskLog(ws, 5); !strings.Contains(got, "FORK OWN WORK") || strings.Contains(got, "SEEDED") {
+		t.Errorf("latestTaskLog = %q, want the 99_done log, not the newer seeded todo template", got)
+	}
+	empty := t.TempDir()
+	writeTaskFile(t, filepath.Join(empty, tasksRoot, stateTodo, "x", "log.md"), "todo only\n")
+	if got := latestTaskLog(empty, 5); got != "" {
+		t.Errorf("latestTaskLog with no completed tasks = %q, want empty (caller renders 'none yet')", got)
+	}
+}
+
 func TestParseShortstat(t *testing.T) {
 	ins, del := parseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
 	if ins != 42 || del != 7 {

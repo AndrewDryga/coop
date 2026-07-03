@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fork ls`/`review` stop showing inherited state as fork activity.** A fresh fork's UPDATED
+  column showed the base commit time it inherited from the clone (a seconds-old fork could read "3
+  minutes ago"); it now shows the fork's own latest commit, falling back to the clone's age when the
+  fork hasn't committed. And `coop fork review`'s "why (latest task log)" now reads only completed
+  (`99_done`) task logs, so a seeded `00_todo` template no longer masquerades as the fork's work — with
+  a clear "no completed task yet" when it hasn't finished anything.
+
 - **Filesystem-only commands no longer need a container runtime.** coop detected the runtime up front
   for every command, so `coop tasks ls`/`lint`, `profiles`, `models`, `init`, `check-secrets`,
   `fork ls`/`path`, and the group help pages all failed on a machine without Docker — even though they
