@@ -19,9 +19,9 @@ lead:                         # REQUIRED — the default agent + its model ladde
   # Omit models to use the agent's default model on all signed-in accounts.
   models: [claude-fable-5, claude-opus-4-8@work]
 
-  # prompt — OPTIONAL Markdown file in this preset folder, appended to (never
-  # replacing) the generated lead contract. Uncomment once the file exists.
-  # prompt: lead.md
+  # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
+  # contract. init scaffolds lead.md; edit it, or delete it and this line.
+  prompt: lead.md
 
 # roles — OPTIONAL map of role-name → role the lead can hand work to. A role
 # name is lowercase letters, digits, and dashes. Every role runs on its agent's
@@ -57,4 +57,4 @@ roles:
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never             # delegate-only — only 'never' is supported
     concurrent: never         # delegate-only; only 'never' (runs serialized)
-    # prompt: roles/fast.md   # optional, appended to this role's contract
+    prompt: roles/fast.md     # scaffolded; edit it, or delete it and this line

@@ -101,6 +101,20 @@ func TestCmdPresetsInit(t *testing.T) {
 			t.Errorf("scaffolded preset should list cleanly, missing %q:\n%s", want, list)
 		}
 	}
+	// init also writes the prompt files the recipe references, so the show view marks them.
+	for _, rel := range []string{"lead.md", filepath.Join("roles", "fast.md")} {
+		if _, err := os.Stat(filepath.Join(a.cfg.RepoOverride, ".agent", "presets", "frontier", rel)); err != nil {
+			t.Errorf("init should scaffold %s: %v", rel, err)
+		}
+	}
+	show := captureStdout(t, func() {
+		if code, err := a.cmdPresets([]string{"frontier"}); code != 0 || err != nil {
+			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(show, "+lead.md") || !strings.Contains(show, "+md") {
+		t.Errorf("show should mark the scaffolded prompt files (+lead.md / +md):\n%s", show)
+	}
 	if code, err := a.cmdPresets([]string{"init"}); code != 2 || err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("re-init = (%d, %v), want a refusal", code, err)
 	}

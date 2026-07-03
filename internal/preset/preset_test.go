@@ -198,10 +198,11 @@ func TestEnvKey(t *testing.T) {
 	}
 }
 
-// Scaffold writes the documented frontier template, which must LOAD as written —
-// commented credentials/prompt lines, real model ids, all three role modes — so a
-// scaffolded preset lists and runs immediately. It never clobbers, and rejects names
-// that could never round-trip (the presets command's own verbs included).
+// Scaffold writes the documented frontier template, which must LOAD as written — real
+// model ids, all three role modes, and ACTIVE prompt: lines resolved by the starter
+// prompt files Scaffold writes alongside preset.yaml — so a scaffolded preset lists and
+// runs immediately. It never clobbers, and rejects names that could never round-trip
+// (the presets command's own verbs included).
 func TestScaffold(t *testing.T) {
 	repo := t.TempDir()
 	path, err := Scaffold(repo, "frontier")
@@ -220,6 +221,21 @@ func TestScaffold(t *testing.T) {
 	}
 	if len(p.Roles) != 3 || !p.HasConsult() || !p.HasDelegate() {
 		t.Errorf("template should carry all three role modes: %+v", p.Roles)
+	}
+	// The active prompt: lines must resolve — every file the template references is
+	// written by Scaffold, and its text is appended to the contract.
+	if p.LeadPromptText == "" {
+		t.Error("scaffolded lead.md should load (LeadPromptText is empty)")
+	}
+	for _, r := range p.Roles {
+		if r.Mode == ModeDelegate && r.PromptText == "" {
+			t.Errorf("scaffolded roles/%s.md should load (PromptText is empty)", r.Name)
+		}
+	}
+	for _, rel := range []string{"lead.md", "roles/fast.md"} {
+		if _, err := os.Stat(filepath.Join(repo, Dir, "frontier", filepath.FromSlash(rel))); err != nil {
+			t.Errorf("Scaffold should write %s: %v", rel, err)
+		}
 	}
 	// The header names the chosen preset so the run hints are copy-pasteable.
 	data, _ := os.ReadFile(path)

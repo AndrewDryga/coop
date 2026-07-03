@@ -8,8 +8,9 @@ import (
 
 // Template is the scaffolded preset — the documented frontier recipe, ready to edit:
 // a big-model lead, a native deep-thinking subagent, a read-only cross-vendor critic,
-// and a cheap write-capable delegate. It must load cleanly as written (the test guards
-// it), so the prompt: lines ship commented — a prompt file must exist to be referenced.
+// and a cheap write-capable delegate. Its prompt: lines are active because Scaffold
+// also writes the files they reference (templateFiles); the result must load cleanly
+// (TestScaffold loads it), so any referenced file MUST be in templateFiles.
 const Template = `# coop preset — an orchestration recipe: which agent LEADS a session, and which
 # ROLES it can route work to. Edit this file, then run or inspect it:
 #   Run:      coop claude --preset %[1]s   ·   coop loop --preset %[1]s
@@ -31,9 +32,9 @@ lead:                         # REQUIRED — the default agent + its model ladde
   # Omit models to use the agent's default model on all signed-in accounts.
   models: [claude-fable-5, claude-opus-4-8@work]
 
-  # prompt — OPTIONAL Markdown file in this preset folder, appended to (never
-  # replacing) the generated lead contract. Uncomment once the file exists.
-  # prompt: lead.md
+  # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
+  # contract. init scaffolds lead.md; edit it, or delete it and this line.
+  prompt: lead.md
 
 # roles — OPTIONAL map of role-name → role the lead can hand work to. A role
 # name is lowercase letters, digits, and dashes. Every role runs on its agent's
@@ -69,12 +70,55 @@ roles:
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never             # delegate-only — only 'never' is supported
     concurrent: never         # delegate-only; only 'never' (runs serialized)
-    # prompt: roles/fast.md   # optional, appended to this role's contract
+    prompt: roles/fast.md     # scaffolded; edit it, or delete it and this line
 `
 
-// Scaffold writes the template as .agent/presets/<name>/preset.yaml and returns the
-// written path. It never clobbers an existing preset, and the result is guaranteed to
-// load (the template carries no uncommented file references).
+// leadPrompt and fastPrompt are the starter Markdown files the template references,
+// written by Scaffold. They APPEND to coop's generated contract (they never replace
+// its routing/safety text), so they carry project-specific guidance to fill in — a
+// leading HTML note explains each and how to drop it.
+const leadPrompt = `<!-- lead.md — extra guidance for the LEAD, appended to (never replacing) coop's
+     generated contract. Make it project-specific, then it is yours. Delete this
+     file and the "prompt: lead.md" line in preset.yaml to drop it entirely. -->
+
+## This project (edit me)
+
+- Gate: the one command that must pass before you commit (e.g. make check, npm test).
+- Layout: where the code, tests, and docs live — anything a fresh session should know.
+- Conventions: house style, naming, and what "done" means beyond a green gate.
+`
+
+const fastPrompt = `<!-- roles/fast.md — extra guidance for the "fast" delegate, appended to its
+     generated contract. Delete this file and the "prompt: roles/fast.md" line in
+     preset.yaml to drop it. -->
+
+## Working as the fast delegate (edit me)
+
+- Stay strictly within the task you are handed; note anything else, do not fix it.
+- Follow the existing patterns and tests; add no new dependencies or options.
+- You edit but never commit — leave the worktree gate-green for the lead to review.
+`
+
+// templateFile is one file Scaffold writes beside preset.yaml. Rel is a POSIX path
+// relative to the preset folder (forward slashes; Scaffold localizes it).
+type templateFile struct {
+	rel     string
+	content string
+}
+
+// templateFiles are the prompt files preset.yaml references — kept in step with the
+// active prompt: lines in Template. A reference with no entry here would make the
+// scaffolded preset fail to load, which TestScaffold catches.
+var templateFiles = []templateFile{
+	{"lead.md", leadPrompt},
+	{"roles/fast.md", fastPrompt},
+}
+
+// Scaffold writes the template as .agent/presets/<name>/preset.yaml plus the starter
+// prompt files it references (templateFiles: lead.md, roles/fast.md) and returns the
+// preset.yaml path. It never clobbers an existing preset, and the result is guaranteed
+// to load — the referenced prompt files are written here, so the active prompt: lines
+// resolve.
 func Scaffold(repo, name string) (string, error) {
 	if !ValidName(name) {
 		return "", fmt.Errorf("invalid preset name %q — a preset is a folder name under %s/ (lowercase, no '/', '..', or leading '-')", name, Dir)
@@ -88,6 +132,17 @@ func Scaffold(repo, name string) (string, error) {
 	}
 	if err := os.WriteFile(path, fmt.Appendf(nil, Template, name), 0o644); err != nil {
 		return "", err
+	}
+	// The prompt files preset.yaml references, so the scaffolded preset loads as written.
+	dir := filepath.Dir(path)
+	for _, f := range templateFiles {
+		dest := filepath.Join(dir, filepath.FromSlash(f.rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(dest, []byte(f.content), 0o644); err != nil {
+			return "", err
+		}
 	}
 	return path, nil
 }
