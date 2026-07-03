@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A CLI-conformance test graduates the taste rules into the gate.** The committed `.agent/rules`
+  (ls/list everywhere, rm/remove everywhere, every verb documented, retired aliases stay dead) were
+  enforced only by review — and drift crept in. A new table-driven test now walks the CLI surface and
+  asserts them mechanically, so a lister that forgets `list`, a destructive verb without `remove`, a
+  verb added with no help row, or a re-minted retired alias fails CI. (Also documents the `clear`
+  bulk-delete verb in `coop tasks --help`, which the test surfaced as undocumented.)
+
 - **Grammar consistency across launch paths.** `coop loop --profile <name>` now runs a one-off on the
   given profile(s) without mutating the persistent `coop loop pool`, and `coop fork <name> acp
   --profile` is accepted like plain `coop acp` (it was rejected). `coop fusion --consult` is a

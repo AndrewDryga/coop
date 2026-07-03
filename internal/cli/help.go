@@ -340,7 +340,7 @@ var commandHelp = map[string]string{
   unblock <id>     move it back to todo (claim it to start); add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)
   path <id>        print a task's resolved folder path
-  rm <id>          delete a task folder; --all-done clears the whole done archive
+  rm <id>          delete a task folder; --all-done (alias: clear) clears the done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
   split <n>        slice the todo tasks into n trees (.agent/tasks.sliceN); coop fleet split makes a fleet
