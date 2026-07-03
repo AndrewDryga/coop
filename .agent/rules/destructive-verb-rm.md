@@ -16,4 +16,5 @@ while quietly accepting both).
 - Don't introduce a command whose primary destructive verb is `remove`/`delete`/`del`.
 - Keep the accept-set uniform: if one destructive command accepts `remove`, they all do.
 
-See also [[help-output-style]] and [[bare-subcommand-shows-help]].
+See also [[destructive-confirm-gate]] (rm shares one confirmation gate), [[help-output-style]], and
+[[bare-subcommand-shows-help]].

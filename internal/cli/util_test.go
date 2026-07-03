@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestHasYes(t *testing.T) {
+	if !hasYes([]string{"x", "--yes"}) || !hasYes([]string{"-y"}) {
+		t.Error("hasYes should detect --yes and -y")
+	}
+	if hasYes([]string{"x", "--yesss", "yes"}) {
+		t.Error("hasYes must match only the exact -y/--yes flags")
+	}
+}
+
+// destroyGate proceeds with --yes; without it in a non-TTY (the test env) it refuses and names --yes,
+// so a pipe/CI can't delete on its own. (The TTY default-No prompt path needs a terminal to exercise.)
+func TestDestroyGate(t *testing.T) {
+	if err := destroyGate("delete X", true); err != nil {
+		t.Errorf("destroyGate(yes) = %v, want nil (proceed)", err)
+	}
+	if err := destroyGate("delete task Y (todo)", false); err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("destroyGate(no, piped) = %v, want a refusal naming --yes", err)
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	if got := truncate("hello", 10); got != "hello" {
 		t.Errorf("truncate(short) = %q, want %q", got, "hello")

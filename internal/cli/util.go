@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -469,6 +470,35 @@ func approve(prompt string, yes bool) bool {
 		return false
 	}
 	return confirm(prompt, true)
+}
+
+// hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands
+// accept to run unattended (distinct from --force, which overrides a safety guard, not the prompt).
+func hasYes(args []string) bool {
+	for _, a := range args {
+		if a == "-y" || a == "--yes" {
+			return true
+		}
+	}
+	return false
+}
+
+// destroyGate guards an UNRECOVERABLE deletion, returning nil only when it may proceed. With yes (the
+// caller saw -y/--yes) it proceeds silently. Otherwise, piped (no TTY) it REFUSES — there's nothing
+// to confirm against, so a script must opt in with --yes; at a TTY it asks "<what>? …" defaulting to
+// No, so a stray Enter cancels. `what` names the blast radius, e.g. "delete task X (todo)". One gate
+// for every rm (tasks, profiles, forks) so they can't drift. See rule destructive-confirm-gate.
+func destroyGate(what string, yes bool) error {
+	if yes {
+		return nil
+	}
+	if !ui.IsTerminal(os.Stdin) {
+		return fmt.Errorf("refusing to %s without confirmation — re-run with --yes (no terminal to prompt)", what)
+	}
+	if !confirm(what+"? this can't be undone", false) {
+		return errors.New("cancelled")
+	}
+	return nil
 }
 
 // confirm asks a yes/no question, returning def with no tty (batch runs) or on a

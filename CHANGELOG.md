@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Deletions now confirm before they happen.** `coop tasks rm` (which matches by substring and has
+  no undo — the queue is gitignored), `coop tasks rm --all-done`, and `coop profiles rm` all went
+  straight to `os.RemoveAll` with no prompt. They now route through one shared gate: at a terminal it
+  asks first (naming the resolved id / the count / the profile, and defaulting to No); piped it
+  refuses unless you pass `--yes`. `--yes` skips the prompt and is distinct from `--force` (which
+  overrides a safety guard, not the confirmation). `tasks rm` also echoes the resolved id *before*
+  deleting, not after.
+
 - **Consistent verb recognition across the command families.** `coop fork list` now lists (an alias
   for `coop fork ls`, matching `coop tasks`), and `list`/`watch`/`remove` join the reserved fork
   names so a fork can't shadow a subcommand — `coop fork ls` warns if a pre-existing fork already

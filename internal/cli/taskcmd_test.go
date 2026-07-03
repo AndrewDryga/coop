@@ -159,8 +159,8 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Errorf("re-done should be a no-op (code 0), got %d", code)
 	}
 
-	// remove deletes the folder (a manual, by-id removal)
-	if code, err := tasksFolderRemove(root, []string{id}); code != 0 || err != nil {
+	// remove deletes the folder (a manual, by-id removal); --yes skips the gate in this non-TTY test
+	if code, err := tasksFolderRemove(root, []string{id, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("remove: code=%d err=%v", code, err)
 	}
 	if len(readTaskTree(root)) != 0 {
@@ -179,6 +179,30 @@ func TestMoveTaskDirSourceVanished(t *testing.T) {
 	}
 }
 
+// Without --yes and no TTY (the test env), a destructive rm refuses and preserves the target — and
+// names WHAT it would remove (the resolved id, or the --all-done count) so it isn't a blind delete.
+func TestTasksRemoveGate(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-keep", "task.md"), "# keep\n")
+	// by-id (substring match): refuses, task survives, error names the resolved id.
+	code, err := tasksFolderRemove(root, []string{"keep"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "2026-01-01-keep") {
+		t.Fatalf("rm without --yes = (%d, %v), want (2, a refusal naming the resolved id)", code, err)
+	}
+	if len(readTaskTree(root)) != 1 {
+		t.Fatal("a refused rm must not delete the task")
+	}
+	// --all-done: refuses with the blast-radius count; the done task survives.
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-02-done", "task.md"), "# done\n")
+	code, err = tasksFolderRemove(root, []string{"--all-done"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "1 done task") {
+		t.Fatalf("rm --all-done without --yes = (%d, %v), want (2, a refusal naming the count)", code, err)
+	}
+	if countDone(root) != 1 {
+		t.Error("a refused --all-done must not delete anything")
+	}
+}
+
 func TestTasksFolderRemoveAllDone(t *testing.T) {
 	root := t.TempDir()
 	// two done tasks, one todo and one in_progress that must SURVIVE --all-done
@@ -187,7 +211,7 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-03-c", "task.md"), "# c\n")
 	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-04-d", "task.md"), "# d\n")
 
-	if code, err := tasksFolderRemove(root, []string{"--all-done"}); code != 0 || err != nil {
+	if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("remove --all-done: code=%d err=%v", code, err)
 	}
 	items := readTaskTree(root)

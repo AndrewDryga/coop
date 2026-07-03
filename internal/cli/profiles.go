@@ -166,10 +166,12 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 		}
 		return a.setProfileDefault([]string{agent, profile})
 	case "rm", "remove":
-		if len(rest) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q (usage: coop profiles %s %s rm)", rest[1], agent, profile)
+		for _, x := range rest[1:] { // only --yes may follow rm here; anything else is a mistake
+			if x != "-y" && x != "--yes" {
+				return 2, fmt.Errorf("unexpected argument %q (usage: coop profiles %s %s rm [--yes])", x, agent, profile)
+			}
 		}
-		return a.removeProfile([]string{agent, profile})
+		return a.removeProfile(append([]string{agent, profile}, rest[1:]...))
 	default:
 		return 2, unknownErr("profile attribute", rest[0], []string{"model", "default", "rm"})
 	}
@@ -290,10 +292,17 @@ func (a *app) markProfileModel(args []string) (int, error) {
 // agent dir. A pool that still names the profile is harmless: buildPool drops members that aren't
 // signed in.
 func (a *app) removeProfile(args []string) (int, error) {
-	if len(args) != 2 {
-		return 2, errors.New("usage: coop profiles <agent> <profile> rm")
+	yes := hasYes(args)
+	var pos []string
+	for _, x := range args {
+		if !strings.HasPrefix(x, "-") {
+			pos = append(pos, x)
+		}
 	}
-	agent, name := args[0], args[1]
+	if len(pos) != 2 {
+		return 2, errors.New("usage: coop profiles <agent> <profile> rm [--yes]")
+	}
+	agent, name := pos[0], pos[1]
 	if _, ok := agents.Get(agent); !ok {
 		return 2, unknownErr("agent", agent, agents.Names())
 	}
@@ -308,6 +317,10 @@ func (a *app) removeProfile(args []string) (int, error) {
 	// removing that would wipe every profile, not one.
 	if dir == filepath.Join(a.cfg.ConfigDir, agent) {
 		return 2, fmt.Errorf("%s has no separate %q profile directory to remove", agent, name)
+	}
+	// Deleting a profile drops its login token AND all session history, with no undo — gate it.
+	if err := destroyGate(fmt.Sprintf("delete %s profile %q (login token + session history)", agent, name), yes); err != nil {
+		return 2, err
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return -1, err

@@ -113,8 +113,8 @@ func TestIntegrationLifecycleViaDispatcher(t *testing.T) {
 		t.Fatalf("done should MOVE, not delete: tree=%+v", got)
 	}
 
-	// remove --all-done is the only thing that deletes it.
-	if code, err := a.cmdTasks([]string{"remove", "--all-done"}); code != 0 || err != nil {
+	// remove --all-done is the only thing that deletes it (--yes skips the gate in this non-TTY test).
+	if code, err := a.cmdTasks([]string{"remove", "--all-done", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("remove --all-done: code=%d err=%v", code, err)
 	}
 	if len(readTaskTree(root)) != 0 {

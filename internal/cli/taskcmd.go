@@ -37,7 +37,7 @@ var taskArgSpecs = map[string]taskArgSpec{
 	"lint":  {nil, 0},
 	"claim": {nil, 1}, "start": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
-	"rm": {[]string{"--all-done"}, 1}, "remove": {[]string{"--all-done"}, 1},
+	"rm": {[]string{"--all-done", "--yes", "-y"}, 1}, "remove": {[]string{"--all-done", "--yes", "-y"}, 1},
 }
 
 // validateArgs enforces a subcommand's flags + positional count: any token starting with "-" must be
@@ -528,25 +528,42 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 // loop and skills only ever MOVE a finished task to 99_done/, never delete it, so done
 // tasks accumulate until someone prunes them with this.
 func tasksFolderRemove(root string, args []string) (int, error) {
-	const usage = "usage: coop tasks rm <id>  |  coop tasks rm --all-done"
-	if len(args) == 1 && args[0] == "--all-done" {
+	const usage = "usage: coop tasks rm <id> [--yes]  |  coop tasks rm --all-done [--yes]"
+	yes := hasYes(args)
+	var pos []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			pos = append(pos, a)
+		}
+	}
+	if slices.Contains(args, "--all-done") {
+		if len(pos) != 0 {
+			return 2, errors.New(usage) // an id and --all-done together is ambiguous
+		}
+		n := countDone(root)
+		if n == 0 {
+			ui.Note("no done tasks to remove")
+			return 0, nil
+		}
+		if err := destroyGate("remove "+ui.Count(n, "done task")+" from the archive", yes); err != nil {
+			return 2, err
+		}
 		removed, err := removeAllDone(root)
 		if err != nil {
 			return -1, err
 		}
-		if removed == 0 {
-			ui.Note("no done tasks to remove")
-			return 0, nil
-		}
 		ui.OK("removed %s", ui.Count(removed, "done task"))
 		return 0, nil
 	}
-	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+	if len(pos) != 1 {
 		return 2, errors.New(usage)
 	}
-	t, err := findTask(root, args[0])
+	t, err := findTask(root, pos[0]) // resolve the (possibly substring) match first, so the gate names it
 	if err != nil {
 		return 1, err
+	}
+	if err := destroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, stateLabel(t.State)), yes); err != nil {
+		return 2, err
 	}
 	if err := os.RemoveAll(t.Dir); err != nil {
 		return -1, err
@@ -569,6 +586,18 @@ func removeAllDone(root string) (int, error) {
 		removed++
 	}
 	return removed, nil
+}
+
+// countDone reports how many done tasks removeAllDone would delete — for the pre-delete blast-radius
+// prompt, so `rm --all-done` can say the count before the (unrecoverable) removal, not after.
+func countDone(root string) int {
+	n := 0
+	for _, t := range readTaskTree(root) {
+		if t.State == stateDone {
+			n++
+		}
+	}
+	return n
 }
 
 // tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.slice1 …

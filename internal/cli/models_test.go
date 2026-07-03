@@ -170,7 +170,7 @@ func TestModelsMarkClearedOnProfileRemoval(t *testing.T) {
 	if err := a.cfg.SetProfileModel("claude", "work", "opus"); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.cmdProfiles([]string{"rm", "claude", "work"}); code != 0 || err != nil {
+	if code, err := a.cmdProfiles([]string{"rm", "claude", "work", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("profiles rm = (%d, %v)", code, err)
 	}
 	if got := a.cfg.ProfileModelOf("claude", "work"); got != "" {

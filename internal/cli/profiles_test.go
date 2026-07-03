@@ -122,6 +122,28 @@ func TestCmdProfilesDefault(t *testing.T) {
 	}
 }
 
+// profiles rm without --yes (non-TTY) refuses and keeps the profile — deleting one drops its login
+// token + session history with no undo, so it can't happen unattended without an explicit opt-in.
+func TestProfilesRemoveGate(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	for _, p := range []string{"personal", "work"} {
+		if err := os.MkdirAll(cfg.AgentProfileDir("claude", p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cfg.SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg}
+	code, err := a.cmdProfiles([]string{"rm", "claude", "work"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("profiles rm without --yes = (%d, %v), want (2, a refusal naming --yes)", code, err)
+	}
+	if !pathExists(cfg.AgentProfileDir("claude", "work")) {
+		t.Error("a refused profile rm must not delete the profile dir")
+	}
+}
+
 func TestRemoveProfile(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	for _, p := range []string{"personal", "personal_backup", "default"} {
@@ -152,11 +174,12 @@ func TestRemoveProfile(t *testing.T) {
 		t.Fatal("refused deletion still removed the default profile dir")
 	}
 
-	// Remove the stray "default" profile (discard the confirmation listing on stdout).
+	// Remove the stray "default" profile (--yes skips the gate in this non-TTY test; discard the
+	// confirmation listing on stdout).
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, err := a.cmdProfiles([]string{"rm", "claude", "default"})
+	code, err := a.cmdProfiles([]string{"rm", "claude", "default", "--yes"})
 	_ = w.Close()
 	os.Stdout = old
 	_, _ = io.ReadAll(r)

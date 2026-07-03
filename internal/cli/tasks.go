@@ -190,6 +190,17 @@ func tasksListAll(repo string, rels []string) (int, error) {
 func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (int, error) {
 	args := rest[1:]
 	if (sub == "rm" || sub == "remove") && slices.Contains(args, "--all-done") {
+		total := 0
+		for _, rel := range rels {
+			total += countDone(filepath.Join(repo, rel))
+		}
+		if total == 0 {
+			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
+			return 0, nil
+		}
+		if err := destroyGate(fmt.Sprintf("remove %s across %s", ui.Count(total, "done task"), ui.Count(len(rels), "queue")), hasYes(args)); err != nil {
+			return 2, err
+		}
 		removed := 0
 		for _, rel := range rels {
 			n, err := removeAllDone(filepath.Join(repo, rel))
@@ -197,10 +208,6 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 				return -1, err
 			}
 			removed += n
-		}
-		if removed == 0 {
-			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
-			return 0, nil
 		}
 		ui.OK("removed %s across %s", ui.Count(removed, "done task"), ui.Count(len(rels), "queue"))
 		return 0, nil
