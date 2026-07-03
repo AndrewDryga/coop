@@ -202,6 +202,33 @@ func TestUnknownErr(t *testing.T) {
 	}
 }
 
+// Pure-local families work with NO container runtime; only box-running commands surface the runtime
+// error. Detect is lazy (a.ensureRuntime), not eager in Main — so install→init→browse the queue and
+// CI `coop tasks lint` don't require Docker.
+func TestRuntimeDetectIsLazy(t *testing.T) {
+	bogus := func() *app {
+		return &app{cfg: &config.Config{RuntimeName: "coop-no-such-runtime-xyz", ConfigDir: t.TempDir()}}
+	}
+	if err := bogus().ensureRuntime(); err == nil {
+		t.Fatal("ensureRuntime with a bogus runtime should error")
+	}
+	// A box-running command (dispatched) hits the runtime error up front...
+	if code, err := bogus().dispatch([]string{"build"}); err == nil || code == 0 {
+		t.Errorf("coop build with no runtime should fail, got (%d, %v)", code, err)
+	}
+	// ...but a pure-local one never detects. Capture stdout so the listing stays quiet.
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	code, err := bogus().dispatch([]string{"models"})
+	_ = w.Close()
+	os.Stdout = old
+	_, _ = io.ReadAll(r)
+	if code != 0 || err != nil {
+		t.Errorf("coop models with no runtime should succeed (pure-local), got (%d, %v)", code, err)
+	}
+}
+
 // `coop status` and `coop help status` must show the SAME removal tombstone — one source, both paths.
 func TestRemovedCommandNoteParity(t *testing.T) {
 	note, ok := removedCommandNote("status")

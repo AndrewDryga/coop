@@ -35,8 +35,25 @@ func resolveVersion() string {
 }
 
 type app struct {
-	cfg *config.Config
-	rt  runtime.Runtime
+	cfg   *config.Config
+	rt    runtime.Runtime
+	rtSet bool // whether rt has been detected yet (ensureRuntime is lazy — see below)
+}
+
+// ensureRuntime lazily detects and caches the container runtime the first time a box-running command
+// needs it. Pure-local families (tasks, profiles, models, init, check-secrets, fork ls/path, group
+// help) never call it, so they work with no runtime installed — Main no longer detects eagerly. The
+// error is the same actionable "runtime not found" Main used to surface.
+func (a *app) ensureRuntime() error {
+	if a.rtSet {
+		return nil
+	}
+	rt, err := runtime.Detect(a.cfg.RuntimeName)
+	if err != nil {
+		return err
+	}
+	a.rt, a.rtSet = rt, true
+	return nil
 }
 
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
@@ -98,13 +115,9 @@ func Main(argv []string) int {
 	for _, w := range cfg.Warnings { // non-fatal config problems (e.g. an unrecognized COOP_EGRESS)
 		ui.Warn("%s", w)
 	}
-	rt, err := runtime.Detect(cfg.RuntimeName)
-	if err != nil {
-		ui.Error("%v", err)
-		return 1
-	}
-
-	a := &app{cfg: cfg, rt: rt}
+	// The runtime is detected lazily (a.ensureRuntime), only by box-running commands — so pure-local
+	// families work with no container runtime installed. See dispatch and resolveImage.
+	a := &app{cfg: cfg}
 	code, err := a.dispatch(argv)
 	if err != nil {
 		ui.Error("%v", err)
@@ -124,6 +137,16 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return 0, nil
 	}
 	sub, rest := argv[0], argv[1:]
+	// These commands always run a container, so detect the runtime up front (fail fast with the
+	// actionable "runtime not found"). The mixed commands — fork/fleet (ls/path are local) and update
+	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
+	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime.
+	switch sub {
+	case "run", "shell", "login", "acp", "fusion", "loop", "up", "down", "doctor", "build":
+		if err := a.ensureRuntime(); err != nil {
+			return -1, err
+		}
+	}
 	switch sub {
 	case "run":
 		return a.cmdRun(rest)

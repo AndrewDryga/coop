@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filesystem-only commands no longer need a container runtime.** coop detected the runtime up front
+  for every command, so `coop tasks ls`/`lint`, `profiles`, `models`, `init`, `check-secrets`,
+  `fork ls`/`path`, and the group help pages all failed on a machine without Docker — even though they
+  never touch a container. Detection is now lazy: only box-running commands (agent launch, `run`,
+  `shell`, `build`, `doctor`, `up`/`down`, `acp`, `fusion`, loops, and a gated `fork merge`) resolve
+  it, so install→init→browse-the-queue and CI `coop tasks lint` work before Docker exists. Box
+  commands keep the same actionable "runtime not found" error.
+
 - **Fork destroyers stop losing work quietly.** `coop fork <name> --fresh` recreated a fork by
   destroying the old clone with no check — it now runs the same unmerged/dirty guard as `fork rm`
   (recreate anyway with `--fresh --force`), and fails fast before any image work. `coop fork rm` now

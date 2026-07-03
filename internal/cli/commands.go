@@ -30,6 +30,9 @@ import (
 
 // resolveImage resolves the repo and its image, verifying the image is built.
 func (a *app) resolveImage() (repo, img string, err error) {
+	if err := a.ensureRuntime(); err != nil { // the choke point for box commands not eager-detected in dispatch (fork/fleet)
+		return "", "", err
+	}
 	repo, err = box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return "", "", err
@@ -666,6 +669,11 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		}
 	}
 
+	// The box rebuild needs the runtime; --self-only returned above, so detect only here (not eagerly
+	// in dispatch), keeping `coop update --self-only` usable on a box with no container runtime.
+	if err := a.ensureRuntime(); err != nil {
+		return -1, err
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err

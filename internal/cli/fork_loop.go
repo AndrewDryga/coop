@@ -379,6 +379,11 @@ func (a *app) forkStop(args []string) (int, error) {
 	if pid == 0 {
 		return 1, fmt.Errorf("fork %s is not running", name)
 	}
+	// Reaping the loop's box container needs the runtime; a not-running fork (handled above) doesn't,
+	// so detect only here rather than eagerly — `coop fork stop` on an idle fork works with no runtime.
+	if err := a.ensureRuntime(); err != nil {
+		return -1, err
+	}
 	// The worker is a session leader (Setsid); signal its whole group, falling back to the single
 	// pid. SIGTERM first, then escalate to SIGKILL if it doesn't exit (mid-iteration / blocked).
 	killGroup := func(sig syscall.Signal) {

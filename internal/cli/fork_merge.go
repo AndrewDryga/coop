@@ -115,7 +115,10 @@ func pkgScripts(content string) map[string]string {
 // revalidated in the box), or returns "" when no gate is configured.
 func (a *app) mergeGate(repo string) (string, error) {
 	if len(a.cfg.Gate) == 0 {
-		return "", nil
+		return "", nil // no gate configured → the merge is pure-local, no runtime needed
+	}
+	if err := a.ensureRuntime(); err != nil {
+		return "", err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	if !box.ImageExists(a.rt, img) {
