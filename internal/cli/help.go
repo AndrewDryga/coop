@@ -120,7 +120,12 @@ func renderHelp(cfg *config.Config, ref bool) string {
 
 	group("UNATTENDED")
 	row("coop loop [agent]", "work the queue(s) until done, then audit")
-	row("coop fleet init|up|down|split|watch|prune", "parallel forks from .agent/fleet")
+	row("coop fleet init", "write the .agent/fleet.yaml template")
+	row("coop fleet up", "start every fork's loop, detached")
+	row("coop fleet down", "stop the fleet's running loops")
+	row("coop fleet split <n>", "slice the queue into n forks + fleet file")
+	row("coop fleet watch", "live dashboard of every fork's progress")
+	row("coop fleet prune", "drop forks no longer in the fleet file")
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks ls", "show the queue, grouped by state")

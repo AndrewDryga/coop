@@ -36,7 +36,12 @@ FORKS — review and land work like a PR
 
 UNATTENDED
   coop loop [agent]                 work the queue(s) until done, then audit
-  coop fleet init|up|down|split|watch|prune  parallel forks from .agent/fleet
+  coop fleet init                   write the .agent/fleet.yaml template
+  coop fleet up                     start every fork's loop, detached
+  coop fleet down                   stop the fleet's running loops
+  coop fleet split <n>              slice the queue into n forks + fleet file
+  coop fleet watch                  live dashboard of every fork's progress
+  coop fleet prune                  drop forks no longer in the fleet file
 
 TASKS — a folder-per-task queue in .agent/tasks/
   coop tasks ls                     show the queue, grouped by state

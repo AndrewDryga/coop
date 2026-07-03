@@ -583,12 +583,14 @@ func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {
 	}
 }
 
-// The top-level fleet summary line must list every verb (init/split were omitted, hiding
-// `coop fleet init` etc. from the main help).
+// The top-level help lists every fleet verb on its own row (like the fork rows), so none
+// is hidden from the main help.
 func TestTopLevelListsAllGroupVerbs(t *testing.T) {
 	h := helpText(&config.Config{})
-	if !strings.Contains(h, "coop fleet init|up|down|split|watch|prune") {
-		t.Error("top-level fleet row should list every fleet verb (init/split were missing)")
+	for _, verb := range []string{"init", "up", "down", "split", "watch", "prune"} {
+		if !strings.Contains(h, "coop fleet "+verb) {
+			t.Errorf("top-level help should list `coop fleet %s` as its own row", verb)
+		}
 	}
 }
 

@@ -102,9 +102,6 @@ func TestHelpRowsAlign(t *testing.T) {
 			}
 		}
 		cmd := strings.TrimRight(string(runes[2:cmdEnd]), " ")
-		if strings.Count(cmd, "|") >= 3 {
-			continue // a verb-list row (e.g. fleet init|up|down|…) may run long
-		}
 		if n := len([]rune(cmd)); n > 32 {
 			t.Errorf("help row command cell is %d runes (max 32, or the description column drifts): %q", n, cmd)
 		}
