@@ -175,6 +175,11 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 		if err := copyTree(tasks, dst); err != nil {
 			return -1, err
 		}
+		// The source may predate the four-state scaffold (or be a slice with only 00_todo); guarantee
+		// all four in the seeded queue so the in-box move protocol can't rename a task into a missing dir.
+		if err := scaffoldStateDirs(dst); err != nil {
+			return -1, err
+		}
 	} else if tasks != "" {
 		// The fork already has a queue (a resumed loop keeps its progress), so the
 		// source isn't re-seeded — say so instead of silently ignoring it.

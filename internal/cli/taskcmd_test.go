@@ -252,6 +252,9 @@ func TestTasksFolderSplitCommand(t *testing.T) {
 func TestTasksFolderLint(t *testing.T) {
 	// findings: blocked-without-decision, todo-with-decision, status field, missing acceptance
 	root := t.TempDir()
+	if err := scaffoldStateDirs(root); err != nil { // isolate the content findings from the missing-state-dir check
+		t.Fatal(err)
+	}
 	writeTaskFile(t, filepath.Join(root, stateBlocked, "b1", "task.md"), "---\ntitle: B\n---\n# B\n**Acceptance criteria:** x\n")
 	writeTaskFile(t, filepath.Join(root, stateTodo, "t1", "task.md"), "---\ntitle: T\nstatus: todo\n---\n# T\nno accept here\n")
 	writeTaskFile(t, filepath.Join(root, stateTodo, "t2", "task.md"), "# T2\n**Acceptance criteria:** ok\n")
@@ -262,11 +265,33 @@ func TestTasksFolderLint(t *testing.T) {
 
 	// clean tree — a complete task carries all three sections (Context / Acceptance criteria / Approach).
 	clean := t.TempDir()
+	if err := scaffoldStateDirs(clean); err != nil { // a real queue has all four state dirs (lint flags a tree missing any)
+		t.Fatal(err)
+	}
 	writeTaskFile(t, filepath.Join(clean, stateTodo, "ok", "task.md"), "---\ntitle: OK\n---\n# OK\n**Context:** why\n**Acceptance criteria:** the gate is green\n**Approach:** do it\n")
 	writeTaskFile(t, filepath.Join(clean, stateBlocked, "bk", "task.md"), "# BK\n**Context:** c\n**Acceptance criteria:** y\n**Approach:** a\n")
 	writeTaskFile(t, filepath.Join(clean, stateBlocked, "bk", "decision.md"), "# Decision: which?\n**Recommendation:** A\n")
 	if code, err := tasksFolderLint(clean); err != nil || code != 0 {
 		t.Fatalf("clean lint: code=%d err=%v (want 0)", code, err)
+	}
+}
+
+// A queue missing any state dir is a corruption trap: the in-box "move a folder between states"
+// protocol would rename a task into the nonexistent dir (see scaffoldStateDirs). lint flags it (exit
+// 1); scaffolding the four makes it clean.
+func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateTodo, "t1", "task.md"),
+		"# T\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n")
+	// only 00_todo exists (a hand-made or pre-fix tree) — the other three are missing.
+	if code, err := tasksFolderLint(root); err != nil || code != 1 {
+		t.Fatalf("lint of a queue missing state dirs: code=%d err=%v (want 1)", code, err)
+	}
+	if err := scaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderLint(root); code != 0 || err != nil {
+		t.Errorf("after scaffolding all four state dirs, lint should be clean: code=%d err=%v", code, err)
 	}
 }
 
@@ -435,6 +460,9 @@ func TestTasksFolderListCapsDone(t *testing.T) {
 // Resolution it refuses (task stays blocked); an inline answer resolves it and unblocks lint-clean.
 func TestUnblockRequiresResolution(t *testing.T) {
 	root := t.TempDir()
+	if err := scaffoldStateDirs(root); err != nil { // a real queue has all four state dirs (lint flags a tree missing any)
+		t.Fatal(err)
+	}
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-pick", "task.md"),
 		"# Pick a backend\n\n**Context:** need a datastore\n**Acceptance criteria:** one is chosen and why is noted\n**Approach:** compare options\n")
 	if code, err := tasksFolderBlock(root, []string{"pick"}); code != 0 || err != nil {

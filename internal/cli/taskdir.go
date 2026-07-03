@@ -263,6 +263,21 @@ func copyTree(src, dst string) error {
 	})
 }
 
+// scaffoldStateDirs creates the four task-state dirs (00_todo/10_in_progress/50_blocked/99_done)
+// under root. The move-a-folder-between-states protocol relies on every target dir existing: a bare
+// `mv 00_todo/x 10_in_progress/` with no 10_in_progress/ *renames* the task folder to a file called
+// 10_in_progress, silently corrupting the queue. Split producers and fork seeding call this so a
+// slice or seeded fork queue is safe to move within (`coop init` scaffolds the same four its own
+// way). Idempotent — MkdirAll on an existing dir is a no-op.
+func scaffoldStateDirs(root string) error {
+	for _, st := range taskStates {
+		if err := os.MkdirAll(filepath.Join(root, st), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // splitTodoFolders round-robins the todo task folders under root into len(names) per-fork
 // task trees — siblings of root named "tasks.<name>" — copying each task folder into that
 // slice's todo/. The source tree is left untouched (the slices are COPIES). Returns, per
@@ -304,6 +319,9 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 			continue
 		}
 		sliceDir := filepath.Join(parent, "tasks."+names[i])
+		if e := scaffoldStateDirs(sliceDir); e != nil { // all four states, so an in-box `mv` between them can't corrupt the slice
+			return nil, nil, 0, e
+		}
 		if rel, e := filepath.Rel(repo, sliceDir); e == nil {
 			written[i] = rel
 		} else {

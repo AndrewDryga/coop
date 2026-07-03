@@ -274,6 +274,38 @@ func TestSplitTodoFolders(t *testing.T) {
 	}
 }
 
+// A split slice is a self-contained queue carrying all four state dirs, and a fork seeded by copying
+// the slice inherits them — so the in-box "move a folder between states" protocol can't rename a task
+// into a missing dir. Regression: a 2026-07-01 fleet run lost a claimed task to a bare `mv` into a
+// nonexistent 10_in_progress/ on a slice that only had 00_todo/.
+func TestSplitAndForkSeedScaffoldAllStateDirs(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-02-b", "task.md"), "# b\n")
+	if _, _, _, err := splitTodoFolders(repo, root, []string{"x", "y"}); err != nil {
+		t.Fatal(err)
+	}
+	allFour := func(where, dir string) {
+		t.Helper()
+		for _, st := range taskStates {
+			if fi, err := os.Stat(filepath.Join(dir, st)); err != nil || !fi.IsDir() {
+				t.Errorf("%s missing state dir %s/: %v", where, st, err)
+			}
+		}
+	}
+	for _, name := range []string{"x", "y"} {
+		slice := filepath.Join(repo, ".agent", "tasks."+name)
+		allFour("slice "+name, slice) // (1) every split slice has all four
+		// (2) a fork seeded by copyTree'ing the slice inherits all four (copyTree preserves empty dirs)
+		seed := filepath.Join(t.TempDir(), ".agent", "tasks")
+		if err := copyTree(slice, seed); err != nil {
+			t.Fatal(err)
+		}
+		allFour("fork seeded from slice "+name, seed)
+	}
+}
+
 // A RE-split must regenerate each slice from the (unchanged) source, not merge into a stale one —
 // else a task already worked in a slice (moved to 99_done) plus a fresh todo copy of the same id
 // would leave it in two states and a loop on the slice would re-run completed work.

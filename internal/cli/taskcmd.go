@@ -321,6 +321,12 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 			return 1, fmt.Errorf("task %q already exists in %s/", id, st)
 		}
 	}
+	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
+	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
+	// `coop init` and the split producers. Then the task's own todo dir.
+	if err := scaffoldStateDirs(root); err != nil {
+		return -1, err
+	}
 	dir := filepath.Join(root, stateTodo, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return -1, err
@@ -989,6 +995,16 @@ func tasksFolderLint(root string) (int, error) {
 	items := readTaskTree(root)
 	var findings []string
 	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", id, msg)) }
+	// Every queue needs all four state dirs, or the move-a-folder-between-states protocol renames a
+	// task into a missing dir and silently corrupts the queue (see scaffoldStateDirs). Split slices and
+	// seeded fork queues now scaffold them up front; flag any older tree that predates the fix.
+	if fi, err := os.Stat(root); err == nil && fi.IsDir() {
+		for _, st := range taskStates {
+			if s, e := os.Stat(filepath.Join(root, st)); e != nil || !s.IsDir() {
+				add(st, "state dir is missing — the move protocol will corrupt the queue; run 'coop init' (or re-run split)")
+			}
+		}
+	}
 	for _, t := range items {
 		body := readFileString(filepath.Join(t.Dir, "task.md"))
 		// blocked ⇒ a decision.md is present. A RESOLVED decision.md rides along as the audit trail

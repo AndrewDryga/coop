@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Split slices and seeded fork queues get all four state dirs.** `coop tasks split` /
+  `coop fleet split` wrote slices containing only `00_todo/`, and fork loops seed a fork's queue by
+  copying that tree — so an in-box agent following the documented "move a task's folder between state
+  dirs" protocol hit a bare `mv 00_todo/x 10_in_progress/` with no `10_in_progress/`, which *renames*
+  the folder into a file and silently corrupts the queue (observed losing a claimed task mid-fleet-run
+  on 2026-07-01). Split producers, `coop tasks add`, and fork seeding now scaffold all four state dirs
+  up front, and `coop tasks lint` flags any queue missing one so pre-fix trees get caught.
+
 - **`coop tasks add` can fill a task inline.** Pass `--context`, `--acceptance`, `--approach`, and
   repeatable `--subtask` to create a complete, ready-to-work task in one call instead of scaffolding
   then editing — all-or-nothing (give every section flag, or none for the placeholder scaffold). The
