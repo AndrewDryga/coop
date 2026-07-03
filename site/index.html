@@ -188,7 +188,7 @@
                             <p>
                                 A fresh agent per iteration drains the
                                 <code>.agent/tasks/</code> queue, rides through rate
-                                limits with profile failover, and audits its own
+                                limits with credential failover, and audits its own
                                 work when the queue empties.
                             </p>
                         </div>
@@ -229,7 +229,7 @@
                                 </li>
                                 <li>
                                     A rate limit triggers
-                                    <b>profile failover</b>, not a stall — it
+                                    <b>credential failover</b>, not a stall — it
                                     switches accounts and keeps going.
                                 </li>
                                 <li>
@@ -270,7 +270,7 @@
                             <ul>
                                 <li>
                                     Declare the fleet once in
-                                    <code>.agent/fleet</code>;
+                                    <code>.agent/fleet.yaml</code>;
                                     <code>coop fleet up</code> starts them all
                                     detached.
                                 </li>
@@ -372,6 +372,11 @@
                                 <li>
                                     Or add <code>--consult</code> to any run for
                                     a lighter, opt-in second opinion.
+                                </li>
+                                <li>
+                                    Capture the whole arrangement — lead, roles,
+                                    and models — as a reusable
+                                    <a href="docs.html#presets">preset</a>.
                                 </li>
                             </ul>
                         </div>

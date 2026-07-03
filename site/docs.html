@@ -85,8 +85,9 @@
                 <h5>Run unattended</h5>
                 <a href="#loop">The loop</a>
                 <a href="#fleet">A fleet</a>
-                <a href="#profiles">Profiles &amp; failover</a>
+                <a href="#credentials">Credentials &amp; failover</a>
                 <a href="#models">Pick the model</a>
+                <a href="#presets">Presets</a>
                 <h5>Integrate</h5>
                 <a href="#zed">Editors (Zed)</a>
                 <a href="#toolchain">Toolchain &amp; services</a>
@@ -578,7 +579,10 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         re-reads every task marked done and confirms the git
                         history actually backs it up — reopening anything that
                         doesn't. "Done" ends up meaning <em>verified</em>, not
-                        just claimed.
+                        just claimed. Add your own bar in
+                        <code>.agent/audit.md</code> (Markdown) and the auditor
+                        runs those checks too — reopening a task that fails one
+                        (changelog updated, docs regenerated, no stray TODOs).
                     </p>
                     <p>
                         <strong>It survives the daily cap.</strong> Long runs
@@ -692,15 +696,18 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> fleet split 3    <span class="t"># slice the todo queue 3 ways + write .agent/fleet</span>
-<span class="k">coop</span> fleet up         <span class="t"># start every fork in .agent/fleet, detached</span>
+                    ><span class="k">coop</span> fleet split 3    <span class="t"># slice the todo queue 3 ways + write .agent/fleet.yaml</span>
+<span class="k">coop</span> fleet up         <span class="t"># start every fork in .agent/fleet.yaml, detached</span>
 <span class="k">coop</span> fleet watch      <span class="t"># the live dashboard</span>
 <span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>
                     <p>
-                        Each <code>.agent/fleet</code> line carries per-fork
-                        options: <code>profile=a,b</code> puts its loop on its
-                        own account(s), <code>model=…</code> picks its model,
-                        and <code>consult=1</code> lets its iterations ask the
+                        Each fork in <code>.agent/fleet.yaml</code> takes per-fork
+                        keys: <code>credential:</code> pins its account (give each
+                        one a different account so they don't contend),
+                        <code>model:</code> picks its model (may be
+                        <code>model@account</code>), <code>preset:</code> runs it
+                        under an <a href="#presets">orchestration preset</a>, and
+                        <code>consult: true</code> lets its iterations ask the
                         other signed-in agents for a read-only second opinion.
                     </p>
                     <div class="why">
@@ -735,35 +742,38 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </figure>
                 </section>
 
-                <section class="doc-section" id="profiles">
-                    <h2>Profiles &amp; failover</h2>
+                <section class="doc-section" id="credentials">
+                    <h2>Credentials &amp; failover</h2>
                     <p class="section-lead">
                         Hold more than one account for an agent so a long run
                         never has to park on a rate limit.
                     </p>
                     <p>
                         Sign in to several subscriptions as named
-                        <strong>profiles</strong>. When a loop hits a limit on
+                        <strong>credentials</strong>. When a loop hits a limit on
                         one, it rotates to another that's still fresh and keeps
-                        going — only ever waiting once <em>every</em> profile is
+                        going — only ever waiting once <em>every</em> account is
                         capped.
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> login claude --profile work       <span class="t"># a second account…</span>
-<span class="k">coop</span> login claude --profile personal   <span class="t"># …and a third</span>
-<span class="k">coop</span> profiles                          <span class="t"># list them and which are signed in</span>
-<span class="k">coop</span> loop pool add claude work personal    <span class="t"># rotate just these for this repo's loop</span>
-<span class="k">coop</span> loop pool                             <span class="t"># show the pool (coop loop pool clear claude resets)</span></pre>
+                    ><span class="k">coop</span> login claude --credential work       <span class="t"># a second account…</span>
+<span class="k">coop</span> login claude --credential personal   <span class="t"># …and a third</span>
+<span class="k">coop</span> credentials                          <span class="t"># list them + which are signed in</span></pre>
                     <p>
-                        By default a loop rotates through <em>every</em>
-                        signed-in profile for its agent. To pin a repo to a
-                        subset, name them with <code>coop loop pool</code> — handy
-                        when one account is for this project and the others
-                        aren't.
+                        There's no pool to configure: a loop rotates whatever its
+                        lead's <a href="#presets">models ladder</a> expands to. A
+                        bare model in that ladder fans out across <em>every</em>
+                        signed-in account (the marked default first), so with no
+                        setup a loop already uses all your accounts; a pinned
+                        <code>model@account</code> runs just one. Limits are tracked
+                        per (model, account), so <code>opus@personal</code> stays
+                        usable while <code>opus@work</code> cools down. Mark which
+                        account a plain <code>coop &lt;agent&gt;</code> uses with
+                        <code>coop credentials &lt;agent&gt; &lt;name&gt; default</code>.
                     </p>
                     <p>
-                        Only the <em>active</em> profile is ever mounted into
+                        Only the <em>active</em> credential is ever mounted into
                         the box, so a running agent sees just the account it's
                         using — never your whole vault. Switching mid-run loses
                         nothing: each iteration is a fresh run, and the queue
@@ -774,24 +784,27 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                 <section class="doc-section" id="models">
                     <h2>Pick the model</h2>
                     <p class="section-lead">
-                        Every launch takes <code>--model</code>; standing
-                        defaults live on profiles — so the loop's failover
-                        switches models along with the account.
+                        The model is its own axis — pick it per run with
+                        <code>--model</code>, or as a standing recipe in a
+                        preset. A credential is just an account; models don't
+                        live on it.
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> claude --model opus              <span class="t"># one run on the big model</span>
-<span class="k">coop</span> profiles claude work model opus  <span class="t"># every run on this profile uses opus</span>
-<span class="k">coop</span> models                           <span class="t"># the menu per agent + what each profile runs</span>
-<span class="k">coop</span> loop --model claude-fable-5      <span class="t"># pin an unattended run's model</span></pre>
+                    ><span class="k">coop</span> claude --model opus       <span class="t"># one run on the big model</span>
+<span class="k">coop</span> claude --model opus@work  <span class="t"># …pinned to a specific account</span>
+<span class="k">coop</span> loop --preset frontier   <span class="t"># a standing lead model + roles, from a preset</span>
+<span class="k">coop</span> models                    <span class="t"># the model menu per agent</span></pre>
                     <p>
                         Precedence is most-specific-first: the
-                        <code>--model</code> flag, then
-                        <code>COOP_LOOP_MODEL</code> (loop runs only), then the
-                        profile's mark, then <code>COOP_&lt;AGENT&gt;_MODEL</code>.
-                        Coop never validates a model id — whatever the agent's
-                        own CLI accepts works, and a bad one fails loudly in the
-                        agent's own error, so new models work the day they ship.
+                        <code>--model</code> flag, then the active
+                        <a href="#presets">ladder</a> entry's model (a loop
+                        stepping through a preset), then
+                        <code>COOP_LOOP_MODEL</code> (loop runs only), then
+                        <code>COOP_&lt;AGENT&gt;_MODEL</code>. Coop never
+                        validates a model id — whatever the agent's own CLI
+                        accepts works, and a bad one fails loudly in the agent's
+                        own error, so new models work the day they ship.
                     </p>
                     <p>
                         This is what makes the
@@ -802,11 +815,110 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         to Sonnet — mechanical work). A lead on a bigger model
                         spends its tokens on planning and synthesis while each
                         delegated turn bills at the subagent's cheaper model.
-                        Add <code>--consult</code> (or <code>consult=1</code> on
-                        a fleet line) and the lead can also ask codex and gemini
-                        read-only — peer engineers with different blind spots,
-                        no plugins required.
+                        Add <code>--consult</code> (or <code>consult: true</code>
+                        on a fleet fork) and the lead can also ask codex and
+                        gemini read-only — peer engineers with different blind
+                        spots, no plugins required. Wrap the whole arrangement in
+                        a <a href="#presets">preset</a>.
                     </p>
+                </section>
+
+                <section class="doc-section" id="presets">
+                    <h2>Presets — the whole arrangement in one file</h2>
+                    <p class="section-lead">
+                        A lead model, its fallback ladder, and the roles it
+                        routes work to — declared once as a file, instead of
+                        assembled from flags every time.
+                    </p>
+                    <p>
+                        The <a href="#fusion">fusion</a> and orchestrator
+                        patterns above are wired up by hand — a model here, a
+                        <code>--consult</code> there. A <strong>preset</strong>
+                        captures the whole recipe in
+                        <code>.agent/presets/&lt;name&gt;/preset.yaml</code>: who
+                        leads, on which models, and the named roles it can hand
+                        work to. Run it with <code>--preset &lt;name&gt;</code> on
+                        any surface — <code>coop &lt;agent&gt;</code>,
+                        <code>loop</code>, <code>fusion</code>, <code>acp</code>,
+                        or a fork.
+                    </p>
+                    <pre
+                        class="code"
+                    ><span class="k">coop</span> presets init          <span class="t"># scaffold the documented "frontier" recipe</span>
+<span class="k">coop</span> presets               <span class="t"># list every preset (a broken one shows its error)</span>
+<span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
+                    <p>
+                        The lead carries a model-first <code>models:</code>
+                        ladder — the same ladder a loop rotates (a bare model
+                        fans across every account; <code>model@account</code>
+                        pins one). Each role sets a <strong>mode</strong> that
+                        decides how the lead reaches it:
+                    </p>
+                    <table class="ref">
+                        <tr>
+                            <th>Mode</th>
+                            <th>What it is</th>
+                        </tr>
+                        <tr>
+                            <td><code>native</code></td>
+                            <td>
+                                a Claude subagent that runs inside the lead's own
+                                session (e.g. <code>deep-reasoner</code>) — no
+                                separate box
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>consult</code></td>
+                            <td>
+                                a read-only peer via <code>coop-consult</code> — a
+                                second opinion from another vendor; it can't edit
+                                files
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>delegate</code></td>
+                            <td>
+                                a write-capable worker via
+                                <code>coop-delegate</code>: it may edit the
+                                worktree but never commits — the lead reviews the
+                                diff, runs the gate, and commits
+                            </td>
+                        </tr>
+                    </table>
+                    <pre
+                        class="code"
+                    ><span class="t"># .agent/presets/frontier/preset.yaml</span>
+lead:
+  agent: claude
+  models: [claude-fable-5, claude-opus-4-8@work]
+roles:
+  thinker:                 <span class="t"># deep thinking, in the lead's session</span>
+    mode: native
+    agent: claude
+    subagent: deep-reasoner
+  critic:                  <span class="t"># read-only cross-vendor review</span>
+    mode: consult
+    agent: codex
+  fast:                    <span class="t"># cheap, write-capable mechanical work</span>
+    mode: delegate
+    agent: gemini</pre>
+                    <div class="why">
+                        <span class="why-label"
+                            >What coop generates from it</span
+                        >
+                        <p>
+                            coop turns the YAML into the lead's routing contract
+                            — each role, when to use it, and the exact invocation
+                            — and mounts the <code>coop-consult</code> /
+                            <code>coop-delegate</code> wrappers.
+                            <code>coop presets init</code> also scaffolds starter
+                            prompt files under <code>roles/</code> that append to
+                            (never replace) that generated contract, so you can
+                            layer project guidance on top. An explicitly named
+                            agent or <code>--model</code> still overrides the
+                            recipe.
+                        </p>
+                    </div>
                 </section>
 
                 <section class="doc-section" id="zed">
