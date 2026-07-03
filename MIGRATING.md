@@ -10,7 +10,8 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`) |
 | `--profile <name>` (login/launch flags) | `--credential <name>` — same value, new name; the old spelling errors with this rewrite. An agent's OWN `--profile` still passes through after a `--` |
 | `coop pool <add\|rm\|clear>` | Retired — there is no persistent pool. A loop rotates the model-first `models:` ladder of its preset's lead (`coop help presets`); a bare model in that ladder fans out across every signed-in account, which is what the pool used to do. A stray `pools.json` is ignored. |
-| `coop profiles <default\|model\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|model\|rm>` (a path) |
+| `coop profiles <default\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|rm>` (a path) |
+| `coop profiles <name> model <m>` / a credential's model mark | Retired — a credential is just an account; the model is a separate axis. Set it with `--model` (per run) or a preset's `models:` ladder (`coop help presets`). Both spellings of `coop credentials <cred> model` tombstone. |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |
 | `<any> list` (e.g. `coop tasks list`) | `<any> ls` — `ls` is the only list verb |

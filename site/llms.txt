@@ -134,31 +134,24 @@ coop login <agent> — sign in to an agent (token persists in the config dir).
 coop credentials — list stored credentials; a path grammar edits one.
 
   Usage: coop credentials [agent [credential]]
-         coop credentials <agent> <credential> model [<model> | --clear]
          coop credentials <agent> <credential> default
          coop credentials <agent> <credential> rm
 
   A CREDENTIAL is one stored account/login — a rate-limit slot. (Orchestration
   recipes are PRESETS; see coop help presets. 'coop profiles' was the pre-v3 name.)
   Each token narrows: no args lists every agent, an agent lists its credentials
-  (signed in? default? marked model?), a credential shows its detail, and a trailing
-  attribute reads or writes one property of it. A credential is one subscription;
-  add more with 'coop login <agent> --credential <name>', then an unattended loop
-  rotates across them on a rate limit (a bare model in a preset's models: ladder).
+  (signed in? default?), a credential shows its detail, and a trailing attribute
+  reads or writes one property of it. A credential is one subscription; add more
+  with 'coop login <agent> --credential <name>', then an unattended loop rotates
+  across them on a rate limit (a bare model in a preset's models: ladder). The model
+  is a separate axis — set it with --model or a preset, never on a credential.
 
-  model [<m> | --clear]  the credential's default model — every run on it
-                         (interactive, loop, fork, consult peer) uses it unless
-                         --model overrides; bare 'model' prints the current mark.
-                         E.g. work on the big model, personal on a cheap one:
-                             coop credentials claude work model opus
-                             coop credentials claude personal model haiku
-                         See 'coop models' for the menu and the precedence.
   default                mark this credential as what a plain 'coop <agent>' runs,
                          and the account a loop's rotation starts on. A mark you
                          set — the listing shows it first, tagged (default).
-  rm                     delete the credential (its login token, session history,
-                         and model mark). Set a different default first if
-                         you're removing the marked one.
+  rm                     delete the credential (its login token and session
+                         history). Set a different default first if you're
+                         removing the marked one.
 
   Run on a specific credential without changing the default — works on any agent
   launch: 'coop claude --credential <name>', 'coop fusion <agent> --credential
@@ -221,19 +214,18 @@ coop models [agent] — the model menu per agent.
   Usage: coop models [claude|codex|gemini]
 
   One line per agent with its known models (examples — model ids churn, so ANY
-  id the agent's CLI accepts works), then how to pick one. Per-credential marks
-  live in 'coop credentials' (shown as a column there); set one with
-  'coop credentials <agent> <credential> model <model>'.
+  id the agent's CLI accepts works), then how to pick one. A model is an axis of its
+  own — set it with --model or a preset's models: ladder, never on a credential.
 
-  Pick per run instead with --model on any launch: 'coop claude --model fable',
+  Pick per run with --model on any launch: 'coop claude --model fable',
   'coop fusion claude --model opus', 'coop loop --model haiku',
   'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
 
   Precedence: --model flag > the active rotation entry's model (a loop stepping
-  through a preset's models: ladder) > COOP_LOOP_MODEL (loop runs) > the credential's
-  mark > COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
-  agent CLI's own default. --model may carry an account (--model opus@work). coop
-  never validates a model id — a bad one fails in the agent's own error.
+  through a preset's models: ladder) > COOP_LOOP_MODEL (loop runs) > COOP_<AGENT>_MODEL
+  (agent-wide) > a model baked into COOP_<AGENT>_CMD > the agent CLI's own default.
+  --model may carry an account (--model opus@work). coop never validates a model id —
+  a bad one fails in the agent's own error.
 
 coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 

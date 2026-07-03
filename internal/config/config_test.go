@@ -291,9 +291,9 @@ func TestDefaultProfileMark(t *testing.T) {
 	}
 }
 
-// TestModelResolution: ModelFor's precedence — per-run selection > the active profile's
-// marked default > COOP_<AGENT>_MODEL — and that a mark persists, clears, and follows the
-// active profile (the loop's rotation picks up each profile's own mark).
+// TestModelResolution: ModelFor's precedence — a per-run selection (--model) beats the
+// agent-wide COOP_<AGENT>_MODEL, and clearing the selection falls back to it. The model is
+// an axis of its own, never a credential property (see TestModelForTiers for the full ladder).
 func TestModelResolution(t *testing.T) {
 	clearAgentEnv(t)
 	dir := t.TempDir()
@@ -308,38 +308,14 @@ func TestModelResolution(t *testing.T) {
 	if got := c.ModelFor("claude"); got != "sonnet" {
 		t.Errorf("ModelFor with env = %q, want sonnet", got)
 	}
-	// A profile mark beats the agent-wide default — for the ACTIVE profile only.
-	if err := c.SetProfileModel("claude", "work", "opus"); err != nil {
-		t.Fatal(err)
-	}
-	if got := c.ModelFor("claude"); got != "sonnet" {
-		t.Errorf("ModelFor on the default profile = %q, want sonnet (work's mark must not apply)", got)
-	}
-	c.SetActiveProfile("claude", "work")
-	if got := c.ModelFor("claude"); got != "opus" {
-		t.Errorf("ModelFor on profile work = %q, want its mark opus", got)
-	}
 	// A per-run selection (--model / COOP_LOOP_MODEL) beats everything.
 	c.SetActiveModel("claude", "fable")
 	if got := c.ModelFor("claude"); got != "fable" {
 		t.Errorf("ModelFor with active selection = %q, want fable", got)
 	}
-	c.SetActiveModel("claude", "") // clearing falls back to the profile mark
-	if got := c.ModelFor("claude"); got != "opus" {
-		t.Errorf("ModelFor after clearing selection = %q, want opus", got)
-	}
-	// The mark persists (a fresh load reads it back) and clears.
-	if m := loadConfFile(c.ModelsFile()); m["claude/work"] != "opus" {
-		t.Errorf("ModelsFile not persisted: %v", m)
-	}
-	if err := c.SetProfileModel("claude", "work", ""); err != nil {
-		t.Fatal(err)
-	}
+	c.SetActiveModel("claude", "") // clearing falls back to the env default
 	if got := c.ModelFor("claude"); got != "sonnet" {
-		t.Errorf("ModelFor after clearing the mark = %q, want sonnet", got)
-	}
-	if m := loadConfFile(c.ModelsFile()); m["claude/work"] != "" {
-		t.Errorf("cleared mark still in ModelsFile: %v", m)
+		t.Errorf("ModelFor after clearing selection = %q, want sonnet", got)
 	}
 }
 
@@ -390,22 +366,21 @@ func TestLoadEgressFailsClosed(t *testing.T) {
 	}
 }
 
-// ModelFor resolves through five tiers, most specific first: explicit (--model), the
-// pool target's model, the standing fallback (preset lead / COOP_LOOP_MODEL), the active
-// profile's mark, then COOP_<AGENT>_MODEL.
+// ModelFor resolves through four tiers, most specific first: explicit (--model), the
+// rotation target's model, the standing fallback (preset lead / COOP_LOOP_MODEL), then
+// COOP_<AGENT>_MODEL. The model is its own axis — never a credential property.
 func TestModelForTiers(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("COOP_CLAUDE_MODEL", "env-model")
 	dir := t.TempDir()
 	c := &Config{ConfigDir: dir}
-	c.profileModels = map[string]string{"claude/default": "marked"}
 
-	if got := c.ModelFor("claude"); got != "marked" {
-		t.Errorf("mark beats env: got %q", got)
+	if got := c.ModelFor("claude"); got != "env-model" {
+		t.Errorf("env is the floor: got %q", got)
 	}
 	c.SetFallbackModel("claude", "fallback")
 	if got := c.ModelFor("claude"); got != "fallback" {
-		t.Errorf("fallback beats mark: got %q", got)
+		t.Errorf("fallback beats env: got %q", got)
 	}
 	c.SetTargetModel("claude", "target")
 	if got := c.ModelFor("claude"); got != "target" {
@@ -415,14 +390,14 @@ func TestModelForTiers(t *testing.T) {
 	if got := c.ModelFor("claude"); got != "explicit" {
 		t.Errorf("explicit beats target: got %q", got)
 	}
-	// A bare target clears its tier, so resolution falls through again.
+	// Clearing each tier falls through to the next.
 	c.SetActiveModel("claude", "")
 	c.SetTargetModel("claude", "")
 	if got := c.ModelFor("claude"); got != "fallback" {
 		t.Errorf("cleared target falls to fallback: got %q", got)
 	}
 	c.SetFallbackModel("claude", "")
-	if got := c.ModelFor("claude"); got != "marked" {
-		t.Errorf("cleared fallback falls to the mark: got %q", got)
+	if got := c.ModelFor("claude"); got != "env-model" {
+		t.Errorf("cleared fallback falls to env: got %q", got)
 	}
 }

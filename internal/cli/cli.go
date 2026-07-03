@@ -291,7 +291,10 @@ func removedCommandNote(cmd string) (string, bool) {
 			"account/login; orchestration recipes are presets — see coop help presets) — run: coop credentials", true
 	case "profiles verb":
 		return "coop credentials edits read as a path — run: coop credentials <agent> <credential> " +
-			"<default|model|rm> (e.g. coop credentials claude work default)", true
+			"<default|rm> (e.g. coop credentials claude work default)", true
+	case "credentials model":
+		return "setting a model on a credential was retired in v3 — a credential is just an account. " +
+			"Set the model with --model (per run) or a preset's models: ladder (see coop help presets)", true
 	}
 	return "", false
 }

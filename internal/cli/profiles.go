@@ -13,15 +13,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// cmdCredentials drives the profiles family with a resource-path grammar — each token
+// cmdCredentials drives the credentials family with a resource-path grammar — each token
 // narrows: `coop credentials` lists every agent, `coop credentials claude` one agent,
-// `coop credentials claude personal` one profile, and a trailing attribute reads or writes
-// one property of it: `model [<m> | --clear]`, `default` (mark it the agent's default),
-// `rm` (delete it). So setting a profile's model reads as a path, not a verb sandwich:
+// `coop credentials claude personal` one credential, and a trailing attribute reads or writes
+// one property of it: `default` (mark it the agent's default) or `rm` (delete it). A credential
+// is just an account — the model is a separate axis (set it with --model or a preset), never a
+// property here. So marking the default reads as a path, not a verb sandwich:
 //
-//	coop credentials claude personal model opus
+//	coop credentials claude personal default
 //
-// The older verb-first forms (`default|model|rm <agent> <profile> …`) were retired in v3 — they
+// The older verb-first forms (`default|rm <agent> <credential> …`) were retired in v3 — they
 // tombstone with the path-grammar rewrite (see removedCommandNote "profiles verb").
 func (a *app) cmdCredentials(args []string) (int, error) {
 	if len(args) > 0 {
@@ -29,10 +30,14 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			return a.profilePath(args[0], args[1], args[2:])
 		}
 		switch args[0] {
-		case "default", "model", "rm":
+		case "default", "rm":
 			// v3: the verb-first forms (`coop credentials rm <agent> <p>`) are retired for the path grammar
 			// (`coop credentials <agent> <p> rm`, handled above). Tombstone the old spelling loudly.
 			note, _ := removedCommandNote("profiles verb")
+			return 2, errors.New(note)
+		case "model":
+			// v3: a model isn't a credential property — set it with --model or a preset.
+			note, _ := removedCommandNote("credentials model")
 			return 2, errors.New(note)
 		case "ls":
 			// Bare `coop credentials` already lists — steer `ls` there instead of "unknown agent" (rule:
@@ -48,22 +53,15 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		names = []string{args[0]}
 	}
 	// One width per column across every agent's block, so the listing reads as one table:
-	// NAME · STATUS · MODEL · (default). The models are the per-profile marks; the status
-	// stays a short label — the re-login remedy for an expired token gets its own dim line
-	// under the block instead of blowing the row out sideways.
-	var allProfiles, allModels []string
+	// NAME · STATUS · (default). The status stays a short label — the re-login remedy for an
+	// expired token gets its own dim line under the block instead of blowing the row sideways.
+	var allProfiles []string
 	for _, agent := range names {
-		for _, p := range a.cfg.Profiles(agent) {
-			allProfiles = append(allProfiles, p)
-			if m := a.cfg.ProfileModelOf(agent, p); m != "" {
-				allModels = append(allModels, m)
-			}
-		}
+		allProfiles = append(allProfiles, a.cfg.Profiles(agent)...)
 	}
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean (p is the profile loop var below)
 	width := colWidth(allProfiles, 0, 40)
 	statusW := len("not signed in") // the widest short status label
-	modelW := colWidth(allModels, 1, 24)
 	first := true
 	for _, agent := range names {
 		if !first {
@@ -94,17 +92,12 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			if expired {
 				relogin = append(relogin, p)
 			}
-			model := a.cfg.ProfileModelOf(agent, p)
-			modelCell := padRight(model, modelW)
-			if model == "" {
-				modelCell = pal.Dim(padRight("—", modelW))
-			}
 			tag := ""
 			if p == def {
 				tag = pal.Dim("  (default)")
 			}
 			// Pad the plain strings (rune-aware), then style — never color inside a width.
-			fmt.Printf("  %s  %s  %s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), modelCell, tag)
+			fmt.Printf("  %s  %s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), tag)
 		}
 		for _, p := range relogin {
 			fmt.Printf("  %s\n", pal.Dim("↻ re-login: coop login "+agent+" --credential "+p))
@@ -153,21 +146,9 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 	}
 	switch rest[0] {
 	case "model":
-		switch len(rest) {
-		case 1: // read — print the bare mark, pipe-friendly
-			if err := a.requireProfile(agent, profile); err != nil {
-				return 2, err
-			}
-			if m := a.cfg.ProfileModelOf(agent, profile); m != "" {
-				fmt.Println(m)
-			} else {
-				ui.Note("no default model marked — set one: coop credentials %s %s model <model>", agent, profile)
-			}
-			return 0, nil
-		case 2: // write (or --clear)
-			return a.markProfileModel([]string{agent, profile, rest[1]})
-		}
-		return 2, fmt.Errorf("usage: coop credentials %s %s model [<model> | --clear]", agent, profile)
+		// v3: a model isn't a credential property — set it with --model or a preset.
+		note, _ := removedCommandNote("credentials model")
+		return 2, errors.New(note)
 	case "default":
 		if len(rest) > 1 {
 			return 2, fmt.Errorf("unexpected argument %q (usage: coop credentials %s %s default)", rest[1], agent, profile)
@@ -181,7 +162,7 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 		}
 		return a.removeProfile(append([]string{agent, profile}, rest[1:]...))
 	default:
-		return 2, unknownErr("credential attribute", rest[0], []string{"model", "default", "rm"})
+		return 2, unknownErr("credential attribute", rest[0], []string{"default", "rm"})
 	}
 }
 
@@ -211,11 +192,6 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 		def = "yes"
 	}
 	fmt.Printf("  default    %s\n", def)
-	model := a.cfg.ProfileModelOf(agent, profile)
-	if model == "" {
-		model = ui.Dim("—  (set: coop credentials " + agent + " " + profile + " model <model>)")
-	}
-	fmt.Printf("  model      %s\n", model)
 	fmt.Printf("  dir        %s\n", a.cfg.AgentProfileDir(agent, profile))
 	if expired {
 		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+" --credential "+profile))
@@ -246,59 +222,11 @@ func (a *app) setProfileDefault(args []string) (int, error) {
 	return a.cmdCredentials([]string{agent})
 }
 
-// validModelName keeps a model id sane for the models file (one KEY=VALUE line per mark):
-// non-empty, no whitespace or control characters (a newline would corrupt the file), and no
-// leading '-' (a mistyped flag isn't a model). Deliberately loose otherwise — ids churn.
-func validModelName(model string) bool {
-	if model == "" || strings.HasPrefix(model, "-") {
-		return false
-	}
-	return !strings.ContainsFunc(model, func(r rune) bool { return r <= ' ' || r == 0x7f })
-}
-
-// markProfileModel sets (or, with --clear, removes) a profile's default model — the model
-// every run on that profile uses unless --model overrides (see 'coop models' for the menu
-// and the precedence). The model id itself is deliberately unvalidated beyond file safety:
-// ids churn, and the agent CLI's own error is the gate for a bad one.
-func (a *app) markProfileModel(args []string) (int, error) {
-	if len(args) != 3 {
-		return 2, errors.New("usage: coop credentials <agent> <credential> model <model | --clear>")
-	}
-	agent, profile, model := args[0], args[1], args[2]
-	if _, ok := agents.Get(agent); !ok {
-		return 2, unknownErr("agent", agent, agents.Names())
-	}
-	if model == "--clear" {
-		// Clearing skips the profile-existence check, so a stale mark (its profile removed by
-		// an older coop, before rm dropped marks) never becomes unremovable.
-		if a.cfg.ProfileModelOf(agent, profile) == "" {
-			ui.Note("%s credential %q has no default model marked — nothing to clear", agent, profile)
-			return 0, nil
-		}
-		if err := a.cfg.SetProfileModel(agent, profile, ""); err != nil {
-			return -1, err
-		}
-		ui.OK("cleared %s credential %q default model", agent, profile)
-		return 0, nil
-	}
-	if err := a.requireProfile(agent, profile); err != nil {
-		return 2, err
-	}
-	if !validModelName(model) {
-		return 2, fmt.Errorf("invalid model name %q — a model id has no spaces and no leading '-' (clear a mark with --clear)", model)
-	}
-	if err := a.cfg.SetProfileModel(agent, profile, model); err != nil {
-		return -1, err
-	}
-	ui.OK("%s credential %q default model → %s", agent, profile, model)
-	return a.cmdCredentials([]string{agent})
-}
-
 // removeProfile deletes a stored credential profile's directory — its login token and that
 // profile's session history. It refuses to delete the agent's marked default (set another first,
 // so a run never lands on a profile that's gone) and never deletes the legacy flat layout's whole
-// agent dir. A pool that still names the profile is harmless: buildPool drops members that aren't
-// signed in.
+// agent dir. A preset ladder that still names the account is harmless: expandLadder skips a
+// target that isn't signed in.
 func (a *app) removeProfile(args []string) (int, error) {
 	yes := hasYes(args)
 	var pos []string
@@ -328,9 +256,6 @@ func (a *app) removeProfile(args []string) (int, error) {
 	if err := os.RemoveAll(dir); err != nil {
 		return -1, err
 	}
-	// Drop the profile's default-model mark with it — best-effort: a stale mark is inert
-	// (nothing resolves the missing profile) but would linger confusingly in `coop models`.
-	_ = a.cfg.SetProfileModel(agent, name, "")
 	ui.OK("removed %s credential %q", agent, name)
 	return a.cmdCredentials([]string{agent})
 }

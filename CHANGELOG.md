@@ -23,10 +23,12 @@
   opus → fable), and limits are keyed per (model, account), so `opus@personal` stays usable while
   `opus@work` cools. This makes model the one axis everywhere: presets drop lead `model:`/`credentials:`
   for one `models:` ladder, roles drop `credentials:` (they run on their agent's default account),
-  a fleet fork takes a single `model:`/`credential:` (a full ladder → a `preset:`), and `--model` gains
-  a `--model opus@work` shortcut (the `--credential work@opus` `@`-form is retired). Model precedence
-  is tiered: `--model`/fleet `model:` > the active ladder entry's model > `COOP_LOOP_MODEL`/preset >
-  the account's mark > `COOP_<AGENT>_MODEL` > the agent CLI default.
+  a fleet fork takes a single `model:`/`credential:` (a full ladder → a `preset:`), `--model` gains
+  a `--model opus@work` shortcut (the `--credential work@opus` `@`-form is retired), and a credential
+  no longer carries a model — `coop credentials <cred> model` is retired (both spellings tombstone;
+  set the model with `--model` or a preset). A credential is just an account. Model precedence is
+  tiered: `--model`/fleet `model:` > the active ladder entry's model > `COOP_LOOP_MODEL`/preset >
+  `COOP_<AGENT>_MODEL` > the agent CLI default.
 
 - **`coop loop` takes project-specific audit checks in `.agent/audit.md`.** The end-of-loop
   auditor always verifies each shipped task's gate passes and has a commit; now, if

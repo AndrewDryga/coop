@@ -74,7 +74,6 @@ type Config struct {
 	activeModels   map[string]string // per-run EXPLICIT model (--model / fleet model=) — the top tier
 	targetModels   map[string]string // the active pool target's model (credential@model), below explicit
 	fallbackModels map[string]string // standing default (preset lead model / COOP_LOOP_MODEL), below a target
-	profileModels  map[string]string // stored per-(agent,profile) default model (from ModelsFile), key "agent/profile"
 }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
@@ -170,7 +169,6 @@ func Load() *Config {
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
 	c.defaultProfiles = loadConfFile(c.DefaultsFile())
-	c.profileModels = loadConfFile(c.ModelsFile())
 
 	// COOP_EGRESS is a security toggle — fail CLOSED on an unrecognized value so a typo ("None",
 	// "off") can't silently grant full outbound. Only the exact "open"/"none" are honored.
@@ -325,10 +323,6 @@ func (c *Config) SetActiveProfile(agent, name string) {
 	c.activeProfiles[agent] = name
 }
 
-// ModelsFile stores each profile's default model (KEY=VALUE, <agent>/<profile>=model): the
-// model a run resolves to when none is given on the CLI. Managed by `coop models default`.
-func (c *Config) ModelsFile() string { return filepath.Join(c.ConfigDir, "models") }
-
 // SetActiveModel selects the model a run of agent uses, overriding every other tier —
 // only an EXPLICIT choice lands here: the CLI's --model flag or a fleet model=. Empty
 // clears the selection, falling back to the lower tiers.
@@ -339,10 +333,10 @@ func (c *Config) SetActiveModel(agent, model string) {
 	c.activeModels[agent] = model
 }
 
-// SetTargetModel selects the active pool target's model — a loop applies it at start and
-// on every rotation, so a `work@sonnet` target runs sonnet until the pool moves on. It
+// SetTargetModel selects the active rotation target's model — a loop applies it at start and
+// on every rotation, so an `opus@work` target runs opus until the rotation moves on. It
 // ranks below an explicit --model and above every static default. Empty clears it (a bare
-// credential target), so resolution falls through to the fallback/mark/env tiers.
+// credential target), so resolution falls through to the fallback/env tiers.
 func (c *Config) SetTargetModel(agent, model string) {
 	if c.targetModels == nil {
 		c.targetModels = map[string]string{}
@@ -351,8 +345,8 @@ func (c *Config) SetTargetModel(agent, model string) {
 }
 
 // SetFallbackModel sets the run's standing default model — a preset lead's model, or the
-// loop applying COOP_LOOP_MODEL — ranking below an explicit --model and any pool target's
-// model, but above the profile marks and COOP_<AGENT>_MODEL.
+// loop applying COOP_LOOP_MODEL — ranking below an explicit --model and any rotation target's
+// model, but above COOP_<AGENT>_MODEL.
 func (c *Config) SetFallbackModel(agent, model string) {
 	if c.fallbackModels == nil {
 		c.fallbackModels = map[string]string{}
@@ -362,58 +356,6 @@ func (c *Config) SetFallbackModel(agent, model string) {
 
 // FallbackModel returns the run's standing default model for agent ("" when none set).
 func (c *Config) FallbackModel(agent string) string { return c.fallbackModels[agent] }
-
-// ProfileModelOf returns the model marked as agent's default for the named profile
-// (via `coop models default`), or "" when none is marked.
-func (c *Config) ProfileModelOf(agent, profile string) string {
-	if profile == "" {
-		profile = DefaultProfile
-	}
-	return c.profileModels[agent+"/"+profile]
-}
-
-// SetProfileModel marks model as the default for agent's named profile, persisting it to
-// ModelsFile and updating the in-memory view; an empty model clears the mark. Locked
-// load→modify→write like SetDefaultProfile, so concurrent edits don't lose each other.
-func (c *Config) SetProfileModel(agent, profile, model string) error {
-	if profile == "" {
-		profile = DefaultProfile
-	}
-	if err := os.MkdirAll(c.ConfigDir, 0o700); err != nil {
-		return err
-	}
-	key := agent + "/" + profile
-	err := WithLock(c.ModelsFile(), func() error {
-		m := loadConfFile(c.ModelsFile())
-		if model == "" {
-			delete(m, key)
-		} else {
-			m[key] = model
-		}
-		keys := make([]string, 0, len(m))
-		for k := range m {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		var b strings.Builder
-		for _, k := range keys {
-			b.WriteString(k + "=" + m[k] + "\n")
-		}
-		return WriteFileAtomic(c.ModelsFile(), []byte(b.String()))
-	})
-	if err != nil {
-		return err
-	}
-	if c.profileModels == nil {
-		c.profileModels = map[string]string{}
-	}
-	if model == "" {
-		delete(c.profileModels, key)
-	} else {
-		c.profileModels[key] = model
-	}
-	return nil
-}
 
 // AgentModelDefault is the agent-wide default model from COOP_<AGENT>_MODEL (env, then
 // conf file — the same precedence as every other setting), or "". Resolved late (not in
@@ -427,15 +369,14 @@ func (c *Config) AgentModelDefault(agent string) string {
 }
 
 // ModelFor resolves the model a run of agent should use, most specific first:
-//  1. the explicit per-run choice (--model / fleet model=),
-//  2. the active pool target's model (a loop's `work@sonnet` — re-set on each rotation),
+//  1. the explicit per-run choice (--model / fleet model:),
+//  2. the active rotation target's model (a loop's `opus@work` — re-set on each rotation),
 //  3. the run's standing default (a preset lead's model, else the loop's COOP_LOOP_MODEL),
-//  4. the ACTIVE profile's marked default (`coop models default` — re-resolved per call,
-//     so the loop's credential rotation picks up each profile's own mark),
-//  5. the agent-wide COOP_<AGENT>_MODEL.
+//  4. the agent-wide COOP_<AGENT>_MODEL.
 //
-// "" means no coop-level choice — the agent CLI's own default runs (including a model
-// baked into COOP_<AGENT>_CMD, which the adapters never override; see agent.withModel).
+// The model is its own axis — never a property of a credential (a credential is just an
+// account). "" means no coop-level choice — the agent CLI's own default runs (including a
+// model baked into COOP_<AGENT>_CMD, which the adapters never override; see agent.withModel).
 func (c *Config) ModelFor(agent string) string {
 	if m := c.activeModels[agent]; m != "" {
 		return m
@@ -444,9 +385,6 @@ func (c *Config) ModelFor(agent string) string {
 		return m
 	}
 	if m := c.fallbackModels[agent]; m != "" {
-		return m
-	}
-	if m := c.ProfileModelOf(agent, c.activeProfile(agent)); m != "" {
 		return m
 	}
 	return c.AgentModelDefault(agent)
