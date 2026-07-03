@@ -6,8 +6,10 @@
 # ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
 # names models and accounts, never the secrets themselves.
 
-lead:                         # REQUIRED — the default agent + its model ladder.
-  agent: claude               # REQUIRED — one of: claude, codex, gemini.
+# lead — REQUIRED: the default agent for the session, plus its model ladder.
+lead:
+  # REQUIRED — one of: claude, codex, gemini.
+  agent: claude
 
   # models — OPTIONAL model-first fallback ladder. Each entry is one of:
   #   <model>            bare model → runs on EVERY signed-in account, rotating
@@ -23,38 +25,40 @@ lead:                         # REQUIRED — the default agent + its model ladde
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
   prompt: roles/lead.md
 
-# roles — OPTIONAL map of role-name → role the lead can hand work to. A role
-# name is lowercase letters, digits, and dashes. Every role runs on its agent's
-# DEFAULT account (only the lead rotates accounts). Each role sets a "mode"; the
-# three below show one of each. Optional "when:" tags are routing hints the lead
-# reads to decide when to use a role — they appear verbatim in its contract.
+# roles — OPTIONAL map of role-name → role the lead can hand work to. Names are
+# lowercase letters, digits, and dashes. Each names an agent (claude, codex,
+# gemini) and an optional model (coop models; omit for the agent's default), and
+# runs on that agent's DEFAULT account (only the lead rotates). Optional "when:"
+# tags are routing hints the lead reads to pick a role. A role's "mode" is how
+# the lead reaches it:
 roles:
 
-  # native — a Claude subagent that runs INSIDE the lead's own session (no extra
-  # box). Requires agent: claude and a subagent: name.
+  # native — a Claude subagent inside the lead's session (no separate box).
+  # Requires agent: claude and subagent: <a .claude/agents/ name>.
   thinker:
     mode: native
     agent: claude
-    model: claude-opus-4-8    # optional — omit for the agent's default model
-    subagent: deep-reasoner   # required for native: a .claude/agents/ subagent
+    model: claude-opus-4-8
+    subagent: deep-reasoner
     when: [architecture, debugging, code-review, before-commit]
 
-  # consult — a READ-ONLY peer invoked via coop-consult, for an independent
-  # second opinion (often another vendor). Cannot edit files.
+  # consult — a READ-ONLY peer via coop-consult, for an independent second
+  # opinion (often from another vendor). It cannot edit files.
   critic:
     mode: consult
-    agent: codex              # one of: claude, codex, gemini
+    agent: codex
     model: gpt-5.5
     when: [plan-review, security, tradeoffs]
 
-  # delegate — a WRITE-CAPABLE worker invoked via coop-delegate. It may edit the
-  # worktree but never commits (coop-delegate fails if HEAD moved) — the lead
-  # reviews the diff, runs the gate, and commits.
+  # delegate — a WRITE-CAPABLE worker invoked via coop-delegate: it may edit the
+  # worktree but never commits; the lead reviews the diff, gates, and commits.
+  # commit/concurrent accept only "never".
   fast:
     mode: delegate
     agent: gemini
     model: gemini-3.5-flash
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
-    commit: never             # delegate-only — only 'never' is supported
-    concurrent: never         # delegate-only; only 'never' (runs serialized)
-    prompt: roles/fast.md     # scaffolded; edit it, or delete it and this line
+    commit: never
+    concurrent: never
+    # prompt — OPTIONAL, like the lead's; init scaffolds roles/fast.md.
+    prompt: roles/fast.md
