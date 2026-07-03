@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Shell completions for bash and zsh.** `coop completion bash|zsh` prints a completion script (its
+  commands and verbs come from the same source the dispatch and help do, so it can't drift), and a
+  hidden `coop __complete` offers live values — existing fork names, task ids, credential profiles —
+  all from local reads. The scripts ship in the release archive. Install:
+  `coop completion bash > ~/.local/share/bash-completion/completions/coop` (bash) or
+  `coop completion zsh > "${fpath[1]}/_coop"` (zsh).
+
 - **`help.go` is now the single source for the CLI reference, with a drift gate.** A new
   `tools/gendocs` renders the whole reference (the overview plus every command page) from `internal/cli`
   into `docs/cli.md` (offline reference) and `site/llms.txt` (an agent-readable manual); `coop help

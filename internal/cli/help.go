@@ -128,6 +128,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, subagents")
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box")
+	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
 	// `coop up`/`down` act on this repo's compose.agent.yml — name its real services, and dim the
 	// pair when there's no compose file to act on. Repo resolution is best-effort (help runs
 	// anywhere; outside a repo, or with no compose, the rows dim).
@@ -531,6 +532,16 @@ var commandHelp = map[string]string{
 
   Prints coop's build version (git tag or commit). Takes no arguments; -v and
   --version are aliases.`,
+
+	"completion": `coop completion <bash|zsh> — print a shell completion script.
+
+  Usage: coop completion <bash|zsh>
+
+  bash: coop completion bash > ~/.local/share/bash-completion/completions/coop
+  zsh:  coop completion zsh  > "${fpath[1]}/_coop"   (then restart your shell)
+
+  Completes commands and verbs, and — via a hidden 'coop __complete' — live values
+  (fork names, task ids, credential profiles), all from local reads.`,
 }
 
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,

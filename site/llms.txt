@@ -39,6 +39,7 @@ SETUP & MAINTENANCE
   coop init [--stack asdf]          scaffold the queue, hooks, skills, subagents
   coop build                        build the box image (stable, pinned)
   coop update                       self-update coop, then rebuild the box
+  coop completion <shell>           shell tab-completion (bash, zsh)
   coop up                           start sibling services (compose.agent.yml)
   coop down                         stop sibling services
   coop doctor                       attack the box, prove isolation holds
@@ -380,6 +381,16 @@ coop update — self-update coop, then rebuild the box image fresh.
 
   A dev/source build, an already-current binary, or a coop installed somewhere
   unwritable (a package-manager prefix) skips the self-update with a note.
+
+coop completion <bash|zsh> — print a shell completion script.
+
+  Usage: coop completion <bash|zsh>
+
+  bash: coop completion bash > ~/.local/share/bash-completion/completions/coop
+  zsh:  coop completion zsh  > "${fpath[1]}/_coop"   (then restart your shell)
+
+  Completes commands and verbs, and — via a hidden 'coop __complete' — live values
+  (fork names, task ids, credential profiles), all from local reads.
 
 coop version — print coop's version and exit.
 

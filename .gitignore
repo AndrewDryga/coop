@@ -19,3 +19,6 @@ __pycache__/
 !.gemini/
 .gemini/*
 !.gemini/skills
+
+# generated at release by 'coop completion' (goreleaser before-hook)
+completions/

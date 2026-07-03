@@ -7,6 +7,8 @@ project_name: coop
 before:
   hooks:
     - go mod tidy
+    # Ship shell completions rendered from the single source (help.go) — see `coop completion`.
+    - sh -c 'mkdir -p completions && go run . completion bash > completions/coop.bash && go run . completion zsh > completions/_coop'
 
 builds:
   - id: coop
@@ -29,6 +31,7 @@ archives:
       - README.md
       - LICENSE
       - CHANGELOG.md
+      - completions/*
 
 checksum:
   name_template: checksums.txt
