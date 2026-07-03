@@ -260,10 +260,10 @@ func TestTasksFolderLint(t *testing.T) {
 		t.Fatalf("lint with findings: code=%d err=%v (want 1)", code, err)
 	}
 
-	// clean tree
+	// clean tree — a complete task carries all three sections (Context / Acceptance criteria / Approach).
 	clean := t.TempDir()
-	writeTaskFile(t, filepath.Join(clean, stateTodo, "ok", "task.md"), "---\ntitle: OK\n---\n# OK\n**Acceptance criteria:** the gate is green\n")
-	writeTaskFile(t, filepath.Join(clean, stateBlocked, "bk", "task.md"), "# BK\n**Acceptance criteria:** y\n")
+	writeTaskFile(t, filepath.Join(clean, stateTodo, "ok", "task.md"), "---\ntitle: OK\n---\n# OK\n**Context:** why\n**Acceptance criteria:** the gate is green\n**Approach:** do it\n")
+	writeTaskFile(t, filepath.Join(clean, stateBlocked, "bk", "task.md"), "# BK\n**Context:** c\n**Acceptance criteria:** y\n**Approach:** a\n")
 	writeTaskFile(t, filepath.Join(clean, stateBlocked, "bk", "decision.md"), "# Decision: which?\n**Recommendation:** A\n")
 	if code, err := tasksFolderLint(clean); err != nil || code != 0 {
 		t.Fatalf("clean lint: code=%d err=%v (want 0)", code, err)
@@ -294,9 +294,70 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 	if fileExists(filepath.Join(dir, "decision.md")) {
 		t.Error("add must NOT seed decision.md — a todo task carrying one is a lint error")
 	}
-	// A freshly-added task is lint-clean (acceptance present, no decision in todo, no status field).
+	// A freshly-added task is lint-clean (all sections present, no decision in todo, no status field).
 	if code, err := tasksFolderLint(root); code != 0 || err != nil {
 		t.Errorf("a freshly-added task should be lint-clean, got code=%d err=%v", code, err)
+	}
+}
+
+// taskBody with no values reproduces the scaffold body byte-for-byte (the single shape source stays
+// stable), and taskShapeIssues flags a body missing a section but not the all-sections scaffold.
+func TestTaskBodyScaffoldStable(t *testing.T) {
+	want := "**Context:** <the problem, why it matters, and where in the code it lives>\n\n" +
+		"**Acceptance criteria:** <the gate green + the behaviour/test that proves it's done>\n\n" +
+		"**Approach:** <the boring plan; when it outgrows ~a screen, move it into spec.md>\n\n" +
+		"## Subtasks\n" +
+		"- [ ] <first small, end-to-end, testable step — check off once the gate is green>\n"
+	if got := taskBody(nil, nil); got != want {
+		t.Errorf("scaffold body drifted from the single source:\ngot:  %q\nwant: %q", got, want)
+	}
+	if issues := taskShapeIssues(taskBody(nil, nil)); len(issues) != 0 {
+		t.Errorf("scaffold has all sections present, want no issues, got %v", issues)
+	}
+	if issues := taskShapeIssues("# t\n**Acceptance criteria:** x\n"); len(issues) != 2 { // missing Context + Approach
+		t.Errorf("body missing Context+Approach should yield 2 issues, got %v", issues)
+	}
+}
+
+// `coop tasks add` with structured flags creates a FILLED, lint-clean task in one call; partial flags
+// are all-or-nothing (no folder created); with no flags it's the placeholder scaffold.
+func TestTasksFolderAddStructuredFlags(t *testing.T) {
+	root := t.TempDir()
+	code, err := tasksFolderAdd(root, []string{"wire", "auth",
+		"--context", "the login retries loop",
+		"--acceptance", "gate green + a retry test",
+		"--approach", "cap attempts at 3",
+		"--subtask", "add the cap", "--subtask", "test the failure path"})
+	if code != 0 || err != nil {
+		t.Fatalf("structured add: code=%d err=%v", code, err)
+	}
+	items := readTaskTree(root)
+	if len(items) != 1 {
+		t.Fatalf("want 1 task, got %d", len(items))
+	}
+	body := readFileString(filepath.Join(items[0].Dir, "task.md"))
+	for _, want := range []string{
+		"# wire auth", "**Context:** the login retries loop",
+		"**Acceptance criteria:** gate green + a retry test", "**Approach:** cap attempts at 3",
+		"- [ ] add the cap", "- [ ] test the failure path",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("structured body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "<the problem") {
+		t.Errorf("a fully-flagged task should carry no placeholders:\n%s", body)
+	}
+	if code, err := tasksFolderLint(root); code != 0 || err != nil {
+		t.Errorf("structured task should be lint-clean, got code=%d err=%v", code, err)
+	}
+	// Partial flags → refused (exit 2), and NOTHING created.
+	root2 := t.TempDir()
+	if code, _ := tasksFolderAdd(root2, []string{"half", "--context", "only this"}); code != 2 {
+		t.Errorf("partial structured flags should be a usage error (2), got %d", code)
+	}
+	if len(readTaskTree(root2)) != 0 {
+		t.Error("a refused structured add must not create a task folder")
 	}
 }
 
@@ -375,7 +436,7 @@ func TestTasksFolderListCapsDone(t *testing.T) {
 func TestUnblockRequiresResolution(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-pick", "task.md"),
-		"# Pick a backend\n\n**Acceptance criteria:** one is chosen and why is noted\n")
+		"# Pick a backend\n\n**Context:** need a datastore\n**Acceptance criteria:** one is chosen and why is noted\n**Approach:** compare options\n")
 	if code, err := tasksFolderBlock(root, []string{"pick"}); code != 0 || err != nil {
 		t.Fatalf("block: %d %v", code, err)
 	}

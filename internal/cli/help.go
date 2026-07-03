@@ -293,7 +293,7 @@ var commandHelp = map[string]string{
   ls [--all]       list tasks by state, with counts (recent done capped; --all shows all)
   watch            live board: the queue + any active forks, deduped by id (auto-exits when done).
                    Per-fork fleet view: coop fleet watch
-  add "<title>"    scaffold a new task folder (lands in todo)
+  add "<title>"    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to todo (claim it to start); add "<answer>" to record in decision.md

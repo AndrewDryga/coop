@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks add` can fill a task inline.** Pass `--context`, `--acceptance`, `--approach`, and
+  repeatable `--subtask` to create a complete, ready-to-work task in one call instead of scaffolding
+  then editing — all-or-nothing (give every section flag, or none for the placeholder scaffold). The
+  scaffold, these flags, and `coop tasks lint` now derive the task shape from one source, and lint
+  checks that all three sections are present (not just Acceptance).
+
 - **`coop tasks watch` is one queue-ordered list.** The live board split tasks into per-state
   sections; it now shows a single list — in progress, then todo, then blocked — with each row's icon
   colored to match the top counter (in-progress yellow, todo cyan, blocked red). Active work

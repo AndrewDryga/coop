@@ -182,13 +182,50 @@ func slugify(s string) string {
 	return slug
 }
 
+// taskSection is one **Heading:** block of a task.md body. taskSections is the SINGLE source of the
+// body's shape: the scaffold (newTaskFiles), the structured `coop tasks add` flags, and lint
+// (taskShapeIssues) all derive from it, so they can't drift. Subtasks are the trailing `## Subtasks`
+// checklist — a list, not a section — so they're handled separately.
+type taskSection struct{ heading, flag, placeholder string }
+
+var taskSections = []taskSection{
+	{"Context", "context", "<the problem, why it matters, and where in the code it lives>"},
+	{"Acceptance criteria", "acceptance", "<the gate green + the behaviour/test that proves it's done>"},
+	{"Approach", "approach", "<the boring plan; when it outgrows ~a screen, move it into spec.md>"},
+}
+
+const defaultSubtask = "<first small, end-to-end, testable step — check off once the gate is green>"
+
+// taskBody renders the task.md body after the `# title` line: each section as `**Heading:** value`
+// (a blank/absent value falls back to the section's `<…>` placeholder — that's the scaffold), then
+// the `## Subtasks` checklist (the default placeholder when none are given).
+func taskBody(values map[string]string, subtasks []string) string {
+	var b strings.Builder
+	for _, s := range taskSections {
+		v := strings.TrimSpace(values[s.heading])
+		if v == "" {
+			v = s.placeholder
+		}
+		fmt.Fprintf(&b, "**%s:** %s\n\n", s.heading, v)
+	}
+	b.WriteString("## Subtasks\n")
+	if len(subtasks) == 0 {
+		subtasks = []string{defaultSubtask}
+	}
+	for _, st := range subtasks {
+		fmt.Fprintf(&b, "- [ ] %s\n", st)
+	}
+	return b.String()
+}
+
 // newTaskFiles is the set of starter files `coop tasks add` writes into a new task folder: the
 // required task.md plus a seeded log.md and state.md. Each opens with an HTML-comment header
 // that explains the file and shows its format, so the file is self-documenting yet renders clean
 // once filled. The full reference with worked examples is .agent/tasks/README.md. decision.md is
 // NOT seeded here — `block` writes it, since a pending decision is what moves a task to
-// 50_blocked/ (and a decision.md on a todo task is a lint error).
-func newTaskFiles(id, title, now string) map[string]string {
+// 50_blocked/ (and a decision.md on a todo task is a lint error). values/subtasks fill the body from
+// structured `add` flags; pass nil/empty for the placeholder scaffold.
+func newTaskFiles(id, title, now string, values map[string]string, subtasks []string) map[string]string {
 	return map[string]string{
 		"task.md": "<!-- TASK SPEC — a fresh agent must work this from this file ALONE.\n" +
 			"     FIRST, BEFORE ANY CODE: replace every <…> placeholder below — the real problem and\n" +
@@ -197,12 +234,7 @@ func newTaskFiles(id, title, now string) map[string]string {
 			"     honestly? It isn't ready — run: coop tasks block " + id + "\n" +
 			"     Full format + examples: .agent/tasks/README.md -->\n" +
 			"---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
-			"# " + title + "\n\n" +
-			"**Context:** <the problem, why it matters, and where in the code it lives>\n\n" +
-			"**Acceptance criteria:** <the gate green + the behaviour/test that proves it's done>\n\n" +
-			"**Approach:** <the boring plan; when it outgrows ~a screen, move it into spec.md>\n\n" +
-			"## Subtasks\n" +
-			"- [ ] <first small, end-to-end, testable step — check off once the gate is green>\n",
+			"# " + title + "\n\n" + taskBody(values, subtasks),
 		"log.md": "<!-- Append-only working journal: what you did and WHY (decisions, dead ends,\n" +
 			"     surprises). Add to the BOTTOM; never rewrite history. The short \"where am I\n" +
 			"     now\" snapshot lives in state.md, not here. Example entry:\n" +
@@ -221,13 +253,64 @@ func newTaskFiles(id, title, now string) map[string]string {
 }
 
 func tasksFolderAdd(root string, args []string) (int, error) {
-	title := strings.TrimSpace(strings.Join(args, " "))
+	// Optional structured flags carve the title from the body: with any of
+	// --context/--acceptance/--approach/--subtask the task is created FILLED and validated up front;
+	// with none, it's the placeholder scaffold you edit. The flag names ARE the shape (taskSections).
+	sectionByFlag := map[string]string{}
+	for _, s := range taskSections {
+		sectionByFlag[s.flag] = s.heading
+	}
+	var titleWords, subtasks []string
+	values := map[string]string{}
+	structured := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "--") {
+			titleWords = append(titleWords, a)
+			continue
+		}
+		flag, val, hasEq := strings.TrimPrefix(a, "--"), "", false
+		if eq := strings.IndexByte(flag, '='); eq >= 0 {
+			flag, val, hasEq = flag[:eq], flag[eq+1:], true
+		}
+		heading, isSection := sectionByFlag[flag]
+		if !isSection && flag != "subtask" {
+			return 2, fmt.Errorf("coop tasks add: unknown flag %q (known: --context, --acceptance, --approach, --subtask)", a)
+		}
+		if !hasEq {
+			if i+1 >= len(args) {
+				return 2, fmt.Errorf("coop tasks add --%s needs a value", flag)
+			}
+			i++
+			val = args[i]
+		}
+		structured = true
+		if flag == "subtask" {
+			subtasks = append(subtasks, val)
+		} else {
+			values[heading] = val
+		}
+	}
+	title := strings.TrimSpace(strings.Join(titleWords, " "))
 	if title == "" {
-		return 2, errors.New(`usage: coop tasks add "<title>"`)
+		return 2, errors.New(`usage: coop tasks add "<title>" [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`)
 	}
 	slug := slugify(title)
 	if slug == "" {
 		return 2, errors.New(`that title has no letters or digits to build a task id from — use a title with at least one word, e.g. coop tasks add "fix login retry"`)
+	}
+	// Structured mode is all-or-nothing: every section flag must be given, so we never create a task
+	// that's half-filled and half-<…>-placeholder. Omit all the flags to get the placeholder scaffold.
+	if structured {
+		var missing []string
+		for _, s := range taskSections {
+			if strings.TrimSpace(values[s.heading]) == "" {
+				missing = append(missing, "--"+s.flag)
+			}
+		}
+		if len(missing) > 0 {
+			return 2, fmt.Errorf("coop tasks add: structured flags need every section — missing %s (or omit all flags to scaffold)", strings.Join(missing, ", "))
+		}
 	}
 	id := time.Now().Format("2006-01-02") + "-" + slug
 	// An id is a stable, unique handle, so reject a collision in ANY state — not just todo/ —
@@ -242,12 +325,16 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return -1, err
 	}
-	for name, content := range newTaskFiles(id, title, time.Now().Format(time.RFC3339)) {
+	for name, content := range newTaskFiles(id, title, time.Now().Format(time.RFC3339), values, subtasks) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			return -1, err
 		}
 	}
-	ui.OK("added %s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id)
+	if structured {
+		ui.OK("added %s (filled from flags); log.md + state.md seeded", id)
+	} else {
+		ui.OK("added %s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id)
+	}
 	return 0, nil
 }
 
@@ -884,6 +971,20 @@ func stripHTMLComments(s string) string {
 	}
 }
 
+// taskShapeIssues reports a required section (taskSections) whose **Heading:** is absent from a
+// task.md body — the structural half of "self-contained." It does NOT flag an unfilled `<…>`
+// placeholder: a fresh scaffold is lint-clean by design (you add, then fill), and the loop doesn't
+// gate on lint. Derived from taskSections so lint and the scaffold share one shape source.
+func taskShapeIssues(body string) []string {
+	var issues []string
+	for _, s := range taskSections {
+		if !strings.Contains(body, "**"+s.heading+":**") {
+			issues = append(issues, "missing the **"+s.heading+"** section")
+		}
+	}
+	return issues
+}
+
 func tasksFolderLint(root string) (int, error) {
 	items := readTaskTree(root)
 	var findings []string
@@ -903,9 +1004,12 @@ func tasksFolderLint(root string) (int, error) {
 		if fields, _ := splitFrontmatter(body); fields["status"] != "" {
 			add(t.ID, "has a `status:` field — remove it; the parent directory is the status")
 		}
-		// self-contained: acceptance criteria present (not for done, which is the record)
-		if t.State != stateDone && !strings.Contains(strings.ToLower(body), "acceptance") {
-			add(t.ID, "not self-contained: missing an **Acceptance criteria** section")
+		// self-contained: every shape section present and filled — not still a `<…>` placeholder (not
+		// for done, which is the shipped record). Supersedes the old acceptance-substring-only check.
+		if t.State != stateDone {
+			for _, issue := range taskShapeIssues(body) {
+				add(t.ID, "not self-contained: "+issue)
+			}
 		}
 	}
 	if len(findings) == 0 {
