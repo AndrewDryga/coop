@@ -93,15 +93,19 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	group("AGENTS")
 	row("coop claude|codex|gemini [args]", "a sandboxed agent (its flags + your args)")
 	row("coop fusion [agent]", "one leads, the others advise + synthesize")
-	row("coop run -- <cmd...>", "run a raw command in the box")
-	row("coop shell", "an interactive shell in the box")
-	row("coop login <agent> [--credential <name>]", "sign in an agent (a subscription)")
-	row("coop credentials [agent]", "stored credentials + which are signed in")
-	row("coop presets [name]", "orchestration recipes (lead + roles)")
-	row("coop models [agent]", "the model menu per agent")
 	row("coop acp [agent|fusion]", "serve as an editor agent (ACP; e.g. Zed)")
 	row("coop <agent> --consult", "a read-only second opinion from the others")
 	row("coop <agent> --model <model>", "run on a chosen model (fusion/fork/loop too)")
+
+	group("CREDENTIALS, MODELS & PRESETS")
+	row("coop login <agent>", "sign in an agent (a subscription)")
+	row("coop credentials [agent]", "stored credentials + which are signed in")
+	row("coop models [agent]", "the model menu per agent")
+	row("coop presets [name]", "orchestration recipes (lead + roles)")
+
+	group("THE BOX")
+	row("coop run -- <cmd...>", "run a raw command in the box")
+	row("coop shell", "an interactive shell in the box")
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
@@ -115,7 +119,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fork path <name>", "print the fork's filesystem path")
 
 	group("UNATTENDED")
-	row("coop loop [agent] [--tasks <path>]", "work the queue(s) until done, then audit")
+	row("coop loop [agent]", "work the queue(s) until done, then audit")
 	row("coop loop pool add|rm|clear", "subscriptions to rotate when rate-limited")
 	row("coop fleet init|up|down|split|watch|prune", "parallel forks from .agent/fleet")
 

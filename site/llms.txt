@@ -4,15 +4,19 @@ Usage: coop <command> [args]
 AGENTS
   coop claude|codex|gemini [args]   a sandboxed agent (its flags + your args)
   coop fusion [agent]               one leads, the others advise + synthesize
-  coop run -- <cmd...>              run a raw command in the box
-  coop shell                        an interactive shell in the box
-  coop login <agent> [--credential <name>]  sign in an agent (a subscription)
-  coop credentials [agent]          stored credentials + which are signed in
-  coop presets [name]               orchestration recipes (lead + roles)
-  coop models [agent]               the model menu per agent
   coop acp [agent|fusion]           serve as an editor agent (ACP; e.g. Zed)
   coop <agent> --consult            a read-only second opinion from the others
   coop <agent> --model <model>      run on a chosen model (fusion/fork/loop too)
+
+CREDENTIALS, MODELS & PRESETS
+  coop login <agent>                sign in an agent (a subscription)
+  coop credentials [agent]          stored credentials + which are signed in
+  coop models [agent]               the model menu per agent
+  coop presets [name]               orchestration recipes (lead + roles)
+
+THE BOX
+  coop run -- <cmd...>              run a raw command in the box
+  coop shell                        an interactive shell in the box
 
 FORKS — review and land work like a PR
   coop fork <name> [agent]          open or re-enter a fork and run an agent
@@ -26,7 +30,7 @@ FORKS — review and land work like a PR
   coop fork path <name>             print the fork's filesystem path
 
 UNATTENDED
-  coop loop [agent] [--tasks <path>]  work the queue(s) until done, then audit
+  coop loop [agent]                 work the queue(s) until done, then audit
   coop loop pool add|rm|clear       subscriptions to rotate when rate-limited
   coop fleet init|up|down|split|watch|prune  parallel forks from .agent/fleet
 

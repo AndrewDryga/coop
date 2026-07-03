@@ -15,6 +15,13 @@
   say **`compose.agent.yml`** (its real services when present), never "sibling services" — a
   glanceable row has no body to explain an abstraction, so the concrete name IS the
   explanation. Same for any row/error one-liner: prefer the real path/file/flag.
+- A row's command cell stays **≤ 32 runes** so every description starts at the same column
+  (the table look breaks the moment one row pushes past the gap). Too long? Drop optional
+  flags from the cell — they live in the command's own help page. The one exception is a
+  full verb-list row (`coop fleet init|up|down|…`), where completeness beats alignment.
+  Enforced by `TestHelpRowsAlign`.
+- A group with more than ~6 rows is a wall — split it by what the user is doing (e.g.
+  AGENTS / CREDENTIALS, MODELS & PRESETS / THE BOX), not by implementation.
 
 **Why:** the top-level help is scanned, not read. Lowercase headers, collapsed verbs, and
 `·`-separated descriptions read as clutter; people expect a man-page-like reference where

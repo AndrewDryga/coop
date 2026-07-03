@@ -82,6 +82,35 @@ func TestHelpTextWidth(t *testing.T) {
 	}
 }
 
+// Every command row's description starts at ONE column (a command cell ≤32 runes keeps the
+// 34-rune gap), so the two-column layout reads as a table. A row whose command is a full
+// verb list (it carries several `|`s, like fleet's) is the accepted exception — listing
+// every verb beats alignment there. Anything else over the column is a bug: shorten the
+// command cell (flag detail belongs in the command's own help page, not the overview).
+func TestHelpRowsAlign(t *testing.T) {
+	out := helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "  coop ") {
+			continue // headers, hints, footer — not command rows
+		}
+		runes := []rune(line)
+		cmdEnd := len(runes)
+		for i := 2; i < len(runes)-1; i++ {
+			if runes[i] == ' ' && runes[i+1] == ' ' {
+				cmdEnd = i
+				break
+			}
+		}
+		cmd := strings.TrimRight(string(runes[2:cmdEnd]), " ")
+		if strings.Count(cmd, "|") >= 3 {
+			continue // a verb-list row (e.g. fleet init|up|down|…) may run long
+		}
+		if n := len([]rune(cmd)); n > 32 {
+			t.Errorf("help row command cell is %d runes (max 32, or the description column drifts): %q", n, cmd)
+		}
+	}
+}
+
 // RenderManual is the single source for `coop help --all`, docs/cli.md, and site/llms.txt — it must
 // be deterministic and plain (no ANSI, no host-specific version/paths/state), or gendocs -check flaps.
 func TestRenderManual(t *testing.T) {
