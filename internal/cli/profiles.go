@@ -37,6 +37,10 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			return a.markProfileModel(args[1:])
 		case "rm", "remove":
 			return a.removeProfile(args[1:])
+		case "ls", "list":
+			// Bare `coop profiles` already lists — steer `ls` there instead of "unknown agent" (rule:
+			// `ls` is the list verb, so it must lead somewhere useful, not read as an agent filter).
+			return 2, fmt.Errorf("coop profiles already lists every profile — just run `coop profiles` (no %q)", args[0])
 		}
 	}
 	names := agents.Names()

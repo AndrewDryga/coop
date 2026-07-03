@@ -104,20 +104,23 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "decisions":
 		return tasksFolderDecisions(root, args)
 	default:
-		return 2, unknownErr("tasks command", sub,
-			[]string{"ls", "lint", "add", "claim", "block", "unblock", "done", "path", "rm", "split", "decisions"})
+		return 2, unknownErr("tasks command", sub, tasksVerbs)
 	}
 }
 
+// tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
+// source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
+// belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
+var tasksVerbs = []string{"ls", "lint", "add", "claim", "block", "unblock", "done", "watch", "path", "rm", "split", "decisions"}
+
+// tasksAliases are accepted alternate spellings (→ a canonical verb: list→ls, start→claim, remove→rm),
+// recognized by isTasksSubcommand but kept out of suggestions, which name only the canonical form.
+var tasksAliases = map[string]bool{"list": true, "start": true, "remove": true}
+
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand (or alias). cmdTasks
-// uses it to catch `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a
-// queue path. Keep in sync with the dispatch switch above.
+// uses it to catch `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path.
 func isTasksSubcommand(s string) bool {
-	switch s {
-	case "ls", "list", "lint", "add", "claim", "start", "block", "unblock", "done", "path", "remove", "rm", "split", "decisions", "watch":
-		return true
-	}
-	return false
+	return tasksAliases[s] || slices.Contains(tasksVerbs, s)
 }
 
 // findTask locates a task by ID across all state dirs: an exact ID match, else a unique

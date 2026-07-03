@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Consistent verb recognition across the command families.** `coop fork list` now lists (an alias
+  for `coop fork ls`, matching `coop tasks`), and `list`/`watch`/`remove` join the reserved fork
+  names so a fork can't shadow a subcommand — `coop fork ls` warns if a pre-existing fork already
+  does. `coop fleet ls` and `coop profiles ls` stop erroring blankly and point at the real lister
+  (`coop fork ls` / bare `coop profiles`). The `coop tasks` unknown-subcommand hint now includes the
+  flagship `watch` (both it and `isTasksSubcommand` derive from one list, so they can't drift). And
+  `coop help status` shows the same removal tombstone as `coop status` (one shared source). `coop
+  fork --help` states the policy: new fork actions are verb-first, and a fork can't be named a verb.
+
 - **Typo suggestions now catch 3-rune slips.** The did-you-mean floor ignored anything under 4
   runes, so `coop lop` got no "did you mean loop" and — worse — `coop fork lss` (a distance-1 typo of
   `ls`) slipped past the guard and silently cloned a stray `lss` fork. The floor now allows 3-rune

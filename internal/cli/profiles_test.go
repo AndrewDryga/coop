@@ -65,6 +65,18 @@ func TestCmdProfilesDanglingDefault(t *testing.T) {
 	}
 }
 
+// `coop profiles ls`/`list` steers to the bare listing (which already lists) instead of reading `ls`
+// as an unknown agent (rule: `ls` is the list verb, it must lead somewhere useful).
+func TestProfilesLsRedirect(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	for _, sub := range []string{"ls", "list"} {
+		code, err := a.cmdProfiles([]string{sub})
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "coop profiles") {
+			t.Errorf("cmdProfiles([%s]) = (%d, %v), want (2, pointing at bare `coop profiles`)", sub, code, err)
+		}
+	}
+}
+
 func TestCmdProfilesUnknownAgent(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	if code, err := a.cmdProfiles([]string{"nope"}); code != 2 || err == nil {

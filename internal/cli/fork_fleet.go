@@ -131,8 +131,11 @@ func (a *app) cmdFleet(args []string) (int, error) {
 		return a.fleetWatch()
 	case "prune":
 		return a.fleetPrune(args[1:])
+	case "ls", "list":
+		// A fleet is its forks — there's no fleet-level listing. Point at the two real views instead of
+		// a bare "unknown command" (rule: `ls` is the list verb, so it must lead somewhere useful).
+		return 2, fmt.Errorf("coop fleet has no %q — list the forks with `coop fork ls`, or watch the live board with `coop fleet watch`", sub)
 	default:
-		// `ls` lives on `coop fork ls`, not here.
 		return 2, unknownErr("fleet command", sub, []string{"init", "up", "down", "split", "watch", "prune"})
 	}
 }

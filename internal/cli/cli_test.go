@@ -202,6 +202,33 @@ func TestUnknownErr(t *testing.T) {
 	}
 }
 
+// `coop status` and `coop help status` must show the SAME removal tombstone — one source, both paths.
+func TestRemovedCommandNoteParity(t *testing.T) {
+	note, ok := removedCommandNote("status")
+	if !ok || !strings.Contains(note, "was removed") {
+		t.Fatalf("removedCommandNote(status) = (%q, %v), want the tombstone", note, ok)
+	}
+	if _, ok := removedCommandNote("tasks"); ok {
+		t.Error("a live command must not carry a removal note")
+	}
+	// `coop status` path: unknownCommandErr returns the note verbatim.
+	if err := unknownCommandErr([]string{"status"}); err == nil || err.Error() != note {
+		t.Errorf("unknownCommandErr(status) = %v, want the tombstone verbatim", err)
+	}
+	// `coop help status` path: helpForCommand prints the same note (stderr) and exits 2 — NOT the
+	// generic "unknown command" (which would also be exit 2, hence the text check).
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	code := helpForCommand("status")
+	_ = w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	if code != 2 || !strings.Contains(string(out), "was removed") {
+		t.Errorf("helpForCommand(status) = exit %d, out=%q; want 2 + the tombstone", code, out)
+	}
+}
+
 // `coop fork --help` must match every other command's template: a Usage line under the title and
 // the standard footer (it used to have neither).
 func TestForkHelpTemplate(t *testing.T) {

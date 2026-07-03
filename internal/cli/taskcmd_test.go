@@ -249,6 +249,23 @@ func TestTasksFolderSplitCommand(t *testing.T) {
 	}
 }
 
+// The tasks unknown-subcommand suggester and isTasksSubcommand share one source (tasksVerbs), so the
+// flagship `watch` is suggestable and every verb+alias is recognized — no drift between the two.
+func TestTasksVerbsIncludeWatch(t *testing.T) {
+	// a mistype of watch suggests it — only possible if watch is in the derived candidate list.
+	if err := unknownErr("tasks command", "watxh", tasksVerbs); !strings.Contains(err.Error(), `did you mean "watch"`) {
+		t.Errorf("expected a watch suggestion, got: %v", err)
+	}
+	for _, s := range []string{"watch", "ls", "list", "start", "remove", "decisions"} {
+		if !isTasksSubcommand(s) {
+			t.Errorf("isTasksSubcommand(%q) = false, want true", s)
+		}
+	}
+	if isTasksSubcommand("bogus") {
+		t.Error("isTasksSubcommand(bogus) = true, want false")
+	}
+}
+
 func TestTasksFolderLint(t *testing.T) {
 	// findings: blocked-without-decision, todo-with-decision, status field, missing acceptance
 	root := t.TempDir()

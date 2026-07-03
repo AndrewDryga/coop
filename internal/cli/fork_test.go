@@ -111,6 +111,36 @@ func TestCmdForkRefusesVerbTypo(t *testing.T) {
 	}
 }
 
+// Every fork subcommand + accepted alias + `watch` is a reserved name (can't be a fork), so no fork
+// shadows a subcommand; a real fork name is not reserved.
+func TestForkReserved(t *testing.T) {
+	for _, r := range []string{"ls", "review", "merge", "rm", "open", "logs", "stop", "path", "acp", "list", "remove", "watch"} {
+		if !forkReserved(r) {
+			t.Errorf("forkReserved(%q) = false, want true", r)
+		}
+		if validForkName(r) {
+			t.Errorf("validForkName(%q) = true, want false (a fork can't be named a reserved verb)", r)
+		}
+	}
+	for _, ok := range []string{"api", "web", "feature-x", "wip2"} {
+		if forkReserved(ok) {
+			t.Errorf("forkReserved(%q) = true, want false", ok)
+		}
+		if !validForkName(ok) {
+			t.Errorf("validForkName(%q) = false, want true", ok)
+		}
+	}
+}
+
+// `coop fork list` is an alias for `coop fork ls` (rule: `ls`/`list` list everywhere) — it lists an
+// empty repo cleanly (exit 0), it does NOT try to create a fork named "list".
+func TestCmdForkListAlias(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	if code, err := a.cmdFork([]string{"list"}); code != 0 || err != nil {
+		t.Fatalf("cmdFork([list]) = (%d, %v), want (0, nil) — should list, not create", code, err)
+	}
+}
+
 // A typo'd --profile must fail (exit 2) before any image/clone work, so it never leaves a stray
 // fork behind. The check runs before resolveImage, so it returns without a runtime.
 func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {

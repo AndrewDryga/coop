@@ -30,12 +30,24 @@ import (
 
 const forkSuffix = "-forks"
 
-// forkVerbs are the reserved subcommands of `coop fork`; a fork can't be named one. "acp" is
-// reserved too: `coop fork <name> acp` fronts a fork over ACP, so a fork literally named "acp"
-// would shadow that route.
+// forkVerbs are the canonical `coop fork` subcommands — the source for did-you-mean suggestions and
+// the help Usage line, so those name only real, canonically-spelled commands. "acp" is here too:
+// `coop fork <name> acp` fronts a fork over ACP, so a fork literally named "acp" would shadow it.
 var forkVerbs = map[string]bool{
 	"ls": true, "review": true, "merge": true, "rm": true, "open": true,
 	"logs": true, "stop": true, "path": true, "acp": true,
+}
+
+// forkReserved reports whether name is off-limits for a fork (validForkName refuses it), so no fork
+// can shadow a subcommand. It's forkVerbs plus the accepted aliases (list→ls, remove→rm) and "watch"
+// (reserved so a fork can't be confused with the fleet-level `coop fleet watch`). Kept separate from
+// forkVerbs so aliases and watch never leak into a suggestion for a command that isn't spelled that way.
+func forkReserved(name string) bool {
+	switch name {
+	case "list", "remove", "watch":
+		return true
+	}
+	return forkVerbs[name]
 }
 
 // forkHome is the sibling directory that holds every fork of repo.
@@ -50,7 +62,7 @@ func forkWorkspace(repo, name string) string {
 
 // validForkName keeps a name to a single safe path/branch segment.
 func validForkName(name string) bool {
-	if name == "" || forkVerbs[name] {
+	if name == "" || forkReserved(name) {
 		return false
 	}
 	if name == "." || name == ".." || strings.HasPrefix(name, "-") {
@@ -107,6 +119,7 @@ func forkHelp() (int, error) {
 		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
 	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", ui.Bold("REVIEW"))
+	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", ui.Bold("NAMES"))
 	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
 	fmt.Print(b.String())
 	return 0, nil
@@ -119,7 +132,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 		return forkHelp()
 	}
 	switch args[0] {
-	case "ls":
+	case "ls", "list":
 		return a.forkLs(args[1:])
 	case "review":
 		return a.forkReview(args[1:])
@@ -591,6 +604,14 @@ func (a *app) forkLs(args []string) (int, error) {
 	for _, n := range names {
 		s := gatherForkStatus(repo, n)
 		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), s.Updated)
+	}
+	// A fork whose name is (or became) a reserved verb is unreachable by `coop fork <name>` — that
+	// spelling runs the subcommand. validForkName now refuses such names, so this only catches forks
+	// made before that guard; point at the escape hatch (path/rm still take it as an explicit arg).
+	for _, n := range names {
+		if forkReserved(n) {
+			ui.Warn("fork %q shadows the '%s' subcommand — reach it via 'coop fork path %s' or 'coop fork rm %s'", n, n, n, n)
+		}
 	}
 	return 0, nil
 }

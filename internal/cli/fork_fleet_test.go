@@ -80,6 +80,18 @@ func TestParseFleet(t *testing.T) {
 	}
 }
 
+// `coop fleet ls`/`list` has no fleet-level listing — it must point at the real views (fork ls / the
+// live board), not error blankly (rule: `ls` is the list verb, it must lead somewhere useful).
+func TestFleetLsRedirect(t *testing.T) {
+	a := &app{cfg: &config.Config{}}
+	for _, sub := range []string{"ls", "list"} {
+		code, err := a.cmdFleet([]string{sub})
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
+			t.Errorf("cmdFleet([%s]) = (%d, %v), want (2, pointing at `coop fork ls`)", sub, code, err)
+		}
+	}
+}
+
 // fleet up fails fast, but when forks already started the error must be loud about the partial fleet
 // and name the cleanup, so a half-started fleet isn't discovered later.
 func TestFleetAbortErr(t *testing.T) {

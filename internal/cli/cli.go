@@ -211,6 +211,10 @@ func helpForCommand(cmd string) int {
 		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
 		return 0
 	default:
+		if note, ok := removedCommandNote(cmd); ok { // `coop help status` shows the same tombstone as `coop status`
+			ui.Error("%s", note)
+			return 2
+		}
 		candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
 		msg := fmt.Sprintf("unknown command %q", cmd)
 		if guess, ok := nearestCommand(cmd, candidates); ok {
@@ -231,14 +235,25 @@ func isKnownCommand(cmd string) bool {
 	return agents.Valid(cmd)
 }
 
+// removedCommandNote returns the migration message for a command coop used to have but dropped, so
+// `coop <cmd>` and `coop help <cmd>` explain the replacement identically instead of one of them
+// falling back to a generic "unknown command". ok is false for a command that was never removed.
+func removedCommandNote(cmd string) (string, bool) {
+	switch cmd {
+	case "status": // replaced by the task board (the default) + the per-fork fleet board
+		return "coop status was removed — watch the work with `coop tasks watch` " +
+			"(the queue + any active forks, deduped); for the per-fork fleet board use `coop fleet watch` " +
+			"(snapshot: `coop fork ls`)", true
+	}
+	return "", false
+}
+
 // unknownCommandErr explains an unrecognized command: a "did you mean" for a likely typo,
 // and how to run an actual command in the box (which is no longer implicit).
 func unknownCommandErr(argv []string) error {
 	sub := argv[0]
-	if sub == "status" { // removed — replaced by the task board (the default) + the per-fork fleet board
-		return fmt.Errorf("coop status was removed — watch the work with `coop tasks watch` " +
-			"(the queue + any active forks, deduped); for the per-fork fleet board use `coop fleet watch` " +
-			"(snapshot: `coop fork ls`)")
+	if note, ok := removedCommandNote(sub); ok {
+		return fmt.Errorf("%s", note)
 	}
 	msg := fmt.Sprintf("unknown command %q", sub)
 	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
