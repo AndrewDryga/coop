@@ -17,35 +17,39 @@ func TestCLIConformance(t *testing.T) {
 		return &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
 	}
 
-	// list-verb-ls: the families with a list verb accept BOTH `ls` and `list`, routed to the lister
-	// (exit 0 on an empty repo/queue). A family that grew an `ls` without `list` fails here.
-	t.Run("ls_and_list_both_list", func(t *testing.T) {
-		for _, v := range []string{"ls", "list"} {
-			if code, err := newApp().cmdFork([]string{v}); code != 0 || err != nil {
-				t.Errorf("coop fork %s = (%d, %v), want (0, nil)", v, code, err)
-			}
-			if code, err := cmdTasksFolder("", t.TempDir(), []string{v}); code != 0 || err != nil {
-				t.Errorf("coop tasks %s = (%d, %v), want (0, nil)", v, code, err)
-			}
+	// list-verb-ls: `ls` is the list verb (fork + tasks list on it, exit 0). v3 keeps NO `list` alias —
+	// it's an unknown verb in the closed families.
+	t.Run("ls_lists_no_list_alias", func(t *testing.T) {
+		if code, err := newApp().cmdFork([]string{"ls"}); code != 0 || err != nil {
+			t.Errorf("coop fork ls = (%d, %v), want (0, nil)", code, err)
+		}
+		if code, err := cmdTasksFolder("", t.TempDir(), []string{"ls"}); code != 0 || err != nil {
+			t.Errorf("coop tasks ls = (%d, %v), want (0, nil)", code, err)
+		}
+		if _, err := cmdTasksFolder("", t.TempDir(), []string{"list"}); err == nil || !strings.Contains(err.Error(), "unknown tasks command") {
+			t.Errorf("coop tasks list should be unknown (no compat alias in v3), got %v", err)
 		}
 	})
 
-	// destructive-verb-rm: every destructive family accepts BOTH `rm` and `remove` — each routes to the
-	// handler (a bare invocation yields that handler's usage/gate error, never the unknown-command
-	// suggester). A family that dropped the `remove` alias fails here.
-	t.Run("rm_and_remove_both_accepted", func(t *testing.T) {
+	// destructive-verb-rm: `rm` is the destructive verb (a bare call is a usage/gate error, not the
+	// unknown suggester). v3 keeps NO `remove` alias — it's unknown in the closed families (fork names
+	// are open, so `remove` is a NAME there, not asserted).
+	t.Run("rm_no_remove_alias", func(t *testing.T) {
 		a := newApp()
-		families := map[string]func([]string) (int, error){
-			"fork":  a.cmdFork,
+		closed := map[string]func([]string) (int, error){
 			"pool":  a.cmdPool,
 			"tasks": func(args []string) (int, error) { return cmdTasksFolder("", t.TempDir(), args) },
 		}
-		for name, run := range families {
-			for _, v := range []string{"rm", "remove"} {
-				if _, err := run([]string{v}); err != nil && strings.Contains(err.Error(), "unknown") {
-					t.Errorf("%s: %q was not accepted (got the unknown-command error): %v", name, v, err)
-				}
+		for name, run := range closed {
+			if _, err := run([]string{"rm"}); err != nil && strings.Contains(err.Error(), "unknown") {
+				t.Errorf("%s: rm was not accepted: %v", name, err)
 			}
+			if _, err := run([]string{"remove"}); err == nil || !strings.Contains(err.Error(), "unknown") {
+				t.Errorf("%s: remove should be unknown (no compat alias in v3), got %v", name, err)
+			}
+		}
+		if _, err := a.cmdFork([]string{"rm"}); err != nil && strings.Contains(err.Error(), "unknown") {
+			t.Errorf("fork: rm was not accepted: %v", err)
 		}
 	})
 

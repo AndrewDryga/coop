@@ -114,7 +114,7 @@ func TestCmdForkRefusesVerbTypo(t *testing.T) {
 // Every fork subcommand + accepted alias + `watch` is a reserved name (can't be a fork), so no fork
 // shadows a subcommand; a real fork name is not reserved.
 func TestForkReserved(t *testing.T) {
-	for _, r := range []string{"ls", "review", "merge", "rm", "open", "logs", "stop", "path", "acp", "list", "remove", "watch"} {
+	for _, r := range []string{"ls", "review", "merge", "rm", "open", "logs", "stop", "path", "acp", "watch"} {
 		if !forkReserved(r) {
 			t.Errorf("forkReserved(%q) = false, want true", r)
 		}
@@ -122,7 +122,8 @@ func TestForkReserved(t *testing.T) {
 			t.Errorf("validForkName(%q) = true, want false (a fork can't be named a reserved verb)", r)
 		}
 	}
-	for _, ok := range []string{"api", "web", "feature-x", "wip2"} {
+	// v3 dropped the list/remove aliases, so they are ordinary (allowed) fork names now.
+	for _, ok := range []string{"api", "web", "feature-x", "wip2", "list", "remove"} {
 		if forkReserved(ok) {
 			t.Errorf("forkReserved(%q) = true, want false", ok)
 		}
@@ -132,12 +133,13 @@ func TestForkReserved(t *testing.T) {
 	}
 }
 
-// `coop fork list` is an alias for `coop fork ls` (rule: `ls`/`list` list everywhere) — it lists an
-// empty repo cleanly (exit 0), it does NOT try to create a fork named "list".
-func TestCmdForkListAlias(t *testing.T) {
+// v3 dropped the `list` alias: `coop fork list` (no agent) is refused as a near-miss of `ls`, not
+// treated as a lister. (A fork literally named "list" still works with an explicit agent.)
+func TestCmdForkListRetired(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	if code, err := a.cmdFork([]string{"list"}); code != 0 || err != nil {
-		t.Fatalf("cmdFork([list]) = (%d, %v), want (0, nil) — should list, not create", code, err)
+	code, err := a.cmdFork([]string{"list"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
+		t.Fatalf("cmdFork([list]) = (%d, %v), want (2, a near-miss pointing at `coop fork ls`)", code, err)
 	}
 }
 

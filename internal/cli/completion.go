@@ -116,7 +116,7 @@ func (a *app) completionCandidates(prev []string) []string {
 // `coop fork <v> <TAB>` offers existing forks.
 func forkVerbList2(v string) bool {
 	switch v {
-	case "rm", "remove", "merge", "stop", "logs", "review", "open", "path":
+	case "rm", "merge", "stop", "logs", "review", "open", "path":
 		return true
 	}
 	return false
@@ -125,7 +125,7 @@ func forkVerbList2(v string) bool {
 // taskIDVerb reports whether a tasks subcommand takes a task id (so `coop tasks <verb> <TAB>` offers ids).
 func taskIDVerb(v string) bool {
 	switch v {
-	case "claim", "block", "unblock", "done", "path", "rm", "remove":
+	case "claim", "block", "unblock", "done", "path", "rm":
 		return true
 	}
 	return false

@@ -19,9 +19,9 @@
   plain (no color, version, host paths, or state), so it's byte-identical on every machine.
 
 - **A CLI-conformance test graduates the taste rules into the gate.** The committed `.agent/rules`
-  (ls/list everywhere, rm/remove everywhere, every verb documented, retired aliases stay dead) were
-  enforced only by review — and drift crept in. A new table-driven test now walks the CLI surface and
-  asserts them mechanically, so a lister that forgets `list`, a destructive verb without `remove`, a
+  (`ls` everywhere, `rm` everywhere, every verb documented, retired aliases stay dead) were enforced
+  only by review — and drift crept in. A new table-driven test now walks the CLI surface and asserts
+  them mechanically, so a lister that resurrects `list`, a destructive verb that resurrects `remove`, a
   verb added with no help row, or a re-minted retired alias fails CI. (Also documents the `clear`
   bulk-delete verb in `coop tasks --help`, which the test surfaced as undocumented.)
 
@@ -35,12 +35,12 @@
   placeholder lexicon (`<name>`/`<model>`/`<path>`/`<id>`, ASCII `...`) instead of spelling the same
   value `p`/`m`/`<m>`/`<dir>` with mixed ellipses.
 
-- **BREAKING: retired renamed-command aliases.** v3 removes renamed aliases instead of minting them
-  as forever-compat: `coop clone` (→ `coop fork`), the top-level `coop pool` (→ `coop loop pool`), the
-  verb-first credential edits `coop profiles <default|model|rm> <agent> <profile>` (→ the path grammar
-  `coop profiles <agent> <profile> <verb>`), `coop tasks start` (→ `coop tasks claim`), and
-  `coop loop --debug` (→ `--debug-on-fail`). Each now exits 2 with the exact rewrite (one shared
-  tombstone registry); forgiving *spelling* aliases (`ls`/`list`, `rm`/`remove`) are unaffected. See
+- **BREAKING: v3 has a clean CLI — no backward-compat aliases.** Renamed commands are retired with a
+  tombstone (exit 2 + the exact rewrite, one shared registry): `coop clone` (→ `coop fork`), top-level
+  `coop pool` (→ `coop loop pool`), the verb-first credential edits `coop profiles <default|model|rm>
+  <agent> <profile>` (→ the path grammar `coop profiles <agent> <profile> <verb>`), `coop tasks start`
+  (→ `claim`), and `coop loop --debug` (→ `--debug-on-fail`). And the forgiving *spelling* aliases are
+  dropped too: **`ls` and `rm` are the only spellings** — `list`/`remove` are no longer accepted. See
   MIGRATING.md.
 
 - **A gentler first run.** `coop help` now leads with a FIRST RUN line — `coop build → coop login

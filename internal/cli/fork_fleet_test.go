@@ -84,11 +84,9 @@ func TestParseFleet(t *testing.T) {
 // live board), not error blankly (rule: `ls` is the list verb, it must lead somewhere useful).
 func TestFleetLsRedirect(t *testing.T) {
 	a := &app{cfg: &config.Config{}}
-	for _, sub := range []string{"ls", "list"} {
-		code, err := a.cmdFleet([]string{sub})
-		if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
-			t.Errorf("cmdFleet([%s]) = (%d, %v), want (2, pointing at `coop fork ls`)", sub, code, err)
-		}
+	code, err := a.cmdFleet([]string{"ls"}) // v3: only `ls` redirects; `list` is a plain unknown verb
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
+		t.Errorf("cmdFleet([ls]) = (%d, %v), want (2, pointing at `coop fork ls`)", code, err)
 	}
 }
 

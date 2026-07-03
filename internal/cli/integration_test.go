@@ -113,12 +113,12 @@ func TestIntegrationLifecycleViaDispatcher(t *testing.T) {
 		t.Fatalf("done should MOVE, not delete: tree=%+v", got)
 	}
 
-	// remove --all-done is the only thing that deletes it (--yes skips the gate in this non-TTY test).
-	if code, err := a.cmdTasks([]string{"remove", "--all-done", "--yes"}); code != 0 || err != nil {
-		t.Fatalf("remove --all-done: code=%d err=%v", code, err)
+	// rm --all-done is the only thing that deletes it (--yes skips the gate in this non-TTY test).
+	if code, err := a.cmdTasks([]string{"rm", "--all-done", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("rm --all-done: code=%d err=%v", code, err)
 	}
 	if len(readTaskTree(root)) != 0 {
-		t.Error("remove --all-done left a done task behind")
+		t.Error("rm --all-done left a done task behind")
 	}
 	// No bare (unprefixed) state dir was ever created.
 	for _, bare := range []string{"todo", "in_progress", "blocked", "done"} {
@@ -144,11 +144,11 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	}
 
 	// A non-add command on a queue that doesn't exist must fail and must NOT create it.
-	if code, err := a.cmdTasks([]string{"--tasks", "runner/.agent/tasks", "list"}); code == 0 || err == nil {
-		t.Errorf("list on a missing queue should error, got code=%d err=%v", code, err)
+	if code, err := a.cmdTasks([]string{"--tasks", "runner/.agent/tasks", "ls"}); code == 0 || err == nil {
+		t.Errorf("ls on a missing queue should error, got code=%d err=%v", code, err)
 	}
 	if isTaskDir(filepath.Join(repo, "runner", ".agent", "tasks")) {
-		t.Error("list wrongly created the missing queue dir")
+		t.Error("ls wrongly created the missing queue dir")
 	}
 
 	// An id command across two queues resolves the task itself; an id found NOWHERE errors
@@ -181,13 +181,13 @@ func TestIntegrationMultiQueueRollup(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		if code, err := run("list"); code != 0 || err != nil {
-			t.Fatalf("multi-queue list: code=%d err=%v", code, err)
+		if code, err := run("ls"); code != 0 || err != nil {
+			t.Fatalf("multi-queue ls: code=%d err=%v", code, err)
 		}
 	})
 	for _, want := range []string{"a/" + tasksRoot, "b/" + tasksRoot, "2026-01-01-x", "2026-01-02-y"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("multi-queue list missing %q:\n%s", want, out)
+			t.Errorf("multi-queue ls missing %q:\n%s", want, out)
 		}
 	}
 
@@ -227,9 +227,9 @@ func TestIntegrationListShowsCleanLabels(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# A\n")
 	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-02-b", "task.md"), "# B\n")
 
-	out := captureStdout(t, func() { _, _ = appFor(repo).cmdTasks([]string{"list"}) })
+	out := captureStdout(t, func() { _, _ = appFor(repo).cmdTasks([]string{"ls"}) })
 	if !strings.Contains(out, "todo (1)") || !strings.Contains(out, "in_progress (1)") {
-		t.Errorf("list should head groups with clean labels:\n%s", out)
+		t.Errorf("ls should head groups with clean labels:\n%s", out)
 	}
 	for _, leaked := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done"} {
 		if strings.Contains(out, leaked) {

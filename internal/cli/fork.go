@@ -40,12 +40,11 @@ var forkVerbs = map[string]bool{
 }
 
 // forkReserved reports whether name is off-limits for a fork (validForkName refuses it), so no fork
-// can shadow a subcommand. It's forkVerbs plus the accepted aliases (list→ls, remove→rm) and "watch"
-// (reserved so a fork can't be confused with the fleet-level `coop fleet watch`). Kept separate from
-// forkVerbs so aliases and watch never leak into a suggestion for a command that isn't spelled that way.
+// can shadow a subcommand. It's forkVerbs plus "watch" (reserved so a fork can't be confused with the
+// fleet-level `coop fleet watch`). Kept separate from forkVerbs so "watch" never leaks into a
+// did-you-mean suggestion for a command that doesn't exist on `coop fork`.
 func forkReserved(name string) bool {
-	switch name {
-	case "list", "remove", "watch":
+	if name == "watch" {
 		return true
 	}
 	return forkVerbs[name]
@@ -139,13 +138,13 @@ func (a *app) cmdFork(args []string) (int, error) {
 		return forkHelp()
 	}
 	switch args[0] {
-	case "ls", "list":
+	case "ls":
 		return a.forkLs(args[1:])
 	case "review":
 		return a.forkReview(args[1:])
 	case "merge":
 		return a.forkMerge(args[1:])
-	case "rm", "remove":
+	case "rm":
 		return a.forkRm(args[1:])
 	case "open":
 		return a.forkOpenEditor(args[1:])

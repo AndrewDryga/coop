@@ -33,11 +33,11 @@ type taskArgSpec struct {
 // free-form text (a title / a human's answer) that may start with "-", and decisions self-validates,
 // so they're intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
-	"ls": {[]string{"--all"}, 0}, "list": {[]string{"--all"}, 0},
+	"ls":    {[]string{"--all"}, 0},
 	"lint":  {nil, 0},
 	"claim": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
-	"rm": {[]string{"--all-done", "--yes", "-y"}, 1}, "remove": {[]string{"--all-done", "--yes", "-y"}, 1},
+	"rm": {[]string{"--all-done", "--yes", "-y"}, 1},
 }
 
 // validateArgs enforces a subcommand's flags + positional count: any token starting with "-" must be
@@ -81,7 +81,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	switch sub {
 	case "":
 		return tasksFolderList(root, false) // bare `coop tasks` lists the queue (a useful default view; see rule)
-	case "ls", "list":
+	case "ls":
 		return tasksFolderList(root, slices.Contains(args, "--all"))
 	case "lint":
 		return tasksFolderLint(root)
@@ -100,7 +100,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderMove(root, args, stateDone, "done", "done")
 	case "path":
 		return tasksFolderPath(root, args)
-	case "rm", "remove":
+	case "rm":
 		return tasksFolderRemove(root, args)
 	case "clear": // bulk-delete idiom shared with `coop loop pool clear`: clear the done archive
 		return tasksFolderRemove(root, append([]string{"--all-done"}, args...))
@@ -118,14 +118,11 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
 var tasksVerbs = []string{"ls", "lint", "add", "claim", "block", "unblock", "done", "watch", "path", "rm", "clear", "split", "decisions"}
 
-// tasksAliases are accepted alternate spellings (→ a canonical verb: list→ls, start→claim, remove→rm),
-// recognized by isTasksSubcommand but kept out of suggestions, which name only the canonical form.
-var tasksAliases = map[string]bool{"list": true, "remove": true}
-
-// isTasksSubcommand reports whether s names a `coop tasks` subcommand (or alias). cmdTasks
-// uses it to catch `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path.
+// isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
+// `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
+// compat aliases (ls/rm are the only spellings), so this is plain tasksVerbs membership.
 func isTasksSubcommand(s string) bool {
-	return tasksAliases[s] || slices.Contains(tasksVerbs, s)
+	return slices.Contains(tasksVerbs, s)
 }
 
 // findTask locates a task by ID across all state dirs: an exact ID match, else a unique

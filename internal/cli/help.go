@@ -296,19 +296,19 @@ var commandHelp = map[string]string{
   agent CLI's own default. coop never validates a model id — a bad one fails in
   the agent's own error.`,
 
-	"pool": `coop loop pool (alias: coop pool) — which profiles this repo's loops rotate.
+	"pool": `coop loop pool — which profiles this repo's loops rotate.
 
   Usage: coop loop pool                          show this repo's pool
          coop loop pool add <agent> <profile>...   add profiles to the rotation
-         coop loop pool rm  <agent> <profile>...   remove profiles
+         coop loop pool rm  <agent> <profile>...   drop profiles from the rotation
          coop loop pool clear <agent>            drop the agent's pool
 
   When an unattended loop hits a rate/usage limit it switches to another profile in
   the pool and keeps going, so a long run survives a subscription cap. With no pool
   set the loop rotates across ALL signed-in profiles for the agent; a pool narrows
   that to a chosen set. Pools are per-repo and stored outside the repo (names only).
-  It's a setting of the loop — hence the home under 'coop loop'; the old top-level
-  'coop pool' still works as an alias.`,
+  It's a setting of the loop — hence the home under 'coop loop' (the old top-level
+  'coop pool' was retired in v3).`,
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 

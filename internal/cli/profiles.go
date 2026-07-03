@@ -22,21 +22,20 @@ import (
 //
 //	coop profiles claude personal model opus
 //
-// The older verb-first forms (`default|model|rm <agent> <profile> …`) stay accepted —
-// they shipped, and aliasing them here is cheaper than breaking fingers — but the path
-// grammar is the documented one.
+// The older verb-first forms (`default|model|rm <agent> <profile> …`) were retired in v3 — they
+// tombstone with the path-grammar rewrite (see removedCommandNote "profiles verb").
 func (a *app) cmdProfiles(args []string) (int, error) {
 	if len(args) > 0 {
 		if _, ok := agents.Get(args[0]); ok && len(args) > 1 {
 			return a.profilePath(args[0], args[1], args[2:])
 		}
 		switch args[0] {
-		case "default", "model", "rm", "remove":
+		case "default", "model", "rm":
 			// v3: the verb-first forms (`coop profiles rm <agent> <p>`) are retired for the path grammar
 			// (`coop profiles <agent> <p> rm`, handled above). Tombstone the old spelling loudly.
 			note, _ := removedCommandNote("profiles verb")
 			return 2, errors.New(note)
-		case "ls", "list":
+		case "ls":
 			// Bare `coop profiles` already lists — steer `ls` there instead of "unknown agent" (rule:
 			// `ls` is the list verb, so it must lead somewhere useful, not read as an agent filter).
 			return 2, fmt.Errorf("coop profiles already lists every profile — just run `coop profiles` (no %q)", args[0])
@@ -164,7 +163,7 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 			return 2, fmt.Errorf("unexpected argument %q (usage: coop profiles %s %s default)", rest[1], agent, profile)
 		}
 		return a.setProfileDefault([]string{agent, profile})
-	case "rm", "remove":
+	case "rm":
 		for _, x := range rest[1:] { // only --yes may follow rm here; anything else is a mistake
 			if x != "-y" && x != "--yes" {
 				return 2, fmt.Errorf("unexpected argument %q (usage: coop profiles %s %s rm [--yes])", x, agent, profile)

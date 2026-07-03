@@ -95,13 +95,13 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		// id-addressed commands find their task in whichever queue holds it; only the commands that
 		// CREATE into a queue (add, split) need one unambiguous target.
 		switch sub {
-		case "ls", "list":
+		case "ls":
 			return tasksListAll(repo, rels)
 		case "lint":
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "block", "unblock", "done", "path", "rm", "remove", "clear":
+		case "claim", "block", "unblock", "done", "path", "rm", "clear":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return tasksListAll(repo, rels)
@@ -189,7 +189,7 @@ func tasksListAll(repo string, rels []string) (int, error) {
 // id-less exception: it clears every queue's done archive.
 func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (int, error) {
 	args := rest[1:]
-	if sub == "clear" || ((sub == "rm" || sub == "remove") && slices.Contains(args, "--all-done")) {
+	if sub == "clear" || (sub == "rm" && slices.Contains(args, "--all-done")) {
 		total := 0
 		for _, rel := range rels {
 			total += countDone(filepath.Join(repo, rel))

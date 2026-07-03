@@ -265,8 +265,8 @@ func TestCmdTasksFolderDispatch(t *testing.T) {
 	if code, err := cmdTasksFolder(root, root, []string{"add", "Hello world"}); code != 0 || err != nil {
 		t.Fatalf("add via dispatch: code=%d err=%v", code, err)
 	}
-	if code, err := cmdTasksFolder(root, root, []string{"list"}); code != 0 || err != nil {
-		t.Fatalf("list via dispatch: code=%d err=%v", code, err)
+	if code, err := cmdTasksFolder(root, root, []string{"ls"}); code != 0 || err != nil {
+		t.Fatalf("ls via dispatch: code=%d err=%v", code, err)
 	}
 	if code, _ := cmdTasksFolder(root, root, []string{"bogus"}); code != 2 {
 		t.Errorf("unknown sub should return code 2, got %d", code)
@@ -299,7 +299,7 @@ func TestTasksVerbsIncludeWatch(t *testing.T) {
 	if err := unknownErr("tasks command", "watxh", tasksVerbs); !strings.Contains(err.Error(), `did you mean "watch"`) {
 		t.Errorf("expected a watch suggestion, got: %v", err)
 	}
-	for _, s := range []string{"watch", "ls", "list", "remove", "decisions"} {
+	for _, s := range []string{"watch", "ls", "rm", "clear", "decisions"} {
 		if !isTasksSubcommand(s) {
 			t.Errorf("isTasksSubcommand(%q) = false, want true", s)
 		}
@@ -307,8 +307,11 @@ func TestTasksVerbsIncludeWatch(t *testing.T) {
 	if isTasksSubcommand("bogus") {
 		t.Error("isTasksSubcommand(bogus) = true, want false")
 	}
-	if isTasksSubcommand("start") { // v3: retired in favor of claim
-		t.Error("isTasksSubcommand(start) = true, want false (retired)")
+	// v3 keeps no compat aliases: start→claim, list→ls, remove→rm are all retired.
+	for _, s := range []string{"start", "list", "remove"} {
+		if isTasksSubcommand(s) {
+			t.Errorf("isTasksSubcommand(%q) = true, want false (retired in v3)", s)
+		}
 	}
 }
 

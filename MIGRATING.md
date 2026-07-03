@@ -2,8 +2,7 @@
 
 ## v3: retired command aliases
 
-v3 removes renamed-command aliases instead of carrying them forever. Each retired form now exits 2
-with the rewrite (forgiving *spelling* aliases like `ls`/`list` and `rm`/`remove` stay). Rewrite:
+v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/tombstoned; rewrite:
 
 | Retired | Use |
 | --- | --- |
@@ -12,6 +11,8 @@ with the rewrite (forgiving *spelling* aliases like `ls`/`list` and `rm`/`remove
 | `coop profiles <default\|model\|rm> <agent> <profile>` | `coop profiles <agent> <profile> <default\|model\|rm>` |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |
+| `<any> list` (e.g. `coop tasks list`) | `<any> ls` — `ls` is the only list verb |
+| `<any> remove` (e.g. `coop tasks remove`) | `<any> rm` — `rm` is the only destructive verb |
 
 ## A legacy `.agent/TASKS.md` → the folder task system
 
