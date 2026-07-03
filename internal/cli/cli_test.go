@@ -30,7 +30,7 @@ func TestRejectArgs(t *testing.T) {
 // the help intercept keyed on argv[0] alone, so the canonical form printed loop's page and only the
 // deprecated `coop pool --help` alias reached the pool page.
 func TestMainLoopPoolHelpRoutesToPoolPage(t *testing.T) {
-	const poolMarker = "which profiles this repo's loops rotate" // unique to commandHelp["pool"]
+	const poolMarker = "which credentials this repo's loops rotate" // unique to commandHelp["pool"]
 	for _, argv := range [][]string{
 		{"loop", "pool", "--help"},
 		{"loop", "pool", "add", "--help"},

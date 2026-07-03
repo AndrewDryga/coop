@@ -389,3 +389,40 @@ func TestLoadEgressFailsClosed(t *testing.T) {
 		t.Errorf("open: Egress=%q warnings=%v, want open + no warnings", c.Egress, c.Warnings)
 	}
 }
+
+// ModelFor resolves through five tiers, most specific first: explicit (--model), the
+// pool target's model, the standing fallback (preset lead / COOP_LOOP_MODEL), the active
+// profile's mark, then COOP_<AGENT>_MODEL.
+func TestModelForTiers(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("COOP_CLAUDE_MODEL", "env-model")
+	dir := t.TempDir()
+	c := &Config{ConfigDir: dir}
+	c.profileModels = map[string]string{"claude/default": "marked"}
+
+	if got := c.ModelFor("claude"); got != "marked" {
+		t.Errorf("mark beats env: got %q", got)
+	}
+	c.SetFallbackModel("claude", "fallback")
+	if got := c.ModelFor("claude"); got != "fallback" {
+		t.Errorf("fallback beats mark: got %q", got)
+	}
+	c.SetTargetModel("claude", "target")
+	if got := c.ModelFor("claude"); got != "target" {
+		t.Errorf("target beats fallback: got %q", got)
+	}
+	c.SetActiveModel("claude", "explicit")
+	if got := c.ModelFor("claude"); got != "explicit" {
+		t.Errorf("explicit beats target: got %q", got)
+	}
+	// A bare target clears its tier, so resolution falls through again.
+	c.SetActiveModel("claude", "")
+	c.SetTargetModel("claude", "")
+	if got := c.ModelFor("claude"); got != "fallback" {
+		t.Errorf("cleared target falls to fallback: got %q", got)
+	}
+	c.SetFallbackModel("claude", "")
+	if got := c.ModelFor("claude"); got != "marked" {
+		t.Errorf("cleared fallback falls to the mark: got %q", got)
+	}
+}

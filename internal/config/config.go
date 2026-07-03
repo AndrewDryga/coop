@@ -71,8 +71,10 @@ type Config struct {
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
 	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
 
-	activeModels  map[string]string // per-run selected model (--model / the loop's COOP_LOOP_MODEL)
-	profileModels map[string]string // stored per-(agent,profile) default model (from ModelsFile), key "agent/profile"
+	activeModels   map[string]string // per-run EXPLICIT model (--model / fleet model=) — the top tier
+	targetModels   map[string]string // the active pool target's model (credential@model), below explicit
+	fallbackModels map[string]string // standing default (preset lead model / COOP_LOOP_MODEL), below a target
+	profileModels  map[string]string // stored per-(agent,profile) default model (from ModelsFile), key "agent/profile"
 }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
@@ -327,15 +329,39 @@ func (c *Config) SetActiveProfile(agent, name string) {
 // model a run resolves to when none is given on the CLI. Managed by `coop models default`.
 func (c *Config) ModelsFile() string { return filepath.Join(c.ConfigDir, "models") }
 
-// SetActiveModel selects the model a run of agent uses, overriding every stored default —
-// the CLI's --model flag (and the loop's COOP_LOOP_MODEL) land here. Empty clears the
-// selection, falling back to the profile/agent defaults.
+// SetActiveModel selects the model a run of agent uses, overriding every other tier —
+// only an EXPLICIT choice lands here: the CLI's --model flag or a fleet model=. Empty
+// clears the selection, falling back to the lower tiers.
 func (c *Config) SetActiveModel(agent, model string) {
 	if c.activeModels == nil {
 		c.activeModels = map[string]string{}
 	}
 	c.activeModels[agent] = model
 }
+
+// SetTargetModel selects the active pool target's model — a loop applies it at start and
+// on every rotation, so a `work@sonnet` target runs sonnet until the pool moves on. It
+// ranks below an explicit --model and above every static default. Empty clears it (a bare
+// credential target), so resolution falls through to the fallback/mark/env tiers.
+func (c *Config) SetTargetModel(agent, model string) {
+	if c.targetModels == nil {
+		c.targetModels = map[string]string{}
+	}
+	c.targetModels[agent] = model
+}
+
+// SetFallbackModel sets the run's standing default model — a preset lead's model, or the
+// loop applying COOP_LOOP_MODEL — ranking below an explicit --model and any pool target's
+// model, but above the profile marks and COOP_<AGENT>_MODEL.
+func (c *Config) SetFallbackModel(agent, model string) {
+	if c.fallbackModels == nil {
+		c.fallbackModels = map[string]string{}
+	}
+	c.fallbackModels[agent] = model
+}
+
+// FallbackModel returns the run's standing default model for agent ("" when none set).
+func (c *Config) FallbackModel(agent string) string { return c.fallbackModels[agent] }
 
 // ProfileModelOf returns the model marked as agent's default for the named profile
 // (via `coop models default`), or "" when none is marked.
@@ -400,14 +426,24 @@ func (c *Config) AgentModelDefault(agent string) string {
 	return c.conf[key]
 }
 
-// ModelFor resolves the model a run of agent should use, most specific first: the per-run
-// selection (--model, or the loop applying COOP_LOOP_MODEL), then the ACTIVE profile's
-// marked default (`coop models default` — re-resolved per call, so the loop's profile
-// rotation picks up each profile's own mark), then the agent-wide COOP_<AGENT>_MODEL.
+// ModelFor resolves the model a run of agent should use, most specific first:
+//  1. the explicit per-run choice (--model / fleet model=),
+//  2. the active pool target's model (a loop's `work@sonnet` — re-set on each rotation),
+//  3. the run's standing default (a preset lead's model, else the loop's COOP_LOOP_MODEL),
+//  4. the ACTIVE profile's marked default (`coop models default` — re-resolved per call,
+//     so the loop's credential rotation picks up each profile's own mark),
+//  5. the agent-wide COOP_<AGENT>_MODEL.
+//
 // "" means no coop-level choice — the agent CLI's own default runs (including a model
 // baked into COOP_<AGENT>_CMD, which the adapters never override; see agent.withModel).
 func (c *Config) ModelFor(agent string) string {
 	if m := c.activeModels[agent]; m != "" {
+		return m
+	}
+	if m := c.targetModels[agent]; m != "" {
+		return m
+	}
+	if m := c.fallbackModels[agent]; m != "" {
 		return m
 	}
 	if m := c.ProfileModelOf(agent, c.activeProfile(agent)); m != "" {

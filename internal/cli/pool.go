@@ -116,21 +116,25 @@ func (a *app) cmdPool(args []string) (int, error) {
 	switch verb {
 	case "add", "rm":
 		if len(rest) < 2 {
-			return 2, fmt.Errorf("usage: coop loop pool %s <agent> <profile...>", verb)
+			return 2, fmt.Errorf("usage: coop loop pool %s <agent> <credential[@model]...>", verb)
 		}
-		agent, profiles := rest[0], rest[1:]
+		agent, members := rest[0], rest[1:]
 		if _, ok := agents.Get(agent); !ok {
 			return 2, unknownErr("agent", agent, agents.Names())
 		}
-		for _, p := range profiles { // a mistyped flag mustn't be stored as a profile named "--x"
-			if !validProfileName(p) {
-				return 2, fmt.Errorf("invalid profile name %q — a profile is a single name (no '/', '..', or leading '-')", p)
+		for _, m := range members { // a mistyped flag mustn't be stored as a member named "--x"
+			t := parsePoolTarget(m)
+			if !validProfileName(t.credential) {
+				return 2, fmt.Errorf("invalid credential name %q — a member is credential[@model], the name a single segment (no '/', '..', or leading '-')", m)
+			}
+			if strings.Contains(m, "@") && t.model == "" {
+				return 2, fmt.Errorf("member %q has an empty model — use credential@model, or drop the @", m)
 			}
 		}
 		if verb == "add" {
-			for _, p := range profiles { // a pool member you haven't signed into yet won't rotate
-				if !box.ProfileAuthed(a.cfg, agent, p) {
-					ui.Warn("%s profile %q isn't signed in — run: coop login %s --profile %s", agent, p, agent, p)
+			for _, m := range members { // a pool member you haven't signed into yet won't rotate
+				if t := parsePoolTarget(m); !box.ProfileAuthed(a.cfg, agent, t.credential) {
+					ui.Warn("%s credential %q isn't signed in — run: coop login %s --profile %s", agent, t.credential, agent, t.credential)
 				}
 			}
 		}
@@ -139,9 +143,9 @@ func (a *app) cmdPool(args []string) (int, error) {
 		err := modifyPoolRegistry(a.cfg, func(reg poolRegistry) {
 			cur := reg[repo][agent]
 			if verb == "add" {
-				assignPool(reg, repo, agent, addProfiles(cur, profiles))
+				assignPool(reg, repo, agent, addProfiles(cur, members))
 			} else {
-				assignPool(reg, repo, agent, removeProfiles(cur, profiles))
+				assignPool(reg, repo, agent, removeProfiles(cur, members))
 			}
 		})
 		if err != nil {
@@ -173,8 +177,8 @@ func (a *app) showPool(repo string) (int, error) {
 	fmt.Println(p.Bold(filepath.Base(repo) + " — loop rotation pool"))
 	byAgent := reg[repo]
 	if len(byAgent) == 0 {
-		fmt.Println("  none set — the loop rotates across ALL signed-in profiles")
-		fmt.Println("  narrow it with: coop loop pool add <agent> <profile...>")
+		fmt.Println("  none set — the loop rotates across ALL signed-in credentials")
+		fmt.Println("  narrow it with: coop loop pool add <agent> <credential[@model]...>")
 		return 0, nil
 	}
 	for _, agent := range agents.Names() {
@@ -207,18 +211,47 @@ func removeProfiles(cur, rm []string) []string {
 	return out
 }
 
-// profilePool is the loop's view of a repo+agent's rotation pool: an ordered set of
-// signed-in profiles and which ones are rate-limited, with a sticky cursor that stays on
-// one profile until it's limited, then advances. It is pure (the clock is injected) so the
-// rotation policy is unit-tested without sleeping.
-type profilePool struct {
-	profiles []string             // ordered, signed-in members; len >= 1
-	limited  map[string]time.Time // profile -> when its limit resets
-	idx      int                  // sticky cursor: advances only on a limit
+// poolTarget is one rotation-pool member: a credential (a stored account) and an
+// optional model to run it on — the `credential@model` grammar. Two targets on the SAME
+// credential with different models are distinct members, so a rate limit on `work@opus`
+// can fall back to `work@sonnet` (same login, cheaper model, no re-auth) before the pool
+// rotates to another account.
+type poolTarget struct {
+	credential string
+	model      string // "" = the credential's own defaults resolve (mark/env/CLI default)
 }
 
-func newProfilePool(profiles []string) *profilePool {
-	return &profilePool{profiles: profiles, limited: map[string]time.Time{}}
+// parsePoolTarget splits a pool member "credential[@model]" into its parts.
+func parsePoolTarget(s string) poolTarget {
+	cred, model, _ := strings.Cut(s, "@")
+	return poolTarget{credential: strings.TrimSpace(cred), model: strings.TrimSpace(model)}
+}
+
+// String renders the member back in its wire form (what pools.json stores and errors show).
+func (t poolTarget) String() string {
+	if t.model == "" {
+		return t.credential
+	}
+	return t.credential + "@" + t.model
+}
+
+// profilePool is the loop's view of a repo+agent's rotation pool: an ordered set of
+// signed-in credential targets and which ones are rate-limited, with a sticky cursor that
+// stays on one target until it's limited, then advances. The limit map is keyed per
+// TARGET, so `work@sonnet` stays available while `work@opus` cools down. It is pure (the
+// clock is injected) so the rotation policy is unit-tested without sleeping.
+type profilePool struct {
+	targets []poolTarget             // ordered, signed-in members; len >= 1
+	limited map[poolTarget]time.Time // target -> when its limit resets
+	idx     int                      // sticky cursor: advances only on a limit
+}
+
+func newProfilePool(members []string) *profilePool {
+	p := &profilePool{limited: map[poolTarget]time.Time{}}
+	for _, m := range members {
+		p.targets = append(p.targets, parsePoolTarget(m))
+	}
+	return p
 }
 
 // buildPool resolves the rotation pool for repo+agent: the repo's configured pool if set,
@@ -241,18 +274,20 @@ func buildPool(cfg *config.Config, repo, agent string) (*profilePool, error) {
 	return authedPool(cfg, agent, names)
 }
 
-// authedPool wraps names in a rotation pool, keeping only the signed-in ones (order preserved) and
-// erroring when none are — the loop can't run unauthenticated. Shared by buildPool (repo pool / all
-// signed-in) and a fork's explicit per-fork profile list (`profile=` in .agent/fleet, or --profile).
-func authedPool(cfg *config.Config, agent string, names []string) (*profilePool, error) {
+// authedPool wraps members ("credential" or "credential@model") in a rotation pool,
+// keeping only those whose CREDENTIAL is signed in (order preserved) and erroring when
+// none are — the loop can't run unauthenticated. Shared by buildPool (repo pool / all
+// signed-in) and a fork's explicit per-fork credential list (fleet credentials:, or
+// --credential).
+func authedPool(cfg *config.Config, agent string, members []string) (*profilePool, error) {
 	var authed []string
-	for _, p := range names {
-		if box.ProfileAuthed(cfg, agent, p) {
-			authed = append(authed, p)
+	for _, m := range members {
+		if box.ProfileAuthed(cfg, agent, parsePoolTarget(m).credential) {
+			authed = append(authed, m)
 		}
 	}
 	if len(authed) == 0 {
-		return nil, fmt.Errorf("%s has no signed-in profile — run: coop login %s [--profile <name>]", agent, agent)
+		return nil, fmt.Errorf("%s has no signed-in credential — run: coop login %s [--profile <name>]", agent, agent)
 	}
 	return newProfilePool(authed), nil
 }
@@ -272,55 +307,76 @@ func parseProfileList(s string) []string {
 	return out
 }
 
-// rotateOnLimit handles a rate limit when the pool has more than one profile: it advances
-// the pool, points cfg at the new active profile (so the next iteration mounts and runs it),
-// and either switches immediately (resetting the wait counter, since a free rotation is
-// progress) or, when every profile is limited, sleeps until the soonest reset.
+// applyPoolTarget points cfg at the pool's active target: the credential the next
+// iteration mounts, and the target's model (empty clears it, so a bare credential falls
+// through to the fallback/mark/env tiers). One choke point for loop start + every rotation.
+func (a *app) applyPoolTarget(agent string, pool *profilePool) {
+	t := pool.active()
+	a.cfg.SetActiveProfile(agent, t.credential)
+	a.cfg.SetTargetModel(agent, t.model)
+}
+
+// rotateOnLimit handles a rate limit when the pool has more than one target: it advances
+// the pool, points cfg at the new active target (credential + its model, so the next
+// iteration mounts and runs it), and either switches immediately (resetting the wait
+// counter, since a free rotation is progress) or, when every target is limited, sleeps
+// until the soonest reset.
 func (a *app) rotateOnLimit(agent string, pool *profilePool, resetAt time.Time, waits *int, wake <-chan struct{}) {
 	prev := pool.active()
 	sleep, until := pool.onLimit(resetAt, *waits, time.Now())
-	a.cfg.SetActiveProfile(agent, pool.active())
+	a.applyPoolTarget(agent, pool)
 	if sleep > 0 {
-		ui.Info("all %d %s profiles are rate limited — waiting for the soonest reset", len(pool.profiles), agent)
+		ui.Info("all %d %s pool targets are rate limited — waiting for the soonest reset", len(pool.targets), agent)
 		sleepForLimit(sleep, until, wake)
 		return
 	}
-	ui.Info("%s profile %q rate limited — switching to %q", agent, prev, pool.active())
+	ui.Info("%s target %q rate limited — switching to %q", agent, prev, pool.active())
 	*waits = 0 // only consecutive all-limited waits count toward the stop cap
 }
 
-func (p *profilePool) active() string { return p.profiles[p.idx] }
+func (p *profilePool) active() poolTarget { return p.targets[p.idx] }
 
-// rotates reports whether there's more than one profile to switch between.
-func (p *profilePool) rotates() bool { return len(p.profiles) > 1 }
+// members renders the pool back in wire form ("credential[@model]"), for messages and tests.
+func (p *profilePool) members() []string {
+	out := make([]string, len(p.targets))
+	for i, t := range p.targets {
+		out[i] = t.String()
+	}
+	return out
+}
 
-// onLimit records that the active profile is rate-limited until resetAt (a zero resetAt
-// means "unknown", so it backs off by attempt), then advances to the next usable profile.
-// It returns how long to sleep before the next iteration — 0 when another profile is free
-// now (switch and retry immediately) — and, when sleeping, the time it's waiting until.
+// rotates reports whether there's more than one target to switch between.
+func (p *profilePool) rotates() bool { return len(p.targets) > 1 }
+
+// onLimit records that the active target is rate-limited until resetAt (a zero resetAt
+// means "unknown", so it backs off by attempt), then advances to the next usable target.
+// The limit is keyed per TARGET, so `work@opus` cooling down leaves `work@sonnet` free —
+// the same-credential model fallback. It returns how long to sleep before the next
+// iteration — 0 when another target is free now (switch and retry immediately) — and,
+// when sleeping, the time it's waiting until.
 func (p *profilePool) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep time.Duration, until time.Time) {
 	if resetAt.IsZero() {
 		resetAt = now.Add(limitWait(limitHint{limited: true}, attempt, now))
 	}
-	p.limited[p.profiles[p.idx]] = resetAt
-	// Sticky rotation: scan the profiles after the current one (wrapping) for the first
-	// that isn't limited as of now — a profile becomes usable again once its reset passes.
-	n := len(p.profiles)
+	p.limited[p.targets[p.idx]] = resetAt
+	// Sticky rotation: scan the targets after the current one (wrapping) for the first
+	// that isn't limited as of now — a target becomes usable again once its reset passes.
+	n := len(p.targets)
 	for i := 1; i <= n; i++ {
 		cand := (p.idx + i) % n
-		if t, ok := p.limited[p.profiles[cand]]; !ok || !t.After(now) {
+		if t, ok := p.limited[p.targets[cand]]; !ok || !t.After(now) {
 			p.idx = cand
 			return 0, time.Time{}
 		}
 	}
-	// Every profile is limited: move to the soonest-resetting one and wait for it.
+	// Every target is limited: move to the soonest-resetting one and wait for it.
 	earliest := 0
-	for i := range p.profiles {
-		if p.limited[p.profiles[i]].Before(p.limited[p.profiles[earliest]]) {
+	for i := range p.targets {
+		if p.limited[p.targets[i]].Before(p.limited[p.targets[earliest]]) {
 			earliest = i
 		}
 	}
 	p.idx = earliest
-	until = p.limited[p.profiles[earliest]]
+	until = p.limited[p.targets[earliest]]
 	return limitWait(limitHint{limited: true, resetAt: until}, attempt, now), until
 }

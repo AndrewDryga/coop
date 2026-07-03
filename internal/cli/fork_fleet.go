@@ -46,12 +46,53 @@ func fleetYAMLFile(repo string) string { return filepath.Join(repo, ".agent", "f
 // preset's lead when preset is set, else the default agent. Credentials/model/consult
 // override the preset for this fork only.
 type fleetForkYAML struct {
-	Agent       string   `yaml:"agent"`
-	Tasks       string   `yaml:"tasks"`
-	Preset      string   `yaml:"preset"`
-	Credentials []string `yaml:"credentials"`
-	Model       string   `yaml:"model"`
-	Consult     bool     `yaml:"consult"`
+	Agent       string           `yaml:"agent"`
+	Tasks       string           `yaml:"tasks"`
+	Preset      string           `yaml:"preset"`
+	Credentials []credentialYAML `yaml:"credentials"`
+	Model       string           `yaml:"model"`
+	Consult     bool             `yaml:"consult"`
+}
+
+// credentialYAML is one credential target in a fleet fork's credentials: list — a plain
+// name ("work", or the compact "work@opus"), or the structured form
+// {name: work, model: opus} for a model fallback member. Both normalize to the pool's
+// credential[@model] wire form.
+type credentialYAML struct {
+	Name  string
+	Model string
+}
+
+func (c *credentialYAML) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		t := parsePoolTarget(n.Value)
+		c.Name, c.Model = t.credential, t.model
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return fmt.Errorf("a credential is a name (\"work\", \"work@opus\") or {name: work, model: opus}")
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		switch key := n.Content[i].Value; key {
+		case "name", "model":
+		default:
+			return fmt.Errorf("credential: unknown key %q (known: name, model)", key)
+		}
+	}
+	var m struct {
+		Name  string `yaml:"name"`
+		Model string `yaml:"model"`
+	}
+	if err := n.Decode(&m); err != nil {
+		return err
+	}
+	c.Name, c.Model = m.Name, m.Model
+	return nil
+}
+
+// wire renders the target in the pool's credential[@model] member form.
+func (c credentialYAML) wire() string {
+	return poolTarget{credential: c.Name, model: c.Model}.String()
 }
 
 // parseFleetYAML parses .agent/fleet.yaml preserving the author's fork order (a plain
@@ -91,7 +132,10 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 		if err := doc.Forks.Content[i+1].Decode(&f); err != nil {
 			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %v", name, err)
 		}
-		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, profiles: f.Credentials, model: f.Model, preset: f.Preset, consult: f.Consult}
+		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, model: f.Model, preset: f.Preset, consult: f.Consult}
+		for _, c := range f.Credentials {
+			e.profiles = append(e.profiles, c.wire())
+		}
 		if !validForkName(e.name) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: invalid fork name %q", e.name)
 		}
@@ -109,7 +153,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 			e.agent = agents.Default() // no preset to supply a lead — same default as the legacy format
 		}
 		for _, c := range e.profiles {
-			if c == "" {
+			if parsePoolTarget(c).credential == "" {
 				return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: credentials has an empty name", e.name)
 			}
 		}
@@ -242,6 +286,8 @@ const fleetTemplate = `# coop fleet — a declarative set of fork loops. Start i
 #                 models, credentials — see 'coop help presets')
 #   credentials:  the credential(s) this fork's loop rotates on a rate limit. Give each
 #                 fork a DIFFERENT account so they run in parallel instead of contending.
+#                 A member may carry a model for same-account fallback — "work@opus" or
+#                 {name: work, model: opus} — tried in order before the next account.
 #                 Overrides the preset's lead credentials for this fork.
 #   model:        the model this fork runs (see 'coop models'); overrides the preset.
 #   consult:      true — iterations may ask the other signed-in agents for a read-only
@@ -317,8 +363,8 @@ func (a *app) fleetUp(args []string) (int, error) {
 			continue // the fork's preset supplies the lead; forkCreate validates after resolving it
 		}
 		for _, p := range e.profiles {
-			if !box.ProfileAuthed(a.cfg, e.agent, p) {
-				unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, p))
+			if cred := parsePoolTarget(p).credential; !box.ProfileAuthed(a.cfg, e.agent, cred) {
+				unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, cred))
 			}
 		}
 	}

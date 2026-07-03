@@ -459,14 +459,18 @@ coop login claude --profile personal   # …and a third
 coop profiles                          # list them and which are signed in
 ```
 
-When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to another
-signed-in profile and keeps going, only waiting once every profile is limited. With no
-extra setup it rotates across all of an agent's signed-in profiles; to narrow a repo to a
-chosen set, give it a pool:
+When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to the
+next pool target and keeps going, only waiting once every target is limited. With no
+extra setup it rotates across all of an agent's signed-in credentials; to narrow a repo
+to a chosen set, give it a pool. A target can also carry a **model fallback** —
+`work@opus, work@sonnet` steps down to a cheaper model on the *same* login (no re-auth)
+before rotating to another account, and limits are tracked per target, so `work@sonnet`
+stays available while `work@opus` cools down:
 
 ```bash
-coop loop pool add claude work personal   # this repo's loop rotates just these two
-coop loop pool                             # show the pool (coop loop pool clear claude to reset)
+coop loop pool add claude work personal        # this repo's loop rotates two accounts
+coop loop pool add claude work@opus work@sonnet  # or: model fallback on one account first
+coop loop pool                                 # show the pool (coop loop pool clear claude to reset)
 ```
 
 Which profile a plain interactive `coop claude` uses is a mark you set, not a magic

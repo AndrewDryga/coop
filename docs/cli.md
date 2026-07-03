@@ -167,7 +167,8 @@ coop models [agent] — the model menu per agent.
   'coop fusion claude --model opus', 'coop loop --model haiku',
   'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
 
-  Precedence: --model flag > COOP_LOOP_MODEL (loop runs) > the profile's mark >
+  Precedence: --model flag > the pool target's model (a loop's credential@model)
+  > the preset lead's model > COOP_LOOP_MODEL (loop runs) > the profile's mark >
   COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
   agent CLI's own default. coop never validates a model id — a bad one fails in
   the agent's own error.
@@ -232,8 +233,9 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
   loop) and may set agent:, preset: (an orchestration preset; its lead is the fork's
-  default agent), credentials: [a, b] (rotated on a rate limit — give each fork a
-  DIFFERENT account so they run in parallel instead of contending), model:, and
+  default agent), credentials: (rotated on a rate limit — give each fork a DIFFERENT
+  account so they run in parallel instead of contending; a member may carry a model
+  for same-account fallback: "work@opus" or {name: work, model: opus}), model:, and
   consult: true (iterations may ask the other signed-in agents read-only):
 
     forks:

@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Model fallback in the rotation pool: `credential@model`.** A loop-pool member can now carry a
+  model, so a rate limit steps down on the SAME login before switching accounts:
+  `coop loop pool add claude work@opus work@sonnet other` falls back opus → sonnet with no re-auth,
+  then rotates to `other` — limits are tracked per target, so `work@sonnet` stays available while
+  `work@opus` cools down. Fleet forks take the same idea structurally
+  (`credentials: [{name: work, model: opus}, work@sonnet]`), `coop loop pool` renders the targets,
+  and `pools.json` stays a plain string list, so existing pools load unchanged. Model precedence is
+  now explicitly tiered: `--model`/fleet `model:` > the active target's model > the preset lead's
+  model > `COOP_LOOP_MODEL` > the credential's mark > `COOP_<AGENT>_MODEL` > the agent CLI default.
+
 - **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
   (`.agent/presets/<name>/preset.yaml`) declares who leads and which roles it routes work to —
   each role an agent + model + credentials + routing hints, in one of three modes: `native` (a

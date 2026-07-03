@@ -112,8 +112,8 @@ func TestForkPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forkPool: %v", err)
 	}
-	if !slices.Equal(pool.profiles, []string{"work", "personal"}) {
-		t.Errorf("pool = %v, want [work personal] (ghost dropped)", pool.profiles)
+	if !slices.Equal(pool.members(), []string{"work", "personal"}) {
+		t.Errorf("pool = %v, want [work personal] (ghost dropped)", pool.members())
 	}
 	// Every explicit profile unsigned → an error, so `coop fleet up` fails loud instead of looping
 	// a fork on a profile that can't authenticate.
@@ -125,10 +125,10 @@ func TestForkPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forkPool fallback: %v", err)
 	}
-	got := append([]string{}, pool.profiles...)
+	got := append([]string{}, pool.members()...)
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"personal", "work"}) {
-		t.Errorf("fallback pool = %v, want both signed-in profiles", pool.profiles)
+		t.Errorf("fallback pool = %v, want both signed-in profiles", pool.members())
 	}
 }
 

@@ -328,21 +328,19 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if !fa.agentSet {
 			fa.agent, fa.agentSet = p.LeadAgent, true // the preset's lead wins over the remembered agent
 		}
-		if fa.agent == p.LeadAgent {
-			if len(fa.profiles) == 0 {
-				fa.profiles = p.LeadCredentials
-			}
-			if fa.model == "" {
-				fa.model = p.LeadModel
-			}
+		if fa.agent == p.LeadAgent && len(fa.profiles) == 0 {
+			fa.profiles = p.LeadCredentials // the lead's credentials become the fork's pool
 		}
+		// The lead's MODEL is not merged into fa.model — that's the explicit tier; applyPreset
+		// puts it in the fallback slot, where a pool target's model correctly beats it.
 		a.applyPreset(p, fa.agent)
 	}
-	// Validate the requested profile(s) before any image/clone work, so a typo'd --profile fails fast
-	// and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
+	// Validate the requested credential(s) before any image/clone work, so a typo'd
+	// --credential fails fast and never leaves a stray fork behind (setupFork would
+	// otherwise clone first, then fail). A member may carry a model (credential@model).
 	for _, p := range fa.profiles {
-		if !slices.Contains(a.cfg.Profiles(fa.agent), p) {
-			return 2, fmt.Errorf("%s has no profile %q — sign in first: coop login %s --profile %s", fa.agent, p, fa.agent, p)
+		if cred := parsePoolTarget(p).credential; !slices.Contains(a.cfg.Profiles(fa.agent), cred) {
+			return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --profile %s", fa.agent, cred, fa.agent, cred)
 		}
 	}
 	// --loop with no --tasks defaults to the repo's own queue (.agent/tasks); per-fork slices are
@@ -419,11 +417,14 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, false)
 		}
 	}
-	// A single --profile pins this interactive session's credential profile.
+	// A single --credential pins this interactive session's account; a credential@model
+	// member (pool grammar) also pins the target model, below an explicit --model.
 	if len(fa.profiles) == 1 {
-		if err := a.selectRunProfile(fa.agent, fa.profiles[0]); err != nil {
+		t := parsePoolTarget(fa.profiles[0])
+		if err := a.selectRunProfile(fa.agent, t.credential); err != nil {
 			return 2, err
 		}
+		a.cfg.SetTargetModel(fa.agent, t.model)
 	}
 	// --model pins this interactive session's model (after the remembered-agent resolution
 	// above, so it lands on the agent that actually runs).

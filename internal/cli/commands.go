@@ -1135,27 +1135,28 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	// Model precedence: explicit --model, then the preset's lead model, then COOP_LOOP_MODEL
-	// (inside applyLoopModel), then the profile mark / agent default at resolution time.
-	if model == "" && p != nil && agent == p.LeadAgent {
-		model = p.LeadModel
-	}
+	// Model precedence: explicit --model (the top tier), then the active pool TARGET's model
+	// (applied per rotation — see applyPoolTarget), then the preset's lead model (already in
+	// the fallback slot via applyPreset), then COOP_LOOP_MODEL (applyLoopModel below), then
+	// the profile mark / agent default at resolution time.
 	a.applyLoopModel(agent, model)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	return a.loop(repo, img, agent, "", pool, queues, nil, consult, debugOnFail, preflight) // local loop: no fork label
 }
 
-// applyLoopModel pins the loop's model: an explicit --model wins, else COOP_LOOP_MODEL (the
-// loop-specific default — so overnight runs can grind on a cheaper model than interactive
-// sessions). With neither, nothing is pinned: each iteration rebuilds its command, so the
-// rotated profile's marked model (or the agent default) resolves lazily per iteration.
+// applyLoopModel pins the loop's model tiers: an explicit --model / fleet model= is the
+// top tier (it beats even a pool target's model); COOP_LOOP_MODEL is a standing default
+// BELOW any target model and below a preset lead's model (which applyPreset already put
+// in the fallback slot — don't overwrite it). With nothing set, each iteration resolves
+// lazily: the rotated target's model, then the credential's mark, then the agent default.
 // Shared by `coop loop` and the fork loops.
 func (a *app) applyLoopModel(agent, model string) {
-	if model == "" {
-		model = a.cfg.LoopModel
-	}
 	if model != "" {
 		a.cfg.SetActiveModel(agent, model)
+		return
+	}
+	if a.cfg.LoopModel != "" && a.cfg.FallbackModel(agent) == "" {
+		a.cfg.SetFallbackModel(agent, a.cfg.LoopModel)
 	}
 }
 
@@ -1399,9 +1400,9 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 		if c.Todo+c.Doing == 0 {
 			break
 		}
-		// Run this iteration on the pool's active subscription; the mount and the agent
-		// command both resolve cfg.AgentDir, so pointing cfg here is all it takes.
-		a.cfg.SetActiveProfile(agent, pool.active())
+		// Run this iteration on the pool's active target — its credential (the mount and the
+		// agent command both resolve cfg.AgentDir) and its model, if the target carries one.
+		a.applyPoolTarget(agent, pool)
 		// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 		ui.Info("%s", progressBanner(n, c, active))
 		code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, consult)

@@ -262,6 +262,36 @@ forks:
 	}
 }
 
+// A fleet fork's credentials: list takes plain names, compact targets, and the
+// structured {name, model} form — all normalizing to the pool's credential[@model]
+// members, so a fleet can declare a same-account model-fallback chain.
+func TestParseFleetYAMLCredentialTargets(t *testing.T) {
+	got, err := parseFleetYAML(`
+forks:
+  core:
+    tasks: t
+    credentials:
+      - work
+      - work@opus
+      - {name: work, model: sonnet}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"work", "work@opus", "work@sonnet"}; !reflect.DeepEqual(got[0].profiles, want) {
+		t.Errorf("credentials = %v, want %v", got[0].profiles, want)
+	}
+	for name, in := range map[string]string{
+		"unknown target key": "forks:\n  a: {tasks: t, credentials: [{name: w, mode: opus}]}\n",
+		"empty name":         "forks:\n  a: {tasks: t, credentials: [{model: opus}]}\n",
+		"list-form target":   "forks:\n  a: {tasks: t, credentials: [[w]]}\n",
+	} {
+		if _, err := parseFleetYAML(in); err == nil {
+			t.Errorf("%s: want an error, got none", name)
+		}
+	}
+}
+
 // Both fleet formats present is ambiguous — refuse loudly; each alone loads.
 func TestLoadFleetAmbiguity(t *testing.T) {
 	repo := t.TempDir()

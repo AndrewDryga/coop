@@ -66,7 +66,9 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 			a.cfg.SetActiveProfile(lead, p.LeadCredentials[0])
 		}
 		if p.LeadModel != "" {
-			a.cfg.SetActiveModel(lead, p.LeadModel)
+			// The fallback tier, not the explicit one: an explicit --model must beat it, and so
+			// must a loop pool target's model (`work@sonnet` — the rate-limit model fallback).
+			a.cfg.SetFallbackModel(lead, p.LeadModel)
 		}
 	}
 	a.preset = p

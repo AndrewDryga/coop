@@ -294,23 +294,30 @@ var commandHelp = map[string]string{
   'coop fusion claude --model opus', 'coop loop --model haiku',
   'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
 
-  Precedence: --model flag > COOP_LOOP_MODEL (loop runs) > the profile's mark >
+  Precedence: --model flag > the pool target's model (a loop's credential@model)
+  > the preset lead's model > COOP_LOOP_MODEL (loop runs) > the profile's mark >
   COOP_<AGENT>_MODEL (agent-wide) > a model baked into COOP_<AGENT>_CMD > the
   agent CLI's own default. coop never validates a model id — a bad one fails in
   the agent's own error.`,
 
-	"pool": `coop loop pool — which profiles this repo's loops rotate.
+	"pool": `coop loop pool — which credentials this repo's loops rotate.
 
-  Usage: coop loop pool                          show this repo's pool
-         coop loop pool add <agent> <profile>...   add profiles to the rotation
-         coop loop pool rm  <agent> <profile>...   drop profiles from the rotation
-         coop loop pool clear <agent>            drop the agent's pool
+  Usage: coop loop pool                                     show this repo's pool
+         coop loop pool add <agent> <credential[@model]>...   add rotation targets
+         coop loop pool rm  <agent> <credential[@model]>...   drop rotation targets
+         coop loop pool clear <agent>                       drop the agent's pool
 
-  When an unattended loop hits a rate/usage limit it switches to another profile in
-  the pool and keeps going, so a long run survives a subscription cap. With no pool
-  set the loop rotates across ALL signed-in profiles for the agent; a pool narrows
-  that to a chosen set. Pools are per-repo and stored outside the repo (names only).
-  It's a setting of the loop — hence the home under 'coop loop' (the old top-level
+  When an unattended loop hits a rate/usage limit it switches to the next pool
+  target and keeps going, so a long run survives a subscription cap. A target is a
+  credential (a stored account) with an optional model: 'work@opus, work@sonnet,
+  other' falls back from opus to sonnet on the SAME login (no re-auth) before
+  rotating to the other account — limits are tracked per target, so work@sonnet
+  stays available while work@opus cools down. A bare credential runs its own
+  default model (its mark, else COOP_LOOP_MODEL, else the agent default).
+
+  With no pool set the loop rotates across ALL signed-in credentials for the
+  agent. Pools are per-repo and stored outside the repo (names only). It's a
+  setting of the loop — hence the home under 'coop loop' (the old top-level
   'coop pool' was retired in v3).`,
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
@@ -421,8 +428,9 @@ var commandHelp = map[string]string{
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
   loop) and may set agent:, preset: (an orchestration preset; its lead is the fork's
-  default agent), credentials: [a, b] (rotated on a rate limit — give each fork a
-  DIFFERENT account so they run in parallel instead of contending), model:, and
+  default agent), credentials: (rotated on a rate limit — give each fork a DIFFERENT
+  account so they run in parallel instead of contending; a member may carry a model
+  for same-account fallback: "work@opus" or {name: work, model: opus}), model:, and
   consult: true (iterations may ask the other signed-in agents read-only):
 
     forks:
