@@ -40,8 +40,8 @@ SETUP & MAINTENANCE
   coop build                        build the box image (stable, pinned)
   coop update                       self-update coop, then rebuild the box
   coop completion <shell>           shell tab-completion (bash, zsh)
-  coop up                           start sibling services (compose.agent.yml)
-  coop down                         stop sibling services
+  coop up                           start the compose.agent.yml services
+  coop down                         stop the compose.agent.yml services
   coop doctor                       attack the box, prove isolation holds
   coop check-secrets                scan the working tree for committed secrets
   coop help                         this help

@@ -129,21 +129,21 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box")
 	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
-	// `coop up`/`down` act on this repo's compose.agent.yml — name its real services, and dim the
-	// pair when there's no compose file to act on. Repo resolution is best-effort (help runs
-	// anywhere; outside a repo, or with no compose, the rows dim).
+	// `coop up`/`down` act on this repo's compose.agent.yml — always NAME the file (it's what makes
+	// the rows obvious), listing its real services when present, and dim the pair when there's none to
+	// act on. Repo resolution is best-effort (help runs anywhere; outside a repo, or with no compose).
 	repo, _ := box.ResolveRepo(cfg.RepoOverride)
 	switch {
-	case ref: // the reference form is machine-independent: canonical, compose-less rows
-		dimRow("coop up", "start sibling services (compose.agent.yml)")
-		dimRow("coop down", "stop sibling services")
+	case ref: // the reference form is machine-independent: no per-repo service list
+		row("coop up", "start the compose.agent.yml services")
+		row("coop down", "stop the compose.agent.yml services")
 	case len(scaffold.ComposeServiceNames(box.ComposeFile(repo))) > 0:
 		services := scaffold.ComposeServiceNames(box.ComposeFile(repo))
-		row("coop up", "compose.agent.yml services ("+strings.Join(services, ", ")+")")
+		row("coop up", "start the compose.agent.yml services ("+strings.Join(services, ", ")+")")
 		row("coop down", "stop the compose.agent.yml services")
 	default:
 		dimRow("coop up", "none in compose.agent.yml yet")
-		dimRow("coop down", "stop sibling services")
+		dimRow("coop down", "stop the compose.agent.yml services")
 	}
 	row("coop doctor", "attack the box, prove isolation holds")
 	row("coop check-secrets", "scan the working tree for committed secrets")

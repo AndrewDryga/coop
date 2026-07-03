@@ -11,10 +11,16 @@
   (`row()` keeps a minimum gap) — see [[no-color-in-width-fields]].
 - Flags, examples, and sub-verbs live in the command's own `coop <cmd> --help`, not
   crammed into the top-level index.
+- Name the concrete file/artifact a command acts on, not a vague category. `coop up`/`down`
+  say **`compose.agent.yml`** (its real services when present), never "sibling services" — a
+  glanceable row has no body to explain an abstraction, so the concrete name IS the
+  explanation. Same for any row/error one-liner: prefer the real path/file/flag.
 
 **Why:** the top-level help is scanned, not read. Lowercase headers, collapsed verbs, and
 `·`-separated descriptions read as clutter; people expect a man-page-like reference where
-each command stands on its own line. "I never saw any docs collapsing it like that."
+each command stands on its own line. "I never saw any docs collapsing it like that." And on
+the up/down rows: "it should stay the filename so it's obvious what this is" — "sibling
+services" hides the one thing that makes the row make sense.
 
 **How to apply:**
 - New command → add a one-line row to `helpText` (under its group) AND a `commandHelp`
