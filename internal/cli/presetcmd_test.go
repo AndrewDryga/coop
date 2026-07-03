@@ -72,14 +72,49 @@ func TestCmdPresets(t *testing.T) {
 		t.Errorf("extra args = (%d, %v), want a usage error", code, err)
 	}
 
-	// An empty repo lists nothing, with the pointer to the format.
+	// An empty repo lists nothing, with the pointer to the scaffolder.
 	b := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
 	empty := captureStdout(t, func() {
 		if code, err := b.cmdPresets(nil); code != 0 || err != nil {
 			t.Errorf("cmdPresets(empty) = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(empty, "no presets") || !strings.Contains(empty, "coop help presets") {
-		t.Errorf("empty listing should point at the format:\n%s", empty)
+	if !strings.Contains(empty, "no presets") || !strings.Contains(empty, "coop presets init") {
+		t.Errorf("empty listing should point at the scaffolder:\n%s", empty)
+	}
+}
+
+// `coop presets init [name]` scaffolds the documented template (default name frontier),
+// which then lists and shows like any hand-written preset; re-init refuses to clobber.
+func TestCmdPresetsInit(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
+	if code, err := a.cmdPresets([]string{"init"}); code != 0 || err != nil {
+		t.Fatalf("presets init = (%d, %v)", code, err)
+	}
+	list := captureStdout(t, func() {
+		if code, err := a.cmdPresets(nil); code != 0 || err != nil {
+			t.Errorf("cmdPresets() after init = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{"frontier", "lead claude/claude-fable-5", "thinker (native claude)", "critic (consult codex)", "fast (delegate gemini)"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("scaffolded preset should list cleanly, missing %q:\n%s", want, list)
+		}
+	}
+	if code, err := a.cmdPresets([]string{"init"}); code != 2 || err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("re-init = (%d, %v), want a refusal", code, err)
+	}
+	// A custom name lands under its own folder; extra args and bad names are usage errors.
+	if code, err := a.cmdPresets([]string{"init", "myteam"}); code != 0 || err != nil {
+		t.Fatalf("presets init myteam = (%d, %v)", code, err)
+	}
+	if _, err := os.Stat(filepath.Join(a.cfg.RepoOverride, ".agent", "presets", "myteam", "preset.yaml")); err != nil {
+		t.Errorf("named init should write its own folder: %v", err)
+	}
+	if code, err := a.cmdPresets([]string{"init", "a", "b"}); code != 2 || err == nil {
+		t.Errorf("extra init args = (%d, %v), want a usage error", code, err)
+	}
+	if code, err := a.cmdPresets([]string{"init", "../evil"}); code != 2 || err == nil {
+		t.Errorf("bad init name = (%d, %v), want a refusal", code, err)
 	}
 }

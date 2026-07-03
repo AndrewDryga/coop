@@ -19,8 +19,11 @@ func (a *app) cmdPresets(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	if len(args) > 0 && args[0] == "init" {
+		return a.presetsInit(repo, args[1:])
+	}
 	if len(args) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets [name])", args[1])
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets [init] [name])", args[1])
 	}
 	if len(args) == 1 {
 		if args[0] == "ls" { // rule: `ls` must lead somewhere useful, not read as a preset name
@@ -32,7 +35,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 	names := preset.List(repo)
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
 	if len(names) == 0 {
-		fmt.Println("no presets — create " + preset.Dir + "/<name>/preset.yaml (see 'coop help presets')")
+		fmt.Println("no presets — scaffold the documented frontier recipe: coop presets init")
 		return 0, nil
 	}
 	w := colWidth(names, 0, 24)
@@ -59,6 +62,25 @@ func (a *app) cmdPresets(args []string) (int, error) {
 	}
 	fmt.Println()
 	fmt.Println(ui.Dim("  run one: coop <agent>|loop|fusion|acp --preset <name>   ·   format: coop help presets"))
+	return 0, nil
+}
+
+// presetsInit scaffolds a ready-to-edit preset from the documented frontier template
+// (`coop presets init [name]`, name defaulting to "frontier"). The template loads
+// cleanly as written, so the new preset lists and runs immediately.
+func (a *app) presetsInit(repo string, args []string) (int, error) {
+	name := "frontier"
+	switch {
+	case len(args) > 1:
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets init [name])", args[1])
+	case len(args) == 1:
+		name = args[0]
+	}
+	path, err := preset.Scaffold(repo, name)
+	if err != nil {
+		return 2, err
+	}
+	ui.OK("wrote %s — edit the recipe, then run: coop claude --preset %s", path, name)
 	return 0, nil
 }
 

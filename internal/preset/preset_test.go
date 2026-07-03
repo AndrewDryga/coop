@@ -197,3 +197,42 @@ func TestEnvKey(t *testing.T) {
 		t.Errorf("EnvKey = %q, want FAST_WRITER", got)
 	}
 }
+
+// Scaffold writes the documented frontier template, which must LOAD as written —
+// commented credentials/prompt lines, real model ids, all three role modes — so a
+// scaffolded preset lists and runs immediately. It never clobbers, and rejects names
+// that could never round-trip (the presets command's own verbs included).
+func TestScaffold(t *testing.T) {
+	repo := t.TempDir()
+	path, err := Scaffold(repo, "frontier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != Path(repo, "frontier") {
+		t.Errorf("path = %q, want %q", path, Path(repo, "frontier"))
+	}
+	p, err := Load(repo, "frontier")
+	if err != nil {
+		t.Fatalf("the scaffolded template must load cleanly: %v", err)
+	}
+	if p.LeadAgent != "claude" || p.LeadModel != "claude-fable-5" {
+		t.Errorf("template lead = %s/%s", p.LeadAgent, p.LeadModel)
+	}
+	if len(p.Roles) != 3 || !p.HasConsult() || !p.HasDelegate() {
+		t.Errorf("template should carry all three role modes: %+v", p.Roles)
+	}
+	// The header names the chosen preset so the run hints are copy-pasteable.
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "--preset frontier") {
+		t.Errorf("template header should name the preset:\n%s", data)
+	}
+	// Never clobbers; validates the name.
+	if _, err := Scaffold(repo, "frontier"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("re-scaffold should refuse: %v", err)
+	}
+	for _, bad := range []string{"", "init", "ls", "../evil", "-x"} {
+		if _, err := Scaffold(t.TempDir(), bad); err == nil {
+			t.Errorf("Scaffold(%q) should refuse the name", bad)
+		}
+	}
+}

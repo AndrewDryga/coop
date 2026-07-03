@@ -160,6 +160,7 @@ coop credentials — list stored credentials; a path grammar edits one.
 coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
   Usage: coop presets [name]        list them, or show one recipe in full
+         coop presets init [name]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
   work to — each role an agent + model + credentials + routing hints. A CREDENTIAL

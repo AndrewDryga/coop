@@ -117,10 +117,20 @@ func List(repo string) []string {
 	return names
 }
 
+// ValidName reports whether name can be a preset: a single folder-name segment, not a
+// verb of the presets command itself (a preset named "init" could never be shown).
+func ValidName(name string) bool {
+	switch name {
+	case "", ".", "..", "init", "ls":
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\") && !strings.HasPrefix(name, "-")
+}
+
 // Load reads and validates .agent/presets/<name>/preset.yaml under repo, loading any
 // referenced Markdown prompt files. Every error names the preset and what to fix.
 func Load(repo, name string) (*Preset, error) {
-	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+	if !ValidName(name) {
 		return nil, fmt.Errorf("invalid preset name %q — a preset is a folder name under %s/", name, Dir)
 	}
 	path := Path(repo, name)

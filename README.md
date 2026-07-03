@@ -605,6 +605,7 @@ Run anything under it — the preset's lead is the default agent, and an explici
 agent/`--model`/`--credential` still wins:
 
 ```bash
+coop presets init                # scaffold this exact recipe, ready to edit
 coop claude --preset frontier    # interactive lead with the full routing contract
 coop loop --preset frontier      # unattended: lead credentials rotate, roles ride along
 coop fusion --preset frontier    # council + the preset's roles

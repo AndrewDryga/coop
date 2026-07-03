@@ -10,7 +10,8 @@
   `coop login claude --credential work`); `coop profiles` tombstones with the rewrite, and the
   `--profile` flag is retired too — it errors with the rename (an agent's OWN `--profile` still
   passes through after a `--`). A new `coop presets [name]` command lists the repo's presets (a
-  broken one shows its error) and shows one recipe in full. On-disk storage is unchanged
+  broken one shows its error) and shows one recipe in full; `coop presets init [name]` scaffolds
+  the documented frontier template, valid and runnable as written. On-disk storage is unchanged
   (`<agent>/profiles/<name>/`, `pools.json`) — nothing to migrate.
 
 - **Model fallback in the rotation pool: `credential@model`.** A loop-pool member can now carry a
