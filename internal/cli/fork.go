@@ -83,7 +83,7 @@ func forkHelp() (int, error) {
 		{"coop fork review <name>", "brief + diff (--stat, --tool, --open)"},
 		{"coop fork <name> acp [agent]", "front the fork as an ACP agent (for editors)"},
 		{"coop fork merge <name>", "rebase onto your branch and land it (--all = fleet)"},
-		{"coop fork rm <name>", "discard a fork (refuses unmerged/dirty without --force)"},
+		{"coop fork rm <name>", "discard a fork (confirms; refuses unmerged/dirty without --force)"},
 		{"coop fork open <name>", "open the fork in your editor"},
 		{"coop fork path <name>", "print the fork's filesystem path"},
 		{"coop fork stop <name>", "stop a detached loop"},
@@ -91,14 +91,14 @@ func forkHelp() (int, error) {
 	flags := []struct{ flag, desc string }{
 		{"-c, --continue", "resume the prior session (the default on re-entry)"},
 		{"    --new", "start a fresh agent session on re-entry"},
-		{"    --fresh", "recreate the fork from scratch (new clone + session)"},
+		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
 		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
 		{"    --model", "model for this fork's agent (see 'coop models')"},
 		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
-		{"-f, --force", "merge/rm: override the gate, policy, or dirty guard"},
-		{"-y, --yes", "merge: confirm landing + removal (required without a TTY)"},
+		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
+		{"-y, --yes", "merge/rm: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
 	}
 	pad := func(s string, w int) string {
@@ -192,6 +192,7 @@ type forkArgs struct {
 	agent      string
 	agentSet   bool // an agent was given explicitly (vs defaulted / remembered from the fork)
 	fresh      bool
+	force      bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
 	cont       bool // -c/--continue: force-resume the prior session (now the default on re-entry)
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
@@ -218,6 +219,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.agentSet = true
 		case x == "--fresh":
 			fa.fresh = true
+		case x == "--force", x == "-f":
+			fa.force = true
 		case x == "--continue", x == "-c":
 			fa.cont = true
 		case x == "--new":
@@ -321,6 +324,20 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 		fa.tasks = abs
 	}
+	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so
+	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
+	// BEFORE resolveImage (like the --profile check above): fail fast, never spin up an image to refuse.
+	if fa.fresh {
+		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+		if err != nil {
+			return -1, err
+		}
+		if ws := forkWorkspace(repo, fa.name); pathExists(ws) {
+			if err := forkRmSafe(forkUnmerged(repo, fa.name), gitDirty(ws), fa.force); err != nil {
+				return 1, fmt.Errorf("--fresh: %w (add --force to recreate anyway)", err)
+			}
+		}
+	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
@@ -328,7 +345,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	ws := forkWorkspace(repo, fa.name)
 	existed := pathExists(ws) // a re-entry (vs a fresh fork) — resume by default below
 	if fa.fresh && pathExists(ws) {
-		if err := destroyFork(repo, fa.name); err != nil {
+		if err := destroyFork(repo, fa.name); err != nil { // guard already passed above
 			return -1, err
 		}
 	}
@@ -836,6 +853,20 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 	fmt.Println(ui.Bold("diff:"))
 }
 
+// oneForkName returns the single fork name from the parsed positionals, rejecting a second one. The
+// rm/merge/stop/logs families used to let a later positional silently overwrite the first — acting on
+// only the last and printing success — a data-loss footgun (`fork rm a b` looks like it removed both).
+// Zero positionals returns "" so callers can apply their own "name required" usage error.
+func oneForkName(verb string, pos []string) (string, error) {
+	if len(pos) > 1 {
+		return "", fmt.Errorf("coop fork %s takes one name (got %s)", verb, strings.Join(pos, ", "))
+	}
+	if len(pos) == 0 {
+		return "", nil
+	}
+	return pos[0], nil
+}
+
 // forkRmSafe is the guard for `rm`: never silently drop an agent's work.
 func forkRmSafe(unmerged, dirty, force bool) error {
 	if force {
@@ -861,20 +892,26 @@ func forkUnmerged(repo, ws string) bool {
 }
 
 func (a *app) forkRm(args []string) (int, error) {
-	name, force := "", false
+	force := false
+	var pos []string
 	for _, x := range args {
 		switch x {
 		case "--force", "-f":
 			force = true
+		case "--yes", "-y": // accepted so `--yes` skips the confirm below (read via hasYes)
 		default:
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork rm: unknown flag %q", x)
 			}
-			name = x
+			pos = append(pos, x)
 		}
 	}
+	name, err := oneForkName("rm", pos)
+	if err != nil {
+		return 2, err
+	}
 	if name == "" {
-		return 2, errors.New("usage: coop fork rm <name> [--force]")
+		return 2, errors.New("usage: coop fork rm <name> [--force] [--yes]")
 	}
 	if !validForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
@@ -900,6 +937,11 @@ func (a *app) forkRm(args []string) (int, error) {
 	}
 	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
 		return 1, err
+	}
+	// Confirm the (unrecoverable) delete — default-No at a TTY, refuse piped without --yes. Distinct
+	// from --force above, which overrides the unmerged/dirty guard, not this prompt.
+	if err := destroyGate("delete fork "+name, hasYes(args)); err != nil {
+		return 2, err
 	}
 	if err := destroyFork(repo, name); err != nil {
 		return -1, err

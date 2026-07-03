@@ -297,6 +297,94 @@ func TestForkRmRefusesRunning(t *testing.T) {
 	}
 }
 
+func TestOneForkName(t *testing.T) {
+	if n, err := oneForkName("rm", []string{"x"}); n != "x" || err != nil {
+		t.Errorf("oneForkName(1) = (%q, %v), want (x, nil)", n, err)
+	}
+	if n, err := oneForkName("rm", nil); n != "" || err != nil {
+		t.Errorf("oneForkName(0) = (%q, %v), want (\"\", nil)", n, err)
+	}
+	if _, err := oneForkName("rm", []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), "got a, b") {
+		t.Errorf("oneForkName(2) should error naming both, got %v", err)
+	}
+}
+
+// rm/merge/stop/logs must reject a SECOND positional (they used to silently act on only the last and
+// report success). The check fires before any repo/clone work, so a bare app suffices.
+func TestForkVerbsRejectSecondPositional(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	for verb, fn := range map[string]func([]string) (int, error){
+		"rm": a.forkRm, "merge": a.forkMerge, "stop": a.forkStop, "logs": a.forkLogs,
+	} {
+		code, err := fn([]string{"aaa", "bbb"})
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "one name (got aaa, bbb)") {
+			t.Errorf("fork %s a b = (%d, %v), want (2, 'takes one name (got aaa, bbb)')", verb, code, err)
+		}
+	}
+}
+
+func TestParseForkCreateForce(t *testing.T) {
+	for _, flag := range []string{"--force", "-f"} {
+		fa, err := parseForkCreate([]string{"myfork", "--fresh", flag})
+		if err != nil || !fa.force || !fa.fresh {
+			t.Errorf("parseForkCreate(%s) = fa{force:%v fresh:%v} err=%v, want force+fresh", flag, fa.force, fa.fresh, err)
+		}
+	}
+}
+
+// `coop fork rm` confirms before the unrecoverable delete: without --yes and no TTY it refuses and
+// keeps the fork; --yes deletes. (The unmerged/dirty guard is separate — see TestForkRmSafe.)
+func TestForkRmGate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	code, err := a.forkRm([]string{"perf"}) // no --yes, no TTY → refuse
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("fork rm without --yes = (%d, %v), want (2, a refusal naming --yes)", code, err)
+	}
+	if !pathExists(ws) {
+		t.Error("a refused fork rm must not delete the fork")
+	}
+	if code, err := a.forkRm([]string{"perf", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("fork rm --yes = (%d, %v), want (0, nil)", code, err)
+	}
+	if pathExists(ws) {
+		t.Error("fork rm --yes should delete the fork")
+	}
+}
+
+// `coop fork <name> --fresh` refuses to recreate a fork with uncommitted work unless --force, and the
+// refusal happens BEFORE any image work — so the dirty work survives. (--fresh --force reclones, which
+// needs a runtime, so only the refusal path is exercised here.)
+func TestForkFreshGuardsDirtyWork(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "wip.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A") // staged, uncommitted → dirty
+	code, err := a.forkCreate([]string{"perf", "--fresh"})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("fork --fresh on a dirty fork = (%d, %v), want a refusal mentioning --force", code, err)
+	}
+	if !pathExists(filepath.Join(ws, "wip.txt")) {
+		t.Error("a refused --fresh must not have destroyed the dirty work")
+	}
+}
+
 func TestParseShortstat(t *testing.T) {
 	ins, del := parseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
 	if ins != 42 || del != 7 {

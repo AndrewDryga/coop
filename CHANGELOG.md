@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork destroyers stop losing work quietly.** `coop fork <name> --fresh` recreated a fork by
+  destroying the old clone with no check — it now runs the same unmerged/dirty guard as `fork rm`
+  (recreate anyway with `--fresh --force`), and fails fast before any image work. `coop fork rm` now
+  confirms before deleting (default No at a terminal; `--yes` to skip; distinct from `--force`, which
+  overrides the unmerged/dirty guard). `fork rm/merge/stop/logs` reject a second name (`fork rm a b`
+  used to act on only `b` and report success). And a post-merge cleanup now keeps a fork whose
+  worktree has uncommitted changes (an interrupted iteration) instead of discarding them.
+
 - **Deletions now confirm before they happen.** `coop tasks rm` (which matches by substring and has
   no undo — the queue is gitignored), `coop tasks rm --all-done`, and `coop profiles rm` all went
   straight to `os.RemoveAll` with no prompt. They now route through one shared gate: at a terminal it

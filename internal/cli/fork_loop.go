@@ -266,7 +266,8 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string,
 }
 
 func (a *app) forkLogs(args []string) (int, error) {
-	name, follow := "", false
+	follow := false
+	var pos []string
 	for _, x := range args {
 		switch x {
 		case "-f", "--follow":
@@ -275,8 +276,12 @@ func (a *app) forkLogs(args []string) (int, error) {
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork logs: unknown flag %q", x)
 			}
-			name = x
+			pos = append(pos, x)
 		}
+	}
+	name, err := oneForkName("logs", pos)
+	if err != nil {
+		return 2, err
 	}
 	if name != "" && !validForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
@@ -356,7 +361,10 @@ func (a *app) forkStop(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
 		return 2, errors.New("usage: coop fork stop <name>")
 	}
-	name := args[0]
+	name, err := oneForkName("stop", args)
+	if err != nil {
+		return 2, err
+	}
 	if !validForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}

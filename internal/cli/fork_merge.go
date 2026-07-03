@@ -269,7 +269,8 @@ func (a *app) landFork(repo, ws, name string) error {
 }
 
 func (a *app) forkMerge(args []string) (int, error) {
-	all, force, yes, name := false, false, false, ""
+	all, force, yes := false, false, false
+	var pos []string
 	for _, x := range args {
 		switch x {
 		case "--all":
@@ -282,8 +283,12 @@ func (a *app) forkMerge(args []string) (int, error) {
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork merge: unknown flag %q", x)
 			}
-			name = x
+			pos = append(pos, x)
 		}
+	}
+	name, err := oneForkName("merge", pos)
+	if err != nil {
+		return 2, err
 	}
 	// Validate the static args before the environment: a missing <name> (without --all) is a usage
 	// error (exit 2), not the dirty-tree / non-interactive error (exit 1) the env gates below report.
@@ -341,7 +346,15 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return 1, nil
 	}
 	ui.OK("landed %s", name)
-	if approve("remove the fork?", yes) {
+	// The merge landed the committed work (via review/<name>); an interrupted iteration can still leave
+	// uncommitted changes in the fork's worktree, so keep a dirty fork with a note rather than discard it.
+	if gitDirty(ws) {
+		ui.Warn("keeping fork %s — its worktree has uncommitted changes; inspect, then 'coop fork rm %s --force'", name, name)
+		return 0, nil
+	}
+	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
+	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
+	if destroyGate("remove the landed fork "+name, yes) == nil {
 		if err := destroyFork(repo, name); err != nil {
 			return -1, err
 		}
@@ -399,7 +412,11 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 		}
 		if ok {
 			ui.OK("landed %s", n)
-			_ = destroyFork(repo, n)
+			if gitDirty(ws) { // interrupted iteration — don't discard uncommitted work in the batch cleanup
+				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
+			} else {
+				_ = destroyFork(repo, n)
+			}
 			landed = append(landed, n)
 		}
 	}

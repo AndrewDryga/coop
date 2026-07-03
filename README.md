@@ -175,7 +175,7 @@ any of them.
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
-| `coop fork rm <name> [--force]` | discard a fork (refuses unmerged/dirty work without `--force`) |
+| `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
 | `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-a-fork-from-zed-acp) over ACP |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
@@ -266,7 +266,7 @@ coop fork perf           # re-enter: continues codex's last session by default
 coop fork ls             # list your forks (branch, changes, state, last activity)
 coop fork review perf    # review: a brief, then the diff
 coop fork merge perf     # land: rebase onto your branch, then close the fork
-coop fork rm perf        # or discard it (refuses unmerged/dirty work without --force)
+coop fork rm perf        # or discard it (confirms first; refuses unmerged/dirty work without --force)
 ```
 
 `coop fork <name>` opens a new fork or re-enters an existing one (`coop clone` is a
@@ -293,7 +293,8 @@ git-excluded `.coop/`) and resumes exactly that one — so a loop or a peer cons
 shares the fork's directory can never hijack the "continue". codex can't be handed an
 id, so it resumes the most-recent *interactive* session recorded for the fork (skipping
 `codex exec` loop/consult runs). It falls back to a fresh session when none exists.
-Force one with `--new`; `--fresh` recreates the whole fork.
+Force one with `--new`; `--fresh` recreates the whole fork (refusing to discard unmerged/dirty
+work without `--force`).
 
 ### Review — in your terminal or your IDE
 
