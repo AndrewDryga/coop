@@ -28,6 +28,13 @@
   is tiered: `--model`/fleet `model:` > the active ladder entry's model > `COOP_LOOP_MODEL`/preset >
   the account's mark > `COOP_<AGENT>_MODEL` > the agent CLI default.
 
+- **`coop loop` takes project-specific audit checks in `.agent/audit.md`.** The end-of-loop
+  auditor always verifies each shipped task's gate passes and has a commit; now, if
+  `.agent/audit.md` is present, its Markdown is appended to the audit prompt and the final pass
+  reopens any task that fails one of your checks (changelog updated, docs regenerated, no stray
+  TODOs, …). Inlined into the prompt, so it works the same for every agent; committed by default
+  (un-ignored like presets). Opt-in — no file is scaffolded. See `coop help loop`.
+
 - **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
   (`.agent/presets/<name>/preset.yaml`) declares who leads (a model-first `models:` ladder) and
   which roles it routes work to — each role an agent + model + routing hints (a role runs on its
@@ -36,8 +43,10 @@
   write-capable `coop-delegate` wrapper: it may edit the worktree but never commits — HEAD is
   compared before/after and a commit fails loud — and runs are serialized; the lead reviews the
   diff, runs the gate, and owns the commit). coop generates the lead's routing contract from the
-  YAML (exact invocations included); optional Markdown files (`lead.md`, `roles/<name>.md`) append
-  to it, never replace it. `--preset <name>` works on `coop <agent>`, `loop`, `fusion`, `acp`, and
+  YAML (exact invocations included); `coop presets init` scaffolds a self-documenting template (a
+  leading comment on every field) plus starter prompt files under `roles/` (`roles/lead.md`,
+  `roles/<name>.md`) that append to the generated contract — never replacing it — and read as
+  usable defaults for any project. `--preset <name>` works on `coop <agent>`, `loop`, `fusion`, `acp`, and
   `coop fork <name> --loop`; explicit agent/`--model`/`--credential` flags still win. Credentials
   are the public name for stored accounts/logins (rate-limit slots): launch surfaces take
   `--credential`/`--credentials`, and `coop models` now lists

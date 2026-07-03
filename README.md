@@ -612,7 +612,7 @@ Run anything under it — the preset's lead is the default agent, and an explici
 agent/`--model`/`--credential` still wins:
 
 ```bash
-coop presets init                # scaffold this exact recipe, ready to edit
+coop presets init                # scaffold the recipe + starter prompt files, ready to edit
 coop claude --preset frontier    # interactive lead with the full routing contract
 coop loop --preset frontier      # unattended: lead credentials rotate, roles ride along
 coop fusion --preset frontier    # council + the preset's roles
@@ -620,8 +620,10 @@ coop fusion --preset frontier    # council + the preset's roles
 
 coop generates the lead's routing contract from the YAML — each role, when to use it,
 and the exact invocation (`@deep-reasoner`, `coop-consult codex --fresh "…"`, or a
-`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. Your Markdown
-prompt files append to that generated text; they never replace the safety/routing rules.
+`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. `coop presets init`
+also scaffolds starter `roles/lead.md` and `roles/fast.md` (usable defaults, not
+placeholders); their Markdown appends to that generated text — never replacing the
+safety/routing rules — and you edit or delete them freely.
 
 `coop-delegate` is the write-capable counterpart of the read-only `coop-consult`: the
 delegate may edit the shared worktree, runs are serialized, and it must **not** commit —
@@ -803,6 +805,12 @@ in `10_in_progress/`), and won't quit while either has work. Pass `claude`/`code
 to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
 command if you need something custom. When the queue empties, a fresh auditor re-checks
 every task in `99_done/` against the git log and reopens anything that doesn't hold up.
+
+Extend that audit with your own checks: drop them in `.agent/audit.md` (Markdown) and
+they're appended to the auditor's prompt, so the final pass also reopens a shipped task
+that fails one — e.g. the CHANGELOG gained an entry, the docs were regenerated, no stray
+`TODO`s. It's committed with the repo (shared, like a preset) and opt-in — no file is
+scaffolded for you.
 
 **Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
 queue is verified done (or the audit reopened work — run `coop loop` again); `1` a failure; `2` a
