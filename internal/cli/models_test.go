@@ -139,6 +139,21 @@ func TestModelsIsAMenuNotAProfileDump(t *testing.T) {
 	}
 }
 
+// The menu names the current ids the frontier preset recipe uses, so a preset author
+// can copy them straight from `coop models`.
+func TestModelsMenuHasFrontierIDs(t *testing.T) {
+	out := captureStdout(t, func() {
+		if code, err := modelsApp(t).cmdModels(nil); code != 0 || err != nil {
+			t.Errorf("cmdModels = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{"claude-fable-5", "claude-opus-4-8", "gpt-5.5", "gemini-3.5-flash"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("menu missing the recipe id %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestProfilesListsModelColumn: the profiles listing carries each profile's marked model
 // (a column, with — for unmarked) — that's where per-profile model state lives.
 func TestProfilesListsModelColumn(t *testing.T) {

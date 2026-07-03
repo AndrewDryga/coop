@@ -14,6 +14,26 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | `<any> list` (e.g. `coop tasks list`) | `<any> ls` — `ls` is the only list verb |
 | `<any> remove` (e.g. `coop tasks remove`) | `<any> rm` — `rm` is the only destructive verb |
 
+## The fleet file: `.agent/fleet` → `.agent/fleet.yaml`
+
+The fleet is YAML now. A legacy one-line `.agent/fleet` still reads (with a note), but
+having **both** files is an error. Each old line
+`<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]` becomes a `forks:` entry:
+
+```yaml
+forks:
+  <name>:
+    agent: <agent>            # omit to default (or to take a preset's lead)
+    tasks: <tasks-path>
+    credentials: [a, b]       # was profile=a,b
+    model: <m>                # was model=m
+    consult: true             # was consult=1
+```
+
+Delete `.agent/fleet` once translated. New per-fork key: `preset: <name>` (an
+orchestration preset from `.agent/presets/`; see `coop help presets`). On launch
+surfaces, `--credential` is the new spelling of `--profile` (which remains an alias).
+
 ## A legacy `.agent/TASKS.md` → the folder task system
 
 Older coop repos kept the work queue in a single `.agent/TASKS.md` (with

@@ -101,8 +101,9 @@ func forkHelpText(p ui.Palette) string {
 		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
-		{"    --profile", "credential profile(s) for this fork (a,b rotates with --loop)"},
+		{"    --credential", "credential(s) for this fork (a,b rotates with --loop; alias --profile)"},
 		{"    --model", "model for this fork's agent (see 'coop models')"},
+		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
 		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
 		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
 		{"-y, --yes", "merge/rm: skip the delete confirm (required without a TTY)"},
@@ -204,9 +205,10 @@ type forkArgs struct {
 	loop       bool
 	detach     bool
 	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
-	profiles   []string // --profile <a,b>: the credential profile(s) this fork uses (a loop rotates them)
+	profiles   []string // --credential <a,b> (legacy --profile): the credential(s) this fork uses (a loop rotates them)
 	model      string   // --model <m>: the model this fork's agent runs (beats profile/agent defaults)
 	consult    bool     // --consult: loop iterations may ask the authed peers (interactive forks always may)
+	preset     string   // --preset <name>: the orchestration preset this fork's loop runs under
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
 
@@ -246,18 +248,29 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
-		case x == "--profile":
+		case x == "--profile", x == "--credential", x == "--credentials": // --profile is the legacy spelling
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
+				return fa, fmt.Errorf("coop fork %s needs a credential name (or comma-separated list)", x)
 			}
 			i++
-			fa.profiles = addProfiles(fa.profiles, parseProfileList(rest[i])) // repeated --profile accumulates (deduped), not last-wins
-		case strings.HasPrefix(x, "--profile="):
-			list := parseProfileList(strings.TrimPrefix(x, "--profile="))
+			fa.profiles = addProfiles(fa.profiles, parseProfileList(rest[i])) // repeated flags accumulate (deduped), not last-wins
+		case strings.HasPrefix(x, "--profile="), strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
+			_, val, _ := strings.Cut(x, "=")
+			list := parseProfileList(val)
 			if len(list) == 0 {
-				return fa, errors.New("coop fork --profile needs a profile name (or comma-separated list)")
+				return fa, fmt.Errorf("coop fork %s needs a credential name (or comma-separated list)", strings.SplitN(x, "=", 2)[0])
 			}
 			fa.profiles = addProfiles(fa.profiles, list)
+		case x == "--preset":
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
+				return fa, errors.New("coop fork --preset needs a preset name")
+			}
+			i++
+			fa.preset = rest[i]
+		case strings.HasPrefix(x, "--preset="):
+			if fa.preset = strings.TrimPrefix(x, "--preset="); fa.preset == "" {
+				return fa, errors.New("coop fork --preset needs a preset name")
+			}
 		case x == "--model":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, errors.New("coop fork --model needs a model name")
@@ -303,6 +316,27 @@ func (a *app) forkCreate(args []string) (int, error) {
 	fa, err := parseForkCreate(args)
 	if err != nil {
 		return 2, err
+	}
+	// --preset: load + fail fast (pure local reads), then default the fork's agent,
+	// credentials, and model from the preset's lead — explicit flags still win, and the
+	// lead's model/credentials only apply when the fork actually runs the lead agent.
+	if fa.preset != "" {
+		p, err := a.loadRunPreset(fa.preset)
+		if err != nil {
+			return 2, err
+		}
+		if !fa.agentSet {
+			fa.agent, fa.agentSet = p.LeadAgent, true // the preset's lead wins over the remembered agent
+		}
+		if fa.agent == p.LeadAgent {
+			if len(fa.profiles) == 0 {
+				fa.profiles = p.LeadCredentials
+			}
+			if fa.model == "" {
+				fa.model = p.LeadModel
+			}
+		}
+		a.applyPreset(p, fa.agent)
 	}
 	// Validate the requested profile(s) before any image/clone work, so a typo'd --profile fails fast
 	// and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
@@ -380,7 +414,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.preset, fa.consult)
 		default:
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.profiles, fa.model, fa.consult, false)
 		}
@@ -399,7 +433,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// run when no session for this fork exists. See forkLaunchCmd.
 	cmd := a.forkLaunchCmd(fa, ws, existed)
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent,
+		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	if err == nil {

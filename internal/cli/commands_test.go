@@ -130,19 +130,19 @@ func TestLoopPreflightAndAuditFolder(t *testing.T) {
 }
 
 func TestLoopAgent(t *testing.T) {
-	if got, err := loopAgent(nil); err != nil || got != "claude" {
-		t.Errorf("loopAgent(nil) = (%q, %v), want claude", got, err)
+	if got, explicit, err := loopAgent(nil); err != nil || got != "claude" || explicit {
+		t.Errorf("loopAgent(nil) = (%q, explicit=%v, %v), want claude (defaulted)", got, explicit, err)
 	}
 	for _, ag := range []string{"claude", "codex", "gemini"} {
-		if got, err := loopAgent([]string{ag}); err != nil || got != ag {
-			t.Errorf("loopAgent(%q) = (%q, %v), want %q", ag, got, err, ag)
+		if got, explicit, err := loopAgent([]string{ag}); err != nil || got != ag || !explicit {
+			t.Errorf("loopAgent(%q) = (%q, explicit=%v, %v), want %q explicit", ag, got, explicit, err, ag)
 		}
 	}
-	if _, err := loopAgent([]string{"bogus"}); err == nil {
+	if _, _, err := loopAgent([]string{"bogus"}); err == nil {
 		t.Error("loopAgent(bogus): want error")
 	}
 	// More than one agent is a usage error, not silently last-wins.
-	if _, err := loopAgent([]string{"claude", "codex"}); err == nil {
+	if _, _, err := loopAgent([]string{"claude", "codex"}); err == nil {
 		t.Error("loopAgent(claude codex): want error for more than one agent")
 	}
 }
@@ -179,7 +179,7 @@ func TestParseLoopArgs(t *testing.T) {
 		{[]string{"claude", "--model", "claude-fable-5", "--consult"}, false, "claude", "claude-fable-5", true, false, false, false},
 	}
 	for _, c := range cases {
-		agent, model, consult, debug, preflight, err := parseLoopArgs(c.args, c.def)
+		agent, model, _, consult, debug, preflight, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
@@ -228,7 +228,7 @@ func TestParseGovernor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gov, rest := a.parseGovernor(c.args)
+			gov, rest, _ := a.parseGovernor(c.args)
 			if gov != c.wantGov {
 				t.Errorf("governor = %q, want %q", gov, c.wantGov)
 			}

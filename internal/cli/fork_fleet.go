@@ -11,29 +11,112 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"gopkg.in/yaml.v3"
 )
 
 // fleetEntry is one fork in the declarative fleet: a name, the agent to run it, the tasks tree
-// that seeds its loop, and optionally the credential profile(s) its loop rotates (so a fleet can
-// put each fork on its own account instead of all contending for the repo pool's first profile),
-// the model it runs (so e.g. a risky fork gets the big model and a chore fork a cheap one), and
-// whether its loop iterations may consult the authed peers (the orchestrator pattern, headless).
+// that seeds its loop, and optionally the credential(s) its loop rotates (so a fleet can put
+// each fork on its own account instead of all contending for the repo pool's first one), the
+// model it runs (so e.g. a risky fork gets the big model and a chore fork a cheap one), the
+// orchestration preset it runs under, and whether its loop iterations may consult the authed
+// peers (the orchestrator pattern, headless). agent may be empty when a preset supplies the
+// lead. Per-fork credentials/model/consult override the preset for that fork only.
 type fleetEntry struct {
 	name     string
 	agent    string
 	tasks    string
 	profiles []string
 	model    string
+	preset   string
 	consult  bool
 }
 
-// fleetLineShape is the one-line grammar shown in fleet parse errors.
+// fleetLineShape is the one-line grammar shown in legacy fleet parse errors.
 const fleetLineShape = "<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]"
 
-// fleetFile is the declarative fleet: .agent/fleet, one fork per line as
-// "<name> [agent] <tasks-path>" (agent defaults to claude; the tasks path is required
-// and is relative to the repo root). Blank and `#` lines are ignored.
+// fleetFile is the LEGACY one-line-per-fork fleet (.agent/fleet), read only as a
+// compatibility path; fleetYAMLFile is the primary format.
 func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet") }
+
+// fleetYAMLFile is the declarative fleet: .agent/fleet.yaml, a `forks:` map of fork
+// name → {tasks, agent, preset, credentials, model, consult}.
+func fleetYAMLFile(repo string) string { return filepath.Join(repo, ".agent", "fleet.yaml") }
+
+// fleetForkYAML is one fork's YAML shape. Tasks is required; agent defaults to the
+// preset's lead when preset is set, else the default agent. Credentials/model/consult
+// override the preset for this fork only.
+type fleetForkYAML struct {
+	Agent       string   `yaml:"agent"`
+	Tasks       string   `yaml:"tasks"`
+	Preset      string   `yaml:"preset"`
+	Credentials []string `yaml:"credentials"`
+	Model       string   `yaml:"model"`
+	Consult     bool     `yaml:"consult"`
+}
+
+// parseFleetYAML parses .agent/fleet.yaml preserving the author's fork order (a plain
+// map decode would randomize it, and `fleet up` starts forks in file order). Unknown
+// fields, duplicate names, and every invalid value fail with the fork named.
+func parseFleetYAML(data string) ([]fleetEntry, error) {
+	var doc struct {
+		Forks yaml.Node `yaml:"forks"`
+	}
+	dec := yaml.NewDecoder(strings.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf(".agent/fleet.yaml: malformed YAML: %v", err)
+	}
+	if doc.Forks.Kind == 0 || doc.Forks.IsZero() {
+		return nil, errors.New(".agent/fleet.yaml: a top-level `forks:` map is required")
+	}
+	if doc.Forks.Kind != yaml.MappingNode {
+		return nil, errors.New(".agent/fleet.yaml: `forks:` must be a map of fork name → settings")
+	}
+	var out []fleetEntry
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(doc.Forks.Content); i += 2 {
+		name := doc.Forks.Content[i].Value
+		// Node.Decode doesn't honor KnownFields, so reject unknown per-fork keys explicitly —
+		// a typo'd key (or the legacy profile= spelling) must error, not silently drop.
+		if node := doc.Forks.Content[i+1]; node.Kind == yaml.MappingNode {
+			for k := 0; k+1 < len(node.Content); k += 2 {
+				switch key := node.Content[k].Value; key {
+				case "agent", "tasks", "preset", "credentials", "model", "consult":
+				default:
+					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown key %q (known: agent, tasks, preset, credentials, model, consult)", name, key)
+				}
+			}
+		}
+		var f fleetForkYAML
+		if err := doc.Forks.Content[i+1].Decode(&f); err != nil {
+			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %v", name, err)
+		}
+		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, profiles: f.Credentials, model: f.Model, preset: f.Preset, consult: f.Consult}
+		if !validForkName(e.name) {
+			return nil, fmt.Errorf(".agent/fleet.yaml: invalid fork name %q", e.name)
+		}
+		if seen[e.name] {
+			return nil, fmt.Errorf(".agent/fleet.yaml: duplicate fork name %q — each fork shares one workspace/branch, so a name can appear once", e.name)
+		}
+		seen[e.name] = true
+		if e.tasks == "" {
+			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q needs tasks: <path> (the task tree that seeds its loop)", e.name)
+		}
+		if e.agent != "" && !agents.Valid(e.agent) {
+			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown agent %q (use %s)", e.name, e.agent, strings.Join(agents.Names(), ", "))
+		}
+		if e.agent == "" && e.preset == "" {
+			e.agent = agents.Default() // no preset to supply a lead — same default as the legacy format
+		}
+		for _, c := range e.profiles {
+			if c == "" {
+				return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: credentials has an empty name", e.name)
+			}
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
 
 func parseFleet(data string) ([]fleetEntry, error) {
 	var out []fleetEntry
@@ -100,11 +183,20 @@ func parseFleet(data string) ([]fleetEntry, error) {
 }
 
 func (a *app) loadFleet(repo string) ([]fleetEntry, error) {
-	data, err := os.ReadFile(fleetFile(repo))
-	if err != nil {
-		return nil, errors.New("no .agent/fleet — run 'coop fleet init' to scaffold one")
+	yamlData, yamlErr := os.ReadFile(fleetYAMLFile(repo))
+	legacyData, legacyErr := os.ReadFile(fleetFile(repo))
+	switch {
+	case yamlErr == nil && legacyErr == nil:
+		// Two sources of truth would silently diverge — refuse until one is gone.
+		return nil, errors.New("both .agent/fleet.yaml and the legacy .agent/fleet exist — keep fleet.yaml and delete .agent/fleet (its lines translate to forks: entries)")
+	case yamlErr == nil:
+		return parseFleetYAML(string(yamlData))
+	case legacyErr == nil:
+		ui.Info("note: reading the legacy .agent/fleet — migrate to .agent/fleet.yaml (same data, YAML shape; see 'coop fleet init')")
+		return parseFleet(string(legacyData))
+	default:
+		return nil, errors.New("no .agent/fleet.yaml — run 'coop fleet init' to scaffold one")
 	}
-	return parseFleet(string(data))
 }
 
 // cmdFleet manages a declarative fleet of forks from .agent/fleet.
@@ -140,36 +232,49 @@ func (a *app) cmdFleet(args []string) (int, error) {
 	}
 }
 
-// fleetTemplate seeds .agent/fleet with a documented, ready-to-edit format.
-const fleetTemplate = `# coop fleet — one fork per line:  <name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]
-#   <name>        the fork's name (also its git branch)
-#   [agent]       claude (default), codex, or gemini
-#   <tasks-path>  the task tree that seeds the fork's loop (a dir, relative to the repo)
-#   profile=a,b   optional: the credential profile(s) this fork's loop uses (rotated on a
-#                 rate limit). Give each fork a DIFFERENT account so they run in parallel
-#                 instead of all contending for the same one. Omit to share the repo pool.
-#   model=m       optional: the model this fork runs (see 'coop models'). Omit for the
-#                 profile's marked default / COOP_LOOP_MODEL / the agent's own default.
-#   consult=1     optional: iterations may ask the other signed-in agents for a read-only
+// fleetTemplate seeds .agent/fleet.yaml with a documented, ready-to-edit format.
+const fleetTemplate = `# coop fleet — a declarative set of fork loops. Start it with: coop fleet up
+#
+# Each fork under forks: needs tasks: (the task tree that seeds its loop, relative to
+# the repo). Everything else is optional:
+#   agent:        claude, codex, or gemini (defaults to the preset's lead, else claude)
+#   preset:       an orchestration preset from .agent/presets/<name>/ (lead, roles,
+#                 models, credentials — see 'coop help presets')
+#   credentials:  the credential(s) this fork's loop rotates on a rate limit. Give each
+#                 fork a DIFFERENT account so they run in parallel instead of contending.
+#                 Overrides the preset's lead credentials for this fork.
+#   model:        the model this fork runs (see 'coop models'); overrides the preset.
+#   consult:      true — iterations may ask the other signed-in agents for a read-only
 #                 second opinion (mounts their credentials into this fork's boxes).
-# Blank lines and #-comments are ignored.  Start the fleet with: coop fleet up
 #
 # Example:
-# api    codex   .agent/tasks.api   profile=work       model=gpt-5-codex
-# deps   gemini  .agent/tasks.deps  profile=personal,backup
-# core   claude  .agent/tasks.core  model=claude-fable-5  consult=1
+# forks:
+#   core:
+#     tasks: .agent/tasks.core
+#     preset: frontier
+#     credentials: [work]
+#   chores:
+#     agent: gemini
+#     tasks: .agent/tasks.chores
+#     model: gemini-3.5-flash
+#     credentials: [work, backup]
+
+forks: {}
 `
 
-// fleetInit writes a documented .agent/fleet template so you can declare a fleet without
-// remembering the format. It never clobbers an existing file.
+// fleetInit writes a documented .agent/fleet.yaml template so you can declare a fleet
+// without remembering the format. It never clobbers an existing fleet, in either format.
 func (a *app) fleetInit() (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	path := fleetFile(repo)
+	if fileExists(fleetFile(repo)) {
+		return 1, errors.New("a legacy .agent/fleet already exists — migrate it to .agent/fleet.yaml (same data, YAML shape), then delete it")
+	}
+	path := fleetYAMLFile(repo)
 	if fileExists(path) {
-		return 1, errors.New(".agent/fleet already exists — edit it, or remove it to start over")
+		return 1, errors.New(".agent/fleet.yaml already exists — edit it, or remove it to start over")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return -1, err
@@ -177,7 +282,7 @@ func (a *app) fleetInit() (int, error) {
 	if err := os.WriteFile(path, []byte(fleetTemplate), 0o644); err != nil {
 		return -1, err
 	}
-	ui.OK("wrote .agent/fleet — add a fork per line, then 'coop fleet up'")
+	ui.OK("wrote .agent/fleet.yaml — add your forks under forks:, then 'coop fleet up'")
 	return 0, nil
 }
 
@@ -208,6 +313,9 @@ func (a *app) fleetUp(args []string) (int, error) {
 	// detached worker's log. (A fork with no profile= falls back to the repo pool / all signed-in.)
 	var unsigned []string
 	for _, e := range fleet {
+		if e.agent == "" {
+			continue // the fork's preset supplies the lead; forkCreate validates after resolving it
+		}
 		for _, p := range e.profiles {
 			if !box.ProfileAuthed(a.cfg, e.agent, p) {
 				unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, p))
@@ -227,9 +335,16 @@ func (a *app) fleetUp(args []string) (int, error) {
 		if !filepath.IsAbs(tasks) {
 			tasks = filepath.Join(repo, tasks)
 		}
-		forkArgs := []string{e.name, e.agent, "--loop", "-d", "--tasks", tasks}
+		forkArgs := []string{e.name}
+		if e.agent != "" { // empty = the fork's preset supplies the lead agent
+			forkArgs = append(forkArgs, e.agent)
+		}
+		forkArgs = append(forkArgs, "--loop", "-d", "--tasks", tasks)
+		if e.preset != "" {
+			forkArgs = append(forkArgs, "--preset", e.preset)
+		}
 		if len(e.profiles) > 0 {
-			forkArgs = append(forkArgs, "--profile", strings.Join(e.profiles, ","))
+			forkArgs = append(forkArgs, "--credential", strings.Join(e.profiles, ","))
 		}
 		if e.model != "" {
 			forkArgs = append(forkArgs, "--model", e.model)
@@ -440,27 +555,26 @@ func (a *app) fleetSplitFolders(repo, root string, names, agts []string) (int, e
 		ui.Note("no todo tasks to split")
 		return 0, nil
 	}
-	var fleetLines []string
+	var forkBlocks []string
 	for i := range names {
 		if written[i] == "" {
 			continue
 		}
 		ui.Note("wrote %s (%s)", written[i], ui.Count(counts[i], "task"))
-		fleetLines = append(fleetLines, fmt.Sprintf("%s %s %s", names[i], agts[i], written[i]))
+		forkBlocks = append(forkBlocks, fmt.Sprintf("  %s:\n    agent: %s\n    tasks: %s", names[i], agts[i], written[i]))
 	}
-	// Don't clobber a hand-authored .agent/fleet — print the lines to reconcile instead.
-	if !fileExists(fleetFile(repo)) {
-		header := "# coop fleet — one fork per line: <name> [agent] <tasks-path>\n"
-		out := header + strings.Join(fleetLines, "\n") + "\n"
-		if err := os.WriteFile(fleetFile(repo), []byte(out), 0o644); err != nil {
+	// Don't clobber a hand-authored fleet (either format) — print the entries to reconcile instead.
+	if !fileExists(fleetYAMLFile(repo)) && !fileExists(fleetFile(repo)) {
+		out := "# coop fleet — generated by 'coop fleet split'; see 'coop fleet init' for the format\nforks:\n" + strings.Join(forkBlocks, "\n") + "\n"
+		if err := os.WriteFile(fleetYAMLFile(repo), []byte(out), 0o644); err != nil {
 			return -1, err
 		}
-		ui.OK("wrote .agent/fleet — review the slices, then 'coop fleet up'")
+		ui.OK("wrote .agent/fleet.yaml — review the slices, then 'coop fleet up'")
 		return 0, nil
 	}
-	ui.Note(".agent/fleet already exists — add these lines to it yourself:")
-	for _, l := range fleetLines {
-		fmt.Printf("  %s\n", l)
+	ui.Note("a fleet file already exists — add these forks to it yourself:")
+	for _, b := range forkBlocks {
+		fmt.Println(b)
 	}
 	return 0, nil
 }

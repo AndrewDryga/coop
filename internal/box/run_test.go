@@ -10,6 +10,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/preset"
 )
 
 func TestDecideTTY(t *testing.T) {
@@ -330,7 +331,7 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
 
-	content, file, wired, ok := leadInstructionMount(cfg, "claude")
+	content, file, wired, ok := leadInstructionMount(cfg, "claude", nil)
 	if !ok || file != "CLAUDE.md" {
 		t.Fatalf("leadInstructionMount ok=%v file=%q, want true CLAUDE.md", ok, file)
 	}
@@ -345,7 +346,7 @@ func TestLeadInstructionMount(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "env"), []byte("OPENAI_API_KEY=real\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	content, _, wired, _ = leadInstructionMount(cfg, "claude")
+	content, _, wired, _ = leadInstructionMount(cfg, "claude", nil)
 	if !wired {
 		t.Error("with an authed peer, expected the consult directive to be wired")
 	}
@@ -489,5 +490,91 @@ func TestAssembleArgsEgress(t *testing.T) {
 	// Default (open) WITH a services net → joins it.
 	if got := args("open", "coop-x_default"); !containsSeq(got, []string{"--network", "coop-x_default"}) {
 		t.Errorf("default egress should join the services net:\n%v", got)
+	}
+}
+
+// frontierPreset is a loaded-preset literal for box tests (no YAML round-trip needed):
+// one role per mode, matching the docs' frontier recipe.
+func frontierPreset() *preset.Preset {
+	return &preset.Preset{
+		Name: "frontier", LeadAgent: "claude", LeadModel: "claude-fable-5",
+		Roles: []preset.Role{
+			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5"},
+			{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Model: "gemini-3.5-flash"},
+			{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", Subagent: "deep-reasoner"},
+		},
+	}
+}
+
+// A preset lead's instruction file carries the generated routing contract (exact role
+// invocations) instead of the generic second-opinion directive, keeps the base, and
+// wires coop-consult only because a consult role exists.
+func TestLeadInstructionMountPreset(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("BASE RULES"), 0o644)
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
+
+	content, file, wired, ok := leadInstructionMount(cfg, "claude", frontierPreset())
+	if !ok || file != "CLAUDE.md" {
+		t.Fatalf("mount = (file=%q, ok=%v)", file, ok)
+	}
+	if !wired {
+		t.Error("a consult role must wire coop-consult")
+	}
+	for _, want := range []string{`preset "frontier"`, "coop-consult codex --fresh", "coop-delegate fast", "@deep-reasoner", "BASE RULES"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("preset lead instructions missing %q:\n%s", want, content)
+		}
+	}
+	// The generic directive is replaced by the preset block, not stacked on top of it.
+	if strings.Contains(content, "second opinion is available") {
+		t.Error("preset should replace the generic consult directive")
+	}
+
+	// A delegate-only preset wires no consult (nothing read-only to call).
+	delegateOnly := &preset.Preset{Name: "d", LeadAgent: "claude",
+		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"}}}
+	if _, _, wired, _ := leadInstructionMount(cfg, "claude", delegateOnly); wired {
+		t.Error("a delegate-only preset must not mount coop-consult")
+	}
+}
+
+// A preset scopes credentials precisely: the lead plus its (authed) consult/delegate
+// role agents — never the blanket all-authed-peers widening, and never a native role.
+func TestCredentialScopePreset(t *testing.T) {
+	dir := t.TempDir()
+	for _, agent := range []string{"claude", "codex", "gemini"} {
+		os.MkdirAll(filepath.Join(dir, agent, "profiles", "default"), 0o755)
+	}
+	// All three authed (codex uses auth.json, gemini its own marker file, claude .credentials.json).
+	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "gemini", "profiles", "default", "gemini-credentials.json"), []byte("{}"), 0o644)
+	cfg := &config.Config{ConfigDir: dir}
+
+	p := frontierPreset()
+	scope := credentialScope(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: p})
+	if !slices.Equal(scope, []string{"claude", "codex", "gemini"}) {
+		t.Errorf("preset scope = %v, want [claude codex gemini] (lead + consult + delegate)", scope)
+	}
+
+	// A consult-role-only preset must not drag in agents with no role (no blanket widening).
+	oneRole := &preset.Preset{Name: "one", LeadAgent: "claude",
+		Roles: []preset.Role{{Name: "critic", Mode: preset.ModeConsult, Agent: "codex"}}}
+	scope = credentialScope(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: oneRole})
+	if !slices.Equal(scope, []string{"claude", "codex"}) {
+		t.Errorf("one-role preset scope = %v, want [claude codex] — gemini has no role", scope)
+	}
+}
+
+// A preset with a consult role exports COOP_PEER_MODEL_<AGENT> for scoped agents whose
+// model resolves — that's how the consult wrapper learns each role's model.
+func TestModelEnvArgsPreset(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	cfg.SetActiveModel("codex", "gpt-5.5")
+	spec := RunSpec{Preset: frontierPreset()}
+	args := modelEnvArgs(cfg, spec, []string{"codex"})
+	if !containsSeq(args, []string{"-e", "COOP_PEER_MODEL_CODEX=gpt-5.5"}) {
+		t.Errorf("preset consult run should export the peer model: %v", args)
 	}
 }

@@ -88,7 +88,7 @@ func (codexAgent) Packages() []string {
 
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
 func (codexAgent) Models() []string {
-	return []string{"gpt-5-codex", "gpt-5", "o4-mini"}
+	return []string{"gpt-5.5", "gpt-5-codex", "gpt-5", "o4-mini"}
 }
 
 // ModelEnv: codex reads no model env var (its default lives in config.toml), so the

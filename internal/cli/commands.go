@@ -56,11 +56,11 @@ func (a *app) runInBox(cmd []string, agent string, consult bool) (int, error) {
 		return -1, err
 	}
 	lead := ""
-	if consult {
-		lead = agent
+	if consult || (a.preset != nil && agent != "") {
+		lead = agent // a preset makes the agent a lead too: its routing contract mounts via ConsultLead
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -102,10 +102,10 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		}
 		return a.loginTo(tool, profile)
 	}
-	// `coop claude --profile work` runs on a chosen credential profile (one subscription);
-	// coop consumes the flag so it isn't forwarded. It's read only before a `--`, so an agent's
-	// own --profile (e.g. codex's config.toml profile) is still reachable as
-	// `coop codex -- --profile <name>`.
+	// `coop claude --credential work` runs on a chosen credential (one account/login;
+	// --profile is the legacy spelling); coop consumes the flag so it isn't forwarded. It's
+	// read only before a `--`, so an agent's own --profile (e.g. codex's config.toml
+	// profile) is still reachable as `coop codex -- --profile <name>`.
 	profile, args, err := extractRunProfile(args)
 	if err != nil {
 		return 2, err
@@ -118,6 +118,18 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// `coop claude --preset frontier` loads the orchestration preset: its roles seed the
+	// run (routing contract, role models/credentials, wrappers); `coop <agent>` names the
+	// lead explicitly, so the preset's lead.agent never overrides the command's own.
+	presetName, args, err := extractRunPreset(args)
+	if err != nil {
+		return 2, err
+	}
+	p, err := a.loadRunPreset(presetName)
+	if err != nil {
+		return 2, err
+	}
+	a.applyPreset(p, tool)
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err
 	}
@@ -291,13 +303,14 @@ func extractProfile(args []string) (profile string, rest []string, err error) {
 	return profile, rest, nil
 }
 
-// extractRunProfile pulls coop's own --profile <name> (or --profile=<name>) out of an agent
-// RUN's args, returning the chosen credential profile ("" if none) and the remaining args.
-// Unlike extractProfile (login), it stops at a "--" separator and forwards everything after it
-// verbatim — so an agent's own --profile (e.g. codex's config.toml profile) is still reachable
-// as `coop codex -- --profile <name>`. A --profile with no value is an error, like login's.
+// extractRunProfile pulls coop's own --credential <name> (or --credential=<name>; the
+// singular/plural and the legacy --profile spelling are aliases) out of an agent RUN's
+// args, returning the chosen credential ("" if none) and the remaining args. Unlike
+// extractProfile (login), it stops at a "--" separator and forwards everything after it
+// verbatim — so an agent's own --profile is still reachable as `coop codex -- --profile
+// <name>`. A flag with no value is an error, not a silent fall-back.
 func extractRunProfile(args []string) (profile string, rest []string, err error) {
-	return extractRunValue(args, "--profile")
+	return extractRunValue(args, "--credential", "--credentials", "--profile")
 }
 
 // extractRunModel pulls coop's own --model <name> (or --model=<name>) out of an agent RUN's
@@ -308,19 +321,26 @@ func extractRunModel(args []string) (model string, rest []string, err error) {
 }
 
 // extractRunValue is the shared extractor behind extractRunProfile/extractRunModel: it pulls
-// one of coop's own value-bearing flags out of run args, stopping at "--" (everything after is
-// the agent's, forwarded verbatim).
-func extractRunValue(args []string, flag string) (val string, rest []string, err error) {
+// one of coop's own value-bearing flags (any of the given spellings) out of run args,
+// stopping at "--" (everything after is the agent's, forwarded verbatim).
+func extractRunValue(args []string, flags ...string) (val string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
 			return val, append(rest, args[i:]...), nil
 		}
-		if v, n, ok, e := flagValue(args, i, flag); ok {
-			if e != nil {
-				return "", nil, e
+		matched := false
+		for _, flag := range flags {
+			if v, n, ok, e := flagValue(args, i, flag); ok {
+				if e != nil {
+					return "", nil, e
+				}
+				val = v
+				i += n - 1
+				matched = true
+				break
 			}
-			val = v
-			i += n - 1
+		}
+		if matched {
 			continue
 		}
 		rest = append(rest, args[i])
@@ -421,23 +441,36 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	tool := agents.Default()
+	// --preset: routing + role wiring for the editor session; the preset's lead is the
+	// default agent (or governor, under fusion) when none is named.
+	presetName, args, err := extractRunPreset(args)
+	if err != nil {
+		return 2, err
+	}
+	p, err := a.loadRunPreset(presetName)
+	if err != nil {
+		return 2, err
+	}
+	tool, toolSet := agents.Default(), false
 	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
 	if len(args) > 0 {
-		tool = args[0]
+		tool, toolSet = args[0], true
 		consumed = 1
 	}
 	governor := ""
 	if tool == "fusion" {
-		governor = a.cfg.FusionGovernor
+		governor, toolSet = a.cfg.FusionGovernor, false
 		if len(args) > 1 {
-			governor = args[1]
+			governor, toolSet = args[1], true
 			consumed = 2
 		}
+		governor = presetLeadAgent(p, governor, toolSet)
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
 		}
 		tool = governor
+	} else {
+		tool = presetLeadAgent(p, tool, toolSet)
 	}
 	if !agents.Valid(tool) {
 		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
@@ -445,8 +478,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile <name>] [--model <model>])", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--credential <name>] [--model <model>] [--preset <name>])", leftover[0])
 	}
+	a.applyPreset(p, tool)
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err
 	}
@@ -459,8 +493,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return -1, err
 	}
 	lead := "" // --consult opts into the second-opinion directive (a no-op under fusion)
-	if consult {
-		lead = tool
+	if consult || a.preset != nil {
+		lead = tool // a preset's routing contract mounts via ConsultLead too
 	}
 	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
 	// own progress lines, and COOP_QUIET tells the box to provision the toolchain silently.
@@ -475,7 +509,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool,
 		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
-		FusionGovernor: governor, ConsultLead: lead, Quiet: true,
+		FusionGovernor: governor, ConsultLead: lead, Preset: a.preset, Quiet: true,
 		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
@@ -597,10 +631,22 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	// --consult is a documented no-op for fusion (a council always consults its peers). Strip it so it
 	// isn't leaked into the governor's own CLI as an unknown flag.
 	_, args = extractConsult(args)
-	governor, rest := a.parseGovernor(args)
+	// --preset: the preset's lead is the default governor (an explicit one still wins), and
+	// its role routing rides along with the council directive.
+	presetName, args, err := extractRunPreset(args)
+	if err != nil {
+		return 2, err
+	}
+	p, err := a.loadRunPreset(presetName)
+	if err != nil {
+		return 2, err
+	}
+	governor, rest, govSet := a.parseGovernor(args)
+	governor = presetLeadAgent(p, governor, govSet)
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
 	}
+	a.applyPreset(p, governor)
 	if err := a.selectRunProfile(governor, profile); err != nil {
 		return 2, err
 	}
@@ -614,20 +660,21 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
 		strings.Join(fusion.Peers(governor, agents.Names()), " + "))
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor,
+		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
 
 // parseGovernor takes a leading `claude|codex|gemini` token as the governor (else
-// COOP_FUSION_GOVERNOR); everything else passes through to the governor.
-func (a *app) parseGovernor(args []string) (governor string, rest []string) {
+// COOP_FUSION_GOVERNOR); everything else passes through to the governor. explicit
+// reports whether the command named one (so a --preset's lead only fills the default).
+func (a *app) parseGovernor(args []string) (governor string, rest []string, explicit bool) {
 	governor = a.cfg.FusionGovernor
 	tookGov := false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":
-			return governor, append(rest, args[i+1:]...) // everything after passes through
+			return governor, append(rest, args[i+1:]...), tookGov // everything after passes through
 		case !tookGov && len(rest) == 0 && agents.Valid(args[i]):
 			// Only the FIRST leading agent name is the governor: `coop fusion claude` (matches
 			// `coop acp fusion claude`); otherwise the default / COOP_FUSION_GOVERNOR. A second
@@ -637,7 +684,7 @@ func (a *app) parseGovernor(args []string) (governor string, rest []string) {
 			rest = append(rest, args[i])
 		}
 	}
-	return governor, rest
+	return governor, rest, tookGov
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
@@ -1021,18 +1068,18 @@ func promptGateLangs(in io.Reader) []string {
 
 // loopAgent picks the agent for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
-func loopAgent(args []string) (string, error) {
-	agent, set := agents.Default(), false
+func loopAgent(args []string) (agent string, explicit bool, err error) {
+	agent = agents.Default()
 	for _, x := range args {
 		if !agents.Valid(x) {
-			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <path>] [--model <model>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+			return "", false, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
 		}
-		if set {
-			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
+		if explicit {
+			return "", false, fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
 		}
-		agent, set = x, true
+		agent, explicit = x, true
 	}
-	return agent, nil
+	return agent, explicit, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1049,7 +1096,11 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	agent, model, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
+	presetName, rest, err := extractRunPreset(rest)
+	if err != nil {
+		return 2, err
+	}
+	agent, model, agentSet, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
 	}
@@ -1057,20 +1108,37 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// --preset: the preset's lead agent is the default (an explicit agent still wins), its
+	// roles seed the run, and its lead model/credentials slot below explicit flags.
+	p, err := a.loadRunPreset(presetName)
+	if err != nil {
+		return 2, err
+	}
+	agent = presetLeadAgent(p, agent, agentSet)
+	a.applyPreset(p, agent)
 	queues, err := taskQueues(a.cfg, repo, flags)
 	if err != nil {
 		return 2, err
 	}
-	// A one-off --profile runs on exactly the given profile(s) without touching the persistent pool;
-	// otherwise rotate the configured pool (repo pool, else all signed-in).
+	// A one-off --credential runs on exactly the given credential(s) without touching the
+	// persistent pool; else the preset lead's credentials rotate; else the configured pool
+	// (repo pool, else all signed-in).
 	pool := (*profilePool)(nil)
-	if len(profiles) > 0 {
+	switch {
+	case len(profiles) > 0:
 		pool, err = authedPool(a.cfg, agent, profiles)
-	} else {
+	case p != nil && agent == p.LeadAgent && len(p.LeadCredentials) > 0:
+		pool, err = authedPool(a.cfg, agent, p.LeadCredentials)
+	default:
 		pool, err = buildPool(a.cfg, repo, agent)
 	}
 	if err != nil {
 		return -1, err
+	}
+	// Model precedence: explicit --model, then the preset's lead model, then COOP_LOOP_MODEL
+	// (inside applyLoopModel), then the profile mark / agent default at resolution time.
+	if model == "" && p != nil && agent == p.LeadAgent {
+		model = p.LeadModel
 	}
 	a.applyLoopModel(agent, model)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
@@ -1095,21 +1163,31 @@ func (a *app) applyLoopModel(agent, model string) {
 // of the loop args, so `coop loop --profile x` runs a ONE-OFF on x without mutating the persistent
 // pool (`coop loop pool …`) — the same credential-selection flag every other launch path takes.
 func extractLoopProfiles(args []string) (profiles, rest []string, err error) {
+	spellings := []string{"--credential", "--credentials", "--profile"} // --profile is the legacy alias
 	for i := 0; i < len(args); i++ {
-		switch x := args[i]; {
-		case x == "--profile":
-			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-				return nil, nil, errors.New("coop loop --profile needs a profile name (or comma-separated list)")
+		x, matched := args[i], false
+		for _, flag := range spellings {
+			switch {
+			case x == flag:
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					return nil, nil, fmt.Errorf("coop loop %s needs a credential name (or comma-separated list)", flag)
+				}
+				i++
+				profiles = addProfiles(profiles, parseProfileList(args[i]))
+				matched = true
+			case strings.HasPrefix(x, flag+"="):
+				list := parseProfileList(strings.TrimPrefix(x, flag+"="))
+				if len(list) == 0 {
+					return nil, nil, fmt.Errorf("coop loop %s needs a credential name (or comma-separated list)", flag)
+				}
+				profiles = addProfiles(profiles, list)
+				matched = true
 			}
-			i++
-			profiles = addProfiles(profiles, parseProfileList(args[i]))
-		case strings.HasPrefix(x, "--profile="):
-			list := parseProfileList(strings.TrimPrefix(x, "--profile="))
-			if len(list) == 0 {
-				return nil, nil, errors.New("coop loop --profile needs a profile name (or comma-separated list)")
+			if matched {
+				break
 			}
-			profiles = addProfiles(profiles, list)
-		default:
+		}
+		if !matched {
 			rest = append(rest, x)
 		}
 	}
@@ -1119,13 +1197,13 @@ func extractLoopProfiles(args []string) (profiles, rest []string, err error) {
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
 // --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
 // one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
-func parseLoopArgs(args []string, def bool) (agent, model string, consult, debugOnFail, preflight bool, err error) {
+func parseLoopArgs(args []string, def bool) (agent, model string, agentSet, consult, debugOnFail, preflight bool, err error) {
 	preflight = def
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--model"); ok {
 			if e != nil {
-				return "", "", false, false, false, e
+				return "", "", false, false, false, false, e
 			}
 			model = v
 			i += n - 1
@@ -1138,7 +1216,7 @@ func parseLoopArgs(args []string, def bool) (agent, model string, consult, debug
 			debugOnFail = true
 		case "--debug": // v3: renamed to --debug-on-fail
 			note, _ := removedCommandNote("loop --debug")
-			return agent, model, consult, debugOnFail, preflight, errors.New(note)
+			return agent, model, agentSet, consult, debugOnFail, preflight, errors.New(note)
 		case "--preflight":
 			preflight = true
 		case "--no-preflight":
@@ -1147,8 +1225,8 @@ func parseLoopArgs(args []string, def bool) (agent, model string, consult, debug
 			rest = append(rest, x)
 		}
 	}
-	agent, err = loopAgent(rest)
-	return agent, model, consult, debugOnFail, preflight, err
+	agent, agentSet, err = loopAgent(rest)
+	return agent, model, agentSet, consult, debugOnFail, preflight, err
 }
 
 // loopWorkPrompt and loopAuditPrompt name the queue dir(s) the iteration works as ABSOLUTE
@@ -1500,13 +1578,14 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
 	// --consult makes each iteration a consult lead: box.Run then mounts the authed peers'
-	// credentials, the coop-consult wrapper, and the second-opinion directive.
+	// credentials, the coop-consult wrapper, and the second-opinion directive. A preset
+	// does the same with ITS roles: the routing contract mounts via ConsultLead.
 	lead := ""
-	if consult {
+	if consult || a.preset != nil {
 		lead = agent
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),

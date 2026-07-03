@@ -219,9 +219,9 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks string, profiles []string
 
 // detachForkLoop re-execs coop as a session-leader background worker whose stdio is
 // the fork's log, records its pid, and returns immediately. tasks is an absolute path
-// (resolved by the caller) forwarded so the worker seeds the same queue; model and
-// consult are forwarded too, so the worker runs the fork's chosen model and peer scope.
-func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string, model string, consult bool) (int, error) {
+// (resolved by the caller) forwarded so the worker seeds the same queue; model, preset,
+// and consult are forwarded too, so the worker re-loads the same recipe and scope.
+func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string, model, presetName string, consult bool) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
@@ -243,10 +243,13 @@ func (a *app) detachForkLoop(repo, name, agent, tasks string, profiles []string,
 	}
 	reExec := []string{"fork", name, agent, "--loop", "--tasks", tasks, "--_detached"}
 	if len(profiles) > 0 {
-		reExec = append(reExec, "--profile", strings.Join(profiles, ","))
+		reExec = append(reExec, "--credential", strings.Join(profiles, ","))
 	}
 	if model != "" {
 		reExec = append(reExec, "--model", model)
+	}
+	if presetName != "" {
+		reExec = append(reExec, "--preset", presetName) // the worker re-loads the preset itself
 	}
 	if consult {
 		reExec = append(reExec, "--consult")

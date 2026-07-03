@@ -11,6 +11,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -73,6 +74,14 @@ type RunSpec struct {
 	// naming the authenticated peers it may consult read-only on hard calls. Scoped
 	// to the lead so peers it spawns don't recurse. Empty = no consult directive.
 	ConsultLead string
+
+	// Preset, when set, is the loaded orchestration preset for this run: the lead's
+	// instruction file gets the generated routing block (roles, modes, exact consult/
+	// delegate invocations) instead of the generic consult directive, consult/delegate
+	// role agents join the credential scope, and a delegate role mounts coop-delegate
+	// plus its per-role contracts and env. The cli loads and applies the preset's
+	// model/credential selections before calling Run.
+	Preset *preset.Preset
 }
 
 // ttyMode is how stdin and the tty are wired for a run.
@@ -203,6 +212,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 			if len(peers) > 0 {
 				content = fusion.GovernorInstructions(base, spec.FusionGovernor, append([]string{spec.FusionGovernor}, peers...))
 			}
+			if spec.Preset != nil {
+				// A preset under fusion keeps the council directive and adds the preset's
+				// role routing (its subagents/delegates) ahead of it.
+				content = preset.LeadContract(spec.Preset) + "\n" + content
+			}
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("fusion: skipped instruction wiring: %v", err)
 			} else {
@@ -222,7 +236,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// running with no instructions at all. (Fusion's stronger directive takes over
 	// when FusionGovernor is set, so the two never both apply.)
 	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
-		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead); ok {
+		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset); ok {
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("consult: skipped instruction wiring: %v", err)
 			} else {
@@ -244,6 +258,36 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		} else {
 			tmpFiles = append(tmpFiles, p)
 			fusionMounts = append(fusionMounts, extraMount{p, fusion.ConsultWrapperPath})
+		}
+	}
+
+	// coop-delegate: a preset with a write-capable delegate role mounts the wrapper (on
+	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*
+	// env the wrapper resolves a role's agent/model/contract from — so the box needs no
+	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
+	if spec.Homes && spec.Preset != nil && spec.Preset.HasDelegate() {
+		if p, err := writeTempFile(preset.DelegateWrapper); err != nil {
+			ui.Info("delegate: skipped wrapper wiring: %v", err)
+		} else if err := os.Chmod(p, 0o755); err != nil {
+			ui.Info("delegate: skipped wrapper wiring: %v", err)
+		} else {
+			tmpFiles = append(tmpFiles, p)
+			fusionMounts = append(fusionMounts, extraMount{p, preset.DelegateWrapperPath})
+			for _, role := range spec.Preset.Delegates() {
+				key := preset.EnvKey(role.Name)
+				dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
+				if cp, err := writeTempFile(preset.RoleContract(&role)); err != nil {
+					ui.Info("delegate: skipped %s contract: %v", role.Name, err)
+				} else {
+					tmpFiles = append(tmpFiles, cp)
+					fusionMounts = append(fusionMounts, extraMount{cp, dst})
+					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst)
+				}
+				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_AGENT="+role.Agent)
+				if role.Model != "" {
+					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_MODEL="+role.Model)
+				}
+			}
 		}
 	}
 
@@ -460,12 +504,22 @@ func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
 // was actually injected, so the caller mounts coop-consult only when there is a peer to consult.
 // ok is false only when the agent has no native instruction file. Pure, so the "no authed peer
 // still mounts the base" invariant is unit-tested without a container.
-func leadInstructionMount(cfg *config.Config, lead string) (content, file string, wired, ok bool) {
+func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset) (content, file string, wired, ok bool) {
 	file = instructionFile(lead)
 	if file == "" {
 		return "", "", false, false
 	}
 	base := agentBaseInstructions(cfg, lead, file)
+	if p != nil {
+		// A preset's generated routing block replaces the generic second-opinion
+		// directive — it already names each consult/delegate role and its exact
+		// invocation. coop-consult is mounted only when a consult role exists.
+		content = preset.LeadContract(p)
+		if base != "" {
+			content += "\n" + base + "\n"
+		}
+		return content, file, p.HasConsult(), true
+	}
 	peers := authedPeers(cfg, lead)
 	return fusion.LeadInstructions(base, peers), file, len(peers) > 0, true
 }
@@ -534,7 +588,8 @@ func appendROMounts(args []string, ms []extraMount) []string {
 // peer's --model flag. Agents with no resolved model export nothing (the CLI's own default
 // runs); the primary agent's command already carries --model, which beats its env var.
 func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
-	consults := spec.FusionGovernor != "" || spec.ConsultLead != ""
+	consults := spec.FusionGovernor != "" || spec.ConsultLead != "" ||
+		(spec.Preset != nil && spec.Preset.HasConsult())
 	var args []string
 	for _, agent := range scope {
 		model := cfg.ModelFor(agent)

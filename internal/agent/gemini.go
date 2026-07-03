@@ -85,7 +85,7 @@ func (geminiAgent) Packages() []string { return []string{geminiCLIPackage} }
 
 // Models are common Gemini model ids. Illustrative — any id the CLI accepts works.
 func (geminiAgent) Models() []string {
-	return []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+	return []string{"gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"}
 }
 
 // ModelEnv: the Gemini CLI reads its default model from GEMINI_MODEL; the flag in base()

@@ -217,10 +217,13 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
   Usage: coop <agent> [coop flags] [-- <agent args>]
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --profile <name>   run on a stored credential profile — one subscription (see coop profiles)
-    --model <name>     run on a chosen model (see coop models)
-    --consult          add a read-only second opinion from the other agents on a hard call
-    --                 pass the rest verbatim to the agent, e.g. coop claude -- --help
+    --credential <name>  run on a stored credential — one account/login (see coop profiles;
+                         --profile is the legacy spelling)
+    --model <name>       run on a chosen model (see coop models)
+    --preset <name>      run under an orchestration preset from .agent/presets/<name>/
+                         (lead + roles + models + credentials; see coop help presets)
+    --consult            add a read-only second opinion from the other agents on a hard call
+    --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
 
   Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
 
@@ -312,16 +315,19 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--model <model>] [--supervise] [--consult]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--credential <name>] [--model <model>] [--preset <name>] [--supervise] [--consult]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
 
-  --profile <name> pins the session to one credential profile, so an editor can run
-  two entries on different accounts, e.g. ["acp","claude","--profile","work"].
+  --credential <name> (legacy --profile) pins the session to one stored account, so an
+  editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].
 
   --model <m> pins the session's model (see 'coop models'), e.g.
   ["acp","claude","--model","opus"].
+
+  --preset <name> runs the session under an orchestration preset (its lead is the
+  default agent when none is named; see 'coop help presets').
 
   --consult lets the session ask the other signed-in agents for a read-only second
   opinion (their credentials are mounted) — the orchestrator pattern, from your editor.
@@ -333,41 +339,101 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini] [--profile <name>] [--model <model>] [args...]
+  Usage: coop fusion [claude|codex|gemini] [--credential <name>] [--model <model>] [--preset <name>] [args...]
 
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
   writes. Lighter, opt-in variant: coop <agent> --consult
 
-  --profile <name> pins the governor's credential profile; each peer keeps its own.
+  --credential <name> (legacy --profile) pins the governor's stored account; each
+  peer keeps its own.
 
   --model picks the governor's model; each peer keeps its own default (its
   profile's mark or COOP_<AGENT>_MODEL — see 'coop models').
 
+  --preset <name> loads an orchestration preset: its lead is the default governor,
+  and its role routing rides along with the council directive ('coop help presets').
+
   Like coop <agent>, it forwards extra args to the governor — a leading agent name
   picks the governor; anything else (or anything after a --) passes through.`,
 
-	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.
+	"presets": `coop presets — YAML orchestration recipes under .agent/presets/<name>/.
+
+  A PRESET is a runtime recipe: which agent leads, and which roles it can route
+  work to — each role an agent + model + credentials + routing hints. A CREDENTIAL
+  is just a stored account/login (a rate-limit slot; see coop profiles). Presets
+  reference credentials; they never store secrets.
+
+  Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
+  fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
+  An explicitly named agent wins over the preset's lead; explicit --model/
+  --credential win over the preset's values.
+
+  .agent/presets/frontier/preset.yaml:
+
+    lead:
+      agent: claude
+      model: claude-fable-5
+      credentials: [work]
+      prompt: lead.md            # optional Markdown, appended to the generated contract
+    roles:
+      thinker:                   # native Claude subagent — deep thinking in-session
+        mode: native
+        agent: claude
+        model: claude-opus-4-8
+        subagent: deep-reasoner
+        when: [architecture, debugging, code-review]
+      critic:                    # read-only peer via coop-consult
+        mode: consult
+        agent: codex
+        model: gpt-5.5
+        credentials: [work]
+        when: [plan-review, security]
+      fast:                      # write-capable delegate via coop-delegate
+        mode: delegate
+        agent: gemini
+        model: gemini-3.5-flash
+        credentials: [work]
+        when: [boilerplate, bulk-edits, test-scaffolding]
+        commit: never            # the delegate edits; the LEAD reviews, gates, commits
+        concurrent: never        # delegate runs are serialized
+
+  coop generates the lead's routing contract from this (roles, when-to-use, the
+  exact coop-consult/coop-delegate invocations) and mounts the wrappers. Markdown
+  prompt files (lead.md, roles/<name>.md) append to the generated text, never
+  replace it. A delegate may edit the worktree but must not commit — coop-delegate
+  fails loud if HEAD moved — and the lead owns the diff review, the gate, and the
+  commit. Model ids for the recipe: coop models.`,
+
+	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
 
   Usage: coop fleet <init|up|down|split|watch|prune>
 
-  init           write a .agent/fleet template
+  init           write a .agent/fleet.yaml template
   up             start every fork in the fleet, looping its tasks, detached
   down           stop the fleet's running loops
-  split <n>      slice the queue into n forks (= coop tasks split) + write .agent/fleet
+  split <n>      slice the queue into n forks (= coop tasks split) + write .agent/fleet.yaml
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
                  done; Ctrl-C anytime). Task-centric view: coop tasks watch
-  prune          remove forks no longer in .agent/fleet (kept: running, dirty, or
+  prune          remove forks no longer in the fleet file (kept: running, dirty, or
                  unmerged — pass --force to remove those too)
 
   up and down take --prune (with optional --force) to prune in the same step.
 
-  Each fleet line is "<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]".
-  Add profile= to put a fork's loop on specific account(s) — give each fork a different
-  one so they run in parallel instead of contending for the same rate limit. Add
-  model= to pick that fork's model (see 'coop models'), and consult=1 to let its
-  iterations ask the other signed-in agents read-only (like coop loop --consult).
+  .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
+  loop) and may set agent:, preset: (an orchestration preset; its lead is the fork's
+  default agent), credentials: [a, b] (rotated on a rate limit — give each fork a
+  DIFFERENT account so they run in parallel instead of contending), model:, and
+  consult: true (iterations may ask the other signed-in agents read-only):
 
-  List forks: coop fork ls`,
+    forks:
+      core:
+        tasks: .agent/tasks.core
+        preset: frontier
+        credentials: [work]
+
+  Per-fork credentials/model/consult override the preset for that fork only. The
+  legacy one-line .agent/fleet still reads (migrate to YAML); having both files is
+  an error. List forks: coop fork ls`,
 
 	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
@@ -414,16 +480,20 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <model>] [--consult] [--preflight] [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <model>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, an
   auditor re-checks every shipped task. On a rate limit it switches to another
-  signed-in profile (see 'coop loop pool'), or waits out the reset when there's only one.
+  signed-in credential (see 'coop loop pool'), or waits out the reset when there's only one.
 
-  --model <m> pins the loop's model; COOP_LOOP_MODEL is its standing default —
-  so overnight runs can grind on a cheaper model than your interactive sessions.
-  With neither, each iteration uses the rotated profile's marked default
-  ('coop models'), then COOP_<AGENT>_MODEL.
+  --preset <name> runs the loop under an orchestration preset: its lead is the
+  default agent, its lead credentials the rotation pool, and each iteration gets
+  the preset's role routing + wrappers ('coop help presets').
+
+  --model <m> pins the loop's model; else the preset lead's model; COOP_LOOP_MODEL
+  is the standing default below those — so overnight runs can grind on a cheaper
+  model than your interactive sessions. With none, each iteration uses the rotated
+  credential's marked default ('coop models'), then COOP_<AGENT>_MODEL.
 
   --consult lets each iteration ask the other signed-in agents for a read-only
   second opinion (coop-consult on PATH, peers' credentials mounted) — the

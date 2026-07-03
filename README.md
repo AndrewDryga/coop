@@ -448,8 +448,10 @@ sandbox, so trusting the one mounted repo is the intended posture.)
 
 ### Multiple subscriptions, with failover
 
-One agent can hold several accounts as named **profiles**, so a long unattended run can
-ride through a subscription's rate cap instead of parking on it:
+One agent can hold several accounts as named **credentials** — each a stored login and
+its own rate-limit pool — so a long unattended run can ride through a subscription's cap
+instead of parking on it. (The storage and commands still say *profiles*; that's the
+legacy name for the same thing. Presets and fleet files use the `credentials` spelling.)
 
 ```bash
 coop login claude --profile work       # a second account…
@@ -553,6 +555,69 @@ too: `coop fork <name> claude --loop --consult`, and a fleet line opts in with
 `consult=1`). Prefer `coop-consult` over vendor cross-agent plugins in the box:
 nothing to install, peers stay read-only (one writer per tree), and the credential
 scoping is already handled.
+
+### Presets: the whole arrangement in one YAML file
+
+The orchestrator pattern above is assembled by hand — a model mark here, a `--consult`
+there. A **preset** declares the whole arrangement once, as a runtime recipe under
+`.agent/presets/<name>/`: who leads, and which **roles** it routes work to. Three role
+modes cover the spectrum: `native` (a Claude subagent inside the lead's session),
+`consult` (a read-only peer via `coop-consult`), and `delegate` (a **write-capable**
+delegate via `coop-delegate`). `.agent/presets/frontier/preset.yaml`:
+
+```yaml
+lead:
+  agent: claude
+  model: claude-fable-5
+  credentials: [work]
+  prompt: lead.md              # optional Markdown, appended to the generated contract
+
+roles:
+  thinker:                     # deep thinking + review, in the lead's own session
+    mode: native
+    agent: claude
+    model: claude-opus-4-8
+    subagent: deep-reasoner
+    when: [architecture, debugging, code-review, before-commit]
+    prompt: roles/thinker.md   # optional
+
+  critic:                      # independent critique from another vendor, read-only
+    mode: consult
+    agent: codex
+    model: gpt-5.5
+    credentials: [work]
+    when: [plan-review, security, tradeoffs]
+
+  fast:                        # cheap mechanical work, write-capable
+    mode: delegate
+    agent: gemini
+    model: gemini-3.5-flash
+    credentials: [work]
+    when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
+    commit: never              # it edits; the LEAD reviews the diff, gates, commits
+    concurrent: never          # delegate runs are serialized
+```
+
+Run anything under it — the preset's lead is the default agent, and an explicit
+agent/`--model`/`--credential` still wins:
+
+```bash
+coop claude --preset frontier    # interactive lead with the full routing contract
+coop loop --preset frontier      # unattended: lead credentials rotate, roles ride along
+coop fusion --preset frontier    # council + the preset's roles
+```
+
+coop generates the lead's routing contract from the YAML — each role, when to use it,
+and the exact invocation (`@deep-reasoner`, `coop-consult codex --fresh "…"`, or a
+`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. Your Markdown
+prompt files append to that generated text; they never replace the safety/routing rules.
+
+`coop-delegate` is the write-capable counterpart of the read-only `coop-consult`: the
+delegate may edit the shared worktree, runs are serialized, and it must **not** commit —
+the wrapper compares `HEAD` before and after and fails loud if the delegate committed.
+The lead then reviews `git diff`, runs the gate, fixes or reverts what falls short, and
+makes the commit itself. That keeps one reviewer — your strongest model — accountable
+for everything that lands, while the cheap tokens do the typing.
 
 ### Instructions, one source of truth
 
@@ -802,26 +867,38 @@ agents until *review*, not generation, is your bottleneck.
 "green" fork can't ride in against a base an earlier landing already changed. It stops at
 the first conflict or red gate, leaving the rest untouched.
 
-**Declare the fleet once** in `.agent/fleet` (run `coop fleet init` for a template with
-the format documented inline), one fork per line as
-`<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]` (agent defaults to
-`claude`; the path is relative to the repo root; `profile=` puts the fork's loop on its
-own account(s), `model=` on its own model, and `consult=1` lets its iterations ask the
-[peer agents](#the-orchestrator-pattern) read-only, like `coop loop --consult`):
+**Declare the fleet once** in `.agent/fleet.yaml` (run `coop fleet init` for a template
+with the format documented inline). Each fork needs `tasks:` (relative to the repo
+root) and may set `agent:`, `preset:` (an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file)
+— its lead becomes the fork's default agent), `credentials:` (its own account(s),
+rotated on a rate limit), `model:`, and `consult: true` (iterations may ask the
+[peer agents](#the-orchestrator-pattern) read-only). Per-fork values override the
+preset for that fork only:
 
-```
-perf  codex  .agent/tasks.perf   profile=work  model=gpt-5-codex
-deps  gemini .agent/tasks.deps
-docs         .agent/tasks.docs   model=haiku
-core  claude .agent/tasks.core   model=claude-fable-5  consult=1
+```yaml
+forks:
+  core:
+    tasks: .agent/tasks.core
+    preset: frontier          # claude/fable lead + critic/fast roles, from the preset
+    credentials: [work]
+  perf:
+    agent: codex
+    tasks: .agent/tasks.perf
+    model: gpt-5.5
+    credentials: [work]
+  deps:
+    agent: gemini
+    tasks: .agent/tasks.deps
+    model: gemini-3.5-flash
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
-`coop fleet down` stops them. To bootstrap that file, `coop fleet split <n>` mechanically
-round-robins your `.agent/tasks/` todo folders into per-fork `.agent/tasks.slice<n>/` slices and writes a
-matching `.agent/fleet` with each slice's explicit path (use an agent for *semantic*
-slicing). It won't clobber a fleet you've already written — it prints the lines to
-reconcile instead.
+`coop fleet down` stops them. (A legacy one-line `.agent/fleet` still reads with a
+migration note; having both files is an error.) To bootstrap the file, `coop fleet
+split <n>` mechanically round-robins your `.agent/tasks/` todo folders into per-fork
+`.agent/tasks.slice<n>/` slices and writes a matching `.agent/fleet.yaml` with each
+slice's explicit path (use an agent for *semantic* slicing). It won't clobber a fleet
+you've already written — it prints the entries to reconcile instead.
 
 ## Project toolchain & services
 

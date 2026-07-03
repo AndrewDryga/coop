@@ -4,6 +4,27 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
+  (`.agent/presets/<name>/preset.yaml`) declares who leads and which roles it routes work to —
+  each role an agent + model + credentials + routing hints, in one of three modes: `native` (a
+  Claude subagent), `consult` (a read-only peer via coop-consult), or `delegate` (a NEW
+  write-capable `coop-delegate` wrapper: it may edit the worktree but never commits — HEAD is
+  compared before/after and a commit fails loud — and runs are serialized; the lead reviews the
+  diff, runs the gate, and owns the commit). coop generates the lead's routing contract from the
+  YAML (exact invocations included); optional Markdown files (`lead.md`, `roles/<name>.md`) append
+  to it, never replace it. `--preset <name>` works on `coop <agent>`, `loop`, `fusion`, `acp`, and
+  `coop fork <name> --loop`; explicit agent/`--model`/`--credential` flags still win. Credentials
+  are the public name for stored accounts/logins (rate-limit slots): launch surfaces take
+  `--credential`/`--credentials` with `--profile` as the legacy alias, and `coop models` now lists
+  `claude-fable-5`, `claude-opus-4-8`, `gpt-5.5`, and `gemini-3.5-flash` for the frontier recipe.
+  See the README's "Presets" section and `coop help presets`. (First external dependency:
+  gopkg.in/yaml.v3 — dependency-free itself, the binary stays static.)
+
+- **`.agent/fleet.yaml` is the fleet format.** `coop fleet init`/`split` write YAML, every fleet
+  command reads it, and forks can reference presets (`preset: frontier`) with per-fork
+  `credentials:`/`model:`/`consult:` overriding the preset for that fork only. The legacy one-line
+  `.agent/fleet` still reads with a migration note; having both files is a loud ambiguity error.
+
 - **coop now tells you when it's stale — binary, box image, and the skew between them.** Once a day,
   the first interactive command checks GitHub in the background and mentions a newer release after
   the command's output (gh-style; never blocks anything; `COOP_NO_UPDATE_CHECK=1` opts out).

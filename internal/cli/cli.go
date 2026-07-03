@@ -12,6 +12,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -35,9 +36,10 @@ func resolveVersion() string {
 }
 
 type app struct {
-	cfg   *config.Config
-	rt    runtime.Runtime
-	rtSet bool // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	cfg    *config.Config
+	rt     runtime.Runtime
+	rtSet  bool           // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	preset *preset.Preset // the run's loaded --preset, carried into each RunSpec (see applyPreset)
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command

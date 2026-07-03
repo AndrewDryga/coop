@@ -19,6 +19,20 @@
 - **Keep writes serialized in this checkout.** Native workers are for thinking unless the runtime proves they have separate workspaces. Never let two workers edit the same checkout at once.
 - **Use real capabilities only.** If a named feature does not exist in your runtime, do the closest safe thing with the tools you actually have; do not invent slash commands, tools, or worker APIs.
 
+## Orchestration — spend the big model where it matters
+When an orchestration preset is active, its routing contract sits at the top of your
+instructions — follow it: it names your roles and their exact invocations. The shapes:
+- **Native subagents** (`.claude/agents/`: deep-reasoner pinned to a big model,
+  fast-worker to a cheap one) — deep thinking and mechanical work inside your session.
+- **A read-only peer** (`coop-consult`, only when it's on PATH) — a different vendor
+  with different blind spots. It analyses and reports; it never edits. Without it,
+  skip peers — don't improvise a substitute.
+- **A write-capable delegate** (`coop-delegate`, only when it's on PATH) — it may edit
+  this worktree but never commits; runs are serialized. YOU review its `git diff`, run
+  the gate, fix or revert what falls short, and make the commit yourself.
+Credentials (accounts) and presets (orchestration recipes) are the human's to configure;
+never edit credential stores from inside the box.
+
 ## The gate (adapt to this repo)
 `<format-check> && <build --warnings-as-errors> && <tests>`
 

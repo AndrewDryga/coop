@@ -28,14 +28,14 @@ func TestParseFleet(t *testing.T) {
 		t.Fatalf("parseFleet: %v", err)
 	}
 	want := []fleetEntry{
-		{"perf", "codex", ".agent/tasks.perf", nil, "", false},
-		{"deps", "gemini", ".agent/tasks.deps", nil, "", false},
-		{"docs", "claude", ".agent/tasks.docs", nil, "", false},
-		{"api", "codex", ".agent/tasks.api", []string{"work"}, "", false},
-		{"web", "claude", ".agent/tasks.web", []string{"work", "personal"}, "", false},
-		{"big", "claude", ".agent/tasks.big", []string{"work"}, "opus", false},
-		{"core", "claude", ".agent/tasks.core", nil, "fable", true},
-		{"solo", "codex", ".agent/tasks.solo", nil, "", false},
+		{name: "perf", agent: "codex", tasks: ".agent/tasks.perf"},
+		{name: "deps", agent: "gemini", tasks: ".agent/tasks.deps"},
+		{name: "docs", agent: "claude", tasks: ".agent/tasks.docs"},
+		{name: "api", agent: "codex", tasks: ".agent/tasks.api", profiles: []string{"work"}},
+		{name: "web", agent: "claude", tasks: ".agent/tasks.web", profiles: []string{"work", "personal"}},
+		{name: "big", agent: "claude", tasks: ".agent/tasks.big", profiles: []string{"work"}, model: "opus"},
+		{name: "core", agent: "claude", tasks: ".agent/tasks.core", model: "fable", consult: true},
+		{name: "solo", agent: "codex", tasks: ".agent/tasks.solo"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleet = %v, want %v", got, want)
@@ -183,22 +183,112 @@ func TestFleetInit(t *testing.T) {
 	if code, err := a.fleetInit(); err != nil || code != 0 {
 		t.Fatalf("fleetInit = (%d, %v), want (0, nil)", code, err)
 	}
-	body, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet"))
+	body, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet.yaml"))
 	if err != nil {
-		t.Fatalf(".agent/fleet not written: %v", err)
+		t.Fatalf(".agent/fleet.yaml not written: %v", err)
 	}
-	for _, want := range []string{"one fork per line", "<name> [agent] <tasks-path>", "coop fleet up"} {
+	for _, want := range []string{"forks:", "tasks:", "credentials:", "preset:", "coop fleet up"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("fleet template missing %q:\n%s", want, body)
 		}
 	}
-	// The template is all comments, so it parses to an empty fleet (nothing to start yet).
-	if entries, err := parseFleet(string(body)); err != nil || len(entries) != 0 {
+	// The template's forks map is empty, so it parses to an empty fleet (nothing to start yet).
+	if entries, err := parseFleetYAML(string(body)); err != nil || len(entries) != 0 {
 		t.Errorf("template should parse to 0 forks, got %d (%v)", len(entries), err)
 	}
 	// Re-init refuses to clobber.
 	if code, err := a.fleetInit(); err == nil || code == 0 {
 		t.Errorf("re-init should refuse to clobber, got (%d, %v)", code, err)
+	}
+	// A repo with only a LEGACY .agent/fleet refuses too — init must not create the ambiguity.
+	legacy := filepath.Join(t.TempDir(), "l")
+	if err := os.MkdirAll(filepath.Join(legacy, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, ".agent", "fleet"), []byte("a claude t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a2 := &app{cfg: &config.Config{RepoOverride: legacy}}
+	if code, err := a2.fleetInit(); err == nil || code == 0 || !strings.Contains(err.Error(), "legacy") {
+		t.Errorf("init over a legacy fleet should refuse and name the migration, got (%d, %v)", code, err)
+	}
+}
+
+// .agent/fleet.yaml is the primary fleet format: author order is preserved, per-fork
+// preset/credentials/model/consult parse, agent defaults to the preset's lead (empty
+// here) or the default agent, and every invalid shape errors with the fork named.
+func TestParseFleetYAML(t *testing.T) {
+	got, err := parseFleetYAML(`
+forks:
+  core:
+    tasks: .agent/tasks.core
+    preset: frontier
+    credentials: [work]
+  chores:
+    agent: gemini
+    tasks: .agent/tasks.chores
+    model: gemini-3.5-flash
+    credentials: [work, backup]
+    consult: false
+  plain:
+    tasks: .agent/tasks.plain
+    consult: true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []fleetEntry{
+		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier", profiles: []string{"work"}},
+		{name: "chores", agent: "gemini", tasks: ".agent/tasks.chores", model: "gemini-3.5-flash", profiles: []string{"work", "backup"}},
+		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain", consult: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseFleetYAML =\n%+v\nwant\n%+v", got, want)
+	}
+
+	for name, in := range map[string]string{
+		"malformed":     "forks: [\n",
+		"no forks map":  "other: {}\n",
+		"missing tasks": "forks:\n  a: {agent: claude}\n",
+		"unknown agent": "forks:\n  a: {agent: borg, tasks: t}\n",
+		"unknown field": "forks:\n  a: {tasks: t, profile: work}\n", // YAML uses credentials:, not the legacy profile=
+		"bad name":      "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
+		"duplicate":     "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
+		"empty cred":    "forks:\n  a: {tasks: t, credentials: [\"\"]}\n",
+	} {
+		if _, err := parseFleetYAML(in); err == nil {
+			t.Errorf("%s: want an error, got none", name)
+		}
+	}
+}
+
+// Both fleet formats present is ambiguous — refuse loudly; each alone loads.
+func TestLoadFleetAmbiguity(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
+		t.Errorf("no fleet: want the init pointer, got %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := a.loadFleet(repo); err != nil || len(entries) != 1 {
+		t.Errorf("legacy alone should load: %v (%d entries)", err, len(entries))
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  b: {tasks: t}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "both") {
+		t.Errorf("both formats: want the ambiguity error, got %v", err)
+	}
+	if err := os.Remove(filepath.Join(repo, ".agent", "fleet")); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := a.loadFleet(repo); err != nil || len(entries) != 1 || entries[0].name != "b" {
+		t.Errorf("yaml alone should load: %v (%+v)", err, entries)
 	}
 }
 
@@ -219,14 +309,14 @@ func TestFleetSplit(t *testing.T) {
 	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice2", stateTodo, "2026-01-02-b")) {
 		t.Error("slice2 should hold b")
 	}
-	// It also writes .agent/fleet with each fork's explicit tasks dir.
-	fleet, _ := os.ReadFile(filepath.Join(repo, ".agent", "fleet"))
-	if !strings.Contains(string(fleet), "slice1 claude .agent/tasks.slice1") {
-		t.Errorf(".agent/fleet = %q, want an explicit slice1 path line", fleet)
+	// It also writes .agent/fleet.yaml with each fork's explicit tasks dir.
+	fleet, _ := os.ReadFile(filepath.Join(repo, ".agent", "fleet.yaml"))
+	if !strings.Contains(string(fleet), "slice1:") || !strings.Contains(string(fleet), "tasks: .agent/tasks.slice1") {
+		t.Errorf(".agent/fleet.yaml = %q, want an explicit slice1 entry", fleet)
 	}
-	parsed, err := parseFleet(string(fleet))
+	parsed, err := parseFleetYAML(string(fleet))
 	if err != nil || len(parsed) != 2 {
-		t.Errorf("written .agent/fleet does not parse back: %v (%d entries)", err, len(parsed))
+		t.Errorf("written .agent/fleet.yaml does not parse back: %v (%d entries)", err, len(parsed))
 	}
 }
 

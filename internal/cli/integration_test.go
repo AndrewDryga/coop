@@ -268,12 +268,12 @@ func TestIntegrationFleetSplitValidQueues(t *testing.T) {
 	if c, _ := taskTreeCounts(readTaskTree(root)); c.Todo != 3 {
 		t.Errorf("source queue changed by split: todo=%d, want 3", c.Todo)
 	}
-	// The written .agent/fleet parses back and names the slice dirs.
-	fleet, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet"))
+	// The written .agent/fleet.yaml parses back and names the slice dirs.
+	fleet, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet.yaml"))
 	if err != nil {
-		t.Fatalf(".agent/fleet not written: %v", err)
+		t.Fatalf(".agent/fleet.yaml not written: %v", err)
 	}
-	entries, err := parseFleet(string(fleet))
+	entries, err := parseFleetYAML(string(fleet))
 	if err != nil || len(entries) != 2 {
 		t.Fatalf(".agent/fleet does not parse to 2 forks: %v (%d)", err, len(entries))
 	}

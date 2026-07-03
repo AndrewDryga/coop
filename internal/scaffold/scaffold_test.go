@@ -198,9 +198,18 @@ func TestInit(t *testing.T) {
 			t.Errorf("AGENTS.md missing agent-stack guidance %q:\n%s", want, agents)
 		}
 	}
-	for _, bad := range []string{"coop fork", "coop fleet", "coop-consult"} {
+	// Host-side commands stay out (an agent in the box can't run them). The in-box
+	// wrappers (coop-consult/coop-delegate) MAY be named, but only availability-gated —
+	// they exist only when a consult/preset run mounts them, so an unconditional
+	// recommendation would send agents at a missing binary.
+	for _, bad := range []string{"coop fork", "coop fleet"} {
 		if strings.Contains(string(agents), bad) {
-			t.Errorf("AGENTS.md should not recommend host-side/non-native orchestration %q:\n%s", bad, agents)
+			t.Errorf("AGENTS.md should not recommend host-side orchestration %q:\n%s", bad, agents)
+		}
+	}
+	for _, wrapper := range []string{"coop-consult", "coop-delegate"} {
+		if strings.Contains(string(agents), wrapper) && !strings.Contains(string(agents), "on PATH") {
+			t.Errorf("AGENTS.md names %s without gating on its presence (on PATH):\n%s", wrapper, agents)
 		}
 	}
 
