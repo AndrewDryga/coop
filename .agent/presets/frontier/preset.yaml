@@ -1,34 +1,60 @@
-# coop preset — an orchestration recipe: who leads, and which roles it routes work to.
-# Run it:   coop claude --preset frontier   ·   coop loop --preset frontier
-# Inspect:  coop presets frontier   ·   format reference: coop help presets
+# coop preset — an orchestration recipe: which agent LEADS a session, and which
+# ROLES it can route work to. Edit this file, then run or inspect it:
+#   Run:      coop claude --preset frontier   ·   coop loop --preset frontier
+#   Inspect:  coop presets frontier   ·   format: coop help presets
+# A named agent overrides the lead; explicit --model / --credential override the
+# ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
+# names models and accounts, never the secrets themselves.
 
-lead:
-  agent: claude
-  # models is the lead's fallback ladder (model-first). A bare model runs on EVERY
-  # signed-in account (rotating on rate limit); model@account pins one. On a loop it
-  # rotates top-to-bottom; a single run uses the first. See: coop credentials.
+lead:                         # REQUIRED — the default agent + its model ladder.
+  agent: claude               # REQUIRED — one of: claude, codex, gemini.
+
+  # models — OPTIONAL model-first fallback ladder. Each entry is one of:
+  #   <model>            bare model → runs on EVERY signed-in account, rotating
+  #                      to the next on a rate limit.
+  #   <model>@<account>  pins that model to one account (see coop credentials).
+  #   {model: m, credential: a}   the same pair, written with keys.
+  # A loop rotates it top-to-bottom (all accounts of entry 1, then entry 2, …),
+  # keying rate limits per (model, account); a single run uses the first entry.
+  # Omit models to use the agent's default model on all signed-in accounts.
   models: [claude-fable-5, claude-opus-4-8@work]
-  # prompt: lead.md         # optional Markdown, appended to the generated contract
 
+  # prompt — OPTIONAL Markdown file in this preset folder, appended to (never
+  # replacing) the generated lead contract. Uncomment once the file exists.
+  # prompt: lead.md
+
+# roles — OPTIONAL map of role-name → role the lead can hand work to. A role
+# name is lowercase letters, digits, and dashes. Every role runs on its agent's
+# DEFAULT account (only the lead rotates accounts). Each role sets a "mode"; the
+# three below show one of each. Optional "when:" tags are routing hints the lead
+# reads to decide when to use a role — they appear verbatim in its contract.
 roles:
-  thinker:                  # deep thinking + review, inside the lead's own session
+
+  # native — a Claude subagent that runs INSIDE the lead's own session (no extra
+  # box). Requires agent: claude and a subagent: name.
+  thinker:
     mode: native
     agent: claude
-    model: claude-opus-4-8
-    subagent: deep-reasoner # a .claude/agents/ subagent (coop init scaffolds this one)
+    model: claude-opus-4-8    # optional — omit for the agent's default model
+    subagent: deep-reasoner   # required for native: a .claude/agents/ subagent
     when: [architecture, debugging, code-review, before-commit]
 
-  critic:                   # independent critique from another vendor — read-only
+  # consult — a READ-ONLY peer invoked via coop-consult, for an independent
+  # second opinion (often another vendor). Cannot edit files.
+  critic:
     mode: consult
-    agent: codex
-    model: gpt-5.5          # a role runs on its agent's default account (coop credentials)
+    agent: codex              # one of: claude, codex, gemini
+    model: gpt-5.5
     when: [plan-review, security, tradeoffs]
 
-  fast:                     # cheap mechanical work — write-capable via coop-delegate
+  # delegate — a WRITE-CAPABLE worker invoked via coop-delegate. It may edit the
+  # worktree but never commits (coop-delegate fails if HEAD moved) — the lead
+  # reviews the diff, runs the gate, and commits.
+  fast:
     mode: delegate
     agent: gemini
     model: gemini-3.5-flash
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
-    commit: never           # it edits; the LEAD reviews the diff, runs the gate, commits
-    concurrent: never       # delegate runs are serialized
-    # prompt: roles/fast.md # optional Markdown, appended to this role's contract
+    commit: never             # delegate-only — only 'never' is supported
+    concurrent: never         # delegate-only; only 'never' (runs serialized)
+    # prompt: roles/fast.md   # optional, appended to this role's contract
