@@ -152,6 +152,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .term-bar .title { margin-left: 8px; font-family: var(--font-mono); font-size: 0.78rem; color: var(--faint); }
 .term-body { background: #0a0c10; }
 .term-body .cast { width: 100%; }
+.term-body pre.code { border: 0; border-radius: 0; margin: 0; }  /* a code block sits flush in the window chrome */
 /* asciinema-player: a theme that matches the generated casts */
 .asciinema-player-theme-coop {
   --term-color-foreground: #ece7de;

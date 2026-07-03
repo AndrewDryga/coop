@@ -395,6 +395,68 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- presets -->
+                    <div class="feature">
+                        <div class="feature-text">
+                            <span class="kicker">Presets</span>
+                            <h3>Many models, one recipe</h3>
+                            <p>
+                                Put your strongest model in charge and let it
+                                spend the cheap tokens: a lead plus the roles it
+                                routes work to — cross-vendor, each on its own
+                                model — captured once as a file and reused on any
+                                run.
+                            </p>
+                            <ul>
+                                <li>
+                                    The lead's <b>models ladder</b> fans across
+                                    your accounts and falls back model → model on
+                                    a rate limit.
+                                </li>
+                                <li>
+                                    Roles in three modes: an in-session
+                                    <b>native</b> subagent, a read-only
+                                    cross-vendor <b>consult</b>, and a
+                                    write-capable <b>delegate</b>.
+                                </li>
+                                <li>
+                                    <code>coop presets init</code> scaffolds one;
+                                    <code>--preset</code> runs it on an agent, the
+                                    loop, fusion, or a fork.
+                                    <a href="docs.html#presets">Details ↗</a>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title"
+                                    >.agent/presets/frontier/preset.yaml</span
+                                >
+                            </div>
+                            <div class="term-body">
+                                <pre
+                                    class="code"
+                                >lead:
+  agent: claude
+  models: [claude-fable-5, claude-opus-4-8@work]
+roles:
+  thinker:                 <span class="t"># deep thinking, in-session</span>
+    mode: native
+    agent: claude
+    subagent: deep-reasoner
+  critic:                  <span class="t"># read-only, another vendor</span>
+    mode: consult
+    agent: codex
+  fast:                    <span class="t"># cheap, write-capable</span>
+    mode: delegate
+    agent: gemini</pre>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
