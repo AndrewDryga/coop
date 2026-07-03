@@ -31,12 +31,11 @@ func (a *app) cmdProfiles(args []string) (int, error) {
 			return a.profilePath(args[0], args[1], args[2:])
 		}
 		switch args[0] {
-		case "default":
-			return a.setProfileDefault(args[1:])
-		case "model":
-			return a.markProfileModel(args[1:])
-		case "rm", "remove":
-			return a.removeProfile(args[1:])
+		case "default", "model", "rm", "remove":
+			// v3: the verb-first forms (`coop profiles rm <agent> <p>`) are retired for the path grammar
+			// (`coop profiles <agent> <p> rm`, handled above). Tombstone the old spelling loudly.
+			note, _ := removedCommandNote("profiles verb")
+			return 2, errors.New(note)
 		case "ls", "list":
 			// Bare `coop profiles` already lists — steer `ls` there instead of "unknown agent" (rule:
 			// `ls` is the list verb, so it must lead somewhere useful, not read as an agent filter).

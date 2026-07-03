@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **BREAKING: retired renamed-command aliases.** v3 removes renamed aliases instead of minting them
+  as forever-compat: `coop clone` (→ `coop fork`), the top-level `coop pool` (→ `coop loop pool`), the
+  verb-first credential edits `coop profiles <default|model|rm> <agent> <profile>` (→ the path grammar
+  `coop profiles <agent> <profile> <verb>`), `coop tasks start` (→ `coop tasks claim`), and
+  `coop loop --debug` (→ `--debug-on-fail`). Each now exits 2 with the exact rewrite (one shared
+  tombstone registry); forgiving *spelling* aliases (`ls`/`list`, `rm`/`remove`) are unaffected. See
+  MIGRATING.md.
+
 - **A gentler first run.** `coop help` now leads with a FIRST RUN line — `coop build → coop login
   <agent> → coop doctor` — until an agent is signed in (a pure-local check, so it still works before
   Docker). `coop help <agent>` documents coop's own wrapper flags (`--profile`, `--model`,

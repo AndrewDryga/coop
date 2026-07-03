@@ -96,10 +96,9 @@ func TestCmdProfilesDefault(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-	}{
-		{"bad arity", []string{"default", "claude"}},
-		{"unknown agent", []string{"default", "nope", "work"}},
-		{"unknown profile", []string{"default", "claude", "ghost"}},
+	}{ // path grammar: coop profiles <agent> <profile> default (verb-first is retired)
+		{"unknown agent", []string{"nope", "work", "default"}},
+		{"unknown profile", []string{"claude", "ghost", "default"}},
 	} {
 		if code, err := a.cmdProfiles(tc.args); code != 2 || err == nil {
 			t.Errorf("%s: code=%d err=%v, want 2 + error", tc.name, code, err)
@@ -110,7 +109,7 @@ func TestCmdProfilesDefault(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, err := a.cmdProfiles([]string{"default", "claude", "personal"})
+	code, err := a.cmdProfiles([]string{"claude", "personal", "default"})
 	_ = w.Close()
 	os.Stdout = old
 	_, _ = io.ReadAll(r)
@@ -135,7 +134,7 @@ func TestProfilesRemoveGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: cfg}
-	code, err := a.cmdProfiles([]string{"rm", "claude", "work"})
+	code, err := a.cmdProfiles([]string{"claude", "work", "rm"}) // path grammar (verb-first retired)
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("profiles rm without --yes = (%d, %v), want (2, a refusal naming --yes)", code, err)
 	}
@@ -159,11 +158,10 @@ func TestRemoveProfile(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-	}{
-		{"bad arity", []string{"rm", "claude"}},
-		{"unknown agent", []string{"rm", "nope", "default"}},
-		{"unknown profile", []string{"rm", "claude", "ghost"}},
-		{"refuses the marked default", []string{"rm", "claude", "personal"}},
+	}{ // path grammar: coop profiles <agent> <profile> rm (verb-first is retired)
+		{"unknown agent", []string{"nope", "default", "rm"}},
+		{"unknown profile", []string{"claude", "ghost", "rm"}},
+		{"refuses the marked default", []string{"claude", "personal", "rm"}},
 	} {
 		if code, err := a.cmdProfiles(tc.args); code != 2 || err == nil {
 			t.Errorf("%s: code=%d err=%v, want 2 + error", tc.name, code, err)
@@ -179,7 +177,7 @@ func TestRemoveProfile(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, err := a.cmdProfiles([]string{"rm", "claude", "default", "--yes"})
+	code, err := a.cmdProfiles([]string{"claude", "default", "rm", "--yes"})
 	_ = w.Close()
 	os.Stdout = old
 	_, _ = io.ReadAll(r)

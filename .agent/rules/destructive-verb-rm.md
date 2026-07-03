@@ -1,7 +1,7 @@
 # Destructive subcommands advertise `rm` (and accept `remove` as an alias)
 
 Every destructive subcommand uses `rm` as its canonical verb and shows `rm` in its usage, help row,
-and error suggestions — `coop fork rm`, `coop profiles rm`, `coop pool rm`, `coop tasks rm`. `remove`
+and error suggestions — `coop fork rm`, `coop profiles rm`, `coop loop pool rm`, `coop tasks rm`. `remove`
 is accepted everywhere as a forgiving alias, but is never the form advertised.
 
 **Why:** the user ran `coop profiles rm` and noticed `coop tasks` advertised `remove` instead —

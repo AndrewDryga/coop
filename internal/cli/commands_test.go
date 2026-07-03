@@ -161,7 +161,7 @@ func TestParseLoopArgs(t *testing.T) {
 		{nil, false, "claude", "", false, false, false, false},
 		{[]string{"codex"}, false, "codex", "", false, false, false, false},
 		{[]string{"--debug-on-fail"}, false, "claude", "", false, true, false, false},
-		{[]string{"gemini", "--debug"}, false, "gemini", "", false, true, false, false},
+		{[]string{"gemini", "--debug"}, false, "", "", false, false, false, true}, // v3: --debug retired → error
 		{[]string{"--debug-on-fail", "codex"}, false, "codex", "", false, true, false, false},
 		{[]string{"bogus"}, false, "", "", false, false, false, true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
@@ -172,7 +172,7 @@ func TestParseLoopArgs(t *testing.T) {
 		// --model pins the loop's model, space or equals form; a bare --model is an error.
 		{[]string{"--model", "haiku"}, false, "claude", "haiku", false, false, false, false},
 		{[]string{"codex", "--model=gpt-5"}, false, "codex", "gpt-5", false, false, false, false},
-		{[]string{"--model", "haiku", "--debug"}, false, "claude", "haiku", false, true, false, false},
+		{[]string{"--model", "haiku", "--debug-on-fail"}, false, "claude", "haiku", false, true, false, false},
 		{[]string{"--model"}, false, "", "", false, false, false, true},
 		// --consult opts iterations into peer consultation, composing with the other flags.
 		{[]string{"--consult"}, false, "claude", "", true, false, false, false},

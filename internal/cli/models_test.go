@@ -50,12 +50,9 @@ func TestProfilesModelMarkAndClear(t *testing.T) {
 	if code, err := a.cmdProfiles([]string{"claude", "work", "model", "--clear"}); code != 0 || err != nil {
 		t.Errorf("clearing an unmarked profile = (%d, %v), want a no-op", code, err)
 	}
-	// The verb-first form still works (compat alias onto the same function).
-	if code, err := a.cmdProfiles([]string{"model", "claude", "work", "sonnet"}); code != 0 || err != nil {
-		t.Fatalf("verb-form profiles model = (%d, %v)", code, err)
-	}
-	if got := a.cfg.ProfileModelOf("claude", "work"); got != "sonnet" {
-		t.Errorf("mark via verb form = %q, want sonnet", got)
+	// The verb-first form is retired (v3): it now tombstones with the path-grammar rewrite.
+	if code, err := a.cmdProfiles([]string{"model", "claude", "work", "sonnet"}); code != 2 || err == nil {
+		t.Errorf("verb-first profiles model should be retired (exit 2), got (%d, %v)", code, err)
 	}
 }
 
@@ -170,7 +167,7 @@ func TestModelsMarkClearedOnProfileRemoval(t *testing.T) {
 	if err := a.cfg.SetProfileModel("claude", "work", "opus"); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.cmdProfiles([]string{"rm", "claude", "work", "--yes"}); code != 0 || err != nil {
+	if code, err := a.cmdProfiles([]string{"claude", "work", "rm", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("profiles rm = (%d, %v)", code, err)
 	}
 	if got := a.cfg.ProfileModelOf("claude", "work"); got != "" {

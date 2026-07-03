@@ -962,7 +962,7 @@ func loopAgent(args []string) (string, error) {
 
 func (a *app) cmdLoop(args []string) (int, error) {
 	// The rotation pool is a SETTING of the loop, not a peer workflow, so it lives here:
-	// `coop loop pool [add|rm|clear]`. (`coop pool` remains a top-level back-compat alias.)
+	// `coop loop pool [add|rm|clear]` (the top-level `coop pool` alias was retired in v3).
 	if len(args) > 0 && args[0] == "pool" {
 		return a.cmdPool(args[1:])
 	}
@@ -1005,7 +1005,7 @@ func (a *app) applyLoopModel(agent, model string) {
 	}
 }
 
-// parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail (alias --debug), and
+// parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
 // --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
 // one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
 func parseLoopArgs(args []string, def bool) (agent, model string, consult, debugOnFail, preflight bool, err error) {
@@ -1023,8 +1023,11 @@ func parseLoopArgs(args []string, def bool) (agent, model string, consult, debug
 		switch x := args[i]; x {
 		case "--consult":
 			consult = true
-		case "--debug-on-fail", "--debug":
+		case "--debug-on-fail":
 			debugOnFail = true
+		case "--debug": // v3: renamed to --debug-on-fail
+			note, _ := removedCommandNote("loop --debug")
+			return agent, model, consult, debugOnFail, preflight, errors.New(note)
 		case "--preflight":
 			preflight = true
 		case "--no-preflight":

@@ -280,13 +280,16 @@ func TestTasksVerbsIncludeWatch(t *testing.T) {
 	if err := unknownErr("tasks command", "watxh", tasksVerbs); !strings.Contains(err.Error(), `did you mean "watch"`) {
 		t.Errorf("expected a watch suggestion, got: %v", err)
 	}
-	for _, s := range []string{"watch", "ls", "list", "start", "remove", "decisions"} {
+	for _, s := range []string{"watch", "ls", "list", "remove", "decisions"} {
 		if !isTasksSubcommand(s) {
 			t.Errorf("isTasksSubcommand(%q) = false, want true", s)
 		}
 	}
 	if isTasksSubcommand("bogus") {
 		t.Error("isTasksSubcommand(bogus) = true, want false")
+	}
+	if isTasksSubcommand("start") { // v3: retired in favor of claim
+		t.Error("isTasksSubcommand(start) = true, want false (retired)")
 	}
 }
 

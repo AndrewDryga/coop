@@ -269,8 +269,8 @@ coop fork merge perf     # land: rebase onto your branch, then close the fork
 coop fork rm perf        # or discard it (confirms first; refuses unmerged/dirty work without --force)
 ```
 
-`coop fork <name>` opens a new fork or re-enters an existing one (`coop clone` is a
-back-compat alias). The agent defaults to `claude`; pass `codex` or `gemini` to pick
+`coop fork <name>` opens a new fork or re-enters an existing one. The agent defaults
+to `claude`; pass `codex` or `gemini` to pick
 the model. A fork inherits your git identity, signing key, and global gitignore from
 the parent — so the agent can commit *as you* and ignores the same noise you do.
 

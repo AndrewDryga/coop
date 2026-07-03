@@ -1,5 +1,18 @@
 # Migrating
 
+## v3: retired command aliases
+
+v3 removes renamed-command aliases instead of carrying them forever. Each retired form now exits 2
+with the rewrite (forgiving *spelling* aliases like `ls`/`list` and `rm`/`remove` stay). Rewrite:
+
+| Retired | Use |
+| --- | --- |
+| `coop clone <name>` | `coop fork <name>` |
+| `coop pool <add\|rm\|clear>` | `coop loop pool <add\|rm\|clear>` |
+| `coop profiles <default\|model\|rm> <agent> <profile>` | `coop profiles <agent> <profile> <default\|model\|rm>` |
+| `coop tasks start <id>` | `coop tasks claim <id>` |
+| `coop loop --debug` | `coop loop --debug-on-fail` |
+
 ## A legacy `.agent/TASKS.md` → the folder task system
 
 Older coop repos kept the work queue in a single `.agent/TASKS.md` (with

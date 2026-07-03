@@ -35,7 +35,7 @@ type taskArgSpec struct {
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls": {[]string{"--all"}, 0}, "list": {[]string{"--all"}, 0},
 	"lint":  {nil, 0},
-	"claim": {nil, 1}, "start": {nil, 1}, "path": {nil, 1},
+	"claim": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
 	"rm": {[]string{"--all-done", "--yes", "-y"}, 1}, "remove": {[]string{"--all-done", "--yes", "-y"}, 1},
 }
@@ -87,8 +87,11 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderLint(root)
 	case "add":
 		return tasksFolderAdd(root, args)
-	case "claim", "start":
+	case "claim":
 		return tasksFolderMove(root, args, stateInProgress, "claim", "claimed")
+	case "start": // v3: renamed to claim
+		note, _ := removedCommandNote("tasks start")
+		return 2, errors.New(note)
 	case "block":
 		return tasksFolderBlock(root, args)
 	case "unblock":
@@ -115,7 +118,7 @@ var tasksVerbs = []string{"ls", "lint", "add", "claim", "block", "unblock", "don
 
 // tasksAliases are accepted alternate spellings (→ a canonical verb: list→ls, start→claim, remove→rm),
 // recognized by isTasksSubcommand but kept out of suggestions, which name only the canonical form.
-var tasksAliases = map[string]bool{"list": true, "start": true, "remove": true}
+var tasksAliases = map[string]bool{"list": true, "remove": true}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand (or alias). cmdTasks
 // uses it to catch `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path.

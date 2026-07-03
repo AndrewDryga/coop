@@ -95,7 +95,7 @@ func Main(argv []string) int {
 	// commands (claude/codex/gemini/run/…) aren't in the map, so they fall through and
 	// forward `--help`/`help` to the underlying CLI / box.
 	if helpRequested(argv[1:]) || (len(argv) > 1 && argv[1] == "help") {
-		if argv[0] == "fork" || argv[0] == "clone" {
+		if argv[0] == "fork" {
 			code, _ := forkHelp()
 			return code
 		}
@@ -161,15 +161,11 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdProfiles(rest)
 	case "models":
 		return a.cmdModels(rest)
-	case "pool": // back-compat alias — the documented form is `coop loop pool` (it's the loop's setting)
-		return a.cmdPool(rest)
 	case "acp":
 		return a.cmdACP(rest)
 	case "fusion":
 		return a.cmdFusion(rest)
 	case "fork":
-		return a.cmdFork(rest)
-	case "clone": // back-compat alias for `coop fork`
 		return a.cmdFork(rest)
 	case "fleet":
 		return a.cmdFleet(rest)
@@ -205,7 +201,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
-	"run", "shell", "login", "profiles", "models", "pool", "acp", "fusion", "fork", "fleet", "tasks",
+	"run", "shell", "login", "profiles", "models", "acp", "fusion", "fork", "fleet", "tasks",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "help", "version",
 }
 
@@ -214,7 +210,7 @@ var topLevelCommands = []string{
 // --help forwards to the underlying CLI, or an unknown-command error (exit 2) for anything else.
 func helpForCommand(cmd string) int {
 	switch {
-	case cmd == "fork" || cmd == "clone":
+	case cmd == "fork":
 		code, _ := forkHelp()
 		return code
 	case cmd == "run":
@@ -261,15 +257,28 @@ func isKnownCommand(cmd string) bool {
 	return agents.Valid(cmd)
 }
 
-// removedCommandNote returns the migration message for a command coop used to have but dropped, so
-// `coop <cmd>` and `coop help <cmd>` explain the replacement identically instead of one of them
-// falling back to a generic "unknown command". ok is false for a command that was never removed.
+// removedCommandNote is the one tombstone registry for every retired command/alias/flag: each maps to
+// a migration line naming the replacement, so a retired form fails loudly (exit 2) with the rewrite
+// instead of doing nothing, or being silently re-minted as a forever-alias. Keyed by the top-level
+// command name (checked by unknownCommandErr / helpForCommand) or a descriptive key for a sub-form
+// (its own dispatch site looks it up). ok is false for anything that was never removed. See MIGRATING.md.
 func removedCommandNote(cmd string) (string, bool) {
 	switch cmd {
 	case "status": // replaced by the task board (the default) + the per-fork fleet board
 		return "coop status was removed — watch the work with `coop tasks watch` " +
 			"(the queue + any active forks, deduped); for the per-fork fleet board use `coop fleet watch` " +
 			"(snapshot: `coop fork ls`)", true
+	case "clone": // v3: renamed-command aliases die loudly rather than living forever
+		return "coop clone was renamed to coop fork (v2.4) — run: coop fork <name>", true
+	case "pool":
+		return "coop pool moved under the loop — run: coop loop pool <add|rm|clear>", true
+	case "tasks start":
+		return "coop tasks start was renamed to claim — run: coop tasks claim <id>", true
+	case "loop --debug":
+		return "coop loop --debug was renamed — use --debug-on-fail", true
+	case "profiles verb":
+		return "coop profiles edits read as a path now — run: coop profiles <agent> <profile> " +
+			"<default|model|rm> (e.g. coop profiles claude work default)", true
 	}
 	return "", false
 }
