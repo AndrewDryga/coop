@@ -162,13 +162,19 @@ func ImageExists(rt runtime.Runtime, image string) bool {
 // own toolchain), otherwise the shared base is built from BaseDockerfile. When
 // fresh is set it adds --pull --no-cache so the base image and the npm-installed
 // agent CLIs + ACP adapters are pulled to their latest (this is `coop update`).
-func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) error {
+// version is the building coop's version, stamped beside the image so a later
+// launch can flag binary/image skew (box can't resolve it itself — cli owns it).
+func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, version string) error {
 	if err := rt.EnsureDaemon(); err != nil {
 		return err
 	}
 	if !fileExists(filepath.Join(repo, "Dockerfile.agent")) {
 		ui.Info("building %s (shared base)", cfg.BaseImage)
-		return buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
+		err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
+		if err == nil {
+			StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
+		}
+		return err
 	}
 	img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
 	// Dockerfile.agent defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent with

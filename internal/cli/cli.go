@@ -63,6 +63,9 @@ func Main(argv []string) int {
 	// profile — even help checks sign-in state and lists profiles. One-time, idempotent, and
 	// best-effort (filesystem only, so it needs no container runtime). See migrateFlatVaults.
 	migrateFlatVaults(cfg)
+	// Once a day, check for a newer coop in the background and mention it as the command's
+	// parting line (deferred, so it runs on every return path). See startUpdateCheck.
+	defer startUpdateCheck(cfg, argv)()
 
 	// Bare `coop`, help, and version all work without a container runtime. Bare
 	// `coop` prints help rather than launching an agent — running one is explicit

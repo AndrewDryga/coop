@@ -228,28 +228,30 @@ func TestSelfUpdate(t *testing.T) {
 
 func TestParseUpdateFlags(t *testing.T) {
 	cases := []struct {
-		name      string
-		args      []string
-		self, box bool
-		wantErr   bool
+		name             string
+		args             []string
+		self, box, check bool
+		wantErr          bool
 	}{
-		{"none", nil, false, false, false},
-		{"self-only", []string{"--self-only"}, true, false, false},
-		{"box-only", []string{"--box-only"}, false, true, false},
-		{"both is an error", []string{"--self-only", "--box-only"}, false, false, true},
-		{"unknown flag", []string{"--wat"}, false, false, true},
+		{"none", nil, false, false, false, false},
+		{"self-only", []string{"--self-only"}, true, false, false, false},
+		{"box-only", []string{"--box-only"}, false, true, false, false},
+		{"check", []string{"--check"}, false, false, true, false},
+		{"both is an error", []string{"--self-only", "--box-only"}, false, false, false, true},
+		{"check + self-only is an error", []string{"--check", "--self-only"}, false, false, false, true},
+		{"unknown flag", []string{"--wat"}, false, false, false, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			self, box, err := parseUpdateFlags(c.args)
+			self, box, check, err := parseUpdateFlags(c.args)
 			if (err != nil) != c.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, c.wantErr)
 			}
 			if err != nil {
 				return
 			}
-			if self != c.self || box != c.box {
-				t.Errorf("self=%v box=%v, want %v/%v", self, box, c.self, c.box)
+			if self != c.self || box != c.box || check != c.check {
+				t.Errorf("self=%v box=%v check=%v, want %v/%v/%v", self, box, check, c.self, c.box, c.check)
 			}
 		})
 	}

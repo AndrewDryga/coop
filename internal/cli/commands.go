@@ -648,7 +648,7 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	if err := box.Build(a.rt, a.cfg, repo, false); err != nil {
+	if err := box.Build(a.rt, a.cfg, repo, false, resolveVersion()); err != nil {
 		return -1, err
 	}
 	a.recycleBoxes()
@@ -676,9 +676,12 @@ func (a *app) recycleBoxes() {
 // + ACP adapters refresh to their latest, then reports the versions it landed on.
 // --self-only does just the binary; --box-only does just the image (the old behavior).
 func (a *app) cmdUpdate(args []string) (int, error) {
-	selfOnly, boxOnly, err := parseUpdateFlags(args)
+	selfOnly, boxOnly, check, err := parseUpdateFlags(args)
 	if err != nil {
 		return 2, err
+	}
+	if check {
+		return a.cmdUpdateCheck()
 	}
 
 	// Self-update the binary first. A failed *check* (offline/rate limit) is soft and
@@ -713,7 +716,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		return -1, err
 	}
 	ui.Info("updating the box: newer base image + latest agent CLIs and ACP adapters")
-	if err := box.Build(a.rt, a.cfg, repo, true); err != nil {
+	if err := box.Build(a.rt, a.cfg, repo, true, resolveVersion()); err != nil {
 		return -1, err
 	}
 	a.recycleBoxes()
@@ -730,23 +733,73 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	return 0, nil
 }
 
-// parseUpdateFlags parses `coop update`'s own flags: --self-only (just the binary) and
-// --box-only (just the image), which are mutually exclusive.
-func parseUpdateFlags(args []string) (selfOnly, boxOnly bool, err error) {
+// parseUpdateFlags parses `coop update`'s own flags: --self-only (just the binary),
+// --box-only (just the image), and --check (report, change nothing) — mutually exclusive.
+func parseUpdateFlags(args []string) (selfOnly, boxOnly, check bool, err error) {
 	for _, x := range args {
 		switch x {
 		case "--self-only":
 			selfOnly = true
 		case "--box-only":
 			boxOnly = true
+		case "--check":
+			check = true
 		default:
-			return false, false, fmt.Errorf("update: unknown flag %q (usage: coop update [--self-only|--box-only])", x)
+			return false, false, false, fmt.Errorf("update: unknown flag %q (usage: coop update [--self-only|--box-only|--check])", x)
 		}
 	}
-	if selfOnly && boxOnly {
-		return false, false, errors.New("update: --self-only and --box-only are mutually exclusive")
+	picked := 0
+	for _, on := range []bool{selfOnly, boxOnly, check} {
+		if on {
+			picked++
+		}
 	}
-	return selfOnly, boxOnly, nil
+	if picked > 1 {
+		return false, false, false, errors.New("update: --self-only, --box-only, and --check are mutually exclusive")
+	}
+	return selfOnly, boxOnly, check, nil
+}
+
+// cmdUpdateCheck is `coop update --check`: report what an update WOULD do, changing
+// nothing. The binary line needs one GitHub call; the box report reads only the local
+// build stamps (no container runtime), so the dry-run works anywhere.
+func (a *app) cmdUpdateCheck() (int, error) {
+	cur := resolveVersion()
+	latest, err := latestReleaseTag()
+	if err != nil {
+		return -1, err // latestReleaseTag's message already says what to do
+	}
+	c, l := normalizeVersion(cur), normalizeVersion(latest)
+	switch {
+	case !releaseVersion(cur):
+		ui.Note("coop %s is a dev/source build (self-update doesn't apply); the latest release is v%s", cur, l)
+	case versionLess(c, l):
+		ui.Note("coop v%s → v%s available — run 'coop update'", c, l)
+	default:
+		ui.OK("coop v%s is up to date", c)
+	}
+
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		ui.Note("(not in a repo — skipped the box image check)")
+		return 0, nil
+	}
+	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	if at, ok := box.ImageBuildAge(a.cfg, img); ok {
+		when := "today"
+		if days := int(time.Since(at).Hours() / 24); days > 0 {
+			when = ui.Count(days, "day") + " ago"
+		}
+		ui.Note("box image %s: built %s", img, when)
+	}
+	nudges := box.StalenessNudges(a.cfg, repo, img)
+	for _, n := range nudges {
+		ui.Note("%s", n)
+	}
+	if len(nudges) == 0 {
+		ui.OK("box image %s is current", img)
+	}
+	return 0, nil
 }
 
 func (a *app) cmdUp(args []string) (int, error) {
@@ -1175,6 +1228,11 @@ func (a *app) loop(repo, img, agent, forkName string, pool *profilePool, queues 
 	}
 	if !box.ImageExists(a.rt, img) {
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
+	}
+	// Iterations run Batch (box.Run stays quiet), so surface image staleness once here —
+	// an overnight drain on a month-old box is exactly where a stale nudge earns its line.
+	for _, nudge := range box.StalenessNudges(a.cfg, repo, img) {
+		ui.Info("%s", nudge)
 	}
 	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
 	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.

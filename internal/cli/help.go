@@ -511,7 +511,7 @@ var commandHelp = map[string]string{
 
 	"update": `coop update — self-update coop, then rebuild the box image fresh.
 
-  Usage: coop update [--self-only | --box-only]
+  Usage: coop update [--self-only | --box-only | --check]
 
   First replaces the coop binary with the latest GitHub release — fetched and
   verified the same way install.sh does (checksum + cosign), then swapped in
@@ -522,9 +522,15 @@ var commandHelp = map[string]string{
 
     --self-only   update just the coop binary, skip the image rebuild
     --box-only    rebuild just the image, skip the self-update (the old behavior)
+    --check       dry-run: report the binary vs the latest release and the box
+                  image's build age/staleness, changing nothing (no runtime needed)
 
   A dev/source build, an already-current binary, or a coop installed somewhere
-  unwritable (a package-manager prefix) skips the self-update with a note.`,
+  unwritable (a package-manager prefix) skips the self-update with a note.
+
+  Once a day, any TTY command also checks for a newer release in the background
+  and mentions it after the command's output; COOP_NO_UPDATE_CHECK=1 turns that
+  notice off.`,
 
 	"version": `coop version — print coop's version and exit.
 

@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **coop now tells you when it's stale — binary, box image, and the skew between them.** Once a day,
+  the first interactive command checks GitHub in the background and mentions a newer release after
+  the command's output (gh-style; never blocks anything; `COOP_NO_UPDATE_CHECK=1` opts out).
+  `coop update --check` is the on-demand dry-run: binary vs latest release plus the box image's
+  build age and staleness, changing nothing and needing no container runtime. Every base-image
+  build now stamps which coop built it and from what box definition, so launches can warn — never
+  block — when a newer binary runs over an old image (the kubectl-style skew `update --self-only`
+  used to leave invisible), and when the image is a month old (its baked agent CLIs churn weekly).
+  `coop loop` surfaces the same nudges once at startup.
+
 - **Site casts can't ship a dirty version anymore.** `make casts` regenerates the site's terminal
   recordings, and the generator now refuses to capture the real `coop help` from an untagged or
   `+dirty` binary (the live help.cast once shipped `coop v0.0.0-…+dirty` to every visitor). The
