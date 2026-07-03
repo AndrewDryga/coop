@@ -674,7 +674,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	// Place the fake session where the adapter resolves it — via the same key function, so
 	// this test can't drift from Claude Code's project-dir encoding.
 	claudeKey := agents.ClaudeProjectKey(ws)
-	sess := filepath.Join(cfgDir, "claude", "projects", claudeKey, id+".jsonl")
+	sess := filepath.Join(a.cfg.AgentDir("claude"), "projects", claudeKey, id+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(sess), 0o755); err != nil {
 		t.Fatal(err)
 	}

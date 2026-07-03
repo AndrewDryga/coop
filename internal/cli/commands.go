@@ -213,6 +213,25 @@ func (a *app) defaultCmd(tool string) []string {
 	return []string{tool}
 }
 
+// migrateFlatVaults retires any legacy flat credential vault into the named-profile layout at
+// startup: for each agent whose <ConfigDir>/<agent>/ dir predates profiles/, box.EnsureProfilesDir
+// moves the login into profiles/default so every read path can assume named profiles. It runs once
+// (from Main) before anything reads a profile, is idempotent — a no-op once profiles/ exists — and
+// best-effort: a rare rename failure is surfaced as a warning and nothing is deleted, so the flat
+// login stays put and the user can retry or simply log in again. Agents never used (no <agent>/ dir)
+// are skipped, so this doesn't leave an empty profiles/ behind for them.
+func migrateFlatVaults(cfg *config.Config) {
+	for _, name := range agents.Names() {
+		base := filepath.Join(cfg.ConfigDir, name)
+		if fi, err := os.Stat(base); err != nil || !fi.IsDir() {
+			continue // never used this agent — nothing to migrate
+		}
+		if err := box.EnsureProfilesDir(cfg, name); err != nil {
+			ui.Warn("could not migrate %s credentials into the profile layout: %v — log in again if %s stops authenticating", name, err, name)
+		}
+	}
+}
+
 func (a *app) cmdLogin(args []string) (int, error) {
 	profile, rest, err := extractProfile(args)
 	if err != nil {

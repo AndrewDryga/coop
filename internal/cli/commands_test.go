@@ -604,3 +604,52 @@ func TestTopLevelListsAllGroupVerbs(t *testing.T) {
 		t.Error("top-level pool row should list every pool verb (rm/clear were missing) at its loop home")
 	}
 }
+
+// migrateFlatVaults retires a legacy flat login into profiles/default, leaves an already-migrated
+// agent alone, skips agents never used (no empty dir left behind), and is idempotent.
+func TestMigrateFlatVaults(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+
+	// claude: a flat vault — login sits directly in claude/, no profiles/ yet.
+	claudeFlat := filepath.Join(dir, "claude")
+	if err := os.MkdirAll(claudeFlat, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeFlat, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// gemini: already on the named-profile layout — must be left exactly as-is.
+	geminiWork := filepath.Join(dir, "gemini", "profiles", "work")
+	if err := os.MkdirAll(geminiWork, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// codex: never used (no dir at all).
+
+	migrateFlatVaults(cfg)
+
+	// claude's flat login moved into profiles/default; the flat path no longer holds it.
+	if !pathExists(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json")) {
+		t.Error("flat claude login was not migrated into profiles/default")
+	}
+	if pathExists(filepath.Join(claudeFlat, ".credentials.json")) {
+		t.Error("flat claude login still present at the old path after migration")
+	}
+	// gemini's existing profile is untouched and no stray default was invented for it.
+	if !pathExists(geminiWork) {
+		t.Error("existing gemini profile was disturbed by the migration")
+	}
+	if pathExists(filepath.Join(dir, "gemini", "profiles", "default")) {
+		t.Error("migration wrongly created a default profile for an already-migrated agent")
+	}
+	// codex was never used → no empty dir litters its (nonexistent) home.
+	if pathExists(filepath.Join(dir, "codex")) {
+		t.Error("migration created a dir for an agent that was never used")
+	}
+
+	// Idempotent: a second run leaves the migrated login exactly where it is.
+	migrateFlatVaults(cfg)
+	if !pathExists(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json")) {
+		t.Error("second migrateFlatVaults disturbed the migrated claude login")
+	}
+}

@@ -217,7 +217,7 @@ func TestResume(t *testing.T) {
 
 	// claude resumes the exact coop-owned id (projects/<cwd>/<id>.jsonl), not --continue.
 	claude, _ := Get("claude")
-	mustWrite(t, filepath.Join(cfgDir, "claude", "projects", ClaudeProjectKey(ws), id+".jsonl"), "{}")
+	mustWrite(t, filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), id+".jsonl"), "{}")
 	if cmd, ok := claude.Resume(cfg, ws, id); !ok ||
 		!slices.Equal(cmd, []string{"claude", "--dangerously-skip-permissions", "--resume", id}) {
 		t.Errorf("claude Resume = (%v, %v)", cmd, ok)
@@ -229,7 +229,7 @@ func TestResume(t *testing.T) {
 
 	// gemini resumes the exact id, matched by file content (not "latest").
 	gemini, _ := Get("gemini")
-	mustWrite(t, filepath.Join(cfgDir, "gemini", "tmp", "demo", "chats", "session-x.jsonl"),
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "demo", "chats", "session-x.jsonl"),
 		`{"sessionId":"`+id+`"}`)
 	if cmd, ok := gemini.Resume(cfg, ws, id); !ok ||
 		!slices.Equal(cmd, []string{"gemini", "--yolo", "--resume", id}) {
@@ -239,7 +239,7 @@ func TestResume(t *testing.T) {
 	// resume must find the id regardless of the bucket name (the old raw-basename lookup silently
 	// missed a fork named e.g. "My.Repo" whose real bucket is "my-repo").
 	slugWs := filepath.Join(t.TempDir(), "My.Cool_Repo")
-	mustWrite(t, filepath.Join(cfgDir, "gemini", "tmp", "my-cool-repo", "chats", "s.jsonl"), `{"sessionId":"`+id+`"}`)
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", "chats", "s.jsonl"), `{"sessionId":"`+id+`"}`)
 	if _, ok := gemini.Resume(cfg, slugWs, id); !ok {
 		t.Error("gemini Resume must match a session in a slug-named bucket, not only the raw basename")
 	}
@@ -247,7 +247,7 @@ func TestResume(t *testing.T) {
 	// codex ignores the id and resumes its most-recent INTERACTIVE session for the cwd,
 	// skipping a newer `codex exec` (source=="exec") loop/consult session.
 	codex, _ := Get("codex")
-	sess := filepath.Join(cfgDir, "codex", "sessions", "2026", "06")
+	sess := filepath.Join(cfg.AgentDir("codex"), "sessions", "2026", "06")
 	mustWrite(t, filepath.Join(sess, "16", "rollout-interactive.jsonl"),
 		`{"type":"session_meta","payload":{"id":"abc-123","cwd":"`+ws+`","source":"cli"}}`+"\n")
 	mustWrite(t, filepath.Join(sess, "17", "rollout-exec.jsonl"),

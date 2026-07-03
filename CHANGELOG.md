@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The legacy flat credential vault is retired — one layout, migrated automatically.** Credentials
+  and sessions now always live under `<config>/<agent>/profiles/<name>/`; the old flat
+  `<config>/<agent>/` layout, where an un-named "default" login sat directly in the agent dir, is gone.
+  The first `coop` command after upgrading moves any flat login into `profiles/default` for you — no
+  action, no error — so `AgentProfileDir`, `Profiles`, and the profile-`rm` guard no longer carry a
+  second on-disk shape and every future profile feature is written once. A downgrade to ≥v2.6 still
+  reads `profiles/`.
+
 - **Progress bars show blocked work in red — everywhere.** Every coop progress bar (`coop tasks
   watch`'s overall + per-queue bars, `coop fleet watch`'s fleet + per-fork bars, and the `coop loop`
   live bar) now renders blocked tasks as a red segment (done cyan, blocked red, the rest empty) instead

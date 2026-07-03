@@ -68,7 +68,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	want := []string{
 		"run", "--rm", "--label", "coop=box",
 		"-v", "/repo:/workspace",
-		"-v", cfg.ConfigDir + "/claude:/home/node/.claude",
+		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
 		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
 		"-w", "/workspace", "coop-box", "claude",
@@ -191,9 +191,10 @@ func containsSeq(s, want []string) bool {
 func TestInstructionOverrideUsed(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("SHARED"), 0o644)
-	os.MkdirAll(filepath.Join(dir, "claude"), 0o755)
-	os.WriteFile(filepath.Join(dir, "claude", "CLAUDE.md"), []byte("OVERRIDE"), 0o644)
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
+	// The per-agent override lives in the agent's active-profile dir (profiles/default now).
+	os.MkdirAll(cfg.AgentDir("claude"), 0o755)
+	os.WriteFile(filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md"), []byte("OVERRIDE"), 0o644)
 
 	if c := agentBaseInstructions(cfg, "claude", "CLAUDE.md"); !strings.Contains(c, "OVERRIDE") || strings.Contains(c, "SHARED") {
 		t.Errorf("claude should use its per-agent override, not the shared file:\n%s", c)
@@ -319,11 +320,12 @@ func TestModelEnvArgs(t *testing.T) {
 // directive is injected and coop-consult is wired.
 func TestLeadInstructionMount(t *testing.T) {
 	dir := t.TempDir()
-	// Only claude signed in → authedPeers(claude) is empty.
-	if err := os.MkdirAll(filepath.Join(dir, "claude"), 0o755); err != nil {
+	// Only claude signed in → authedPeers(claude) is empty. Creds live in profiles/default (the
+	// flat vault is retired — migrateFlatVaults moves it there at startup).
+	if err := os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "claude", ".credentials.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}

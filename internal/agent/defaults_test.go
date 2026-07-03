@@ -39,7 +39,7 @@ func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 	cfg := &config.Config{ConfigDir: dir}
 	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
 
-	s := readJSONMap(t, filepath.Join(dir, "claude", "settings.json"))
+	s := readJSONMap(t, filepath.Join(cfg.AgentDir("claude"), "settings.json"))
 	if s["theme"] != "dark" {
 		t.Errorf("settings.json theme = %v, want dark", s["theme"])
 	}
@@ -51,7 +51,7 @@ func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 		t.Errorf("sandbox should be pinned off: %v", s["sandbox"])
 	}
 
-	c := readJSONMap(t, filepath.Join(dir, "claude", ".claude.json"))
+	c := readJSONMap(t, filepath.Join(cfg.AgentDir("claude"), ".claude.json"))
 	if c["hasCompletedOnboarding"] != true {
 		t.Error("hasCompletedOnboarding not set")
 	}
@@ -67,13 +67,13 @@ func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 
 func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	cdir := filepath.Join(dir, "claude")
+	cfg := &config.Config{ConfigDir: dir}
+	cdir := cfg.AgentDir("claude")
 	os.MkdirAll(cdir, 0o755)
 	// Pre-existing login state + a user setting that must survive.
 	os.WriteFile(filepath.Join(cdir, ".claude.json"),
 		[]byte(`{"oauthAccount":{"u":"x"},"numStartups":5}`), 0o600)
 	os.WriteFile(filepath.Join(cdir, "settings.json"), []byte(`{"theme":"light"}`), 0o644)
-	cfg := &config.Config{ConfigDir: dir}
 
 	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
 
@@ -104,7 +104,7 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 func TestEnsureCodexDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	cfgPath := filepath.Join(dir, "codex", "config.toml")
+	cfgPath := filepath.Join(cfg.AgentDir("codex"), "config.toml")
 
 	// Fresh: appends a trust entry for the workdir.
 	codexAgent{}.EnsureDefaults(cfg, "/Users/x/proj")
@@ -130,11 +130,12 @@ func TestEnsureCodexDefaults(t *testing.T) {
 
 func TestEnsureCodexDefaultsPreservesExisting(t *testing.T) {
 	dir := t.TempDir()
-	cdir := filepath.Join(dir, "codex")
+	cfg := &config.Config{ConfigDir: dir}
+	cdir := cfg.AgentDir("codex")
 	os.MkdirAll(cdir, 0o755)
 	os.WriteFile(filepath.Join(cdir, "config.toml"), []byte("model = \"o3\"\n"), 0o644)
 
-	codexAgent{}.EnsureDefaults(&config.Config{ConfigDir: dir}, "/w")
+	codexAgent{}.EnsureDefaults(cfg, "/w")
 	got := readFile(t, filepath.Join(cdir, "config.toml"))
 	if !strings.Contains(got, `model = "o3"`) {
 		t.Error("existing config was dropped")
@@ -150,7 +151,8 @@ func TestEnsureCodexDefaultsHardensSQLiteFeedbackLog(t *testing.T) {
 		t.Skip("sqlite3 not available")
 	}
 	dir := t.TempDir()
-	cdir := filepath.Join(dir, "codex")
+	cfg := &config.Config{ConfigDir: dir}
+	cdir := cfg.AgentDir("codex")
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +172,7 @@ INSERT INTO logs(ts, ts_nanos, level, target) VALUES (1, 0, 'INFO', 'before');
 		t.Fatalf("sqlite setup: %v\n%s", err, out)
 	}
 
-	codexAgent{}.EnsureDefaults(&config.Config{ConfigDir: dir}, "/w")
+	codexAgent{}.EnsureDefaults(cfg, "/w")
 
 	insert := `INSERT INTO logs(ts, ts_nanos, level, target) VALUES (2, 0, 'INFO', 'after'); SELECT count(*) FROM logs;`
 	out, err := exec.Command(sqlite, db, insert).CombinedOutput()
@@ -193,7 +195,7 @@ INSERT INTO logs(ts, ts_nanos, level, target) VALUES (1, 0, 'INFO', 'before');
 func TestEnsureGeminiDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	path := filepath.Join(dir, "gemini", "settings.json")
+	path := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
 
 	folderTrust := func(t *testing.T) (any, bool) {
 		t.Helper()

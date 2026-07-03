@@ -202,25 +202,17 @@ func TestAgentProfileResolution(t *testing.T) {
 	c := &Config{ConfigDir: dir}
 	claudeDir := filepath.Join(dir, "claude")
 
-	// Legacy flat layout: no profiles/ dir yet → "default" IS the agent dir itself,
-	// so an existing single login keeps resolving to today's path (no file move).
-	if got := c.AgentProfileDir("claude", "default"); got != claudeDir {
-		t.Errorf("legacy default = %q, want %q", got, claudeDir)
+	// Every profile — "default" included — resolves under profiles/. The legacy flat layout is
+	// retired (migrateFlatVaults moves any old login into profiles/default at startup), so there's
+	// no longer a branch where the agent dir itself is the default.
+	if got, want := c.AgentProfileDir("claude", "default"), filepath.Join(claudeDir, "profiles", "default"); got != want {
+		t.Errorf("default = %q, want %q", got, want)
 	}
-	if got := c.AgentDir("claude"); got != claudeDir {
-		t.Errorf("AgentDir (legacy) = %q, want %q", got, claudeDir)
+	if got, want := c.AgentDir("claude"), filepath.Join(claudeDir, "profiles", "default"); got != want {
+		t.Errorf("AgentDir = %q, want %q", got, want)
 	}
-	// A named profile always lives under profiles/, even before migration.
 	if got, want := c.AgentProfileDir("claude", "work"), filepath.Join(claudeDir, "profiles", "work"); got != want {
 		t.Errorf("named profile = %q, want %q", got, want)
-	}
-
-	// Once profiles/ exists, the default moves under it too (post-migration invariant).
-	if err := os.MkdirAll(filepath.Join(claudeDir, "profiles", "default"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := c.AgentProfileDir("claude", "default"), filepath.Join(claudeDir, "profiles", "default"); got != want {
-		t.Errorf("migrated default = %q, want %q", got, want)
 	}
 
 	// SetActiveProfile changes what AgentDir resolves to; empty resets to default.
@@ -242,14 +234,15 @@ func TestProfilesListing(t *testing.T) {
 	if got := c.Profiles("codex"); got != nil {
 		t.Errorf("unused agent Profiles = %v, want nil", got)
 	}
-	// Legacy flat (agent dir exists, no profiles/) → a single "default".
+	// A bare agent dir with no profiles/ reports nothing — the flat layout is retired, so there's no
+	// "default" until the profiles/ dir exists (migrateFlatVaults creates it from an old flat login).
 	if err := os.MkdirAll(filepath.Join(dir, "codex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Profiles("codex"); !slices.Equal(got, []string{"default"}) {
-		t.Errorf("legacy Profiles = %v, want [default]", got)
+	if got := c.Profiles("codex"); got != nil {
+		t.Errorf("bare agent dir (no profiles/) Profiles = %v, want nil", got)
 	}
-	// Migrated → the profiles/ subdirs.
+	// The profiles/ subdirs are the profile names.
 	for _, p := range []string{"default", "work", "personal"} {
 		if err := os.MkdirAll(filepath.Join(dir, "codex", "profiles", p), 0o755); err != nil {
 			t.Fatal(err)
@@ -258,7 +251,7 @@ func TestProfilesListing(t *testing.T) {
 	got := c.Profiles("codex")
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"default", "personal", "work"}) {
-		t.Errorf("migrated Profiles = %v", got)
+		t.Errorf("Profiles = %v", got)
 	}
 }
 

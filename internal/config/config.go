@@ -414,30 +414,24 @@ func (c *Config) ModelFor(agent string) string {
 	return c.AgentModelDefault(agent)
 }
 
-// AgentProfileDir is the host folder for one named credential profile of an agent.
-// Profiles live at <ConfigDir>/<agent>/profiles/<name>/. For back-compat, until a named
-// profile exists (no profiles/ dir yet) the "default" profile IS the legacy flat
-// <ConfigDir>/<agent>/ — so an existing single login keeps working without a file move.
+// AgentProfileDir is the host folder for one named credential profile of an agent:
+// <ConfigDir>/<agent>/profiles/<name>/. "default" is just the profile named "default" —
+// a startup migration (migrateFlatVaults → box.EnsureProfilesDir) moves any legacy flat
+// login into profiles/default before anything reads a profile, so this always resolves
+// under profiles/.
 func (c *Config) AgentProfileDir(agent, name string) string {
 	if name == "" {
 		name = DefaultProfile
 	}
-	base := filepath.Join(c.ConfigDir, agent)
-	if name == DefaultProfile && !dirExists(filepath.Join(base, profilesSubdir)) {
-		return base // legacy flat layout: the agent dir itself is the default profile
-	}
-	return filepath.Join(base, profilesSubdir, name)
+	return filepath.Join(c.ConfigDir, agent, profilesSubdir, name)
 }
 
-// Profiles lists agent's credential profile names. In the migrated layout it reads the
-// profiles/ dir; in the legacy flat layout it reports a single "default" when the agent
-// dir exists, and nothing when the agent has never been used.
+// Profiles lists agent's credential profile names from its profiles/ dir, or nothing when the
+// agent has never been used. A legacy flat login is migrated into profiles/default at startup
+// (see migrateFlatVaults), so it appears here too.
 func (c *Config) Profiles(agent string) []string {
 	entries, err := os.ReadDir(filepath.Join(c.ConfigDir, agent, profilesSubdir))
 	if err != nil {
-		if dirExists(filepath.Join(c.ConfigDir, agent)) {
-			return []string{DefaultProfile}
-		}
 		return nil
 	}
 	var names []string
@@ -551,11 +545,6 @@ func shellSplit(s string) []string {
 		return nil
 	}
 	return args
-}
-
-func dirExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
 }
 
 // loadConfFile parses a simple KEY=VALUE file: blank lines and #-comments are

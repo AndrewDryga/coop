@@ -58,11 +58,17 @@ func (a *app) ensureRuntime() error {
 
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
 func Main(argv []string) int {
+	cfg := config.Load()
+	// Retire any legacy flat credential vault into profiles/default before anything reads a
+	// profile — even help checks sign-in state and lists profiles. One-time, idempotent, and
+	// best-effort (filesystem only, so it needs no container runtime). See migrateFlatVaults.
+	migrateFlatVaults(cfg)
+
 	// Bare `coop`, help, and version all work without a container runtime. Bare
 	// `coop` prints help rather than launching an agent — running one is explicit
 	// (`coop claude`), so a stray `coop` never turns an agent loose on the cwd.
 	if len(argv) == 0 {
-		printHelp(config.Load())
+		printHelp(cfg)
 		return 0
 	}
 	switch argv[0] {
@@ -71,7 +77,7 @@ func Main(argv []string) int {
 		// help` (or -h/--help) is the top-level reference.
 		if argv[0] == "help" && len(argv) > 1 {
 			if argv[1] == "--all" { // the whole manual, same bytes as docs/cli.md (see RenderManual)
-				fmt.Print(RenderManual(config.Load()))
+				fmt.Print(RenderManual(cfg))
 				return 0
 			}
 			if argv[1] == "loop" && len(argv) > 2 && argv[2] == "pool" { // canonical `coop help loop pool` → the pool page
@@ -80,7 +86,7 @@ func Main(argv []string) int {
 			}
 			return helpForCommand(argv[1])
 		}
-		printHelp(config.Load())
+		printHelp(cfg)
 		return 0
 	case "version", "-v", "--version":
 		if helpRequested(argv[1:]) { // `coop version --help` prints its help, not a self-referential error
@@ -115,7 +121,6 @@ func Main(argv []string) int {
 		}
 	}
 
-	cfg := config.Load()
 	for _, w := range cfg.Warnings { // non-fatal config problems (e.g. an unrecognized COOP_EGRESS)
 		ui.Warn("%s", w)
 	}

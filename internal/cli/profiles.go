@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -311,11 +310,6 @@ func (a *app) removeProfile(args []string) (int, error) {
 		return 2, fmt.Errorf("%s profile %q is the default — set another first: coop profiles default %s <other>", agent, name, agent)
 	}
 	dir := a.cfg.AgentProfileDir(agent, name)
-	// Guard the legacy flat layout, where the "default" profile resolves to the agent dir itself:
-	// removing that would wipe every profile, not one.
-	if dir == filepath.Join(a.cfg.ConfigDir, agent) {
-		return 2, fmt.Errorf("%s has no separate %q profile directory to remove", agent, name)
-	}
 	// Deleting a profile drops its login token AND all session history, with no undo — gate it.
 	if err := destroyGate(fmt.Sprintf("delete %s profile %q (login token + session history)", agent, name), yes); err != nil {
 		return 2, err
