@@ -80,7 +80,7 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	ui.OK("wrote %s (with starter lead.md + roles/fast.md) — edit it, then run: coop claude --preset %s", path, name)
+	ui.OK("wrote %s (with starter roles/lead.md + roles/fast.md) — edit it, then run: coop claude --preset %s", path, name)
 	return 0, nil
 }
 
@@ -101,7 +101,7 @@ func (a *app) showPreset(repo, name string) (int, error) {
 		lead += pal.Dim("  models ") + strings.Join(models, ", ")
 	}
 	if p.LeadPromptText != "" {
-		lead += pal.Dim("  +lead.md")
+		lead += pal.Dim("  +roles/lead.md")
 	}
 	fmt.Println(lead)
 	for _, r := range p.Roles {

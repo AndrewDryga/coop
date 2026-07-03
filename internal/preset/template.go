@@ -33,8 +33,8 @@ lead:                         # REQUIRED — the default agent + its model ladde
   models: [claude-fable-5, claude-opus-4-8@work]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
-  # contract. init scaffolds lead.md; edit it, or delete it and this line.
-  prompt: lead.md
+  # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
+  prompt: roles/lead.md
 
 # roles — OPTIONAL map of role-name → role the lead can hand work to. A role
 # name is lowercase letters, digits, and dashes. Every role runs on its agent's
@@ -77,9 +77,9 @@ roles:
 // written by Scaffold. They APPEND to coop's generated contract (they never replace
 // its routing/safety text), so they carry project-specific guidance to fill in — a
 // leading HTML note explains each and how to drop it.
-const leadPrompt = `<!-- lead.md — extra guidance for the LEAD, appended to (never replacing) coop's
-     generated contract. Make it project-specific, then it is yours. Delete this
-     file and the "prompt: lead.md" line in preset.yaml to drop it entirely. -->
+const leadPrompt = `<!-- roles/lead.md — extra guidance for the LEAD, appended to (never
+     replacing) coop's generated contract. Make it project-specific, then it is
+     yours. Delete this file and the "prompt: roles/lead.md" line to drop it. -->
 
 ## This project (edit me)
 
@@ -110,13 +110,13 @@ type templateFile struct {
 // active prompt: lines in Template. A reference with no entry here would make the
 // scaffolded preset fail to load, which TestScaffold catches.
 var templateFiles = []templateFile{
-	{"lead.md", leadPrompt},
+	{"roles/lead.md", leadPrompt},
 	{"roles/fast.md", fastPrompt},
 }
 
 // Scaffold writes the template as .agent/presets/<name>/preset.yaml plus the starter
-// prompt files it references (templateFiles: lead.md, roles/fast.md) and returns the
-// preset.yaml path. It never clobbers an existing preset, and the result is guaranteed
+// prompt files it references (templateFiles: roles/lead.md, roles/fast.md) and returns
+// the preset.yaml path. It never clobbers an existing preset, and the result is guaranteed
 // to load — the referenced prompt files are written here, so the active prompt: lines
 // resolve.
 func Scaffold(repo, name string) (string, error) {

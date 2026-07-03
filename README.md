@@ -582,7 +582,7 @@ lead:
   # signed-in account (rotating on rate limit); model@account pins one. On a loop it
   # rotates top-to-bottom; a single run uses the first.
   models: [claude-fable-5, claude-opus-4-8@work]
-  prompt: lead.md              # optional Markdown, appended to the generated contract
+  prompt: roles/lead.md        # optional Markdown, appended to the generated contract
 
 roles:
   thinker:                     # deep thinking + review, in the lead's own session

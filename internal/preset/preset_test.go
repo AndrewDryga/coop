@@ -232,7 +232,7 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("scaffolded roles/%s.md should load (PromptText is empty)", r.Name)
 		}
 	}
-	for _, rel := range []string{"lead.md", "roles/fast.md"} {
+	for _, rel := range []string{"roles/lead.md", "roles/fast.md"} {
 		if _, err := os.Stat(filepath.Join(repo, Dir, "frontier", filepath.FromSlash(rel))); err != nil {
 			t.Errorf("Scaffold should write %s: %v", rel, err)
 		}

@@ -1,6 +1,6 @@
-<!-- lead.md — extra guidance for the LEAD, appended to (never replacing) coop's
-     generated contract. Make it project-specific, then it is yours. Delete this
-     file and the "prompt: lead.md" line in preset.yaml to drop it entirely. -->
+<!-- roles/lead.md — extra guidance for the LEAD, appended to (never
+     replacing) coop's generated contract. Make it project-specific, then it is
+     yours. Delete this file and the "prompt: roles/lead.md" line to drop it. -->
 
 ## This project (edit me)
 

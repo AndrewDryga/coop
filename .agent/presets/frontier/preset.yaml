@@ -20,8 +20,8 @@ lead:                         # REQUIRED — the default agent + its model ladde
   models: [claude-fable-5, claude-opus-4-8@work]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
-  # contract. init scaffolds lead.md; edit it, or delete it and this line.
-  prompt: lead.md
+  # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
+  prompt: roles/lead.md
 
 # roles — OPTIONAL map of role-name → role the lead can hand work to. A role
 # name is lowercase letters, digits, and dashes. Every role runs on its agent's

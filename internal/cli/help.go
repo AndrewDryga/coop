@@ -371,7 +371,7 @@ var commandHelp = map[string]string{
     lead:
       agent: claude
       models: [claude-fable-5, claude-opus-4-8@work]   # ladder: fable on all
-      prompt: lead.md            # accounts, then opus on work. Optional Markdown.
+      prompt: roles/lead.md      # accounts, then opus on work. Optional Markdown.
     roles:                       # roles run on their agent's default account
       thinker:                   # native Claude subagent — deep thinking in-session
         mode: native
@@ -394,7 +394,7 @@ var commandHelp = map[string]string{
 
   coop generates the lead's routing contract from this (roles, when-to-use, the
   exact coop-consult/coop-delegate invocations) and mounts the wrappers. Markdown
-  prompt files (lead.md, roles/<name>.md) append to the generated text, never
+  prompt files (roles/lead.md, roles/<name>.md) append to the generated text, never
   replace it. A delegate may edit the worktree but must not commit — coop-delegate
   fails loud if HEAD moved — and the lead owns the diff review, the gate, and the
   commit. Model ids for the recipe: coop models. Scaffold one: coop presets init.`,
