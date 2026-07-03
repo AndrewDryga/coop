@@ -36,10 +36,10 @@ It's the working tooling behind two write-ups:
 
 ## Contents
 
-- [Install](#install) · [Happy path](#happy-path-5-commands) · [Quickstart](#quickstart) · [Command reference](#command-reference)
+- [Install](#install) · [Quickstart](#quickstart) · [Command reference](#command-reference)
 - [The sandbox](#the-sandbox) — what's mounted · secrets shadowed · git identity · `coop doctor`
 - [Forks](#forks-hand-off-work-like-a-pr) — open · review · land work like a contractor's PR
-- [Agents & config](#agents--config) — authentication · profiles · models · instructions · MCP servers
+- [Agents & config](#agents--config) — authentication · credentials · models · presets · instructions · MCP servers
 - [Fusion](#fusion-a-governed-council) — a council of models that argues before it commits
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · a fleet
@@ -104,31 +104,30 @@ awk -v f="$ASSET" '$2==f{print $1"  "f}' checksums.txt | shasum -a 256 -c -
 ```
 </details>
 
-## Happy path (5 commands)
+## Quickstart
 
-From nothing to a sandboxed agent landing reviewed work:
+From nothing to disposable agents draining a task queue, sandboxed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
 # ^ installs the binary, and (if a runtime is present) builds the box + runs coop doctor
 
-cd ~/code/your-repo          # 1. any git repo
-coop doctor                  # 2. prove isolation holds (run 'coop build' first if needed)
-coop login claude            # 3. authenticate once (token persists; paste-code, no browser needed)
-coop claude                  # 4. a sandboxed agent, brakes off, your secrets shadowed
-coop fork feature claude     # 5. or hand off a branch: agent works in a throwaway clone…
-coop fork review feature     #    …you review the diff…
-coop fork merge feature      #    …and land it (rebased onto your branch, signed if you sign)
+cd ~/code/your-repo        # 1. any git repo
+coop init                  # 2. scaffold AGENTS.md, the .agent/ queue, and the hooks
+coop login claude          # 3. authenticate once (paste-code, no browser; token persists)
+coop doctor                # 4. prove isolation holds (run 'coop build' first if needed)
+
+# 5. queue a few tasks (a folder each under .agent/tasks/00_todo/)…
+coop tasks add "Add a /health endpoint"
+coop tasks add "Backfill tests for the parser"
+coop tasks add "Document the config file"
+
+coop loop                  # 6. disposable agents work the queue until done, then audit
 ```
 
-If `coop doctor` says the image isn't built, run `coop build` once. Stuck on any step?
-See [Troubleshooting](#troubleshooting).
-
-## Quickstart
+Prefer to steer an agent yourself? Skip the queue and go interactive:
 
 ```bash
-cd ~/code/some-repo
-
 coop claude           # sandboxed Claude — no permission prompts, secrets shadowed
 coop codex            # same box, Codex instead
 coop gemini           # ...or Gemini
@@ -147,6 +146,10 @@ Anything after the agent name is passed through to it, on top of those flags —
 exception: its `-p` is `--profile`, not a prompt, so run a one-shot prompt with
 `coop codex exec "…"` and use `-p` only to pick a profile.)
 
+If `coop doctor` says the image isn't built, run `coop build` once. Stuck on any step?
+See [Troubleshooting](#troubleshooting). New to forks and reviewing agent work like a
+PR? Jump to [Forks](#forks-hand-off-work-like-a-pr).
+
 ## Command reference
 
 Every command runs against the repo in your current directory. `-h`/`--help` works on
@@ -164,7 +167,7 @@ any of them.
 | `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
 | `coop <any launch> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
-| `coop models [agent]` | the model menu per agent; mark a credential's model with `coop credentials <agent> <credential> model <m>` ([details](#picking-models)) |
+| `coop models [agent]` | the model menu per agent ([picking models](#picking-models)) — set a model with `--model` or a [preset](#presets-the-whole-arrangement-in-one-yaml-file) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
 
@@ -173,11 +176,11 @@ any of them.
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
 | `coop fork <name> <agent> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (defaults to `.agent/tasks`; `-d`/`--detach` backgrounds it) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
-| `coop fork review <name> [--tool\|--open]` | brief + diff; `--tool` = your `git difftool`, `--open` = your editor |
+| `coop fork review <name> [--stat\|--tool]` | brief + diff; `--stat` = brief only, `--tool` = your `git difftool` (open the fork in your editor with `coop fork open`) |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
-| `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-a-fork-from-zed-acp) over ACP |
+| `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 
 **Run unattended** ([details](#run-it-unattended))
@@ -186,19 +189,29 @@ any of them.
 |---|---|
 | `coop loop [agent] [--tasks <path>] [--model <model>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--consult` lets iterations ask the [peer agents](#the-orchestrator-pattern) read-only; `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
-| `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
+| `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 | `coop tasks watch` | live board of the task queue + any active forks, merged and deduped by id — in progress (with the fork that claimed it), todo, blocked (auto-exits when every task's done; Ctrl-C anytime) |
 | `coop tasks add` · `claim` · `block` · `done` · `ls` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
+
+**Services** — the box's `compose.agent.yml` sidecars
+
+| Command | What it does |
+|---|---|
+| `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
+
+**Safety** — prove the box holds, catch committed secrets
+
+| Command | What it does |
+|---|---|
+| `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
+| `coop check-secrets` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
 
 **Set up & maintain**
 
 | Command | What it does |
 |---|---|
 | `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and [starter subagents](#the-orchestrator-pattern) (and optionally a toolchain) |
-| `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
 | `coop build` · `update` | build the box image · [self-update coop + rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
-| `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
-| `coop check-secrets` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
 | `coop help` · `version` | print help · print the version |
 
 ## The sandbox
@@ -305,13 +318,15 @@ No setup needed. To review in an IDE instead:
 | | |
 |---|---|
 | `--stat` | brief only, skip the diff |
-| `--open` | open the fork as a folder in your editor and review via its SCM panel |
 | `--tool` | open each changed file in your GUI difftool |
 
-<details>
-<summary><b><code>--open</code></b> — register your editor</summary>
+To review in your editor's SCM panel instead, open the fork as a folder with `coop fork
+open <name>` (it uses the editor resolution below).
 
-coop opens the fork directory with the first of these that's set:
+<details>
+<summary><b><code>coop fork open</code></b> — which editor it opens</summary>
+
+It opens the fork directory with the first of these that's set:
 
 1. `COOP_EDITOR` — a coop-only override
 2. `git config core.editor` — your normal git editor (local config beats global)
@@ -390,11 +405,6 @@ Merging lands code, not queue state. A fork's loop works a *copy* of the task qu
 them — `coop tasks done <id>` / `coop tasks rm <id>` — so a later `coop loop` doesn't
 re-claim finished work (redoing a done task makes an empty commit, which fails). While forks
 run, `coop tasks watch` shows the deduped truth across the parent and its forks.
-
-### Drive a fork from Zed (ACP)
-
-`coop fork <name> acp [agent]` fronts a fork as an [ACP](#drive-it-from-zed-acp) agent
-over stdio; `coop acp [agent]` does the same for the project in your current directory.
 
 ## Agents & config
 
@@ -475,7 +485,7 @@ lead:
 ```
 
 ```bash
-coop loop --preset frontier   # rotates that ladder; coop presets shows every recipe
+coop loop --preset frontier    # rotates that ladder; coop presets shows every recipe
 coop loop --model opus@work    # or a one-off single target, no preset
 ```
 
@@ -504,27 +514,24 @@ coop fork risky claude --model opus    # a careful fork on the big model
 coop acp claude --model sonnet         # pin an editor entry's model
 ```
 
-For standing defaults, mark them instead of retyping. A **profile** carries its own
-default model (it's a profile attribute, edited like the other profile marks) — so e.g.
-the work subscription always runs the big model and the personal one a cheap one, and
-the loop's profile rotation switches models with the account:
+For a *standing* model you don't retype, put it in a
+[preset](#presets-the-whole-arrangement-in-one-yaml-file): the lead's `models:` ladder is
+the model (and, on a loop, the rotation across your accounts), and each role names its own.
+Pick the model with `--model` or a preset — a credential is just an account (which
+subscription); the model is a separate axis:
 
 ```bash
-coop models                              # the model menu per agent
-coop credentials claude work model opus     # every run on the work credential uses opus
-coop credentials claude personal model haiku
-coop credentials claude personal model --clear   # unmark (bare `model` prints the mark)
+coop models                        # the model menu per agent
+coop claude --model opus           # one run on the big model
+coop claude --preset frontier      # a standing lead model + roles, from the preset
 ```
 
-`coop credentials` shows each credential's mark as a column, so one listing answers "which
-account, signed in, running what".
-
-Two env/conf knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`)
-is the agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so
-unattended runs can grind on a cheaper model than your interactive sessions. In a fleet,
-give a fork its own with `model=` on its `.agent/fleet` line. Precedence, most specific
-first: `--model` › `COOP_LOOP_MODEL` (loop runs) › the profile's mark › `COOP_<AGENT>_MODEL`
-› a model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
+Two env knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`) is the
+agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so unattended
+runs can grind on a cheaper model than your interactive sessions. In a fleet, give a fork
+its own with `model:` in `.agent/fleet.yaml`. Precedence, most specific first: `--model` ›
+the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AGENT>_MODEL` › a
+model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
 The chosen model reaches consult peers and fusion advisors too (each peer resolves its
 own default), and `coop loop`'s live view prints the model each iteration actually ran —
@@ -541,9 +548,11 @@ decomposes, and synthesizes, while pinned subagents execute and cross-vendor pee
 independent opinions. Everything below composes from pieces coop already has — no plugins.
 
 ```bash
-coop credentials claude personal model claude-fable-5   # the lead's standing model
-coop claude --consult                                # run it; --consult mounts the peers
+coop claude --consult --model claude-fable-5   # run it; --consult mounts the peers
 ```
+
+For a *standing* arrangement (a lead model + its roles you don't retype), put it in a
+[preset](#presets-the-whole-arrangement-in-one-yaml-file) and run `coop claude --preset <name>`.
 
 - **Tiered subagents** — `coop init` scaffolds `.claude/agents/deep-reasoner.md` (pinned
   to Opus: architecture, complex debugging, algorithm design) and `fast-worker.md`
@@ -561,8 +570,8 @@ coop claude --consult                                # run it; --consult mounts 
 The same arrangement runs unattended: `coop loop --model claude-fable-5 --consult`
 makes every iteration orchestrate this way — the pinned subagents ride along in the
 repo, and `--consult` mounts the peers into each iteration's box (fork loops take it
-too: `coop fork <name> claude --loop --consult`, and a fleet line opts in with
-`consult=1`). Prefer `coop-consult` over vendor cross-agent plugins in the box:
+too: `coop fork <name> claude --loop --consult`, and a fleet fork opts in with
+`consult: true`). Prefer `coop-consult` over vendor cross-agent plugins in the box:
 nothing to install, peers stay read-only (one writer per tree), and the credential
 scoping is already handled.
 
@@ -778,6 +787,10 @@ Add `--supervise` to the ACP args in your editor (e.g. `["acp","claude","--super
 keep the session connected across a box restart: `coop build`/`coop update` restart a
 supervised session onto the new image and replay the ACP handshake, so a rebuild doesn't drop
 your editor.
+
+To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your working tree,
+point the adapter at it: `coop fork <name> acp [agent]` — same ACP, but the agent works the
+throwaway clone (nothing to push, secrets never came along), and you still review and land it.
 
 > **Services** work too — if the repo has a `compose.agent.yml`, run `coop up` first and
 > the ACP box joins the same network.
@@ -1133,7 +1146,7 @@ five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -
 **Exit codes.** Every command follows one contract, so CI and scripts can branch without parsing
 output: `0` success · `1` a failure (or findings — e.g. `coop check-secrets` on a hit) · `2` a usage
 error (unknown command/flag or bad arguments). `coop loop` adds `3` — it stopped with a task blocked
-on a human decision (see [Exit codes](#unattended) above).
+on a human decision (see [Exit codes](#the-loop) above).
 
 **Why no `--json`?** coop's stdout is for a human at a terminal; its *exit codes* are the machine
 contract. The structured data a script would want already lives in files it can read directly — the
