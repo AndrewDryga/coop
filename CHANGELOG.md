@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`help.go` is now the single source for the CLI reference, with a drift gate.** A new
+  `tools/gendocs` renders the whole reference (the overview plus every command page) from `internal/cli`
+  into `docs/cli.md` (offline reference) and `site/llms.txt` (an agent-readable manual); `coop help
+  --all` prints the same bytes. `go run ./tools/gendocs -check` — wired into `make check` — fails if a
+  `help.go` edit wasn't regenerated, so the docs can't silently drift. The render is deterministic and
+  plain (no color, version, host paths, or state), so it's byte-identical on every machine.
+
 - **A CLI-conformance test graduates the taste rules into the gate.** The committed `.agent/rules`
   (ls/list everywhere, rm/remove everywhere, every verb documented, retired aliases stay dead) were
   enforced only by review — and drift crept in. A new table-driven test now walks the CLI surface and

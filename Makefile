@@ -28,7 +28,13 @@ snapshot: ## Build a local release snapshot with GoReleaser (no publish)
 doctor: ## Integration check: prove isolation holds (needs a runtime)
 	@go run . doctor
 
-check: lint test ## What CI runs: lint + unit tests
+docs: ## Regenerate docs/cli.md + site/llms.txt from internal/cli (help.go is the single source)
+	@go run ./tools/gendocs
+
+docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)
+	@go run ./tools/gendocs -check
+
+check: lint test docs-check ## What CI runs: lint + unit tests + CLI-docs freshness
 
 acp-e2e: install ## ACP supervise resume e2e (needs Docker + a built box + signed-in claude)
 	@go test -tags acpe2e -run TestSuperviseResume -count=1 -v ./internal/acpproxy/

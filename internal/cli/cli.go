@@ -70,6 +70,10 @@ func Main(argv []string) int {
 		// `coop help <cmd>` shows that command's help — same as `coop <cmd> --help`. Bare `coop
 		// help` (or -h/--help) is the top-level reference.
 		if argv[0] == "help" && len(argv) > 1 {
+			if argv[1] == "--all" { // the whole manual, same bytes as docs/cli.md (see RenderManual)
+				fmt.Print(RenderManual(config.Load()))
+				return 0
+			}
 			if argv[1] == "loop" && len(argv) > 2 && argv[2] == "pool" { // canonical `coop help loop pool` → the pool page
 				printCommandHelp(commandHelp["pool"])
 				return 0

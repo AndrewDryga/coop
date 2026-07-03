@@ -76,6 +76,13 @@ func validForkName(name string) bool {
 
 // forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
 func forkHelp() (int, error) {
+	fmt.Print(forkHelpText(ui.For(os.Stdout)))
+	return 0, nil
+}
+
+// forkHelpText builds the fork family usage with palette p — p == ui.Palette{} gives the plain,
+// byte-stable reference render that `coop help --all` and gendocs concatenate into the manual.
+func forkHelpText(p ui.Palette) string {
 	rows := []struct{ cmd, desc string }{
 		{"coop fork <name> [agent]", "open or re-enter a fork and run an agent"},
 		{"coop fork <name> <agent> --loop", "loop the fork on a tasks folder (-d detaches)"},
@@ -110,20 +117,19 @@ func forkHelp() (int, error) {
 		return s + strings.Repeat(" ", n)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", ui.Bold("coop fork"))
+	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", p.Bold("coop fork"))
 	fmt.Fprint(&b, "  Usage: coop fork <name> [agent] | ls | review | merge | logs | rm | stop | open | path\n\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
 	}
-	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", ui.Bold("FLAGS"))
+	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", p.Bold("FLAGS"))
 	for _, f := range flags {
 		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
-	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", ui.Bold("REVIEW"))
-	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", ui.Bold("NAMES"))
+	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", p.Bold("REVIEW"))
+	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", p.Bold("NAMES"))
 	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
-	fmt.Print(b.String())
-	return 0, nil
+	return b.String()
 }
 
 // cmdFork is the `coop fork` family. Bare `coop fork` prints the family help; a

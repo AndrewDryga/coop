@@ -82,6 +82,29 @@ func TestHelpTextWidth(t *testing.T) {
 	}
 }
 
+// RenderManual is the single source for `coop help --all`, docs/cli.md, and site/llms.txt — it must
+// be deterministic and plain (no ANSI, no host-specific version/paths/state), or gendocs -check flaps.
+func TestRenderManual(t *testing.T) {
+	m := RenderManual(&config.Config{BoxHome: "/host-boxhome", ConfigDir: "/host-configdir"})
+	if strings.Contains(m, "\x1b[") {
+		t.Error("RenderManual must be plain — no ANSI escapes")
+	}
+	if strings.Contains(m, "FIRST RUN") {
+		t.Error("RenderManual must omit the state-aware FIRST RUN hint")
+	}
+	if strings.Contains(m, "/host-boxhome") || strings.Contains(m, "/host-configdir") {
+		t.Error("RenderManual must not leak host config paths")
+	}
+	if RenderManual(&config.Config{}) != m {
+		t.Error("RenderManual must be cfg-independent (deterministic across machines)")
+	}
+	for _, want := range []string{"AGENTS", "coop fork", "coop tasks", "coop run"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("RenderManual missing %q", want)
+		}
+	}
+}
+
 // helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop fusion claude --
 // --help` runs the agent's --help, not coop's page.
 func TestHelpRequestedStopsAtDashDash(t *testing.T) {

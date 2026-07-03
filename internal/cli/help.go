@@ -45,9 +45,18 @@ func groupHelp(cmd string) (int, error) {
 // helpText renders the top-level command reference: one command per line, grouped, with a
 // pointer to per-command help. Flags, sub-verbs, and examples live in `coop <cmd> --help`
 // and the README, so this stays a clean, scannable overview.
-func helpText(cfg *config.Config) string {
+func helpText(cfg *config.Config) string { return renderHelp(cfg, false) }
+
+// renderHelp renders the top-level command reference. ref=true is the DETERMINISTIC reference form
+// for docs/`coop help --all`: forced no-color, no state-aware FIRST RUN hint, and the canonical
+// (compose-less) up/down rows — so the output is identical on every machine (gendocs -check depends
+// on it). ref=false is the live, state-aware terminal view.
+func renderHelp(cfg *config.Config, ref bool) string {
 	var b strings.Builder
 	p := ui.For(os.Stdout) // help is a stdout view — gate color on stdout so a pipe stays clean
+	if ref {
+		p = ui.Palette{} // forced plain: the reference must be byte-identical regardless of the terminal
+	}
 	group := func(label string) { fmt.Fprintf(&b, "\n%s\n", p.Bold(label)) }
 	// row keeps a column gap even when a command is long, so a description never glues to it.
 	// Width is counted in runes, not bytes, so a command with a "…" doesn't shift its column.
@@ -69,11 +78,15 @@ func helpText(cfg *config.Config) string {
 		fmt.Fprintf(&b, "  %s\n", p.Dim(cmd+strings.Repeat(" ", gap)+desc))
 	}
 
-	fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
+	if ref { // the reference omits the build version — its bytes must not depend on the tag/commit
+		fmt.Fprintf(&b, "%s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"))
+	} else {
+		fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
+	}
 	fmt.Fprint(&b, "Usage: coop <command> [args]\n")
 	// A newcomer (no agent signed in) gets the day-one order up front. Pure-local check (no runtime),
 	// so `coop help` still works before Docker exists — same state-aware style as the up/down rows below.
-	if !anyAgentSignedIn(cfg) {
+	if !ref && !anyAgentSignedIn(cfg) {
 		fmt.Fprintf(&b, "\n%s  set up in order:  coop build → coop login <agent> → coop doctor\n", p.Bold("FIRST RUN"))
 	}
 
@@ -119,10 +132,15 @@ func helpText(cfg *config.Config) string {
 	// pair when there's no compose file to act on. Repo resolution is best-effort (help runs
 	// anywhere; outside a repo, or with no compose, the rows dim).
 	repo, _ := box.ResolveRepo(cfg.RepoOverride)
-	if services := scaffold.ComposeServiceNames(box.ComposeFile(repo)); len(services) > 0 {
+	switch {
+	case ref: // the reference form is machine-independent: canonical, compose-less rows
+		dimRow("coop up", "start sibling services (compose.agent.yml)")
+		dimRow("coop down", "stop sibling services")
+	case len(scaffold.ComposeServiceNames(box.ComposeFile(repo))) > 0:
+		services := scaffold.ComposeServiceNames(box.ComposeFile(repo))
 		row("coop up", "compose.agent.yml services ("+strings.Join(services, ", ")+")")
 		row("coop down", "stop the compose.agent.yml services")
-	} else {
+	default:
 		dimRow("coop up", "none in compose.agent.yml yet")
 		dimRow("coop down", "stop sibling services")
 	}
@@ -133,8 +151,12 @@ func helpText(cfg *config.Config) string {
 
 	fmt.Fprint(&b, "\nRun 'coop help <command>' or 'coop <command> --help' for a command's details —\n"+
 		"for an agent (claude/codex/gemini), --help is the agent's own.\n")
-	fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://coop.dryga.com\n",
-		tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
+	if ref { // machine-independent footer for the reference/manual (no host-specific paths)
+		fmt.Fprint(&b, "\nConfig  coop.conf (COOP_CONF), or COOP_* env vars\nAuth    the config dir (COOP_CONFIG_DIR)\nDocs    https://coop.dryga.com\n")
+	} else {
+		fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://coop.dryga.com\n",
+			tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
+	}
 
 	return b.String()
 }
@@ -154,6 +176,25 @@ func anyAgentSignedIn(cfg *config.Config) bool {
 		}
 	}
 	return false
+}
+
+// RenderManual is the entire CLI reference as ONE deterministic, plain-text document: the reference-
+// form top-level overview, then every command's page in a stable order. It's the single source shared
+// by `coop help --all`, docs/cli.md, and site/llms.txt — so terminal, docs, and the offline reference
+// are provably identical (tools/gendocs -check enforces it). Plain (ui.Palette{}) and state-free, so
+// its bytes never depend on the terminal, the repo's compose file, the config paths, or logins.
+func RenderManual(cfg *config.Config) string {
+	var b strings.Builder
+	b.WriteString(renderHelp(cfg, true))
+	b.WriteString("\n" + strings.Repeat("=", 78) + "\n\n")
+	b.WriteString(forkHelpText(ui.Palette{}) + "\n")
+	b.WriteString(runHelp + "\n")
+	for _, name := range topLevelCommands { // stable order; fork/run have their own pages above
+		if h := commandHelp[name]; h != "" {
+			b.WriteString("\n" + h + "\n")
+		}
+	}
+	return b.String()
 }
 
 // runHelp is `coop run`'s page. It's deliberately NOT in commandHelp: the dispatch's help check
