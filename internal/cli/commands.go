@@ -426,7 +426,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile p] [--model m])", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--profile <name>] [--model <model>])", leftover[0])
 	}
 	if err := a.selectRunProfile(tool, profile); err != nil {
 		return 2, err
@@ -575,6 +575,9 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// --consult is a documented no-op for fusion (a council always consults its peers). Strip it so it
+	// isn't leaked into the governor's own CLI as an unknown flag.
+	_, args = extractConsult(args)
 	governor, rest := a.parseGovernor(args)
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
@@ -950,7 +953,7 @@ func loopAgent(args []string) (string, error) {
 	agent, set := agents.Default(), false
 	for _, x := range args {
 		if !agents.Valid(x) {
-			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <dir>] [--model <m>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+			return "", fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <path>] [--model <model>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
 		}
 		if set {
 			return "", fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
@@ -970,6 +973,10 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	profiles, rest, err := extractLoopProfiles(rest)
+	if err != nil {
+		return 2, err
+	}
 	agent, model, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
@@ -982,7 +989,14 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	pool, err := buildPool(a.cfg, repo, agent)
+	// A one-off --profile runs on exactly the given profile(s) without touching the persistent pool;
+	// otherwise rotate the configured pool (repo pool, else all signed-in).
+	pool := (*profilePool)(nil)
+	if len(profiles) > 0 {
+		pool, err = authedPool(a.cfg, agent, profiles)
+	} else {
+		pool, err = buildPool(a.cfg, repo, agent)
+	}
 	if err != nil {
 		return -1, err
 	}
@@ -1003,6 +1017,31 @@ func (a *app) applyLoopModel(agent, model string) {
 	if model != "" {
 		a.cfg.SetActiveModel(agent, model)
 	}
+}
+
+// extractLoopProfiles pulls --profile <a,b> / --profile=<a,b> (repeatable, accumulating like fork) out
+// of the loop args, so `coop loop --profile x` runs a ONE-OFF on x without mutating the persistent
+// pool (`coop loop pool …`) — the same credential-selection flag every other launch path takes.
+func extractLoopProfiles(args []string) (profiles, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		switch x := args[i]; {
+		case x == "--profile":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return nil, nil, errors.New("coop loop --profile needs a profile name (or comma-separated list)")
+			}
+			i++
+			profiles = addProfiles(profiles, parseProfileList(args[i]))
+		case strings.HasPrefix(x, "--profile="):
+			list := parseProfileList(strings.TrimPrefix(x, "--profile="))
+			if len(list) == 0 {
+				return nil, nil, errors.New("coop loop --profile needs a profile name (or comma-separated list)")
+			}
+			profiles = addProfiles(profiles, list)
+		default:
+			rest = append(rest, x)
+		}
+	}
+	return profiles, rest, nil
 }
 
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and

@@ -161,9 +161,9 @@ any of them.
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
 | `coop run -- <cmd>` | run any command in the box (raw — none of coop's agent flags) |
 | `coop shell` | a shell in the box, to look around |
-| `coop acp [agent\|fusion] [--profile <name>] [--model <m>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
+| `coop acp [agent\|fusion] [--profile <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
 | `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
-| `coop <any launch> --model <m>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
+| `coop <any launch> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
 | `coop models [agent]` | the model menu per agent; mark a profile's model with `coop profiles <agent> <profile> model <m>` ([details](#picking-models)) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
@@ -184,7 +184,7 @@ any of them.
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--tasks <path>] [--model <m>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--consult` lets iterations ask the [peer agents](#the-orchestrator-pattern) read-only; `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
+| `coop loop [agent] [--tasks <path>] [--model <model>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--consult` lets iterations ask the [peer agents](#the-orchestrator-pattern) read-only; `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
 | `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 | `coop tasks watch` | live board of the task queue + any active forks, merged and deduped by id — in progress (with the fork that claimed it), todo, blocked (auto-exits when every task's done; Ctrl-C anytime) |

@@ -85,7 +85,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		// The live board watches the queue(s) themselves draining — task-centric, across however
 		// many are configured — unlike the per-fork `coop fleet watch`.
 		if len(rels) == 0 {
-			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <dir>")
+			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 		}
 		return a.tasksWatch(repo, rels)
 	}
@@ -101,16 +101,16 @@ func (a *app) cmdTasks(args []string) (int, error) {
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "start", "block", "unblock", "done", "path", "rm", "remove":
+		case "claim", "block", "unblock", "done", "path", "rm", "remove", "clear":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return tasksListAll(repo, rels)
 		default:
-			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <dir> (ls, lint, decisions, and the id commands span all %d configured queues)", sub, len(rels))
+			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <path> (ls, lint, decisions, and the id commands span all %d configured queues)", sub, len(rels))
 		}
 	}
 	if len(rels) == 0 {
-		return 2, errors.New("coop tasks: no task queue configured — set COOP_TASKS or pass --tasks <dir>")
+		return 2, errors.New("coop tasks: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 	}
 	root := filepath.Join(repo, rels[0])
 	// When the queue doesn't exist yet, a bare `coop tasks` still shows help, and `add`
@@ -189,7 +189,7 @@ func tasksListAll(repo string, rels []string) (int, error) {
 // id-less exception: it clears every queue's done archive.
 func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (int, error) {
 	args := rest[1:]
-	if (sub == "rm" || sub == "remove") && slices.Contains(args, "--all-done") {
+	if sub == "clear" || ((sub == "rm" || sub == "remove") && slices.Contains(args, "--all-done")) {
 		total := 0
 		for _, rel := range rels {
 			total += countDone(filepath.Join(repo, rel))
@@ -263,7 +263,7 @@ func queueOfTask(repo string, rels []string, id string) (string, error) {
 	for i, h := range pick {
 		where[i] = h.rel + ": " + h.id
 	}
-	return "", fmt.Errorf("%q matches %d tasks across the queues (%s) — pass a single --tasks <dir> to pick one", id, len(pick), strings.Join(where, ", "))
+	return "", fmt.Errorf("%q matches %d tasks across the queues (%s) — pass a single --tasks <path> to pick one", id, len(pick), strings.Join(where, ", "))
 }
 
 // tasksLintAll rolls `coop tasks lint` up across the configured queues, each under its banner.

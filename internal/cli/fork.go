@@ -787,6 +787,12 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	consult, rest := extractConsult(rest)
+	// --profile picks the credential profile, like plain `coop acp` / `coop <agent>` — accepted here
+	// too so `coop fork <name> acp --profile p` isn't rejected while plain acp takes it.
+	profile, rest, err := extractRunProfile(rest)
+	if err != nil {
+		return 2, err
+	}
 	// --model pins the fork's ACP session model, like `coop acp --model` (an editor entry
 	// can carry it); applied before acpCommand so gemini's own-binary adapter takes the flag.
 	model, rest, err := extractRunModel(rest)
@@ -799,8 +805,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		case agents.Valid(x):
 			agent = x
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--model m]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--profile <name>] [--model <model>]", name, strings.Join(agents.Names(), "|"))
 		}
+	}
+	if err := a.selectRunProfile(agent, profile); err != nil {
+		return 2, err
 	}
 	a.selectRunModel(agent, model)
 	cmd, ok := acpCommand(a.cfg, agent)

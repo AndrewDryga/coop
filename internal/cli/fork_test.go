@@ -434,6 +434,19 @@ func TestLatestTaskLogOnlyDone(t *testing.T) {
 	}
 }
 
+// `coop fork <name> acp --profile <p>` is accepted (like plain `coop acp`), not rejected as an
+// unexpected argument. A missing profile errors on the profile itself — proving the flag parsed.
+func TestForkACPAcceptsProfile(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	code, err := a.forkACP("myfork", []string{"claude", "--profile", "ghost"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("fork acp --profile ghost = (%d, %v), want (2, a profile error)", code, err)
+	}
+	if strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:") {
+		t.Errorf("--profile should be accepted, not rejected as an argument: %v", err)
+	}
+}
+
 func TestParseShortstat(t *testing.T) {
 	ins, del := parseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
 	if ins != 42 || del != 7 {

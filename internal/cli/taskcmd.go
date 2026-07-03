@@ -102,6 +102,8 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderPath(root, args)
 	case "rm", "remove":
 		return tasksFolderRemove(root, args)
+	case "clear": // bulk-delete idiom shared with `coop loop pool clear`: clear the done archive
+		return tasksFolderRemove(root, append([]string{"--all-done"}, args...))
 	case "split":
 		return tasksFolderSplit(repo, root, args)
 	case "decisions":
@@ -114,7 +116,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var tasksVerbs = []string{"ls", "lint", "add", "claim", "block", "unblock", "done", "watch", "path", "rm", "split", "decisions"}
+var tasksVerbs = []string{"ls", "lint", "add", "claim", "block", "unblock", "done", "watch", "path", "rm", "clear", "split", "decisions"}
 
 // tasksAliases are accepted alternate spellings (→ a canonical verb: list→ls, start→claim, remove→rm),
 // recognized by isTasksSubcommand but kept out of suggestions, which name only the canonical form.

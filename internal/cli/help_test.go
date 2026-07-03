@@ -82,6 +82,17 @@ func TestHelpTextWidth(t *testing.T) {
 	}
 }
 
+// helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop fusion claude --
+// --help` runs the agent's --help, not coop's page.
+func TestHelpRequestedStopsAtDashDash(t *testing.T) {
+	if helpRequested([]string{"claude", "--", "--help"}) {
+		t.Error("--help after -- is passthrough, not a coop help request")
+	}
+	if !helpRequested([]string{"--help"}) || !helpRequested([]string{"x", "-h"}) {
+		t.Error("--help / -h before -- must request coop help")
+	}
+}
+
 // A newcomer with no agent signed in gets the day-one FIRST RUN hint; once signed in, it's gone.
 func TestHelpFirstRunHint(t *testing.T) {
 	fresh := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir(), BoxHome: t.TempDir()}

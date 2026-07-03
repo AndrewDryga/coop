@@ -191,6 +191,24 @@ func TestParseLoopArgs(t *testing.T) {
 	}
 }
 
+// `coop loop --profile a,b` (repeatable, accumulating) is pulled out for a one-off run; a trailing
+// --profile with no value errors. The rest passes through to parseLoopArgs.
+func TestExtractLoopProfiles(t *testing.T) {
+	profiles, rest, err := extractLoopProfiles([]string{"claude", "--profile", "a,b", "--consult", "--profile=c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(profiles, ",") != "a,b,c" {
+		t.Errorf("profiles = %v, want [a b c]", profiles)
+	}
+	if strings.Join(rest, " ") != "claude --consult" {
+		t.Errorf("rest = %v, want [claude --consult]", rest)
+	}
+	if _, _, err := extractLoopProfiles([]string{"--profile"}); err == nil {
+		t.Error("a trailing --profile with no value should error")
+	}
+}
+
 func TestParseGovernor(t *testing.T) {
 	a := &app{cfg: &config.Config{FusionGovernor: "codex"}}
 	cases := []struct {

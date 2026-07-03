@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Grammar consistency across launch paths.** `coop loop --profile <name>` now runs a one-off on the
+  given profile(s) without mutating the persistent `coop loop pool`, and `coop fork <name> acp
+  --profile` is accepted like plain `coop acp` (it was rejected). `coop fusion --consult` is a
+  documented no-op (a council always consults) instead of leaking coop's flag into the governor's CLI.
+  `coop fusion claude -- --help` now runs the agent's `--help` rather than coop's page (help detection
+  stops at `--`). `coop tasks clear` is added as the bulk-delete idiom shared with `coop loop pool
+  clear` (it clears the done archive, gated like `rm --all-done`). And usage strings now share one
+  placeholder lexicon (`<name>`/`<model>`/`<path>`/`<id>`, ASCII `...`) instead of spelling the same
+  value `p`/`m`/`<m>`/`<dir>` with mixed ellipses.
+
 - **BREAKING: retired renamed-command aliases.** v3 removes renamed aliases instead of minting them
   as forever-compat: `coop clone` (→ `coop fork`), the top-level `coop pool` (→ `coop loop pool`), the
   verb-first credential edits `coop profiles <default|model|rm> <agent> <profile>` (→ the path grammar

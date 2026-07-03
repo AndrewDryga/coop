@@ -203,6 +203,25 @@ func TestTasksRemoveGate(t *testing.T) {
 	}
 }
 
+// `coop tasks clear` is the bulk-delete idiom shared with `coop loop pool clear`: it clears the done
+// archive (= `rm --all-done`), gated the same way — refuses without --yes in a non-TTY, deletes with it.
+func TestTasksClear(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateDone, "d1", "task.md"), "# d\n")
+	if code, err := cmdTasksFolder("", root, []string{"clear"}); code != 2 || err == nil {
+		t.Fatalf("tasks clear without --yes = (%d, %v), want (2, gated)", code, err)
+	}
+	if countDone(root) != 1 {
+		t.Error("a refused clear must not delete the done task")
+	}
+	if code, err := cmdTasksFolder("", root, []string{"clear", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("tasks clear --yes = (%d, %v), want (0, nil)", code, err)
+	}
+	if countDone(root) != 0 {
+		t.Error("clear --yes should empty the done archive")
+	}
+}
+
 func TestTasksFolderRemoveAllDone(t *testing.T) {
 	root := t.TempDir()
 	// two done tasks, one todo and one in_progress that must SURVIVE --all-done

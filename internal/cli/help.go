@@ -17,6 +17,9 @@ import (
 // helpRequested reports whether args contains -h or --help.
 func helpRequested(args []string) bool {
 	for _, a := range args {
+		if a == "--" {
+			return false // everything after -- is passthrough to the agent, not a request for coop's help
+		}
 		if a == "-h" || a == "--help" {
 			return true
 		}
@@ -79,12 +82,12 @@ func helpText(cfg *config.Config) string {
 	row("coop fusion [agent]", "one leads, the others advise + synthesize")
 	row("coop run -- <cmd...>", "run a raw command in the box")
 	row("coop shell", "an interactive shell in the box")
-	row("coop login <agent> [--profile p]", "sign in an agent (profile = a subscription)")
+	row("coop login <agent> [--profile <name>]", "sign in an agent (a subscription)")
 	row("coop profiles [agent]", "credential profiles + which are signed in")
 	row("coop models [agent]", "the model menu per agent")
 	row("coop acp [agent|fusion]", "serve as an editor agent (ACP; e.g. Zed)")
 	row("coop <agent> --consult", "a read-only second opinion from the others")
-	row("coop <agent> --model <m>", "run on a chosen model (fusion/fork/loop too)")
+	row("coop <agent> --model <model>", "run on a chosen model (fusion/fork/loop too)")
 
 	group("FORKS — review and land work like a PR")
 	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
@@ -98,7 +101,7 @@ func helpText(cfg *config.Config) string {
 	row("coop fork path <name>", "print the fork's filesystem path")
 
 	group("UNATTENDED")
-	row("coop loop [agent] [--tasks p]…", "work the queue(s) until done, then audit")
+	row("coop loop [agent] [--tasks <path>]", "work the queue(s) until done, then audit")
 	row("coop loop pool add|rm|clear", "subscriptions to rotate when rate-limited")
 	row("coop fleet init|up|down|split|watch|prune", "parallel forks from .agent/fleet")
 
@@ -254,8 +257,8 @@ var commandHelp = map[string]string{
 	"pool": `coop loop pool (alias: coop pool) — which profiles this repo's loops rotate.
 
   Usage: coop loop pool                          show this repo's pool
-         coop loop pool add <agent> <profile…>   add profiles to the rotation
-         coop loop pool rm  <agent> <profile…>   remove profiles
+         coop loop pool add <agent> <profile>...   add profiles to the rotation
+         coop loop pool rm  <agent> <profile>...   remove profiles
          coop loop pool clear <agent>            drop the agent's pool
 
   When an unattended loop hits a rate/usage limit it switches to another profile in
@@ -267,7 +270,7 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--model <m>] [--supervise] [--consult]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--profile <name>] [--model <model>] [--supervise] [--consult]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
@@ -288,7 +291,7 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini] [--profile <name>] [--model <m>] [args...]
+  Usage: coop fusion [claude|codex|gemini] [--profile <name>] [--model <model>] [args...]
 
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
   writes. Lighter, opt-in variant: coop <agent> --consult
@@ -339,7 +342,7 @@ var commandHelp = map[string]string{
   path <id>        print a task's resolved folder path
   rm <id>          delete a task folder; --all-done clears the whole done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
-  lint             check the tree (blocked<->decision.md, no status field, …; exits 1)
+  lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
   split <n>        slice the todo tasks into n trees (.agent/tasks.sliceN); coop fleet split makes a fleet
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
@@ -369,7 +372,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then audit.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m>] [--consult] [--preflight] [--debug-on-fail]
+  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <model>] [--consult] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, an
   auditor re-checks every shipped task. On a rate limit it switches to another
@@ -415,7 +418,7 @@ var commandHelp = map[string]string{
   Usage: coop up
 
   Brings up the services in compose.agent.yml on coop's network; an agent in
-  the box reaches db/redis/… by hostname. Stop them with: coop down`,
+  the box reaches db/redis/... by hostname. Stop them with: coop down`,
 
 	"down": `coop down [-v] — stop the repo's sibling services.
 
