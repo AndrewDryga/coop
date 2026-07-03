@@ -1245,7 +1245,24 @@ func loopWorkPrompt(repo string, queues []string) string {
 }
 
 func loopAuditPrompt(repo string, queues []string) string {
-	return fmt.Sprintf("Audit: for every task folder in the 99_done/ of the queue(s) %s, verify its gate passes and a commit implementing it exists in the git log. `coop` is NOT installed in this box, so reopen any that fail by moving its folder back to 10_in_progress/ yourself, and note what is missing in its log.md. Do not fix anything yourself.", absJoin(repo, queues))
+	p := fmt.Sprintf("Audit: for every task folder in the 99_done/ of the queue(s) %s, verify its gate passes and a commit implementing it exists in the git log. `coop` is NOT installed in this box, so reopen any that fail by moving its folder back to 10_in_progress/ yourself, and note what is missing in its log.md. Do not fix anything yourself.", absJoin(repo, queues))
+	if extra := loopAuditInstructions(repo); extra != "" {
+		p += "\n\nAlso apply these project-specific audit checks (from .agent/audit.md), reopening any task that fails one:\n" + extra
+	}
+	return p
+}
+
+// loopAuditInstructions reads optional, project-specific audit criteria from
+// .agent/audit.md, appended to the generated audit prompt so the final pass also checks
+// whatever this repo cares about (changelog updated, no stray TODOs, docs regenerated, …).
+// Absent or empty → "". Read on the host and inlined into the prompt, so there is no in-box
+// path for an agent to resolve and it behaves the same for every agent.
+func loopAuditInstructions(repo string) string {
+	data, err := os.ReadFile(filepath.Join(repo, ".agent", "audit.md"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // loopPreflightPrompt is the one-shot cleanup pass run before the work loop when

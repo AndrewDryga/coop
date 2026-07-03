@@ -353,6 +353,10 @@ coop loop [agent] — work the task queue until done, then audit.
   auditor re-checks every shipped task. On a rate limit it rotates to the next
   target in its models ladder, or waits out the reset when they're all limited.
 
+  Drop project-specific audit checks in .agent/audit.md (Markdown): its text is
+  appended to the auditor's prompt, and the final pass reopens any shipped task
+  that fails one (e.g. changelog updated, docs regenerated, no stray TODOs).
+
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its models: ladder is the rotation, and each iteration gets the
   preset's role routing + wrappers ('coop help presets'). With no preset, the loop

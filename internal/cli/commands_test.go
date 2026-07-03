@@ -129,6 +129,31 @@ func TestLoopPreflightAndAuditFolder(t *testing.T) {
 	}
 }
 
+// .agent/audit.md, when present, is appended to the audit prompt so the final pass also runs
+// the project's own checks; absent, the generated prompt is unchanged.
+func TestLoopAuditInstructionsAppended(t *testing.T) {
+	repo := t.TempDir()
+	// No file → no appendix.
+	if aud := loopAuditPrompt(repo, []string{".agent/tasks"}); strings.Contains(aud, "project-specific audit checks") {
+		t.Errorf("audit prompt should carry no appendix without .agent/audit.md:\n%s", aud)
+	}
+	// With the file → its (trimmed) text is appended after the generated body.
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "audit.md"), []byte("\nVerify CHANGELOG.md gained an entry.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aud := loopAuditPrompt(repo, []string{".agent/tasks"})
+	if !strings.HasPrefix(aud, "Audit:") {
+		t.Errorf("generated audit body should still lead:\n%s", aud)
+	}
+	if !strings.Contains(aud, "project-specific audit checks (from .agent/audit.md)") ||
+		!strings.Contains(aud, "Verify CHANGELOG.md gained an entry.") {
+		t.Errorf("audit prompt should append .agent/audit.md's text:\n%s", aud)
+	}
+}
+
 func TestLoopAgent(t *testing.T) {
 	if got, explicit, err := loopAgent(nil); err != nil || got != "claude" || explicit {
 		t.Errorf("loopAgent(nil) = (%q, explicit=%v, %v), want claude (defaulted)", got, explicit, err)

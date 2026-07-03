@@ -213,9 +213,9 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// .gitignore carries the working-state rule (skills + rules tracked).
+	// .gitignore carries the working-state rule (rules/skills/presets/audit.md tracked).
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{".agent/*", "!.agent/rules/", "!.agent/skills/", "!.gemini/skills"} {
+	for _, want := range []string{".agent/*", "!.agent/rules/", "!.agent/skills/", "!.agent/presets/", "!.agent/audit.md", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}
