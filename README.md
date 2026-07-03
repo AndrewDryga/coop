@@ -155,45 +155,66 @@ PR? Jump to [Forks](#forks-hand-off-work-like-a-pr).
 Every command runs against the repo in your current directory. `-h`/`--help` works on
 any of them.
 
-**Run an agent**
+The groups below match `coop help` — same commands in each, with more of the flags
+spelled out here (there's room to render them).
+
+**Agents**
 
 | Command | What it does |
 |---|---|
 | `coop claude` · `codex` · `gemini` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
 | `coop fusion [agent]` | a [governed council](#fusion-a-governed-council): that agent leads, the other two advise |
+| `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
+| `coop <agent> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
+
+**Credentials, models & presets** ([details](#agents--config))
+
+| Command | What it does |
+|---|---|
+| `coop login <agent> [--credential <name>]` | [authenticate](#authentication) an agent (token persists in the config dir); `--credential` adds a second account |
+| `coop credentials [agent [credential]]` | list stored credentials + which are signed in; a path grammar edits one (e.g. `coop credentials claude work default` · `… rm`) |
+| `coop models [agent]` | the model menu per agent ([picking models](#picking-models)) — set a model with `--model` or a [preset](#presets-the-whole-arrangement-in-one-yaml-file) |
+| `coop presets [name]` | list [orchestration presets](#presets-the-whole-arrangement-in-one-yaml-file) (lead + roles) or show one; `coop presets init` scaffolds the frontier recipe |
+
+**The box**
+
+| Command | What it does |
+|---|---|
 | `coop run -- <cmd>` | run any command in the box (raw — none of coop's agent flags) |
 | `coop shell` | a shell in the box, to look around |
-| `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
-| `coop login <agent>` | [authenticate](#authentication) an agent (token persists in the config dir) |
-| `coop <any launch> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
-| `coop models [agent]` | the model menu per agent ([picking models](#picking-models)) — set a model with `--model` or a [preset](#presets-the-whole-arrangement-in-one-yaml-file) |
 
 **Forks** — hand off work like a PR ([details](#forks-hand-off-work-like-a-pr))
 
 | Command | What it does |
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
-| `coop fork <name> <agent> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (defaults to `.agent/tasks`; `-d`/`--detach` backgrounds it) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
-| `coop fork review <name> [--stat\|--tool]` | brief + diff; `--stat` = brief only, `--tool` = your `git difftool` (open the fork in your editor with `coop fork open`) |
+| `coop fork review <name> [--stat\|--tool]` | brief + diff; `--stat` = brief only, `--tool` = your `git difftool` |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
+| `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
+| `coop fork <name> <agent> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (`-d` detaches) |
 | `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
-| `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 
-**Run unattended** ([details](#run-it-unattended))
+**Unattended** ([details](#run-it-unattended))
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--tasks <path>] [--model <model>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue unattended until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable for several); `--model` pins the [loop's model](#picking-models) (or `COOP_LOOP_MODEL`); `--consult` lets iterations ask the [peer agents](#the-orchestrator-pattern) read-only; `--preflight` tidies the `.agent/` state first (opt-in); `--debug-on-fail` opens a box shell on an iteration failure |
-| `coop fork <name> <agent> --loop [--tasks <path>]` | loop [one fork](#a-fleet) on a tasks queue (`-d` detaches; `--tasks` defaults to `.agent/tasks`) |
+| `coop loop [agent] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable); `--model`/`--preset` set the [rotation](#picking-models); `--consult` lets iterations ask the [peers](#the-orchestrator-pattern) read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
-| `coop tasks watch` | live board of the task queue + any active forks, merged and deduped by id — in progress (with the fork that claimed it), todo, blocked (auto-exits when every task's done; Ctrl-C anytime) |
-| `coop tasks add` · `claim` · `block` · `done` · `ls` · … | drive the [`.agent/tasks/`](#the-loop) queue — a folder per task, state = its directory; `lint` checks the tree, `split` carves the todo tasks into per-fork slices |
 
-**Services** — the box's `compose.agent.yml` sidecars
+**Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
+
+| Command | What it does |
+|---|---|
+| `coop tasks ls` | show the queue, grouped by state (a folder per task; its directory *is* its state) |
+| `coop tasks watch` | live board of the queue + any active forks, merged and deduped by id (auto-exits when every task's done; Ctrl-C anytime) |
+| `coop tasks add "<title>"` · `claim` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change) |
+| `coop tasks decisions [-i]` · `lint` · `split <n>` | what's blocked on a decision (`-i` to answer) · check the tree · carve todo tasks into per-fork slices |
+
+**Services** — the box's `compose.agent.yml` sidecars ([details](#services))
 
 | Command | What it does |
 |---|---|
@@ -204,7 +225,7 @@ any of them.
 | Command | What it does |
 |---|---|
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
-| `coop check-secrets` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
+| `coop check-secrets [--include-ignored]` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
 
 **Set up & maintain**
 
@@ -212,6 +233,7 @@ any of them.
 |---|---|
 | `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and [starter subagents](#the-orchestrator-pattern) (and optionally a toolchain) |
 | `coop build` · `update` | build the box image · [self-update coop + rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
+| `coop completion <shell>` | shell tab-completion (bash, zsh) |
 | `coop help` · `version` | print help · print the version |
 
 ## The sandbox
