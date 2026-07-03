@@ -149,6 +149,33 @@ func ProgressBar(frac float64, width int) string {
 	return "[" + Cyan(strings.Repeat("█", filled)) + strings.Repeat("░", width-filled) + "]"
 }
 
+// ProgressBarStates is ProgressBar with a blocked segment: `done` cells filled (cyan), then `blocked`
+// cells in red, then the rest (todo + in-progress) empty — all out of total. A glance shows both how
+// far along AND how much is parked on a decision.
+func ProgressBarStates(done, blocked, total, width int) string {
+	if width < 0 {
+		width = 0
+	}
+	if total <= 0 {
+		return "[" + strings.Repeat("░", width) + "]"
+	}
+	cells := func(n int) int {
+		if n < 0 {
+			return 0
+		}
+		return int(float64(n)/float64(total)*float64(width) + 0.5)
+	}
+	d := cells(done)
+	if d > width {
+		d = width
+	}
+	b := cells(blocked)
+	if d+b > width {
+		b = width - d
+	}
+	return "[" + Cyan(strings.Repeat("█", d)) + Red(strings.Repeat("█", b)) + strings.Repeat("░", width-d-b) + "]"
+}
+
 // clip truncates s to at most n visible columns, counting runes but not ANSI SGR escapes, and
 // appends a reset if it cut inside styled text — so a colored status line can be width-bounded
 // without leaving a dangling color or miscounting escape bytes as width.

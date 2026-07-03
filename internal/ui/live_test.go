@@ -67,6 +67,26 @@ func TestProgressBar(t *testing.T) {
 	}
 }
 
+func TestProgressBarStates(t *testing.T) {
+	// Colors off under `go test` — done (cyan) and blocked (red) both render as plain █, so assert the
+	// cell layout: done + blocked fill, the rest is empty.
+	for _, c := range []struct {
+		done, blocked, total, w int
+		want                    string
+	}{
+		{0, 0, 0, 4, "[░░░░]"},        // no tasks → empty
+		{2, 0, 4, 4, "[██░░]"},        // half done, none blocked
+		{2, 2, 4, 4, "[████]"},        // 2 done + 2 blocked → full
+		{0, 4, 4, 4, "[████]"},        // all blocked → full
+		{5, 5, 10, 4, "[████]"},       // done+blocked can't exceed the width
+		{2, 0, 4, 10, "[█████░░░░░]"}, // 2/4 done scaled to width 10
+	} {
+		if got := ProgressBarStates(c.done, c.blocked, c.total, c.w); got != c.want {
+			t.Errorf("ProgressBarStates(d=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.blocked, c.total, c.w, got, c.want)
+		}
+	}
+}
+
 func TestRegion(t *testing.T) {
 	var buf strings.Builder
 	r := NewRegion(&buf, func() int { return 40 })

@@ -3,7 +3,24 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// A per-source (per-queue) line shows its blocked count when any — so a parked queue is visible in the
+// breakdown, not just the overall header; with none, the blocked tail is omitted.
+func TestSourceLineShowsBlocked(t *testing.T) {
+	line := sourceLine(ui.Palette{}, "api", 3, taskCounts{Todo: 1, Done: 5, Blocked: 2})
+	if !strings.Contains(line, "5/8") { // 5 done of 8 total
+		t.Errorf("sourceLine should show done/total (5/8): %q", line)
+	}
+	if !strings.Contains(line, "2 blocked") {
+		t.Errorf("sourceLine should show the blocked count: %q", line)
+	}
+	if l := sourceLine(ui.Palette{}, "api", 3, taskCounts{Todo: 1, Done: 3}); strings.Contains(l, "blocked") {
+		t.Errorf("sourceLine with 0 blocked should omit the blocked tail: %q", l)
+	}
+}
 
 func merge(items []taskItem) []mergedTask {
 	out := make([]mergedTask, len(items))
