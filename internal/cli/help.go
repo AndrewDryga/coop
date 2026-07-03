@@ -133,11 +133,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop tasks add \"<title>\"", "add a task (then claim/block/unblock/done)")
 	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
 
-	group("SETUP & MAINTENANCE")
-	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, subagents")
-	row("coop build", "build the box image (stable, pinned)")
-	row("coop update", "self-update coop, then rebuild the box")
-	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
+	group("SERVICES — the box's compose.agent.yml sidecars")
 	// `coop up`/`down` act on this repo's compose.agent.yml — always NAME the file (it's what makes
 	// the rows obvious), listing its real services when present, and dim the pair when there's none to
 	// act on. Repo resolution is best-effort (help runs anywhere; outside a repo, or with no compose).
@@ -154,8 +150,16 @@ func renderHelp(cfg *config.Config, ref bool) string {
 		dimRow("coop up", "none in compose.agent.yml yet")
 		dimRow("coop down", "stop the compose.agent.yml services")
 	}
+
+	group("SAFETY — prove the box holds, catch committed secrets")
 	row("coop doctor", "attack the box, prove isolation holds")
 	row("coop check-secrets", "scan the working tree for committed secrets")
+
+	group("SETUP & MAINTENANCE")
+	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, subagents")
+	row("coop build", "build the box image (stable, pinned)")
+	row("coop update", "self-update coop, then rebuild the box")
+	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
 	row("coop help", "this help")
 	row("coop version", "print the version")
 

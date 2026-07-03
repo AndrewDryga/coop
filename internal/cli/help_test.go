@@ -55,7 +55,7 @@ func TestHelpTextAligned(t *testing.T) {
 	if strings.Contains(out, "·") {
 		t.Errorf("help should not use · separators:\n%s", out)
 	}
-	for _, want := range []string{"AGENTS", "FORKS", "UNATTENDED", "TASKS", "SETUP & MAINTENANCE"} {
+	for _, want := range []string{"AGENTS", "FORKS", "UNATTENDED", "TASKS", "SERVICES", "SAFETY", "SETUP & MAINTENANCE"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing capitalized section header %q", want)
 		}

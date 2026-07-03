@@ -44,15 +44,19 @@ TASKS — a folder-per-task queue in .agent/tasks/
   coop tasks add "<title>"          add a task (then claim/block/unblock/done)
   coop tasks decisions              what's blocked on a decision (-i to answer)
 
+SERVICES — the box's compose.agent.yml sidecars
+  coop up                           start the compose.agent.yml services
+  coop down                         stop the compose.agent.yml services
+
+SAFETY — prove the box holds, catch committed secrets
+  coop doctor                       attack the box, prove isolation holds
+  coop check-secrets                scan the working tree for committed secrets
+
 SETUP & MAINTENANCE
   coop init [--stack asdf]          scaffold the queue, hooks, skills, subagents
   coop build                        build the box image (stable, pinned)
   coop update                       self-update coop, then rebuild the box
   coop completion <shell>           shell tab-completion (bash, zsh)
-  coop up                           start the compose.agent.yml services
-  coop down                         stop the compose.agent.yml services
-  coop doctor                       attack the box, prove isolation holds
-  coop check-secrets                scan the working tree for committed secrets
   coop help                         this help
   coop version                      print the version
 
