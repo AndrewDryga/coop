@@ -97,6 +97,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop shell", "an interactive shell in the box")
 	row("coop login <agent> [--credential <name>]", "sign in an agent (a subscription)")
 	row("coop credentials [agent]", "stored credentials + which are signed in")
+	row("coop presets [name]", "orchestration recipes (lead + roles)")
 	row("coop models [agent]", "the model menu per agent")
 	row("coop acp [agent|fusion]", "serve as an editor agent (ACP; e.g. Zed)")
 	row("coop <agent> --consult", "a read-only second opinion from the others")
@@ -217,8 +218,7 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
   Usage: coop <agent> [coop flags] [-- <agent args>]
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --credential <name>  run on a stored credential — one account/login (see coop credentials;
-                         --profile is the legacy spelling)
+    --credential <name>  run on a stored credential — one account/login (see coop credentials)
     --model <name>       run on a chosen model (see coop models)
     --preset <name>      run under an orchestration preset from .agent/presets/<name>/
                          (lead + roles + models + credentials; see coop help presets)
@@ -245,8 +245,7 @@ var commandHelp = map[string]string{
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
   refresh or switch accounts — e.g. after a usage limit.
 
-  --credential <name> (legacy --profile) signs in a second (or third) account
-  under a name, so
+  --credential <name> signs in a second (or third) account under a name, so
   one agent can hold several subscriptions. The unattended loop rotates across a
   repo's credentials when one is rate limited (see 'coop loop pool'). Without the
   flag the sign-in targets the default credential.`,
@@ -282,8 +281,8 @@ var commandHelp = map[string]string{
   Run on a specific credential without changing the default — works on any agent
   launch: 'coop claude --credential <name>', 'coop fusion <agent> --credential
   <name>', and 'coop acp <agent> --credential <name>' (so an editor entry can pin
-  an account; --profile stays a legacy alias). An agent's own --profile goes after
-  a --, e.g. 'coop codex -- --profile <name>'.`,
+  an account). An agent's own --profile goes after a --, e.g.
+  'coop codex -- --profile <name>'.`,
 
 	"models": `coop models [agent] — the model menu per agent.
 
@@ -331,7 +330,7 @@ var commandHelp = map[string]string{
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
 
-  --credential <name> (legacy --profile) pins the session to one stored account, so an
+  --credential <name> pins the session to one stored account, so an
   editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].
 
   --model <m> pins the session's model (see 'coop models'), e.g.
@@ -355,8 +354,7 @@ var commandHelp = map[string]string{
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
   writes. Lighter, opt-in variant: coop <agent> --consult
 
-  --credential <name> (legacy --profile) pins the governor's stored account; each
-  peer keeps its own.
+  --credential <name> pins the governor's stored account; each peer keeps its own.
 
   --model picks the governor's model; each peer keeps its own default (its
   profile's mark or COOP_<AGENT>_MODEL — see 'coop models').
@@ -368,6 +366,8 @@ var commandHelp = map[string]string{
   picks the governor; anything else (or anything after a --) passes through.`,
 
 	"presets": `coop presets — YAML orchestration recipes under .agent/presets/<name>/.
+
+  Usage: coop presets [name]        list them, or show one recipe in full
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
   work to — each role an agent + model + credentials + routing hints. A CREDENTIAL
@@ -444,8 +444,8 @@ var commandHelp = map[string]string{
         credentials: [work]
 
   Per-fork credentials/model/consult override the preset for that fork only. The
-  legacy one-line .agent/fleet still reads (migrate to YAML); having both files is
-  an error. List forks: coop fork ls`,
+  pre-v3 one-line .agent/fleet is NOT read — its presence is an error until you
+  translate it (see MIGRATING.md) and delete it. List forks: coop fork ls`,
 
 	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 

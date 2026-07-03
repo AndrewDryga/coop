@@ -13,73 +13,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-func TestParseFleet(t *testing.T) {
-	in := "# a fleet\n" +
-		"perf codex .agent/tasks.perf\n" +
-		"deps gemini .agent/tasks.deps\n" +
-		"docs .agent/tasks.docs\n" + // agent omitted → claude
-		"api codex .agent/tasks.api profile=work\n" + // per-fork single profile
-		"web .agent/tasks.web profile=work,personal\n" + // agent omitted + per-fork pool
-		"big claude .agent/tasks.big profile=work model=opus\n" + // per-fork model
-		"core claude .agent/tasks.core model=fable consult=1\n" + // per-fork consult
-		"solo codex .agent/tasks.solo consult=off\n\n" // explicit off parses too
-	got, err := parseFleet(in)
-	if err != nil {
-		t.Fatalf("parseFleet: %v", err)
-	}
-	want := []fleetEntry{
-		{name: "perf", agent: "codex", tasks: ".agent/tasks.perf"},
-		{name: "deps", agent: "gemini", tasks: ".agent/tasks.deps"},
-		{name: "docs", agent: "claude", tasks: ".agent/tasks.docs"},
-		{name: "api", agent: "codex", tasks: ".agent/tasks.api", profiles: []string{"work"}},
-		{name: "web", agent: "claude", tasks: ".agent/tasks.web", profiles: []string{"work", "personal"}},
-		{name: "big", agent: "claude", tasks: ".agent/tasks.big", profiles: []string{"work"}, model: "opus"},
-		{name: "core", agent: "claude", tasks: ".agent/tasks.core", model: "fable", consult: true},
-		{name: "solo", agent: "codex", tasks: ".agent/tasks.solo"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseFleet = %v, want %v", got, want)
-	}
-	// An unknown key=value option is rejected (only profile=/model=/consult= are known).
-	if _, err := parseFleet("api codex q.md bogus=1"); err == nil {
-		t.Error("parseFleet: want error for an unknown option key")
-	}
-	// profile= with no value is rejected, not a silent empty pool.
-	if _, err := parseFleet("api codex q.md profile="); err == nil {
-		t.Error("parseFleet: want error for an empty profile= value")
-	}
-	// model= with no value is rejected too.
-	if _, err := parseFleet("api codex q.md model="); err == nil {
-		t.Error("parseFleet: want error for an empty model= value")
-	}
-	// consult= with a non-boolean value is rejected, not silently off.
-	if _, err := parseFleet("api codex q.md consult=maybe"); err == nil {
-		t.Error("parseFleet: want error for a non-boolean consult= value")
-	}
-	if _, err := parseFleet("perf"); err == nil {
-		t.Error("parseFleet: want error when the tasks path is missing")
-	}
-	if _, err := parseFleet("perf codex"); err == nil {
-		t.Error("parseFleet: want error when only an agent is given (no tasks path)")
-	}
-	if _, err := parseFleet("ls codex q.md"); err == nil {
-		t.Error("parseFleet: want error for reserved name")
-	}
-	// A misspelled middle agent must not be swallowed as the path (dropping the real path) — it's an
-	// error naming the agents, not a silent "no such file: borg" later.
-	if _, err := parseFleet("api borg .agent/tasks.api"); err == nil {
-		t.Error("parseFleet: want error for an unknown middle agent token")
-	}
-	// A path with spaces is rejected, not truncated to its first word.
-	if _, err := parseFleet("api codex tasks with spaces.md"); err == nil {
-		t.Error("parseFleet: want error for a tasks path containing spaces")
-	}
-	// Duplicate fork names are rejected — two lines for one name silently dropped the second before.
-	if _, err := parseFleet("api codex a.md\napi gemini b.md"); err == nil {
-		t.Error("parseFleet: want error for a duplicate fork name")
-	}
-}
-
 // `coop fleet ls`/`list` has no fleet-level listing — it must point at the real views (fork ls / the
 // live board), not error blankly (rule: `ls` is the list verb, it must lead somewhere useful).
 func TestFleetLsRedirect(t *testing.T) {
@@ -209,8 +142,8 @@ func TestFleetInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	a2 := &app{cfg: &config.Config{RepoOverride: legacy}}
-	if code, err := a2.fleetInit(); err == nil || code == 0 || !strings.Contains(err.Error(), "legacy") {
-		t.Errorf("init over a legacy fleet should refuse and name the migration, got (%d, %v)", code, err)
+	if code, err := a2.fleetInit(); err == nil || code == 0 || !strings.Contains(err.Error(), "pre-v3") {
+		t.Errorf("init over a pre-v3 fleet should refuse and name the migration, got (%d, %v)", code, err)
 	}
 }
 
@@ -292,8 +225,9 @@ forks:
 	}
 }
 
-// Both fleet formats present is ambiguous — refuse loudly; each alone loads.
-func TestLoadFleetAmbiguity(t *testing.T) {
+// The pre-v3 one-line .agent/fleet is NEVER read: alone or alongside fleet.yaml, its
+// presence errors with the migrate-and-delete pointer; fleet.yaml alone loads.
+func TestLoadFleetRejectsPreV3File(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -305,14 +239,14 @@ func TestLoadFleetAmbiguity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude t\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if entries, err := a.loadFleet(repo); err != nil || len(entries) != 1 {
-		t.Errorf("legacy alone should load: %v (%d entries)", err, len(entries))
+	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "no longer read") {
+		t.Errorf("pre-v3 file alone: want the migrate-and-delete error, got %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  b: {tasks: t}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "both") {
-		t.Errorf("both formats: want the ambiguity error, got %v", err)
+	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "no longer read") {
+		t.Errorf("pre-v3 file alongside yaml: want the migrate-and-delete error, got %v", err)
 	}
 	if err := os.Remove(filepath.Join(repo, ".agent", "fleet")); err != nil {
 		t.Fatal(err)
@@ -357,7 +291,7 @@ func TestFleetDownWarnsRunningOrphan(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude .agent/T.md\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  a: {agent: claude, tasks: .agent/T.md}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A running fork "b" that isn't in the fleet (its workspace exists + a live pidfile).
@@ -378,7 +312,7 @@ func TestFleetDownWarnsRunningOrphan(t *testing.T) {
 	_ = w.Close()
 	os.Stderr = old
 	out, _ := io.ReadAll(r)
-	if !strings.Contains(string(out), "b") || !strings.Contains(string(out), "not in .agent/fleet") {
+	if !strings.Contains(string(out), "b") || !strings.Contains(string(out), "not in .agent/fleet.yaml") {
 		t.Errorf("expected a warning about running orphan b:\n%s", out)
 	}
 }

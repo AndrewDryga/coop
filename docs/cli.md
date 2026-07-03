@@ -13,6 +13,7 @@ AGENTS
   coop shell                        an interactive shell in the box
   coop login <agent> [--credential <name>]  sign in an agent (a subscription)
   coop credentials [agent]          stored credentials + which are signed in
+  coop presets [name]               orchestration recipes (lead + roles)
   coop models [agent]               the model menu per agent
   coop acp [agent|fusion]           serve as an editor agent (ACP; e.g. Zed)
   coop <agent> --consult            a read-only second opinion from the others
@@ -83,7 +84,7 @@ FLAGS (every short flag has a long form):
       --fresh     recreate the fork from scratch (refuses unmerged/dirty without --force)
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)
-      --credential  credential(s) for this fork (a,b rotates with --loop; alias --profile)
+      --credential  credential(s) for this fork (a,b rotates with --loop)
       --model     model for this fork's agent (see 'coop models')
       --preset    orchestration preset for this fork (see 'coop help presets')
       --consult   with --loop, iterations may consult the authed peers read-only
@@ -118,8 +119,7 @@ coop login <agent> — sign in to an agent (token persists in the config dir).
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
   refresh or switch accounts — e.g. after a usage limit.
 
-  --credential <name> (legacy --profile) signs in a second (or third) account
-  under a name, so
+  --credential <name> signs in a second (or third) account under a name, so
   one agent can hold several subscriptions. The unattended loop rotates across a
   repo's credentials when one is rate limited (see 'coop loop pool'). Without the
   flag the sign-in targets the default credential.
@@ -155,8 +155,58 @@ coop credentials — list stored credentials; a path grammar edits one.
   Run on a specific credential without changing the default — works on any agent
   launch: 'coop claude --credential <name>', 'coop fusion <agent> --credential
   <name>', and 'coop acp <agent> --credential <name>' (so an editor entry can pin
-  an account; --profile stays a legacy alias). An agent's own --profile goes after
-  a --, e.g. 'coop codex -- --profile <name>'.
+  an account). An agent's own --profile goes after a --, e.g.
+  'coop codex -- --profile <name>'.
+
+coop presets — YAML orchestration recipes under .agent/presets/<name>/.
+
+  Usage: coop presets [name]        list them, or show one recipe in full
+
+  A PRESET is a runtime recipe: which agent leads, and which roles it can route
+  work to — each role an agent + model + credentials + routing hints. A CREDENTIAL
+  is just a stored account/login (a rate-limit slot; see coop credentials). Presets
+  reference credentials; they never store secrets.
+
+  Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
+  fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
+  An explicitly named agent wins over the preset's lead; explicit --model/
+  --credential win over the preset's values.
+
+  .agent/presets/frontier/preset.yaml:
+
+    lead:
+      agent: claude
+      model: claude-fable-5
+      credentials: [work]
+      prompt: lead.md            # optional Markdown, appended to the generated contract
+    roles:
+      thinker:                   # native Claude subagent — deep thinking in-session
+        mode: native
+        agent: claude
+        model: claude-opus-4-8
+        subagent: deep-reasoner
+        when: [architecture, debugging, code-review]
+      critic:                    # read-only peer via coop-consult
+        mode: consult
+        agent: codex
+        model: gpt-5.5
+        credentials: [work]
+        when: [plan-review, security]
+      fast:                      # write-capable delegate via coop-delegate
+        mode: delegate
+        agent: gemini
+        model: gemini-3.5-flash
+        credentials: [work]
+        when: [boilerplate, bulk-edits, test-scaffolding]
+        commit: never            # the delegate edits; the LEAD reviews, gates, commits
+        concurrent: never        # delegate runs are serialized
+
+  coop generates the lead's routing contract from this (roles, when-to-use, the
+  exact coop-consult/coop-delegate invocations) and mounts the wrappers. Markdown
+  prompt files (lead.md, roles/<name>.md) append to the generated text, never
+  replace it. A delegate may edit the worktree but must not commit — coop-delegate
+  fails loud if HEAD moved — and the lead owns the diff review, the gate, and the
+  commit. Model ids for the recipe: coop models.
 
 coop models [agent] — the model menu per agent.
 
@@ -184,7 +234,7 @@ coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor.
 
-  --credential <name> (legacy --profile) pins the session to one stored account, so an
+  --credential <name> pins the session to one stored account, so an
   editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].
 
   --model <m> pins the session's model (see 'coop models'), e.g.
@@ -208,8 +258,7 @@ coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
   Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
   writes. Lighter, opt-in variant: coop <agent> --consult
 
-  --credential <name> (legacy --profile) pins the governor's stored account; each
-  peer keeps its own.
+  --credential <name> pins the governor's stored account; each peer keeps its own.
 
   --model picks the governor's model; each peer keeps its own default (its
   profile's mark or COOP_<AGENT>_MODEL — see 'coop models').
@@ -249,8 +298,8 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
         credentials: [work]
 
   Per-fork credentials/model/consult override the preset for that fork only. The
-  legacy one-line .agent/fleet still reads (migrate to YAML); having both files is
-  an error. List forks: coop fork ls
+  pre-v3 one-line .agent/fleet is NOT read — its presence is an error until you
+  translate it (see MIGRATING.md) and delete it. List forks: coop fork ls
 
 coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 

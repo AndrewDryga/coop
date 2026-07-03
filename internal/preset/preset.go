@@ -97,6 +97,26 @@ func Path(repo, name string) string {
 	return filepath.Join(repo, filepath.FromSlash(Dir), name, "preset.yaml")
 }
 
+// List returns the names of every preset folder under repo (a directory in
+// .agent/presets/ holding a preset.yaml), sorted. It doesn't validate them —
+// the lister must show a broken preset so it can be fixed, not hide it.
+func List(repo string) []string {
+	entries, err := os.ReadDir(filepath.Join(repo, filepath.FromSlash(Dir)))
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			if _, err := os.Stat(Path(repo, e.Name())); err == nil {
+				names = append(names, e.Name())
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Load reads and validates .agent/presets/<name>/preset.yaml under repo, loading any
 // referenced Markdown prompt files. Every error names the preset and what to fix.
 func Load(repo, name string) (*Preset, error) {

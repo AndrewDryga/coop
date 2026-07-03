@@ -7,9 +7,11 @@
 - **BREAKING: `coop profiles` is now `coop credentials`.** The split is complete: a CREDENTIAL is a
   stored account/login (its own rate-limit pool); an orchestration recipe is a PRESET. The command,
   help, and every hint now say credentials (`coop credentials claude work model opus`,
-  `coop login claude --credential work`); `coop profiles` tombstones with the rewrite, and
-  `--profile` remains a working alias of `--credential` on login/launch flags. On-disk storage is
-  unchanged (`<agent>/profiles/<name>/`, `pools.json`) — nothing to migrate.
+  `coop login claude --credential work`); `coop profiles` tombstones with the rewrite, and the
+  `--profile` flag is retired too — it errors with the rename (an agent's OWN `--profile` still
+  passes through after a `--`). A new `coop presets [name]` command lists the repo's presets (a
+  broken one shows its error) and shows one recipe in full. On-disk storage is unchanged
+  (`<agent>/profiles/<name>/`, `pools.json`) — nothing to migrate.
 
 - **Model fallback in the rotation pool: `credential@model`.** A loop-pool member can now carry a
   model, so a rate limit steps down on the SAME login before switching accounts:
@@ -32,15 +34,16 @@
   to it, never replace it. `--preset <name>` works on `coop <agent>`, `loop`, `fusion`, `acp`, and
   `coop fork <name> --loop`; explicit agent/`--model`/`--credential` flags still win. Credentials
   are the public name for stored accounts/logins (rate-limit slots): launch surfaces take
-  `--credential`/`--credentials` with `--profile` as the legacy alias, and `coop models` now lists
+  `--credential`/`--credentials`, and `coop models` now lists
   `claude-fable-5`, `claude-opus-4-8`, `gpt-5.5`, and `gemini-3.5-flash` for the frontier recipe.
   See the README's "Presets" section and `coop help presets`. (First external dependency:
   gopkg.in/yaml.v3 — dependency-free itself, the binary stays static.)
 
 - **`.agent/fleet.yaml` is the fleet format.** `coop fleet init`/`split` write YAML, every fleet
   command reads it, and forks can reference presets (`preset: frontier`) with per-fork
-  `credentials:`/`model:`/`consult:` overriding the preset for that fork only. The legacy one-line
-  `.agent/fleet` still reads with a migration note; having both files is a loud ambiguity error.
+  `credentials:`/`model:`/`consult:` overriding the preset for that fork only. The pre-v3 one-line
+  `.agent/fleet` is NOT read — its presence (alone or alongside fleet.yaml) is an error until it's
+  translated and deleted (see MIGRATING.md).
 
 - **coop now tells you when it's stale — binary, box image, and the skew between them.** Once a day,
   the first interactive command checks GitHub in the background and mentions a newer release after

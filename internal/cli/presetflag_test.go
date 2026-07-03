@@ -100,11 +100,14 @@ func TestPresetFlagParsing(t *testing.T) {
 		t.Error("a bare --preset must error")
 	}
 
-	// The credential spellings are aliases of --profile on run surfaces.
-	for _, flag := range []string{"--credential", "--credentials", "--profile"} {
+	// Both credential spellings parse; the retired --profile fails with the rewrite.
+	for _, flag := range []string{"--credential", "--credentials"} {
 		if got, _, err := extractRunProfile([]string{flag, "work"}); err != nil || got != "work" {
 			t.Errorf("extractRunProfile(%s work) = (%q, %v)", flag, got, err)
 		}
+	}
+	if _, _, err := extractRunProfile([]string{"--profile", "work"}); err == nil || !strings.Contains(err.Error(), "--credential") {
+		t.Errorf("the retired --profile must fail with the rewrite, got %v", err)
 	}
 
 	fa, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier", "--credential", "work"})
@@ -119,9 +122,9 @@ func TestPresetFlagParsing(t *testing.T) {
 	}
 }
 
-// The loop's --credential aliases accumulate like the legacy --profile.
+// The loop's --credential spellings accumulate (singular and plural).
 func TestLoopCredentialAliases(t *testing.T) {
-	profiles, rest, err := extractLoopProfiles([]string{"claude", "--credential", "a", "--credentials=b,c", "--profile", "d"})
+	profiles, rest, err := extractLoopProfiles([]string{"claude", "--credential", "a", "--credentials=b,c", "--credential", "d"})
 	if err != nil {
 		t.Fatal(err)
 	}

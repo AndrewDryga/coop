@@ -300,7 +300,7 @@ func TestHelpForAgentShowsWrapperFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("helpForCommand(claude) = %d, want 0", code)
 	}
-	for _, want := range []string{"--profile", "--model", "--consult", "coop claude -- --help"} {
+	for _, want := range []string{"--credential", "--model", "--consult", "coop claude -- --help"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("agent help missing %q:\n%s", want, out)
 		}

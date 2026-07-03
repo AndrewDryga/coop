@@ -896,8 +896,8 @@ forks:
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
-`coop fleet down` stops them. (A legacy one-line `.agent/fleet` still reads with a
-migration note; having both files is an error.) To bootstrap the file, `coop fleet
+`coop fleet down` stops them. (The pre-v3 one-line `.agent/fleet` is not read — its
+presence is an error until you translate it to YAML and delete it; see MIGRATING.md.) To bootstrap the file, `coop fleet
 split <n>` mechanically round-robins your `.agent/tasks/` todo folders into per-fork
 `.agent/tasks.slice<n>/` slices and writes a matching `.agent/fleet.yaml` with each
 slice's explicit path (use an agent for *semantic* slicing). It won't clobber a fleet

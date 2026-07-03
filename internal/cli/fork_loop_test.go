@@ -55,22 +55,28 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 
 func TestParseForkCreateProfiles(t *testing.T) {
 	// A loop fork may name several profiles (a per-fork rotation pool), space or = form.
-	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--tasks", "q.md", "--profile", "work,personal"})
+	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--tasks", "q.md", "--credential", "work,personal"})
 	if err != nil {
 		t.Fatalf("parseForkCreate profiles err = %v", err)
 	}
 	if got, want := fa.profiles, []string{"work", "personal"}; !slices.Equal(got, want) {
 		t.Errorf("profiles = %v, want %v", got, want)
 	}
-	if fa2, err := parseForkCreate([]string{"perf", "--profile=work"}); err != nil || !slices.Equal(fa2.profiles, []string{"work"}) {
-		t.Errorf("--profile=work → profiles=%v err=%v, want [work]", fa2.profiles, err)
+	if fa2, err := parseForkCreate([]string{"perf", "--credential=work"}); err != nil || !slices.Equal(fa2.profiles, []string{"work"}) {
+		t.Errorf("--credential=work → profiles=%v err=%v, want [work]", fa2.profiles, err)
+	}
+	// The retired --profile spelling fails with the rewrite, both forms.
+	for _, args := range [][]string{{"perf", "--profile", "work"}, {"perf", "--profile=work"}} {
+		if _, err := parseForkCreate(args); err == nil || !strings.Contains(err.Error(), "--credential") {
+			t.Errorf("parseForkCreate(%v): the retired --profile must fail with the rewrite, got %v", args, err)
+		}
 	}
 	// A single profile is fine without --loop (an interactive fork uses one); several is not.
-	if _, err := parseForkCreate([]string{"perf", "--profile", "work,personal"}); err == nil {
-		t.Error("multiple --profile without --loop: want error")
+	if _, err := parseForkCreate([]string{"perf", "--credential", "work,personal"}); err == nil {
+		t.Error("multiple --credential without --loop: want error")
 	}
-	if _, err := parseForkCreate([]string{"perf", "--profile"}); err == nil {
-		t.Error("--profile with no value: want error")
+	if _, err := parseForkCreate([]string{"perf", "--credential"}); err == nil {
+		t.Error("--credential with no value: want error")
 	}
 }
 

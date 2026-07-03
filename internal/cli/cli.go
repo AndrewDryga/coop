@@ -173,6 +173,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdLogin(rest)
 	case "credentials":
 		return a.cmdCredentials(rest)
+	case "presets":
+		return a.cmdPresets(rest)
 	case "models":
 		return a.cmdModels(rest)
 	case "acp":
@@ -219,7 +221,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
-	"run", "shell", "login", "credentials", "models", "acp", "fusion", "fork", "fleet", "tasks",
+	"run", "shell", "login", "credentials", "presets", "models", "acp", "fusion", "fork", "fleet", "tasks",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "help", "version",
 }
 

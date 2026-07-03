@@ -283,15 +283,39 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 	return "", 0, false, nil
 }
 
+// retiredProfileFlagErr is the tombstone for the pre-v3 --profile spelling: v3 keeps one
+// canonical flag, so the old name fails loudly with the rewrite instead of living as an alias.
+func retiredProfileFlagErr() error {
+	return errors.New("--profile was renamed to --credential in v3 — same value, new name (an agent's OWN --profile still passes through after a --)")
+}
+
+// rejectRetiredProfileFlag errors when the retired --profile spelling appears before a "--"
+// (after it, the token belongs to the agent and passes through untouched). Without this the
+// dead flag would silently forward INTO the agent CLI, which is worse than an alias.
+func rejectRetiredProfileFlag(args []string) error {
+	for _, x := range args {
+		if x == "--" {
+			return nil
+		}
+		if x == "--profile" || strings.HasPrefix(x, "--profile=") {
+			return retiredProfileFlagErr()
+		}
+	}
+	return nil
+}
+
 // extractProfile pulls coop's own `--credential <name>` (or `--credential=<name>`; the
-// plural and the legacy --profile spelling are aliases) out of login args, returning the
-// chosen credential ("" if absent — the caller resolves the agent's MARKED default, not
-// one literally named "default") and the remaining args. It lets a login target one of
-// several stored accounts. A flag with no value is an error, not a silent fall-back.
+// plural is an accepted spelling) out of login args, returning the chosen credential
+// ("" if absent — the caller resolves the agent's MARKED default, not one literally
+// named "default") and the remaining args. It lets a login target one of several stored
+// accounts. A flag with no value is an error, not a silent fall-back.
 func extractProfile(args []string) (profile string, rest []string, err error) {
+	if err := rejectRetiredProfileFlag(args); err != nil {
+		return "", nil, err
+	}
 	for i := 0; i < len(args); i++ {
 		matched := false
-		for _, flag := range []string{"--credential", "--credentials", "--profile"} {
+		for _, flag := range []string{"--credential", "--credentials"} {
 			if v, n, ok, e := flagValue(args, i, flag); ok {
 				if e != nil {
 					return "", nil, e
@@ -310,13 +334,16 @@ func extractProfile(args []string) (profile string, rest []string, err error) {
 }
 
 // extractRunProfile pulls coop's own --credential <name> (or --credential=<name>; the
-// singular/plural and the legacy --profile spelling are aliases) out of an agent RUN's
-// args, returning the chosen credential ("" if none) and the remaining args. Unlike
-// extractProfile (login), it stops at a "--" separator and forwards everything after it
-// verbatim — so an agent's own --profile is still reachable as `coop codex -- --profile
-// <name>`. A flag with no value is an error, not a silent fall-back.
+// plural is an accepted spelling) out of an agent RUN's args, returning the chosen
+// credential ("" if none) and the remaining args. It stops at a "--" separator and
+// forwards everything after it verbatim — so an agent's own --profile is still reachable
+// as `coop codex -- --profile <name>`; BEFORE the --, the retired --profile spelling
+// errors with the rewrite. A flag with no value is an error, not a silent fall-back.
 func extractRunProfile(args []string) (profile string, rest []string, err error) {
-	return extractRunValue(args, "--credential", "--credentials", "--profile")
+	if err := rejectRetiredProfileFlag(args); err != nil {
+		return "", nil, err
+	}
+	return extractRunValue(args, "--credential", "--credentials")
 }
 
 // extractRunModel pulls coop's own --model <name> (or --model=<name>) out of an agent RUN's
@@ -433,7 +460,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	consult, args := extractConsult(args)
 	// --profile pins this ACP session to one credential profile — so an editor can point a
-	// "claude (work)" agent_servers entry at ["acp","claude","--profile","work"]. Read before the
+	// "claude (work)" agent_servers entry at ["acp","claude","--credential","work"]. Read before the
 	// tool token; an agent's own --profile still passes through after a `--`.
 	profile, args, err := extractRunProfile(args)
 	if err != nil {
@@ -1170,7 +1197,10 @@ func (a *app) applyLoopModel(agent, model string) {
 // of the loop args, so `coop loop --profile x` runs a ONE-OFF on x without mutating the persistent
 // pool (`coop loop pool …`) — the same credential-selection flag every other launch path takes.
 func extractLoopProfiles(args []string) (profiles, rest []string, err error) {
-	spellings := []string{"--credential", "--credentials", "--profile"} // --profile is the legacy alias
+	if err := rejectRetiredProfileFlag(args); err != nil {
+		return nil, nil, err
+	}
+	spellings := []string{"--credential", "--credentials"}
 	for i := 0; i < len(args); i++ {
 		x, matched := args[i], false
 		for _, flag := range spellings {

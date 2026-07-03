@@ -7,9 +7,10 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | Retired | Use |
 | --- | --- |
 | `coop clone <name>` | `coop fork <name>` |
-| `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`). `--profile` stays a working alias of `--credential` on login/launch flags |
+| `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`) |
+| `--profile <name>` (login/launch flags) | `--credential <name>` — same value, new name; the old spelling errors with this rewrite. An agent's OWN `--profile` still passes through after a `--` |
 | `coop pool <add\|rm\|clear>` | `coop loop pool <add\|rm\|clear>` |
-| `coop profiles <default\|model\|rm> <agent> <profile>` | `coop profiles <agent> <profile> <default\|model\|rm>` |
+| `coop profiles <default\|model\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|model\|rm>` (a path) |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |
 | `<any> list` (e.g. `coop tasks list`) | `<any> ls` — `ls` is the only list verb |
@@ -17,8 +18,8 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 
 ## The fleet file: `.agent/fleet` → `.agent/fleet.yaml`
 
-The fleet is YAML now. A legacy one-line `.agent/fleet` still reads (with a note), but
-having **both** files is an error. Each old line
+The fleet is YAML-only. The pre-v3 one-line `.agent/fleet` is **not read** — its presence
+(alone or alongside `fleet.yaml`) is an error until you translate and delete it. Each old line
 `<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]` becomes a `forks:` entry:
 
 ```yaml
@@ -32,8 +33,7 @@ forks:
 ```
 
 Delete `.agent/fleet` once translated. New per-fork key: `preset: <name>` (an
-orchestration preset from `.agent/presets/`; see `coop help presets`). On launch
-surfaces, `--credential` is the new spelling of `--profile` (which remains an alias).
+orchestration preset from `.agent/presets/`; see `coop help presets`).
 
 ## A legacy `.agent/TASKS.md` → the folder task system
 

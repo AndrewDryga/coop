@@ -31,11 +31,9 @@ type fleetEntry struct {
 	consult  bool
 }
 
-// fleetLineShape is the one-line grammar shown in legacy fleet parse errors.
-const fleetLineShape = "<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]"
-
-// fleetFile is the LEGACY one-line-per-fork fleet (.agent/fleet), read only as a
-// compatibility path; fleetYAMLFile is the primary format.
+// fleetFile is the PRE-V3 one-line-per-fork fleet (.agent/fleet). It is never read —
+// its presence only produces a migrate-and-delete error, so a stale file can't silently
+// diverge from .agent/fleet.yaml (the one fleet format).
 func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet") }
 
 // fleetYAMLFile is the declarative fleet: .agent/fleet.yaml, a `forks:` map of fork
@@ -118,7 +116,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 	for i := 0; i+1 < len(doc.Forks.Content); i += 2 {
 		name := doc.Forks.Content[i].Value
 		// Node.Decode doesn't honor KnownFields, so reject unknown per-fork keys explicitly —
-		// a typo'd key (or the legacy profile= spelling) must error, not silently drop.
+		// a typo'd key (or the pre-v3 profile= spelling) must error, not silently drop.
 		if node := doc.Forks.Content[i+1]; node.Kind == yaml.MappingNode {
 			for k := 0; k+1 < len(node.Content); k += 2 {
 				switch key := node.Content[k].Value; key {
@@ -150,7 +148,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown agent %q (use %s)", e.name, e.agent, strings.Join(agents.Names(), ", "))
 		}
 		if e.agent == "" && e.preset == "" {
-			e.agent = agents.Default() // no preset to supply a lead — same default as the legacy format
+			e.agent = agents.Default() // no preset to supply a lead — claude, the standing default
 		}
 		for _, c := range e.profiles {
 			if parsePoolTarget(c).credential == "" {
@@ -162,85 +160,17 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 	return out, nil
 }
 
-func parseFleet(data string) ([]fleetEntry, error) {
-	var out []fleetEntry
-	seen := map[string]bool{}
-	for _, line := range strings.Split(data, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		f := strings.Fields(line)
-		e := fleetEntry{name: f[0], agent: agents.Default()}
-		rest := f[1:]
-		// An optional agent token may precede the required tasks path.
-		if len(rest) > 0 && agents.Valid(rest[0]) {
-			e.agent = rest[0]
-			rest = rest[1:]
-		}
-		if len(rest) == 0 {
-			return nil, fmt.Errorf("fleet: %q needs a tasks path — %q", e.name, fleetLineShape)
-		}
-		e.tasks = rest[0]
-		// Any further tokens are key=value options (currently only profile=). A bare extra token is a
-		// misspelled middle agent (so the real path got mis-read) or a space in the path — rejecting
-		// it turns a baffling later "no such file" into a clear error at parse time.
-		for _, tok := range rest[1:] {
-			key, val, ok := strings.Cut(tok, "=")
-			if !ok {
-				return nil, fmt.Errorf("fleet: %q — unexpected token %q; expected %q (a middle token must be a known agent %s; the path can't contain spaces; extra options are key=value)",
-					e.name, tok, fleetLineShape, strings.Join(agents.Names(), ", "))
-			}
-			switch key {
-			case "profile":
-				if e.profiles = parseProfileList(val); len(e.profiles) == 0 {
-					return nil, fmt.Errorf("fleet: %q — profile= needs a name or comma-separated list", e.name)
-				}
-			case "model":
-				if e.model = strings.TrimSpace(val); e.model == "" {
-					return nil, fmt.Errorf("fleet: %q — model= needs a model name", e.name)
-				}
-			case "consult":
-				// Explicit both ways — a typo'd value must error, not silently mean off.
-				switch strings.ToLower(strings.TrimSpace(val)) {
-				case "1", "true", "yes", "on":
-					e.consult = true
-				case "0", "false", "no", "off":
-					e.consult = false
-				default:
-					return nil, fmt.Errorf("fleet: %q — consult= takes 1/0 (or true/false, on/off), got %q", e.name, val)
-				}
-			default:
-				return nil, fmt.Errorf("fleet: %q — unknown option %q (known: profile=, model=, consult=)", e.name, key)
-			}
-		}
-		if !validForkName(e.name) {
-			return nil, fmt.Errorf("fleet: invalid fork name %q", e.name)
-		}
-		if seen[e.name] {
-			return nil, fmt.Errorf("fleet: duplicate fork name %q — each fork shares one workspace/branch, so a name can appear once", e.name)
-		}
-		seen[e.name] = true
-		out = append(out, e)
-	}
-	return out, nil
-}
-
 func (a *app) loadFleet(repo string) ([]fleetEntry, error) {
-	yamlData, yamlErr := os.ReadFile(fleetYAMLFile(repo))
-	legacyData, legacyErr := os.ReadFile(fleetFile(repo))
-	switch {
-	case yamlErr == nil && legacyErr == nil:
-		// Two sources of truth would silently diverge — refuse until one is gone.
-		return nil, errors.New("both .agent/fleet.yaml and the legacy .agent/fleet exist — keep fleet.yaml and delete .agent/fleet (its lines translate to forks: entries)")
-	case yamlErr == nil:
-		return parseFleetYAML(string(yamlData))
-	case legacyErr == nil:
-		ui.Info("note: reading the legacy .agent/fleet — migrate to .agent/fleet.yaml (same data, YAML shape; see 'coop fleet init')")
-		return parseFleet(string(legacyData))
-	default:
+	// The pre-v3 one-line .agent/fleet is never read — even alongside a fleet.yaml, its
+	// presence is an error, so a stale copy can't sit there quietly diverging.
+	if fileExists(fleetFile(repo)) {
+		return nil, errors.New(".agent/fleet is the pre-v3 fleet format and is no longer read — translate each line into a forks: entry in .agent/fleet.yaml (see MIGRATING.md), then delete .agent/fleet")
+	}
+	data, err := os.ReadFile(fleetYAMLFile(repo))
+	if err != nil {
 		return nil, errors.New("no .agent/fleet.yaml — run 'coop fleet init' to scaffold one")
 	}
+	return parseFleetYAML(string(data))
 }
 
 // cmdFleet manages a declarative fleet of forks from .agent/fleet.
@@ -316,7 +246,7 @@ func (a *app) fleetInit() (int, error) {
 		return -1, err
 	}
 	if fileExists(fleetFile(repo)) {
-		return 1, errors.New("a legacy .agent/fleet already exists — migrate it to .agent/fleet.yaml (same data, YAML shape), then delete it")
+		return 1, errors.New(".agent/fleet is the pre-v3 format and is no longer read — translate it into .agent/fleet.yaml (see MIGRATING.md), then delete it")
 	}
 	path := fleetYAMLFile(repo)
 	if fileExists(path) {
@@ -440,7 +370,7 @@ func (a *app) fleetDown(args []string) (int, error) {
 	// from the file, or started by hand) rather than leave it silently running.
 	for _, n := range fleetOrphans(names, forkNames(repo)) {
 		if forkRunningPid(repo, n) != 0 {
-			ui.Info("note: fork %s is running but not in .agent/fleet — stop it with: coop fork stop %s", n, n)
+			ui.Info("note: fork %s is running but not in .agent/fleet.yaml — stop it with: coop fork stop %s", n, n)
 		}
 	}
 	if prune {
@@ -506,7 +436,7 @@ func (a *app) fleetPrune(args []string) (int, error) {
 	return 0, nil
 }
 
-// pruneFleet removes forks no longer listed in .agent/fleet. It honors the same guard as `coop
+// pruneFleet removes forks no longer listed in .agent/fleet.yaml. It honors the same guard as `coop
 // fork rm`: a fork with uncommitted or unmerged work is kept unless force, and a running fork is
 // always kept (stop it first), so the safe path can never silently drop an agent's work. Shared
 // by `coop fleet prune` and the --prune flag on `coop fleet up`/`down`.
@@ -521,7 +451,7 @@ func (a *app) pruneFleet(repo string, force bool) error {
 	}
 	orphans := fleetOrphans(names, forkNames(repo))
 	if len(orphans) == 0 {
-		ui.Note("nothing to prune — every fork is in .agent/fleet")
+		ui.Note("nothing to prune — every fork is in .agent/fleet.yaml")
 		return nil
 	}
 	removed, kept := 0, 0

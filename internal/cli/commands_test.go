@@ -191,10 +191,10 @@ func TestParseLoopArgs(t *testing.T) {
 	}
 }
 
-// `coop loop --profile a,b` (repeatable, accumulating) is pulled out for a one-off run; a trailing
-// --profile with no value errors. The rest passes through to parseLoopArgs.
+// `coop loop --credential a,b` (repeatable, accumulating) is pulled out for a one-off run; a
+// trailing flag with no value errors, and the retired --profile spelling fails with the rewrite.
 func TestExtractLoopProfiles(t *testing.T) {
-	profiles, rest, err := extractLoopProfiles([]string{"claude", "--profile", "a,b", "--consult", "--profile=c"})
+	profiles, rest, err := extractLoopProfiles([]string{"claude", "--credential", "a,b", "--consult", "--credential=c"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,8 +204,11 @@ func TestExtractLoopProfiles(t *testing.T) {
 	if strings.Join(rest, " ") != "claude --consult" {
 		t.Errorf("rest = %v, want [claude --consult]", rest)
 	}
-	if _, _, err := extractLoopProfiles([]string{"--profile"}); err == nil {
-		t.Error("a trailing --profile with no value should error")
+	if _, _, err := extractLoopProfiles([]string{"--credential"}); err == nil {
+		t.Error("a trailing --credential with no value should error")
+	}
+	if _, _, err := extractLoopProfiles([]string{"--profile", "a"}); err == nil || !strings.Contains(err.Error(), "--credential") {
+		t.Errorf("the retired --profile must fail with the rewrite, got %v", err)
 	}
 }
 
@@ -262,7 +265,7 @@ func TestExtractConsult(t *testing.T) {
 	}
 }
 
-// TestExtractProfileAbsentIsEmpty: with no --profile, extractProfile returns "" — the
+// TestExtractProfileAbsentIsEmpty: with no --credential, extractProfile returns "" — the
 // caller (loginTo) then resolves the agent's MARKED default. Returning the literal
 // "default" here made a bare `coop login claude` re-auth (and keep re-creating) a husk
 // profile named "default" while runs used the marked profile's expired token.
@@ -271,8 +274,11 @@ func TestExtractProfileAbsentIsEmpty(t *testing.T) {
 	if err != nil || profile != "" || !slices.Equal(rest, []string{"claude"}) {
 		t.Errorf("extractProfile(claude) = (%q, %v, %v), want (\"\", [claude], nil)", profile, rest, err)
 	}
-	if profile, _, _ := extractProfile([]string{"claude", "--profile", "work"}); profile != "work" {
-		t.Errorf("explicit --profile = %q, want work", profile)
+	if profile, _, _ := extractProfile([]string{"claude", "--credential", "work"}); profile != "work" {
+		t.Errorf("explicit --credential = %q, want work", profile)
+	}
+	if _, _, err := extractProfile([]string{"claude", "--profile", "work"}); err == nil || !strings.Contains(err.Error(), "--credential") {
+		t.Errorf("login: the retired --profile must fail with the rewrite, got %v", err)
 	}
 }
 
@@ -285,12 +291,13 @@ func TestExtractRunProfile(t *testing.T) {
 		wantErr     bool
 	}{
 		{"none", []string{"-p", "hi"}, "", []string{"-p", "hi"}, false},
-		{"space form", []string{"--profile", "work", "-p", "hi"}, "work", []string{"-p", "hi"}, false},
-		{"equals form", []string{"--profile=work"}, "work", nil, false},
-		{"missing value", []string{"--profile"}, "", nil, true},
-		// coop reads --profile only before --; the agent's own --profile passes through verbatim.
+		{"space form", []string{"--credential", "work", "-p", "hi"}, "work", []string{"-p", "hi"}, false},
+		{"equals form", []string{"--credential=work"}, "work", nil, false},
+		{"missing value", []string{"--credential"}, "", nil, true},
+		{"retired --profile errors", []string{"--profile", "work"}, "", nil, true},
+		// coop reads its flags only before --; the agent's own --profile passes through verbatim.
 		{"passthrough after --", []string{"--", "--profile", "codexprof"}, "", []string{"--", "--profile", "codexprof"}, false},
-		{"coop profile then passthrough", []string{"--profile", "work", "--", "--profile", "codexprof"},
+		{"coop credential then passthrough", []string{"--credential", "work", "--", "--profile", "codexprof"},
 			"work", []string{"--", "--profile", "codexprof"}, false},
 	}
 	for _, c := range cases {
@@ -310,14 +317,18 @@ func TestExtractRunProfile(t *testing.T) {
 }
 
 func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
-	// A nonexistent profile must error before any box work, so a typo never silently creates a husk.
+	// A nonexistent credential must error before any box work, so a typo never silently creates a husk.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	code, err := a.launchAgent("claude", []string{"--profile", "ghost", "-p", "hi"})
+	code, err := a.launchAgent("claude", []string{"--credential", "ghost", "-p", "hi"})
 	if code != 2 || err == nil {
-		t.Fatalf("launchAgent --profile ghost = (%d, %v), want 2 + error", code, err)
+		t.Fatalf("launchAgent --credential ghost = (%d, %v), want 2 + error", code, err)
 	}
 	if !strings.Contains(err.Error(), "ghost") {
-		t.Errorf("error should name the bad profile: %v", err)
+		t.Errorf("error should name the bad credential: %v", err)
+	}
+	// The retired --profile spelling fails with the rewrite (never forwarded into the agent).
+	if code, err := a.launchAgent("claude", []string{"--profile", "ghost"}); code != 2 || err == nil || !strings.Contains(err.Error(), "--credential") {
+		t.Errorf("launchAgent --profile = (%d, %v), want the rename tombstone", code, err)
 	}
 }
 

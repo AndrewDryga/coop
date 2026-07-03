@@ -101,7 +101,7 @@ func forkHelpText(p ui.Palette) string {
 		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
-		{"    --credential", "credential(s) for this fork (a,b rotates with --loop; alias --profile)"},
+		{"    --credential", "credential(s) for this fork (a,b rotates with --loop)"},
 		{"    --model", "model for this fork's agent (see 'coop models')"},
 		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
 		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
@@ -248,13 +248,15 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
-		case x == "--profile", x == "--credential", x == "--credentials": // --profile is the legacy spelling
+		case x == "--profile", strings.HasPrefix(x, "--profile="): // pre-v3 spelling — fail with the rewrite
+			return fa, retiredProfileFlagErr()
+		case x == "--credential", x == "--credentials":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, fmt.Errorf("coop fork %s needs a credential name (or comma-separated list)", x)
 			}
 			i++
 			fa.profiles = addProfiles(fa.profiles, parseProfileList(rest[i])) // repeated flags accumulate (deduped), not last-wins
-		case strings.HasPrefix(x, "--profile="), strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
+		case strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
 			_, val, _ := strings.Cut(x, "=")
 			list := parseProfileList(val)
 			if len(list) == 0 {
