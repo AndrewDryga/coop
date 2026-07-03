@@ -141,16 +141,25 @@ func (a *app) cmdFork(args []string) (int, error) {
 			return a.forkACP(args[0], args[2:])
 		}
 		// A typo'd subcommand would otherwise become a NEW fork name and silently clone + branch +
-		// launch an agent. If args[0] isn't an existing fork, has no explicit agent (which signals a
-		// real create), and is a near-miss of a real subcommand, suggest it instead of creating.
-		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil &&
-			!pathExists(forkWorkspace(repo, args[0])) && !(len(args) >= 2 && agents.Valid(args[1])) {
-			if verb, ok := nearestCommand(args[0], forkVerbList()); ok {
+		// launch an agent. Catch a near-miss of a real subcommand and suggest it instead of creating.
+		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil {
+			if verb, ok := forkVerbNearMiss(args, pathExists(forkWorkspace(repo, args[0]))); ok {
 				return 2, fmt.Errorf("unknown fork command %q — did you mean 'coop fork %s'? (give an agent, e.g. 'coop fork %s claude', to make a fork by that name)", args[0], verb, args[0])
 			}
 		}
 		return a.forkCreate(args)
 	}
+}
+
+// forkVerbNearMiss reports the fork verb that a would-be fork name is a likely typo of, so cmdFork
+// can refuse it (with a suggestion) instead of silently cloning a stray fork. It stays quiet when the
+// name is already an existing fork, or when an explicit agent follows it — an agent is the deliberate
+// signal that args[0] really is a new fork name (`coop fork lss claude` creates `lss` on purpose).
+func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
+	if forkExists || (len(args) >= 2 && agents.Valid(args[1])) {
+		return "", false
+	}
+	return nearestCommand(args[0], forkVerbList())
 }
 
 // forkVerbList is the reserved fork subcommands as a sorted slice, for did-you-mean matching on a

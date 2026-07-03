@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Typo suggestions now catch 3-rune slips.** The did-you-mean floor ignored anything under 4
+  runes, so `coop lop` got no "did you mean loop" and — worse — `coop fork lss` (a distance-1 typo of
+  `ls`) slipped past the guard and silently cloned a stray `lss` fork. The floor now allows 3-rune
+  inputs at edit-distance 1 (`lop`→loop, `lss`→`coop fork ls`) while keeping 1-2-rune inputs
+  suggestion-free (so `ls`/`cp` still route to the run-in-box hint). A verb-adjacent new fork name is
+  refused unless you pass an explicit agent (`coop fork lss claude` still creates `lss` on purpose).
+
 - **Split slices and seeded fork queues get all four state dirs.** `coop tasks split` /
   `coop fleet split` wrote slices containing only `00_todo/`, and fork loops seed a fork's queue by
   copying that tree — so an in-box agent following the documented "move a task's folder between state

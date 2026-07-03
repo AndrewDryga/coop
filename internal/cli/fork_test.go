@@ -79,6 +79,38 @@ func TestForkVerbsRejectUnsafeName(t *testing.T) {
 	}
 }
 
+// A 3-rune typo of a fork verb (the audit's stray `lss`) must be caught and suggested, not silently
+// cloned — but an explicit agent, or an already-existing fork of that name, is a deliberate create.
+func TestForkVerbNearMiss(t *testing.T) {
+	cases := []struct {
+		args      []string
+		exists    bool
+		want      string
+		wantMatch bool
+	}{
+		{[]string{"lss"}, false, "ls", true},          // distance 1 from `ls` — the most-typed verb
+		{[]string{"stp"}, false, "stop", true},        // 3 runes, distance 1 from `stop`
+		{[]string{"lss", "claude"}, false, "", false}, // explicit agent → deliberate create of `lss`
+		{[]string{"lss"}, true, "", false},            // already a fork → open it, don't second-guess
+		{[]string{"ls"}, false, "", false},            // 2 runes → below the suggestion floor
+		{[]string{"api"}, false, "", false},           // a real new fork name, far from any verb
+	}
+	for _, c := range cases {
+		if got, ok := forkVerbNearMiss(c.args, c.exists); ok != c.wantMatch || got != c.want {
+			t.Errorf("forkVerbNearMiss(%v, exists=%v) = (%q,%v), want (%q,%v)", c.args, c.exists, got, ok, c.want, c.wantMatch)
+		}
+	}
+}
+
+// End-to-end: `coop fork lss` (no agent) is refused before any clone — exit 2 with the suggestion.
+func TestCmdForkRefusesVerbTypo(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	code, err := a.cmdFork([]string{"lss"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "did you mean 'coop fork ls'") {
+		t.Fatalf("cmdFork([lss]) = (%d, %v), want (2, a 'did you mean ls' refusal)", code, err)
+	}
+}
+
 // A typo'd --profile must fail (exit 2) before any image/clone work, so it never leaves a stray
 // fork behind. The check runs before resolveImage, so it returns without a runtime.
 func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {

@@ -192,12 +192,20 @@ func levenshtein(a, b string) int {
 	return prev[len(rb)]
 }
 
-// nearestCommand suggests the candidate closest to a mistyped command (within 2 edits).
-// Inputs shorter than 4 runes get no suggestion — fuzzy matches on `ls`/`go`/`cp` are
-// mostly noise, and the caller's "run it in the box" hint already covers them.
+// nearestCommand suggests the candidate closest to a mistyped command. The allowed edit distance
+// scales with input length so short words don't attract noise: 1-2 runes get no suggestion (fuzzy
+// matches on `ls`/`go`/`cp` are mostly noise, and the caller's "run it in the box" hint covers them),
+// 3 runes match only at distance 1 (`lop`→loop, `lss`→ls — a single slip of the most-typed verbs),
+// and 4+ runes match within 2. This is what catches a distance-1 typo of `ls` before `coop fork lss`
+// silently clones a stray fork.
 func nearestCommand(input string, candidates []string) (string, bool) {
-	if len([]rune(input)) < 4 {
+	n := len([]rune(input))
+	if n < 3 {
 		return "", false
+	}
+	maxDist := 2
+	if n == 3 {
+		maxDist = 1
 	}
 	best, bestDist := "", -1
 	for _, c := range candidates {
@@ -205,7 +213,7 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 			best, bestDist = c, d
 		}
 	}
-	if bestDist >= 0 && bestDist <= 2 {
+	if bestDist >= 0 && bestDist <= maxDist {
 		return best, true
 	}
 	return "", false

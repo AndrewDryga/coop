@@ -16,8 +16,10 @@ func TestNearestCommand(t *testing.T) {
 		{"task", "tasks", true},                 // a missing char
 		{"dctor", "doctor", true},               // a missing char
 		{"claud", "claude", true},               // agent name
-		{"npm", "", false},                      // too short for a fuzzy match
-		{"ls", "", false},                       // too short
+		{"lop", "loop", true},                   // 3 runes at distance 1 — the floor allows it
+		{"npm", "", false},                      // 3 runes, but no command within 1 edit
+		{"ls", "", false},                       // 1-2 runes: suggestion-free (routes to the run-in-box hint)
+		{"cp", "", false},                       // ditto
 		{"make", "", false},                     // a real command, far from any subcommand
 		{"python", "", false},                   // ditto
 	}
