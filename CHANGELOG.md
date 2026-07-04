@@ -137,7 +137,7 @@
 
 - **Shell completions for bash and zsh.** `coop completion bash|zsh` prints a completion script (its
   commands and verbs come from the same source the dispatch and help do, so it can't drift), and a
-  hidden `coop __complete` offers live values — existing fork names, task ids, credential profiles —
+  hidden `coop __complete` offers live values — existing fork names, task ids, credential names —
   all from local reads. The scripts ship in the release archive. Install:
   `coop completion bash > ~/.local/share/bash-completion/completions/coop` (bash) or
   `coop completion zsh > "${fpath[1]}/_coop"` (zsh).
@@ -167,16 +167,16 @@
 
 - **BREAKING: v3 has a clean CLI — no backward-compat aliases.** Renamed commands are retired with a
   tombstone (exit 2 + the exact rewrite, one shared registry): `coop clone` (→ `coop fork`),
-  `coop pool`/`coop loop pool` (retired — a loop rotates a preset's `models:` ladder), the
-  verb-first credential edits `coop profiles <default|model|rm>
-  <agent> <profile>` (→ the path grammar `coop profiles <agent> <profile> <verb>`), `coop tasks start`
-  (→ `claim`), and `coop loop --debug` (→ `--debug-on-fail`). And the forgiving *spelling* aliases are
+  `coop pool`/`coop loop pool` (retired — a loop rotates a preset's `models:` ladder), the old
+  `coop profiles` name (→ `coop credentials`), the verb-first credential edits (→ the path grammar
+  `coop credentials <agent> <credential> <default|rm>`), `coop tasks start` (→ `claim`), and
+  `coop loop --debug` (→ `--debug-on-fail`). And the forgiving *spelling* aliases are
   dropped too: **`ls` and `rm` are the only spellings** — `list`/`remove` are no longer accepted. See
   MIGRATING.md.
 
 - **A gentler first run.** `coop help` now leads with a FIRST RUN line — `coop build → coop login
   <agent> → coop doctor` — until an agent is signed in (a pure-local check, so it still works before
-  Docker). `coop help <agent>` documents coop's own wrapper flags (`--profile`, `--model`,
+  Docker). `coop help <agent>` documents coop's own wrapper flags (`--credential`, `--model`,
   `--consult`, `--`) instead of just punting to the agent's CLI, and a first `coop claude` with no
   stored credential prints a one-line login nudge (TTY only, never blocks). Every top-level help line
   now fits an 80-column terminal (was up to 109, wrapping the two-column layout), and the fleet/ACP
@@ -190,7 +190,7 @@
   a clear "no completed task yet" when it hasn't finished anything.
 
 - **Filesystem-only commands no longer need a container runtime.** coop detected the runtime up front
-  for every command, so `coop tasks ls`/`lint`, `profiles`, `models`, `init`, `check-secrets`,
+  for every command, so `coop tasks ls`/`lint`, `credentials`, `models`, `init`, `check-secrets`,
   `fork ls`/`path`, and the group help pages all failed on a machine without Docker — even though they
   never touch a container. Detection is now lazy: only box-running commands (agent launch, `run`,
   `shell`, `build`, `doctor`, `up`/`down`, `acp`, `fusion`, loops, and a gated `fork merge`) resolve
@@ -206,9 +206,9 @@
   worktree has uncommitted changes (an interrupted iteration) instead of discarding them.
 
 - **Deletions now confirm before they happen.** `coop tasks rm` (which matches by substring and has
-  no undo — the queue is gitignored), `coop tasks rm --all-done`, and `coop profiles rm` all went
+  no undo — the queue is gitignored), `coop tasks rm --all-done`, and `coop credentials rm` all went
   straight to `os.RemoveAll` with no prompt. They now route through one shared gate: at a terminal it
-  asks first (naming the resolved id / the count / the profile, and defaulting to No); piped it
+  asks first (naming the resolved id / the count / the credential, and defaulting to No); piped it
   refuses unless you pass `--yes`. `--yes` skips the prompt and is distinct from `--force` (which
   overrides a safety guard, not the confirmation). `tasks rm` also echoes the resolved id *before*
   deleting, not after.
@@ -216,8 +216,8 @@
 - **Consistent verb recognition across the command families.** `coop fork list` now lists (an alias
   for `coop fork ls`, matching `coop tasks`), and `list`/`watch`/`remove` join the reserved fork
   names so a fork can't shadow a subcommand — `coop fork ls` warns if a pre-existing fork already
-  does. `coop fleet ls` and `coop profiles ls` stop erroring blankly and point at the real lister
-  (`coop fork ls` / bare `coop profiles`). The `coop tasks` unknown-subcommand hint now includes the
+  does. `coop fleet ls` and `coop credentials ls` stop erroring blankly and point at the real lister
+  (`coop fork ls` / bare `coop credentials`). The `coop tasks` unknown-subcommand hint now includes the
   flagship `watch` (both it and `isTasksSubcommand` derive from one list, so they can't drift). And
   `coop help status` shows the same removal tombstone as `coop status` (one shared source). `coop
   fork --help` states the policy: new fork actions are verb-first, and a fork can't be named a verb.
@@ -250,7 +250,7 @@
 
 - **Bare `coop tasks` now lists the queue.** It printed the help page, yet the docs, MIGRATING
   guide, scaffold templates, and its own error strings all call bare `coop tasks` "the listing." It
-  now lists (like `coop profiles`); `coop tasks --help` (or `coop tasks help`) still shows the
+  now lists (like `coop credentials`); `coop tasks --help` (or `coop tasks help`) still shows the
   reference.
 
 - **`:d` in `coop tasks decisions -i` marks a task done.** When a blocked decision's real answer is
@@ -375,7 +375,7 @@
   what's done · next action · traps), refreshed at each checkpoint, and read first when resuming
   it. Because it's
   plain markdown in the repo, the next iteration can be a *different* agent (claude → codex → gemini)
-  and still resume cleanly — the groundwork for switching agents, not just credential profiles,
+  and still resume cleanly — the groundwork for switching agents, not just credentials,
   between iterations. The agent finalizes the note as its last step on a task — even when done — so
   a review can reopen it and the next agent picks up the requested changes from the note rather than
   the diff.
@@ -413,35 +413,34 @@
   tokens (`github_pat_…`), and note how many gitignored-but-box-visible files the default scan
   skipped. `COOP_EGRESS` fails closed — an unrecognized value (a typo like `None`) is treated as
   offline, and the box forces `--network none` for any egress value other than an explicit `open`
-  (defense in depth at the boundary). `coop login --profile` rejects a traversal/collision name, so
-  credentials can't be written outside the agent vault.
+  (defense in depth at the boundary). `coop login --credential` rejects a traversal/collision name,
+  so credentials can't be written outside the agent vault.
 
-- **Per-fork credential profiles in `.agent/fleet`.** Add `profile=<name>` (or `profile=a,b`) to a
-  fleet line — e.g. `api codex .agent/tasks.api profile=work` — to put that fork's loop on specific
-  account(s); several rotate on a rate limit. Give each fork a different account so a fleet runs in
-  parallel instead of all forks contending for the repo pool's first profile. It's a `key=value`
-  suffix, so it doesn't add to the fragile space-delimited positional fields, and `coop fleet up`
-  validates the profiles up front. Also exposed on `coop fork <name> <agent> --loop --tasks <p>
-  --profile a,b` (and a single `--profile` on an interactive fork). Forks with no `profile=` keep
-  rotating the repo pool / all signed-in profiles as before.
+- **Per-fork credentials in the fleet.** Give each fleet fork its own account — `credential: <name>`
+  on the fork in `.agent/fleet.yaml` (or a `model: <m>@<account>` pin; a full fallback ladder comes
+  from a `preset:`) — so forks run in parallel on separate rate limits instead of contending for one.
+  `coop fleet up` validates the credentials up front. Also exposed on
+  `coop fork <name> <agent> --credential <name>` (loop and interactive). Forks with no `credential:`
+  keep the agent's marked default.
 
-- **Pick a credential profile for a single run with `--profile <name>`.** Previously `--profile` only
-  worked for `coop login`; on a run it was forwarded to the agent and rejected. Now `coop claude
-  --profile work` runs that one session on the `work` profile without changing the default
-  (`coop profiles default` still sets the persistent one). It works on every agent-launch path —
-  `coop <agent>`, `coop fusion <agent>`, and `coop acp <agent>` (so an editor can pin two ACP entries
-  to different accounts). coop consumes the flag only before a `--`, so an agent's own `--profile` is
-  still reachable as `coop codex -- --profile <name>`; a nonexistent profile errors instead of
-  creating an empty husk dir.
+- **Pick a credential for a single run with `--credential <name>`.** Previously account selection
+  only worked for `coop login`; on a run the flag was forwarded to the agent and rejected. Now
+  `coop claude --credential work` runs that one session on the `work` account without changing the
+  default (`coop credentials <agent> <name> default` still sets the persistent one). It works on
+  every agent-launch path — `coop <agent>`, `coop fusion <agent>`, and `coop acp <agent>` (so an
+  editor can pin two ACP entries to different accounts). coop consumes the flag only before a `--`,
+  so an agent's own flags (e.g. codex's `--profile`) still pass through after it; a nonexistent
+  credential errors instead of creating an empty husk dir.
 
-- **`coop profiles` flags an expired login.** "signed in" used to mean only that a credentials file
-  existed, so an expired OAuth token read as fine yet 401'd mid-run. `coop profiles` now detects the
-  expired token and points you at `coop login <agent> --profile <name>` to refresh it.
+- **`coop credentials` flags an expired login.** "signed in" used to mean only that a credentials
+  file existed, so a dead OAuth token read as fine yet 401'd mid-run. `coop credentials` now detects
+  an expired token (one with no refresh token — see the refresh-token entry above) and points you at
+  `coop login <agent> --credential <name>` to refresh it.
 
-- **Delete a stored profile with `coop profiles rm <agent> <profile>`.** Removes that profile's login
+- **Delete a stored credential with `coop credentials <agent> <credential> rm`.** Removes that credential's login
   token and session history. It refuses to delete the marked default (set another first) and never
-  touches the legacy flat layout's whole agent dir. Use it to clear a stray profile left behind by an
-  earlier login layout, e.g. `coop profiles rm claude default`.
+  touches the legacy flat layout's whole agent dir. Use it to clear a stray credential left behind
+  by an earlier login layout, e.g. `coop credentials claude default rm`.
 
 - **Remote (HTTP/SSE) MCP servers in `mcp.json` are covered for every agent.** Besides stdio
   servers, an HTTP server — `{ "type": "http", "url": …, "headers": … }` — reaches all three:
@@ -451,15 +450,14 @@
   `headers` but no `bearer_token_env_var`, so the auth gap is visible instead of a silent 401. See
   `agents/mcp.json.example`.
 
-- **Reliability fixes (from end-to-end and multi-agent audits).** Concurrent `coop pool add` /
-  `coop profiles default` no longer lose updates (writes are locked + atomic), and `coop fork -d`
-  claims its pidfile atomically (the worker owns it on exit) so two concurrent detaches can't start
-  two loops racing one worktree; `coop fork stop` confirms the worker is dead (escalating to SIGKILL)
-  before clearing the pidfile. `coop fork merge` rebases the fork's branch by name, so it can't
-  sign/land the wrong branch if an agent left another checked out. `coop fork --profile <typo>` fails
-  before cloning (no stray fork), a fork can't be named `acp`, and a duplicate fork name with
-  whitespace/`=`, a duplicate profile in `--profile a,a`, and a duplicate task id across states are
-  all rejected/de-duped. Regenerating a Codex MCP config no longer drops a user's own
+- **Reliability fixes (from end-to-end and multi-agent audits).** Concurrent config edits (e.g.
+  `coop credentials <agent> <name> default`) no longer lose updates (writes are locked + atomic), and
+  `coop fork -d` claims its pidfile atomically (the worker owns it on exit) so two concurrent
+  detaches can't start two loops racing one worktree; `coop fork stop` confirms the worker is dead
+  (escalating to SIGKILL) before clearing the pidfile. `coop fork merge` rebases the fork's branch by
+  name, so it can't sign/land the wrong branch if an agent left another checked out.
+  `coop fork --credential <typo>` fails before cloning (no stray fork), a fork can't be named `acp`,
+  and a fork name with whitespace/`=` and a duplicate task id across states are rejected/de-duped. Regenerating a Codex MCP config no longer drops a user's own
   `[mcp_servers_backup]`-style tables, and numeric MCP env values render as plain digits. The
   unattended loop no longer false-"stall"s when it's parking one-way-door tasks into `50_blocked/`
   (progress = done *or* blocked), parses minute/hour `retry-after` hints, and falls back to backoff
@@ -467,11 +465,11 @@
   counts no longer briefly inflate on a torn read of a task move. Fusion's governor is told to consult
   only authenticated peers.
 
-- **CLI consistency.** `coop version`, `coop loop`, `coop acp`, and `coop pool` reject stray or
-  malformed arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
+- **CLI consistency.** `coop version`, `coop loop`, and `coop acp` reject stray or malformed
+  arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
   error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
   honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet; and
-  `coop profiles` flags a dangling default.
+  `coop credentials` flags a dangling default.
 
 - **`coop update` now refreshes agent CLI packages from npm's stable `latest` tags.** The shared
   box's built-in npm specs are `@anthropic-ai/claude-code@latest`, `@openai/codex@latest`,
@@ -511,18 +509,18 @@
   unavailable slash commands or trying to run host-side Coop commands from inside the box.
 
 - **`rm` is the one verb for deleting things.** Every destructive subcommand advertises `rm` —
-  `coop tasks rm`, `coop fork rm`, `coop profiles rm`, `coop pool rm` — rather than `coop tasks`
-  alone advertising `remove`. `remove` still works everywhere as an accepted alias, so existing
-  habits and scripts don't break; it's just no longer the form shown in help or usage.
+  `coop tasks rm`, `coop fork rm`, `coop credentials rm` — and `rm` is the only accepted spelling
+  (the clean-CLI entry above drops the `remove` alias).
 
 - **Clearer `coop help`.** Tasks get their own `TASKS` section instead of one line under
   `UNATTENDED`, and `coop up`/`coop down` name the actual services defined in `compose.agent.yml`,
   dimmed (with a "none yet" hint) when there's no compose file to act on.
 
-- **A bare command group prints its help instead of an error.** `coop tasks` and `coop fleet`
-  with no subcommand used to fail with an "unknown command" error built from an empty token; they
-  now print that group's help and exit 0 — the natural way to discover the subcommands. (`coop
-  pool` and `coop profiles` already showed a sensible default view, so they're unchanged.)
+- **A bare command group prints its help instead of an error.** `coop fleet` with no subcommand
+  used to fail with an "unknown command" error built from an empty token; it now prints the
+  group's help and exits 0 — the natural way to discover the subcommands. (Bare `coop tasks`
+  goes further and lists the queue — see its own entry; `coop credentials` already showed a
+  sensible default view.)
 
 - **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
   demand, so a monorepo can start a per-component queue without a root `coop init`. (The single-loop
@@ -558,30 +556,27 @@
   `.agent/fleet` line. Off by default everywhere, since it widens each iteration's credential
   scope to the authed peers.
 
-- **Pick the model for any run — `--model` everywhere, per-profile defaults, and `coop models`.**
+- **Pick the model for any run — `--model` everywhere and `coop models`.**
   Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
   --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp
-  claude --model sonnet`, and a fleet line's `model=` option. For standing defaults, mark a model
-  per credential profile with `coop profiles claude work model opus` (`--clear` unmarks; the mark
-  is a profile attribute, so `coop profiles` owns editing it and shows it) — e.g. the work
-  subscription always on the big model, the personal one on a cheap one; the loop's profile
-  rotation then switches models with the account. `COOP_<AGENT>_MODEL` sets an agent-wide default
-  and `COOP_LOOP_MODEL` a loop-only one (so overnight runs grind on a cheaper model than your
-  interactive sessions). `coop models [agent]` is the model menu — one line per agent with its
-  known models (examples — any id the CLI accepts works; coop never validates one) and a short
-  how-to; each profile's mark shows as a column in `coop profiles`.
+  claude --model sonnet`, and a fleet fork's `model:` field. For standing defaults, put a
+  `models:` ladder in a preset (each entry `model` or `model@account` — see the model-first
+  entry above), or set `COOP_<AGENT>_MODEL` agent-wide and `COOP_LOOP_MODEL` for loops only (so
+  overnight runs grind on a cheaper model than your interactive sessions). `coop models [agent]`
+  is the model menu — one line per agent with its known models (examples — any id the CLI
+  accepts works; coop never validates one) and a short how-to.
 
-- **`coop profiles` gained a path grammar** — each token narrows: `coop profiles` lists every
-  agent, `coop profiles claude` one agent, `coop profiles claude personal` shows that profile,
-  and a trailing attribute edits one property of it: `model [<m> | --clear]`, `default` (mark it
-  what a plain `coop claude` runs), `rm`. So profile edits read as a path — `coop profiles
-  claude personal model opus-4.8` — instead of a verb sandwich (`coop profiles default claude
-  default` read like a stutter). The old verb-first forms (`coop profiles default|rm <agent>
-  <profile>`) still work.
+- **`coop credentials` gained a path grammar** — each token narrows: `coop credentials` lists
+  every agent, `coop credentials claude` one agent, `coop credentials claude personal` shows that
+  credential, and a trailing attribute edits one property of it: `default` (mark it what a plain
+  `coop claude` runs), `rm`. So credential edits read as a path — `coop credentials claude
+  personal default` — instead of a verb sandwich (`coop profiles default claude default` read
+  like a stutter). The verb-first forms tombstone with the rewrite (see the clean-CLI entry).
 
-  *How it reaches every feature.* The precedence is most-specific-first: `--model` ›
-  `COOP_LOOP_MODEL` (loop runs) › the profile's mark › `COOP_<AGENT>_MODEL` › a model baked into
-  `COOP_<AGENT>_CMD` › the agent CLI's own default. The resolved model rides each agent's command
+  *How it reaches every feature.* The precedence is most-specific-first: `--model` (or a fleet
+  fork's `model:`) › the rotation ladder's active entry › `COOP_LOOP_MODEL` (loop runs) ›
+  `COOP_<AGENT>_MODEL` › a model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
+  The resolved model rides each agent's command
   as its native `--model` flag (interactive, headless loop iterations, fork session resume, the
   fusion governor, gemini's ACP), is exported as the agent's own model env var for flagless
   adapter binaries (claude-agent-acp reads `ANTHROPIC_MODEL`), and reaches fusion/consult *peers*
@@ -589,14 +584,14 @@
   own configured model. One gap, by design: codex under ACP keeps reading its model from its own
   `config.toml` (its adapter takes no flags and codex has no model env var).
 
-- **Fixed: a deleted profile named "default" kept reappearing (empty, "not signed in").**
-  Every box run pre-created the active-profile dir for ALL THREE agents — even agents the run
-  never touched — and with no profile marked default (or via a bare `coop login <agent>`, which
-  targeted a profile literally named "default"), that materialized a husk `default` dir seeded
+- **Fixed: a deleted credential named "default" kept reappearing (empty, "not signed in").**
+  Every box run pre-created the active credential's dir for ALL THREE agents — even agents the run
+  never touched — and with no credential marked default (or via a bare `coop login <agent>`, which
+  targeted one literally named "default"), that materialized a husk `default` dir seeded
   with settings files, resurrecting it after every deletion. Three changes close it: a run now
   pre-creates homes only for the agents it actually mounts (the launched agent plus authed
   fusion/consult peers); a bare `coop login <agent>` signs into the agent's MARKED default
-  profile — the one your runs actually use, so re-authing an expired subscription lands in the
+  credential — the one your runs actually use, so re-authing an expired subscription lands in the
   right slot instead of a fresh "default"; and a custom-`COOP_LOOP_CMD` loop pins the marked
   default too.
 
