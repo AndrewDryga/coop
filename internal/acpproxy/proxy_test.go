@@ -280,10 +280,11 @@ func TestProxyReplayWarnsOnFailedLoad(t *testing.T) {
 	defer func() { warnOut = old }()
 
 	p := &proxy{
-		out:      io.Discard,
-		sessions: map[string]json.RawMessage{"S1": json.RawMessage(`{"cwd":"/w"}`)},
-		newReqs:  map[string]json.RawMessage{},
-		pending:  map[string]bool{},
+		out:       io.Discard,
+		sessions:  map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{},
+		pending:   map[string]bool{},
 	}
 	fc := newFakeChild()
 	br := bufio.NewReader(fc.outR)
@@ -364,10 +365,11 @@ func TestProxyReplayTimeoutFailsPending(t *testing.T) {
 // newReqs entry (else it lingers forever and could bind a sessionId on a stale id).
 func TestFailAllPendingClearsNewReqs(t *testing.T) {
 	p := &proxy{
-		out:      io.Discard,
-		sessions: map[string]json.RawMessage{},
-		newReqs:  map[string]json.RawMessage{`"7"`: json.RawMessage(`{"cwd":"/w"}`)},
-		pending:  map[string]bool{`"7"`: true},
+		out:       io.Discard,
+		sessions:  map[string]*sess{},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{`"7"`: json.RawMessage(`{"cwd":"/w"}`)},
+		pending:   map[string]bool{`"7"`: true},
 	}
 	p.failAllPending()
 	if len(p.newReqs) != 0 {
@@ -386,10 +388,11 @@ func TestFailAllPendingClearsNewReqs(t *testing.T) {
 func TestSwapChildPublishesAndFailsAtomically(t *testing.T) {
 	var out bytes.Buffer
 	p := &proxy{
-		out:      &out,
-		sessions: map[string]json.RawMessage{},
-		newReqs:  map[string]json.RawMessage{`"1"`: json.RawMessage(`{"cwd":"/w"}`)},
-		pending:  map[string]bool{`"1"`: true},
+		out:       &out,
+		sessions:  map[string]*sess{},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{`"1"`: json.RawMessage(`{"cwd":"/w"}`)},
+		pending:   map[string]bool{`"1"`: true},
 	}
 	fc := newFakeChild()
 	c := fc.child()
@@ -437,6 +440,180 @@ func TestProxyGivesUpOnRapidFailures(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not give up on rapidly-failing children")
+	}
+}
+
+// TestWithSessionID: the sessionId rewrite replaces params.sessionId, preserves the rest, and leaves
+// a line with no params untouched.
+func TestWithSessionID(t *testing.T) {
+	out := withSessionID([]byte(`{"jsonrpc":"2.0","method":"session/prompt","params":{"sessionId":"A","foo":1}}`+"\n"), "B")
+	if sid := sessionID(parse(out).Params); sid != "B" {
+		t.Errorf("sessionId = %q, want B", sid)
+	}
+	if !bytes.Contains(out, []byte(`"foo":1`)) {
+		t.Errorf("other params dropped: %s", out)
+	}
+	noParams := []byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n")
+	if got := withSessionID(noParams, "B"); !bytes.Equal(got, noParams) {
+		t.Errorf("a line with no params was changed: %s", got)
+	}
+}
+
+// TestProxyRecreatesTurnlessSession: a coop-driven switch (or box death) BEFORE the first prompt
+// re-creates the turn-less session on the new box under a fresh id and remaps it, so the editor's
+// original id keeps working — no "Session not found". (A session that HAS turned is reloaded instead;
+// that path is covered by TestProxyPassthroughAndReplayOnRestart, whose in-flight prompt marks it.)
+func TestProxyRecreatesTurnlessSession(t *testing.T) {
+	orig1, orig2 := replayStartupGrace, replayIdleTimeout
+	replayStartupGrace, replayIdleTimeout = 2*time.Second, 2*time.Second
+	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	c1, c2 := newFakeChild(), newFakeChild()
+	queue := make(chan *fakeChild, 2)
+	queue <- c1
+	queue <- c2
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	// A coop-driven switch: an editor line carrying "__switch__" is handled here and restarts the box.
+	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, bool) {
+		if bytes.Contains(line, []byte("__switch__")) {
+			return true, nil, true
+		}
+		return false, nil, false
+	}}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+
+	childIn1 := bufio.NewReader(c1.inR)
+	childIn2 := bufio.NewReader(c2.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	// initialize.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, clientOut)
+
+	// session/new → box assigns S1. NO prompt follows, so the session is turn-less.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w","mcpServers":[]}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	if id := idStr(t, readLine(t, clientOut)); id != "2" {
+		t.Fatalf("session/new response id = %q, want 2", id)
+	}
+
+	// An in-flight (non-prompt) request so the swap has something to fail — our sync point for "the
+	// new box is live" — without marking the session turned.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/set_config_option","params":{"sessionId":"S1","configId":"model","value":"x"}}`)
+	readLine(t, childIn1) // reaches child1, which never answers it
+
+	// The switch, before any prompt → restart.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":4,"method":"session/set_config_option","params":{"configId":"__switch__"}}`)
+
+	// child2 replay: initialize (setup) + session/new (re-create the turn-less S1, NOT session/load).
+	reNew := false
+	for i := 0; i < 2; i++ {
+		fr := parse(readLine(t, childIn2))
+		switch fr.Method {
+		case "initialize":
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
+		case "session/new":
+			reNew = true
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"S2"}}`, string(fr.ID)))
+		case "session/load":
+			t.Fatal("a turn-less session must be re-created (session/new), not session/load-ed")
+		default:
+			t.Fatalf("unexpected replay frame: %s", fr.Method)
+		}
+	}
+	if !reNew {
+		t.Fatal("turn-less session was not re-created on the new box")
+	}
+
+	// swapChild fails the in-flight id 3 → our signal that child2 is now live.
+	if id := idStr(t, readLine(t, clientOut)); id != "3" {
+		t.Fatalf("expected in-flight id 3 to be failed on swap, got %q", id)
+	}
+
+	// The editor's FIRST prompt still uses the ORIGINAL id S1; it must reach the box remapped to S2.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1"}}`)
+	fwd := parse(readLine(t, childIn2))
+	if fwd.Method != "session/prompt" {
+		t.Fatalf("post-restart frame = %q, want session/prompt", fwd.Method)
+	}
+	if sid := sessionID(fwd.Params); sid != "S2" {
+		t.Fatalf("editor→box prompt sessionId = %q, want S2 (remapped from S1)", sid)
+	}
+
+	// A box notification tagged with S2 must come back to the editor tagged with the original S1.
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{}}}`)
+	upd := parse(readLine(t, clientOut))
+	if sid := sessionID(upd.Params); sid != "S1" {
+		t.Fatalf("box→editor update sessionId = %q, want S1 (the editor's id)", sid)
+	}
+
+	clientInW.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after client close")
+	}
+}
+
+// TestProxyDisconnectDuringReplayReturnsCleanly: if the editor disconnects WHILE a restart's replay
+// is in flight (the new box not yet published), Run must still tear down and return — not orphan the
+// new box on an Out that never closes and block forever. (Prod is reaped by signal ctx-cancel; the
+// bug shows as a hang only with a non-cancelable ctx, but the leak is real either way.)
+func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
+	orig1, orig2 := replayStartupGrace, replayIdleTimeout
+	replayStartupGrace, replayIdleTimeout = 3*time.Second, 3*time.Second
+	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	c1, c2 := newFakeChild(), newFakeChild()
+	queue := make(chan *fakeChild, 2)
+	queue <- c1
+	queue <- c2
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, bool) {
+		if bytes.Contains(line, []byte("__switch__")) {
+			return true, nil, true
+		}
+		return false, nil, false
+	}}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+
+	childIn1 := bufio.NewReader(c1.inR)
+	childIn2 := bufio.NewReader(c2.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, clientOut)
+
+	// An intentional restart: replay(child2) begins and blocks waiting for the initialize response.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/set_config_option","params":{"configId":"__switch__"}}`)
+	fr := parse(readLine(t, childIn2))
+	if fr.Method != "initialize" {
+		t.Fatalf("replay frame = %q, want initialize", fr.Method)
+	}
+
+	// Editor disconnects mid-replay; let the disconnect tear down the (old) child BEFORE replay
+	// publishes the new one — the exact window where the new box could be orphaned.
+	clientInW.Close()
+	time.Sleep(50 * time.Millisecond)
+	writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after a mid-replay disconnect (the new box was orphaned)")
 	}
 }
 

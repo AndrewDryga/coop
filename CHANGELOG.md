@@ -34,6 +34,20 @@
   `session/load` comes back an error on the new box (e.g. its transcript wasn't on the shared store),
   coop warns on the ACP server log instead of leaving the editor with a context-less session.
 
+- **ACP: a switch or box restart before your first message no longer errors.** A credential/preset
+  switch made — or a box death (rebuild/OOM) hitting — an opened-but-unused thread used to fail with
+  a confusing "Session not found": the restart replayed `session/load`, but a session that hasn't had
+  a turn yet has no transcript to load. coop now **re-creates** such a turn-less session on the new
+  box (via `session/new`) and remaps its id under the hood, so the editor's session keeps working —
+  nothing is lost, because there was no conversation. A session that has already had a turn still
+  reloads its transcript as before.
+
+- **ACP: an editor disconnect during a box restart no longer orphans the new box.** If the editor
+  went away in the brief window while a restart's replay was in flight, the freshly-spawned box could
+  be left running with `coop acp` blocked forever waiting on it (in prod it was reaped by the shutdown
+  signal; the leak was real regardless). The teardown and the swap-in now coordinate, so exactly one
+  stops the new box and `coop acp` always exits cleanly.
+
 - **ACP: opt-in wire tracing to debug a misbehaving editor session.** Off by default, zero cost;
   turn it on by setting `COOP_ACP_TRACE=1` in the editor's server env, or by creating the sentinel
   `~/.config/coop/acp-debug` (which works on an ALREADY-running server — editors keep one coop process

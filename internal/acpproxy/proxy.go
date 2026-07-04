@@ -116,11 +116,12 @@ var errReplayTimeout = errors.New("acpproxy: timed out waiting for the restarted
 // reader to stop when ctx cancels. Close clientIn to release the goroutine.
 func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks) error {
 	p := &proxy{
-		out:      clientOut,
-		hooks:    hooks,
-		sessions: map[string]json.RawMessage{},
-		newReqs:  map[string]json.RawMessage{},
-		pending:  map[string]bool{},
+		out:       clientOut,
+		hooks:     hooks,
+		sessions:  map[string]*sess{},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{},
+		pending:   map[string]bool{},
 	}
 
 	child, err := factory(ctx)
@@ -198,15 +199,27 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 	}
 }
 
+// sess is one live editor session. The editor knows it by a stable id (the map key in
+// proxy.sessions); the box knows it by adapterID, which normally equals the editor id but diverges
+// after a restart re-creates a turn-less session under a fresh id (see replay + remapSession).
+type sess struct {
+	params    json.RawMessage // the original session/new (or session/load) params — cwd, mcpServers
+	adapterID string          // the id the current box knows this session by (== editor id until re-created)
+	turned    bool            // a session/prompt has run (or it was resumed via session/load), so a
+	// transcript exists and it can be session/load-ed back after a restart; false = re-create instead
+}
+
 type proxy struct {
 	out io.Writer
 
-	mu       sync.Mutex
-	child    *Child
-	setup    [][]byte                   // editor's pre-session setup (initialize, authenticate), in order
-	sessions map[string]json.RawMessage // sessionId -> session/new params (for session/load)
-	newReqs  map[string]json.RawMessage // pending session/new request id -> its params
-	pending  map[string]bool            // editor request id -> awaiting a response
+	mu           sync.Mutex
+	child        *Child
+	shuttingDown bool                       // editor gone / ctx cancelled: a concurrent swap must stop the child it publishes
+	setup        [][]byte                   // editor's pre-session setup (initialize, authenticate), in order
+	sessions     map[string]*sess           // editor sessionId -> session state
+	byAdapter    map[string]string          // adapter sessionId -> editor sessionId, only for re-created (diverged) sessions
+	newReqs      map[string]json.RawMessage // pending session/new request id -> its params
+	pending      map[string]bool            // editor request id -> awaiting a response
 
 	hooks       *Hooks      // coop's control layer (nil → pure pass-through)
 	intentional atomic.Bool // set before a coop-driven restart so the loop doesn't count it as a failure
@@ -220,6 +233,7 @@ func (p *proxy) setChild(c *Child) {
 
 func (p *proxy) shutdownChild() {
 	p.mu.Lock()
+	p.shuttingDown = true
 	c := p.child
 	p.mu.Unlock()
 	if c != nil {
@@ -249,6 +263,7 @@ func (p *proxy) fromClient(line []byte) {
 		}
 	}
 	h := parse(line)
+	sid := sessionID(h.Params) // the editor's session id, "" for non-session methods
 	p.mu.Lock()
 	if h.isRequest() {
 		switch h.Method {
@@ -260,11 +275,24 @@ func (p *proxy) fromClient(line []byte) {
 		case "session/new":
 			p.newReqs[string(h.ID)] = h.Params
 		case "session/load":
-			if sid := sessionID(h.Params); sid != "" {
-				p.sessions[sid] = h.Params
+			// A resumed session already has a transcript, so it's reloadable from the start.
+			if sid != "" {
+				p.sessions[sid] = &sess{params: h.Params, adapterID: sid, turned: true}
+			}
+		case "session/prompt":
+			// The first prompt starts a turn → a transcript now exists, so a restart can
+			// session/load it back rather than re-create it.
+			if s := p.sessions[sid]; s != nil {
+				s.turned = true
 			}
 		}
 		p.pending[string(h.ID)] = true
+	}
+	// Translate the editor's session id to the box's, if this session was re-created under a new one
+	// (turn-less at a restart). Normal case: adapterID == sid, so no rewrite.
+	fwd := line
+	if s := p.sessions[sid]; sid != "" && s != nil && s.adapterID != sid {
+		fwd = withSessionID(line, s.adapterID)
 	}
 	var w io.Writer
 	if p.child != nil {
@@ -272,7 +300,7 @@ func (p *proxy) fromClient(line []byte) {
 	}
 	p.mu.Unlock()
 	if w != nil {
-		_, _ = w.Write(line)
+		_, _ = w.Write(fwd)
 	}
 }
 
@@ -281,6 +309,9 @@ func (p *proxy) fromClient(line []byte) {
 func (p *proxy) pumpChild(br *bufio.Reader) {
 	_ = readLines(br, func(line []byte) error {
 		traceLine("box→editor", line)
+		// Translate the box's session id back to the one the editor knows, so coop's hooks and the
+		// editor always see the editor's id (a no-op unless a session was re-created under a new one).
+		line = p.remapToEditor(line)
 		h := parse(line)
 		// coop answers some agent→editor requests itself (session/request_permission → always allow, so
 		// the editor never prompts). The reply goes to THIS child; the request is not forwarded.
@@ -310,7 +341,7 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 			if wasNew {
 				delete(p.newReqs, id)
 				if sid := sessionID(h.Result); sid != "" {
-					p.sessions[sid] = newParams
+					p.sessions[sid] = &sess{params: newParams, adapterID: sid}
 				}
 			}
 			delete(p.pending, id)
@@ -370,21 +401,64 @@ func (p *proxy) triggerRestart() {
 	}
 }
 
+// remapSession records that the session the editor knows as editorID now lives under a new box id
+// (it was re-created during replay because it had no reloadable transcript). Both directions then
+// translate between the two ids; the old mapping, if any, is dropped.
+func (p *proxy) remapSession(editorID, adapterID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.sessions[editorID]
+	if s == nil {
+		return
+	}
+	if s.adapterID != editorID {
+		delete(p.byAdapter, s.adapterID) // clear the previous divergent mapping
+	}
+	s.adapterID = adapterID
+	if adapterID != editorID {
+		p.byAdapter[adapterID] = editorID
+	}
+}
+
+// remapToEditor rewrites a box→editor line's sessionId from the box's id back to the editor's, when
+// this session was re-created under a new box id. A no-op (no parse) in the normal case, so it's cheap
+// on the streaming hot path.
+func (p *proxy) remapToEditor(line []byte) []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.byAdapter) == 0 {
+		return line
+	}
+	aid := sessionID(parse(line).Params)
+	if aid == "" {
+		return line
+	}
+	if eid, ok := p.byAdapter[aid]; ok {
+		return withSessionID(line, eid)
+	}
+	return line
+}
+
 // replay brings a freshly-started child up to the editor's current view: re-send
 // initialize and a session/load for each live session, consuming their responses
 // (and any chatter emitted while loading) so the editor doesn't see them; then fail
 // any requests that were in flight when the old child died.
 func (p *proxy) replay(c *Child, br *bufio.Reader) error {
+	type snap struct {
+		editorID, adapterID string
+		params              json.RawMessage
+		turned              bool
+	}
 	p.mu.Lock()
 	setup := make([][]byte, len(p.setup))
 	copy(setup, p.setup)
-	sessions := make(map[string]json.RawMessage, len(p.sessions))
-	for k, v := range p.sessions {
-		sessions[k] = v
+	snaps := make([]snap, 0, len(p.sessions))
+	for eid, s := range p.sessions {
+		snaps = append(snaps, snap{eid, s.adapterID, s.params, s.turned})
 	}
 	p.mu.Unlock()
 
-	Trace("replay: restoring %d session(s) on the restarted box", len(sessions))
+	Trace("replay: restoring %d session(s) on the restarted box", len(snaps))
 	var msgs [][]byte
 	expect := map[string]bool{}
 	for i, line := range setup {
@@ -394,11 +468,22 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 			expect[id] = true
 		}
 	}
-	for sid, params := range sessions {
-		id := replayPrefix + "load-" + sid
-		if msg := loadRequest(id, sid, params); msg != nil {
-			msgs = append(msgs, msg)
-			expect[id] = true
+	for _, s := range snaps {
+		// A session with a transcript is reloaded by its box id; a turn-less one (a fresh session/new
+		// never prompted) has nothing to load yet, so re-create it and rebind the editor's id — losing
+		// nothing, since there was no conversation.
+		if s.turned {
+			id := replayPrefix + "load-" + s.editorID
+			if msg := loadRequest(id, s.adapterID, s.params); msg != nil {
+				msgs = append(msgs, msg)
+				expect[id] = true
+			}
+		} else {
+			id := replayPrefix + "new-" + s.editorID
+			if msg := newRequest(id, s.params); msg != nil {
+				msgs = append(msgs, msg)
+				expect[id] = true
+			}
 		}
 	}
 
@@ -422,14 +507,22 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		if len(line) > 0 {
 			if h := parse(line); h.isResponse() {
 				id := string(trimQuotes(h.ID))
-				// A restored session that fails to reload (e.g. its transcript wasn't on the shared store
-				// on this credential) would otherwise vanish silently — the editor keeps the sessionId but
-				// the agent has no history. We can't recover it, but say so on stderr (the editor's ACP
-				// server log) so a lost conversation isn't invisible.
-				if len(h.Error) > 0 {
-					if sid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
-						fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; its history may be lost: %s\n", sid, h.Error)
-						Trace("replay: session %s did NOT reload: %s", sid, h.Error)
+				if eid, ok := strings.CutPrefix(id, replayPrefix+"new-"); ok {
+					// A re-created turn-less session: bind the editor's id to the fresh box id so both
+					// directions translate from here on. If even session/new failed, the box is broken.
+					if newID := sessionID(h.Result); newID != "" {
+						p.remapSession(eid, newID)
+					} else if len(h.Error) > 0 {
+						fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, h.Error)
+						Trace("replay: session %s re-create failed: %s", eid, h.Error)
+					}
+				} else if eid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
+					// A session that DID have a transcript failed to reload (e.g. it wasn't on the shared
+					// store on this credential) — its history is genuinely gone. We can't recover it, but
+					// say so on stderr (the editor's ACP server log) so the loss isn't invisible.
+					if len(h.Error) > 0 {
+						fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; its history may be lost: %s\n", eid, h.Error)
+						Trace("replay: session %s did NOT reload: %s", eid, h.Error)
 					}
 				}
 				delete(expect, id)
@@ -444,11 +537,18 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		timeout = replayIdleTimeout
 	}
 	<-sent // replay writer done: no concurrent write to c.In
-	// Re-force coop's per-session state (yolo, model) on the restarted box for each restored session —
-	// the fresh adapter reset it. Responses are swallowed in pumpChild (InjectPrefix).
+	// Re-force coop's per-session state (yolo, model) on the restarted box for each restored session,
+	// keyed by its CURRENT box id (a re-created session now lives under a new one). The fresh adapter
+	// reset it; responses are swallowed in pumpChild (InjectPrefix).
 	if p.hooks != nil && p.hooks.SessionReady != nil {
-		for sid := range sessions {
-			for _, m := range p.hooks.SessionReady(sid) {
+		p.mu.Lock()
+		aids := make([]string, 0, len(p.sessions))
+		for _, s := range p.sessions {
+			aids = append(aids, s.adapterID)
+		}
+		p.mu.Unlock()
+		for _, aid := range aids {
+			for _, m := range p.hooks.SessionReady(aid) {
 				_, _ = c.In.Write(m)
 			}
 		}
@@ -474,7 +574,14 @@ func (p *proxy) swapChild(c *Child) {
 	}
 	p.pending = map[string]bool{}
 	p.child = c
+	down := p.shuttingDown
 	p.mu.Unlock()
+	// The editor disconnected while replay was in flight: shutdownChild already stopped the OLD child,
+	// so stop the one we just published too — otherwise its Out never closes and Run blocks forever in
+	// pumpChild. Serialized with shutdownChild under p.mu, so exactly one of them stops this child.
+	if down {
+		c.Stop()
+	}
 	for _, id := range ids {
 		_, _ = p.out.Write(errorResponse(id))
 	}
@@ -560,6 +667,58 @@ func withID(line []byte, id string) []byte {
 	out, err := json.Marshal(m)
 	if err != nil {
 		return nil
+	}
+	return append(out, '\n')
+}
+
+// newRequest builds a session/new request reusing the original params (cwd, mcpServers) under a
+// fresh synthetic id — used to re-create a session that has no reloadable transcript yet.
+func newRequest(id string, params json.RawMessage) []byte {
+	p := map[string]json.RawMessage{}
+	if len(params) > 0 {
+		_ = json.Unmarshal(params, &p)
+	}
+	delete(p, "sessionId") // session/new mints a new id; it never carries one
+	paramsJSON, _ := json.Marshal(p)
+	idJSON, _ := json.Marshal(id)
+	msg := map[string]json.RawMessage{
+		"jsonrpc": json.RawMessage(`"2.0"`),
+		"id":      idJSON,
+		"method":  json.RawMessage(`"session/new"`),
+		"params":  paramsJSON,
+	}
+	out, err := json.Marshal(msg)
+	if err != nil {
+		return nil
+	}
+	return append(out, '\n')
+}
+
+// withSessionID returns line with params.sessionId replaced by sid — both directions of the
+// editor↔box id remap use it. Returns the line unchanged if it carries no params object.
+func withSessionID(line []byte, sid string) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(line, &m) != nil {
+		return line
+	}
+	raw, ok := m["params"]
+	if !ok {
+		return line
+	}
+	var params map[string]json.RawMessage
+	if json.Unmarshal(raw, &params) != nil {
+		return line
+	}
+	sidJSON, _ := json.Marshal(sid)
+	params["sessionId"] = sidJSON
+	pj, err := json.Marshal(params)
+	if err != nil {
+		return line
+	}
+	m["params"] = pj
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line
 	}
 	return append(out, '\n')
 }
