@@ -7,7 +7,31 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/taskstate"
 )
+
+// InitSubproject scaffolds the MINIMAL coop set for a monorepo member: just its task queue and
+// backlog, plus a project.yaml. Members share the root's AGENTS.md, skills, rules, hooks, and box —
+// they're task-queue holders under the root, not standalone projects — so none of that is duplicated
+// per member. Writes only what's absent.
+func InitSubproject(dir string) error {
+	dirs := make([]string, 0, len(taskstate.All))
+	for _, st := range taskstate.All {
+		dirs = append(dirs, filepath.Join(dir, ".agent", "tasks", st))
+	}
+	if err := mkdirs(dirs...); err != nil {
+		return err
+	}
+	s := &scaffolder{repo: dir}
+	if err := s.writeIfAbsent(filepath.Join(dir, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644); err != nil {
+		return err
+	}
+	if err := s.writeIfAbsent(filepath.Join(dir, ".agent", "BACKLOG.md"), "templates/agent/BACKLOG.md", 0o644); err != nil {
+		return err
+	}
+	_, err := WriteProject(dir, nil)
+	return err
+}
 
 // DetectSubprojects returns repo's direct child directories that are themselves coop projects (they
 // contain a .agent/ dir) — a monorepo's members. Sorted; empty for a single project. Hidden dirs

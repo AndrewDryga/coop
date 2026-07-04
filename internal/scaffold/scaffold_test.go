@@ -64,7 +64,8 @@ func TestGeneratedHooksShellcheckClean(t *testing.T) {
 }
 
 // A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its
-// block — that would drop the !rules/!skills un-ignore and leave tracked dirs ignored.
+// block — that would drop the !rules/!skills un-ignore and leave tracked dirs ignored. The block is
+// monorepo-aware: **/.agent/* (any depth) with !**/.agent/project.yaml.
 func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
@@ -74,17 +75,68 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{".agent/*\n", "!.agent/rules/", "!.agent/skills/"} {
+	for _, want := range []string{"**/.agent/*\n", "!.agent/rules/", "!.agent/skills/", "!**/.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
 	}
-	// And it stays idempotent: a second run doesn't duplicate the exact marker.
+	// Idempotent: a second run doesn't duplicate the block.
 	_ = (&scaffolder{repo: repo}).updateGitignore()
 	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	if n := strings.Count(string(gi2), "\n.agent/*\n"); n != 1 {
+	if n := strings.Count(string(gi2), "\n**/.agent/*\n"); n != 1 {
 		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
 	}
+}
+
+// TestUpdateGitignoreUpgrade: an older root-anchored block (.agent/*, no project.yaml un-ignore) is
+// upgraded in place to the monorepo-aware form, without duplicating the block.
+func TestUpdateGitignoreUpgrade(t *testing.T) {
+	repo := t.TempDir()
+	old := "node_modules/\n\n# coop working state\n.agent/*\n!.agent/rules/\n!.agent/skills/\n"
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&scaffolder{repo: repo}).updateGitignore(); err != nil {
+		t.Fatal(err)
+	}
+	gi := string(mustRead(t, filepath.Join(repo, ".gitignore")))
+	if strings.Contains(gi, "\n.agent/*\n") {
+		t.Errorf("old root-anchored .agent/* not upgraded:\n%s", gi)
+	}
+	if !strings.Contains(gi, "**/.agent/*") || !strings.Contains(gi, "!**/.agent/project.yaml") {
+		t.Errorf("upgrade missing the monorepo pattern or project.yaml un-ignore:\n%s", gi)
+	}
+	if n := strings.Count(gi, "**/.agent/*"); n != 1 {
+		t.Errorf("**/.agent/* appears %d times, want 1:\n%s", n, gi)
+	}
+}
+
+// TestInitSubproject: a member gets ONLY its task queue + backlog + project.yaml — never the full
+// scaffold (AGENTS.md, .claude/, rules), which the monorepo root owns.
+func TestInitSubproject(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitSubproject(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/BACKLOG.md", ".agent/project.yaml"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("member missing %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/rules", ".agent/skills", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			t.Errorf("member should NOT have %s (the root owns it)", rel)
+		}
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // TestDockerfileTemplatesTrustAnyWorktree guards the real-path-mount contract:

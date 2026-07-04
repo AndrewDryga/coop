@@ -14,8 +14,11 @@
   now span all of them — previously you had to export `COOP_TASKS="portal/.agent/tasks
   runner/.agent/tasks …"` by hand. An explicit `COOP_TASKS`/`--tasks` still overrides; a single repo
   is unchanged. New `coop tasks queues` prints each configured queue's path (the composable primitive
-  the Stop hook uses). (`coop fork --loop`/`coop fleet split` still take one queue — multi-queue
-  seeding is backlogged.)
+  the Stop hook uses). `coop init` detects the members and scaffolds each with only the MINIMAL set —
+  its task queue, backlog, and `project.yaml` — since members share the root's AGENTS.md, skills,
+  rules, hooks, and box; the generated `.gitignore` ignores `.agent/` state at any depth
+  (`**/.agent/*`) and keeps `project.yaml` committed everywhere (`!**/.agent/project.yaml`).
+  (`coop fork --loop`/`coop fleet split` still take one queue — multi-queue seeding is backlogged.)
 
 - **See a dev server in your browser — `.agent/project.yaml` → `serve.ports`.** List the ports your
   dev server listens on inside the box:

@@ -1049,7 +1049,9 @@ func (a *app) cmdInit(args []string) (int, error) {
 		return 0, err
 	}
 	for _, s := range subs {
-		if _, err := scaffold.WriteProject(filepath.Join(repo, s), nil); err != nil {
+		// Members get only the minimal set — their task queue + backlog + project.yaml — since they
+		// share the root's AGENTS.md, skills, rules, hooks, and box.
+		if err := scaffold.InitSubproject(filepath.Join(repo, s)); err != nil {
 			return 0, err
 		}
 	}

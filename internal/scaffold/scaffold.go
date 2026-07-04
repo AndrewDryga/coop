@@ -273,28 +273,31 @@ func gitConfigSet(repo, key, value string) error {
 
 func (s *scaffolder) updateGitignore() error {
 	gi := filepath.Join(s.repo, ".gitignore")
-	if data, err := os.ReadFile(gi); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			// Match coop's exact marker line, not a prefix — a pre-existing broad rule like
-			// `.agent/*.log` must NOT make us skip the block (which would drop the !rules/!skills
-			// un-ignore and the .gemini symlink rules, leaving tracked dirs ignored).
-			if strings.TrimSpace(line) == ".agent/*" {
-				return nil // coop's block is already present
-			}
-		}
-	}
-	f, err := os.OpenFile(gi, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	const block = "\n# coop working state (commit knowledge, ignore state)\n.agent/*\n!.agent/rules/\n!.agent/skills/\n!.agent/presets/\n!.agent/audit.md\n" +
+	data, _ := os.ReadFile(gi) // missing file → empty; we create it below
+	content := string(data)
+	orig := content
+	// **/.agent/* (not .agent/*) so a monorepo member's .agent/ working state — its tasks/backlog —
+	// is ignored too, at any depth; !**/.agent/project.yaml keeps the committed per-project config at
+	// any depth. rules/skills/presets/audit stay root-only (members share the root's, not their own).
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!.agent/rules/\n!.agent/skills/\n!.agent/presets/\n!.agent/audit.md\n!**/.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
-	if _, err := f.WriteString(block); err != nil {
+	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place.
+	content = strings.ReplaceAll(content, "\n.agent/*\n", "\n**/.agent/*\n")
+	switch {
+	case !strings.Contains(content, "**/.agent/*"):
+		content += block // no coop block yet — append the whole thing
+	case !strings.Contains(content, "!**/.agent/project.yaml"):
+		// Block present but predates project.yaml — un-ignore it (committed) at any depth.
+		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!**/.agent/project.yaml\n", 1)
+	}
+	if content == orig {
+		return nil // already up to date
+	}
+	if err := os.WriteFile(gi, []byte(content), 0o644); err != nil {
 		return err
 	}
-	ui.Detail("updated .gitignore (.agent state ignored; rules/ + skills/ + presets/ + audit.md tracked)")
+	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/audit.md + project.yaml tracked)")
 	return nil
 }
 

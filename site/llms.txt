@@ -440,9 +440,12 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   inert until you add a server) so there's an obvious place to declare MCP servers.
   Writes .agent/project.yaml (committed): in a monorepo — detected by direct child
   dirs that are themselves coop projects (each with a .agent/) — it lists them under
-  'subprojects:' so coop aggregates their task queues automatically (no COOP_TASKS),
-  and gives each member a project.yaml too; a single repo gets a template with
-  commented serve/subprojects examples. Never clobbers existing files.
+  'subprojects:' so coop aggregates their task queues automatically (no COOP_TASKS).
+  Each member gets only the MINIMAL set — its task queue, backlog, and project.yaml —
+  since members share the root's AGENTS.md, skills, rules, hooks, and box. A single
+  repo gets a project.yaml template with commented serve/subprojects examples. The
+  .gitignore ignores .agent/ state at any depth (**/.agent/*) and keeps project.yaml
+  committed everywhere (!**/.agent/project.yaml). Never clobbers existing files.
 
 coop doctor — prove the box's isolation: attack it, inside and from the host.
 
