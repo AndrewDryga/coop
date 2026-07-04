@@ -287,8 +287,7 @@ var commandHelp = map[string]string{
   Run on a specific credential without changing the default — works on any agent
   launch: 'coop claude --credential <name>', 'coop fusion <agent> --credential
   <name>', and 'coop acp <agent> --credential <name>' (so an editor entry can pin
-  an account). An agent's own --profile goes after a --, e.g.
-  'coop codex -- --profile <name>'.`,
+  an account).`,
 
 	"models": `coop models [agent] — the model menu per agent.
 

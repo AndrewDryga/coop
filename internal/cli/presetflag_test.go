@@ -101,14 +101,11 @@ func TestPresetFlagParsing(t *testing.T) {
 		t.Error("a bare --preset must error")
 	}
 
-	// Both credential spellings parse; the retired --profile fails with the rewrite.
+	// Both credential spellings parse.
 	for _, flag := range []string{"--credential", "--credentials"} {
 		if got, _, err := extractRunProfile([]string{flag, "work"}); err != nil || got != "work" {
 			t.Errorf("extractRunProfile(%s work) = (%q, %v)", flag, got, err)
 		}
-	}
-	if _, _, err := extractRunProfile([]string{"--profile", "work"}); err == nil || !strings.Contains(err.Error(), "--credential") {
-		t.Errorf("the retired --profile must fail with the rewrite, got %v", err)
 	}
 
 	fa, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier", "--credential", "work"})

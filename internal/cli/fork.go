@@ -248,8 +248,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
-		case x == "--profile", strings.HasPrefix(x, "--profile="): // pre-v3 spelling — fail with the rewrite
-			return fa, retiredProfileFlagErr()
 		case x == "--credential", x == "--credentials":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, fmt.Errorf("coop fork %s needs an account name", x)
@@ -354,7 +352,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}
 	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so
 	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
-	// BEFORE resolveImage (like the --profile check above): fail fast, never spin up an image to refuse.
+	// BEFORE resolveImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
 	if fa.fresh {
 		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 		if err != nil {
@@ -810,8 +808,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	consult, rest := extractConsult(rest)
-	// --profile picks the credential profile, like plain `coop acp` / `coop <agent>` — accepted here
-	// too so `coop fork <name> acp --profile p` isn't rejected while plain acp takes it.
+	// --credential picks the account, like plain `coop acp` / `coop <agent>` — accepted here too
+	// so `coop fork <name> acp --credential p` works, like plain acp.
 	profile, rest, err := extractRunProfile(rest)
 	if err != nil {
 		return 2, err

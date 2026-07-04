@@ -438,14 +438,14 @@ func TestLatestTaskLogOnlyDone(t *testing.T) {
 
 // `coop fork <name> acp --profile <p>` is accepted (like plain `coop acp`), not rejected as an
 // unexpected argument. A missing profile errors on the profile itself — proving the flag parsed.
-func TestForkACPAcceptsProfile(t *testing.T) {
+func TestForkACPAcceptsCredential(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	code, err := a.forkACP("myfork", []string{"claude", "--profile", "ghost"})
+	code, err := a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "credential") {
-		t.Fatalf("fork acp --profile ghost = (%d, %v), want (2, a credential error)", code, err)
+		t.Fatalf("fork acp --credential ghost = (%d, %v), want (2, a credential error)", code, err)
 	}
 	if strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:") {
-		t.Errorf("--profile should be accepted, not rejected as an argument: %v", err)
+		t.Errorf("--credential should be accepted, not rejected as an argument: %v", err)
 	}
 }
 

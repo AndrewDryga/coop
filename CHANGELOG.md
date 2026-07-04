@@ -7,9 +7,9 @@
 - **BREAKING: `coop profiles` is now `coop credentials`.** The split is complete: a CREDENTIAL is a
   stored account/login (its own rate-limit pool); an orchestration recipe is a PRESET. The command,
   help, and every hint now say credentials (`coop credentials claude work model opus`,
-  `coop login claude --credential work`); `coop profiles` tombstones with the rewrite, and the
-  `--profile` flag is retired too — it errors with the rename (an agent's OWN `--profile` still
-  passes through after a `--`). A new `coop presets [name]` command lists the repo's presets (a
+  `coop login claude --credential work`); `coop profiles` tombstones with the rewrite. The
+  `--profile` flag is removed entirely — no tombstone, `--credential` is the one name; an agent's
+  OWN `--profile` still reaches it after a `--`. A new `coop presets [name]` command lists the repo's presets (a
   broken one shows its error) and shows one recipe in full; `coop presets init [name]` scaffolds
   the documented frontier template, valid and runnable as written. On-disk credential storage is
   unchanged (`<agent>/profiles/<name>/`) — nothing to migrate.

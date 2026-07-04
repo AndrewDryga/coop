@@ -281,8 +281,9 @@ func TestExtractProfileAbsentIsEmpty(t *testing.T) {
 	if profile, _, _ := extractProfile([]string{"claude", "--credential", "work"}); profile != "work" {
 		t.Errorf("explicit --credential = %q, want work", profile)
 	}
-	if _, _, err := extractProfile([]string{"claude", "--profile", "work"}); err == nil || !strings.Contains(err.Error(), "--credential") {
-		t.Errorf("login: the retired --profile must fail with the rewrite, got %v", err)
+	// --profile is retired — no longer a coop flag, so it's left untouched (a plain arg), not intercepted.
+	if _, rest, err := extractProfile([]string{"claude", "--profile", "work"}); err != nil || !slices.Equal(rest, []string{"claude", "--profile", "work"}) {
+		t.Errorf("extractProfile should leave the retired --profile untouched, got rest=%v err=%v", rest, err)
 	}
 }
 
@@ -298,7 +299,8 @@ func TestExtractRunProfile(t *testing.T) {
 		{"space form", []string{"--credential", "work", "-p", "hi"}, "work", []string{"-p", "hi"}, false},
 		{"equals form", []string{"--credential=work"}, "work", nil, false},
 		{"missing value", []string{"--credential"}, "", nil, true},
-		{"retired --profile errors", []string{"--profile", "work"}, "", nil, true},
+		// --profile is retired: no longer a coop flag, so it's left in rest (a plain token), not errored.
+		{"retired --profile is a plain token", []string{"--profile", "work"}, "", []string{"--profile", "work"}, false},
 		// coop reads its flags only before --; the agent's own --profile passes through verbatim.
 		{"passthrough after --", []string{"--", "--profile", "codexprof"}, "", []string{"--", "--profile", "codexprof"}, false},
 		{"coop credential then passthrough", []string{"--credential", "work", "--", "--profile", "codexprof"},
@@ -329,10 +331,6 @@ func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ghost") {
 		t.Errorf("error should name the bad credential: %v", err)
-	}
-	// The retired --profile spelling fails with the rewrite (never forwarded into the agent).
-	if code, err := a.launchAgent("claude", []string{"--profile", "ghost"}); code != 2 || err == nil || !strings.Contains(err.Error(), "--credential") {
-		t.Errorf("launchAgent --profile = (%d, %v), want the rename tombstone", code, err)
 	}
 }
 
@@ -367,15 +365,15 @@ func TestSelectRunProfile(t *testing.T) {
 	}
 }
 
-// --profile is wired into every agent-launch path; a nonexistent profile must fail fast (before any
-// box/Docker work) on fusion and acp too, not just a plain agent run.
+// --credential is wired into every agent-launch path; a nonexistent credential must fail fast
+// (before any box/Docker work) on fusion and acp too, not just a plain agent run.
 func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.cmdFusion([]string{"claude", "--profile", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdFusion --profile ghost = (%d, %v), want 2 + error", code, err)
+	if code, err := a.cmdFusion([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdFusion --credential ghost = (%d, %v), want 2 + error", code, err)
 	}
-	if code, err := a.cmdACP([]string{"claude", "--profile", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdACP --profile ghost = (%d, %v), want 2 + error", code, err)
+	if code, err := a.cmdACP([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdACP --credential ghost = (%d, %v), want 2 + error", code, err)
 	}
 }
 
@@ -583,7 +581,6 @@ func TestStrictFlagParsing(t *testing.T) {
 		name string
 		fn   func() (int, error)
 	}{
-		{"login --profile no value", func() (int, error) { return a.cmdLogin([]string{"claude", "--profile"}) }},
 		{"login stray arg", func() (int, error) { return a.cmdLogin([]string{"claude", "extra"}) }},
 		{"init --stack no value", func() (int, error) { return a.cmdInit([]string{"--stack"}) }},
 		{"init --services no value", func() (int, error) { return a.cmdInit([]string{"--services"}) }},

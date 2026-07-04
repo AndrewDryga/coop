@@ -280,7 +280,7 @@ func TestDefaultProfileMark(t *testing.T) {
 	if got, want := c.AgentDir("claude"), c.AgentProfileDir("claude", "personal"); got != want {
 		t.Errorf("AgentDir = %q, want the marked default's dir %q", got, want)
 	}
-	// A per-run override (a --profile login, or the loop's rotation) still wins.
+	// A per-run override (a --credential login, or the loop's rotation) still wins.
 	c.SetActiveProfile("claude", "work")
 	if got, want := c.AgentDir("claude"), c.AgentProfileDir("claude", "work"); got != want {
 		t.Errorf("AgentDir = %q, want the override's dir %q", got, want)

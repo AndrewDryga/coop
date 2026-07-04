@@ -64,10 +64,10 @@ func TestParseForkCreateCredential(t *testing.T) {
 	if fa2, err := parseForkCreate([]string{"perf", "--credential=work"}); err != nil || fa2.credential != "work" {
 		t.Errorf("--credential=work → credential=%q err=%v, want work", fa2.credential, err)
 	}
-	// The retired --profile spelling fails with the rewrite, both forms.
+	// --profile is retired — no longer a coop flag, so it errors as an unknown argument, both forms.
 	for _, args := range [][]string{{"perf", "--profile", "work"}, {"perf", "--profile=work"}} {
-		if _, err := parseForkCreate(args); err == nil || !strings.Contains(err.Error(), "--credential") {
-			t.Errorf("parseForkCreate(%v): the retired --profile must fail with the rewrite, got %v", args, err)
+		if _, err := parseForkCreate(args); err == nil {
+			t.Errorf("parseForkCreate(%v): retired --profile must error as unknown, got nil", args)
 		}
 	}
 	if _, err := parseForkCreate([]string{"perf", "--credential"}); err == nil {

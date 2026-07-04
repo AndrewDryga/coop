@@ -86,12 +86,12 @@ func (a *app) cmdRun(args []string) (int, error) {
 // args you pass appended — so `coop claude --continue` keeps coop's autonomy + MCP
 // flags and just adds yours. The agents' autonomous flags are global, so this is safe
 // even before subcommands (e.g. `coop codex resume --last`). coop's own --consult and
-// --profile are stripped first so they aren't forwarded to the agent.
+// --credential are stripped first so they aren't forwarded to the agent.
 func (a *app) launchAgent(tool string, args []string) (int, error) {
 	consult, args := extractConsult(args)
 	// `coop claude login` reads as "log in to claude", not "prompt claude with the
 	// word login" — route it to the sign-in flow like `coop login claude` (honoring
-	// `--profile`, e.g. `coop claude login --profile work`).
+	// `--credential`, e.g. `coop claude login --credential work`).
 	if len(args) >= 1 && args[0] == "login" {
 		profile, rest, err := extractProfile(args[1:])
 		if err != nil {
@@ -102,16 +102,15 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		}
 		return a.loginTo(tool, profile)
 	}
-	// `coop claude --credential work` runs on a chosen credential (one account/login;
-	// --profile is the legacy spelling); coop consumes the flag so it isn't forwarded. It's
-	// read only before a `--`, so an agent's own --profile (e.g. codex's config.toml
-	// profile) is still reachable as `coop codex -- --profile <name>`.
+	// `coop claude --credential work` runs on a chosen credential (one account/login); coop
+	// consumes the flag so it isn't forwarded. It's read only before a `--`, so an agent's own
+	// flags after the `--` (e.g. codex's own --profile for its config.toml) pass through.
 	profile, args, err := extractRunProfile(args)
 	if err != nil {
 		return 2, err
 	}
 	// `coop claude --model opus` picks the model for this run, beating the profile/agent
-	// defaults (see config.ModelFor). Consumed like --profile — read only before a `--` —
+	// defaults (see config.ModelFor). Consumed like --credential — read only before a `--` —
 	// though forwarding it would usually work too, since the adapters skip appending a
 	// second --model when one is already present.
 	model, args, err := extractRunModel(args)
@@ -148,7 +147,7 @@ func (a *app) nudgeIfUnauthed(tool string) {
 	}
 }
 
-// selectRunProfile points cfg at the credential profile chosen with --profile for a run of tool
+// selectRunProfile points cfg at the credential profile chosen with --credential for a run of tool
 // (a no-op when profile is ""). It requires the profile to already exist — a typo otherwise
 // silently creates an empty husk dir (box.Run pre-creates the active profile), the very clutter
 // `coop credentials rm` cleans up — and notes (without blocking) one that exists but isn't signed in.
@@ -303,36 +302,12 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 	return "", 0, false, nil
 }
 
-// retiredProfileFlagErr is the tombstone for the pre-v3 --profile spelling: v3 keeps one
-// canonical flag, so the old name fails loudly with the rewrite instead of living as an alias.
-func retiredProfileFlagErr() error {
-	return errors.New("--profile was renamed to --credential in v3 — same value, new name (an agent's OWN --profile still passes through after a --)")
-}
-
-// rejectRetiredProfileFlag errors when the retired --profile spelling appears before a "--"
-// (after it, the token belongs to the agent and passes through untouched). Without this the
-// dead flag would silently forward INTO the agent CLI, which is worse than an alias.
-func rejectRetiredProfileFlag(args []string) error {
-	for _, x := range args {
-		if x == "--" {
-			return nil
-		}
-		if x == "--profile" || strings.HasPrefix(x, "--profile=") {
-			return retiredProfileFlagErr()
-		}
-	}
-	return nil
-}
-
 // extractProfile pulls coop's own `--credential <name>` (or `--credential=<name>`; the
 // plural is an accepted spelling) out of login args, returning the chosen credential
 // ("" if absent — the caller resolves the agent's MARKED default, not one literally
 // named "default") and the remaining args. It lets a login target one of several stored
 // accounts. A flag with no value is an error, not a silent fall-back.
 func extractProfile(args []string) (profile string, rest []string, err error) {
-	if err := rejectRetiredProfileFlag(args); err != nil {
-		return "", nil, err
-	}
 	for i := 0; i < len(args); i++ {
 		matched := false
 		for _, flag := range []string{"--credential", "--credentials"} {
@@ -355,14 +330,10 @@ func extractProfile(args []string) (profile string, rest []string, err error) {
 
 // extractRunProfile pulls coop's own --credential <name> (or --credential=<name>; the
 // plural is an accepted spelling) out of an agent RUN's args, returning the chosen
-// credential ("" if none) and the remaining args. It stops at a "--" separator and
-// forwards everything after it verbatim — so an agent's own --profile is still reachable
-// as `coop codex -- --profile <name>`; BEFORE the --, the retired --profile spelling
-// errors with the rewrite. A flag with no value is an error, not a silent fall-back.
+// credential ("" if none) and the remaining args. It stops at a "--" separator and forwards
+// everything after it verbatim — so an agent's own flags (e.g. codex's --profile) pass
+// through untouched. A flag with no value is an error, not a silent fall-back.
 func extractRunProfile(args []string) (profile string, rest []string, err error) {
-	if err := rejectRetiredProfileFlag(args); err != nil {
-		return "", nil, err
-	}
 	return extractRunValue(args, "--credential", "--credentials")
 }
 
@@ -402,7 +373,7 @@ func extractRunValue(args []string, flags ...string) (val string, rest []string,
 }
 
 // validProfileName keeps a credential profile name to a single safe path segment, so a name passed
-// to --profile can't traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
+// to --credential can't traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
 // '.', empty, or leading '-'). Login is the path that CREATES the dir from the name, so it's the
 // gate; runs/select/rm/default already require an existing profile.
 func validProfileName(name string) bool {

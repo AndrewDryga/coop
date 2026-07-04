@@ -214,7 +214,7 @@ func (c *Config) AgentDir(agent string) string {
 }
 
 // activeProfile resolves which profile AgentDir uses for agent: a per-run selection wins
-// (a --profile login, or the loop's rotation), then the agent's marked default, then the
+// (a --credential login, or the loop's rotation), then the agent's marked default, then the
 // built-in DefaultProfile (so an unmarked single login still resolves to the legacy slot).
 func (c *Config) activeProfile(agent string) string {
 	if p := c.activeProfiles[agent]; p != "" {
