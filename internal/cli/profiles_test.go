@@ -189,3 +189,34 @@ func TestRemoveProfile(t *testing.T) {
 		t.Error("removing default wrongly affected personal")
 	}
 }
+
+// TestProfileStateRenewable: an expired access token with a refresh token reads as signed in
+// (claude renews it on use), not "token expired" — the false alarm that read as blocked. Only an
+// expired token with no refresh token, a genuinely dead OAuth login, needs a re-login.
+func TestProfileStateRenewable(t *testing.T) {
+	dir := t.TempDir()
+	a := &app{cfg: &config.Config{ConfigDir: dir}}
+	write := func(profile, body string) {
+		d := a.cfg.AgentProfileDir("claude", profile)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, ".credentials.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Expired access token (expiresAt in the past) but a refresh token present → signed in.
+	write("renew", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1}}`)
+	if label, expired := a.profileState("claude", "renew"); expired || label != "signed in" {
+		t.Errorf("expired-but-renewable = (%q, %v), want (\"signed in\", false)", label, expired)
+	}
+	// Expired access token, no refresh token → genuinely needs a re-login.
+	write("dead", `{"claudeAiOauth":{"accessToken":"a","expiresAt":1}}`)
+	if label, expired := a.profileState("claude", "dead"); !expired || label != "token expired" {
+		t.Errorf("expired-no-refresh = (%q, %v), want (\"token expired\", true)", label, expired)
+	}
+	// No credential at all → not signed in.
+	if label, _ := a.profileState("claude", "ghost"); label != "not signed in" {
+		t.Errorf("missing credential = %q, want \"not signed in\"", label)
+	}
+}

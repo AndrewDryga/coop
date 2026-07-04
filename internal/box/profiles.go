@@ -52,6 +52,27 @@ func ProfileTokenExpiry(cfg *config.Config, agent, profile string) (time.Time, b
 	return time.UnixMilli(c.ClaudeAiOauth.ExpiresAt), true
 }
 
+// ProfileRenewable reports whether agent's named-profile OAuth login carries a refresh token. An
+// access token past its expiresAt is NOT a dead login when one is present — the agent CLI renews
+// it on use and writes the fresh token back (verified: a claude profile shown "expired" answered
+// live in-box, then its expiresAt moved forward). So callers treat expired-but-renewable as signed
+// in, not "token expired". Only claude exposes a readable OAuth credential; anything else is false.
+func ProfileRenewable(cfg *config.Config, agent, profile string) bool {
+	if agent != "claude" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.AgentProfileDir(agent, profile), ".credentials.json"))
+	if err != nil {
+		return false
+	}
+	var c struct {
+		ClaudeAiOauth struct {
+			RefreshToken string `json:"refreshToken"`
+		} `json:"claudeAiOauth"`
+	}
+	return json.Unmarshal(data, &c) == nil && c.ClaudeAiOauth.RefreshToken != ""
+}
+
 // EnsureProfilesDir prepares agent's credential vault for the named-profile layout, run
 // before a profile other than the default is created. The first time it runs (no
 // profiles/ dir yet) it creates profiles/ (0700) and, if a legacy flat login already

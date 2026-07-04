@@ -14,6 +14,12 @@
   the documented frontier template, valid and runnable as written. On-disk credential storage is
   unchanged (`<agent>/profiles/<name>/`) — nothing to migrate.
 
+- **`coop credentials` no longer cries "token expired" on a live claude login.** The status read
+  only the OAuth access-token expiry and ignored the refresh token, so a working claude account —
+  which the CLI silently renews on use — showed "token expired" and read as blocked. Now a profile
+  that carries a refresh token reads as signed in; only an expired token with no refresh token (a
+  genuinely dead OAuth login) still says "token expired".
+
 - **BREAKING: loop pools are gone — a loop rotates a preset's model-first `models:` ladder.** The
   persistent `coop loop pool` registry and `pools.json` are retired (`coop loop pool` tombstones; a
   stray `pools.json` is ignored, no warning). The rotation now IS the `models:` ladder of the loop's

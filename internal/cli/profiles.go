@@ -111,14 +111,16 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 	return 0, nil
 }
 
-// profileState reports a profile's short sign-in label and whether its token is expired —
-// present but past expiry, which reads as signed in yet 401s in a run; the caller surfaces
-// the re-login remedy on its own line. Shared by the listing and the single-profile view.
+// profileState reports a profile's short sign-in label and whether it needs a re-login. An OAuth
+// access token past its expiry is NOT dead when the login carries a refresh token — the agent CLI
+// renews it on use — so only an expired token with no refresh token reads as "token expired" (the
+// caller surfaces the re-login remedy on its own line). Shared by the listing and single view.
 func (a *app) profileState(agent, p string) (label string, expired bool) {
 	if !box.ProfileAuthed(a.cfg, agent, p) {
 		return "not signed in", false
 	}
-	if exp, ok := box.ProfileTokenExpiry(a.cfg, agent, p); ok && time.Now().After(exp) {
+	if exp, ok := box.ProfileTokenExpiry(a.cfg, agent, p); ok && time.Now().After(exp) &&
+		!box.ProfileRenewable(a.cfg, agent, p) {
 		return "token expired", true
 	}
 	return "signed in", false
