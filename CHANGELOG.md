@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 3.0.0
 
 - **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's
