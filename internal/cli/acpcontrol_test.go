@@ -23,7 +23,7 @@ func newTestControl(t *testing.T) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", []string{"frontier"})
+	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", []string{"frontier"}, nil)
 }
 
 func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMessage) {
@@ -162,7 +162,7 @@ func TestACPControlSessionReady(t *testing.T) {
 // TestACPControlSessionReadyNonClaude: mode=bypassPermissions is a claude option, so a non-claude lead
 // must NOT get it (yolo comes from autoReply instead); coop's model set still goes out.
 func TestACPControlSessionReadyNonClaude(t *testing.T) {
-	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", nil)
+	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", nil, nil)
 	var joined string
 	for _, m := range c.sessionReady("s1") {
 		joined += string(m)
@@ -375,6 +375,33 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	}
 	if _, ok := c.limited["personal"]; !ok {
 		t.Error("personal must be marked limited so the factory waits")
+	}
+}
+
+// TestACPServeNotice: the published-port URLs are announced once, on a session/new result (which
+// carries sessionId + configOptions) — not on a ConfigOptionUpdate, not twice, and not without URLs.
+func TestACPServeNotice(t *testing.T) {
+	c := newTestControl(t)
+	c.serveURLs = []string{"box :5173 → http://localhost:24187"}
+
+	result := []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"S","configOptions":[{"id":"model"}]}}` + "\n")
+	n1 := c.serveNoticeFor(result)
+	if n1 == nil || !strings.Contains(string(n1), "localhost:24187") || !strings.Contains(string(n1), "session/update") {
+		t.Fatalf("expected a serve notice for the new session, got %s", n1)
+	}
+	if n2 := c.serveNoticeFor(result); n2 != nil {
+		t.Errorf("the serve notice must be one-shot per session, got %s", n2)
+	}
+
+	// A ConfigOptionUpdate (configOptions in params, not result) is not a session establishment.
+	upd := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{"sessionUpdate":"config_option_update","configOptions":[]}}}` + "\n")
+	if n := c.serveNoticeFor(upd); n != nil {
+		t.Errorf("only a session/new result announces, got %s", n)
+	}
+
+	c.serveURLs = nil
+	if n := c.serveNoticeFor([]byte(`{"result":{"sessionId":"S3","configOptions":[1]}}` + "\n")); n != nil {
+		t.Errorf("no serve URLs → no notice, got %s", n)
 	}
 }
 

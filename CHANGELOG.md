@@ -17,6 +17,19 @@
   the Stop hook uses). (`coop fork --loop`/`coop fleet split` still take one queue — multi-queue
   seeding is backlogged.)
 
+- **See a dev server in your browser — `.agent/project.yaml` → `serve.ports`.** List the ports your
+  dev server listens on inside the box:
+  ```yaml
+  serve:
+    ports: [5173, 3000]
+  ```
+  and coop publishes each to a **stable, per-repo host port** — deterministic, so the URL is the same
+  every launch and distinct per project, which means one shared editor agent definition serves many
+  projects without host-port collisions. Works for `coop acp` and `coop run`; in the editor coop
+  announces the URLs once per session (`🌐 box :5173 → http://localhost:24187`). Ports bind to
+  localhost only; publishing needs `COOP_EGRESS=open`; a host port already in use is skipped (noted on
+  the server log). Your dev server must listen on `0.0.0.0` (not localhost) inside the box.
+
 - **coop owns the ACP editor toolbar — yolo, model-from-coop, and a live credential/preset switch.**
   The ACP proxy is now always in the path (not just `--supervise`), so coop controls the session an
   editor (Zed, …) drives: (1) it runs **every provider** (claude/codex/gemini) in **yolo** mode —

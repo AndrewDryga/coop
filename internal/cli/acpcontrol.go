@@ -66,9 +66,12 @@ type acpControl struct {
 	lastPrompt    map[string][]byte // editor sessionId -> its latest prompt line (what to resend)
 	resend        map[string]bool   // editor sessionId -> re-send the last prompt after the next restart
 	heldChunk     map[string][]byte // editor sessionId -> a buffered rate-limit notice awaiting the turn's outcome
+
+	serveURLs []string        // published-port lines to show the editor (e.g. "box :5173 → http://localhost:24187")
+	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
 }
 
-func newACPControl(cfg *config.Config, lead, model, cred string, presets []string) *acpControl {
+func newACPControl(cfg *config.Config, lead, model, cred string, presets, serveURLs []string) *acpControl {
 	sel := "cred:" + cfg.ActiveProfile(lead)
 	if cred != "" {
 		sel = "cred:" + cred
@@ -83,6 +86,8 @@ func newACPControl(cfg *config.Config, lead, model, cred string, presets []strin
 		lastPrompt:    map[string][]byte{},
 		resend:        map[string]bool{},
 		heldChunk:     map[string][]byte{},
+		serveURLs:     serveURLs,
+		reported:      map[string]bool{},
 	}
 }
 
@@ -162,9 +167,59 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 	if hold, flush := c.chunkGate(line); hold {
 		return nil, false
 	} else if flush != nil {
-		return append(flush, c.rewriteToEditor(line)...), false
+		out = append(flush, c.rewriteToEditor(line)...)
+	} else {
+		out = c.rewriteToEditor(line)
 	}
-	return c.rewriteToEditor(line), false
+	// Announce this repo's published ports once, when a session is established (its session/new result).
+	if notice := c.serveNoticeFor(line); notice != nil {
+		out = append(out, notice...)
+	}
+	return out, false
+}
+
+// serveNoticeFor returns a one-shot-per-session message listing the published-port URLs when line is a
+// session/new result (which carries both a sessionId and configOptions), or nil. The URLs are stable,
+// so once per session is enough; a box restart's session/load result is swallowed by replay and never
+// reaches here, so it won't re-announce.
+func (c *acpControl) serveNoticeFor(line []byte) []byte {
+	if len(c.serveURLs) == 0 {
+		return nil
+	}
+	var m struct {
+		Result *struct {
+			SessionID     string          `json:"sessionId"`
+			ConfigOptions json.RawMessage `json:"configOptions"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(line, &m) != nil || m.Result == nil || m.Result.SessionID == "" || len(m.Result.ConfigOptions) == 0 {
+		return nil
+	}
+	sid := m.Result.SessionID
+	c.mu.Lock()
+	if c.reported[sid] {
+		c.mu.Unlock()
+		return nil
+	}
+	c.reported[sid] = true
+	c.nextID++
+	n := c.nextID
+	c.mu.Unlock()
+	text := "🌐 coop is publishing this repo's ports:\n" + strings.Join(c.serveURLs, "\n")
+	upd := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": sid,
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]any{"type": "text", "text": text},
+				"messageId":     fmt.Sprintf("coop-serve-%d", n),
+			},
+		},
+	}
+	b, _ := json.Marshal(upd)
+	return append(b, '\n')
 }
 
 // rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a

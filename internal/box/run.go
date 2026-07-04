@@ -2,7 +2,9 @@ package box
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -48,6 +51,7 @@ type RunSpec struct {
 	Agent string
 
 	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
+	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
 	ForkName string // non-empty for a detached fork loop's box: tags it coop.fork=<name> so
@@ -699,6 +703,49 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 	return a
 }
 
+// appendPublish adds `-p 127.0.0.1:<host>:<container>` for each .agent/project.yaml serve.port, so a
+// dev server in the box is reachable from the host browser. The host port is a stable function of the
+// repo+port (project.HostPort), so it's the same every launch and distinct per project. Best-effort:
+// a host port already in use is skipped (a box that can't publish one port still runs), and publishing
+// needs egress open (a --network none box has nothing to bind), else all are skipped. Bound to
+// localhost, not 0.0.0.0, so the port isn't exposed to the LAN. Mappings/skips are noted on stderr
+// (the ACP server log or the terminal) — never stdout, which on ACP is the JSON-RPC wire.
+func appendPublish(args []string, cfg *config.Config, spec RunSpec) []string {
+	p, err := project.Load(spec.Repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "coop: %v — not publishing ports\n", err)
+		return args
+	}
+	if len(p.Serve.Ports) == 0 {
+		return args
+	}
+	if cfg.Egress != "open" {
+		fmt.Fprintf(os.Stderr, "coop: serve ports need network egress (COOP_EGRESS=open) — not publishing\n")
+		return args
+	}
+	for _, port := range p.Serve.Ports {
+		host := project.HostPort(spec.Repo, port)
+		if !hostPortFree(host) {
+			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — skipping\n", host, port)
+			continue
+		}
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
+		fmt.Fprintf(os.Stderr, "coop: serving box :%d at http://localhost:%d\n", port, host)
+	}
+	return args
+}
+
+// hostPortFree reports whether a TCP host port is bindable right now (best-effort; a race with another
+// binder is caught by docker at run time, and in ACP the proxy respawns).
+func hostPortFree(port int) bool {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
+}
+
 // appendROMounts appends a read-only `-v host:box:ro` bind for each mount.
 func appendROMounts(args []string, ms []extraMount) []string {
 	for _, m := range ms {
@@ -837,6 +884,9 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 
 	args = append(args, cfg.ExtraRunArgs...)
 	args = append(args, spec.ExtraArgs...)
+	if spec.Serve {
+		args = appendPublish(args, cfg, spec)
+	}
 	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
 	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped
 	// config.normalizeEgress) cuts the box off the network entirely (--network none), so a missed

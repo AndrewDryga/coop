@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -61,7 +62,7 @@ func (a *app) runInBox(cmd []string, agent string, consult bool) (int, error) {
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Preset: a.preset,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 	})
 }
 
@@ -529,7 +530,18 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if ctrlModel == "" {
 			ctrlModel = a.cfg.ModelFor(tool)
 		}
-		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, a.acpPresetNames(repo, tool))
+		// Ports the inner box will publish (.agent/project.yaml serve), reported to the editor once per
+		// session. Deterministic host ports (project.HostPort), so these match what box.Run binds. Only
+		// when egress is open — otherwise nothing publishes, so nothing to announce.
+		var serveURLs []string
+		if a.cfg.Egress == "open" {
+			if pj, err := project.Load(repo); err == nil {
+				for _, port := range pj.Serve.Ports {
+					serveURLs = append(serveURLs, fmt.Sprintf("box :%d → http://localhost:%d", port, project.HostPort(repo, port)))
+				}
+			}
+		}
+		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, a.acpPresetNames(repo, tool), serveURLs)
 		return a.cmdACPSupervise(inner, ctrl)
 	}
 	a.applyPreset(p, tool)
@@ -558,7 +570,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
-		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool,
+		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
 		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
 		FusionGovernor: governor, ConsultLead: lead, Preset: a.preset, Quiet: true,
 		ExtraArgs: extra,
