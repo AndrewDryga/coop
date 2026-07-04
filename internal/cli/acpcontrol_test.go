@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -253,5 +255,160 @@ func TestChooseAllow(t *testing.T) {
 		if got := chooseAllow(tc.opts); got != tc.want {
 			t.Errorf("case %d: chooseAllow=%q want %q", i, got, tc.want)
 		}
+	}
+}
+
+// TestACPControlAutoResendOnRotate: a captured prompt whose turn rate-limits is re-sent transparently
+// on the backup credential — the error is swallowed (no editor message) and the session flagged.
+func TestACPControlAutoResendOnRotate(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.sel = "cred:personal"
+
+	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	if handled, _, _ := c.fromEditor(prompt); handled {
+		t.Fatal("a session/prompt must pass through (handled=false)")
+	}
+	if c.lastPrompt["S"] == nil || c.promptSession[`"p1"`] != "S" {
+		t.Fatalf("prompt not captured: lastPrompt=%v promptSession=%v", c.lastPrompt["S"], c.promptSession)
+	}
+
+	limitErr := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32000,"message":"You've hit your session limit"}}` + "\n")
+	out, restart := c.toEditor(limitErr)
+	if !restart {
+		t.Fatal("a rate-limit error must restart")
+	}
+	if out != nil {
+		t.Errorf("a transparent rotate must swallow the error (no editor message), got: %s", out)
+	}
+	if cred, _ := c.selection(); cred != "work" {
+		t.Errorf("must rotate to work, got %q", cred)
+	}
+	if !c.resend["S"] {
+		t.Error("session S must be flagged for resend")
+	}
+	if got := c.resumePrompt("S"); string(got) != string(prompt) {
+		t.Errorf("resumePrompt should return the captured prompt, got: %s", got)
+	}
+	if got := c.resumePrompt("S"); got != nil {
+		t.Errorf("resumePrompt must be one-shot, second call got: %s", got)
+	}
+}
+
+// TestACPControlSuppressesLimitChunk: the rate-limit notice the adapter streams before erroring is
+// held and then dropped (not flushed) when the rate-limit error follows — a seamless resend.
+func TestACPControlSuppressesLimitChunk(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.sel = "cred:personal"
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S"}}` + "\n"))
+
+	chunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"You've hit your session limit"}}}}` + "\n")
+	if out, _ := c.toEditor(chunk); out != nil {
+		t.Errorf("a rate-limit chunk must be held (not forwarded), got: %s", out)
+	}
+	if _, restart := c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","error":{"message":"You've hit your session limit"}}` + "\n")); !restart {
+		t.Fatal("the error must rotate")
+	}
+	// A later normal chunk for S must not carry the dropped notice.
+	upd := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}` + "\n")
+	out, _ := c.toEditor(upd)
+	if strings.Contains(string(out), "session limit") {
+		t.Errorf("the suppressed notice must not resurface, got: %s", out)
+	}
+	if !strings.Contains(string(out), "hello") {
+		t.Errorf("the normal update must pass through, got: %s", out)
+	}
+}
+
+// TestACPControlFlushesHeldChunkOnContinue: a chunk that merely MENTIONS a limit (no error follows) is
+// flushed intact once the turn continues — coop never silently drops legitimate output.
+func TestACPControlFlushesHeldChunkOnContinue(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.sel = "cred:personal"
+
+	chunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a 429 rate limit means"}}}}` + "\n")
+	if out, _ := c.toEditor(chunk); out != nil {
+		t.Errorf("a limit-mentioning chunk is held pending the outcome, got: %s", out)
+	}
+	next := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" too many requests"}}}}` + "\n")
+	out, _ := c.toEditor(next)
+	if !strings.Contains(string(out), "429 rate limit means") || !strings.Contains(string(out), "too many requests") {
+		t.Errorf("the held chunk must be flushed before the continuation, got: %s", out)
+	}
+	if strings.Count(string(out), "\n") != 2 {
+		t.Errorf("expected two newline-delimited frames, got: %s", out)
+	}
+}
+
+// TestACPControlWaitsForReset: with no free account, coop points at the nearest reset, tells the editor
+// it's waiting, flags the resend, and keeps the account marked limited so the factory blocks.
+func TestACPControlWaitsForReset(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal"} // single account → nowhere to rotate
+	c.sel = "cred:personal"
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S"}}` + "\n"))
+
+	epoch := time.Now().Add(time.Hour).Unix()
+	limitErr := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"p1","error":{"message":"Claude AI usage limit reached|%d"}}`, epoch) + "\n")
+	out, restart := c.toEditor(limitErr)
+	if !restart {
+		t.Fatal("must restart to wait on the reset")
+	}
+	if !strings.Contains(string(out), "Waiting for a reset on credential personal") {
+		t.Errorf("editor should get the waiting status, got: %s", out)
+	}
+	if cred, _ := c.selection(); cred != "personal" {
+		t.Errorf("selection should stay on personal to wait, got %q", cred)
+	}
+	if !c.resend["S"] {
+		t.Error("session must be flagged for resend after the wait")
+	}
+	if _, ok := c.limited["personal"]; !ok {
+		t.Error("personal must be marked limited so the factory waits")
+	}
+}
+
+// TestFormatWait: MM:SS under an hour, Hh MMm at/over an hour, clamped at zero.
+func TestFormatWait(t *testing.T) {
+	cases := map[time.Duration]string{
+		90 * time.Second:                      "01:30",
+		30 * time.Second:                      "00:30",
+		time.Hour + time.Minute + time.Second: "1h01m",
+		2*time.Hour + 5*time.Minute:           "2h05m",
+		-5 * time.Second:                      "00:00",
+	}
+	for d, want := range cases {
+		if got := formatWait(d); got != want {
+			t.Errorf("formatWait(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// TestWaitForReset: no-op when unlimited, blocks until a near reset, aborts on ctx cancel.
+func TestWaitForReset(t *testing.T) {
+	c := newTestControl(t)
+
+	start := time.Now()
+	c.waitForReset(context.Background(), "personal")
+	if time.Since(start) > 100*time.Millisecond {
+		t.Error("waitForReset must be a no-op for an unlimited credential")
+	}
+
+	c.limited["personal"] = time.Now().Add(60 * time.Millisecond)
+	start = time.Now()
+	c.waitForReset(context.Background(), "personal")
+	if d := time.Since(start); d < 40*time.Millisecond {
+		t.Errorf("waitForReset returned too early (%s) — it must wait for the reset", d)
+	}
+
+	c.limited["personal"] = time.Now().Add(10 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start = time.Now()
+	c.waitForReset(ctx, "personal")
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Errorf("waitForReset must abort on ctx cancel, took %s", d)
 	}
 }

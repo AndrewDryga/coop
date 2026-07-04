@@ -588,7 +588,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	}
 	superID := hex.EncodeToString(idbuf)
 
-	factory := func(_ context.Context) (*acpproxy.Child, error) {
+	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		inR, inW, err := os.Pipe()
 		if err != nil {
 			return nil, err
@@ -609,6 +609,10 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		// The current selection (a credential OR a preset) drives which identity the inner box runs
 		// on; each respawn reads it, so a switch via coop's selector lands on the new one.
 		if cred, preset := ctrl.selection(); cred != "" {
+			// If this respawn is pointed at a still-cooling account (the wait-for-reset path when every
+			// account is rate limited), block until it resets before spawning — sits before replay, so
+			// the replay startup grace is unaffected.
+			ctrl.waitForReset(ctx, cred)
 			env = append(env, "COOP_ACP_CREDENTIAL="+cred)
 			acpproxy.Trace("spawn box on credential=%s", cred)
 		} else if preset != "" {

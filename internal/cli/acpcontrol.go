@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -58,6 +59,13 @@ type acpControl struct {
 	cached  map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
 	limited map[string]time.Time       // account -> when its rate limit resets (skip until then)
 	nextID  int
+
+	// Transparent rate-limit resend: correlate a rate-limit error (which carries only a request id)
+	// back to its session, and re-send that prompt once the box is back on a fresh credential.
+	promptSession map[string]string // in-flight session/prompt: request id -> editor sessionId
+	lastPrompt    map[string][]byte // editor sessionId -> its latest prompt line (what to resend)
+	resend        map[string]bool   // editor sessionId -> re-send the last prompt after the next restart
+	heldChunk     map[string][]byte // editor sessionId -> a buffered rate-limit notice awaiting the turn's outcome
 }
 
 func newACPControl(cfg *config.Config, lead, model, cred string, presets []string) *acpControl {
@@ -67,8 +75,14 @@ func newACPControl(cfg *config.Config, lead, model, cred string, presets []strin
 	}
 	return &acpControl{
 		lead: lead, model: model, creds: cfg.Profiles(lead), presets: presets,
-		accounts: accountsFor(cfg, lead),
-		sel:      sel, cached: map[string]json.RawMessage{}, limited: map[string]time.Time{},
+		accounts:      accountsFor(cfg, lead),
+		sel:           sel,
+		cached:        map[string]json.RawMessage{},
+		limited:       map[string]time.Time{},
+		promptSession: map[string]string{},
+		lastPrompt:    map[string][]byte{},
+		resend:        map[string]bool{},
+		heldChunk:     map[string][]byte{},
 	}
 }
 
@@ -79,7 +93,20 @@ func (c *acpControl) hooks() *acpproxy.Hooks {
 		SessionReady: c.sessionReady,
 		FromEditor:   c.fromEditor,
 		AutoReply:    c.autoReply,
+		ResumePrompt: c.resumePrompt,
 	}
+}
+
+// resumePrompt returns the prompt to transparently re-send for a session once its box is back after a
+// rate-limit rotation/wait, or nil. One-shot: the flag is cleared so a later restart doesn't re-send.
+func (c *acpControl) resumePrompt(session string) []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.resend[session] {
+		return nil
+	}
+	delete(c.resend, session)
+	return c.lastPrompt[session]
 }
 
 // selection returns the current credential and preset (one is "", the other set) the factory reads
@@ -96,22 +123,62 @@ func (c *acpControl) selection() (cred, preset string) {
 	return "", ""
 }
 
+// waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
+// wait-for-reset path pointed at a still-cooling account only starts once it's usable. A no-op for an
+// account that isn't limited — the common case, including a normal rotation to a free account.
+func (c *acpControl) waitForReset(ctx context.Context, cred string) {
+	c.mu.Lock()
+	until := c.limited[cred]
+	c.mu.Unlock()
+	d := time.Until(until)
+	if d <= 0 {
+		return
+	}
+	if d > limitMaxWait {
+		d = limitMaxWait
+	}
+	acpproxy.Trace("waiting %s for credential %s to reset before spawning", d.Round(time.Second), cred)
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
 // toEditor rewrites an agent→editor line. On any object carrying configOptions/modes (a
 // session/new|load|resume result or a ConfigOptionUpdate notification), it drops the mode+subagent
 // dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
 // watches for a rate-limit error and auto-rotates the credential (restart=true) — see maybeRotate.
 func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
+	// A rate-limit error → rotate to a free account (or wait for the nearest reset) and re-send the
+	// prompt transparently; maybeRotate also drops any buffered rate-limit notice for that turn.
 	if rewritten, rotated := c.maybeRotate(line); rotated {
 		return rewritten, true
 	}
+	// Buffer a rate-limit notice chunk until the turn's outcome is known — suppressed if the turn then
+	// rate-limits (a seamless resend), flushed otherwise. This never drops a legit chunk that merely
+	// mentions "rate limit"/"quota"/429, because a chunk is only dropped when a rate-limit error follows.
+	if hold, flush := c.chunkGate(line); hold {
+		return nil, false
+	} else if flush != nil {
+		return append(flush, c.rewriteToEditor(line)...), false
+	}
+	return c.rewriteToEditor(line), false
+}
+
+// rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a
+// session/new|load|resume result or a ConfigOptionUpdate) it drops the mode+subagent dropdowns and the
+// modes mirror, defaults the model to coop's, and prepends coop's selector. Other lines pass through.
+func (c *acpControl) rewriteToEditor(line []byte) []byte {
 	// Fast path: only session/new|load|resume results and ConfigOptionUpdate notifications carry these,
 	// so skip parsing the (often large) prompt/tool-call traffic entirely.
 	if !bytes.Contains(line, []byte("configOptions")) && !bytes.Contains(line, []byte(`"modes"`)) {
-		return line, false
+		return line
 	}
 	var m map[string]json.RawMessage
 	if json.Unmarshal(line, &m) != nil {
-		return line, false
+		return line
 	}
 	for _, key := range []string{"result", "params"} {
 		raw, ok := m[key]
@@ -134,20 +201,22 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 		if nb, err := json.Marshal(inner); err == nil {
 			m[key] = nb
 			if out, err := json.Marshal(m); err == nil {
-				return append(out, '\n'), false
+				return append(out, '\n')
 			}
 		}
 	}
-	return line, false
+	return line
 }
 
-// maybeRotate implements Step 4 — auto-rotate credentials on a rate limit — reusing the loop's
-// detectLimit + account rotation. If this is a CREDENTIAL session (a preset rotates via its own
-// models ladder, not here) and the line is a JSON-RPC error whose message trips the rate-limit
-// detector, it marks the current account limited, picks the next signed-in account that isn't, points
-// the selection at it, and returns (rewritten error, true) so the proxy restarts the box on it —
-// the same transparent restart+replay path as a manual switch. Returns (nil,false) to forward the
-// line unchanged (not an error, not a limit, or nowhere free to rotate to → the user just waits).
+// maybeRotate handles a rate limit on a CREDENTIAL session (a preset rotates via its own models
+// ladder, not here) transparently, reusing the loop's detectLimit. On a JSON-RPC error whose message
+// trips the detector it marks the current account limited and, correlating the error back to the
+// prompt that triggered it: if another account is free, it swaps to it and flags the prompt for an
+// automatic re-send (returns nil,true — the error is swallowed, the turn just completes on the backup
+// credential); if none is free, it points at the account that resets soonest, returns a "waiting"
+// status (true) — the factory blocks until the reset — and flags the same re-send. Falls back to the
+// old switch-and-ask-to-resend note (or forwarding the error) only when it can't identify the prompt.
+// Returns (nil,false) to leave the line untouched (not an error, not a limit, or nothing to do).
 func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	if !bytes.Contains(line, []byte(`"error"`)) {
 		return nil, false
@@ -157,6 +226,7 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return nil, false
 	}
 	var h struct {
+		ID    json.RawMessage `json:"id"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -173,15 +243,189 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	if until.IsZero() {
 		until = now.Add(defaultLimitCooldown)
 	}
+	// Correlate the error (which carries only a request id) back to its session, so we can re-send that
+	// prompt transparently. Drop the buffered rate-limit notice for this turn either way (never flush it).
+	c.mu.Lock()
+	session := c.promptSession[string(h.ID)]
+	delete(c.promptSession, string(h.ID))
+	canResend := session != "" && c.lastPrompt[session] != nil
+	if session != "" {
+		delete(c.heldChunk, session)
+	}
+	c.mu.Unlock()
+
 	next := c.nextAccount(cred, until, now)
-	if next == "" {
-		return nil, false // one account, or all cooling — forward the error; the user waits/retries
+	if next != "" {
+		c.mu.Lock()
+		c.sel = "cred:" + next
+		if canResend {
+			c.resend[session] = true
+		}
+		c.mu.Unlock()
+		if canResend {
+			acpproxy.Trace("rate limit on %s: rotating to %s + auto-resending", cred, next)
+			return nil, true // transparent: swallow the error, restart on `next`, re-send after replay
+		}
+		// Couldn't identify the prompt — fall back to switching + asking the user to resend.
+		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", cred, next)), true
+	}
+
+	// Nothing free right now: wait for the nearest reset, then re-send on that account. Needs a known
+	// reset and a captured prompt; otherwise forward the error so the user can wait/retry themselves.
+	acct, at := c.nearestReset()
+	if acct == "" || !canResend {
+		return nil, false
 	}
 	c.mu.Lock()
-	c.sel = "cred:" + next
+	c.sel = "cred:" + acct
+	c.resend[session] = true
 	c.mu.Unlock()
-	msg := fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", cred, next)
-	return rewriteErrorMessage(line, msg), true
+	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
+	return c.waitStatus(session, acct, at, now), true
+}
+
+// nearestReset returns the signed-in account whose rate limit resets soonest (and when), or "" if none
+// are marked limited. Used when no account is free right now: coop waits for this one, then re-sends.
+func (c *acpControl) nearestReset() (account string, at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, a := range c.accounts {
+		t, ok := c.limited[a]
+		if !ok {
+			continue
+		}
+		if at.IsZero() || t.Before(at) {
+			account, at = a, t
+		}
+	}
+	return account, at
+}
+
+// waitStatus builds the one status line the editor shows while coop waits for a reset (no live
+// countdown — the absolute time says when it resumes). It carries the editor's session id so the
+// message lands in the right thread, and a coop messageId so the editor renders it.
+func (c *acpControl) waitStatus(session, account string, at, now time.Time) []byte {
+	c.mu.Lock()
+	c.nextID++
+	n := c.nextID
+	c.mu.Unlock()
+	text := fmt.Sprintf("Waiting for a reset on credential %s in %s (at %s) — your message will send automatically.",
+		account, formatWait(at.Sub(now)), at.Local().Format("Mon 15:04 MST"))
+	upd := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": session,
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]any{"type": "text", "text": text},
+				"messageId":     fmt.Sprintf("coop-wait-%d", n),
+			},
+		},
+	}
+	b, _ := json.Marshal(upd)
+	return append(b, '\n')
+}
+
+// formatWait renders a wait as MM:SS, or Hh MMm once it's an hour or more.
+func formatWait(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	if d >= time.Hour {
+		return fmt.Sprintf("%dh%02dm", d/time.Hour, (d%time.Hour)/time.Minute)
+	}
+	return fmt.Sprintf("%02d:%02d", d/time.Minute, (d%time.Minute)/time.Second)
+}
+
+// chunkGate decides, for a credential session, whether to buffer a rate-limit notice chunk (hold) or
+// flush a previously buffered one because the turn produced other output / completed (flush). A held
+// chunk is only ever dropped by maybeRotate when a rate-limit error follows; anything else flushes it,
+// so no legitimate chunk is lost. Off for preset sessions (not auto-rotated here).
+func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
+	if cred, preset := c.selection(); cred == "" || preset != "" {
+		return false, nil
+	}
+	if s, text, ok := agentChunk(line); ok && detectLimit(text, time.Now()).limited {
+		c.mu.Lock()
+		c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
+		c.mu.Unlock()
+		return true, nil
+	}
+	// Not a notice chunk: the turn is producing normal output or completing → flush any held notice for
+	// its session. A notification carries the sessionId; a response is matched via the prompt it answers.
+	s := lineSession(line)
+	if s == "" {
+		if id := responseID(line); id != "" {
+			c.mu.Lock()
+			s = c.promptSession[id]
+			delete(c.promptSession, id) // the prompt completed (any outcome) — stop tracking it
+			c.mu.Unlock()
+		}
+	}
+	if s == "" {
+		return false, nil
+	}
+	c.mu.Lock()
+	held := c.heldChunk[s]
+	delete(c.heldChunk, s)
+	c.mu.Unlock()
+	return false, held
+}
+
+// agentChunk reports whether line is an agent_message_chunk session/update, returning its session id
+// and streamed text. lineSession returns a line's params.sessionId (notifications), and responseID
+// returns the request id of a success response — both "" when absent.
+func agentChunk(line []byte) (session, text string, ok bool) {
+	if !bytes.Contains(line, []byte("agent_message_chunk")) {
+		return "", "", false
+	}
+	var m struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			Update    struct {
+				SessionUpdate string `json:"sessionUpdate"`
+				Content       struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &m) != nil || m.Method != "session/update" || m.Params.Update.SessionUpdate != "agent_message_chunk" {
+		return "", "", false
+	}
+	return m.Params.SessionID, m.Params.Update.Content.Text, true
+}
+
+func lineSession(line []byte) string {
+	if !bytes.Contains(line, []byte("sessionId")) {
+		return ""
+	}
+	var m struct {
+		Params struct {
+			SessionID string `json:"sessionId"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &m) != nil {
+		return ""
+	}
+	return m.Params.SessionID
+}
+
+func responseID(line []byte) string {
+	if !bytes.Contains(line, []byte(`"result"`)) {
+		return ""
+	}
+	var m struct {
+		ID     json.RawMessage `json:"id"`
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(line, &m) != nil || len(m.ID) == 0 || len(m.Result) == 0 {
+		return ""
+	}
+	return string(m.ID)
 }
 
 // nextAccount marks cur rate-limited until `until`, then returns the next signed-in account (cyclic
@@ -394,7 +638,20 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, restart
 			Value     string `json:"value"`
 		} `json:"params"`
 	}
-	if json.Unmarshal(line, &h) != nil || h.Method != "session/set_config_option" || h.Params.ConfigID != coopSetupID {
+	if json.Unmarshal(line, &h) != nil {
+		return false, nil, false
+	}
+	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it. Pass it
+	// through unchanged — coop only observes it here.
+	if h.Method == "session/prompt" && h.Params.SessionID != "" && len(h.ID) > 0 {
+		clone := append([]byte(nil), line...)
+		c.mu.Lock()
+		c.promptSession[string(h.ID)] = h.Params.SessionID
+		c.lastPrompt[h.Params.SessionID] = clone
+		c.mu.Unlock()
+		return false, nil, false
+	}
+	if h.Method != "session/set_config_option" || h.Params.ConfigID != coopSetupID {
 		return false, nil, false
 	}
 	c.mu.Lock()

@@ -69,6 +69,13 @@ type Hooks struct {
 	// Called for every agent→editor request. Return reply != nil to write it back to the ADAPTER;
 	// forward=false to NOT pass the original request on to the editor. (nil, true) is pass-through.
 	AutoReply func(line []byte) (reply []byte, forward bool)
+	// ResumePrompt is called once per live session right after a restart's replay re-establishes it, so
+	// coop can transparently re-send a prompt that failed on the old box (the turn that tripped a
+	// rate-limit rotation / wait). A non-nil return is fed through the normal editor→box path — remapped
+	// to the box id, registered as pending, its response forwarded to the editor — so the turn the
+	// editor still shows as running completes on the new box. Return nil for a session with nothing to
+	// resume. The returned line MUST carry the editor's session id (like a real editor prompt).
+	ResumePrompt func(sessionID string) []byte
 }
 
 // InjectPrefix namespaces coop's SessionReady-injected request IDs so the proxy swallows their
@@ -554,6 +561,23 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		}
 	}
 	p.swapChild(c)
+	// A session may have a prompt to re-send transparently — a turn that failed on the old box (a
+	// rate-limit rotation/wait). Feed it through the normal client path AFTER the swap, so it's remapped,
+	// tracked as pending, and its response reaches the editor, completing the turn the editor still shows
+	// as running. Done post-swap so swapChild's pending-fail doesn't cancel the resend we just queued.
+	if p.hooks != nil && p.hooks.ResumePrompt != nil {
+		p.mu.Lock()
+		eids := make([]string, 0, len(p.sessions))
+		for eid := range p.sessions {
+			eids = append(eids, eid)
+		}
+		p.mu.Unlock()
+		for _, eid := range eids {
+			if line := p.hooks.ResumePrompt(eid); len(line) > 0 {
+				p.fromClient(line)
+			}
+		}
+	}
 	return nil
 }
 

@@ -173,6 +173,90 @@ func idStr(t *testing.T, line []byte) string {
 	return string(m.ID)
 }
 
+// TestProxyResumePromptReinjectsAfterRestart: after a restart replays a session, a non-nil
+// ResumePrompt is fed through the client path — reaching the new box remapped + tracked — and its
+// response reaches the editor, completing the turn transparently (coop's rate-limit auto-resend).
+func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	c1, c2 := newFakeChild(), newFakeChild()
+	queue := make(chan *fakeChild, 2)
+	queue <- c1
+	queue <- c2
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	resumed := false
+	hooks := &Hooks{ResumePrompt: func(sid string) []byte {
+		if sid == "S1" && !resumed {
+			resumed = true
+			return []byte(`{"jsonrpc":"2.0","id":"resume-9","method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"again"}]}}` + "\n")
+		}
+		return nil
+	}}
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+
+	childIn1 := bufio.NewReader(c1.inR)
+	childIn2 := bufio.NewReader(c2.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, clientOut)
+
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	readLine(t, clientOut)
+
+	// A prompt turns the session, so the restart reloads it (rather than re-creating it).
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`)
+	readLine(t, childIn1)
+
+	// child1 dies → replay initialize + session/load(S1) on child2.
+	c1.outW.Close()
+	for {
+		h := parse(readLine(t, childIn2))
+		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
+		if h.Method == "session/load" {
+			break
+		}
+	}
+
+	// swapChild fails the in-flight id 3 → drain it first (it's written before the resume is queued).
+	if id := idStr(t, readLine(t, clientOut)); id != "3" {
+		t.Fatalf("expected in-flight id 3 failed on swap, got %q", id)
+	}
+
+	// After the swap, ResumePrompt fires: the prompt is re-injected to the new box.
+	fr := parse(readLine(t, childIn2))
+	if fr.Method != "session/prompt" {
+		t.Fatalf("resume frame = %q, want session/prompt", fr.Method)
+	}
+	if sid := sessionID(fr.Params); sid != "S1" {
+		t.Fatalf("resumed prompt sessionId = %q, want S1", sid)
+	}
+	if string(trimQuotes(fr.ID)) != "resume-9" {
+		t.Fatalf("resumed prompt id = %s, want resume-9", fr.ID)
+	}
+
+	// Its response reaches the editor — the turn completes.
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":"resume-9","result":{"stopReason":"end_turn"}}`)
+	line := readLine(t, clientOut)
+	if !strings.Contains(string(line), "resume-9") || !strings.Contains(string(line), "result") {
+		t.Fatalf("resumed prompt response never reached the editor, got %s", line)
+	}
+
+	clientInW.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after client close")
+	}
+}
+
 // TestProxyAutoReplyAnswersChildRequest: an agent→editor request the hook claims (a permission ask)
 // is answered straight to the child and NOT forwarded to the editor; other traffic still flows.
 func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
