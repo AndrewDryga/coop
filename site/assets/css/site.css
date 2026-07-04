@@ -152,7 +152,12 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .term-bar .title { margin-left: 8px; font-family: var(--font-mono); font-size: 0.78rem; color: var(--faint); }
 .term-body { background: #0a0c10; }
 .term-body .cast { width: 100%; }
-.term-body pre.code { border: 0; border-radius: 0; margin: 0; }  /* a code block sits flush in the window chrome */
+/* a code listing flush inside a .term window — its own class, so there's no nested box */
+.term-code {
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+  font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.6; color: #d4d8df;
+}
+.term-code .t { color: var(--faint); }
 /* asciinema-player: a theme that matches the generated casts */
 .asciinema-player-theme-coop {
   --term-color-foreground: #ece7de;

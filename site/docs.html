@@ -21,21 +21,45 @@
         <meta property="og:type" content="article" />
         <meta property="og:site_name" content="coop" />
         <meta property="og:url" content="https://coop.dryga.com/docs.html" />
-        <meta property="og:title" content="coop docs — run coding agents you don't fully trust, safely" />
-        <meta property="og:description" content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more." />
-        <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png" />
+        <meta
+            property="og:title"
+            content="coop docs — run coding agents you don't fully trust, safely"
+        />
+        <meta
+            property="og:description"
+            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more."
+        />
+        <meta
+            property="og:image"
+            content="https://coop.dryga.com/assets/img/og-image.png"
+        />
         <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="The coop wordmark and tagline beside a terminal draining an overnight task queue." />
+        <meta
+            property="og:image:alt"
+            content="The coop wordmark and tagline beside a terminal draining an overnight task queue."
+        />
         <meta property="og:locale" content="en_US" />
 
         <!-- Twitter / X -->
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="coop docs — run coding agents you don't fully trust, safely" />
-        <meta name="twitter:description" content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more." />
-        <meta name="twitter:image" content="https://coop.dryga.com/assets/img/og-image.png" />
-        <meta name="twitter:image:alt" content="The coop wordmark and tagline beside a terminal draining an overnight task queue." />
+        <meta
+            name="twitter:title"
+            content="coop docs — run coding agents you don't fully trust, safely"
+        />
+        <meta
+            name="twitter:description"
+            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more."
+        />
+        <meta
+            name="twitter:image"
+            content="https://coop.dryga.com/assets/img/og-image.png"
+        />
+        <meta
+            name="twitter:image:alt"
+            content="The coop wordmark and tagline beside a terminal draining an overnight task queue."
+        />
 
         <link rel="stylesheet" href="assets/vendor/asciinema-player.css" />
         <link rel="stylesheet" href="assets/css/site.css" />
@@ -239,16 +263,6 @@
                         IDE. Everything outside that one directory — the rest of
                         your disk — is just not present in the container.
                     </p>
-                    <div class="why">
-                        <span class="why-label">Why the path matches</span>
-                        <p>
-                            A fixed <code>/workspace</code> mount would break
-                            tools that record absolute paths (agent session
-                            files, your editor's project state). Mounting at the
-                            real path means a session you start in the loop is
-                            the same one you can resume later from Zed.
-                        </p>
-                    </div>
                     <h3>Your git identity, not the box's</h3>
                     <p>
                         The container has no <code>~/.gitconfig</code> of its
@@ -459,11 +473,13 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         oversized files on the way in.
                     </p>
                     <p>
-                        Landing brings over <em>code</em>, not queue state: a fork
-                        works a copy of the <code>.agent/tasks/</code> queue, so after a
-                        merge the parent still lists the tasks the fork finished — mark them
-                        done or remove them, and run <code>coop tasks watch</code> for the
-                        deduped view across the parent and its forks while they run.
+                        Landing brings over <em>code</em>, not queue state: a
+                        fork works a copy of the
+                        <code>.agent/tasks/</code> queue, so after a merge the
+                        parent still lists the tasks the fork finished — mark
+                        them done or remove them, and run
+                        <code>coop tasks watch</code> for the deduped view
+                        across the parent and its forks while they run.
                     </p>
                     <figure class="cast-figure">
                         <div class="term">
@@ -593,19 +609,23 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         straight through the limit instead of dying on it.
                     </p>
                     <p>
-                        <strong>It parks a decision instead of guessing.</strong> On
-                        a one-way-door call it shouldn't make alone, the agent moves
-                        the task to <code>50_blocked/</code> and writes a
-                        <code>decision.md</code> (the question, options, its
-                        recommendation) rather than picking blind. When nothing else
-                        is actionable the loop stops and exits <code>3</code>, so
-                        cron/CI can tell "stalled on a decision" from "done." Answer
-                        them with <code>coop tasks decisions -i</code> — it walks each
-                        open decision, records your answer, and unblocks the task —
-                        then re-run <code>coop loop</code> (or start it with
-                        <code>--preflight</code> to unblock already-answered ones
-                        first). <code>coop tasks watch</code> shows the live board —
-                        the queue plus any running forks, deduped — while it works.
+                        <strong
+                            >It parks a decision instead of guessing.</strong
+                        >
+                        On a one-way-door call it shouldn't make alone, the
+                        agent moves the task to <code>50_blocked/</code> and
+                        writes a <code>decision.md</code> (the question,
+                        options, its recommendation) rather than picking blind.
+                        When nothing else is actionable the loop stops and exits
+                        <code>3</code>, so cron/CI can tell "stalled on a
+                        decision" from "done." Answer them with
+                        <code>coop tasks decisions -i</code> — it walks each
+                        open decision, records your answer, and unblocks the
+                        task — then re-run <code>coop loop</code> (or start it
+                        with <code>--preflight</code> to unblock
+                        already-answered ones first).
+                        <code>coop tasks watch</code> shows the live board — the
+                        queue plus any running forks, deduped — while it works.
                     </p>
                     <div class="why">
                         <span class="why-label">Good fits</span>
@@ -701,14 +721,15 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> fleet watch      <span class="t"># the live dashboard</span>
 <span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>
                     <p>
-                        Each fork in <code>.agent/fleet.yaml</code> takes per-fork
-                        keys: <code>credential:</code> pins its account (give each
-                        one a different account so they don't contend),
-                        <code>model:</code> picks its model (may be
-                        <code>model@account</code>), <code>preset:</code> runs it
-                        under an <a href="#presets">orchestration preset</a>, and
-                        <code>consult: true</code> lets its iterations ask the
-                        other signed-in agents for a read-only second opinion.
+                        Each fork in <code>.agent/fleet.yaml</code> takes
+                        per-fork keys: <code>credential:</code> pins its account
+                        (give each one a different account so they don't
+                        contend), <code>model:</code> picks its model (may be
+                        <code>model@account</code>), <code>preset:</code> runs
+                        it under an <a href="#presets">orchestration preset</a>,
+                        and <code>consult: true</code> lets its iterations ask
+                        the other signed-in agents for a read-only second
+                        opinion.
                     </p>
                     <div class="why">
                         <span class="why-label">Why run a fleet</span>
@@ -750,10 +771,10 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </p>
                     <p>
                         Sign in to several subscriptions as named
-                        <strong>credentials</strong>. When a loop hits a limit on
-                        one, it rotates to another that's still fresh and keeps
-                        going — only ever waiting once <em>every</em> account is
-                        capped.
+                        <strong>credentials</strong>. When a loop hits a limit
+                        on one, it rotates to another that's still fresh and
+                        keeps going — only ever waiting once
+                        <em>every</em> account is capped.
                     </p>
                     <pre
                         class="code"
@@ -761,16 +782,21 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> login claude --credential personal   <span class="t"># …and a third</span>
 <span class="k">coop</span> credentials                          <span class="t"># list them + which are signed in</span></pre>
                     <p>
-                        There's no pool to configure: a loop rotates whatever its
-                        lead's <a href="#presets">models ladder</a> expands to. A
-                        bare model in that ladder fans out across <em>every</em>
+                        There's no pool to configure: a loop rotates whatever
+                        its lead's <a href="#presets">models ladder</a> expands
+                        to. A bare model in that ladder fans out across
+                        <em>every</em>
                         signed-in account (the marked default first), so with no
                         setup a loop already uses all your accounts; a pinned
-                        <code>model@account</code> runs just one. Limits are tracked
-                        per (model, account), so <code>opus@personal</code> stays
-                        usable while <code>opus@work</code> cools down. Mark which
-                        account a plain <code>coop &lt;agent&gt;</code> uses with
-                        <code>coop credentials &lt;agent&gt; &lt;name&gt; default</code>.
+                        <code>model@account</code> runs just one. Limits are
+                        tracked per (model, account), so
+                        <code>opus@personal</code> stays usable while
+                        <code>opus@work</code> cools down. Mark which account a
+                        plain <code>coop &lt;agent&gt;</code> uses with
+                        <code
+                            >coop credentials &lt;agent&gt; &lt;name&gt;
+                            default</code
+                        >.
                     </p>
                     <p>
                         Only the <em>active</em> credential is ever mounted into
@@ -810,16 +836,17 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         This is what makes the
                         <strong>orchestrator pattern</strong> cheap to run.
                         <code>coop init</code> scaffolds two starter subagents:
-                        <code>deep-reasoner</code> (pinned to Opus — architecture,
-                        complex debugging) and <code>fast-worker</code> (pinned
-                        to Sonnet — mechanical work). A lead on a bigger model
-                        spends its tokens on planning and synthesis while each
-                        delegated turn bills at the subagent's cheaper model.
-                        Add <code>--consult</code> (or <code>consult: true</code>
-                        on a fleet fork) and the lead can also ask codex and
-                        gemini read-only — peer engineers with different blind
-                        spots, no plugins required. Wrap the whole arrangement in
-                        a <a href="#presets">preset</a>.
+                        <code>deep-reasoner</code> (pinned to Opus —
+                        architecture, complex debugging) and
+                        <code>fast-worker</code> (pinned to Sonnet — mechanical
+                        work). A lead on a bigger model spends its tokens on
+                        planning and synthesis while each delegated turn bills
+                        at the subagent's cheaper model. Add
+                        <code>--consult</code> (or <code>consult: true</code> on
+                        a fleet fork) and the lead can also ask codex and gemini
+                        read-only — peer engineers with different blind spots,
+                        no plugins required. Wrap the whole arrangement in a
+                        <a href="#presets">preset</a>.
                     </p>
                 </section>
 
@@ -835,12 +862,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         patterns above are wired up by hand — a model here, a
                         <code>--consult</code> there. A <strong>preset</strong>
                         captures the whole recipe in
-                        <code>.agent/presets/&lt;name&gt;/preset.yaml</code>: who
-                        leads, on which models, and the named roles it can hand
-                        work to. Run it with <code>--preset &lt;name&gt;</code> on
-                        any surface — <code>coop &lt;agent&gt;</code>,
-                        <code>loop</code>, <code>fusion</code>, <code>acp</code>,
-                        or a fork.
+                        <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
+                        who leads, on which models, and the named roles it can
+                        hand work to. Run it with
+                        <code>--preset &lt;name&gt;</code> on any surface —
+                        <code>coop &lt;agent&gt;</code>, <code>loop</code>,
+                        <code>fusion</code>, <code>acp</code>, or a fork.
                     </p>
                     <pre
                         class="code"
@@ -848,11 +875,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> presets               <span class="t"># list every preset (a broken one shows its error)</span>
 <span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
                     <p>
-                        The lead carries a model-first <code>models:</code>
-                        ladder — the same ladder a loop rotates (a bare model
-                        fans across every account; <code>model@account</code>
-                        pins one). Each role sets a <strong>mode</strong> that
-                        decides how the lead reaches it:
+                        The lead carries a model-first
+                        <code>models:</code> ladder — the same ladder a loop
+                        rotates (a bare model fans across every account;
+                        <code>model@account</code> pins one). Each role sets a
+                        <strong>mode</strong> that decides how the lead reaches
+                        it:
                     </p>
                     <table class="ref">
                         <tr>
@@ -862,17 +890,17 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         <tr>
                             <td><code>native</code></td>
                             <td>
-                                a Claude subagent that runs inside the lead's own
-                                session (e.g. <code>deep-reasoner</code>) — no
-                                separate box
+                                a Claude subagent that runs inside the lead's
+                                own session (e.g. <code>deep-reasoner</code>) —
+                                no separate box
                             </td>
                         </tr>
                         <tr>
                             <td><code>consult</code></td>
                             <td>
-                                a read-only peer via <code>coop-consult</code> — a
-                                second opinion from another vendor; it can't edit
-                                files
+                                a read-only peer via <code>coop-consult</code> —
+                                a second opinion from another vendor; it can't
+                                edit files
                             </td>
                         </tr>
                         <tr>
@@ -880,8 +908,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <td>
                                 a write-capable worker via
                                 <code>coop-delegate</code>: it may edit the
-                                worktree but never commits — the lead reviews the
-                                diff, runs the gate, and commits
+                                worktree but never commits — the lead reviews
+                                the diff, runs the gate, and commits
                             </td>
                         </tr>
                     </table>
@@ -908,15 +936,16 @@ roles:
                         >
                         <p>
                             coop turns the YAML into the lead's routing contract
-                            — each role, when to use it, and the exact invocation
-                            — and mounts the <code>coop-consult</code> /
+                            — each role, when to use it, and the exact
+                            invocation — and mounts the
+                            <code>coop-consult</code> /
                             <code>coop-delegate</code> wrappers.
-                            <code>coop presets init</code> also scaffolds starter
-                            prompt files under <code>roles/</code> that append to
-                            (never replace) that generated contract, so you can
-                            layer project guidance on top. An explicitly named
-                            agent or <code>--model</code> still overrides the
-                            recipe.
+                            <code>coop presets init</code> also scaffolds
+                            starter prompt files under <code>roles/</code> that
+                            append to (never replace) that generated contract,
+                            so you can layer project guidance on top. An
+                            explicitly named agent or <code>--model</code> still
+                            overrides the recipe.
                         </p>
                     </div>
                 </section>
@@ -1087,8 +1116,9 @@ roles:
                             <td><code>COOP_HOMES</code></td>
                             <td>
                                 on by default: mount your per-agent home dirs
-                                into the box; <code>COOP_HOMES=0</code> keeps them
-                                out so an agent can't read your host agent configs
+                                into the box; <code>COOP_HOMES=0</code> keeps
+                                them out so an agent can't read your host agent
+                                configs
                             </td>
                         </tr>
                         <tr>
@@ -1102,8 +1132,12 @@ roles:
                             <td><code>NO_COLOR</code></td>
                             <td>
                                 present at any value disables ANSI color
-                                everywhere (<a href="https://no-color.org"
-                                    target="_blank" rel="noopener">no-color.org</a>)
+                                everywhere (<a
+                                    href="https://no-color.org"
+                                    target="_blank"
+                                    rel="noopener"
+                                    >no-color.org</a
+                                >)
                             </td>
                         </tr>
                     </table>
@@ -1141,9 +1175,7 @@ roles:
                         </tr>
                         <tr>
                             <td>"image isn't built"</td>
-                            <td>
-                                Run <code>coop build</code> once.
-                            </td>
+                            <td>Run <code>coop build</code> once.</td>
                         </tr>
                         <tr>
                             <td>Login hangs / "usage limit reached"</td>
