@@ -159,6 +159,30 @@ func TestConsultWrapperCarriesModelOverrides(t *testing.T) {
 	}
 }
 
+// TestConsultWrapperContinuityIsolated locks in the anti-bleed contract: consult continuity is
+// keyed to a coop-owned, per-target /tmp idfile — a namespace SEPARATE from the agents' real
+// session stores — so a peer consult can never be picked up as a normal `coop <agent>` session's
+// "latest". (The primary-side guard lives in each adapter's Resume/Interactive; this is the
+// consult side.) --fresh mints and writes the id; --continue reads it.
+func TestConsultWrapperContinuityIsolated(t *testing.T) {
+	w := ConsultWrapper
+	if !strings.Contains(w, `idfile="/tmp/coop-consult-${key}.id"`) {
+		t.Error("consult continuity must key a coop-owned per-target /tmp idfile, not an agent session store")
+	}
+	// It must never read or write the agents' own session stores — touching those is the bleed.
+	for _, store := range []string{".claude/projects", ".gemini/tmp", ".codex/sessions"} {
+		if strings.Contains(w, store) {
+			t.Errorf("the wrapper must not touch the agent session store %q — that reintroduces the bleed", store)
+		}
+	}
+	if !strings.Contains(w, `>"$idfile"`) {
+		t.Error("--fresh must write the minted id to the idfile")
+	}
+	if !strings.Contains(w, `cat "$idfile"`) || !strings.Contains(w, `[ -f "$idfile" ]`) {
+		t.Error("--continue must read the stored id from the idfile")
+	}
+}
+
 func TestGovernorInstructionsPreservesBase(t *testing.T) {
 	base := "# Project rules\nAlways run the gate."
 	out := GovernorInstructions(base, "codex", allAgents)
