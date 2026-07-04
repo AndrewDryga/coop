@@ -104,24 +104,39 @@ func TestACPControlPassthrough(t *testing.T) {
 	}
 }
 
-// TestACPControlFromEditor: coop's own selector set is intercepted (handled + restart) and updates
-// the selection; a native option set (model/effort/fast) passes straight through to the adapter.
+// TestACPControlFromEditor: coop's own selector set is intercepted; a REAL change restarts and the ack
+// shows the new currentValue; a NO-OP set (the value it's already on — Zed's default_config_options
+// echo at startup) is acked but does NOT restart; a native option set passes straight through.
 func TestACPControlFromEditor(t *testing.T) {
 	c := newTestControl(t)
+	c.sel = "cred:personal" // deterministic starting point
+	// A prior session/new rewrite would have cached the option array (coop_setup first).
+	c.cached["s"] = json.RawMessage(`[{"id":"coop_setup","currentValue":"cred:personal"},{"id":"model"}]`)
+
+	// A native option set (model/effort/fast) passes through to the adapter untouched.
 	if h, _, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/set_config_option","params":{"sessionId":"s","configId":"model","value":"sonnet"}}`)); h {
 		t.Error("a native model set must pass through (handled=false), not be intercepted")
 	}
-	h, resp, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:work"}}`))
-	if !h || !restart {
-		t.Errorf("coop_setup set = (handled=%v restart=%v), want both true", h, restart)
+
+	// A NO-OP coop_setup (same value) is handled but must NOT restart — else it respawns the box at
+	// startup before any transcript, and session/load fails "Resource not found" (the reported bug).
+	if h, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:personal"}}`)); !h || restart {
+		t.Errorf("no-op coop_setup = (handled=%v restart=%v), want handled with NO restart", h, restart)
 	}
-	if len(resp) == 0 {
-		t.Error("coop must reply to the editor's coop_setup set")
+
+	// A real change restarts, updates the selection, and the ack echoes the NEW currentValue.
+	h, resp, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:work"}}`))
+	if !h || !restart {
+		t.Errorf("coop_setup change = (handled=%v restart=%v), want both true", h, restart)
+	}
+	if !strings.Contains(string(resp), `"currentValue":"cred:work"`) {
+		t.Errorf("ack must show the new currentValue cred:work (not the stale cache), got: %s", resp)
 	}
 	if cred, preset := c.selection(); cred != "work" || preset != "" {
 		t.Errorf("after cred:work, selection = (%q,%q), want (work, \"\")", cred, preset)
 	}
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"preset:frontier"}}`))
+
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":8,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"preset:frontier"}}`))
 	if cred, preset := c.selection(); cred != "" || preset != "frontier" {
 		t.Errorf("after preset:frontier, selection = (%q,%q), want (\"\", frontier)", cred, preset)
 	}

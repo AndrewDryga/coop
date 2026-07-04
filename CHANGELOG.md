@@ -13,9 +13,10 @@
   the model dropdown but **defaults it to coop's model** (`--model`/the agent default), still
   overridable in-editor; (4) it adds a first **coop**
   dropdown to switch the **credential** (account) or **preset** (recipe) mid-session. The switch is
-  **transparent — the conversation is preserved**: coop restarts the box on the new identity and
-  replays the ACP handshake, and an ACP box shares a credential-independent session-transcript store
-  so `session/load` still finds the conversation on the new account. Every `coop acp` session also
+  **transparent — the conversation is preserved**: coop restarts the box on the new identity (only on
+  a real change — re-selecting the current one, as an editor does when it applies its default config
+  at startup, is a no-op) and replays the ACP handshake, and an ACP box shares a credential-independent
+  session-transcript store so `session/load` still finds the conversation on the new account. Every `coop acp` session also
   now survives a box restart (rebuild/OOM) for free, and a bad `--credential` fails fast before any
   box spawns. `--supervise` is accepted but no longer needed. (Switching PROVIDERS — claude↔codex↔
   gemini — is not offered: it can't carry the conversation across adapters today; it's on the

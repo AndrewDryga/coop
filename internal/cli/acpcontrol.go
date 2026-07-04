@@ -398,18 +398,53 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, restart
 		return false, nil, false
 	}
 	c.mu.Lock()
-	c.sel = h.Params.Value
+	// Only a REAL change restarts. Editors (Zed) apply default_config_options at startup by SETTING
+	// coop_setup to the value it's already on; restarting on that no-op would respawn the box before the
+	// session has any transcript, so the replayed session/load fails "Resource not found" and the
+	// conversation is lost before it begins. A no-op just re-acks.
+	changed := h.Params.Value != "" && h.Params.Value != c.sel
+	if changed {
+		c.sel = h.Params.Value
+	}
 	cached := c.cached[h.Params.SessionID]
 	c.mu.Unlock()
-	// Reply with the full option set (coop's selector now showing the new value) so the editor's UI
-	// stays in sync; then restart the box on the new identity.
+	// Ack with the full option set, coop_setup showing the CURRENT value. The cache was captured at
+	// session/new with the old currentValue, so echoing it verbatim would revert the editor's dropdown;
+	// rebuild coop_setup fresh.
+	refreshed := c.refreshSetup(cached)
+	if len(refreshed) > 0 && h.Params.SessionID != "" {
+		c.mu.Lock()
+		c.cached[h.Params.SessionID] = refreshed
+		c.mu.Unlock()
+	}
 	result := map[string]json.RawMessage{}
-	if len(cached) > 0 {
-		result["configOptions"] = cached
+	if len(refreshed) > 0 {
+		result["configOptions"] = refreshed
 	}
 	out := map[string]any{"jsonrpc": "2.0", "id": h.ID, "result": result}
 	b, _ := json.Marshal(out)
-	return true, append(b, '\n'), true
+	return true, append(b, '\n'), changed
+}
+
+// refreshSetup returns the cached configOptions array with a freshly-built coop_setup (currentValue =
+// the current selection) in the first slot, where rewriteConfigOptions always puts it. Falls back to
+// just coop_setup when there's no cache yet.
+func (c *acpControl) refreshSetup(cached json.RawMessage) json.RawMessage {
+	setup := c.setupOption()
+	var arr []json.RawMessage
+	if len(cached) > 0 {
+		_ = json.Unmarshal(cached, &arr)
+	}
+	if len(arr) == 0 {
+		arr = []json.RawMessage{setup}
+	} else {
+		arr[0] = setup
+	}
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return cached
+	}
+	return b
 }
 
 // chooseAllow picks the "approve" option from a request_permission request. ACP kinds are
