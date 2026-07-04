@@ -66,6 +66,14 @@ var errReplayTimeout = errors.New("acpproxy: timed out waiting for the restarted
 // Run proxies ACP between the editor and children from factory until the editor
 // closes clientIn (clean shutdown) or ctx is cancelled. A child that exits while the
 // editor is still connected is transparently replaced.
+//
+// Single-use contract: Run spawns an editor→child reader goroutine that blocks on
+// clientIn until EOF. Run does not own clientIn (it's passed in) and can't interrupt a
+// blocked Read, so on a ctx-cancel return that goroutine lives until the editor closes
+// clientIn. That's fine for the one intended caller — the `coop acp` process, where
+// clientIn is os.Stdin and process exit reaps it — but it means Run is single-use per
+// clientIn, not a reusable in-process library: don't call it in a loop expecting the
+// reader to stop when ctx cancels. Close clientIn to release the goroutine.
 func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory) error {
 	p := &proxy{
 		out:      clientOut,
