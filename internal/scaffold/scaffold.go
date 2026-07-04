@@ -277,19 +277,22 @@ func (s *scaffolder) updateGitignore() error {
 	content := string(data)
 	orig := content
 	// **/.agent/* (not .agent/*) so a monorepo member's .agent/ working state — its tasks/backlog —
-	// is ignored too, at any depth; !**/.agent/project.yaml keeps the committed per-project config at
-	// any depth. rules/skills/presets/audit stay root-only (members share the root's, not their own).
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!.agent/rules/\n!.agent/skills/\n!.agent/presets/\n!.agent/audit.md\n!**/.agent/project.yaml\n" +
+	// is ignored too, at any depth. project.yaml is TOP-LEVEL only (members don't get one), so its
+	// un-ignore is root-anchored, alongside rules/skills/presets/audit (which members also share, not
+	// carry their own).
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!.agent/rules/\n!.agent/skills/\n!.agent/presets/\n!.agent/audit.md\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
-	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place.
+	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place, and a
+	// previously-any-depth project.yaml un-ignore to the top-level-only form.
 	content = strings.ReplaceAll(content, "\n.agent/*\n", "\n**/.agent/*\n")
+	content = strings.ReplaceAll(content, "!**/.agent/project.yaml", "!.agent/project.yaml")
 	switch {
 	case !strings.Contains(content, "**/.agent/*"):
 		content += block // no coop block yet — append the whole thing
-	case !strings.Contains(content, "!**/.agent/project.yaml"):
-		// Block present but predates project.yaml — un-ignore it (committed) at any depth.
-		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!**/.agent/project.yaml\n", 1)
+	case !strings.Contains(content, "!.agent/project.yaml"):
+		// Block present but predates project.yaml — un-ignore the top-level config so it's committed.
+		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!.agent/project.yaml\n", 1)
 	}
 	if content == orig {
 		return nil // already up to date

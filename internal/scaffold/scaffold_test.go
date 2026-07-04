@@ -65,7 +65,7 @@ func TestGeneratedHooksShellcheckClean(t *testing.T) {
 
 // A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its
 // block — that would drop the !rules/!skills un-ignore and leave tracked dirs ignored. The block is
-// monorepo-aware: **/.agent/* (any depth) with !**/.agent/project.yaml.
+// monorepo-aware: **/.agent/* (any depth) with !.agent/project.yaml.
 func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
@@ -75,7 +75,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*\n", "!.agent/rules/", "!.agent/skills/", "!**/.agent/project.yaml"} {
+	for _, want := range []string{"**/.agent/*\n", "!.agent/rules/", "!.agent/skills/", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
@@ -103,7 +103,7 @@ func TestUpdateGitignoreUpgrade(t *testing.T) {
 	if strings.Contains(gi, "\n.agent/*\n") {
 		t.Errorf("old root-anchored .agent/* not upgraded:\n%s", gi)
 	}
-	if !strings.Contains(gi, "**/.agent/*") || !strings.Contains(gi, "!**/.agent/project.yaml") {
+	if !strings.Contains(gi, "**/.agent/*") || !strings.Contains(gi, "!.agent/project.yaml") {
 		t.Errorf("upgrade missing the monorepo pattern or project.yaml un-ignore:\n%s", gi)
 	}
 	if n := strings.Count(gi, "**/.agent/*"); n != 1 {
@@ -111,21 +111,21 @@ func TestUpdateGitignoreUpgrade(t *testing.T) {
 	}
 }
 
-// TestInitSubproject: a member gets ONLY its task queue + backlog + project.yaml — never the full
-// scaffold (AGENTS.md, .claude/, rules), which the monorepo root owns.
+// TestInitSubproject: a member gets ONLY its own task queue + backlog — never the full scaffold
+// (AGENTS.md, .claude/, rules) NOR a project.yaml, both of which are the top-level root's alone.
 func TestInitSubproject(t *testing.T) {
 	dir := t.TempDir()
 	if err := InitSubproject(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/BACKLOG.md", ".agent/project.yaml"} {
+	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/BACKLOG.md"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("member missing %s: %v", rel, err)
 		}
 	}
-	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/rules", ".agent/skills", "CLAUDE.md"} {
+	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
-			t.Errorf("member should NOT have %s (the root owns it)", rel)
+			t.Errorf("member should NOT have %s (top-level only)", rel)
 		}
 	}
 }
