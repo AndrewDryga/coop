@@ -106,14 +106,14 @@
                 <a href="#run">Run an agent</a>
                 <a href="#forks">Forks</a>
                 <a href="#fusion">Fusion</a>
-                <h5>Run unattended</h5>
-                <a href="#loop">The loop</a>
-                <a href="#fleet">A fleet</a>
                 <a href="#credentials">Credentials &amp; failover</a>
                 <a href="#models">Pick the model</a>
                 <a href="#presets">Presets</a>
+                <h5>Run unattended</h5>
+                <a href="#loop">The loop</a>
+                <a href="#fleet">A fleet</a>
                 <h5>Integrate</h5>
-                <a href="#zed">Editors (Zed)</a>
+                <a href="#editors">Editors</a>
                 <a href="#toolchain">Toolchain &amp; services</a>
                 <h5>Reference</h5>
                 <a href="#config">Configuration</a>
@@ -553,6 +553,193 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </figure>
                 </section>
 
+                <section class="doc-section" id="credentials">
+                    <h2>Credentials &amp; failover</h2>
+                    <p class="section-lead">
+                        Hold more than one account for an agent so a long run
+                        never has to park on a rate limit.
+                    </p>
+                    <p>
+                        Sign in to several subscriptions as named
+                        <strong>credentials</strong>. When a loop hits a limit
+                        on one, it rotates to another that's still fresh and
+                        keeps going — only ever waiting once
+                        <em>every</em> account is capped.
+                    </p>
+                    <pre
+                        class="code"
+                    ><span class="k">coop</span> login claude --credential work       <span class="t"># a second account…</span>
+<span class="k">coop</span> login claude --credential personal   <span class="t"># …and a third</span>
+<span class="k">coop</span> credentials                          <span class="t"># list them + which are signed in</span></pre>
+                    <p>
+                        There's no pool to configure: a loop rotates whatever
+                        its lead's <a href="#presets">models ladder</a> expands
+                        to. A bare model in that ladder fans out across
+                        <em>every</em>
+                        signed-in account (the marked default first), so with no
+                        setup a loop already uses all your accounts; a pinned
+                        <code>model@account</code> runs just one. Limits are
+                        tracked per (model, account), so
+                        <code>opus@personal</code> stays usable while
+                        <code>opus@work</code> cools down. Mark which account a
+                        plain <code>coop &lt;agent&gt;</code> uses with
+                        <code
+                            >coop credentials &lt;agent&gt; &lt;name&gt;
+                            default</code
+                        >.
+                    </p>
+                    <p>
+                        Only the <em>active</em> credential is ever mounted into
+                        the box, so a running agent sees just the account it's
+                        using — never your whole vault. Switching mid-run loses
+                        nothing: each iteration is a fresh run, and the queue
+                        plus git carry the progress.
+                    </p>
+                </section>
+
+                <section class="doc-section" id="models">
+                    <h2>Pick the model</h2>
+                    <p class="section-lead">
+                        The model is its own axis — pick it per run with
+                        <code>--model</code>, or as a standing recipe in a
+                        preset. A credential is just an account; models don't
+                        live on it.
+                    </p>
+                    <pre
+                        class="code"
+                    ><span class="k">coop</span> claude --model opus       <span class="t"># one run on the big model</span>
+<span class="k">coop</span> claude --model opus@work  <span class="t"># …pinned to a specific account</span>
+<span class="k">coop</span> loop --preset frontier   <span class="t"># a standing lead model + roles, from a preset</span>
+<span class="k">coop</span> models                    <span class="t"># the model menu per agent</span></pre>
+                    <p>
+                        Precedence is most-specific-first: the
+                        <code>--model</code> flag, then the active
+                        <a href="#presets">ladder</a> entry's model (a loop
+                        stepping through a preset), then
+                        <code>COOP_LOOP_MODEL</code> (loop runs only), then
+                        <code>COOP_&lt;AGENT&gt;_MODEL</code>. Coop never
+                        validates a model id — whatever the agent's own CLI
+                        accepts works, and a bad one fails loudly in the agent's
+                        own error, so new models work the day they ship.
+                    </p>
+                    <p>
+                        This is what makes the
+                        <strong>orchestrator pattern</strong> cheap to run.
+                        <code>coop init</code> scaffolds two starter subagents:
+                        <code>deep-reasoner</code> (pinned to Opus —
+                        architecture, complex debugging) and
+                        <code>fast-worker</code> (pinned to Sonnet — mechanical
+                        work). A lead on a bigger model spends its tokens on
+                        planning and synthesis while each delegated turn bills
+                        at the subagent's cheaper model. Add
+                        <code>--consult</code> (or <code>consult: true</code> on
+                        a fleet fork) and the lead can also ask codex and gemini
+                        read-only — peer engineers with different blind spots,
+                        no plugins required. Wrap the whole arrangement in a
+                        <a href="#presets">preset</a>.
+                    </p>
+                </section>
+
+                <section class="doc-section" id="presets">
+                    <h2>Presets — the whole arrangement in one file</h2>
+                    <p class="section-lead">
+                        A lead model, its fallback ladder, and the roles it
+                        routes work to — declared once as a file, instead of
+                        assembled from flags every time.
+                    </p>
+                    <p>
+                        The <a href="#fusion">fusion</a> and orchestrator
+                        patterns above are wired up by hand — a model here, a
+                        <code>--consult</code> there. A <strong>preset</strong>
+                        captures the whole recipe in
+                        <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
+                        who leads, on which models, and the named roles it can
+                        hand work to. Run it with
+                        <code>--preset &lt;name&gt;</code> on any surface —
+                        <code>coop &lt;agent&gt;</code>, <code>loop</code>,
+                        <code>fusion</code>, <code>acp</code>, or a fork.
+                    </p>
+                    <pre
+                        class="code"
+                    ><span class="k">coop</span> presets init          <span class="t"># scaffold the documented "frontier" recipe</span>
+<span class="k">coop</span> presets               <span class="t"># list every preset (a broken one shows its error)</span>
+<span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
+                    <p>
+                        The lead carries a model-first
+                        <code>models:</code> ladder — the same ladder a loop
+                        rotates (a bare model fans across every account;
+                        <code>model@account</code> pins one). Each role sets a
+                        <strong>mode</strong> that decides how the lead reaches
+                        it:
+                    </p>
+                    <table class="ref">
+                        <tr>
+                            <th>Mode</th>
+                            <th>What it is</th>
+                        </tr>
+                        <tr>
+                            <td><code>native</code></td>
+                            <td>
+                                a Claude subagent that runs inside the lead's
+                                own session (e.g. <code>deep-reasoner</code>) —
+                                no separate box
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>consult</code></td>
+                            <td>
+                                a read-only peer via <code>coop-consult</code> —
+                                a second opinion from another vendor; it can't
+                                edit files
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>delegate</code></td>
+                            <td>
+                                a write-capable worker via
+                                <code>coop-delegate</code>: it may edit the
+                                worktree but never commits — the lead reviews
+                                the diff, runs the gate, and commits
+                            </td>
+                        </tr>
+                    </table>
+                    <pre
+                        class="code"
+                    ><span class="t"># .agent/presets/frontier/preset.yaml</span>
+lead:
+  agent: claude
+  models: [claude-fable-5, claude-opus-4-8@work]
+roles:
+  thinker:                 <span class="t"># deep thinking, in the lead's session</span>
+    mode: native
+    agent: claude
+    subagent: deep-reasoner
+  critic:                  <span class="t"># read-only cross-vendor review</span>
+    mode: consult
+    agent: codex
+  fast:                    <span class="t"># cheap, write-capable mechanical work</span>
+    mode: delegate
+    agent: gemini</pre>
+                    <div class="why">
+                        <span class="why-label"
+                            >What coop generates from it</span
+                        >
+                        <p>
+                            coop turns the YAML into the lead's routing contract
+                            — each role, when to use it, and the exact
+                            invocation — and mounts the
+                            <code>coop-consult</code> /
+                            <code>coop-delegate</code> wrappers.
+                            <code>coop presets init</code> also scaffolds
+                            starter prompt files under <code>roles/</code> that
+                            append to (never replace) that generated contract,
+                            so you can layer project guidance on top. An
+                            explicitly named agent or <code>--model</code> still
+                            overrides the recipe.
+                        </p>
+                    </div>
+                </section>
+
                 <section class="doc-section" id="loop">
                     <h2>The loop — work the queue while you sleep</h2>
                     <p class="section-lead">
@@ -763,210 +950,28 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </figure>
                 </section>
 
-                <section class="doc-section" id="credentials">
-                    <h2>Credentials &amp; failover</h2>
+                <section class="doc-section" id="editors">
+                    <h2>Editors</h2>
                     <p class="section-lead">
-                        Hold more than one account for an agent so a long run
-                        never has to park on a rate limit.
+                        Prefer your editor to a terminal? coop serves the
+                        sandboxed agent over ACP, so any editor that speaks the
+                        protocol drives it while it runs in the box — your editor
+                        is the cockpit, the box stays the cage.
                     </p>
                     <p>
-                        Sign in to several subscriptions as named
-                        <strong>credentials</strong>. When a loop hits a limit
-                        on one, it rotates to another that's still fresh and
-                        keeps going — only ever waiting once
-                        <em>every</em> account is capped.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> login claude --credential work       <span class="t"># a second account…</span>
-<span class="k">coop</span> login claude --credential personal   <span class="t"># …and a third</span>
-<span class="k">coop</span> credentials                          <span class="t"># list them + which are signed in</span></pre>
-                    <p>
-                        There's no pool to configure: a loop rotates whatever
-                        its lead's <a href="#presets">models ladder</a> expands
-                        to. A bare model in that ladder fans out across
-                        <em>every</em>
-                        signed-in account (the marked default first), so with no
-                        setup a loop already uses all your accounts; a pinned
-                        <code>model@account</code> runs just one. Limits are
-                        tracked per (model, account), so
-                        <code>opus@personal</code> stays usable while
-                        <code>opus@work</code> cools down. Mark which account a
-                        plain <code>coop &lt;agent&gt;</code> uses with
-                        <code
-                            >coop credentials &lt;agent&gt; &lt;name&gt;
-                            default</code
-                        >.
-                    </p>
-                    <p>
-                        Only the <em>active</em> credential is ever mounted into
-                        the box, so a running agent sees just the account it's
-                        using — never your whole vault. Switching mid-run loses
-                        nothing: each iteration is a fresh run, and the queue
-                        plus git carry the progress.
-                    </p>
-                </section>
-
-                <section class="doc-section" id="models">
-                    <h2>Pick the model</h2>
-                    <p class="section-lead">
-                        The model is its own axis — pick it per run with
-                        <code>--model</code>, or as a standing recipe in a
-                        preset. A credential is just an account; models don't
-                        live on it.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> claude --model opus       <span class="t"># one run on the big model</span>
-<span class="k">coop</span> claude --model opus@work  <span class="t"># …pinned to a specific account</span>
-<span class="k">coop</span> loop --preset frontier   <span class="t"># a standing lead model + roles, from a preset</span>
-<span class="k">coop</span> models                    <span class="t"># the model menu per agent</span></pre>
-                    <p>
-                        Precedence is most-specific-first: the
-                        <code>--model</code> flag, then the active
-                        <a href="#presets">ladder</a> entry's model (a loop
-                        stepping through a preset), then
-                        <code>COOP_LOOP_MODEL</code> (loop runs only), then
-                        <code>COOP_&lt;AGENT&gt;_MODEL</code>. Coop never
-                        validates a model id — whatever the agent's own CLI
-                        accepts works, and a bad one fails loudly in the agent's
-                        own error, so new models work the day they ship.
-                    </p>
-                    <p>
-                        This is what makes the
-                        <strong>orchestrator pattern</strong> cheap to run.
-                        <code>coop init</code> scaffolds two starter subagents:
-                        <code>deep-reasoner</code> (pinned to Opus —
-                        architecture, complex debugging) and
-                        <code>fast-worker</code> (pinned to Sonnet — mechanical
-                        work). A lead on a bigger model spends its tokens on
-                        planning and synthesis while each delegated turn bills
-                        at the subagent's cheaper model. Add
-                        <code>--consult</code> (or <code>consult: true</code> on
-                        a fleet fork) and the lead can also ask codex and gemini
-                        read-only — peer engineers with different blind spots,
-                        no plugins required. Wrap the whole arrangement in a
-                        <a href="#presets">preset</a>.
-                    </p>
-                </section>
-
-                <section class="doc-section" id="presets">
-                    <h2>Presets — the whole arrangement in one file</h2>
-                    <p class="section-lead">
-                        A lead model, its fallback ladder, and the roles it
-                        routes work to — declared once as a file, instead of
-                        assembled from flags every time.
-                    </p>
-                    <p>
-                        The <a href="#fusion">fusion</a> and orchestrator
-                        patterns above are wired up by hand — a model here, a
-                        <code>--consult</code> there. A <strong>preset</strong>
-                        captures the whole recipe in
-                        <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
-                        who leads, on which models, and the named roles it can
-                        hand work to. Run it with
-                        <code>--preset &lt;name&gt;</code> on any surface —
-                        <code>coop &lt;agent&gt;</code>, <code>loop</code>,
-                        <code>fusion</code>, <code>acp</code>, or a fork.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> presets init          <span class="t"># scaffold the documented "frontier" recipe</span>
-<span class="k">coop</span> presets               <span class="t"># list every preset (a broken one shows its error)</span>
-<span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
-                    <p>
-                        The lead carries a model-first
-                        <code>models:</code> ladder — the same ladder a loop
-                        rotates (a bare model fans across every account;
-                        <code>model@account</code> pins one). Each role sets a
-                        <strong>mode</strong> that decides how the lead reaches
-                        it:
-                    </p>
-                    <table class="ref">
-                        <tr>
-                            <th>Mode</th>
-                            <th>What it is</th>
-                        </tr>
-                        <tr>
-                            <td><code>native</code></td>
-                            <td>
-                                a Claude subagent that runs inside the lead's
-                                own session (e.g. <code>deep-reasoner</code>) —
-                                no separate box
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>consult</code></td>
-                            <td>
-                                a read-only peer via <code>coop-consult</code> —
-                                a second opinion from another vendor; it can't
-                                edit files
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>delegate</code></td>
-                            <td>
-                                a write-capable worker via
-                                <code>coop-delegate</code>: it may edit the
-                                worktree but never commits — the lead reviews
-                                the diff, runs the gate, and commits
-                            </td>
-                        </tr>
-                    </table>
-                    <pre
-                        class="code"
-                    ><span class="t"># .agent/presets/frontier/preset.yaml</span>
-lead:
-  agent: claude
-  models: [claude-fable-5, claude-opus-4-8@work]
-roles:
-  thinker:                 <span class="t"># deep thinking, in the lead's session</span>
-    mode: native
-    agent: claude
-    subagent: deep-reasoner
-  critic:                  <span class="t"># read-only cross-vendor review</span>
-    mode: consult
-    agent: codex
-  fast:                    <span class="t"># cheap, write-capable mechanical work</span>
-    mode: delegate
-    agent: gemini</pre>
-                    <div class="why">
-                        <span class="why-label"
-                            >What coop generates from it</span
-                        >
-                        <p>
-                            coop turns the YAML into the lead's routing contract
-                            — each role, when to use it, and the exact
-                            invocation — and mounts the
-                            <code>coop-consult</code> /
-                            <code>coop-delegate</code> wrappers.
-                            <code>coop presets init</code> also scaffolds
-                            starter prompt files under <code>roles/</code> that
-                            append to (never replace) that generated contract,
-                            so you can layer project guidance on top. An
-                            explicitly named agent or <code>--model</code> still
-                            overrides the recipe.
-                        </p>
-                    </div>
-                </section>
-
-                <section class="doc-section" id="zed">
-                    <h2>Editors (Zed)</h2>
-                    <p class="section-lead">
-                        Prefer your editor to a terminal? Drive the sandboxed
-                        agent from Zed's agent panel — Zed is the cockpit, the
-                        box stays the cage.
-                    </p>
-                    <p>
-                        Coop speaks
                         <a
                             href="https://agentclientprotocol.com"
                             target="_blank"
                             rel="noopener"
                             >ACP</a
-                        >, so you can register it as a custom agent and steer it
-                        from Zed while it runs in the container. Point one entry
-                        at each agent you use:
+                        >
+                        (the Agent Client Protocol) is an open, editor-agnostic
+                        standard. <code>coop acp [agent]</code> speaks it over
+                        stdio, so you register coop as a custom agent in any
+                        editor that supports ACP and steer it from there. Zed
+                        ships ACP today and others are adding it; the setup is the
+                        same anywhere — point one entry at each agent you use. In
+                        Zed's <code>settings.json</code>, for example:
                     </p>
                     <pre class="code">{
   <span class="s">"agent_servers"</span>: {
@@ -980,7 +985,8 @@ roles:
                     <p>
                         Because the repo mounts at its real path, sessions line
                         up across tools — a thread you started with
-                        <code>coop loop</code> is right there to resume in Zed.
+                        <code>coop loop</code> is right there to resume in your
+                        editor.
                     </p>
                     <p>
                         Add <code>"--supervise"</code> to the args to keep the
@@ -991,8 +997,8 @@ roles:
                     </p>
                     <div class="note">
                         GUI apps don't always inherit your shell's
-                        <code>PATH</code>. If Zed can't find <code>coop</code>,
-                        use the absolute path from
+                        <code>PATH</code>. If your editor can't find
+                        <code>coop</code>, use the absolute path from
                         <code>command -v coop</code> as the
                         <code>command</code>.
                     </div>
@@ -1223,8 +1229,7 @@ roles:
                             target="_blank"
                             rel="noopener"
                             >Open an issue</a
-                        >
-                        &nbsp;·&nbsp; <a href="index.html">← back home</a>
+                        >.
                     </p>
                 </section>
             </main>

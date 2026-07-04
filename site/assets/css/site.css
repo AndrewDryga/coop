@@ -267,8 +267,8 @@ pre.code .s { color: var(--green); }            /* string/flag */
 /* ======================================================================== */
 /* docs page                                                                */
 /* ======================================================================== */
-.docs { display: grid; grid-template-columns: 232px 1fr; gap: 60px; align-items: start; padding-top: 40px; }
-.docs-side { position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; padding-right: 6px; }
+.docs { display: grid; grid-template-columns: 232px 1fr; gap: 60px; align-items: start; padding: 40px 0 72px; }
+.docs-side { position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; padding: 0 6px 24px 0; }
 .docs-side h5 { color: var(--faint); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; margin: 22px 0 8px; font-weight: 700; }
 .docs-side h5:first-child { margin-top: 0; }
 .docs-side a { display: block; color: var(--muted); padding: 6px 12px; border-radius: 7px; font-size: 0.92rem; border-left: 2px solid transparent; }
