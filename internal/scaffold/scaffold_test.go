@@ -401,3 +401,57 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 		t.Error("--stack python should error regardless of .tool-versions")
 	}
 }
+
+// The workflow skills live in two hand-kept copies: the canonical .agent/skills/<name>/ (coop's
+// own, at the repo root) and internal/scaffold/templates/skills/<name>/ (embedded, copied into a
+// user repo by `coop init`). This guards them byte-identical in BOTH directions so a later edit to
+// one can't silently miss the other. The one allowed asymmetry: .agent/skills/release/ is coop-only
+// (it cuts a coop release via GoReleaser/install.sh and must never ship to a user repo), so it lives
+// in the canonical tree but not the templates.
+func TestSkillsTemplatesMatchCanonical(t *testing.T) {
+	const canonicalOnly = "release" // coop's own release skill — never scaffolded into a user repo
+	canonicalRoot := filepath.Join("..", "..", ".agent", "skills")
+
+	// Every embedded template skill file exists and is byte-identical in the canonical tree.
+	err := fs.WalkDir(templates, "templates/skills", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel := strings.TrimPrefix(p, "templates/skills/")
+		want, err := templates.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		got, err := os.ReadFile(filepath.Join(canonicalRoot, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Errorf("template skill %s is missing from .agent/skills — copy it there: %v", rel, err)
+			return nil
+		}
+		if string(got) != string(want) {
+			t.Errorf(".agent/skills/%s drifted from the embedded template — sync the two copies", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Every canonical skill file has an embedded template — except the coop-only skill.
+	err = filepath.WalkDir(canonicalRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(canonicalRoot, p)
+		rel = filepath.ToSlash(rel)
+		if rel == canonicalOnly || strings.HasPrefix(rel, canonicalOnly+"/") {
+			return nil // coop-only: intentionally absent from the templates
+		}
+		if _, err := templates.ReadFile("templates/skills/" + rel); err != nil {
+			t.Errorf(".agent/skills/%s has no embedded template — add it to internal/scaffold/templates/skills/ (or, if coop-only, to the canonicalOnly exclusion)", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
