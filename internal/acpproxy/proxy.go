@@ -231,12 +231,15 @@ func (p *proxy) shutdownChild() {
 // child. A write to a momentarily-dead child during a swap is dropped; that request
 // is covered by failAllPending on the swap.
 func (p *proxy) fromClient(line []byte) {
+	traceLine("editor→box", line)
 	// coop's control layer gets first look: it may handle an editor request itself (a coop-owned
 	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
 	// to the editor directly, and optionally restarting the box on a new credential/preset.
 	if p.hooks != nil && p.hooks.FromEditor != nil {
 		if handled, resp, restart := p.hooks.FromEditor(line); handled {
+			Trace("coop handled the editor line itself (restart=%v)", restart)
 			if len(resp) > 0 {
+				traceLine("box→editor(coop)", resp)
 				_, _ = p.out.Write(resp)
 			}
 			if restart {
@@ -277,6 +280,7 @@ func (p *proxy) fromClient(line []byte) {
 // session/new responses and clearing pending requests. Returns on the child's EOF.
 func (p *proxy) pumpChild(br *bufio.Reader) {
 	_ = readLines(br, func(line []byte) error {
+		traceLine("box→editor", line)
 		h := parse(line)
 		// coop answers some agent→editor requests itself (session/request_permission → always allow, so
 		// the editor never prompts). The reply goes to THIS child; the request is not forwarded.
@@ -356,6 +360,7 @@ func (p *proxy) forceSession(sid string) {
 // triggerRestart tears the current child down so pumpChild returns and Run's loop respawns it — a
 // coop-driven switch (e.g. a new credential/preset), flagged intentional so it's not a rapid-fail.
 func (p *proxy) triggerRestart() {
+	Trace("restart requested (coop switch / rotate)")
 	p.intentional.Store(true)
 	p.mu.Lock()
 	c := p.child
@@ -379,6 +384,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 	}
 	p.mu.Unlock()
 
+	Trace("replay: restoring %d session(s) on the restarted box", len(sessions))
 	var msgs [][]byte
 	expect := map[string]bool{}
 	for i, line := range setup {
@@ -423,6 +429,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 				if len(h.Error) > 0 {
 					if sid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
 						fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; its history may be lost: %s\n", sid, h.Error)
+						Trace("replay: session %s did NOT reload: %s", sid, h.Error)
 					}
 				}
 				delete(expect, id)

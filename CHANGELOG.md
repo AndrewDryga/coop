@@ -34,6 +34,15 @@
   `session/load` comes back an error on the new box (e.g. its transcript wasn't on the shared store),
   coop warns on the ACP server log instead of leaving the editor with a context-less session.
 
+- **ACP: opt-in wire tracing to debug a misbehaving editor session.** Off by default, zero cost;
+  turn it on by setting `COOP_ACP_TRACE=1` in the editor's server env, or by creating the sentinel
+  `~/.config/coop/acp-debug` (which works on an ALREADY-running server — editors keep one coop process
+  alive across threads). coop then appends the editor↔box ACP wire, coop's own replies, and
+  restart/spawn events to `~/.config/coop/acp-trace-<pid>.log`. The log is bounded — each file
+  rotates to a single `.log.1` backup past a size cap (~2× the cap per server), and old per-process
+  logs are pruned to the newest few on startup (a running server's log is never pruned). It holds
+  prompts and file contents — treat it as sensitive.
+
 ## 3.0.0
 
 - **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's

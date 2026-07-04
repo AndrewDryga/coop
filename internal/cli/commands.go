@@ -610,8 +610,10 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		// on; each respawn reads it, so a switch via coop's selector lands on the new one.
 		if cred, preset := ctrl.selection(); cred != "" {
 			env = append(env, "COOP_ACP_CREDENTIAL="+cred)
+			acpproxy.Trace("spawn box on credential=%s", cred)
 		} else if preset != "" {
 			env = append(env, "COOP_ACP_PRESET="+preset)
+			acpproxy.Trace("spawn box on preset=%s", preset)
 		}
 		if a.rt.SupportsCIDFile() {
 			if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {

@@ -267,6 +267,12 @@ coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
   --consult lets the session ask the other signed-in agents for a read-only second
   opinion (their credentials are mounted) — the orchestrator pattern, from your editor.
 
+  Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
+  create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
+  ~/.config/coop/acp-trace-<pid>.log (the sentinel works on an already-running server).
+  The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
+  and file contents, so treat it as sensitive.
+
   (--supervise is accepted but no longer needed — the proxy is always on.)
 
 coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
