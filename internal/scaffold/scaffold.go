@@ -276,17 +276,20 @@ func (s *scaffolder) updateGitignore() error {
 	data, _ := os.ReadFile(gi) // missing file → empty; we create it below
 	content := string(data)
 	orig := content
-	// **/.agent/* (not .agent/*) so a monorepo member's .agent/ working state — its tasks/backlog —
-	// is ignored too, at any depth. project.yaml is TOP-LEVEL only (members don't get one), so its
-	// un-ignore is root-anchored, alongside rules/skills/presets/audit (which members also share, not
-	// carry their own).
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!.agent/rules/\n!.agent/skills/\n!.agent/presets/\n!.agent/audit.md\n!.agent/project.yaml\n" +
+	// **/.agent/* ignores .agent/ state at any depth, so a monorepo member's working state (its
+	// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets/audit — is un-ignored
+	// at any depth as well, since a large monorepo member may carry its own; only project.yaml is
+	// TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays root-anchored.
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/audit.md\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
-	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place, and a
-	// previously-any-depth project.yaml un-ignore to the top-level-only form.
+	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place; likewise
+	// widen root-only knowledge un-ignores to any-depth, but keep project.yaml top-level only.
 	content = strings.ReplaceAll(content, "\n.agent/*\n", "\n**/.agent/*\n")
 	content = strings.ReplaceAll(content, "!**/.agent/project.yaml", "!.agent/project.yaml")
+	for _, k := range []string{"rules/", "skills/", "presets/", "audit.md"} {
+		content = strings.ReplaceAll(content, "!.agent/"+k, "!**/.agent/"+k)
+	}
 	switch {
 	case !strings.Contains(content, "**/.agent/*"):
 		content += block // no coop block yet — append the whole thing

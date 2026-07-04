@@ -75,7 +75,9 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*\n", "!.agent/rules/", "!.agent/skills/", "!.agent/project.yaml"} {
+	// Knowledge (rules/skills) is un-ignored at any depth so a member may carry its own; only
+	// project.yaml is top-level.
+	for _, want := range []string{"**/.agent/*\n", "!**/.agent/rules/", "!**/.agent/skills/", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
@@ -105,6 +107,10 @@ func TestUpdateGitignoreUpgrade(t *testing.T) {
 	}
 	if !strings.Contains(gi, "**/.agent/*") || !strings.Contains(gi, "!.agent/project.yaml") {
 		t.Errorf("upgrade missing the monorepo pattern or project.yaml un-ignore:\n%s", gi)
+	}
+	// Root-only knowledge un-ignores are widened to any-depth (a member may carry its own).
+	if strings.Contains(gi, "\n!.agent/rules/\n") || !strings.Contains(gi, "!**/.agent/rules/") {
+		t.Errorf("rules/ un-ignore not widened to any depth:\n%s", gi)
 	}
 	if n := strings.Count(gi, "**/.agent/*"); n != 1 {
 		t.Errorf("**/.agent/* appears %d times, want 1:\n%s", n, gi)
@@ -265,9 +271,10 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// .gitignore carries the working-state rule (rules/skills/presets/audit.md tracked).
+	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets/
+	// audit.md) at any depth; only project.yaml is top-level.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{".agent/*", "!.agent/rules/", "!.agent/skills/", "!.agent/presets/", "!.agent/audit.md", "!.gemini/skills"} {
+	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/audit.md", "!.agent/project.yaml", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}

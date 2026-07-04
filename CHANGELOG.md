@@ -14,11 +14,11 @@
   now span all of them — previously you had to export `COOP_TASKS="portal/.agent/tasks
   runner/.agent/tasks …"` by hand. An explicit `COOP_TASKS`/`--tasks` still overrides; a single repo
   is unchanged. New `coop tasks queues` prints each configured queue's path (the composable primitive
-  the Stop hook uses). `coop init` detects the members and scaffolds each with ONLY its own task queue
-  + backlog — no `project.yaml`, no AGENTS.md/`.claude`/rules — since members share the root's, which
-  is the single top-level `.agent/project.yaml`. Both the members and the root keep a queue (the
-  members for their own work, the root for changes spanning members). The generated `.gitignore`
-  ignores `.agent/` state at any depth (`**/.agent/*`) and keeps the top-level `project.yaml` committed
+  the Stop hook uses). `coop init` scaffolds each member with ONLY its own task queue + backlog (it
+  shares the root's AGENTS.md/`.claude`); both members and the root keep a queue — members for their
+  own work, the root for changes spanning members. The generated `.gitignore` ignores `.agent/` state
+  at any depth (`**/.agent/*`) and commits knowledge — `rules`/`skills`/`presets`/`audit` — at any
+  depth too (a large member may carry its own), keeping only the single `project.yaml` top-level
   (`!.agent/project.yaml`).
   (`coop fork --loop`/`coop fleet split` still take one queue — multi-queue seeding is backlogged.)
 

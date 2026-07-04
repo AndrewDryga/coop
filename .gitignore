@@ -15,10 +15,10 @@ __pycache__/
 
 # coop working state (commit knowledge, ignore state)
 **/.agent/*
-!.agent/rules/
-!.agent/skills/
-!.agent/presets/
-!.agent/audit.md
+!**/.agent/rules/
+!**/.agent/skills/
+!**/.agent/presets/
+!**/.agent/audit.md
 !.agent/project.yaml
 
 # preset native subagents coop generates in the box (coop-<role>) — never committed

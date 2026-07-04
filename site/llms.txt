@@ -441,12 +441,13 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   Writes the TOP-LEVEL .agent/project.yaml (committed): in a monorepo — detected by
   direct child dirs that are themselves coop projects (each with a .agent/) — it lists
   them under 'subprojects:' so coop aggregates their task queues automatically (no
-  COOP_TASKS). Each member gets ONLY its own task queue + backlog (no project.yaml, no
-  AGENTS.md/.claude/rules — those are the root's, shared); the member's queue is for
-  its own work, the root's for changes spanning members. A single repo gets a
-  project.yaml template with commented serve/subprojects examples. The .gitignore
-  ignores .agent/ state at any depth (**/.agent/*) and keeps the top-level project.yaml
-  committed (!.agent/project.yaml). Never clobbers existing files.
+  COOP_TASKS). coop init scaffolds each member with ONLY its own task queue + backlog
+  (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
+  root's for changes spanning members. A single repo gets a project.yaml template with
+  commented serve/subprojects examples. The .gitignore ignores .agent/ state at any
+  depth (**/.agent/*) and commits knowledge — rules/skills/presets/audit — at any depth
+  too (a large member MAY add its own), keeping only project.yaml top-level. Never
+  clobbers existing files.
 
 coop doctor — prove the box's isolation: attack it, inside and from the host.
 
