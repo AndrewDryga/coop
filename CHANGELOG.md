@@ -14,6 +14,17 @@
   the documented frontier template, valid and runnable as written. On-disk credential storage is
   unchanged (`<agent>/profiles/<name>/`) — nothing to migrate.
 
+- **Preset consult roles are role-addressed, with their prompt as the peer's persona.** Every
+  role now resolves by its ROLE name — `@coop-<role>` (native), `coop-consult <role>` (consult),
+  `coop-delegate <role>` (delegate). An explicit `mode: consult` role was the odd one out: the
+  lead was told to call `coop-consult <agent>`, its `prompt:` only shaped the lead (never the
+  peer), and two consult roles on one agent collided on a shared model. Now it wires like the
+  native→consult degrade always did — `COOP_CONSULT_<ROLE>_*` carries the role's agent + model,
+  and its prompt (if any) mounts as the persona the peer adopts — so `coop-consult reviewer`
+  runs the reviewer's agent on the reviewer's model *as* the reviewer, and same-agent consult
+  roles stay distinct. A promptless consult role behaves as before (the peer answers as itself),
+  and raw `coop-consult <agent>` still works for a persona-less opinion.
+
 - **`coop credentials` no longer cries "token expired" on a live claude login.** The status read
   only the OAuth access-token expiry and ignored the refresh token, so a working claude account —
   which the CLI silently renews on use — showed "token expired" and read as blocked. Now a profile

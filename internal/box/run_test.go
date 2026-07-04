@@ -522,7 +522,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	if !wired {
 		t.Error("a consult role must wire coop-consult")
 	}
-	for _, want := range []string{`preset "frontier"`, "coop-consult codex --fresh", "coop-delegate fast", "@deep-reasoner", "BASE RULES"} {
+	for _, want := range []string{`preset "frontier"`, "coop-consult critic --fresh", "coop-delegate fast", "@deep-reasoner", "BASE RULES"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("preset lead instructions missing %q:\n%s", want, content)
 		}

@@ -323,6 +323,20 @@ func (p *Preset) Delegates() []Role {
 	return out
 }
 
+// Consults returns the explicit consult roles, in name order. Each is wired role-addressed
+// (`coop-consult <role>` via COOP_CONSULT_<ROLE>_* env) so it runs its agent on the role's
+// model with the role's persona — natives degraded under a non-Claude lead wire the same way
+// (DegradedNativeRoles).
+func (p *Preset) Consults() []Role {
+	var out []Role
+	for _, r := range p.Roles {
+		if r.Mode == ModeConsult {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // RoleAgents returns the distinct agents of consult and delegate roles — the ones
 // whose credentials must be reachable from the lead's box. Native roles run inside
 // the lead's own session, so they add nothing to the credential scope.

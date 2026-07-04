@@ -206,14 +206,16 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
         commit: never            # the delegate edits; the LEAD reviews, gates, commits
         concurrent: never        # delegate runs are serialized
 
-  coop generates the lead's routing contract from this (roles, when-to-use, the
-  exact coop-consult/coop-delegate invocations) and mounts the wrappers. Markdown
-  prompt files (roles/lead.md, roles/<name>.md) append to the generated text, never
-  replace it. A native role generates a coop-<role> Claude subagent in the box from
-  itself (its model + when + prompt) — never written to your repo; set subagent: <name>
-  to reference an existing .claude/agents/ subagent instead. Native roles run inside the
-  lead's session, so under a codex/gemini lead they degrade to a read-only consult on their
-  agent (same model + persona), invoked as coop-consult <role> instead of @coop-<role>.
+  coop generates the lead's routing contract from this — each role, when to use it, and
+  its ROLE-ADDRESSED invocation (@coop-<role>, coop-consult <role>, coop-delegate <role>)
+  — and mounts the wrappers. Markdown prompt files (roles/lead.md, roles/<name>.md)
+  append to the generated text, never replace it. A native role generates a coop-<role>
+  Claude subagent in the box from itself (its model + when + prompt) — never written to
+  your repo; set subagent: <name> to reference an existing .claude/agents/ subagent
+  instead. A consult role runs its agent on the role's model, and the role's prompt (if
+  any) is the persona the peer adopts. Native roles run inside the lead's session, so
+  under a codex/gemini lead they degrade to exactly such a consult (same model + persona),
+  coop-consult <role> instead of @coop-<role>.
   A delegate may edit the worktree but must not commit — coop-delegate fails loud if HEAD
   moved — and the lead owns the diff review, the gate, and the commit. Model ids: coop models.
   Scaffold one: coop presets init.

@@ -57,6 +57,17 @@ func NativeBody(r *Role) string {
 		" load-bearing reasoning, then concrete next steps. No preamble."
 }
 
+// ConsultBody is the persona mounted for a consult-wired role — what the peer reads ahead of
+// the lead's question. An explicit consult role's persona is its own prompt (none → empty: no
+// persona file, the peer answers as itself); a degraded native always has one (NativeBody), so
+// the role reads the same whether it runs as a subagent or as a consult.
+func ConsultBody(r *Role) string {
+	if r.Mode == ModeNative {
+		return NativeBody(r)
+	}
+	return strings.TrimSpace(r.PromptText)
+}
+
 // GeneratedSubagent renders the Claude subagent file coop overlays into the box for a
 // generated native role: `coop-<role>.md`, with the role's model in the frontmatter (so a
 // native role's model finally takes effect), a `when:`-derived description (Claude uses it

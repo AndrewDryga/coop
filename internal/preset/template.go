@@ -60,8 +60,8 @@ roles:
     prompt: roles/thinker.md
 
   critic:
-    # mode: consult — a READ-ONLY peer via coop-consult for a second opinion
-    # (often another vendor); it cannot edit files.
+    # mode: consult — a READ-ONLY peer for a second opinion (often another
+    # vendor), asked as coop-consult critic; it cannot edit files.
     mode: consult
     # agent — one of: claude, codex, gemini.
     agent: codex
@@ -69,6 +69,8 @@ roles:
     model: gpt-5.5
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
+    # prompt — OPTIONAL persona the peer adopts for this role's consults
+    # (e.g. prompt: roles/critic.md); omit and the peer answers as itself.
 
   fast:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the

@@ -50,26 +50,24 @@ func roleContract(r *Role, lead string) string {
 	if model == "" {
 		model = "its default model"
 	}
-	// A native role can't run in-session under a non-Claude lead — degrade it to a read-only
-	// consult to its agent, role-addressed so it carries this role's model + persona.
-	if r.Mode == ModeNative && lead != "claude" {
-		fmt.Fprintf(&b, "## %s — read-only consult (%s, %s)\n", r.Name, r.Agent, model)
-		writeWhen(&b, r.When)
-		b.WriteString("It analyses and reports; it NEVER edits a file or runs a mutating command. Ask it:\n\n")
-		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Name)
-		return b.String()
+	// A native role can't run in-session under a non-Claude lead — it degrades to a read-only
+	// consult on its agent, rendered exactly like an explicit consult role (both are
+	// role-addressed: `coop-consult <role>` carries the role's agent + model + persona).
+	mode := r.Mode
+	if mode == ModeNative && lead != "claude" {
+		mode = ModeConsult
 	}
-	switch r.Mode {
+	switch mode {
 	case ModeNative:
 		fmt.Fprintf(&b, "## %s — native %s subagent (%s)\n", r.Name, r.Agent, model)
 		writeWhen(&b, r.When)
 		fmt.Fprintf(&b, "Invoke it as the @%s subagent in your own session — it thinks inside your\n", SubagentName(r))
 		b.WriteString("context; you weigh its conclusion and act on it yourself.\n")
 	case ModeConsult:
-		fmt.Fprintf(&b, "## %s — read-only consult peer (%s, %s)\n", r.Name, r.Agent, model)
+		fmt.Fprintf(&b, "## %s — read-only consult (%s, %s)\n", r.Name, r.Agent, model)
 		writeWhen(&b, r.When)
 		b.WriteString("It analyses and reports; it NEVER edits a file or runs a mutating command. Ask it:\n\n")
-		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Agent)
+		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Name)
 	case ModeDelegate:
 		fmt.Fprintf(&b, "## %s — write-capable delegate (%s, %s)\n", r.Name, r.Agent, model)
 		writeWhen(&b, r.When)
@@ -77,9 +75,12 @@ func roleContract(r *Role, lead string) string {
 		fmt.Fprintf(&b, "  coop-delegate %s <<'EOF'\n  <a self-contained implementation prompt>\n  EOF\n\n", r.Name)
 		b.WriteString("When it returns, YOU review its `git diff`, run the gate, fix or revert what\nfalls short, and make the commit yourself — the delegate's work ships under\nyour review or not at all.\n")
 	}
-	// A generated native role's prompt IS its subagent's system prompt (GeneratedSubagent),
-	// so don't also dump it into the lead contract; a referenced/other role appends here.
-	if r.PromptText != "" && !(r.Mode == ModeNative && r.Subagent == "") {
+	// A role whose prompt reaches its runner elsewhere doesn't dump it into the lead contract:
+	// a generated native's prompt IS its subagent's system prompt (GeneratedSubagent), and a
+	// consult-wired role's prompt IS the peer's persona (ConsultBody, mounted in the box) —
+	// degraded natives included. A delegate or a referenced native appends here.
+	promptReachesRunner := r.Mode == ModeConsult || (r.Mode == ModeNative && (r.Subagent == "" || lead != "claude"))
+	if r.PromptText != "" && !promptReachesRunner {
 		b.WriteString("\n" + r.PromptText + "\n")
 	}
 	return b.String()

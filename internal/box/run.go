@@ -295,8 +295,10 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	// Preset native roles: under a Claude lead they run in-session as generated coop-<role>
-	// subagents; under a codex/gemini lead they can't, so they degrade to read-only consults.
+	// Preset roles. Native roles under a Claude lead run in-session as generated coop-<role>
+	// subagents; consult roles — the explicit ones, plus natives degraded under a codex/gemini
+	// lead — are wired role-addressed so `coop-consult <role>` runs the role's agent on its
+	// model, with its persona (if any) mounted.
 	if spec.Homes && spec.Preset != nil {
 		lead := spec.ConsultLead
 		if spec.FusionGovernor != "" {
@@ -315,25 +317,26 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 					fusionMounts = append(fusionMounts, extraMount{dir, workdir + "/.claude/agents"})
 				}
 			}
-		} else {
-			// Non-Claude lead: wire each native role as a read-only consult (like a delegate) —
-			// its persona at ~/.coop/consult/<role>.md + COOP_CONSULT_<ROLE>_* env the wrapper
-			// resolves agent/model/persona from. coop-consult itself is mounted above (this run
-			// is consult-wired). The role's agent joins the credential scope (credentialScope).
-			for _, role := range spec.Preset.DegradedNativeRoles(lead) {
-				key := preset.EnvKey(role.Name)
+		}
+		// Consult-wired roles: persona at ~/.coop/consult/<role>.md + the COOP_CONSULT_<ROLE>_*
+		// env the wrapper resolves agent/model/persona from. coop-consult itself is mounted above
+		// (a preset with consult-wired roles is consult-wired — leadInstructionMount); the roles'
+		// agents join the credential scope (credentialScope).
+		for _, role := range append(spec.Preset.Consults(), spec.Preset.DegradedNativeRoles(lead)...) {
+			key := preset.EnvKey(role.Name)
+			if body := preset.ConsultBody(&role); body != "" {
 				dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
-				if cp, err := writeTempFile(preset.NativeBody(&role)); err != nil {
+				if cp, err := writeTempFile(body); err != nil {
 					ui.Info("consult: skipped %s persona: %v", role.Name, err)
 				} else {
 					tmpFiles = append(tmpFiles, cp)
 					fusionMounts = append(fusionMounts, extraMount{cp, dst})
 					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
 				}
-				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
-				if role.Model != "" {
-					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
-				}
+			}
+			spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
+			if role.Model != "" {
+				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
 			}
 		}
 	}

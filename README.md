@@ -649,14 +649,16 @@ coop fusion --preset frontier    # council + the preset's roles
 ```
 
 coop generates the lead's routing contract from the YAML — each role, when to use it,
-and the exact invocation (`@coop-thinker`, `coop-consult codex --fresh "…"`, or a
+and its role-addressed invocation (`@coop-thinker`, `coop-consult critic --fresh "…"`, or a
 `coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. A **native** role
 generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
-`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. Native roles
-run inside the lead's session, so under a `codex`/`gemini` lead they **degrade to a read-only
-consult** on their agent — same model and persona, invoked as `coop-consult <role>` instead of
-in-session — so a non-Claude lead still gets Claude's deep reasoning.
+`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A **consult**
+role runs its agent on the role's model, and the role's prompt (if any) is the persona the
+peer adopts — so two consult roles on one agent stay distinct. Native roles run inside the
+lead's session, so under a `codex`/`gemini` lead they **degrade to exactly such a consult** —
+same model and persona, `coop-consult <role>` instead of in-session — so a non-Claude lead
+still gets Claude's deep reasoning.
 `coop presets init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, and `roles/fast.md` (usable
 defaults, not placeholders); their Markdown feeds the generated text — never replacing the
 safety/routing rules — and you edit or delete them freely.

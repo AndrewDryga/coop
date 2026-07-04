@@ -169,11 +169,11 @@ func TestLeadContract(t *testing.T) {
 	c := LeadContract(p, "claude")
 	for _, want := range []string{
 		`preset "frontier" — you are the lead (claude)`,
-		"@deep-reasoner",             // native invocation
-		"coop-consult codex --fresh", // consult invocation
-		"coop-delegate fast <<'EOF'", // delegate invocation
-		"NEVER commit",               // delegate safety text
-		"review its `git diff`",      // lead owns review
+		"@deep-reasoner",              // native invocation
+		"coop-consult critic --fresh", // consult invocation — role-addressed, like every role
+		"coop-delegate fast <<'EOF'",  // delegate invocation
+		"NEVER commit",                // delegate safety text
+		"review its `git diff`",       // lead owns review
 		"Use for: architecture, debugging",
 		"claude-opus-4-8", "gpt-5.5", "gemini-3.5-flash",
 		"THINKER EXTRA", "LEAD EXTRA",
@@ -181,6 +181,11 @@ func TestLeadContract(t *testing.T) {
 		if !strings.Contains(c, want) {
 			t.Errorf("lead contract missing %q:\n%s", want, c)
 		}
+	}
+	// A consult role is addressed by ROLE name (the wrapper resolves its agent/model/persona
+	// from COOP_CONSULT_<ROLE>_*), never by its agent.
+	if strings.Contains(c, "coop-consult codex") {
+		t.Errorf("consult roles are role-addressed, not agent-addressed:\n%s", c)
 	}
 	// A non-Claude lead can't host native subagents in-session, so the thinker DEGRADES to a
 	// role-addressed read-only consult (coop-consult thinker) instead of @-delegation; the
@@ -192,8 +197,13 @@ func TestLeadContract(t *testing.T) {
 	if !strings.Contains(cx, "coop-consult thinker --fresh") {
 		t.Errorf("native thinker should degrade to `coop-consult thinker` under a codex lead:\n%s", cx)
 	}
-	if !strings.Contains(cx, "coop-consult codex") || !strings.Contains(cx, "coop-delegate fast") {
+	if !strings.Contains(cx, "coop-consult critic") || !strings.Contains(cx, "coop-delegate fast") {
 		t.Errorf("consult/delegate roles should survive a codex lead:\n%s", cx)
+	}
+	// A degraded native's prompt becomes the consult persona (ConsultBody), so it must not
+	// also dump into the lead contract.
+	if strings.Contains(cx, "THINKER EXTRA") {
+		t.Errorf("a degraded native's prompt belongs in its persona, not the lead contract:\n%s", cx)
 	}
 	// Markdown appends AFTER the generated role text, never replaces it.
 	if strings.Index(c, "@deep-reasoner") > strings.Index(c, "THINKER EXTRA") {
@@ -315,11 +325,14 @@ func TestNativeSubagentGeneration(t *testing.T) {
 }
 
 // DegradedNativeRoles are the native roles for a non-Claude lead (none for a Claude lead);
-// NativeBody is the shared persona (the role's prompt, or a default).
-func TestDegradedNativeRoles(t *testing.T) {
+// Consults are the explicit consult roles under any lead. Both wire role-addressed, and
+// ConsultBody is each one's persona: the native's NativeBody (prompt or a default), the
+// explicit consult's own prompt (or empty — no persona, the peer answers as itself).
+func TestConsultWiredRoles(t *testing.T) {
 	p := &Preset{Roles: []Role{
 		{Name: "thinker", Mode: ModeNative, Agent: "claude", Model: "opus", PromptText: "Think hard."},
-		{Name: "critic", Mode: ModeConsult, Agent: "codex"},
+		{Name: "critic", Mode: ModeConsult, Agent: "codex", PromptText: "Be ruthless."},
+		{Name: "scout", Mode: ModeConsult, Agent: "codex"}, // two consult roles on ONE agent — distinct wirings
 	}}
 	if got := p.DegradedNativeRoles("claude"); got != nil {
 		t.Errorf("a Claude lead has no degraded native roles, got %+v", got)
@@ -328,10 +341,21 @@ func TestDegradedNativeRoles(t *testing.T) {
 	if len(got) != 1 || got[0].Name != "thinker" {
 		t.Fatalf("a codex lead should degrade the native thinker, got %+v", got)
 	}
-	if NativeBody(&got[0]) != "Think hard." {
-		t.Errorf("NativeBody should be the role's prompt, got %q", NativeBody(&got[0]))
+	if ConsultBody(&got[0]) != "Think hard." {
+		t.Errorf("a degraded native's persona is its prompt, got %q", ConsultBody(&got[0]))
 	}
-	if b := NativeBody(&Role{Name: "x"}); !strings.Contains(b, "You are the x subagent") {
-		t.Errorf("empty prompt should yield a default body, got %q", b)
+	if b := ConsultBody(&Role{Name: "x", Mode: ModeNative}); !strings.Contains(b, "You are the x subagent") {
+		t.Errorf("a promptless native should yield the default body, got %q", b)
+	}
+	// Explicit consult roles wire under EVERY lead, each with its own persona (or none).
+	cs := p.Consults()
+	if len(cs) != 2 || cs[0].Name != "critic" || cs[1].Name != "scout" {
+		t.Fatalf("Consults = %+v, want [critic scout]", cs)
+	}
+	if ConsultBody(&cs[0]) != "Be ruthless." {
+		t.Errorf("an explicit consult's persona is its prompt, got %q", ConsultBody(&cs[0]))
+	}
+	if ConsultBody(&cs[1]) != "" {
+		t.Errorf("a promptless consult has no persona (the peer answers as itself), got %q", ConsultBody(&cs[1]))
 	}
 }
