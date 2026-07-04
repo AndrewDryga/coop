@@ -310,7 +310,7 @@ def scene_loop():
 
 def scene_doctor():
     """Prove the box contains the agent — plant a decoy secret, attack, verify."""
-    c = Cast("doctor", rows=32, title="coop doctor — prove the isolation holds")
+    c = Cast("doctor", rows=22, title="coop doctor — prove the isolation holds")
     c.command("coop doctor")
     c.line(bold("== coop doctor ==") + "  " + dim("(runtime: docker, image: coop-box)"), after=0.6)
     c.line()

@@ -1,4 +1,4 @@
-{"version": 2, "width": 88, "height": 32, "env": {"TERM": "xterm-256color", "SHELL": "/bin/zsh"}, "title": "coop doctor \u2014 prove the isolation holds"}
+{"version": 2, "width": 88, "height": 22, "env": {"TERM": "xterm-256color", "SHELL": "/bin/zsh"}, "title": "coop doctor \u2014 prove the isolation holds"}
 [0.0, "o", "\u001b[2m~/code/acme-api\u001b[0m \u001b[92m❯\u001b[0m "]
 [0.392, "o", "c"]
 [0.433, "o", "o"]
