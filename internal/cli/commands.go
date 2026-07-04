@@ -635,16 +635,17 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 		pid := cmd.Process.Pid
 		go func() { _ = cmd.Wait() }()
 		stop := func() {
-			// Remove the box by its deterministic cidfile id first — works even mid-startup, before
-			// labels exist; `rm -f` stops it too. Then kill the whole process group (inner coop +
-			// its run client), the label backstop for any box that did get labelled, and the pipes.
+			// Remove ONLY this generation's box, by its deterministic cidfile id — works even
+			// mid-startup, before labels exist; `rm -f` stops it too. Then kill the whole process
+			// group (inner coop + its run client) and the pipes. Deliberately NO label sweep here:
+			// every generation shares this supervisor's id, so a swap that Stops the dead child would
+			// also kill the just-spawned next box — see the final sweep after acpproxy.Run.
 			if cidPath != "" {
 				if cid, rerr := os.ReadFile(cidPath); rerr == nil {
 					a.rt.RemoveContainer(strings.TrimSpace(string(cid)))
 				}
 			}
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
-			a.rt.KillByLabel(box.LabelSupervisor, superID)
 			inW.Close()
 			outR.Close()
 			if cidDir != "" {
@@ -656,7 +657,13 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	if err := acpproxy.Run(ctx, os.Stdin, os.Stdout, factory); err != nil && !errors.Is(err, context.Canceled) {
+	err = acpproxy.Run(ctx, os.Stdin, os.Stdout, factory)
+	// Final teardown sweep, once, when the whole supervised session ends: a per-generation Stop
+	// removes only its own box (by cidfile), so the last live generation — or a box orphaned by a
+	// swap — is cleaned up here by this supervisor's id. (Doing this per-generation would kill the
+	// just-spawned next box, which shares the id, fork-bombing the supervisor on the first resume.)
+	a.rt.KillByLabel(box.LabelSupervisor, superID)
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return 1, err
 	}
 	return 0, nil

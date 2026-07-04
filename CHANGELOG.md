@@ -20,6 +20,14 @@
   that carries a refresh token reads as signed in; only an expired token with no refresh token (a
   genuinely dead OAuth login) still says "token expired".
 
+- **`coop acp --supervise` survives a box restart again.** On the first resume the supervisor
+  fork-bombed itself: every generation's box carries the same supervisor id, but the per-generation
+  teardown ran a supervisor-wide `KillByLabel(<id>)` — so stopping the dead box also killed the
+  just-spawned replacement, over and over until the rapid-fail guard gave up ("agent exited 5 times
+  within 2s of starting; giving up"), and the editor's session never came back. Per-generation
+  teardown now removes only its own box (by cidfile); the supervisor-wide sweep runs once, at final
+  teardown. The acp-e2e resume test goes from a 64s failure to a 7s pass.
+
 - **BREAKING: loop pools are gone — a loop rotates a preset's model-first `models:` ladder.** The
   persistent `coop loop pool` registry and `pools.json` are retired (`coop loop pool` tombstones; a
   stray `pools.json` is ignored, no warning). The rotation now IS the `models:` ladder of the loop's
