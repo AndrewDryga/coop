@@ -241,10 +241,12 @@ coop models [agent] — the model menu per agent.
 
 coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--credential <name>] [--model <model>] [--preset <name>] [--supervise] [--consult]
+  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--credential <name>] [--model <model>] [--preset <name>] [--consult]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
-  command at e.g. ["acp","claude"] — one entry per agent or governor.
+  command at e.g. ["acp","claude"] — one entry per agent or governor. coop always
+  proxies the session, so the editor stays connected across a box restart (a
+  rebuild/OOM) — it reconnects and replays the handshake, no lost session.
 
   --credential <name> pins the session to one stored account, so an
   editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].
@@ -258,10 +260,7 @@ coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
   --consult lets the session ask the other signed-in agents for a read-only second
   opinion (their credentials are mounted) — the orchestrator pattern, from your editor.
 
-  --supervise keeps the editor connected across a box restart: it runs the agent
-  in a child and, if the container dies, starts a new one and replays the ACP
-  handshake (initialize + session/load) so the editor doesn't see a crash. Set it
-  in your editor's args, e.g. ["acp","claude","--supervise"].
+  (--supervise is accepted but no longer needed — the proxy is always on.)
 
 coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 

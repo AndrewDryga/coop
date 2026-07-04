@@ -442,13 +442,13 @@ func acpCommand(cfg *config.Config, tool string) ([]string, bool) {
 // peers read-only and synthesizes (see cmdFusion). Add one Zed agent_servers
 // entry per governor to switch which model leads.
 func (a *app) cmdACP(args []string) (int, error) {
-	// --supervise keeps the editor's connection alive across a container restart by
-	// running the normal `coop acp` as a child and proxying ACP through acpproxy. The
-	// COOP_ACP_INNER guard makes the child run the box directly (no recursion).
-	supervise, args := extractSupervise(args)
-	if supervise && os.Getenv("COOP_ACP_INNER") == "" {
-		return a.cmdACPSupervise(args)
-	}
+	// The ACP proxy is ALWAYS in the path (not only under --supervise): it's coop's control point for
+	// the editor session — restart resilience, plus rewriting the session so coop owns the toolbar
+	// (yolo, model default, the credential/preset selector). The OUTER process validates the args
+	// (fail fast), then supervises; the INNER (COOP_ACP_INNER=1) runs the box. --supervise is now the
+	// default — strip and ignore it so an existing editor config that still passes it keeps working.
+	_, args = extractSupervise(args)
+	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
 	consult, args := extractConsult(args)
 	// --credential pins this ACP session to one account — so an editor can point a "claude (work)"
 	// agent_servers entry at ["acp","claude","--credential","work"]. Read before the tool token; ACP
@@ -503,6 +503,16 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
 		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--credential <name>] [--model <model>] [--preset <name>])", leftover[0])
+	}
+	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
+	// applyOneOff does the real selection).
+	if profile != "" && !slices.Contains(a.cfg.Profiles(tool), profile) {
+		return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", tool, profile, tool, profile)
+	}
+	// The outer process owns the editor stream via the proxy; it re-execs `coop acp <inner>` (with
+	// COOP_ACP_INNER set) to run the box. The inner falls through to box.Run below.
+	if os.Getenv("COOP_ACP_INNER") == "" {
+		return a.cmdACPSupervise(inner)
 	}
 	a.applyPreset(p, tool)
 	if err := a.applyOneOff(tool, model, profile); err != nil {

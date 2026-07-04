@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop acp` always proxies the editor session (survives a box restart).** The ACP proxy —
+  previously opt-in via `--supervise` — is now always in the path: every `coop acp` session
+  respawns and replays the ACP handshake if its box dies (rebuild/OOM), so the editor never sees a
+  crash. `--supervise` is accepted but no longer needed. A bad `--credential` now also fails fast in
+  the outer process, before any box spawns. (This is the control point coop uses to own the ACP
+  session — model default, yolo, and a credential/preset selector build on it.)
+
 ## 3.0.0
 
 - **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's
