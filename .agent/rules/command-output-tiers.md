@@ -12,7 +12,7 @@ tiers, so the log of what happened never drowns out what the user must do next:
   actually landed (a build step only if a `Dockerfile.agent` exists, `coop up` only if services
   were added), not a fixed script — and never inline among the progress log.
 - **A standalone result** — a synchronous query/result command (`coop tasks` …, `coop check-secrets`,
-  `coop profiles`, `coop fork review`, `coop fleet watch`) prints only its own outcome,
+  `coop credentials`, `coop fork review`, `coop fleet watch`) prints only its own outcome,
   with no agent output and no dim progress block to stand out from, so it needs no `coop:` anchor. Voice it by outcome, with NO prefix and NO
   command-name echo: `ui.OK` (green ✓) a success, `ui.Warn` (yellow ⚠) a non-fatal caution,
   `ui.Error` (red ✗) a failure, `ui.Note` (plain) a neutral note. State the *result* — `tasks lint:
@@ -31,7 +31,7 @@ the command-name echo, and errors that name the fix.
 
 **How to apply:**
 - Routine per-file/per-step progress → `ui.Detail` (dim, indented, no prefix), never `ui.Info`.
-- Standalone command results (`coop tasks`, `coop check-secrets`, `coop profiles`,
+- Standalone command results (`coop tasks`, `coop check-secrets`, `coop credentials`,
   `coop fork review`, `coop fleet watch`, …) → a glyph helper by outcome: `ui.OK` ✓ / `ui.Warn` ⚠ /
   `ui.Error` ✗ / `ui.Note` (neutral). Never `ui.Info`, and never echo the command name you were
   invoked as (no `tasks lint:` / `check-secrets:` prefix).

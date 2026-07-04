@@ -599,7 +599,7 @@ scoping is already handled.
 
 ### Presets: the whole arrangement in one YAML file
 
-The orchestrator pattern above is assembled by hand — a model mark here, a `--consult`
+The orchestrator pattern above is assembled by hand — a `--model` here, a `--consult`
 there. A **preset** declares the whole arrangement once, as a runtime recipe under
 `.agent/presets/<name>/`: who leads, and which **roles** it routes work to. Three role
 modes cover the spectrum: `native` (a Claude subagent inside the lead's session),

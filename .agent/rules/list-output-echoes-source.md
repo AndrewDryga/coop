@@ -19,7 +19,7 @@ between task files and some - or * before [ ]."
 - Multi-section output (per file, per agent) → clear vertical space *between* sections (two
   blank lines reads better than one for file groups), while the section header stays tight
   to its own items.
-- Siblings to keep consistent: `coop tasks list` (done); `coop profiles` groups by agent —
-  give it the same inter-section blank line if it's ever touched.
+- Siblings to keep consistent: the `coop tasks` listing (done); `coop credentials` groups by
+  agent — give it the same inter-section blank line if it's ever touched.
 - Pairs with [[help-output-style]] (the help reference's scannability) and
   [[no-color-in-width-fields]] (column alignment).

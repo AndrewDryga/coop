@@ -2,10 +2,12 @@
 
 **The rule:** Every user-facing surface — command names, flags, help, errors, hints, docs —
 says **credential(s)** for a stored account/login (a rate-limit slot). "Profile" is the
-pre-v3 name and is RETIRED, not aliased: `coop profiles` and the `--profile` flag both
-fail loudly with the rewrite to `credentials`/`--credential` (the v3 tombstone pattern —
-no working aliases, ever). The only `--profile` that still works is an AGENT'S own flag
-after a `--`. The RECIPE concept (lead + roles + models) is a **preset**, never a profile.
+pre-v3 name and is RETIRED, not aliased: `coop profiles` fails loudly with the rewrite to
+`coop credentials` (the v3 tombstone pattern — no working aliases, ever), and the
+`--profile` FLAG is removed outright (no tombstone): coop doesn't recognize it at all, so
+on an agent launch it forwards to the agent like any other arg (codex has its own
+`--profile`) and elsewhere it's an unknown argument. The RECIPE concept (lead + roles +
+models) is a **preset**, never a profile.
 
 **Why:** "Profile" was carrying two unrelated meanings (an account, and a runtime
 preference bundle), which is exactly what the credentials/presets split resolved. Any
@@ -19,4 +21,4 @@ reads.
 
 **Mechanical check:** grep new user-facing strings for `profile` before landing:
 `grep -rn '"' internal/cli --include='*.go' | grep -i profile` should surface only
-the alias-handling lines and internal identifiers.
+the `coop profiles` tombstone line and internal identifiers.
