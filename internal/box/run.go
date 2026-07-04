@@ -162,6 +162,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// carries the trust entry on the very first run.
 	if spec.Homes {
 		ensureAgentHomes(cfg, spec, workdir)
+		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
+		// ensure that shared store exists before it's mounted.
+		if spec.SupervisorID != "" {
+			if ag, ok := agents.Get(acpPrimary(spec)); ok {
+				for _, name := range ag.ACPSessionDirs() {
+					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, acpPrimary(spec)), name), 0o700)
+				}
+			}
+		}
 	}
 
 	// Generate MCP configs into temp files that live for the container's run.
@@ -729,6 +738,22 @@ func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
 // resource/privilege caps (see boxLimits).
+// acpPrimary is the lead agent of an ACP box — the one whose credential/preset coop's selector
+// switches (the fusion governor if set, else the launched agent).
+func acpPrimary(spec RunSpec) string {
+	if spec.FusionGovernor != "" {
+		return spec.FusionGovernor
+	}
+	return spec.Agent
+}
+
+// acpSharedDir is the credential-independent session-transcript store for an agent's ACP boxes: a
+// mid-session credential/preset switch keeps the conversation because every credential's box mounts
+// this same dir over its session store, so session/load still finds the transcript after the switch.
+func acpSharedDir(cfg *config.Config, agent string) string {
+	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
+}
+
 func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", LabelKey + "=" + LabelBox}
 	if spec.SupervisorID != "" {
@@ -761,6 +786,18 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		scope := credentialScope(cfg, spec)
 		for _, agent := range scope {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
+		}
+		// An ACP box (always supervised) shares the LEAD's session transcripts across credentials, so
+		// switching account/preset mid-session doesn't lose the conversation — session/load still finds
+		// the transcript. The shared dir is credential-independent and shadows the profile's own copy.
+		if spec.SupervisorID != "" {
+			primary := acpPrimary(spec)
+			if ag, ok := agents.Get(primary); ok {
+				for _, name := range ag.ACPSessionDirs() {
+					host := filepath.Join(acpSharedDir(cfg, primary), name)
+					args = append(args, "-v", host+":"+cfg.HomeInBox+"/."+primary+"/"+name)
+				}
+			}
 		}
 		args = append(args, modelEnvArgs(cfg, spec, scope)...)
 		// Claude keeps its account + onboarding state in $CLAUDE_CONFIG_DIR — by

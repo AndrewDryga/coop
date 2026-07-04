@@ -24,7 +24,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +40,37 @@ type Child struct {
 
 // Factory starts a fresh child. ctx is cancelled when the proxy is shutting down.
 type Factory func(ctx context.Context) (*Child, error)
+
+// Hooks lets the caller (coop) own the ACP session as it flows through the proxy — without the
+// generic proxy knowing anything coop-specific. A nil *Hooks (or nil field) is pure pass-through, so
+// existing callers and tests are unaffected. All funcs must be safe for concurrent use.
+type Hooks struct {
+	// ToEditor rewrites a line going agent→editor (e.g. strip/add/retarget configOptions on a
+	// session/new|load|resume result or a ConfigOptionUpdate). Return the line to forward; return
+	// nil to drop it. Called for every agent→editor line.
+	ToEditor func(line []byte) []byte
+	// SessionReady is called with a sessionId once a session is (re)established — a fresh session/new
+	// OR a replayed session/load after a box restart — so coop can force per-session state that the
+	// adapter resets each launch (yolo mode, coop's model). It returns lines to inject to the ADAPTER;
+	// their responses are swallowed (the editor never sent them). Injected requests must use IDs from
+	// InjectPrefix so the proxy can recognize and swallow their responses.
+	SessionReady func(sessionID string) [][]byte
+	// FromEditor inspects an editor→agent line before it's forwarded. handled=true → the proxy does
+	// NOT forward it to the adapter (coop handled it); resp (if non-nil) is written back to the editor;
+	// restart=true → the proxy tears down and respawns the box (a coop-driven switch, e.g. a new
+	// credential), NOT counted as a failure, then replays the session so the editor never disconnects.
+	FromEditor func(line []byte) (handled bool, resp []byte, restart bool)
+	// AutoReply lets coop answer an agent→editor REQUEST itself instead of bothering the editor — the
+	// yolo mechanism: coop approves every session/request_permission (the box is the sandbox) so no
+	// provider ever shows a permission prompt, uniformly, whatever each adapter's own settings are.
+	// Called for every agent→editor request. Return reply != nil to write it back to the ADAPTER;
+	// forward=false to NOT pass the original request on to the editor. (nil, true) is pass-through.
+	AutoReply func(line []byte) (reply []byte, forward bool)
+}
+
+// InjectPrefix namespaces coop's SessionReady-injected request IDs so the proxy swallows their
+// responses instead of forwarding them to the editor.
+const InjectPrefix = "coop-inject-"
 
 const replayPrefix = "coop-acp-" // id namespace for our synthetic replay requests
 
@@ -74,9 +107,10 @@ var errReplayTimeout = errors.New("acpproxy: timed out waiting for the restarted
 // clientIn is os.Stdin and process exit reaps it — but it means Run is single-use per
 // clientIn, not a reusable in-process library: don't call it in a loop expecting the
 // reader to stop when ctx cancels. Close clientIn to release the goroutine.
-func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory) error {
+func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks) error {
 	p := &proxy{
 		out:      clientOut,
+		hooks:    hooks,
 		sessions: map[string]json.RawMessage{},
 		newReqs:  map[string]json.RawMessage{},
 		pending:  map[string]bool{},
@@ -120,10 +154,13 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 			return ctx.Err()
 		default:
 		}
-		// A child that dies almost immediately is broken (no runtime, bad auth, a
-		// failing image) — respawning in a tight loop would be a fork bomb, so back
-		// off and eventually give up, letting the editor see the failure.
-		if time.Since(start) < minHealthy {
+		// A coop-driven restart (a credential/preset switch) is intentional, not a failure — never
+		// count it toward the rapid-fail cap or back off. Otherwise: a child that dies almost
+		// immediately is broken (no runtime, bad auth, a failing image) — respawning in a tight loop
+		// would be a fork bomb, so back off and eventually give up, letting the editor see the failure.
+		if p.intentional.Swap(false) {
+			rapid = 0
+		} else if time.Since(start) < minHealthy {
 			rapid++
 			if rapid >= maxRapidFails {
 				child.Stop()
@@ -163,6 +200,9 @@ type proxy struct {
 	sessions map[string]json.RawMessage // sessionId -> session/new params (for session/load)
 	newReqs  map[string]json.RawMessage // pending session/new request id -> its params
 	pending  map[string]bool            // editor request id -> awaiting a response
+
+	hooks       *Hooks      // coop's control layer (nil → pure pass-through)
+	intentional atomic.Bool // set before a coop-driven restart so the loop doesn't count it as a failure
 }
 
 func (p *proxy) setChild(c *Child) {
@@ -184,6 +224,20 @@ func (p *proxy) shutdownChild() {
 // child. A write to a momentarily-dead child during a swap is dropped; that request
 // is covered by failAllPending on the swap.
 func (p *proxy) fromClient(line []byte) {
+	// coop's control layer gets first look: it may handle an editor request itself (a coop-owned
+	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
+	// to the editor directly, and optionally restarting the box on a new credential/preset.
+	if p.hooks != nil && p.hooks.FromEditor != nil {
+		if handled, resp, restart := p.hooks.FromEditor(line); handled {
+			if len(resp) > 0 {
+				_, _ = p.out.Write(resp)
+			}
+			if restart {
+				p.triggerRestart()
+			}
+			return
+		}
+	}
 	h := parse(line)
 	p.mu.Lock()
 	if h.isRequest() {
@@ -217,21 +271,85 @@ func (p *proxy) fromClient(line []byte) {
 func (p *proxy) pumpChild(br *bufio.Reader) {
 	_ = readLines(br, func(line []byte) error {
 		h := parse(line)
+		// coop answers some agent→editor requests itself (session/request_permission → always allow, so
+		// the editor never prompts). The reply goes to THIS child; the request is not forwarded.
+		if h.isRequest() && p.hooks != nil && p.hooks.AutoReply != nil {
+			if reply, forward := p.hooks.AutoReply(line); reply != nil || !forward {
+				if len(reply) > 0 {
+					p.mu.Lock()
+					c := p.child
+					p.mu.Unlock()
+					if c != nil {
+						_, _ = c.In.Write(reply)
+					}
+				}
+				if !forward {
+					return nil
+				}
+			}
+		}
 		if h.isResponse() {
+			// Swallow responses to coop's injected force-sets — the editor never sent them.
+			if strings.HasPrefix(string(trimQuotes(h.ID)), InjectPrefix) {
+				return nil
+			}
 			id := string(h.ID)
 			p.mu.Lock()
-			if params, ok := p.newReqs[id]; ok {
+			newParams, wasNew := p.newReqs[id]
+			if wasNew {
 				delete(p.newReqs, id)
 				if sid := sessionID(h.Result); sid != "" {
-					p.sessions[sid] = params
+					p.sessions[sid] = newParams
 				}
 			}
 			delete(p.pending, id)
 			p.mu.Unlock()
+			// A fresh session/new just completed: force coop's per-session state (yolo, model) on the
+			// adapter, which resets it every launch.
+			if wasNew {
+				if sid := sessionID(h.Result); sid != "" {
+					p.forceSession(sid)
+				}
+			}
 		}
-		_, _ = p.out.Write(line)
+		out := line
+		if p.hooks != nil && p.hooks.ToEditor != nil {
+			out = p.hooks.ToEditor(line)
+		}
+		if len(out) > 0 {
+			_, _ = p.out.Write(out)
+		}
 		return nil
 	})
+}
+
+// forceSession injects coop's per-session force-sets (yolo mode, coop's model) to the CURRENT
+// adapter after a session is established. Their responses are swallowed in pumpChild (InjectPrefix).
+func (p *proxy) forceSession(sid string) {
+	if p.hooks == nil || p.hooks.SessionReady == nil {
+		return
+	}
+	p.mu.Lock()
+	c := p.child
+	p.mu.Unlock()
+	if c == nil {
+		return
+	}
+	for _, m := range p.hooks.SessionReady(sid) {
+		_, _ = c.In.Write(m)
+	}
+}
+
+// triggerRestart tears the current child down so pumpChild returns and Run's loop respawns it — a
+// coop-driven switch (e.g. a new credential/preset), flagged intentional so it's not a rapid-fail.
+func (p *proxy) triggerRestart() {
+	p.intentional.Store(true)
+	p.mu.Lock()
+	c := p.child
+	p.mu.Unlock()
+	if c != nil {
+		c.Stop()
+	}
 }
 
 // replay brings a freshly-started child up to the editor's current view: re-send
@@ -296,6 +414,15 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		timeout = replayIdleTimeout
 	}
 	<-sent // replay writer done: no concurrent write to c.In
+	// Re-force coop's per-session state (yolo, model) on the restarted box for each restored session —
+	// the fresh adapter reset it. Responses are swallowed in pumpChild (InjectPrefix).
+	if p.hooks != nil && p.hooks.SessionReady != nil {
+		for sid := range sessions {
+			for _, m := range p.hooks.SessionReady(sid) {
+				_, _ = c.In.Write(m)
+			}
+		}
+	}
 	p.swapChild(c)
 	return nil
 }

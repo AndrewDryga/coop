@@ -52,6 +52,10 @@ func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
 // env var — its model under ACP comes from its own config.toml.
 func (codexAgent) ACP(*config.Config) []string { return []string{"codex-acp"} }
 
+// ACPSessionDirs: codex stores rollouts under ~/.codex/sessions (best-effort — codex-acp's resume
+// story is weaker than claude's; sharing the dir is the most we can do without a preset-id).
+func (codexAgent) ACPSessionDirs() []string { return []string{"sessions"} }
+
 // PresetSessionID is false: codex has no flag to start a session under a caller-chosen
 // id (it mints its own UUIDv7), so coop allocates none and Resume scans instead.
 func (codexAgent) PresetSessionID() bool { return false }

@@ -24,6 +24,12 @@ type Agent interface {
 	// resolved model flag; a separate adapter binary (claude-agent-acp, codex-acp) takes
 	// no flags — claude's picks the model up via ModelEnv instead.
 	ACP(cfg *config.Config) []string
+	// ACPSessionDirs are the agent-home-relative dirs where this agent's ACP adapter keeps session
+	// state — the transcript AND any session index/aux state session/load needs (claude keeps a
+	// sessions/ index alongside the projects/ transcript). For an ACP box coop bind-mounts a shared,
+	// credential-independent copy of each so switching the credential mid-session doesn't lose the
+	// conversation — session/load still finds it. Empty → no sharing for this agent.
+	ACPSessionDirs() []string
 	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the coop-owned session id for this (fork, agent): agents that honor a preset

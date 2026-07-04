@@ -248,6 +248,12 @@ coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
   proxies the session, so the editor stays connected across a box restart (a
   rebuild/OOM) — it reconnects and replays the handshake, no lost session.
 
+  coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
+  sandbox, so no permission prompts), defaults the model dropdown to coop's model,
+  drops the permission-mode and subagent pickers, and adds a first "coop" dropdown to
+  switch the CREDENTIAL (account) or PRESET mid-session — the switch is transparent,
+  the conversation is preserved (a shared, credential-independent session store).
+
   --credential <name> pins the session to one stored account, so an
   editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].
 

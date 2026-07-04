@@ -68,7 +68,7 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
 
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory) }()
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, nil) }()
 
 	childIn1 := bufio.NewReader(c1.inR)
 	clientOut := bufio.NewReader(clientOutR)
@@ -171,6 +171,51 @@ func idStr(t *testing.T, line []byte) string {
 	return string(m.ID)
 }
 
+// TestProxyAutoReplyAnswersChildRequest: an agent→editor request the hook claims (a permission ask)
+// is answered straight to the child and NOT forwarded to the editor; other traffic still flows.
+func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	c1 := newFakeChild()
+	queue := make(chan *fakeChild, 1)
+	queue <- c1
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	hooks := &Hooks{AutoReply: func(line []byte) ([]byte, bool) {
+		h := parse(line)
+		if h.Method != "session/request_permission" {
+			return nil, true
+		}
+		return []byte(`{"jsonrpc":"2.0","id":` + string(h.ID) + `,"result":{"outcome":{"outcome":"selected","optionId":"ok"}}}` + "\n"), false
+	}}
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+
+	childIn := bufio.NewReader(c1.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	// Child asks for permission → coop answers the child directly (id 7), editor never sees the ask.
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{"options":[{"optionId":"ok","kind":"allow_once"}]}}`)
+	reply := readLine(t, childIn)
+	if h := parse(reply); !h.isResponse() || string(trimQuotes(h.ID)) != "7" || !strings.Contains(string(reply), "selected") {
+		t.Fatalf("child did not get an id-7 allow response, got %s", reply)
+	}
+
+	// A normal notification IS forwarded — proving the stream is live and only the permission was pulled.
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1"}}`)
+	if m := method(t, readLine(t, clientOut)); m != "session/update" {
+		t.Fatalf("editor should see the update after the swallowed permission, got %q", m)
+	}
+
+	clientInW.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after client close")
+	}
+}
+
 // TestProxyReplayTimeoutFailsPending: a restarted child that never answers the replay handshake
 // (a hang, not a crash) must not freeze the editor — replay times out, the in-flight request is
 // failed back, and Run gives up with an error instead of blocking forever.
@@ -189,7 +234,7 @@ func TestProxyReplayTimeoutFailsPending(t *testing.T) {
 	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
 
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory) }()
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, nil) }()
 
 	childIn1 := bufio.NewReader(c1.inR)
 	clientOut := bufio.NewReader(clientOutR)
@@ -295,7 +340,7 @@ func TestProxyGivesUpOnRapidFailures(t *testing.T) {
 		return &Child{In: inW, Out: pr, Stop: func() { inW.Close() }}, nil
 	}
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, io.Discard, factory) }()
+	go func() { done <- Run(context.Background(), clientInR, io.Discard, factory, nil) }()
 	select {
 	case err := <-done:
 		if err == nil {

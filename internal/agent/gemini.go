@@ -35,6 +35,9 @@ func (geminiAgent) ACP(cfg *config.Config) []string {
 	return withModel([]string{"gemini", "--acp"}, cfg.ModelFor("gemini"))
 }
 
+// ACPSessionDirs: gemini stores chats under ~/.gemini/tmp/<bucket>/chats (best-effort).
+func (geminiAgent) ACPSessionDirs() []string { return []string{"tmp"} }
+
 func (geminiAgent) PresetSessionID() bool { return true }
 
 func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {

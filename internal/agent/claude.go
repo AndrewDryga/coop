@@ -39,6 +39,12 @@ func (a claudeAgent) Headless(cfg *config.Config, prompt string) []string {
 // the claude it spawns via ModelEnv (ANTHROPIC_MODEL), which box.Run exports.
 func (claudeAgent) ACP(*config.Config) []string { return []string{"claude-agent-acp"} }
 
+// ACPSessionDirs: claude stores the transcript in projects/ and a session index + aux state in
+// sessions/ (and session-env/, file-history/); session/load needs the index too, so share them all.
+func (claudeAgent) ACPSessionDirs() []string {
+	return []string{"projects", "sessions", "session-env", "file-history"}
+}
+
 func (claudeAgent) PresetSessionID() bool { return true }
 
 func (a claudeAgent) StartSession(cfg *config.Config, id string) []string {

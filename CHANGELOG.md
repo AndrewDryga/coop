@@ -4,12 +4,22 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **`coop acp` always proxies the editor session (survives a box restart).** The ACP proxy —
-  previously opt-in via `--supervise` — is now always in the path: every `coop acp` session
-  respawns and replays the ACP handshake if its box dies (rebuild/OOM), so the editor never sees a
-  crash. `--supervise` is accepted but no longer needed. A bad `--credential` now also fails fast in
-  the outer process, before any box spawns. (This is the control point coop uses to own the ACP
-  session — model default, yolo, and a credential/preset selector build on it.)
+- **coop owns the ACP editor toolbar — yolo, model-from-coop, and a live credential/preset switch.**
+  The ACP proxy is now always in the path (not just `--supervise`), so coop controls the session an
+  editor (Zed, …) drives: (1) it runs **every provider** (claude/codex/gemini) in **yolo** mode —
+  the box is the sandbox, so coop's proxy approves each `session/request_permission` itself (and for
+  claude also sets `bypassPermissions`), and the editor never shows a permission prompt, whatever the
+  adapter's own settings; (2) it **drops** the permission-mode and subagent dropdowns; (3) it keeps
+  the model dropdown but **defaults it to coop's model** (`--model`/the agent default), still
+  overridable in-editor; (4) it adds a first **coop**
+  dropdown to switch the **credential** (account) or **preset** (recipe) mid-session. The switch is
+  **transparent — the conversation is preserved**: coop restarts the box on the new identity and
+  replays the ACP handshake, and an ACP box shares a credential-independent session-transcript store
+  so `session/load` still finds the conversation on the new account. Every `coop acp` session also
+  now survives a box restart (rebuild/OOM) for free, and a bad `--credential` fails fast before any
+  box spawns. `--supervise` is accepted but no longer needed. (Switching PROVIDERS — claude↔codex↔
+  gemini — is not offered: it can't carry the conversation across adapters today; it's on the
+  backlog with a hard "must stay transparent" bar.)
 
 ## 3.0.0
 

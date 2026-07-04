@@ -471,6 +471,17 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// A running ACP session can switch its credential/preset via coop's selector; the supervisor
+	// re-execs the inner box with the choice in the env (COOP_ACP_CREDENTIAL/COOP_ACP_PRESET), which
+	// overrides the launch flags so the switched identity drives loadRunPreset + the lead below.
+	if os.Getenv("COOP_ACP_INNER") != "" {
+		if cr := os.Getenv("COOP_ACP_CREDENTIAL"); cr != "" {
+			profile, presetName = cr, ""
+		}
+		if ps := os.Getenv("COOP_ACP_PRESET"); ps != "" {
+			presetName, profile = ps, ""
+		}
+	}
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
 		return 2, err
@@ -509,10 +520,17 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if profile != "" && !slices.Contains(a.cfg.Profiles(tool), profile) {
 		return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", tool, profile, tool, profile)
 	}
-	// The outer process owns the editor stream via the proxy; it re-execs `coop acp <inner>` (with
-	// COOP_ACP_INNER set) to run the box. The inner falls through to box.Run below.
+	// The outer process owns the editor stream via the proxy; it builds coop's control layer (the
+	// toolbar rewrite + credential/preset selector) and re-execs `coop acp <inner>` (COOP_ACP_INNER
+	// set) to run the box, the current selection carried in the env. The inner falls through to box.Run.
 	if os.Getenv("COOP_ACP_INNER") == "" {
-		return a.cmdACPSupervise(inner)
+		repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
+		ctrlModel := model
+		if ctrlModel == "" {
+			ctrlModel = a.cfg.ModelFor(tool)
+		}
+		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, a.acpPresetNames(repo, tool))
+		return a.cmdACPSupervise(inner, ctrl)
 	}
 	a.applyPreset(p, tool)
 	if err := a.applyOneOff(tool, model, profile); err != nil {
@@ -556,7 +574,7 @@ func extractSupervise(args []string) (supervise bool, rest []string) {
 // child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
 // the child's container dies, acpproxy starts a new child and replays the ACP
 // handshake, so the editor never sees a disconnect (see internal/acpproxy).
-func (a *app) cmdACPSupervise(rest []string) (int, error) {
+func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return 1, fmt.Errorf("acp --supervise: %w", err)
@@ -588,6 +606,13 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 		// "name already in use" hazard across swaps, and `--cidfile` requires the path not to exist.
 		cidDir, cidPath := "", ""
 		env := append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
+		// The current selection (a credential OR a preset) drives which identity the inner box runs
+		// on; each respawn reads it, so a switch via coop's selector lands on the new one.
+		if cred, preset := ctrl.selection(); cred != "" {
+			env = append(env, "COOP_ACP_CREDENTIAL="+cred)
+		} else if preset != "" {
+			env = append(env, "COOP_ACP_PRESET="+preset)
+		}
 		if a.rt.SupportsCIDFile() {
 			if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {
 				cidDir = d
@@ -638,7 +663,7 @@ func (a *app) cmdACPSupervise(rest []string) (int, error) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	err = acpproxy.Run(ctx, os.Stdin, os.Stdout, factory)
+	err = acpproxy.Run(ctx, os.Stdin, os.Stdout, factory, ctrl.hooks())
 	// Final teardown sweep, once, when the whole supervised session ends: a per-generation Stop
 	// removes only its own box (by cidfile), so the last live generation — or a box orphaned by a
 	// swap — is cleaned up here by this supervisor's id. (Doing this per-generation would kill the
