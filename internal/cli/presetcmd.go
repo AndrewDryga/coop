@@ -80,7 +80,7 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	ui.OK("wrote %s (with starter roles/lead.md + roles/fast.md) — edit it, then run: coop claude --preset %s", path, name)
+	ui.OK("wrote %s (with starter prompts in roles/) — edit it, then run: coop claude --preset %s", path, name)
 	return 0, nil
 }
 

@@ -619,10 +619,9 @@ roles:
   thinker:                     # deep thinking + review, in the lead's own session
     mode: native
     agent: claude
-    model: claude-opus-4-8
-    subagent: deep-reasoner
+    model: claude-opus-4-8     # coop generates a coop-thinker subagent from this role
     when: [architecture, debugging, code-review, before-commit]
-    prompt: roles/thinker.md   # optional
+    prompt: roles/thinker.md   # its system prompt (or set subagent: <name> to reuse one)
 
   critic:                      # independent critique from another vendor, read-only
     mode: consult
@@ -650,10 +649,13 @@ coop fusion --preset frontier    # council + the preset's roles
 ```
 
 coop generates the lead's routing contract from the YAML — each role, when to use it,
-and the exact invocation (`@deep-reasoner`, `coop-consult codex --fresh "…"`, or a
-`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. `coop presets init`
-also scaffolds starter `roles/lead.md` and `roles/fast.md` (usable defaults, not
-placeholders); their Markdown appends to that generated text — never replacing the
+and the exact invocation (`@coop-thinker`, `coop-consult codex --fresh "…"`, or a
+`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. A **native** role
+generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
+prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
+`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. `coop presets
+init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, and `roles/fast.md` (usable
+defaults, not placeholders); their Markdown feeds the generated text — never replacing the
 safety/routing rules — and you edit or delete them freely.
 
 `coop-delegate` is the write-capable counterpart of the read-only `coop-consult`: the

@@ -37,6 +37,18 @@
   TODOs, …). Inlined into the prompt, so it works the same for every agent; committed by default
   (un-ignored like presets). Opt-in — no file is scaffolded. See `coop help loop`.
 
+- **A preset's native role generates its subagent in-box, from the role.** A native role's
+  `model:` used to be inert (the model came from the referenced `.claude/agents/<name>.md`).
+  Now a native role with no `subagent:` generates a `coop-<role>` Claude subagent **inside the
+  box** — its frontmatter carrying the role's `model:` (so it finally takes effect), a
+  `when:`-derived description, and the role's `prompt:` as the system prompt. It's overlaid
+  into the box's project `.claude/agents/` and never written to your repo (`.gitignore` gains
+  `.claude/agents/coop-*.md`); the `coop-` prefix can't collide with hand-authored subagents.
+  `subagent:` stays as an optional escape hatch — set it to reference an existing subagent
+  instead of generating one. The frontier template's `thinker` now generates `coop-thinker`
+  from a scaffolded `roles/thinker.md` (`coop init`'s `deep-reasoner`/`fast-worker` are
+  unchanged, for interactive auto-delegation).
+
 - **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
   (`.agent/presets/<name>/preset.yaml`) declares who leads (a model-first `models:` ladder) and
   which roles it routes work to — each role an agent + model + routing hints (a role runs on its

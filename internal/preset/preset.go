@@ -38,7 +38,7 @@ type Role struct {
 	Agent      string   // known agent
 	Model      string   // optional model id ("" = the agent's own default)
 	When       []string // routing hints injected into the lead contract
-	Subagent   string   // native-only: the Claude subagent name (e.g. deep-reasoner)
+	Subagent   string   // native only, OPTIONAL: reference an existing subagent; empty ⇒ coop generates coop-<Name>
 	PromptText string   // roles/<name>.md content, appended to the generated contract
 }
 
@@ -248,12 +248,11 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	// Mode-specific shape.
 	switch r.Mode {
 	case ModeNative:
-		if y.Subagent == "" {
-			return r, bad("mode: native needs subagent: <name> (the Claude subagent to invoke)")
-		}
 		if r.Agent != "claude" {
 			return r, bad("mode: native is Claude subagents — agent must be claude, not %s", r.Agent)
 		}
+		// subagent is OPTIONAL: set = reference that existing .claude/agents/ subagent;
+		// empty = coop generates coop-<role> in the box from this role (model/when/prompt).
 		r.Subagent = y.Subagent
 	default:
 		if y.Subagent != "" {

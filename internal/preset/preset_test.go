@@ -125,8 +125,7 @@ func TestLoadValidation(t *testing.T) {
 		{"unknown models key", "lead: {agent: claude, models: [{model: opus, acct: work}]}", nil, "unknown key"},
 		{"empty role model", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, model: \"\"}}", nil, "model is empty"},
 		{"role credentials rejected", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
-		{"native needs subagent", "lead: {agent: claude}\nroles: {r: {mode: native, agent: claude}}", nil, "needs subagent"},
-		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex, subagent: x}}", nil, "agent must be claude"},
+		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "agent must be claude"},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},
 		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, "only 'never' is supported"},
 		{"concurrent group rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, concurrent: \"group:a\"}}", nil, "only 'never' is supported"},
@@ -250,5 +249,54 @@ func TestScaffold(t *testing.T) {
 		if _, err := Scaffold(t.TempDir(), bad); err == nil {
 			t.Errorf("Scaffold(%q) should refuse the name", bad)
 		}
+	}
+}
+
+// A native role with no subagent generates a coop-<role> subagent from itself (model from
+// the role, description from when, body from the prompt); one WITH subagent references it,
+// and the generated role's prompt lives in the subagent, not the lead contract.
+func TestNativeSubagentGeneration(t *testing.T) {
+	gen := Role{Name: "thinker", Mode: ModeNative, Agent: "claude", Model: "opus",
+		When: []string{"architecture", "debugging"}, PromptText: "Think hard."}
+	ref := Role{Name: "critic", Mode: ModeNative, Agent: "claude", Subagent: "deep-reasoner"}
+
+	if got := SubagentName(&gen); got != "coop-thinker" {
+		t.Errorf("generated name = %q, want coop-thinker", got)
+	}
+	if got := SubagentName(&ref); got != "deep-reasoner" {
+		t.Errorf("referenced name = %q, want deep-reasoner", got)
+	}
+
+	p := &Preset{Roles: []Role{gen, ref, {Name: "fast", Mode: ModeDelegate, Agent: "gemini"}}}
+	if nr := p.GeneratedNativeRoles(); len(nr) != 1 || nr[0].Name != "thinker" {
+		t.Fatalf("GeneratedNativeRoles = %+v, want only the generated native role", nr)
+	}
+
+	fn, content := GeneratedSubagent(&gen)
+	if fn != "coop-thinker.md" {
+		t.Errorf("filename = %q, want coop-thinker.md", fn)
+	}
+	for _, want := range []string{"name: coop-thinker", "model: opus", "Use for: architecture, debugging.", "Think hard."} {
+		if !strings.Contains(content, want) {
+			t.Errorf("generated subagent missing %q:\n%s", want, content)
+		}
+	}
+	// No model on the role → no model line; no prompt → a default body.
+	_, bare := GeneratedSubagent(&Role{Name: "x", Mode: ModeNative, Agent: "claude"})
+	if strings.Contains(bare, "model:") {
+		t.Errorf("empty model should omit the frontmatter line:\n%s", bare)
+	}
+	if !strings.Contains(bare, "You are the x subagent") {
+		t.Errorf("empty prompt should get a default body:\n%s", bare)
+	}
+
+	// The lead contract invokes @coop-thinker (generated) and @deep-reasoner (referenced),
+	// and doesn't dump the generated role's prompt into the contract.
+	c := LeadContract(&Preset{Name: "t", LeadAgent: "claude", Roles: []Role{gen, ref}})
+	if !strings.Contains(c, "@coop-thinker") || !strings.Contains(c, "@deep-reasoner") {
+		t.Errorf("contract invocations wrong:\n%s", c)
+	}
+	if strings.Contains(c, "Think hard.") {
+		t.Errorf("generated role's prompt belongs in its subagent, not the lead contract:\n%s", c)
 	}
 }

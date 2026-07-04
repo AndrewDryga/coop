@@ -166,9 +166,13 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 
 	// Generate MCP configs into temp files that live for the container's run.
 	var tmpFiles []string
+	var tmpDirs []string
 	defer func() {
 		for _, f := range tmpFiles {
 			os.Remove(f)
+		}
+		for _, d := range tmpDirs {
+			os.RemoveAll(d)
 		}
 	}()
 	var mcpMounts []extraMount
@@ -287,6 +291,24 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 				if role.Model != "" {
 					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_MODEL="+role.Model)
 				}
+			}
+		}
+	}
+
+	// A preset's native roles with no explicit `subagent:` generate a coop-<role> Claude
+	// subagent, overlaid into the box's project .claude/agents/ WITHOUT touching the repo:
+	// coop assembles a temp dir holding the repo's existing subagents PLUS the generated
+	// ones and mounts it OVER <workdir>/.claude/agents (a dir over the existing dir, so the
+	// runtime creates no stray host file — a file mount into the repo would). The role's
+	// model rides in the generated frontmatter. Only Claude reads .claude/, so a
+	// codex/gemini lead just ignores it.
+	if spec.Homes {
+		if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
+			if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
+				ui.Info("preset: skipped native subagents: %v", err)
+			} else {
+				tmpDirs = append(tmpDirs, dir)
+				fusionMounts = append(fusionMounts, extraMount{dir, workdir + "/.claude/agents"})
 			}
 		}
 	}
@@ -494,6 +516,53 @@ func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
 		}
 	}
 	return out
+}
+
+// genFile is a coop-generated file: its base name and content.
+type genFile struct{ name, content string }
+
+// generatedSubagentFiles returns the coop-<role>.md subagent (base name + content) for each
+// of a preset's generated native roles (native, no `subagent:`). Pure, so it's unit-tested
+// without a container. Empty when there's no preset or no generated native role.
+func generatedSubagentFiles(p *preset.Preset) []genFile {
+	if p == nil {
+		return nil
+	}
+	var out []genFile
+	for _, role := range p.GeneratedNativeRoles() {
+		fname, content := preset.GeneratedSubagent(&role)
+		out = append(out, genFile{fname, content})
+	}
+	return out
+}
+
+// assembleAgentsDir builds a host temp dir to mount OVER <repo>/.claude/agents in the box:
+// the repo's existing subagents copied in (so mounting over the dir doesn't hide them) plus
+// the generated coop-<role>.md files. The dir is mounted, never the repo, so the host tree
+// is untouched. Caller mounts the returned dir and cleans it up.
+func assembleAgentsDir(repo string, gen []genFile) (string, error) {
+	dir, err := os.MkdirTemp("", "coop-agents-")
+	if err != nil {
+		return "", err
+	}
+	src := filepath.Join(repo, ".claude", "agents")
+	if entries, err := os.ReadDir(src); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if b, err := os.ReadFile(filepath.Join(src, e.Name())); err == nil {
+				_ = os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644)
+			}
+		}
+	}
+	for _, g := range gen {
+		if err := os.WriteFile(filepath.Join(dir, g.name), []byte(g.content), 0o644); err != nil {
+			os.RemoveAll(dir)
+			return "", err
+		}
+	}
+	return dir, nil
 }
 
 // leadInstructionMount builds the instruction file a consult lead receives: its base

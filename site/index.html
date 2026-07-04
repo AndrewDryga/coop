@@ -447,7 +447,7 @@ roles:
   thinker:                 <span class="t"># deep thinking, in-session</span>
     mode: native
     agent: claude
-    subagent: deep-reasoner
+    model: claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent</span>
   critic:                  <span class="t"># read-only, another vendor</span>
     mode: consult
     agent: codex

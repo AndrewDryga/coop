@@ -681,8 +681,10 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <td><code>native</code></td>
                             <td>
                                 a Claude subagent that runs inside the lead's
-                                own session (e.g. <code>deep-reasoner</code>) —
-                                no separate box
+                                own session — no separate box. coop generates it
+                                (<code>coop-&lt;role&gt;</code>, from the role's
+                                model + prompt) in the box, or set
+                                <code>subagent:</code> to reuse an existing one
                             </td>
                         </tr>
                         <tr>
@@ -713,7 +715,8 @@ roles:
   thinker:                 <span class="t"># deep thinking, in the lead's session</span>
     mode: native
     agent: claude
-    subagent: deep-reasoner
+    model: claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent from this</span>
+    prompt: roles/thinker.md
   critic:                  <span class="t"># read-only cross-vendor review</span>
     mode: consult
     agent: codex
@@ -729,13 +732,14 @@ roles:
                             — each role, when to use it, and the exact
                             invocation — and mounts the
                             <code>coop-consult</code> /
-                            <code>coop-delegate</code> wrappers.
-                            <code>coop presets init</code> also scaffolds
-                            starter prompt files under <code>roles/</code> that
-                            append to (never replace) that generated contract,
-                            so you can layer project guidance on top. An
-                            explicitly named agent or <code>--model</code> still
-                            overrides the recipe.
+                            <code>coop-delegate</code> wrappers. A native role
+                            generates its subagent
+                            (<code>coop-&lt;role&gt;</code>) in the box from the
+                            role's model + prompt, never written to your repo.
+                            <code>coop presets init</code> scaffolds the starter
+                            prompt files under <code>roles/</code>; an explicitly
+                            named agent or <code>--model</code> still overrides
+                            the recipe.
                         </p>
                     </div>
                 </section>

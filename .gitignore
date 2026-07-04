@@ -17,6 +17,9 @@ __pycache__/
 !.agent/presets/
 !.agent/audit.md
 
+# preset native subagents coop generates in the box (coop-<role>) — never committed
+.claude/agents/coop-*.md
+
 # .gemini holds local Gemini state (often globally ignored); keep just the skills symlink
 !.gemini/
 .gemini/*

@@ -579,3 +579,52 @@ func TestModelEnvArgsPreset(t *testing.T) {
 		t.Errorf("preset consult run should export the peer model: %v", args)
 	}
 }
+
+// generatedSubagentFiles returns a coop-<role>.md (name + content) only for the un-referenced
+// native role, with the role's model in its frontmatter — not for a referenced native role
+// (subagent set) or non-native roles.
+func TestGeneratedSubagentFiles(t *testing.T) {
+	p := &preset.Preset{Roles: []preset.Role{
+		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", When: []string{"architecture"}},
+		{Name: "critic", Mode: preset.ModeNative, Agent: "claude", Subagent: "deep-reasoner"},
+		{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"},
+	}}
+	got := generatedSubagentFiles(p)
+	if len(got) != 1 || got[0].name != "coop-thinker.md" {
+		t.Fatalf("want only coop-thinker.md, got %+v", got)
+	}
+	if !strings.Contains(got[0].content, "name: coop-thinker") || !strings.Contains(got[0].content, "model: claude-opus-4-8") {
+		t.Errorf("content missing frontmatter:\n%s", got[0].content)
+	}
+	if generatedSubagentFiles(nil) != nil {
+		t.Error("nil preset should yield no files")
+	}
+}
+
+// assembleAgentsDir builds a temp dir with the repo's existing subagents PLUS the generated
+// ones, and never mutates the repo (the dir is what gets mounted over .claude/agents).
+func TestAssembleAgentsDir(t *testing.T) {
+	repo := t.TempDir()
+	agents := filepath.Join(repo, ".claude", "agents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agents, "deep-reasoner.md"), []byte("hand-authored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := assembleAgentsDir(repo, []genFile{{"coop-thinker.md", "generated"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	// The temp dir carries both the copied existing subagent and the generated one.
+	for _, f := range []string{"deep-reasoner.md", "coop-thinker.md"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("assembled dir missing %s: %v", f, err)
+		}
+	}
+	// The repo's own .claude/agents is untouched — no coop-thinker.md written there.
+	if _, err := os.Stat(filepath.Join(agents, "coop-thinker.md")); !os.IsNotExist(err) {
+		t.Errorf("repo .claude/agents must not gain coop-thinker.md (err=%v)", err)
+	}
+}

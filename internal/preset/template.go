@@ -47,16 +47,17 @@ roles:
 
   thinker:
     # mode: native — a Claude subagent that runs inside the lead's session (no
-    # separate box; native requires agent: claude).
+    # separate box; native is Claude-only). With no subagent: below, coop generates
+    # a coop-thinker subagent in the box from this role — model, when, and prompt.
     mode: native
-    # agent — one of: claude, codex, gemini.
     agent: claude
-    # model — OPTIONAL model id (coop models); omit for the agent's default.
+    # model — the generated subagent runs on this (coop models); omit for the default.
     model: claude-opus-4-8
-    # subagent — REQUIRED for native: a .claude/agents/ subagent name.
-    subagent: deep-reasoner
-    # when — OPTIONAL routing hints the lead reads to pick this role.
+    # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
     when: [architecture, debugging, code-review, before-commit]
+    # prompt — the generated subagent's system prompt. To reference an existing
+    # .claude/agents/ subagent instead of generating one, set: subagent: <name>.
+    prompt: roles/thinker.md
 
   critic:
     # mode: consult — a READ-ONLY peer via coop-consult for a second opinion
@@ -124,6 +125,24 @@ const fastPrompt = `<!-- roles/fast.md — guidance for the "fast" delegate, app
   the lead to review.
 `
 
+// thinkerPrompt is the generated coop-thinker subagent's system prompt (the native
+// "thinker" role has no subagent:, so coop generates one from this). Unlike lead/fast it
+// isn't appended to a contract — it IS the subagent's instructions, so it reads as one.
+const thinkerPrompt = `<!-- roles/thinker.md — the generated coop-thinker subagent's system prompt (the
+     thinker role in preset.yaml). Tune it, or reference an existing subagent with
+     "subagent: <name>" and delete this file. -->
+
+You are the deep-reasoning specialist the lead delegates hard thinking to.
+
+Think the problem through before concluding: the alternatives, their failure modes, and
+what evidence in the repo supports or contradicts each. Read whatever code you need —
+verify claims against the actual source rather than assuming.
+
+Your reply is consumed by the lead, not a human: lead with the decision or diagnosis,
+then the load-bearing reasoning in a few sentences, then concrete next steps. No preamble,
+and no survey of rejected options unless a rejection is the insight.
+`
+
 // templateFile is one file Scaffold writes beside preset.yaml. Rel is a POSIX path
 // relative to the preset folder (forward slashes; Scaffold localizes it).
 type templateFile struct {
@@ -136,6 +155,7 @@ type templateFile struct {
 // scaffolded preset fail to load, which TestScaffold catches.
 var templateFiles = []templateFile{
 	{"roles/lead.md", leadPrompt},
+	{"roles/thinker.md", thinkerPrompt},
 	{"roles/fast.md", fastPrompt},
 }
 

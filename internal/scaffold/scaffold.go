@@ -289,6 +289,7 @@ func (s *scaffolder) updateGitignore() error {
 	}
 	defer f.Close()
 	const block = "\n# coop working state (commit knowledge, ignore state)\n.agent/*\n!.agent/rules/\n!.agent/skills/\n!.agent/presets/\n!.agent/audit.md\n" +
+		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	if _, err := f.WriteString(block); err != nil {
 		return err

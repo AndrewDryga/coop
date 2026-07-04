@@ -377,9 +377,9 @@ var commandHelp = map[string]string{
       thinker:                   # native Claude subagent — deep thinking in-session
         mode: native
         agent: claude
-        model: claude-opus-4-8
-        subagent: deep-reasoner
+        model: claude-opus-4-8   # coop generates a coop-thinker subagent from this
         when: [architecture, debugging, code-review]
+        prompt: roles/thinker.md # its system prompt (or set subagent: <name> to reuse one)
       critic:                    # read-only peer via coop-consult
         mode: consult
         agent: codex
@@ -396,9 +396,12 @@ var commandHelp = map[string]string{
   coop generates the lead's routing contract from this (roles, when-to-use, the
   exact coop-consult/coop-delegate invocations) and mounts the wrappers. Markdown
   prompt files (roles/lead.md, roles/<name>.md) append to the generated text, never
-  replace it. A delegate may edit the worktree but must not commit — coop-delegate
-  fails loud if HEAD moved — and the lead owns the diff review, the gate, and the
-  commit. Model ids for the recipe: coop models. Scaffold one: coop presets init.`,
+  replace it. A native role generates a coop-<role> Claude subagent in the box from
+  itself (its model + when + prompt) — never written to your repo; set subagent: <name>
+  to reference an existing .claude/agents/ subagent instead. A delegate may edit the
+  worktree but must not commit — coop-delegate fails loud if HEAD moved — and the lead
+  owns the diff review, the gate, and the commit. Model ids: coop models.
+  Scaffold one: coop presets init.`,
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
 

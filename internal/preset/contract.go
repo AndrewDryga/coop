@@ -43,7 +43,7 @@ func roleContract(r *Role) string {
 	case ModeNative:
 		fmt.Fprintf(&b, "## %s — native %s subagent (%s)\n", r.Name, r.Agent, model)
 		writeWhen(&b, r.When)
-		fmt.Fprintf(&b, "Invoke it as the @%s subagent in your own session — it thinks inside your\n", r.Subagent)
+		fmt.Fprintf(&b, "Invoke it as the @%s subagent in your own session — it thinks inside your\n", SubagentName(r))
 		b.WriteString("context; you weigh its conclusion and act on it yourself.\n")
 	case ModeConsult:
 		fmt.Fprintf(&b, "## %s — read-only consult peer (%s, %s)\n", r.Name, r.Agent, model)
@@ -57,7 +57,9 @@ func roleContract(r *Role) string {
 		fmt.Fprintf(&b, "  coop-delegate %s <<'EOF'\n  <a self-contained implementation prompt>\n  EOF\n\n", r.Name)
 		b.WriteString("When it returns, YOU review its `git diff`, run the gate, fix or revert what\nfalls short, and make the commit yourself — the delegate's work ships under\nyour review or not at all.\n")
 	}
-	if r.PromptText != "" {
+	// A generated native role's prompt IS its subagent's system prompt (GeneratedSubagent),
+	// so don't also dump it into the lead contract; a referenced/other role appends here.
+	if r.PromptText != "" && !(r.Mode == ModeNative && r.Subagent == "") {
 		b.WriteString("\n" + r.PromptText + "\n")
 	}
 	return b.String()

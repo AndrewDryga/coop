@@ -34,16 +34,17 @@ roles:
 
   thinker:
     # mode: native — a Claude subagent that runs inside the lead's session (no
-    # separate box; native requires agent: claude).
+    # separate box; native is Claude-only). With no subagent: below, coop generates
+    # a coop-thinker subagent in the box from this role — model, when, and prompt.
     mode: native
-    # agent — one of: claude, codex, gemini.
     agent: claude
-    # model — OPTIONAL model id (coop models); omit for the agent's default.
+    # model — the generated subagent runs on this (coop models); omit for the default.
     model: claude-opus-4-8
-    # subagent — REQUIRED for native: a .claude/agents/ subagent name.
-    subagent: deep-reasoner
-    # when — OPTIONAL routing hints the lead reads to pick this role.
+    # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
     when: [architecture, debugging, code-review, before-commit]
+    # prompt — the generated subagent's system prompt. To reference an existing
+    # .claude/agents/ subagent instead of generating one, set: subagent: <name>.
+    prompt: roles/thinker.md
 
   critic:
     # mode: consult — a READ-ONLY peer via coop-consult for a second opinion
