@@ -218,8 +218,8 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 			}
 			if spec.Preset != nil {
 				// A preset under fusion keeps the council directive and adds the preset's
-				// role routing (its subagents/delegates) ahead of it.
-				content = preset.LeadContract(spec.Preset) + "\n" + content
+				// role routing (its subagents/delegates) ahead of it. The governor is the lead.
+				content = preset.LeadContract(spec.Preset, spec.FusionGovernor) + "\n" + content
 			}
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("fusion: skipped instruction wiring: %v", err)
@@ -304,7 +304,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// codex/gemini lead just ignores it.
 	if spec.Homes {
 		if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
-			if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
+			lead := spec.ConsultLead
+			if spec.FusionGovernor != "" {
+				lead = spec.FusionGovernor
+			}
+			if !spec.Preset.NativeRolesUsable(lead) {
+				// Native subagents run inside a Claude session; a codex/gemini lead can't
+				// invoke them, so LeadContract drops them and we skip the mount too.
+				ui.Info("preset: native roles need a Claude lead — skipping them under %s", lead)
+			} else if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
 				ui.Info("preset: skipped native subagents: %v", err)
 			} else {
 				tmpDirs = append(tmpDirs, dir)
@@ -583,7 +591,7 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset) (co
 		// A preset's generated routing block replaces the generic second-opinion
 		// directive — it already names each consult/delegate role and its exact
 		// invocation. coop-consult is mounted only when a consult role exists.
-		content = preset.LeadContract(p)
+		content = preset.LeadContract(p, lead)
 		if base != "" {
 			content += "\n" + base + "\n"
 		}

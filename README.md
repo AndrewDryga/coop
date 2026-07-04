@@ -653,8 +653,10 @@ and the exact invocation (`@coop-thinker`, `coop-consult codex --fresh "…"`, o
 `coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. A **native** role
 generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
-`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. `coop presets
-init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, and `roles/fast.md` (usable
+`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. Native roles
+run inside the lead's session, so they need a **Claude lead** — under a `codex`/`gemini` lead
+they're skipped (the `consult`/`delegate` roles, which spawn their own agents, still run).
+`coop presets init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, and `roles/fast.md` (usable
 defaults, not placeholders); their Markdown feeds the generated text — never replacing the
 safety/routing rules — and you edit or delete them freely.
 

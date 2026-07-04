@@ -166,7 +166,7 @@ func TestLeadContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := LeadContract(p)
+	c := LeadContract(p, "claude")
 	for _, want := range []string{
 		`preset "frontier" — you are the lead (claude)`,
 		"@deep-reasoner",             // native invocation
@@ -181,6 +181,15 @@ func TestLeadContract(t *testing.T) {
 		if !strings.Contains(c, want) {
 			t.Errorf("lead contract missing %q:\n%s", want, c)
 		}
+	}
+	// A non-Claude lead can't host native subagents, so they're dropped — but the
+	// consult/delegate roles (separate agents) stay.
+	cx := LeadContract(p, "codex")
+	if strings.Contains(cx, "@deep-reasoner") || strings.Contains(cx, "native") {
+		t.Errorf("native role should be omitted for a codex lead:\n%s", cx)
+	}
+	if !strings.Contains(cx, "coop-consult codex") || !strings.Contains(cx, "coop-delegate fast") {
+		t.Errorf("consult/delegate roles should survive a codex lead:\n%s", cx)
 	}
 	// Markdown appends AFTER the generated role text, never replaces it.
 	if strings.Index(c, "@deep-reasoner") > strings.Index(c, "THINKER EXTRA") {
@@ -292,7 +301,7 @@ func TestNativeSubagentGeneration(t *testing.T) {
 
 	// The lead contract invokes @coop-thinker (generated) and @deep-reasoner (referenced),
 	// and doesn't dump the generated role's prompt into the contract.
-	c := LeadContract(&Preset{Name: "t", LeadAgent: "claude", Roles: []Role{gen, ref}})
+	c := LeadContract(&Preset{Name: "t", LeadAgent: "claude", Roles: []Role{gen, ref}}, "claude")
 	if !strings.Contains(c, "@coop-thinker") || !strings.Contains(c, "@deep-reasoner") {
 		t.Errorf("contract invocations wrong:\n%s", c)
 	}

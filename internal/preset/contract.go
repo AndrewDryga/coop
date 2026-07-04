@@ -10,13 +10,20 @@ import (
 // invocation for each mode. The generated text is always present; a preset's
 // Markdown files append to it (lead.md after the block, each roles/<name>.md after
 // its role's contract) — they refine, never replace, the routing/safety text.
-func LeadContract(p *Preset) string {
+//
+// lead is the EFFECTIVE lead agent (an explicit `coop codex --preset …` overrides the
+// preset's lead). Native roles are Claude subagents that run inside the lead's own
+// session, so they're omitted for a non-Claude lead — it has no way to invoke them.
+func LeadContract(p *Preset, lead string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Orchestration preset %q — you are the lead (%s)\n\n", p.Name, p.LeadAgent)
 	b.WriteString("You lead this session: you make the calls, do the final review, run the gate,\n")
 	b.WriteString("and make every commit. Route work to your roles by their \"use for\" hints —\n")
 	b.WriteString("spend yourself on judgment, not on work a role covers.\n")
 	for i := range p.Roles {
+		if p.Roles[i].Mode == ModeNative && lead != "claude" {
+			continue // a native subagent can't run inside a non-Claude lead's session
+		}
 		b.WriteString("\n")
 		b.WriteString(roleContract(&p.Roles[i]))
 	}
@@ -25,6 +32,11 @@ func LeadContract(p *Preset) string {
 	}
 	return b.String()
 }
+
+// NativeRolesUsable reports whether the effective lead can host this preset's native roles
+// (Claude subagents run only inside a Claude lead's session). Used to gate the in-box
+// subagent generation and to warn when native roles are dropped for a non-Claude lead.
+func (p *Preset) NativeRolesUsable(lead string) bool { return lead == "claude" }
 
 // RoleContract renders one role's generated contract plus its appended Markdown —
 // the same text the lead sees for that role, reused as the delegate wrapper's
