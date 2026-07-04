@@ -7,6 +7,9 @@
 # the compiled binary (make build)
 /coop
 
+# GoReleaser build output (make snapshot / release)
+/dist/
+
 # python bytecode cache (tools/gen_casts.py)
 __pycache__/
 
