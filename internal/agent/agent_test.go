@@ -243,6 +243,15 @@ func TestResume(t *testing.T) {
 	if _, ok := gemini.Resume(cfg, slugWs, id); !ok {
 		t.Error("gemini Resume must match a session in a slug-named bucket, not only the raw basename")
 	}
+	// gemini 0.46+ also writes 64-char-hash buckets alongside slug ones (seen on real hosts). A
+	// DISTINCT id that lives ONLY in a hash bucket must still resolve — proving the content scan
+	// spans every bucket scheme, not just slugs. (A raw-basename lookup would silently miss it.)
+	hashID := "77777777-2222-4333-8444-555555555555"
+	hashBucket := "00019aef076a44ed361af8d31415c187d0650aad947127fd02c5617717734f4f"
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, "chats", "h.jsonl"), `{"sessionId":"`+hashID+`"}`)
+	if _, ok := gemini.Resume(cfg, filepath.Join(t.TempDir(), "hashed-repo"), hashID); !ok {
+		t.Error("gemini Resume must match a session in a 64-char-hash bucket (the gemini 0.46+ scheme)")
+	}
 
 	// codex ignores the id and resumes its most-recent INTERACTIVE session for the cwd,
 	// skipping a newer `codex exec` (source=="exec") loop/consult session.
