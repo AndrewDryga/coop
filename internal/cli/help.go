@@ -399,10 +399,11 @@ var commandHelp = map[string]string{
   replace it. A native role generates a coop-<role> Claude subagent in the box from
   itself (its model + when + prompt) — never written to your repo; set subagent: <name>
   to reference an existing .claude/agents/ subagent instead. Native roles run inside the
-  lead's session, so they need a Claude lead — under a codex/gemini lead they're skipped
-  (consult/delegate roles still run). A delegate may edit the worktree but must not
-  commit — coop-delegate fails loud if HEAD moved — and the lead owns the diff review,
-  the gate, and the commit. Model ids: coop models. Scaffold one: coop presets init.`,
+  lead's session, so under a codex/gemini lead they degrade to a read-only consult on their
+  agent (same model + persona), invoked as coop-consult <role> instead of @coop-<role>.
+  A delegate may edit the worktree but must not commit — coop-delegate fails loud if HEAD
+  moved — and the lead owns the diff review, the gate, and the commit. Model ids: coop models.
+  Scaffold one: coop presets init.`,
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
 

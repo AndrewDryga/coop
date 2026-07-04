@@ -182,11 +182,15 @@ func TestLeadContract(t *testing.T) {
 			t.Errorf("lead contract missing %q:\n%s", want, c)
 		}
 	}
-	// A non-Claude lead can't host native subagents, so they're dropped — but the
-	// consult/delegate roles (separate agents) stay.
+	// A non-Claude lead can't host native subagents in-session, so the thinker DEGRADES to a
+	// role-addressed read-only consult (coop-consult thinker) instead of @-delegation; the
+	// consult/delegate roles stay as they are.
 	cx := LeadContract(p, "codex")
-	if strings.Contains(cx, "@deep-reasoner") || strings.Contains(cx, "native") {
-		t.Errorf("native role should be omitted for a codex lead:\n%s", cx)
+	if strings.Contains(cx, "@deep-reasoner") {
+		t.Errorf("native role must not @-delegate under a codex lead:\n%s", cx)
+	}
+	if !strings.Contains(cx, "coop-consult thinker --fresh") {
+		t.Errorf("native thinker should degrade to `coop-consult thinker` under a codex lead:\n%s", cx)
 	}
 	if !strings.Contains(cx, "coop-consult codex") || !strings.Contains(cx, "coop-delegate fast") {
 		t.Errorf("consult/delegate roles should survive a codex lead:\n%s", cx)
@@ -307,5 +311,27 @@ func TestNativeSubagentGeneration(t *testing.T) {
 	}
 	if strings.Contains(c, "Think hard.") {
 		t.Errorf("generated role's prompt belongs in its subagent, not the lead contract:\n%s", c)
+	}
+}
+
+// DegradedNativeRoles are the native roles for a non-Claude lead (none for a Claude lead);
+// NativeBody is the shared persona (the role's prompt, or a default).
+func TestDegradedNativeRoles(t *testing.T) {
+	p := &Preset{Roles: []Role{
+		{Name: "thinker", Mode: ModeNative, Agent: "claude", Model: "opus", PromptText: "Think hard."},
+		{Name: "critic", Mode: ModeConsult, Agent: "codex"},
+	}}
+	if got := p.DegradedNativeRoles("claude"); got != nil {
+		t.Errorf("a Claude lead has no degraded native roles, got %+v", got)
+	}
+	got := p.DegradedNativeRoles("codex")
+	if len(got) != 1 || got[0].Name != "thinker" {
+		t.Fatalf("a codex lead should degrade the native thinker, got %+v", got)
+	}
+	if NativeBody(&got[0]) != "Think hard." {
+		t.Errorf("NativeBody should be the role's prompt, got %q", NativeBody(&got[0]))
+	}
+	if b := NativeBody(&Role{Name: "x"}); !strings.Contains(b, "You are the x subagent") {
+		t.Errorf("empty prompt should yield a default body, got %q", b)
 	}
 }

@@ -209,3 +209,19 @@ func TestLeadInstructions(t *testing.T) {
 		t.Error("consult must stay optional, not the mandatory fusion directive")
 	}
 }
+
+// coop-consult also resolves a preset ROLE (a consult role, or a native role degraded under
+// a non-Claude lead): COOP_CONSULT_<KEY>_{AGENT,MODEL,CONTRACT}, with the role's persona
+// (contract) prepended so it answers AS that role.
+func TestConsultWrapperResolvesRoles(t *testing.T) {
+	for _, want := range []string{
+		"COOP_CONSULT_${key}_AGENT",
+		"COOP_CONSULT_${key}_MODEL",
+		"COOP_CONSULT_${key}_CONTRACT",
+		`cat "$persona"`, // the role's persona is prepended to the prompt
+	} {
+		if !strings.Contains(ConsultWrapper, want) {
+			t.Errorf("consult wrapper missing role-resolution %q", want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/preset"
 )
 
 func TestAuthedAgents(t *testing.T) {
@@ -49,6 +50,11 @@ func TestCredentialScope(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "env"), []byte("GEMINI_API_KEY=real\n"), 0o644)
 	cfg := &config.Config{ConfigDir: dir}
 
+	// A preset whose only role is a native claude thinker: in-session under a Claude lead
+	// (adds nothing to the scope), but degrades to a consult on claude under a codex lead —
+	// which then must mount claude's creds.
+	nativePreset := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeNative, Agent: "claude"}}}
+
 	cases := []struct {
 		name string
 		spec RunSpec
@@ -59,6 +65,8 @@ func TestCredentialScope(t *testing.T) {
 		{"homes off", RunSpec{Agent: "claude"}, nil},
 		{"consult claude", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude", "gemini"}},
 		{"fusion codex", RunSpec{Homes: true, Agent: "codex", FusionGovernor: "codex"}, []string{"codex", "claude", "gemini"}},
+		{"claude lead keeps native in-session", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: nativePreset}, []string{"claude"}},
+		{"codex lead degrades native to a claude consult", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Preset: nativePreset}, []string{"codex", "claude"}},
 	}
 	for _, c := range cases {
 		if got := credentialScope(cfg, c.spec); !slices.Equal(got, c.want) {

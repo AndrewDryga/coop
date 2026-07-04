@@ -47,7 +47,13 @@
   `subagent:` stays as an optional escape hatch — set it to reference an existing subagent
   instead of generating one. The frontier template's `thinker` now generates `coop-thinker`
   from a scaffolded `roles/thinker.md` (`coop init`'s `deep-reasoner`/`fast-worker` are
-  unchanged, for interactive auto-delegation).
+  unchanged, for interactive auto-delegation). Native subagents run inside a Claude session,
+  so under a codex/gemini lead (`coop codex --preset frontier`) a native role **degrades to a
+  faithful read-only consult** on its agent — same model + persona, invoked as
+  `coop-consult <role>` — instead of an in-session subagent, so a non-Claude lead still gets
+  Claude's deep reasoning. `coop-consult` gained role-addressing to carry it
+  (`COOP_CONSULT_<ROLE>_{AGENT,MODEL,CONTRACT}`, persona prepended); the ad-hoc
+  fusion/`--consult` peer ask stays agent-addressed.
 
 - **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
   (`.agent/presets/<name>/preset.yaml`) declares who leads (a model-first `models:` ladder) and

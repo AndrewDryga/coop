@@ -12,8 +12,9 @@ import (
 // its role's contract) — they refine, never replace, the routing/safety text.
 //
 // lead is the EFFECTIVE lead agent (an explicit `coop codex --preset …` overrides the
-// preset's lead). Native roles are Claude subagents that run inside the lead's own
-// session, so they're omitted for a non-Claude lead — it has no way to invoke them.
+// preset's lead). A native role is a Claude subagent that runs inside the lead's own
+// session; under a non-Claude lead it can't, so it degrades to a read-only consult to its
+// agent (same model + persona), invoked as `coop-consult <role>` (see roleContract).
 func LeadContract(p *Preset, lead string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Orchestration preset %q — you are the lead (%s)\n\n", p.Name, p.LeadAgent)
@@ -21,11 +22,8 @@ func LeadContract(p *Preset, lead string) string {
 	b.WriteString("and make every commit. Route work to your roles by their \"use for\" hints —\n")
 	b.WriteString("spend yourself on judgment, not on work a role covers.\n")
 	for i := range p.Roles {
-		if p.Roles[i].Mode == ModeNative && lead != "claude" {
-			continue // a native subagent can't run inside a non-Claude lead's session
-		}
 		b.WriteString("\n")
-		b.WriteString(roleContract(&p.Roles[i]))
+		b.WriteString(roleContract(&p.Roles[i], lead))
 	}
 	if p.LeadPromptText != "" {
 		b.WriteString("\n" + p.LeadPromptText + "\n")
@@ -40,16 +38,26 @@ func (p *Preset) NativeRolesUsable(lead string) bool { return lead == "claude" }
 
 // RoleContract renders one role's generated contract plus its appended Markdown —
 // the same text the lead sees for that role, reused as the delegate wrapper's
-// prepended contract so the delegate knows its own ground rules.
+// prepended contract so the delegate knows its own ground rules. Delegate-only, so the
+// lead is immaterial (native/consult degradation never applies).
 func RoleContract(r *Role) string {
-	return roleContract(r)
+	return roleContract(r, "claude")
 }
 
-func roleContract(r *Role) string {
+func roleContract(r *Role, lead string) string {
 	var b strings.Builder
 	model := r.Model
 	if model == "" {
 		model = "its default model"
+	}
+	// A native role can't run in-session under a non-Claude lead — degrade it to a read-only
+	// consult to its agent, role-addressed so it carries this role's model + persona.
+	if r.Mode == ModeNative && lead != "claude" {
+		fmt.Fprintf(&b, "## %s — read-only consult (%s, %s)\n", r.Name, r.Agent, model)
+		writeWhen(&b, r.When)
+		b.WriteString("It analyses and reports; it NEVER edits a file or runs a mutating command. Ask it:\n\n")
+		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Name)
+		return b.String()
 	}
 	switch r.Mode {
 	case ModeNative:

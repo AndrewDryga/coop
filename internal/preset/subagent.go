@@ -13,6 +13,7 @@ func SubagentName(r *Role) string {
 
 // GeneratedNativeRoles are the native roles coop generates a subagent for — those that DON'T
 // reference an existing one. A role with `subagent:` set is a reference, so it's excluded.
+// Used for the in-box subagent mount under a Claude lead.
 func (p *Preset) GeneratedNativeRoles() []Role {
 	var out []Role
 	for _, r := range p.Roles {
@@ -21,6 +22,39 @@ func (p *Preset) GeneratedNativeRoles() []Role {
 		}
 	}
 	return out
+}
+
+// DegradedNativeRoles are the native roles that degrade to a read-only consult because the
+// effective lead can't host Claude subagents in-session (any native role when lead isn't
+// claude). Each is wired as `coop-consult <role>` carrying the role's agent + model + persona.
+func (p *Preset) DegradedNativeRoles(lead string) []Role {
+	if lead == "claude" {
+		return nil
+	}
+	var out []Role
+	for _, r := range p.Roles {
+		if r.Mode == ModeNative {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// NativeBody is a native role's system prompt: its own prompt text, or a sensible default.
+// Shared by the generated subagent (its body) and the degraded consult (its persona) so the
+// two deliveries of the same role read identically.
+func NativeBody(r *Role) string {
+	if b := strings.TrimSpace(r.PromptText); b != "" {
+		return b
+	}
+	desc := "The " + r.Name + " subagent the lead delegates to."
+	if len(r.When) > 0 {
+		desc = "Use for: " + strings.Join(r.When, ", ") + "."
+	}
+	return "You are the " + r.Name + " subagent the lead delegates to. " + desc +
+		"\n\nRead whatever code you need and verify claims against the source. Your reply is" +
+		" consumed by the lead, not a human: lead with the decision or result, then the" +
+		" load-bearing reasoning, then concrete next steps. No preamble."
 }
 
 // GeneratedSubagent renders the Claude subagent file coop overlays into the box for a
@@ -42,13 +76,6 @@ func GeneratedSubagent(r *Role) (filename, content string) {
 		b.WriteString("model: " + r.Model + "\n")
 	}
 	b.WriteString("---\n\n")
-	body := r.PromptText
-	if body == "" {
-		body = "You are the " + r.Name + " subagent the lead delegates to. " + desc +
-			"\n\nRead whatever code you need and verify claims against the source. Your reply is" +
-			" consumed by the lead, not a human: lead with the decision or result, then the" +
-			" load-bearing reasoning, then concrete next steps. No preamble."
-	}
-	b.WriteString(strings.TrimSpace(body) + "\n")
+	b.WriteString(NativeBody(r) + "\n")
 	return name + ".md", b.String()
 }

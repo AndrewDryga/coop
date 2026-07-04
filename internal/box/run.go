@@ -295,28 +295,45 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	// A preset's native roles with no explicit `subagent:` generate a coop-<role> Claude
-	// subagent, overlaid into the box's project .claude/agents/ WITHOUT touching the repo:
-	// coop assembles a temp dir holding the repo's existing subagents PLUS the generated
-	// ones and mounts it OVER <workdir>/.claude/agents (a dir over the existing dir, so the
-	// runtime creates no stray host file — a file mount into the repo would). The role's
-	// model rides in the generated frontmatter. Only Claude reads .claude/, so a
-	// codex/gemini lead just ignores it.
-	if spec.Homes {
-		if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
-			lead := spec.ConsultLead
-			if spec.FusionGovernor != "" {
-				lead = spec.FusionGovernor
+	// Preset native roles: under a Claude lead they run in-session as generated coop-<role>
+	// subagents; under a codex/gemini lead they can't, so they degrade to read-only consults.
+	if spec.Homes && spec.Preset != nil {
+		lead := spec.ConsultLead
+		if spec.FusionGovernor != "" {
+			lead = spec.FusionGovernor
+		}
+		if spec.Preset.NativeRolesUsable(lead) {
+			// Claude lead: coop assembles a temp dir holding the repo's existing subagents PLUS
+			// the generated coop-<role>.md and mounts it OVER <workdir>/.claude/agents (a dir over
+			// the existing dir, so the runtime creates no stray host file — a file mount would).
+			// The role's model rides in the generated frontmatter.
+			if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
+				if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
+					ui.Info("preset: skipped native subagents: %v", err)
+				} else {
+					tmpDirs = append(tmpDirs, dir)
+					fusionMounts = append(fusionMounts, extraMount{dir, workdir + "/.claude/agents"})
+				}
 			}
-			if !spec.Preset.NativeRolesUsable(lead) {
-				// Native subagents run inside a Claude session; a codex/gemini lead can't
-				// invoke them, so LeadContract drops them and we skip the mount too.
-				ui.Info("preset: native roles need a Claude lead — skipping them under %s", lead)
-			} else if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
-				ui.Info("preset: skipped native subagents: %v", err)
-			} else {
-				tmpDirs = append(tmpDirs, dir)
-				fusionMounts = append(fusionMounts, extraMount{dir, workdir + "/.claude/agents"})
+		} else {
+			// Non-Claude lead: wire each native role as a read-only consult (like a delegate) —
+			// its persona at ~/.coop/consult/<role>.md + COOP_CONSULT_<ROLE>_* env the wrapper
+			// resolves agent/model/persona from. coop-consult itself is mounted above (this run
+			// is consult-wired). The role's agent joins the credential scope (credentialScope).
+			for _, role := range spec.Preset.DegradedNativeRoles(lead) {
+				key := preset.EnvKey(role.Name)
+				dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
+				if cp, err := writeTempFile(preset.NativeBody(&role)); err != nil {
+					ui.Info("consult: skipped %s persona: %v", role.Name, err)
+				} else {
+					tmpFiles = append(tmpFiles, cp)
+					fusionMounts = append(fusionMounts, extraMount{cp, dst})
+					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
+				}
+				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
+				if role.Model != "" {
+					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
+				}
 			}
 		}
 	}
@@ -590,12 +607,13 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset) (co
 	if p != nil {
 		// A preset's generated routing block replaces the generic second-opinion
 		// directive — it already names each consult/delegate role and its exact
-		// invocation. coop-consult is mounted only when a consult role exists.
+		// invocation. coop-consult is mounted when a consult role exists OR a native role
+		// degrades to a consult under this (non-Claude) lead.
 		content = preset.LeadContract(p, lead)
 		if base != "" {
 			content += "\n" + base + "\n"
 		}
-		return content, file, p.HasConsult(), true
+		return content, file, p.HasConsult() || len(p.DegradedNativeRoles(lead)) > 0, true
 	}
 	peers := authedPeers(cfg, lead)
 	return fusion.LeadInstructions(base, peers), file, len(peers) > 0, true

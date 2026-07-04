@@ -18,38 +18,65 @@ const ConsultWrapperPath = "/usr/local/bin/coop-consult"
 // Keep the per-agent read-only flags here in sync with each adapter's ConsultCmd —
 // TestConsultWrapperMatchesAdapters asserts it.
 const ConsultWrapper = `#!/bin/sh
-# coop-consult — ask a fusion / --consult peer read-only, with optional cross-turn
-# continuity. Generated and mounted by coop; do not edit.
-#   coop-consult <peer> <--fresh|--continue> [prompt]
-# The peer is READ-ONLY: it analyses and reports, it never edits your files. --fresh
-# starts a new session; --continue resumes the peer's last one (send only the delta).
-# The prompt is the trailing argument, or piped on stdin (use a quoted heredoc for
-# prompts with awkward quoting). The first line printed is the session status to read.
-# Each consult is time-bounded (default 30m; set COOP_CONSULT_TIMEOUT in seconds to change);
-# a peer that doesn't answer in time is skipped with a notice so you synthesize from whoever did.
-# A peer's model comes from COOP_PEER_MODEL_<PEER> (exported by coop when one is configured —
-# the profile's marked default or COOP_<AGENT>_MODEL), expanded into its --model flag below.
+# coop-consult — ask a peer read-only, with optional cross-turn continuity.
+# Generated and mounted by coop; do not edit.
+#   coop-consult <peer|role> <--fresh|--continue> [prompt]
+# <peer> is claude|codex|gemini (fusion / --consult ad-hoc). A preset CONSULT ROLE — or a
+# native role degraded under a non-Claude lead — is addressed by its ROLE name: coop exports
+# COOP_CONSULT_<ROLE>_{AGENT,MODEL,CONTRACT}, so it runs on the role's own agent + model with
+# its persona (CONTRACT) prepended to the prompt. The target is READ-ONLY: it analyses and
+# reports, it never edits your files. --fresh starts a new session; --continue resumes the
+# last one for that target (send only the delta). Prompt is the trailing arg or piped on
+# stdin. The first line printed is the session status to read. Each consult is time-bounded
+# (default 30m; set COOP_CONSULT_TIMEOUT in seconds).
+# The model comes from COOP_PEER_MODEL_<PEER> (a role's COOP_CONSULT_<ROLE>_MODEL overrides
+# it), expanded into the --model flag below.
 set -u
 
 die() { echo "coop-consult: $1" >&2; exit 2; }
-[ "$#" -ge 2 ] || die "usage: coop-consult <claude|codex|gemini> <--fresh|--continue> [prompt]"
-peer=$1
+[ "$#" -ge 2 ] || die "usage: coop-consult <peer|role> <--fresh|--continue> [prompt]"
+name=$1
 mode=$2
 shift 2
-# Validate the peer up front, before it's used in the idfile path below — a bogus name would
-# otherwise build a stray/traversed /tmp path and make --continue's "continued" line lie.
+# Validate the target up front, before it's used in the idfile path below — a bogus name
+# would otherwise build a stray/traversed /tmp path and make --continue's line lie.
+case "$name" in
+'' | *[!a-z0-9-]*) die "invalid consult target: $name (letters, digits, dashes)" ;;
+esac
+key=$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')
+# A preset consult role (or a native role degraded under a non-Claude lead) carries its own
+# agent/model/persona via COOP_CONSULT_<ROLE>_*; otherwise the name IS the peer agent.
+eval "peer=\${COOP_CONSULT_${key}_AGENT:-}"
+eval "rolemodel=\${COOP_CONSULT_${key}_MODEL:-}"
+eval "persona=\${COOP_CONSULT_${key}_CONTRACT:-}"
+if [ -n "$peer" ]; then
+	# Role mode: the role's model overrides the per-peer model the branches below expand.
+	if [ -n "$rolemodel" ]; then
+		case "$peer" in
+		claude) COOP_PEER_MODEL_CLAUDE=$rolemodel ;;
+		codex) COOP_PEER_MODEL_CODEX=$rolemodel ;;
+		gemini) COOP_PEER_MODEL_GEMINI=$rolemodel ;;
+		esac
+	fi
+else
+	peer=$name
+	persona=
+fi
 case "$peer" in
 claude | codex | gemini) ;;
-*) die "unknown peer: $peer (expected claude|codex|gemini)" ;;
+*) die "unknown peer: $name (expected claude|codex|gemini, or a preset consult role)" ;;
 esac
 prompt=${*:-}
 [ -n "$prompt" ] || prompt=$(cat)
+# A role's persona (its contract) is prepended so the peer answers AS that role.
+if [ -n "$persona" ] && [ -r "$persona" ]; then
+	prompt=$(cat "$persona"; printf '\n\n---\n\nYour question:\n\n%s' "$prompt")
+fi
 # The prompt is captured above, so no peer needs stdin. Detach it: claude -p reads
 # piped stdin on top of its arg and blocks forever on an inherited open pipe (the
-# governor backgrounds these consults), which hung claude consults at the status
-# line until they timed out while gemini returned. One redirect covers every peer.
+# governor backgrounds these consults). One redirect covers every peer.
 exec </dev/null
-idfile="/tmp/coop-consult-${peer}.id"
+idfile="/tmp/coop-consult-${key}.id"
 
 new_id() {
 	if [ -r /proc/sys/kernel/random/uuid ]; then
