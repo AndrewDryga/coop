@@ -1041,6 +1041,33 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// (only when the repo has its own Docker and no Dockerfile.agent yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
+	// Monorepo: detect member dirs (each with a .agent/), record them in the root .agent/project.yaml
+	// so coop aggregates their task queues, and give each member a project.yaml if it lacks one. A
+	// single repo still gets a project.yaml template. Never clobbers an existing file.
+	subs := scaffold.DetectSubprojects(repo)
+	if _, err := scaffold.WriteProject(repo, subs); err != nil {
+		return 0, err
+	}
+	for _, s := range subs {
+		if _, err := scaffold.WriteProject(filepath.Join(repo, s), nil); err != nil {
+			return 0, err
+		}
+	}
+	if len(subs) > 0 {
+		ui.Info("monorepo: %d member(s) (%s) — .agent/project.yaml aggregates their task queues", len(subs), strings.Join(subs, ", "))
+		// A re-init keeps an existing project.yaml; flag any detected members it doesn't list yet.
+		if pj, err := project.Load(repo); err == nil {
+			var missing []string
+			for _, s := range subs {
+				if !slices.Contains(pj.Subprojects, s) {
+					missing = append(missing, s)
+				}
+			}
+			if len(missing) > 0 {
+				ui.Warn("add these to 'subprojects:' in .agent/project.yaml: %s", strings.Join(missing, ", "))
+			}
+		}
+	}
 	if lf := legacyTasksFile(filepath.Join(repo, tasksRoot)); lf != "" {
 		rel := lf
 		if r, err := filepath.Rel(repo, lf); err == nil {

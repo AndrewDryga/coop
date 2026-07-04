@@ -597,7 +597,11 @@ var commandHelp = map[string]string{
   its own Docker and no Dockerfile.agent yet, it suggests how to build the box on it.
   Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
   inert until you add a server) so there's an obvious place to declare MCP servers.
-  Never clobbers existing files.`,
+  Writes .agent/project.yaml (committed): in a monorepo — detected by direct child
+  dirs that are themselves coop projects (each with a .agent/) — it lists them under
+  'subprojects:' so coop aggregates their task queues automatically (no COOP_TASKS),
+  and gives each member a project.yaml too; a single repo gets a template with
+  commented serve/subprojects examples. Never clobbers existing files.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 
