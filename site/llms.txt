@@ -57,6 +57,7 @@ SETUP & MAINTENANCE
   coop build                        build the box image (stable, pinned)
   coop update                       self-update coop, then rebuild the box
   coop completion <shell>           shell tab-completion (bash, zsh)
+  coop prompt                       a one-line status for a shell prompt / tmux
   coop help                         this help
   coop version                      print the version
 
@@ -491,6 +492,20 @@ coop completion <bash|zsh> — print a shell completion script.
 
   Completes commands and verbs, and — via a hidden 'coop __complete' — live values
   (fork names, task ids, credentials), all from local reads.
+
+coop prompt — one compact status line for a shell prompt, tmux, or menubar.
+
+  Usage: coop prompt
+
+  Prints this repo's state on ONE line — task counts and fork/loop activity,
+  "·"-separated, non-zero segments only (e.g. "3 todo · 1 blocked · 2 forks · 1
+  looping"). Nothing prints when the queue is empty and no forks exist, so an
+  embedding prompt stays clean.
+
+  Read-only and cheap: it reads the task dirs + fork pidfiles (plus one git-root
+  lookup) — never a per-fork git call and never docker — so it's safe to run on
+  every prompt redraw. Wire it into your shell prompt (a starship custom command)
+  or tmux, e.g. set -g status-right '#(cd #{pane_current_path}; coop prompt)'.
 
 coop version — print coop's version and exit.
 

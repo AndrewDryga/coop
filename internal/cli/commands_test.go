@@ -664,3 +664,20 @@ func TestMigrateFlatVaults(t *testing.T) {
 		t.Error("second migrateFlatVaults disturbed the migrated claude login")
 	}
 }
+
+// TestPromptLine: coop prompt's line shows non-zero segments only, "·"-separated, in a fixed
+// order (todo, doing, blocked, looping, forks); "" when idle so an embedding prompt stays clean.
+func TestPromptLine(t *testing.T) {
+	if got := promptLine(taskCounts{}, 0, 0); got != "" {
+		t.Errorf("idle should be empty, got %q", got)
+	}
+	if got := promptLine(taskCounts{Done: 9}, 0, 0); got != "" {
+		t.Errorf("done-only isn't actionable state — should be empty, got %q", got)
+	}
+	if got := promptLine(taskCounts{Todo: 3, Blocked: 1}, 2, 1); got != "3 todo · 1 blocked · 1 looping · 2 forks" {
+		t.Errorf("got %q", got)
+	}
+	if got := promptLine(taskCounts{Doing: 2}, 1, 0); got != "2 doing · 1 fork" { // singular fork
+		t.Errorf("got %q", got)
+	}
+}

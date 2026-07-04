@@ -1477,6 +1477,69 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	return loopExitCode(cf), nil
 }
 
+// cmdPrompt prints a compact, single-line status of this repo for embedding in a shell prompt, a
+// tmux status bar, or a menubar: task-queue counts and fork/loop activity, "·"-separated,
+// non-zero segments only — nothing when idle, so an embedding prompt stays clean. It is READ-ONLY
+// and does only cheap local reads (the task dirs + fork pidfiles, plus one git-root lookup) — never
+// a per-fork git shell-out and never docker — so it's safe to run on every prompt redraw. It takes
+// no arguments and never errors out loud (a prompt must not spew): an unresolvable repo prints
+// nothing.
+func (a *app) cmdPrompt(args []string) (int, error) {
+	if err := rejectArgs("prompt", args); err != nil {
+		return 2, err
+	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return 0, nil // not in a resolvable repo → stay quiet
+	}
+	var c taskCounts
+	if queues, qerr := taskQueues(a.cfg, repo, nil); qerr == nil {
+		hosts := make([]string, len(queues))
+		for i, q := range queues {
+			hosts[i] = filepath.Join(repo, q)
+		}
+		c, _ = queueProgress(hosts)
+	}
+	// Fork activity from a dir listing + pidfiles — no git, so it stays prompt-cheap.
+	names := forkNames(repo)
+	looping := 0
+	for _, n := range names {
+		if forkRunningPid(repo, n) > 0 {
+			looping++
+		}
+	}
+	if line := promptLine(c, len(names), looping); line != "" {
+		fmt.Println(line)
+	}
+	return 0, nil
+}
+
+// promptLine builds coop prompt's compact status line from the counts: non-zero segments only,
+// "·"-separated, returning "" when everything is idle so an embedding prompt shows nothing.
+func promptLine(c taskCounts, forks, looping int) string {
+	var seg []string
+	if c.Todo > 0 {
+		seg = append(seg, fmt.Sprintf("%d todo", c.Todo))
+	}
+	if c.Doing > 0 {
+		seg = append(seg, fmt.Sprintf("%d doing", c.Doing))
+	}
+	if c.Blocked > 0 {
+		seg = append(seg, fmt.Sprintf("%d blocked", c.Blocked))
+	}
+	if looping > 0 {
+		seg = append(seg, fmt.Sprintf("%d looping", looping))
+	}
+	if forks > 0 {
+		word := "forks"
+		if forks == 1 {
+			word = "fork"
+		}
+		seg = append(seg, fmt.Sprintf("%d %s", forks, word))
+	}
+	return strings.Join(seg, " · ")
+}
+
 // advanceStall updates the loop's stall bookkeeping after a clean iteration and reports whether to
 // stop. Progress is a task SETTLING (done or blocked) OR a new commit — a genuinely stuck loop keeps
 // continuing an in_progress task it can't finish AND commits nothing, so after maxStalls such

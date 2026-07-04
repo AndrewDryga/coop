@@ -193,6 +193,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdBuild(rest)
 	case "update":
 		return a.cmdUpdate(rest)
+	case "prompt": // pure-local: a one-line status for a shell prompt / tmux (no git per fork, no docker)
+		return a.cmdPrompt(rest)
 	case "completion": // pure-local: print a shell completion script
 		return cmdCompletion(rest)
 	case "__complete": // hidden: dynamic completion candidates for the shell scripts
@@ -212,7 +214,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
 	"run", "shell", "login", "credentials", "presets", "models", "acp", "fusion", "fork", "fleet", "tasks",
-	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "help", "version",
+	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "prompt", "help", "version",
 }
 
 // helpForCommand prints one command's help for `coop help <cmd>`, matching `coop <cmd> --help`:

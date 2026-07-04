@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's
+  actionable state on ONE line — task counts and fork/loop activity, `·`-separated, non-zero
+  segments only (`3 todo · 1 blocked · 2 forks · 1 looping`); nothing when idle, so an embedding
+  prompt stays clean. Read-only and cheap — task dirs + fork pidfiles, no per-fork git and no
+  docker — so it's safe on every prompt redraw. Wire it into starship or tmux
+  (`set -g status-right '#(cd #{pane_current_path}; coop prompt)'`).
+
 - **BREAKING: `coop profiles` is now `coop credentials`.** The split is complete: a CREDENTIAL is a
   stored account/login (its own rate-limit pool); an orchestration recipe is a PRESET. The command,
   help, and every hint now say credentials (`coop credentials claude work model opus`,

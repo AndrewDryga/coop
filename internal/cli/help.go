@@ -160,6 +160,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box")
 	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
+	row("coop prompt", "a one-line status for a shell prompt / tmux")
 	row("coop help", "this help")
 	row("coop version", "print the version")
 
@@ -243,6 +244,20 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
 // own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
 // the agent's own CLI). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
+	"prompt": `coop prompt — one compact status line for a shell prompt, tmux, or menubar.
+
+  Usage: coop prompt
+
+  Prints this repo's state on ONE line — task counts and fork/loop activity,
+  "·"-separated, non-zero segments only (e.g. "3 todo · 1 blocked · 2 forks · 1
+  looping"). Nothing prints when the queue is empty and no forks exist, so an
+  embedding prompt stays clean.
+
+  Read-only and cheap: it reads the task dirs + fork pidfiles (plus one git-root
+  lookup) — never a per-fork git call and never docker — so it's safe to run on
+  every prompt redraw. Wire it into your shell prompt (a starship custom command)
+  or tmux, e.g. set -g status-right '#(cd #{pane_current_path}; coop prompt)'.`,
+
 	"shell": `coop shell — open an interactive shell in the box.
 
   Usage: coop shell
