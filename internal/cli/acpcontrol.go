@@ -264,7 +264,9 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		c.mu.Unlock()
 		if canResend {
 			acpproxy.Trace("rate limit on %s: rotating to %s + auto-resending", cred, next)
-			return nil, true // transparent: swallow the error, restart on `next`, re-send after replay
+			// Swallow the error, move the toolbar dropdown to the new credential, restart on it, and
+			// re-send after replay — the config_option_update is the only thing the editor sees.
+			return c.configOptionUpdate(session), true
 		}
 		// Couldn't identify the prompt — fall back to switching + asking the user to resend.
 		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", cred, next)), true
@@ -281,7 +283,31 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	c.resend[session] = true
 	c.mu.Unlock()
 	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
-	return c.waitStatus(session, acct, at, now), true
+	// Move the dropdown to the account we'll resume on, then the "waiting…" status line.
+	return append(c.configOptionUpdate(session), c.waitStatus(session, acct, at, now)...), true
+}
+
+// configOptionUpdate builds an ACP config_option_update notification (session/update carrying the full
+// configOptions) with coop_setup's currentValue refreshed to the current selection — so the editor's
+// toolbar dropdown reflects an auto-switch coop made (a rate-limit rotation/wait), just as a manual
+// switch's ack does. Falls back to just coop_setup if this session's options weren't cached.
+func (c *acpControl) configOptionUpdate(session string) []byte {
+	c.mu.Lock()
+	cached := c.cached[session]
+	c.mu.Unlock()
+	upd := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": session,
+			"update": map[string]any{
+				"sessionUpdate": "config_option_update",
+				"configOptions": json.RawMessage(c.refreshSetup(cached)),
+			},
+		},
+	}
+	b, _ := json.Marshal(upd)
+	return append(b, '\n')
 }
 
 // nearestReset returns the signed-in account whose rate limit resets soonest (and when), or "" if none

@@ -278,8 +278,13 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	if !restart {
 		t.Fatal("a rate-limit error must restart")
 	}
-	if out != nil {
-		t.Errorf("a transparent rotate must swallow the error (no editor message), got: %s", out)
+	// The error is swallowed; the only thing the editor sees is a config_option_update moving the
+	// coop_setup dropdown to the new credential (no chat message).
+	if !strings.Contains(string(out), "config_option_update") || !strings.Contains(string(out), `"cred:work"`) {
+		t.Errorf("rotate should push a dropdown update to cred:work, got: %s", out)
+	}
+	if strings.Contains(string(out), `"error"`) || strings.Contains(string(out), "session limit") {
+		t.Errorf("the rate-limit error must not reach the editor, got: %s", out)
 	}
 	if cred, _ := c.selection(); cred != "work" {
 		t.Errorf("must rotate to work, got %q", cred)
@@ -358,6 +363,9 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "Waiting for a reset on credential personal") {
 		t.Errorf("editor should get the waiting status, got: %s", out)
+	}
+	if !strings.Contains(string(out), "config_option_update") {
+		t.Errorf("editor should also get a dropdown update for the account being waited on, got: %s", out)
 	}
 	if cred, _ := c.selection(); cred != "personal" {
 		t.Errorf("selection should stay on personal to wait, got %q", cred)

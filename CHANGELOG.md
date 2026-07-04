@@ -26,7 +26,9 @@
   When the provider rate-limits a turn mid-session, coop no longer errors the turn or asks you to
   resend: it swallows the error, suppresses the "you've hit your limit" notice the adapter streams,
   restarts on your next signed-in account, and **re-sends your prompt automatically** — the turn just
-  completes on the backup credential, conversation preserved. When **every** account is cooling (or
+  completes on the backup credential, conversation preserved. The **toolbar dropdown moves** to the
+  credential coop switched to (a `config_option_update`), so it always shows what you're on. When
+  **every** account is cooling (or
   you have just one), coop points at the account that resets soonest, tells the editor `Waiting for a
   reset on credential X in MM:SS (at <time>) — your message will send automatically`, waits out the
   reset, then re-sends. The limit-notice suppression only ever drops a chunk that a rate-limit error
