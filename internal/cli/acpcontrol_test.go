@@ -80,11 +80,18 @@ func TestACPControlRewrite(t *testing.T) {
 	if !strings.Contains(string(toEd(c, []byte(in))), `"currentValue":"opus[1m]"`) {
 		t.Error("model currentValue not defaulted to coop's model")
 	}
-	// coop_setup lists the credentials + presets, prefixed.
-	if !strings.Contains(string(toEd(c, []byte(in))), `"cred:personal"`) ||
-		!strings.Contains(string(toEd(c, []byte(in))), `"cred:work"`) ||
-		!strings.Contains(string(toEd(c, []byte(in))), `"preset:frontier"`) {
-		t.Error("coop_setup must list the credentials and presets")
+	// coop_setup lists the credentials + presets: intercept values are cred:/preset:-prefixed, while
+	// the display rows read "Credential: <name>" / "Preset: <name>".
+	rewritten := string(toEd(c, []byte(in)))
+	for _, val := range []string{`"cred:personal"`, `"cred:work"`, `"preset:frontier"`} {
+		if !strings.Contains(rewritten, val) {
+			t.Errorf("coop_setup must carry the intercept value %s: %s", val, rewritten)
+		}
+	}
+	for _, label := range []string{`Credential: personal`, `Preset: frontier`} {
+		if !strings.Contains(rewritten, label) {
+			t.Errorf("coop_setup rows should be friendly-labeled %q: %s", label, rewritten)
+		}
 	}
 }
 

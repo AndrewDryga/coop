@@ -266,10 +266,10 @@ func (c *acpControl) setupOption() json.RawMessage {
 	c.mu.Unlock()
 	opts := make([]acpOption, 0, len(c.creds)+len(c.presets))
 	for _, cr := range c.creds {
-		opts = append(opts, acpOption{Value: "cred:" + cr, Name: cr, Description: "account"})
+		opts = append(opts, acpOption{Value: "cred:" + cr, Name: "Credential: " + cr, Description: "Switch to credential: " + cr})
 	}
 	for _, ps := range c.presets {
-		opts = append(opts, acpOption{Value: "preset:" + ps, Name: ps, Description: "preset"})
+		opts = append(opts, acpOption{Value: "preset:" + ps, Name: "Preset: " + ps, Description: "Switch to preset: " + ps})
 	}
 	co := map[string]any{
 		"id": coopSetupID, "name": "coop", "description": "Run on a credential (account) or a preset (recipe)",
