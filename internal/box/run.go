@@ -265,81 +265,14 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	// coop-delegate: a preset with a write-capable delegate role mounts the wrapper (on
-	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*
-	// env the wrapper resolves a role's agent/model/contract from — so the box needs no
-	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
-	if spec.Homes && spec.Preset != nil && spec.Preset.HasDelegate() {
-		if p, err := writeTempFile(preset.DelegateWrapper); err != nil {
-			ui.Info("delegate: skipped wrapper wiring: %v", err)
-		} else if err := os.Chmod(p, 0o755); err != nil {
-			ui.Info("delegate: skipped wrapper wiring: %v", err)
-		} else {
-			tmpFiles = append(tmpFiles, p)
-			fusionMounts = append(fusionMounts, extraMount{p, preset.DelegateWrapperPath})
-			for _, role := range spec.Preset.Delegates() {
-				key := preset.EnvKey(role.Name)
-				dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
-				if cp, err := writeTempFile(preset.RoleContract(&role)); err != nil {
-					ui.Info("delegate: skipped %s contract: %v", role.Name, err)
-				} else {
-					tmpFiles = append(tmpFiles, cp)
-					fusionMounts = append(fusionMounts, extraMount{cp, dst})
-					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst)
-				}
-				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_AGENT="+role.Agent)
-				if role.Model != "" {
-					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_DELEGATE_"+key+"_MODEL="+role.Model)
-				}
-			}
-		}
-	}
-
-	// Preset roles. Native roles under a Claude lead run in-session as generated coop-<role>
-	// subagents; consult roles — the explicit ones, plus natives degraded under a codex/gemini
-	// lead — are wired role-addressed so `coop-consult <role>` runs the role's agent on its
-	// model, with its persona (if any) mounted.
-	if spec.Homes && spec.Preset != nil {
-		lead := spec.ConsultLead
-		if spec.FusionGovernor != "" {
-			lead = spec.FusionGovernor
-		}
-		if spec.Preset.NativeRolesUsable(lead) {
-			// Claude lead: coop assembles a temp dir holding the repo's existing subagents PLUS
-			// the generated coop-<role>.md and mounts it OVER <workdir>/.claude/agents (a dir over
-			// the existing dir, so the runtime creates no stray host file — a file mount would).
-			// The role's model rides in the generated frontmatter.
-			if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
-				if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
-					ui.Info("preset: skipped native subagents: %v", err)
-				} else {
-					tmpDirs = append(tmpDirs, dir)
-					fusionMounts = append(fusionMounts, extraMount{dir, workdir + "/.claude/agents"})
-				}
-			}
-		}
-		// Consult-wired roles: persona at ~/.coop/consult/<role>.md + the COOP_CONSULT_<ROLE>_*
-		// env the wrapper resolves agent/model/persona from. coop-consult itself is mounted above
-		// (a preset with consult-wired roles is consult-wired — leadInstructionMount); the roles'
-		// agents join the credential scope (credentialScope).
-		for _, role := range append(spec.Preset.Consults(), spec.Preset.DegradedNativeRoles(lead)...) {
-			key := preset.EnvKey(role.Name)
-			if body := preset.ConsultBody(&role); body != "" {
-				dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
-				if cp, err := writeTempFile(body); err != nil {
-					ui.Info("consult: skipped %s persona: %v", role.Name, err)
-				} else {
-					tmpFiles = append(tmpFiles, cp)
-					fusionMounts = append(fusionMounts, extraMount{cp, dst})
-					spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
-				}
-			}
-			spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
-			if role.Model != "" {
-				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
-			}
-		}
-	}
+	// Preset roles — the coop-delegate wrapper + delegate role env, the generated native
+	// subagents (Claude lead), and each consult-wired role's persona + env — are wired in one
+	// place; fold what it produced into this run's mounts, args, and cleanup lists.
+	proleMounts, proleArgs, proleFiles, proleDirs := presetRoleMounts(cfg, spec, workdir)
+	fusionMounts = append(fusionMounts, proleMounts...)
+	spec.ExtraArgs = append(spec.ExtraArgs, proleArgs...)
+	tmpFiles = append(tmpFiles, proleFiles...)
+	tmpDirs = append(tmpDirs, proleDirs...)
 
 	// Every agent gets the box environment note, then the user's instructions (a per-agent
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
@@ -436,6 +369,92 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 	}
 	return rt.Run(stdin, stdout, stderr, args...)
+}
+
+// presetRoleMounts wires a preset's roles into the box and returns the mounts to add, the -e args
+// to append to spec.ExtraArgs, and the temp files/dirs to clean up: the coop-delegate wrapper plus
+// each delegate role's contract and COOP_DELEGATE_<ROLE>_* env; the generated coop-<role> native
+// subagents under a Claude lead (a dir overlay on <workdir>/.claude/agents); and each consult-wired
+// role's persona + COOP_CONSULT_<ROLE>_* env (the explicit consult roles plus natives degraded under
+// a non-Claude lead). A run with no preset (or homes off) returns all-nil.
+func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string) {
+	if !spec.Homes || spec.Preset == nil {
+		return
+	}
+	// coop-delegate: a preset with a write-capable delegate role mounts the wrapper (on
+	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*
+	// env the wrapper resolves a role's agent/model/contract from — so the box needs no
+	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
+	if spec.Preset.HasDelegate() {
+		if p, err := writeTempFile(preset.DelegateWrapper); err != nil {
+			ui.Info("delegate: skipped wrapper wiring: %v", err)
+		} else if err := os.Chmod(p, 0o755); err != nil {
+			ui.Info("delegate: skipped wrapper wiring: %v", err)
+		} else {
+			tmpFiles = append(tmpFiles, p)
+			mounts = append(mounts, extraMount{p, preset.DelegateWrapperPath})
+			for _, role := range spec.Preset.Delegates() {
+				key := preset.EnvKey(role.Name)
+				dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
+				if cp, err := writeTempFile(preset.RoleContract(&role)); err != nil {
+					ui.Info("delegate: skipped %s contract: %v", role.Name, err)
+				} else {
+					tmpFiles = append(tmpFiles, cp)
+					mounts = append(mounts, extraMount{cp, dst})
+					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst)
+				}
+				extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_AGENT="+role.Agent)
+				if role.Model != "" {
+					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_MODEL="+role.Model)
+				}
+			}
+		}
+	}
+
+	// Preset roles. Native roles under a Claude lead run in-session as generated coop-<role>
+	// subagents; consult roles — the explicit ones, plus natives degraded under a codex/gemini
+	// lead — are wired role-addressed so `coop-consult <role>` runs the role's agent on its
+	// model, with its persona (if any) mounted.
+	lead := spec.ConsultLead
+	if spec.FusionGovernor != "" {
+		lead = spec.FusionGovernor
+	}
+	if spec.Preset.NativeRolesUsable(lead) {
+		// Claude lead: coop assembles a temp dir holding the repo's existing subagents PLUS
+		// the generated coop-<role>.md and mounts it OVER <workdir>/.claude/agents (a dir over
+		// the existing dir, so the runtime creates no stray host file — a file mount would).
+		// The role's model rides in the generated frontmatter.
+		if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
+			if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
+				ui.Info("preset: skipped native subagents: %v", err)
+			} else {
+				tmpDirs = append(tmpDirs, dir)
+				mounts = append(mounts, extraMount{dir, workdir + "/.claude/agents"})
+			}
+		}
+	}
+	// Consult-wired roles: persona at ~/.coop/consult/<role>.md + the COOP_CONSULT_<ROLE>_*
+	// env the wrapper resolves agent/model/persona from. coop-consult itself is mounted by Run
+	// (a preset with consult-wired roles is consult-wired — leadInstructionMount); the roles'
+	// agents join the credential scope (credentialScope).
+	for _, role := range append(spec.Preset.Consults(), spec.Preset.DegradedNativeRoles(lead)...) {
+		key := preset.EnvKey(role.Name)
+		if body := preset.ConsultBody(&role); body != "" {
+			dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
+			if cp, err := writeTempFile(body); err != nil {
+				ui.Info("consult: skipped %s persona: %v", role.Name, err)
+			} else {
+				tmpFiles = append(tmpFiles, cp)
+				mounts = append(mounts, extraMount{cp, dst})
+				extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
+			}
+		}
+		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
+		if role.Model != "" {
+			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
+		}
+	}
+	return
 }
 
 // ensureAgentHomes pre-creates the credential-home dir and first-run defaults for exactly

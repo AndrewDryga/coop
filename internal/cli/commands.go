@@ -1430,19 +1430,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		case actContinue:
 			completed++
 			n++
-			// A clean iteration that neither finishes NOR blocks a task AND commits nothing means
-			// the agent keeps continuing an in_progress task it can't complete — bail after maxStalls
-			// rather than loop forever. But a commit IS progress on a big task (a genuinely stuck loop
-			// spins WITHOUT committing), as is blocking a one-way door — so don't count either as a stall.
-			after, _ := queueProgress(hosts)
-			settled := after.Done + after.Blocked
-			head := gitOut(repo, "rev-parse", "HEAD")
-			if head != "" && head != prevHead {
-				prevHead, settledBaseline, stalls = head, settled, 0
-			} else if newBase, newStalls, stop := progressStall(settled, settledBaseline, stalls); stop {
-				return code, fmt.Errorf("no task finished, blocked, or committed in %d iterations — stopping (stuck on %q?)", maxStalls, active)
-			} else {
-				settledBaseline, stalls = newBase, newStalls
+			// A clean iteration that neither finishes/blocks a task NOR commits means the agent keeps
+			// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
+			// rather than loop forever (a commit or a block still counts as progress).
+			var stop error
+			prevHead, settledBaseline, stalls, stop = a.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
+			if stop != nil {
+				return code, stop
 			}
 		case actWait:
 			// A rate/usage limit is expected on long runs. With more than one profile in
@@ -1481,6 +1475,25 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	cf, _ := queueProgress(hosts)
 	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
 	return loopExitCode(cf), nil
+}
+
+// advanceStall updates the loop's stall bookkeeping after a clean iteration and reports whether to
+// stop. Progress is a task SETTLING (done or blocked) OR a new commit — a genuinely stuck loop keeps
+// continuing an in_progress task it can't finish AND commits nothing, so after maxStalls such
+// iterations it returns a stop error rather than looping forever. It returns the updated
+// (prevHead, settledBaseline, stalls); a new commit resets the stall count and rebaselines.
+func (a *app) advanceStall(repo string, hosts []string, prevHead string, settledBaseline, stalls int, active string) (string, int, int, error) {
+	after, _ := queueProgress(hosts)
+	settled := after.Done + after.Blocked
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if head != "" && head != prevHead {
+		return head, settled, 0, nil
+	}
+	newBase, newStalls, stop := progressStall(settled, settledBaseline, stalls)
+	if stop {
+		return prevHead, settledBaseline, stalls, fmt.Errorf("no task finished, blocked, or committed in %d iterations — stopping (stuck on %q?)", maxStalls, active)
+	}
+	return prevHead, newBase, newStalls, nil
 }
 
 // loopExitCode is the machine-readable companion to loopClosingBanner so cron/fleet/CI can branch on
