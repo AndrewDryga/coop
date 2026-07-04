@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,9 +47,11 @@ type Factory func(ctx context.Context) (*Child, error)
 // existing callers and tests are unaffected. All funcs must be safe for concurrent use.
 type Hooks struct {
 	// ToEditor rewrites a line going agent→editor (e.g. strip/add/retarget configOptions on a
-	// session/new|load|resume result or a ConfigOptionUpdate). Return the line to forward; return
-	// nil to drop it. Called for every agent→editor line.
-	ToEditor func(line []byte) []byte
+	// session/new|load|resume result or a ConfigOptionUpdate). Returns the line to forward (nil to
+	// drop it) and restart=true to tear down + respawn the box afterward — a coop-driven switch (e.g.
+	// auto-rotating to another credential when this one reports a rate limit), replayed like any other
+	// restart so the editor never disconnects. Called for every agent→editor line.
+	ToEditor func(line []byte) (out []byte, restart bool)
 	// SessionReady is called with a sessionId once a session is (re)established — a fresh session/new
 	// OR a replayed session/load after a box restart — so coop can force per-session state that the
 	// adapter resets each launch (yolo mode, coop's model). It returns lines to inject to the ADAPTER;
@@ -73,6 +76,10 @@ type Hooks struct {
 const InjectPrefix = "coop-inject-"
 
 const replayPrefix = "coop-acp-" // id namespace for our synthetic replay requests
+
+// warnOut is where the proxy writes operator warnings (a lost session after a restart). A var, not
+// os.Stderr inline, so tests can capture it.
+var warnOut io.Writer = os.Stderr
 
 const readBuf = 1 << 20 // ACP messages can carry file contents; read generously.
 
@@ -312,12 +319,18 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 				}
 			}
 		}
-		out := line
+		out, restart := line, false
 		if p.hooks != nil && p.hooks.ToEditor != nil {
-			out = p.hooks.ToEditor(line)
+			out, restart = p.hooks.ToEditor(line)
 		}
 		if len(out) > 0 {
 			_, _ = p.out.Write(out)
+		}
+		// A coop-driven restart requested from the wire (e.g. a rate-limit auto-rotation): forward the
+		// line first (so the editor's request is answered), then tear the box down — Run respawns it on
+		// the newly-selected credential and replays the session, exactly like a manual switch.
+		if restart {
+			p.triggerRestart()
 		}
 		return nil
 	})
@@ -402,7 +415,17 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		line, err := readLineCtx(br, timeout)
 		if len(line) > 0 {
 			if h := parse(line); h.isResponse() {
-				delete(expect, string(trimQuotes(h.ID)))
+				id := string(trimQuotes(h.ID))
+				// A restored session that fails to reload (e.g. its transcript wasn't on the shared store
+				// on this credential) would otherwise vanish silently — the editor keeps the sessionId but
+				// the agent has no history. We can't recover it, but say so on stderr (the editor's ACP
+				// server log) so a lost conversation isn't invisible.
+				if len(h.Error) > 0 {
+					if sid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
+						fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; its history may be lost: %s\n", sid, h.Error)
+					}
+				}
+				delete(expect, id)
 			}
 		}
 		if errors.Is(err, errReplayTimeout) {

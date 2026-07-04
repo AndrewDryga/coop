@@ -252,7 +252,8 @@ coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
   sandbox, so no permission prompts), defaults the model dropdown to coop's model,
   drops the permission-mode and subagent pickers, and adds a first "coop" dropdown to
   switch the CREDENTIAL (account) or PRESET mid-session — the switch is transparent,
-  the conversation is preserved (a shared, credential-independent session store).
+  the conversation is preserved (a shared, credential-independent session store). On a
+  rate limit it auto-rotates to your next signed-in account over that same path.
 
   --credential <name> pins the session to one stored account, so an
   editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].

@@ -21,6 +21,18 @@
   gemini — is not offered: it can't carry the conversation across adapters today; it's on the
   backlog with a hard "must stay transparent" bar.)
 
+- **ACP: auto-rotate credentials on a rate limit.** When the provider reports a rate limit
+  mid-session, coop rotates to your next signed-in account for that agent and restarts on it over the
+  same transparent path — the conversation is preserved — reusing the loop's rate-limit detector and
+  account rotation. The editor's request is answered with a "switched to <account>; resend" note.
+  When every account is cooling (or you have just one), the error passes through so you can wait and
+  retry. Same-provider only: it never changes the model or the provider. A preset session rotates via
+  its own `models:` ladder, not here. (Detection covers rate limits surfaced as a JSON-RPC error.)
+
+- **ACP: a lost-reload after a box restart is no longer silent.** If a restored session's
+  `session/load` comes back an error on the new box (e.g. its transcript wasn't on the shared store),
+  coop warns on the ACP server log instead of leaving the editor with a context-less session.
+
 ## 3.0.0
 
 - **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's

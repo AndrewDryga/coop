@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -42,6 +43,9 @@ func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMes
 	return ids, res
 }
 
+// toEd is the toEditor output bytes only (dropping the restart flag) — most tests just check the line.
+func toEd(c *acpControl, line []byte) []byte { out, _ := c.toEditor(line); return out }
+
 // TestACPControlRewrite: coop's toolbar rewrite on a session/new result — drop mode+agent+modes,
 // keep model/effort/fast (with the model defaulted to coop's), prepend coop_setup, keep sessionId.
 func TestACPControlRewrite(t *testing.T) {
@@ -52,7 +56,7 @@ func TestACPControlRewrite(t *testing.T) {
 		`{"id":"effort","type":"select","currentValue":"default","options":[]},` +
 		`{"id":"fast","type":"select","currentValue":"off","options":[]},` +
 		`{"id":"agent","type":"select","currentValue":"default","options":[]}]}}` + "\n"
-	ids, res := configOptionIDs(t, c.toEditor([]byte(in)))
+	ids, res := configOptionIDs(t, toEd(c, []byte(in)))
 	if _, ok := res["modes"]; ok {
 		t.Error("modes not stripped")
 	}
@@ -73,13 +77,13 @@ func TestACPControlRewrite(t *testing.T) {
 		}
 	}
 	// The model defaults to coop's (opus[1m] is one of the adapter's offered values).
-	if !strings.Contains(string(c.toEditor([]byte(in))), `"currentValue":"opus[1m]"`) {
+	if !strings.Contains(string(toEd(c, []byte(in))), `"currentValue":"opus[1m]"`) {
 		t.Error("model currentValue not defaulted to coop's model")
 	}
 	// coop_setup lists the credentials + presets, prefixed.
-	if !strings.Contains(string(c.toEditor([]byte(in))), `"cred:personal"`) ||
-		!strings.Contains(string(c.toEditor([]byte(in))), `"cred:work"`) ||
-		!strings.Contains(string(c.toEditor([]byte(in))), `"preset:frontier"`) {
+	if !strings.Contains(string(toEd(c, []byte(in))), `"cred:personal"`) ||
+		!strings.Contains(string(toEd(c, []byte(in))), `"cred:work"`) ||
+		!strings.Contains(string(toEd(c, []byte(in))), `"preset:frontier"`) {
 		t.Error("coop_setup must list the credentials and presets")
 	}
 }
@@ -88,7 +92,7 @@ func TestACPControlRewrite(t *testing.T) {
 func TestACPControlPassthrough(t *testing.T) {
 	c := newTestControl(t)
 	line := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}}}` + "\n")
-	if got := c.toEditor(line); string(got) != string(line) {
+	if got := toEd(c, line); string(got) != string(line) {
 		t.Errorf("passthrough changed a non-config line:\n%s", got)
 	}
 }
@@ -167,6 +171,47 @@ func TestACPControlAutoReply(t *testing.T) {
 	// A non-permission agent→editor request is left alone.
 	if r, fwd := c.autoReply([]byte(`{"jsonrpc":"2.0","id":10,"method":"fs/read_text_file","params":{}}`)); r != nil || !fwd {
 		t.Errorf("non-permission request must pass through, got reply=%s forward=%v", r, fwd)
+	}
+}
+
+// TestACPControlAutoRotate: a rate-limit error on a credential session rotates to the next signed-in
+// account and asks for a restart; once every account is cooling it forwards the error unchanged; a
+// preset session and non-error lines never credential-rotate.
+func TestACPControlAutoRotate(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"} // the temp cfg isn't "authed", so set the rotation set
+	c.sel = "cred:personal"
+
+	limitErr := []byte(`{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"HTTP 429: usage limit reached"}}` + "\n")
+	out, restart := c.toEditor(limitErr)
+	if !restart {
+		t.Fatal("a rate-limit error on a credential session must trigger a restart (rotation)")
+	}
+	if cred, _ := c.selection(); cred != "work" {
+		t.Errorf("expected rotation to work, selection = %q", cred)
+	}
+	if !strings.Contains(string(out), "switched to work") {
+		t.Errorf("editor should get coop's switched-to note, got: %s", out)
+	}
+
+	// Now on work with personal cooling → nowhere free → forward the error unchanged, no restart.
+	out2, restart2 := c.toEditor(limitErr)
+	if restart2 {
+		t.Error("with every account cooling, must not rotate again")
+	}
+	if !strings.Contains(string(out2), "429") {
+		t.Errorf("the original error should pass through when it can't rotate, got: %s", out2)
+	}
+
+	// A non-error line is never a rotation.
+	if _, r := c.toEditor([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n")); r {
+		t.Error("a non-error line must not trigger a rotation")
+	}
+
+	// A preset session doesn't credential-rotate (it rotates via its own models ladder).
+	c.sel, c.limited = "preset:frontier", map[string]time.Time{}
+	if _, r := c.toEditor(limitErr); r {
+		t.Error("a preset session must not credential-rotate")
 	}
 }
 

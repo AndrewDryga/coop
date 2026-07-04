@@ -216,6 +216,90 @@ func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
 	}
 }
 
+// TestProxyToEditorRestart: a ToEditor hook that returns restart=true (coop auto-rotating on a
+// rate limit) forwards the line to the editor AND respawns the box, replaying the handshake.
+func TestProxyToEditorRestart(t *testing.T) {
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	c1, c2 := newFakeChild(), newFakeChild()
+	queue := make(chan *fakeChild, 2)
+	queue <- c1
+	queue <- c2
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	hooks := &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
+		return line, bytes.Contains(line, []byte("ratelimited")) // forward always; restart on the limit line
+	}}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+
+	childIn1 := bufio.NewReader(c1.inR)
+	childIn2 := bufio.NewReader(c2.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	// Bring child1 up with initialize, so a restart has a handshake to replay (our sync point).
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	if m := method(t, readLine(t, childIn1)); m != "initialize" {
+		t.Fatalf("child1 frame = %q, want initialize", m)
+	}
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`)
+	readLine(t, clientOut)
+
+	// child1 emits a rate-limit error: ToEditor forwards it to the editor and flags a restart.
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"error":{"message":"ratelimited"}}`)
+	if id := idStr(t, readLine(t, clientOut)); id != "2" {
+		t.Fatalf("the flagged line must still forward to the editor, got id %q", id)
+	}
+
+	// The proxy respawned child2 and replayed initialize — read it, answer its synthetic id so replay
+	// completes and child2 goes live (proves the ToEditor restart swapped the box).
+	replayed := readLine(t, childIn2)
+	h := parse(replayed)
+	if h.Method != "initialize" {
+		t.Fatalf("expected initialize replayed on child2, got %q", h.Method)
+	}
+	writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
+
+	clientInW.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after client close")
+	}
+}
+
+// TestProxyReplayWarnsOnFailedLoad: if a restored session's session/load comes back an error on the
+// restarted box (e.g. its transcript wasn't on the shared store for the new credential), the loss is
+// surfaced on warnOut instead of vanishing silently.
+func TestProxyReplayWarnsOnFailedLoad(t *testing.T) {
+	var buf bytes.Buffer
+	old := warnOut
+	warnOut = &buf
+	defer func() { warnOut = old }()
+
+	p := &proxy{
+		out:      io.Discard,
+		sessions: map[string]json.RawMessage{"S1": json.RawMessage(`{"cwd":"/w"}`)},
+		newReqs:  map[string]json.RawMessage{},
+		pending:  map[string]bool{},
+	}
+	fc := newFakeChild()
+	br := bufio.NewReader(fc.outR)
+	// Read the synthetic session/load coop writes, answer it with an error.
+	go func() {
+		r := bufio.NewReader(fc.inR)
+		line, _ := r.ReadBytes('\n')
+		h := parse(line)
+		writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"error":{"code":-1,"message":"no such session"}}`)
+	}()
+	if err := p.replay(fc.child(), br); err != nil {
+		t.Fatalf("replay returned %v", err)
+	}
+	if !strings.Contains(buf.String(), "did not reload") || !strings.Contains(buf.String(), "S1") {
+		t.Errorf("expected a lost-session warning naming S1, got: %q", buf.String())
+	}
+}
+
 // TestProxyReplayTimeoutFailsPending: a restarted child that never answers the replay handshake
 // (a hang, not a crash) must not freeze the editor — replay times out, the in-flight request is
 // failed back, and Run gives up with an error instead of blocking forever.

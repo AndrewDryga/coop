@@ -3,13 +3,19 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
+
+// defaultLimitCooldown is how long a credential is skipped after a rate limit when the provider's
+// error gave no explicit reset time — long enough to matter, short enough to come back to.
+const defaultLimitCooldown = 5 * time.Minute
 
 // acpPresetNames lists the repo's presets whose lead is the current ACP agent — the SAME-provider
 // presets safe to switch into transparently (a different-provider preset would be a provider switch,
@@ -45,10 +51,13 @@ type acpControl struct {
 	creds   []string // the lead's credentials (accounts), in order
 	presets []string // the repo's presets, in order
 
-	mu     sync.Mutex
-	sel    string                     // current coop_setup value: "cred:<name>" or "preset:<name>"
-	cached map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
-	nextID int
+	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
+
+	mu      sync.Mutex
+	sel     string                     // current coop_setup value: "cred:<name>" or "preset:<name>"
+	cached  map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
+	limited map[string]time.Time       // account -> when its rate limit resets (skip until then)
+	nextID  int
 }
 
 func newACPControl(cfg *config.Config, lead, model, cred string, presets []string) *acpControl {
@@ -58,7 +67,8 @@ func newACPControl(cfg *config.Config, lead, model, cred string, presets []strin
 	}
 	return &acpControl{
 		lead: lead, model: model, creds: cfg.Profiles(lead), presets: presets,
-		sel: sel, cached: map[string]json.RawMessage{},
+		accounts: accountsFor(cfg, lead),
+		sel:      sel, cached: map[string]json.RawMessage{}, limited: map[string]time.Time{},
 	}
 }
 
@@ -86,18 +96,22 @@ func (c *acpControl) selection() (cred, preset string) {
 	return "", ""
 }
 
-// toEditor rewrites an agent→editor line: on any object carrying configOptions/modes (a
+// toEditor rewrites an agent→editor line. On any object carrying configOptions/modes (a
 // session/new|load|resume result or a ConfigOptionUpdate notification), it drops the mode+subagent
-// dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector.
-func (c *acpControl) toEditor(line []byte) []byte {
+// dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
+// watches for a rate-limit error and auto-rotates the credential (restart=true) — see maybeRotate.
+func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
+	if rewritten, rotated := c.maybeRotate(line); rotated {
+		return rewritten, true
+	}
 	// Fast path: only session/new|load|resume results and ConfigOptionUpdate notifications carry these,
 	// so skip parsing the (often large) prompt/tool-call traffic entirely.
 	if !bytes.Contains(line, []byte("configOptions")) && !bytes.Contains(line, []byte(`"modes"`)) {
-		return line
+		return line, false
 	}
 	var m map[string]json.RawMessage
 	if json.Unmarshal(line, &m) != nil {
-		return line
+		return line, false
 	}
 	for _, key := range []string{"result", "params"} {
 		raw, ok := m[key]
@@ -120,11 +134,80 @@ func (c *acpControl) toEditor(line []byte) []byte {
 		if nb, err := json.Marshal(inner); err == nil {
 			m[key] = nb
 			if out, err := json.Marshal(m); err == nil {
-				return append(out, '\n')
+				return append(out, '\n'), false
 			}
 		}
 	}
-	return line
+	return line, false
+}
+
+// maybeRotate implements Step 4 — auto-rotate credentials on a rate limit — reusing the loop's
+// detectLimit + account rotation. If this is a CREDENTIAL session (a preset rotates via its own
+// models ladder, not here) and the line is a JSON-RPC error whose message trips the rate-limit
+// detector, it marks the current account limited, picks the next signed-in account that isn't, points
+// the selection at it, and returns (rewritten error, true) so the proxy restarts the box on it —
+// the same transparent restart+replay path as a manual switch. Returns (nil,false) to forward the
+// line unchanged (not an error, not a limit, or nowhere free to rotate to → the user just waits).
+func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
+	if !bytes.Contains(line, []byte(`"error"`)) {
+		return nil, false
+	}
+	cred, preset := c.selection()
+	if cred == "" || preset != "" {
+		return nil, false
+	}
+	var h struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(line, &h) != nil || h.Error == nil || h.Error.Message == "" {
+		return nil, false
+	}
+	now := time.Now()
+	hint := detectLimit(h.Error.Message, now)
+	if !hint.limited {
+		return nil, false
+	}
+	until := hint.resetAt
+	if until.IsZero() {
+		until = now.Add(defaultLimitCooldown)
+	}
+	next := c.nextAccount(cred, until, now)
+	if next == "" {
+		return nil, false // one account, or all cooling — forward the error; the user waits/retries
+	}
+	c.mu.Lock()
+	c.sel = "cred:" + next
+	c.mu.Unlock()
+	msg := fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", cred, next)
+	return rewriteErrorMessage(line, msg), true
+}
+
+// nextAccount marks cur rate-limited until `until`, then returns the next signed-in account (cyclic
+// from cur) whose own limit has expired, or "" when there's no other free account right now.
+func (c *acpControl) nextAccount(cur string, until, now time.Time) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.limited[cur] = until
+	n := len(c.accounts)
+	start := -1
+	for i, a := range c.accounts {
+		if a == cur {
+			start = i
+			break
+		}
+	}
+	for i := 1; i <= n; i++ {
+		cand := c.accounts[(start+i)%n]
+		if cand == cur {
+			continue
+		}
+		if t, ok := c.limited[cand]; !ok || !t.After(now) {
+			return cand
+		}
+	}
+	return ""
 }
 
 type acpOption struct {
@@ -194,6 +277,32 @@ func (c *acpControl) setupOption() json.RawMessage {
 	}
 	b, _ := json.Marshal(co)
 	return b
+}
+
+// rewriteErrorMessage replaces the message of a JSON-RPC error line, preserving its id + code (so the
+// editor's request is still answered — with coop's "switched to <account>" note instead of the raw
+// provider error). Returns the line unchanged if it isn't a well-formed error object.
+func rewriteErrorMessage(line []byte, msg string) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(line, &m) != nil {
+		return line
+	}
+	var e map[string]json.RawMessage
+	if json.Unmarshal(m["error"], &e) != nil {
+		return line
+	}
+	mb, _ := json.Marshal(msg)
+	e["message"] = mb
+	eb, err := json.Marshal(e)
+	if err != nil {
+		return line
+	}
+	m["error"] = eb
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line
+	}
+	return append(out, '\n')
 }
 
 // withField sets one top-level string field on a JSON object, preserving every other field.
