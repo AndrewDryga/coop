@@ -42,7 +42,7 @@ type Config struct {
 	ServicesNet  string   // COOP_SERVICES_NET — override the services network name
 	LoopModel    string   // COOP_LOOP_MODEL — model for loop iterations (falls back to the per-agent default)
 	LoopCmd      []string // COOP_LOOP_CMD — override the loop's per-iteration command
-	TasksFiles   []string // COOP_TASKS — task queue(s) the loop and `coop tasks` work (repo-relative; default .agent/tasks)
+	TasksFiles   []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
 	Gate         []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
@@ -146,7 +146,7 @@ func Load() *Config {
 		ServicesNet:  get("COOP_SERVICES_NET", ""),
 		LoopModel:    get("COOP_LOOP_MODEL", ""),
 		LoopCmd:      shellSplit(get("COOP_LOOP_CMD", "")),
-		TasksFiles:   shellSplit(get("COOP_TASKS", filepath.Join(".agent", "tasks"))),
+		TasksFiles:   shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
 		Gate:         shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs: shellSplit(get("COOP_RUN_ARGS", "")),
 

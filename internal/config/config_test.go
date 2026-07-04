@@ -322,8 +322,10 @@ func TestModelResolution(t *testing.T) {
 func TestTasksFiles(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if got := Load().TasksFiles; !slices.Equal(got, []string{filepath.Join(".agent", "tasks")}) {
-		t.Errorf("default TasksFiles = %v, want [.agent/tasks]", got)
+	// Default is EMPTY: the queue set is derived downstream (taskQueues → .agent/project.yaml, else
+	// .agent/tasks), so a monorepo needn't hand-maintain COOP_TASKS. An explicit COOP_TASKS overrides.
+	if got := Load().TasksFiles; len(got) != 0 {
+		t.Errorf("default TasksFiles = %v, want [] (derived downstream)", got)
 	}
 	t.Setenv("COOP_TASKS", "portal/.agent/tasks runner/.agent/tasks")
 	if got := Load().TasksFiles; !slices.Equal(got, []string{"portal/.agent/tasks", "runner/.agent/tasks"}) {

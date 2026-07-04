@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Monorepo support via `.agent/project.yaml` — no more hand-maintained `COOP_TASKS`.** Drop a
+  committed `.agent/project.yaml` at the repo root listing the member projects, and coop aggregates
+  every subproject's task queue automatically:
+  ```yaml
+  subprojects: [runner, packs, portal, mcp]
+  ```
+  `coop tasks`, `coop loop`, `coop prompt`, `coop fleet` (status), completion, and the Stop-hook guard
+  now span all of them — previously you had to export `COOP_TASKS="portal/.agent/tasks
+  runner/.agent/tasks …"` by hand. An explicit `COOP_TASKS`/`--tasks` still overrides; a single repo
+  is unchanged. New `coop tasks queues` prints each configured queue's path (the composable primitive
+  the Stop hook uses). (`coop fork --loop`/`coop fleet split` still take one queue — multi-queue
+  seeding is backlogged.)
+
 - **coop owns the ACP editor toolbar — yolo, model-from-coop, and a live credential/preset switch.**
   The ACP proxy is now always in the path (not just `--supervise`), so coop controls the session an
   editor (Zed, …) drives: (1) it runs **every provider** (claude/codex/gemini) in **yolo** mode —

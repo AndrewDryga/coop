@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -41,6 +42,15 @@ func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 	given := flags
 	if len(given) == 0 {
 		given = cfg.TasksFiles
+	}
+	if len(given) == 0 {
+		// No --tasks and no COOP_TASKS: derive from .agent/project.yaml — a monorepo's subproject
+		// queues (so you don't hand-maintain COOP_TASKS), or just .agent/tasks for a single repo.
+		derived, err := project.TaskDirs(repo)
+		if err != nil {
+			return nil, err
+		}
+		given = derived
 	}
 	var rels []string
 	for _, g := range given {
@@ -88,6 +98,14 @@ func (a *app) cmdTasks(args []string) (int, error) {
 			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 		}
 		return a.tasksWatch(repo, rels)
+	}
+	if sub == "queues" {
+		// Print each configured queue's absolute path, one per line — a stable primitive for scripts
+		// and the Stop hook, which counts 00_todo across them so a monorepo /sweep sees every queue.
+		for _, rel := range rels {
+			fmt.Println(filepath.Join(repo, rel))
+		}
+		return 0, nil
 	}
 	if len(rels) > 1 {
 		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set

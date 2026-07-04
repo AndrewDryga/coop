@@ -1,12 +1,46 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+// TestTaskQueuesMonorepo: with no --tasks/COOP_TASKS, taskQueues derives the queue set from
+// .agent/project.yaml — a monorepo's subproject queues — while an explicit override still wins.
+func TestTaskQueuesMonorepo(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("subprojects:\n  - runner\n  - packs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := taskQueues(&config.Config{}, repo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join("runner", ".agent", "tasks"), filepath.Join("packs", ".agent", "tasks")}
+	if !slices.Equal(got, want) {
+		t.Errorf("monorepo queues = %v, want %v", got, want)
+	}
+
+	// An explicit COOP_TASKS (cfg.TasksFiles) overrides project.yaml.
+	got, _ = taskQueues(&config.Config{TasksFiles: []string{".agent/tasks"}}, repo, nil)
+	if !slices.Equal(got, []string{".agent/tasks"}) {
+		t.Errorf("COOP_TASKS override = %v, want [.agent/tasks]", got)
+	}
+
+	// A single repo (no project.yaml) still defaults to .agent/tasks.
+	got, _ = taskQueues(&config.Config{}, t.TempDir(), nil)
+	if !slices.Equal(got, []string{filepath.Join(".agent", "tasks")}) {
+		t.Errorf("single-repo default = %v, want [.agent/tasks]", got)
+	}
+}
 
 func TestExtractTasksFlags(t *testing.T) {
 	flags, rest, err := extractTasksFlags([]string{"--tasks", "a", "list", "--tasks=b", "--debug"})

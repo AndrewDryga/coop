@@ -346,13 +346,15 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
   split <n>        slice the todo tasks into n trees (.agent/tasks.sliceN); coop fleet split makes a fleet
+  queues           print each configured queue's path, one per line (for scripts and the Stop hook)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
   Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
   done, never delete it, so 'coop tasks rm --all-done' is how you prune the archive.
-  Defaults to .agent/tasks/; point --tasks at another tasks dir, or set COOP_TASKS. Paths
-  are repo-relative. With several queues configured (a monorepo), ls, lint, and decisions
+  Defaults to .agent/tasks/ — or, in a monorepo, every subproject's .agent/tasks listed under
+  'subprojects:' in .agent/project.yaml, so you never hand-maintain COOP_TASKS. Override with
+  --tasks or COOP_TASKS. Paths are repo-relative. With several queues (a monorepo), ls, lint, and decisions
   (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
   rm) find their task in whichever queue holds it — erroring only when an id matches in
   more than one queue (split slices share ids with their source). Only add and split need
