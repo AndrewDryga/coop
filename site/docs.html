@@ -776,7 +776,10 @@ roles:
                         rot. The agent claims a task, does it, runs your gate,
                         commits the result, and moves to the next. It won't stop
                         while any task remains in <code>00_todo/</code> or
-                        <code>10_in_progress/</code>.
+                        <code>10_in_progress/</code>. A monorepo? List the
+                        members under <code>subprojects:</code> in a committed
+                        <code>.agent/project.yaml</code> and one loop drains
+                        every component's queue — no configuration beyond that.
                     </p>
                     <pre
                         class="code"
@@ -997,11 +1000,27 @@ roles:
                         editor.
                     </p>
                     <p>
-                        Add <code>"--supervise"</code> to the args to keep the
-                        session connected across a <code>coop build</code> /
-                        <code>coop update</code>: coop restarts it onto the new
-                        image and replays the handshake, so a rebuild doesn't
-                        drop your editor.
+                        coop's proxy owns the editor session. The toolbar grows
+                        a <code>coop</code> dropdown to switch the credential
+                        or preset mid-thread — the conversation survives the
+                        switch. Every session runs yolo (the box is the
+                        boundary, so there are no permission prompts to click).
+                        A rate limit is handled for you: coop rotates to your
+                        next signed-in account and re-sends your prompt — or,
+                        with every account cooling, waits out the nearest reset
+                        and sends then. And a box restart
+                        (<code>coop build</code> / <code>coop update</code>, an
+                        OOM) replays the handshake, so your editor never
+                        disconnects.
+                    </p>
+                    <p>
+                        Building a website? List the dev server's port under
+                        <code>serve:</code> in a committed
+                        <code>.agent/project.yaml</code> and the thread
+                        announces the stable
+                        <code>http://localhost:&lt;port&gt;</code> URL the
+                        box publishes it at (bind the server to
+                        <code>0.0.0.0</code> inside the box).
                     </p>
                     <div class="note">
                         GUI apps don't always inherit your shell's

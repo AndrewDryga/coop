@@ -457,6 +457,66 @@ roles:
                             </div>
                         </div>
                     </div>
+
+                    <div class="feature flip">
+                        <div class="feature-text">
+                            <span class="kicker">Editors</span>
+                            <h3>Your editor is the cockpit</h3>
+                            <p>
+                                Register coop as an
+                                <a
+                                    href="https://agentclientprotocol.com"
+                                    target="_blank"
+                                    rel="noopener"
+                                    >ACP</a
+                                >
+                                agent (Zed today) and steer the sandboxed agent
+                                from the editor — while coop quietly runs the
+                                session for you.
+                            </p>
+                            <ul>
+                                <li>
+                                    A <b>coop dropdown</b> in the toolbar
+                                    switches the credential or preset
+                                    mid-thread — the conversation survives the
+                                    switch.
+                                </li>
+                                <li>
+                                    A rate-limited turn <b>rotates to your next
+                                    account and re-sends itself</b>; with every
+                                    account cooling, it waits out the nearest
+                                    reset and sends then.
+                                </li>
+                                <li>
+                                    Box restarts replay the handshake — the
+                                    editor never disconnects — and a dev server
+                                    in the box shows up at a stable
+                                    <code>localhost</code> URL.
+                                    <a href="docs.html#editors">Details ↗</a>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="term">
+                            <div class="term-bar">
+                                <span class="dot r"></span
+                                ><span class="dot y"></span
+                                ><span class="dot g"></span
+                                ><span class="title">Zed · settings.json</span>
+                            </div>
+                            <div class="term-body">
+                                <pre
+                                    class="term-code"
+                                >{
+  "agent_servers": {
+    "coop": {
+      "command": "coop",
+      "args": ["acp", "claude"]  <span class="t">// or codex / gemini / fusion</span>
+    }
+  }
+}</pre>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 

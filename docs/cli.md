@@ -394,10 +394,11 @@ coop loop [agent] — work the task queue until done, then audit.
   stops before claiming the next task. Press Ctrl-C again to stop now (tearing the
   running box down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
 
-  Defaults to .agent/tasks/. Repeat --tasks (or set COOP_TASKS) to drain several
-  queues at once — the loop keeps going while any
-  has unfinished work, so one loop can cover a monorepo's components. The whole repo is
-  still mounted.
+  Defaults to .agent/tasks/ — or, in a monorepo, every queue named by the top-level
+  .agent/project.yaml ('subprojects:' + the root's own), so one loop drains all the
+  components' work with no setup. Repeat --tasks (or set COOP_TASKS) to override the
+  set; the loop keeps going while any queue has unfinished work. The whole repo is
+  mounted either way.
 
   --preflight       run one cleanup pass before working: unblock blocked/ tasks whose
                     decision now has an answer (opt-in; COOP_PREFLIGHT=1 to default it

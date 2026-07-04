@@ -42,8 +42,8 @@ It's the working tooling behind two write-ups:
 - [Agents & config](#agents--config) — authentication · credentials · models · presets · instructions · MCP servers
 - [Fusion](#fusion-a-governed-council) — a council of models that argues before it commits
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
-- [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · a fleet
-- [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `Dockerfile.agent` · services
+- [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · a fleet
+- [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `Dockerfile.agent` · services · dev-server ports
 - [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Layout & development](#layout--development)
 
 ---
@@ -164,7 +164,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop claude` · `codex` · `gemini` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
 | `coop fusion [agent]` | a [governed council](#fusion-a-governed-council): that agent leads, the other two advise |
-| `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--supervise] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed); pin a per-entry credential/model, `--supervise` keeps the editor connected across a box restart, `--consult` lets it ask the peers read-only |
+| `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry credential/model, `--consult` lets it ask the peers read-only |
 | `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
 | `coop <agent> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
 
@@ -491,9 +491,11 @@ coop credentials                          # list them and which are signed in
 ```
 
 When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to the
-next target and keeps going, only waiting once every target is limited. There is no
-persistent pool to configure: the rotation *is* the model-first `models:` ladder of the
-loop's lead. With no preset it rotates the agent's default model across every signed-in
+next target and keeps going, only waiting once every target is limited. A [Zed (ACP)
+session](#drive-it-from-zed-acp) does the same transparently — rotate, re-send your
+prompt, move the toolbar dropdown; or wait for the nearest reset when every account is
+cooling. There is no persistent pool to configure: the rotation *is* the model-first
+`models:` ladder of the loop's lead. With no preset it rotates the agent's default model across every signed-in
 account; a bare model in a ladder does the same, while a pinned `model@account` runs just
 one. Limits are tracked per (model, account), so `claude-opus-4-8@personal` stays usable
 while `claude-opus-4-8@work` cools down. A ladder gives you **fallbacks** in the order you
@@ -803,8 +805,9 @@ coop login claude    # or codex / gemini
 
 **4. Use it.** Open the agent panel, pick coop from the dropdown, and start a
 thread. Zed launches `coop acp <agent>` with the project as cwd; the agent runs in the
-box, edits your files over ACP, and you approve its tool calls in Zed (or let them run —
-the box is the boundary).
+box and edits your files over ACP. Tool calls never prompt: coop runs every editor
+session in yolo, whatever the provider's own settings — the box is the boundary, so
+permission theater would only slow it down.
 
 Under the hood `coop acp [claude|codex|gemini|fusion]` runs the matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`)
@@ -812,10 +815,26 @@ inside the box over stdio. The repo mounts at its real host path — the same pa
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
 lines up: a thread you started with `coop loop` is there to resume in Zed.
 
-Add `--supervise` to the ACP args in your editor (e.g. `["acp","claude","--supervise"]`) to
-keep the session connected across a box restart: `coop build`/`coop update` restart a
-supervised session onto the new image and replay the ACP handshake, so a rebuild doesn't drop
-your editor.
+coop's proxy sits between the editor and the box and owns the session:
+
+- **A `coop` dropdown in the toolbar** lists your credentials and the repo's
+  same-provider [presets](#presets-the-whole-arrangement-in-one-yaml-file). Switching
+  restarts the box on the new identity and replays the session — the conversation
+  survives, because ACP transcripts live on a shared, credential-independent store. The
+  model dropdown defaults to coop's `--model`/config (still switchable in-editor); the
+  permission-mode dropdown is gone (always yolo).
+- **Rate limits are handled for you.** When a turn hits the provider's limit, coop
+  swallows the error, rotates to your next signed-in account, re-sends your prompt, and
+  moves the dropdown — the turn just completes on the backup credential. With nothing
+  free, it posts `Waiting for a reset on credential X in MM:SS (at <time>)` and sends
+  automatically when the limit lifts.
+- **Restarts don't drop the editor.** A box death (`coop build`/`coop update`, an OOM,
+  Docker restarting) respawns the box and replays the handshake transparently — even a
+  thread you hadn't messaged yet survives. (`--supervise` is accepted for older configs
+  but no longer needed — supervision is always on.)
+- **Dev servers are reachable.** With `serve.ports` in
+  [`.agent/project.yaml`](#see-the-dev-server-in-your-browser), the thread announces
+  the stable `http://localhost:<port>` URLs the box's ports are published at.
 
 To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your working tree,
 point the adapter at it: `coop fork <name> acp [agent]` — same ACP, but the agent works the
@@ -888,16 +907,41 @@ skill you've changed.
 
 `init` creates a tool-neutral working folder the agent reads back on every boot (and
 after each compaction). Everything here is local working state and git-ignored —
-except `rules/`, the shared knowledge base, which is committed.
+except the knowledge (`rules/`, `skills/`, `presets/`) and `project.yaml`, which are
+committed.
 
 | File | What it's for |
 |---|---|
 | `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
 | `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; one item per `##` section, never auto-worked, a human promotes one into `tasks/00_todo/` |
-| `rules/` | the taste knowledge base — corrections graduate into rules here (the one committed part) |
+| `rules/` | the taste knowledge base — corrections graduate into rules here (committed) |
+| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos) and the [`serve:` ports](#see-the-dev-server-in-your-browser) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
 by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the repo.
+
+### Monorepos
+
+One repo, several components, each with its own work? List them once in the top-level
+`.agent/project.yaml`:
+
+```yaml
+# .agent/project.yaml — committed with the repo
+subprojects: [runner, packs, portal, mcp]
+```
+
+and coop aggregates every member's `.agent/tasks` automatically — `coop tasks` rolls
+them up under per-queue headers, one `coop loop` drains them all, `coop prompt` counts
+across them, and the id commands (`claim`/`done`/…) find a task in whichever queue holds
+it. No more hand-maintaining `COOP_TASKS` (an explicit `COOP_TASKS`/`--tasks` still
+overrides). Members keep their **own** queues for their own work; the root keeps one too,
+for changes that span members.
+
+`coop init` at the root detects the members (direct child dirs that have a `.agent/`),
+writes the `project.yaml`, and scaffolds each member with just its queue + backlog —
+members share the root's AGENTS.md, skills, rules, and box, though a large member may
+commit its own `rules/` if it wants them. `coop tasks queues` prints the resolved queue
+paths when a script (or the Stop hook) needs them.
 
 ### A fleet
 
@@ -1068,6 +1112,29 @@ The agent never installs or hosts a database, so it can't corrupt one, and `coop
 resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
 from re-downloading the world.
 
+### See the dev server in your browser
+
+The agent built a website in the box — now open it. List the port(s) the dev server
+listens on in `.agent/project.yaml`:
+
+```yaml
+serve:
+  ports: [5173]        # what the server binds INSIDE the box
+```
+
+and every box for this repo (`coop acp`, `coop run`) publishes each to a **stable host
+port**, derived from the repo path — the same URL every launch, a different one per
+project, so one shared Zed agent definition serves all your projects without port
+collisions. In an ACP thread coop announces the mapping (`🌐 box :5173 →
+http://localhost:24187`); on a terminal run it's printed on stderr.
+
+Two things to know: the dev server must bind `0.0.0.0` inside the box (`vite --host`,
+`next dev -H 0.0.0.0`, …) — a container-localhost server isn't reachable through the
+mapping — and ports bind to *your* localhost only (never the LAN). Publishing needs
+network egress (`COOP_EGRESS=open`, the default); a host port already in use is skipped
+with a note. A box restart (credential switch, rebuild) restarts the dev server's world —
+the URL stays the same, just re-run the server.
+
 ### Keeping the box current
 
 ```bash
@@ -1161,7 +1228,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
 | `COOP_LOOP_MODEL` | — | model for loop iterations (overnight runs on a cheaper model than interactive) |
-| `COOP_TASKS` | `.agent/tasks` | the task queue dir(s) for `coop tasks` and the loop (space-separated for several). `--tasks` **replaces** this for a run (it doesn't merge); repeat `--tasks` to drain several |
+| `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
 
@@ -1188,12 +1255,13 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 |---|---|
 | **"no container runtime found"** | Install Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman, then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
 | **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `Dockerfile.agent` (its own image). |
-| **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own. |
+| **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
 | **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the toolchain there (e.g. `golang 1.26.4`) so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
 | **A pinned `.tool-versions` tool (`go`, `ruby`, …) is installed yet "not found" in a *login* shell** | asdf's shims sit on PATH via the image's `ENV`, which only reaches the agent process and non-login shells. A login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH and drops the shims. The base box adds an `/etc/profile.d` drop-in to re-add them; rebuild an older box with `coop build` to pick it up. |
 | **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <agent>` runs in a terminal first. |
+| **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
 | **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
 | **"box image is stale … run 'coop build'"** | You changed `Dockerfile.agent` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
@@ -1208,7 +1276,10 @@ A single static Go binary plus a config folder. A repo you work on optionally ca
 main.go             entrypoint
 internal/agent/     one file per coding agent (claude/codex/gemini): commands, resume, MCP, defaults, packages
 internal/box/       the engine: secret-shadowing mounts, git env, image selection, container run
+internal/acpproxy/  the ACP session proxy: survives box restarts, replays the handshake, coop's editor hooks
 internal/fusion/    the council: peer commands + the governor instruction
+internal/preset/    orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
+internal/project/   .agent/project.yaml — a monorepo's subprojects + the serve ports
 internal/mcp/       one mcp.json → Claude / Gemini / Codex native configs (pure Go, no Python)
 internal/scaffold/  `coop init` templates + the workflow skills (embedded in the binary)
 internal/cli/       command dispatch, grouped help, the fork lifecycle, doctor

@@ -39,6 +39,21 @@ for a full model-first ladder (fallbacks across models and accounts), set
 `preset: <name>` instead — an orchestration preset from `.agent/presets/` whose lead
 `models:` ladder the fork's loop rotates (see `coop help presets`).
 
+## Monorepos: a hand-set `COOP_TASKS` → `.agent/project.yaml`
+
+Not breaking — `COOP_TASKS` still works and still overrides — but if you were exporting
+`COOP_TASKS="portal/.agent/tasks runner/.agent/tasks …"` to make coop see a monorepo's
+queues, you can delete the export: commit a top-level `.agent/project.yaml` listing the
+members and every task command derives the queue set from it (each member's queue plus
+the root's own, for changes that span members):
+
+```yaml
+subprojects: [portal, runner, mcp, packs]
+```
+
+`coop init` at the root writes it for you (it detects direct child dirs that have a
+`.agent/`) and scaffolds any member that's missing its queue.
+
 ## A legacy `.agent/TASKS.md` → the folder task system
 
 Older coop repos kept the work queue in a single `.agent/TASKS.md` (with
