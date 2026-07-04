@@ -450,9 +450,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return a.cmdACPSupervise(args)
 	}
 	consult, args := extractConsult(args)
-	// --profile pins this ACP session to one credential profile — so an editor can point a
-	// "claude (work)" agent_servers entry at ["acp","claude","--credential","work"]. Read before the
-	// tool token; an agent's own --profile still passes through after a `--`.
+	// --credential pins this ACP session to one account — so an editor can point a "claude (work)"
+	// agent_servers entry at ["acp","claude","--credential","work"]. Read before the tool token; ACP
+	// takes no extra args (the leftover check below rejects them), so there's no agent-flag passthrough.
 	profile, args, err := extractRunProfile(args)
 	if err != nil {
 		return 2, err
