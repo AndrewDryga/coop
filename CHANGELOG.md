@@ -67,6 +67,14 @@
   Same-provider only: it never changes the model or the provider; a preset session rotates via its own
   `models:` ladder, not here. (Detection covers rate limits surfaced as a JSON-RPC error.)
 
+- **ACP: the toolbar shows the box's real config after a switch or restart.** Switching to a preset
+  used to leave the model dropdown on the old value even though the box was already running the
+  preset's model — the acknowledgment echoed coop's cache, and the restarted box's real config (in the
+  replayed `session/load` result) was swallowed. The proxy now forwards each re-established session's
+  `configOptions` to the editor as a `config_option_update`, so the dropdowns land on the truth.
+  Related fix: on a preset session coop no longer force-sets (or displays) its launch-time model over
+  the preset's — the preset's lead ladder owns the model.
+
 - **ACP: a lost-reload after a box restart is no longer silent.** If a restored session's
   `session/load` comes back an error on the new box (e.g. its transcript wasn't on the shared store),
   coop warns on the ACP server log instead of leaving the editor with a context-less session.

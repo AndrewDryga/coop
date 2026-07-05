@@ -257,6 +257,80 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	}
 }
 
+// TestProxyReplayForwardsConfigUpdate: the editor never sees the replayed session/load result, so the
+// proxy forwards its configOptions as a config_option_update — through ToEditor, so coop's toolbar
+// rewrite applies — bringing the toolbar up to the restarted box's truth (e.g. a preset's model).
+func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	c1, c2 := newFakeChild(), newFakeChild()
+	queue := make(chan *fakeChild, 2)
+	queue <- c1
+	queue <- c2
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+
+	sawUpdate := false
+	hooks := &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
+		if bytes.Contains(line, []byte("config_option_update")) {
+			sawUpdate = true // coop's rewrite gets its look at the synthesized update
+		}
+		return line, false
+	}}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+
+	childIn1 := bufio.NewReader(c1.inR)
+	childIn2 := bufio.NewReader(c2.inR)
+	clientOut := bufio.NewReader(clientOutR)
+
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, clientOut)
+
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	readLine(t, clientOut)
+
+	// A prompt turns the session so the restart reloads it.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`)
+	readLine(t, childIn1)
+
+	// child1 dies → replay on child2; the load result carries the box's REAL config.
+	c1.outW.Close()
+	for {
+		h := parse(readLine(t, childIn2))
+		if h.Method == "session/load" {
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","currentValue":"claude-fable-5"}]}}`, string(h.ID)))
+			break
+		}
+		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
+	}
+
+	// The in-flight id 3 fails on swap, then the config update reaches the editor.
+	if id := idStr(t, readLine(t, clientOut)); id != "3" {
+		t.Fatalf("expected the in-flight id 3 failed first, got %q", id)
+	}
+	upd := readLine(t, clientOut)
+	if !strings.Contains(string(upd), "config_option_update") || !strings.Contains(string(upd), "claude-fable-5") {
+		t.Fatalf("expected a config_option_update with the box's model, got %s", upd)
+	}
+	if sid := sessionID(parse(upd).Params); sid != "S1" {
+		t.Fatalf("config update sessionId = %q, want S1", sid)
+	}
+	if !sawUpdate {
+		t.Error("the synthesized update must pass through ToEditor (coop's toolbar rewrite)")
+	}
+
+	clientInW.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after client close")
+	}
+}
+
 // TestProxyAutoReplyAnswersChildRequest: an agent→editor request the hook claims (a permission ask)
 // is answered straight to the child and NOT forwarded to the editor; other traffic still flows.
 func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
@@ -605,7 +679,7 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
 		case "session/new":
 			reNew = true
-			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"S2"}}`, string(fr.ID)))
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"S2","configOptions":[{"id":"model","currentValue":"m1"}]}}`, string(fr.ID)))
 		case "session/load":
 			t.Fatal("a turn-less session must be re-created (session/new), not session/load-ed")
 		default:
@@ -621,6 +695,12 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 		t.Fatalf("expected in-flight id 3 to be failed on swap, got %q", id)
 	}
 
+	// The re-created session's config is forwarded under the EDITOR's id (S1, not the box's S2).
+	upd := parse(readLine(t, clientOut))
+	if sid := sessionID(upd.Params); sid != "S1" {
+		t.Fatalf("config update sessionId = %q, want the editor's S1", sid)
+	}
+
 	// The editor's FIRST prompt still uses the ORIGINAL id S1; it must reach the box remapped to S2.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1"}}`)
 	fwd := parse(readLine(t, childIn2))
@@ -633,7 +713,7 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 
 	// A box notification tagged with S2 must come back to the editor tagged with the original S1.
 	writeLine(t, c2.outW, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{}}}`)
-	upd := parse(readLine(t, clientOut))
+	upd = parse(readLine(t, clientOut))
 	if sid := sessionID(upd.Params); sid != "S1" {
 		t.Fatalf("box→editor update sessionId = %q, want S1 (the editor's id)", sid)
 	}

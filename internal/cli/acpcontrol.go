@@ -557,6 +557,9 @@ func (c *acpControl) rewriteConfigOptions(raw json.RawMessage, sid string) json.
 	if json.Unmarshal(raw, &arr) != nil {
 		return raw
 	}
+	// On a PRESET the preset's lead ladder owns the model — show the box's truth, never coop's
+	// launch-time model over it.
+	_, preset := c.selection()
 	out := []json.RawMessage{c.setupOption()}
 	for _, item := range arr {
 		var head struct {
@@ -567,7 +570,7 @@ func (c *acpControl) rewriteConfigOptions(raw json.RawMessage, sid string) json.
 		if stripConfigIDs[head.ID] {
 			continue
 		}
-		if head.ID == "model" && c.model != "" && optionHasValue(head.Options, c.model) {
+		if head.ID == "model" && preset == "" && c.model != "" && optionHasValue(head.Options, c.model) {
 			item = withField(item, "currentValue", c.model) // default to coop's model; still switchable
 		}
 		out = append(out, item)
@@ -655,7 +658,9 @@ func (c *acpControl) sessionReady(sid string) [][]byte {
 	if c.lead == "claude" {
 		msgs = append(msgs, c.setConfig(sid, "mode", "bypassPermissions"))
 	}
-	if c.model != "" {
+	// On a PRESET the preset's lead ladder owns the model — forcing coop's launch-time model here
+	// would silently override it in the box.
+	if _, preset := c.selection(); c.model != "" && preset == "" {
 		msgs = append(msgs, c.setConfig(sid, "model", c.model))
 	}
 	return msgs

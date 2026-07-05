@@ -505,6 +505,17 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 			}
 		}
 	}()
+	// The editor never sees the replayed load/new results (they answer OUR synthetic requests), so it
+	// would keep showing the config it knew before the restart — stale after a credential/preset
+	// switch (e.g. the model dropdown). Collect each re-established session's configOptions from its
+	// result and, once the child is live, forward them as config_option_update notifications: the
+	// box's truth, pushed through the normal ToEditor path so coop's toolbar rewrite applies.
+	type configUpdate struct {
+		editorID string
+		options  json.RawMessage
+	}
+	var configUpdates []configUpdate
+
 	// Bounded read: allow a generous wait for the FIRST response (the box may still be starting),
 	// then a tighter idle bound once the agent has answered and is provably up. A child EOF here
 	// means it died during replay — break and let Run respawn it; a timeout means it hung — abort.
@@ -519,6 +530,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 					// directions translate from here on. If even session/new failed, the box is broken.
 					if newID := sessionID(h.Result); newID != "" {
 						p.remapSession(eid, newID)
+						configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
 					} else if len(h.Error) > 0 {
 						fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, h.Error)
 						Trace("replay: session %s re-create failed: %s", eid, h.Error)
@@ -530,6 +542,8 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 					if len(h.Error) > 0 {
 						fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; its history may be lost: %s\n", eid, h.Error)
 						Trace("replay: session %s did NOT reload: %s", eid, h.Error)
+					} else {
+						configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
 					}
 				}
 				delete(expect, id)
@@ -561,6 +575,24 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		}
 	}
 	p.swapChild(c)
+	// Tell the editor what the restarted box's sessions ACTUALLY look like (the model in force after a
+	// credential/preset switch, say) — it never saw the load/new results. Synthesized on the editor
+	// side of the boundary with the editor's ids, and run through ToEditor so coop's toolbar rewrite
+	// (drop mode, prepend coop_setup, refresh its cache) applies. The restart flag is ignored: a
+	// config notification can't be a rate-limit error.
+	for _, cu := range configUpdates {
+		if len(cu.options) == 0 {
+			continue
+		}
+		line := configOptionUpdateLine(cu.editorID, cu.options)
+		if p.hooks != nil && p.hooks.ToEditor != nil {
+			line, _ = p.hooks.ToEditor(line)
+		}
+		if len(line) > 0 {
+			traceLine("box→editor(replay-config)", line)
+			_, _ = p.out.Write(line)
+		}
+	}
 	// A session may have a prompt to re-send transparently — a turn that failed on the old box (a
 	// rate-limit rotation/wait). Feed it through the normal client path AFTER the swap, so it's remapped,
 	// tracked as pending, and its response reaches the editor, completing the turn the editor still shows
@@ -678,6 +710,37 @@ func sessionID(raw json.RawMessage) string {
 	}
 	_ = json.Unmarshal(raw, &v)
 	return v.SessionID
+}
+
+// resultConfigOptions extracts a session/load|new result's configOptions, or nil (an adapter that
+// doesn't send them there has nothing to forward).
+func resultConfigOptions(result json.RawMessage) json.RawMessage {
+	if len(result) == 0 {
+		return nil
+	}
+	var v struct {
+		ConfigOptions json.RawMessage `json:"configOptions"`
+	}
+	_ = json.Unmarshal(result, &v)
+	return v.ConfigOptions
+}
+
+// configOptionUpdateLine builds the ACP config_option_update notification — the full configOptions
+// state for one session — used after a replay to bring the editor's toolbar up to the box's truth.
+func configOptionUpdateLine(sid string, options json.RawMessage) []byte {
+	upd := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": sid,
+			"update": map[string]any{
+				"sessionUpdate": "config_option_update",
+				"configOptions": options,
+			},
+		},
+	}
+	b, _ := json.Marshal(upd)
+	return append(b, '\n')
 }
 
 // withID re-stamps a request line with a new (string) id.

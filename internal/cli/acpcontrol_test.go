@@ -159,6 +159,36 @@ func TestACPControlSessionReady(t *testing.T) {
 	}
 }
 
+// TestACPControlPresetOwnsModel: on a PRESET selection the preset's lead ladder owns the model —
+// sessionReady must not force coop's launch-time model over it, and the toolbar rewrite must show the
+// box's currentValue instead of retargeting it.
+func TestACPControlPresetOwnsModel(t *testing.T) {
+	c := newTestControl(t) // model = opus[1m]
+	c.sel = "preset:frontier"
+
+	var joined string
+	for _, m := range c.sessionReady("s1") {
+		joined += string(m)
+	}
+	if strings.Contains(joined, `"configId":"model"`) {
+		t.Errorf("sessionReady must not force coop's model on a preset session:\n%s", joined)
+	}
+
+	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[` +
+		`{"id":"model","type":"select","currentValue":"claude-fable-5","options":[{"value":"opus[1m]","name":"Opus"},{"value":"claude-fable-5","name":"Fable"}]}]}}` + "\n"
+	out := toEd(c, []byte(in))
+	if !strings.Contains(string(out), `"currentValue":"claude-fable-5"`) || strings.Contains(string(out), `"currentValue":"opus[1m]"`) {
+		t.Errorf("preset session must show the box's model, not coop's launch model:\n%s", out)
+	}
+
+	// Back on a credential, the retarget applies again.
+	c.sel = "cred:personal"
+	out = toEd(c, []byte(in))
+	if !strings.Contains(string(out), `"currentValue":"opus[1m]"`) {
+		t.Errorf("credential session should default the model to coop's:\n%s", out)
+	}
+}
+
 // TestACPControlSessionReadyNonClaude: mode=bypassPermissions is a claude option, so a non-claude lead
 // must NOT get it (yolo comes from autoReply instead); coop's model set still goes out.
 func TestACPControlSessionReadyNonClaude(t *testing.T) {
