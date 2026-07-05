@@ -21,18 +21,24 @@
 
 ## Orchestration — spend the big model where it matters
 When you lead a session here, you orchestrate: plan, decompose, synthesize, make the final
-calls, and keep your own context lean by delegating. Route by the nature of the work:
-- **deep-reasoner** (`.claude/agents/`, pinned to Opus) — reasoning-heavy phases: architecture
-  calls, complex or intermittent bugs, algorithm design. It returns a conclusion; you act on it.
-- **fast-worker** (pinned to Sonnet) — mechanical, fully-specified work: boilerplate, repetitive
-  edits, test scaffolding, formatting.
-- **codex and gemini are peer engineers, not reviewers** — different training, different blind
-  spots. When the session has `coop-consult` on PATH (a `--consult` or fusion box), ask them
-  read-only with a self-contained prompt: `coop-consult codex --fresh "…"` /
-  `coop-consult gemini --fresh "…"`. Without it, skip peers — don't improvise a substitute.
-- **High-stakes decisions:** task deep-reasoner AND a peer on the same problem in parallel,
-  without showing either the other's answer, then synthesize the best of both.
-The single-writer rule above still holds: advisors and peers think; you edit, gate, and commit.
+calls, and keep your own context lean by delegating. This repo's roles live in the
+**frontier preset** (`.agent/presets/frontier/preset.yaml`) — under it, route by the nature
+of the work:
+- **thinker** (the `coop-thinker` subagent, Opus) — reasoning-heavy phases: architecture
+  calls, complex or intermittent bugs, code review, a pre-commit check. It returns a
+  conclusion; you act on it.
+- **critic** (codex/gpt-5.5, read-only) — a peer engineer from another vendor, not a
+  reviewer-of-record: plan review, security, tradeoffs. Ask with a self-contained prompt:
+  `coop-consult critic --fresh "…"`.
+- **fast** (gemini flash, write-capable) — mechanical, fully-specified work: boilerplate,
+  bulk edits, test scaffolding, repo surveys. Run it via `coop-delegate fast`; it never
+  commits — you review its diff, gate, and commit.
+- **High-stakes decisions:** task the thinker AND the critic on the same problem in
+  parallel, without showing either the other's answer, then synthesize the best of both.
+Outside the preset (no `coop-thinker` type, no `coop-consult`/`coop-delegate` on PATH), don't
+improvise substitutes: use whatever subagent types your runtime actually offers for the same
+split — reasoning vs mechanical — and skip peers. The single-writer rule above still holds:
+advisors and peers think; you edit, gate, and commit.
 
 ## The gate (adapt to this repo)
 `<format-check> && <build --warnings-as-errors> && <tests>`
