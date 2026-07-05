@@ -601,30 +601,48 @@ func TestGeneratedSubagentFiles(t *testing.T) {
 	}
 }
 
-// assembleAgentsDir builds a temp dir with the repo's existing subagents PLUS the generated
-// ones, and never mutates the repo (the dir is what gets mounted over .claude/agents).
+// assembleAgentsDir builds a temp dir with ONLY the generated coop-<role> files — the user-level
+// agents mount. The repo's own .claude/agents is deliberately NOT copied in: it stays the live repo
+// mount, so deleting/editing the user's subagents never drags coop's preset roles along.
 func TestAssembleAgentsDir(t *testing.T) {
-	repo := t.TempDir()
-	agents := filepath.Join(repo, ".claude", "agents")
-	if err := os.MkdirAll(agents, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agents, "deep-reasoner.md"), []byte("hand-authored"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := assembleAgentsDir(repo, []genFile{{"coop-thinker.md", "generated"}})
+	dir, err := assembleAgentsDir([]genFile{{"coop-thinker.md", "generated"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	// The temp dir carries both the copied existing subagent and the generated one.
-	for _, f := range []string{"deep-reasoner.md", "coop-thinker.md"} {
-		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
-			t.Errorf("assembled dir missing %s: %v", f, err)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "coop-thinker.md" {
+		t.Fatalf("assembled dir should hold only the generated files, got %v", entries)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "coop-thinker.md")); string(b) != "generated" {
+		t.Errorf("generated content mismatch: %q", b)
+	}
+}
+
+// TestPresetRoleMountsNativeTargetsUserAgents: the generated native-role dir mounts as the box's
+// USER-level ~/.claude/agents — never over the repo's .claude/agents, which stays the live repo
+// mount the user owns.
+func TestPresetRoleMountsNativeTargetsUserAgents(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node"}
+	p := &preset.Preset{LeadAgent: "claude", Roles: []preset.Role{
+		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8"},
+	}}
+	mounts, _, _, tmpDirs := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir()}, "/w")
+	defer func() {
+		for _, d := range tmpDirs {
+			os.RemoveAll(d)
+		}
+	}()
+	var target string
+	for _, m := range mounts {
+		if strings.HasSuffix(m.box, "/.claude/agents") {
+			target = m.box
 		}
 	}
-	// The repo's own .claude/agents is untouched — no coop-thinker.md written there.
-	if _, err := os.Stat(filepath.Join(agents, "coop-thinker.md")); !os.IsNotExist(err) {
-		t.Errorf("repo .claude/agents must not gain coop-thinker.md (err=%v)", err)
+	if target != "/home/node/.claude/agents" {
+		t.Fatalf("native agents mount target = %q, want /home/node/.claude/agents (user-level, not the repo's)", target)
 	}
 }

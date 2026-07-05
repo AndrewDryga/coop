@@ -35,6 +35,15 @@
   localhost only; publishing needs `COOP_EGRESS=open`; a host port already in use is skipped (noted on
   the server log). Your dev server must listen on `0.0.0.0` (not localhost) inside the box.
 
+- **Preset native subagents no longer share the repo's `.claude/agents`.** The generated
+  `coop-<role>.md` files used to be assembled into a snapshot mounted OVER the repo's agents dir —
+  so your own subagents were frozen copies for the box's lifetime (host edits invisible, the dir
+  read-only in-box), and deleting your agents took coop's preset role down with them. They now mount
+  as the box's **user-level** `~/.claude/agents`: claude merges the two levels, the repo's
+  `.claude/agents` stays the live repo mount you own (edit, add, delete — with or without a preset),
+  coop's roles can't be deleted from inside, and a repo agent with the same name still deliberately
+  overrides (project beats user).
+
 - **coop owns the ACP editor toolbar — yolo, model-from-coop, and a live credential/preset switch.**
   The ACP proxy is now always in the path (not just `--supervise`), so coop controls the session an
   editor (Zed, …) drives: (1) it runs **every provider** (claude/codex/gemini) in **yolo** mode —

@@ -387,9 +387,10 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 // presetRoleMounts wires a preset's roles into the box and returns the mounts to add, the -e args
 // to append to spec.ExtraArgs, and the temp files/dirs to clean up: the coop-delegate wrapper plus
 // each delegate role's contract and COOP_DELEGATE_<ROLE>_* env; the generated coop-<role> native
-// subagents under a Claude lead (a dir overlay on <workdir>/.claude/agents); and each consult-wired
-// role's persona + COOP_CONSULT_<ROLE>_* env (the explicit consult roles plus natives degraded under
-// a non-Claude lead). A run with no preset (or homes off) returns all-nil.
+// subagents under a Claude lead (mounted as the box's user-level ~/.claude/agents, separate from the
+// repo's own); and each consult-wired role's persona + COOP_CONSULT_<ROLE>_* env (the explicit
+// consult roles plus natives degraded under a non-Claude lead). A run with no preset (or homes off)
+// returns all-nil.
 func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string) {
 	if !spec.Homes || spec.Preset == nil {
 		return
@@ -433,16 +434,18 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 		lead = spec.FusionGovernor
 	}
 	if spec.Preset.NativeRolesUsable(lead) {
-		// Claude lead: coop assembles a temp dir holding the repo's existing subagents PLUS
-		// the generated coop-<role>.md and mounts it OVER <workdir>/.claude/agents (a dir over
-		// the existing dir, so the runtime creates no stray host file — a file mount would).
-		// The role's model rides in the generated frontmatter.
+		// Claude lead: the generated coop-<role>.md files mount as the box's USER-level agents
+		// dir (~/.claude/agents) — merged by claude with the repo's own .claude/agents, which
+		// stays the live repo mount. Separate on purpose: deleting/editing the repo's agents
+		// can't touch coop's preset roles (and vice versa — the mount is read-only and dies
+		// with the box); a repo agent of the same name deliberately overrides (project beats
+		// user). The role's model rides in the generated frontmatter.
 		if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
-			if dir, err := assembleAgentsDir(spec.Repo, gen); err != nil {
+			if dir, err := assembleAgentsDir(gen); err != nil {
 				ui.Info("preset: skipped native subagents: %v", err)
 			} else {
 				tmpDirs = append(tmpDirs, dir)
-				mounts = append(mounts, extraMount{dir, workdir + "/.claude/agents"})
+				mounts = append(mounts, extraMount{dir, cfg.HomeInBox + "/.claude/agents"})
 			}
 		}
 	}
@@ -596,25 +599,15 @@ func generatedSubagentFiles(p *preset.Preset) []genFile {
 	return out
 }
 
-// assembleAgentsDir builds a host temp dir to mount OVER <repo>/.claude/agents in the box:
-// the repo's existing subagents copied in (so mounting over the dir doesn't hide them) plus
-// the generated coop-<role>.md files. The dir is mounted, never the repo, so the host tree
-// is untouched. Caller mounts the returned dir and cleans it up.
-func assembleAgentsDir(repo string, gen []genFile) (string, error) {
+// assembleAgentsDir builds a host temp dir holding ONLY the generated coop-<role>.md files, mounted
+// (read-only) as the box's user-level ~/.claude/agents. The repo's .claude/agents is deliberately NOT
+// copied in — it stays the live repo mount, so the user's own subagents remain theirs to edit or
+// delete without dragging coop's preset roles along (claude merges the two levels; a repo agent of
+// the same name wins). Caller mounts the returned dir and cleans it up.
+func assembleAgentsDir(gen []genFile) (string, error) {
 	dir, err := os.MkdirTemp("", "coop-agents-")
 	if err != nil {
 		return "", err
-	}
-	src := filepath.Join(repo, ".claude", "agents")
-	if entries, err := os.ReadDir(src); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			if b, err := os.ReadFile(filepath.Join(src, e.Name())); err == nil {
-				_ = os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644)
-			}
-		}
 	}
 	for _, g := range gen {
 		if err := os.WriteFile(filepath.Join(dir, g.name), []byte(g.content), 0o644); err != nil {
