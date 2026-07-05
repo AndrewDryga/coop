@@ -86,7 +86,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "lint":
 		return tasksFolderLint(root)
 	case "add":
-		return tasksFolderAdd(root, args)
+		return tasksFolderAdd(root, args, stateTodo, "tasks add")
 	case "claim":
 		return tasksFolderMove(root, args, stateInProgress, "claim", "claimed")
 	case "start": // v3: renamed to claim
@@ -125,15 +125,16 @@ func isTasksSubcommand(s string) bool {
 	return slices.Contains(tasksVerbs, s)
 }
 
-// findTask locates a task by ID across all state dirs: an exact ID match, else a unique
-// substring match (so a slug fragment works). Ambiguous or absent is an error.
-func findTask(root, id string) (taskItem, error) {
+// matchTask resolves id against a set of task items: an exact ID match wins, else a unique substring
+// match (so a slug fragment works). Ambiguous or absent is an error. listCmd names the command that
+// lists this set ("coop tasks" / "coop backlog"), so the "run '…' to list" hint points at the right
+// place. Shared by findTask (the lifecycle tree) and findBacklogTask (xx_backlog).
+func matchTask(items []taskItem, id, listCmd string) (taskItem, error) {
 	if id == "" {
 		// An empty fragment would substring-match every task ("" is in everything); make it a
 		// clear error instead of silently acting on the first/only one.
-		return taskItem{}, errors.New("need a task id (run 'coop tasks' to list)")
+		return taskItem{}, fmt.Errorf("need a task id (run '%s' to list)", listCmd)
 	}
-	items := readTaskTree(root)
 	for _, t := range items {
 		if t.ID == id {
 			return t, nil
@@ -149,7 +150,7 @@ func findTask(root, id string) (taskItem, error) {
 	case 1:
 		return hits[0], nil
 	case 0:
-		return taskItem{}, fmt.Errorf("no task matching %q (run 'coop tasks' to list)", id)
+		return taskItem{}, fmt.Errorf("no task matching %q (run '%s' to list)", id, listCmd)
 	default:
 		var ids []string
 		for _, h := range hits {
@@ -157,6 +158,19 @@ func findTask(root, id string) (taskItem, error) {
 		}
 		return taskItem{}, fmt.Errorf("%q matches %d tasks: %s — be more specific", id, len(hits), strings.Join(ids, ", "))
 	}
+}
+
+// findTask locates a task by ID across the lifecycle state dirs — an exact ID match, else a unique
+// substring match. Backlog (xx_backlog) is deliberately NOT searched: it's off to the side, so the
+// active id-commands (claim/done/…) can't accidentally act on an un-promoted idea. See findBacklogTask.
+func findTask(root, id string) (taskItem, error) {
+	return matchTask(readTaskTree(root), id, "coop tasks")
+}
+
+// findBacklogTask locates a backlog item by ID under root's xx_backlog/ — the backlog analog of
+// findTask, so `coop backlog rm/promote` accept a slug fragment and error clearly on absent/ambiguous.
+func findBacklogTask(root, id string) (taskItem, error) {
+	return matchTask(readBacklog(root), id, "coop backlog")
 }
 
 // slugify turns a title into a lowercase, hyphenated id fragment: runs of non-letter/digit
@@ -257,7 +271,10 @@ func newTaskFiles(id, title, now string, values map[string]string, subtasks []st
 	}
 }
 
-func tasksFolderAdd(root string, args []string) (int, error) {
+// tasksFolderAdd creates a task folder under root/state (stateTodo for `coop tasks add`, stateBacklog
+// for `coop backlog add` — the two share every bit of parsing/validation). cmdLabel is the command as
+// typed ("tasks add" / "backlog add"), so error and usage lines name the right command.
+func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, error) {
 	// Optional structured flags carve the title from the body: with any of
 	// --context/--acceptance/--approach/--subtask the task is created FILLED and validated up front;
 	// with none, it's the placeholder scaffold you edit. The flag names ARE the shape (taskSections).
@@ -280,11 +297,11 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 		}
 		heading, isSection := sectionByFlag[flag]
 		if !isSection && flag != "subtask" {
-			return 2, fmt.Errorf("coop tasks add: unknown flag %q (known: --context, --acceptance, --approach, --subtask)", a)
+			return 2, fmt.Errorf("coop %s: unknown flag %q (known: --context, --acceptance, --approach, --subtask)", cmdLabel, a)
 		}
 		if !hasEq {
 			if i+1 >= len(args) {
-				return 2, fmt.Errorf("coop tasks add --%s needs a value", flag)
+				return 2, fmt.Errorf("coop %s --%s needs a value", cmdLabel, flag)
 			}
 			i++
 			val = args[i]
@@ -298,11 +315,11 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	}
 	title := strings.TrimSpace(strings.Join(titleWords, " "))
 	if title == "" {
-		return 2, errors.New(`usage: coop tasks add "<title>" [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`)
+		return 2, fmt.Errorf(`usage: coop %s "<title>" [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`, cmdLabel)
 	}
 	slug := slugify(title)
 	if slug == "" {
-		return 2, errors.New(`that title has no letters or digits to build a task id from — use a title with at least one word, e.g. coop tasks add "fix login retry"`)
+		return 2, fmt.Errorf(`that title has no letters or digits to build a task id from — use a title with at least one word, e.g. coop %s "fix login retry"`, cmdLabel)
 	}
 	// Structured mode is all-or-nothing: every section flag must be given, so we never create a task
 	// that's half-filled and half-<…>-placeholder. Omit all the flags to get the placeholder scaffold.
@@ -314,17 +331,20 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 			}
 		}
 		if len(missing) > 0 {
-			return 2, fmt.Errorf("coop tasks add: structured flags need every section — missing %s (or omit all flags to scaffold)", strings.Join(missing, ", "))
+			return 2, fmt.Errorf("coop %s: structured flags need every section — missing %s (or omit all flags to scaffold)", cmdLabel, strings.Join(missing, ", "))
 		}
 	}
 	id := time.Now().Format("2006-01-02") + "-" + slug
-	// An id is a stable, unique handle, so reject a collision in ANY state — not just todo/ —
-	// else a re-add after the task shipped would make two folders share an id (and findTask
-	// would silently shadow one).
+	// An id is a stable, unique handle, so reject a collision in ANY state — the four lifecycle dirs
+	// AND xx_backlog — else a re-add (or a promote) would make two folders share an id, and
+	// findTask/findBacklogTask would silently shadow one.
 	for _, st := range taskStates {
 		if pathExists(filepath.Join(root, st, id)) {
 			return 1, fmt.Errorf("task %q already exists in %s/", id, st)
 		}
+	}
+	if pathExists(filepath.Join(root, stateBacklog, id)) {
+		return 1, fmt.Errorf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, stateBacklog, id)
 	}
 	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
 	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
@@ -332,7 +352,9 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 	if err := scaffoldStateDirs(root); err != nil {
 		return -1, err
 	}
-	dir := filepath.Join(root, stateTodo, id)
+	// The target dir: stateTodo lives under scaffoldStateDirs above; xx_backlog is created on demand
+	// here (like a fresh secondary queue), so `coop init` never has to scaffold an empty backlog drawer.
+	dir := filepath.Join(root, state, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return -1, err
 	}
@@ -341,9 +363,12 @@ func tasksFolderAdd(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
-	if structured {
+	switch {
+	case state == stateBacklog:
+		ui.OK("backlogged %s — promote it when it's ready: coop backlog promote %s", id, id)
+	case structured:
 		ui.OK("added %s (filled from flags); log.md + state.md seeded", id)
-	} else {
+	default:
 		ui.OK("added %s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id)
 	}
 	return 0, nil

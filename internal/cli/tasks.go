@@ -255,10 +255,17 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 // into slices WITH their ids, so duplicates across queues are real — acting on an arbitrary one
 // would silently touch the wrong tree.
 func queueOfTask(repo string, rels []string, id string) (string, error) {
+	return queueOfTaskWith(repo, rels, id, readTaskTree)
+}
+
+// queueOfTaskWith is queueOfTask parametrized by the per-queue reader, so the lifecycle tree
+// (readTaskTree) and the backlog drawer (readBacklog) share one resolver. read maps a queue root to
+// its items; everything else — exact-beats-substring precedence, the absent/ambiguous errors — is common.
+func queueOfTaskWith(repo string, rels []string, id string, read func(string) []taskItem) (string, error) {
 	type hit struct{ rel, id string }
 	var exact, subs []hit
 	for _, rel := range rels {
-		for _, t := range readTaskTree(filepath.Join(repo, rel)) {
+		for _, t := range read(filepath.Join(repo, rel)) {
 			switch {
 			case t.ID == id:
 				exact = append(exact, hit{rel, t.ID})

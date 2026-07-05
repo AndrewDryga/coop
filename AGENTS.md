@@ -45,11 +45,11 @@ advisors and peers think; you edit, gate, and commit.
 
 ## The contract
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.
-- **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. Anything not ready to work belongs in `BACKLOG.md`, never as a task folder.
+- **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. Anything not ready to work goes in the backlog (`coop backlog add`), never in `00_todo/`.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
 - `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why). The folder move is local — the queue is gitignored working state, not part of the commit.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
-- One task = one commit. Spot unrelated work? Put it in .agent/BACKLOG.md and stay on task.
+- One task = one commit. Spot unrelated work? Park it with `coop backlog add` and stay on task.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
 - **Hands-off destroyers — human-only, never run unattended.** `coop update` (replaces the running binary and reaps supervised boxes), `coop fleet down`, `coop fork rm`/`coop fork merge --force`, and `coop tasks rm` destroy state or processes with no undo. A loop or sweep must never invoke them — they're the human's call.
 - **Tasks are self-contained.** A task's `task.md` gets read by a fresh agent after a compaction or in a new session — so it can't lean on prior chat, a past review, or memory not in the repo. Each states: the problem + context, acceptance criteria, an approach (or a `spec.md`), and its subtasks. If it can't stand on its own with just the BOOT files, it isn't ready for the queue.
@@ -70,13 +70,15 @@ local (git-ignored) so it never creates commit noise or merge churn.
   `10_in_progress/` task, or you after a review — resumes from the note instead of re-deriving it
   from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
   travels with the task to `99_done/`.
-- `BACKLOG.md` — anything noted but not scheduled: discovered work, chores, and product
-  ideas. One item per `##` section (the file's header carries a template), captured then left — not auto-worked, not scanned by
-  the Stop hook. A human promotes an item into `tasks/00_todo/` (a real task folder) when it's
-  ready. The loop reads `tasks/` only; per-task reasoning lives in each task's own `log.md`.
+- backlog — anything noted but not scheduled (discovered work, chores, product ideas), kept as
+  task folders in the `tasks/xx_backlog/` drawer via `coop backlog add`. It lives OUTSIDE the
+  lifecycle, so it's never auto-worked nor scanned by the Stop hook; `coop backlog promote <id>`
+  moves an item into `tasks/00_todo/` (a folder move, not a rewrite) once it's ready. Shipped or
+  cancelled? `coop backlog rm <id>` — a shipped idea's record is its commits. The loop reads the
+  lifecycle states only; per-task reasoning lives in each task's own `log.md`.
 - `rules/` — the taste knowledge base (committed).
 - `project.yaml` — the committed per-project config: a monorepo's `subprojects:` (each
-  member keeps its own `tasks/`+`BACKLOG.md`; every coop task command aggregates them,
+  member keeps its own `tasks/`, backlog drawer included; every coop task command aggregates them,
   and the root queue holds work that spans members) and the `serve:` ports coop
   publishes so a dev server in the box is reachable from the host browser. When working
   inside a subproject, also honor its own `.agent/rules/` and `AGENTS.md` if present.

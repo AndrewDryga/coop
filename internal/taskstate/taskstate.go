@@ -6,8 +6,9 @@
 //
 // Each name carries a two-digit sort-key prefix so a plain `ls .agent/tasks` lists the states in
 // lifecycle order (todo → in_progress → blocked → done) instead of alphabetically; done uses "99_"
-// so it always sorts last. A shell hook and the doc templates name these as literal strings (they
-// can't import Go), so scaffold's drift-guard test pins those back to these values.
+// so it always sorts last, and Backlog uses "xx_" so it sorts after everything (it's off to the
+// side, not part of the flow). A shell hook and the doc templates name these as literal strings
+// (they can't import Go), so scaffold's drift-guard test pins those back to these values.
 package taskstate
 
 const (
@@ -15,8 +16,15 @@ const (
 	InProgress = "10_in_progress"
 	Blocked    = "50_blocked"
 	Done       = "99_done"
+
+	// Backlog holds unscheduled ideas as task folders (`coop backlog`). It is DELIBERATELY absent
+	// from All: every counter, lister, loop iteration, and the Stop hook walk All (or key off Todo),
+	// so keeping Backlog out of it means all of them ignore xx_backlog for free — it's a staging
+	// drawer, not a fifth lifecycle state. Only the `coop backlog` commands read it directly.
+	Backlog = "xx_backlog"
 )
 
-// All is the state directories in lifecycle order — the list order the loop and `coop tasks list`
-// follow, and the exact set `coop init` creates.
+// All is the LIFECYCLE state directories in order — the list the loop and `coop tasks list` follow,
+// and the exact set `coop init` creates. Backlog is intentionally NOT here (see its doc); a test
+// pins that so no one "helpfully" adds it and makes the loop start working un-promoted ideas.
 var All = []string{Todo, InProgress, Blocked, Done}

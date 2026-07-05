@@ -48,6 +48,7 @@ TASKS — a folder-per-task queue in .agent/tasks/
   coop tasks watch                  live board of the queue + active forks
   coop tasks add "<title>"          add a task (then claim/block/unblock/done)
   coop tasks decisions              what's blocked on a decision (-i to answer)
+  coop backlog                      park unscheduled ideas; promote when ready
 
 SERVICES — the box's compose.agent.yml sidecars
   coop up                           start the compose.agent.yml services
@@ -357,6 +358,22 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   rm) find their task in whichever queue holds it — erroring only when an id matches in
   more than one queue (split slices share ids with their source). Only add and split need
   a single --tasks, since they create into a queue.
+
+coop backlog — park unscheduled ideas as task folders (.agent/tasks/xx_backlog/).
+
+  Usage: coop backlog [--tasks <path>]... [ls | add "<title>" | rm <id> | promote <id>]
+
+  (bare)           list the backlog drawer
+  add "<title>"    capture an idea (--context/--acceptance/--approach/--subtask fill it inline)
+  promote <id>     move it into 00_todo/ when it's ready to work (then coop tasks claim)
+  rm <id>          drop an idea (--yes skips the confirm)
+
+  The backlog is the SAME task-folder format as the queue, in an xx_backlog/ drawer that lives
+  OUTSIDE the lifecycle — the loop, the Stop hook, and 'coop tasks' all ignore it, so an idea
+  sits here with no nagging until you promote it (a folder move, not a rewrite). Not-yet-ready
+  work belongs here, never in 00_todo/. Defaults to .agent/tasks/ — or, in a monorepo, every
+  subproject's queue (see coop tasks): ls rolls up across them and rm/promote find the item in
+  whichever queue holds it, while add needs a single --tasks.
 
 coop loop [agent] — work the task queue until done, then audit.
 

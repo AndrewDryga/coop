@@ -50,7 +50,6 @@ func Init(repo, stack string, gateLangs []string) error {
 	}{
 		{filepath.Join(repo, "AGENTS.md"), "templates/AGENTS.md", 0o644},
 		{filepath.Join(repo, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644},
-		{filepath.Join(repo, ".agent", "BACKLOG.md"), "templates/agent/BACKLOG.md", 0o644},
 		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
 		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
 		// Starter subagents for the orchestrator pattern: the lead delegates reasoning-heavy

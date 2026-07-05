@@ -100,7 +100,7 @@ func TestTasksFolderPath(t *testing.T) {
 func TestTasksFolderLifecycle(t *testing.T) {
 	root := t.TempDir()
 
-	if code, err := tasksFolderAdd(root, []string{"Make egress fail closed"}); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"Make egress fail closed"}, stateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	items := readTaskTree(root)
@@ -365,7 +365,7 @@ func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
 // which would make a todo task lint-dirty), and the result is lint-clean out of the box.
 func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"make egress fail closed"}); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"make egress fail closed"}, stateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	items := readTaskTree(root)
@@ -418,7 +418,7 @@ func TestTasksFolderAddStructuredFlags(t *testing.T) {
 		"--context", "the login retries loop",
 		"--acceptance", "gate green + a retry test",
 		"--approach", "cap attempts at 3",
-		"--subtask", "add the cap", "--subtask", "test the failure path"})
+		"--subtask", "add the cap", "--subtask", "test the failure path"}, stateTodo, "tasks add")
 	if code != 0 || err != nil {
 		t.Fatalf("structured add: code=%d err=%v", code, err)
 	}
@@ -444,7 +444,7 @@ func TestTasksFolderAddStructuredFlags(t *testing.T) {
 	}
 	// Partial flags → refused (exit 2), and NOTHING created.
 	root2 := t.TempDir()
-	if code, _ := tasksFolderAdd(root2, []string{"half", "--context", "only this"}); code != 2 {
+	if code, _ := tasksFolderAdd(root2, []string{"half", "--context", "only this"}, stateTodo, "tasks add"); code != 2 {
 		t.Errorf("partial structured flags should be a usage error (2), got %d", code)
 	}
 	if len(readTaskTree(root2)) != 0 {
@@ -559,7 +559,7 @@ func TestUnblockRequiresResolution(t *testing.T) {
 
 func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"pick the database"}); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"pick the database"}, stateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	id := readTaskTree(root)[0].ID
@@ -582,7 +582,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 // of the decision.md survives the edit and the updated file rides along to the new state.
 func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"pick the db"}); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"pick the db"}, stateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	id := readTaskTree(root)[0].ID
@@ -633,7 +633,7 @@ func TestStripHTMLComments(t *testing.T) {
 func TestRunDecisionBrowser(t *testing.T) {
 	root := t.TempDir()
 	for _, title := range []string{"alpha", "beta"} {
-		if code, err := tasksFolderAdd(root, []string{title}); code != 0 || err != nil {
+		if code, err := tasksFolderAdd(root, []string{title}, stateTodo, "tasks add"); code != 0 || err != nil {
 			t.Fatalf("add %s: code=%d err=%v", title, code, err)
 		}
 	}
@@ -679,7 +679,7 @@ func TestRunDecisionBrowser(t *testing.T) {
 func TestRunDecisionBrowserMarkDone(t *testing.T) {
 	root := t.TempDir()
 	for _, title := range []string{"alpha", "beta"} {
-		if code, err := tasksFolderAdd(root, []string{title}); code != 0 || err != nil {
+		if code, err := tasksFolderAdd(root, []string{title}, stateTodo, "tasks add"); code != 0 || err != nil {
 			t.Fatalf("add %s: code=%d err=%v", title, code, err)
 		}
 	}
@@ -723,7 +723,7 @@ func TestRunDecisionBrowserSpansQueues(t *testing.T) {
 		{rootA, "a/.agent/tasks", "alpha"},
 		{rootB, "b/.agent/tasks", "beta"},
 	} {
-		if code, err := tasksFolderAdd(q.root, []string{q.title}); code != 0 || err != nil {
+		if code, err := tasksFolderAdd(q.root, []string{q.title}, stateTodo, "tasks add"); code != 0 || err != nil {
 			t.Fatalf("add %s: code=%d err=%v", q.title, code, err)
 		}
 		it := readTaskTree(q.root)[0]
@@ -760,7 +760,7 @@ func TestDecisionsUnknownFlag(t *testing.T) {
 // shipped task in 99_done/) must be rejected, not create a second folder that shadows the first.
 func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"redo me"}); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"redo me"}, stateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	id := readTaskTree(root)[0].ID
@@ -768,7 +768,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	// Same title → same id, but it now lives in 99_done/ — the re-add must fail.
-	if code, err := tasksFolderAdd(root, []string{"redo me"}); code == 0 || err == nil {
+	if code, err := tasksFolderAdd(root, []string{"redo me"}, stateTodo, "tasks add"); code == 0 || err == nil {
 		t.Fatalf("re-add of a shipped id should be rejected, got (%d, %v)", code, err)
 	}
 	items := readTaskTree(root)

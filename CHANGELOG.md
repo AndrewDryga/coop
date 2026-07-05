@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The backlog is a task-folder drawer now, not `.agent/BACKLOG.md` — `coop backlog`.** Unscheduled
+  ideas live as task folders in a `.agent/tasks/xx_backlog/` drawer, driven by a new top-level command:
+  `coop backlog` (list), `coop backlog add "<title>"` (capture — same `--context/--acceptance/--approach/
+  --subtask` flags as `coop tasks add`), `coop backlog rm <id>` (drop), and `coop backlog promote <id>`
+  (make it live work — a folder move into `00_todo/`, its id and notes intact, not a hand-rewrite). The
+  drawer sits OUTSIDE the lifecycle states, so the loop, the Stop hook, and every `coop tasks` counter
+  ignore it — an idea waits there with zero nagging until you promote it; in a monorepo it rolls up and
+  resolves across queues like `coop tasks`. This RETIRES `.agent/BACKLOG.md`: `coop init` no longer
+  writes it, and the AGENTS.md/README/skills point at `coop backlog`. Upgrading a repo that still has
+  one? Move each `##` item with `coop backlog add`, then delete the file — steps in MIGRATING.md.
+
 - **Monorepo support via `.agent/project.yaml` — no more hand-maintained `COOP_TASKS`.** Drop a
   committed `.agent/project.yaml` at the repo root listing the member projects, and coop aggregates
   every subproject's task queue automatically:
@@ -14,7 +25,7 @@
   now span all of them — previously you had to export `COOP_TASKS="portal/.agent/tasks
   runner/.agent/tasks …"` by hand. An explicit `COOP_TASKS`/`--tasks` still overrides; a single repo
   is unchanged. New `coop tasks queues` prints each configured queue's path (the composable primitive
-  the Stop hook uses). `coop init` scaffolds each member with ONLY its own task queue + backlog (it
+  the Stop hook uses). `coop init` scaffolds each member with ONLY its own task queue (it
   shares the root's AGENTS.md/`.claude`); both members and the root keep a queue — members for their
   own work, the root for changes spanning members. The generated `.gitignore` ignores `.agent/` state
   at any depth (`**/.agent/*`) and commits knowledge — `rules`/`skills`/`presets`/`audit` — at any

@@ -117,21 +117,21 @@ func TestUpdateGitignoreUpgrade(t *testing.T) {
 	}
 }
 
-// TestInitSubproject: a member gets ONLY its own task queue + backlog — never the full scaffold
-// (AGENTS.md, .claude/, rules) NOR a project.yaml, both of which are the top-level root's alone.
+// TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
+// .claude/, rules), a project.yaml (the root's alone), nor the retired BACKLOG.md.
 func TestInitSubproject(t *testing.T) {
 	dir := t.TempDir()
 	if err := InitSubproject(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/BACKLOG.md"} {
+	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/tasks/README.md"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("member missing %s: %v", rel, err)
 		}
 	}
-	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml"} {
+	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml", ".agent/BACKLOG.md"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
-			t.Errorf("member should NOT have %s (top-level only)", rel)
+			t.Errorf("member should NOT have %s (top-level only / retired)", rel)
 		}
 	}
 }
@@ -184,7 +184,7 @@ func TestInit(t *testing.T) {
 
 	// Core files exist with content.
 	for _, rel := range []string{
-		"AGENTS.md", ".agent/tasks/README.md", ".agent/BACKLOG.md",
+		"AGENTS.md", ".agent/tasks/README.md",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
 		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
 		".githooks/pre-commit",
@@ -197,6 +197,12 @@ func TestInit(t *testing.T) {
 		if fi.Size() == 0 {
 			t.Errorf("%s is empty", rel)
 		}
+	}
+
+	// BACKLOG.md is RETIRED — the backlog is now the xx_backlog task-folder drawer (coop backlog).
+	// init must not scaffold the old file (nor an empty xx_backlog dir, which is created on demand).
+	if _, err := os.Stat(filepath.Join(repo, ".agent/BACKLOG.md")); err == nil {
+		t.Error(".agent/BACKLOG.md should no longer be scaffolded (retired for `coop backlog`)")
 	}
 
 	// The starter subagents carry the model tiering that is their whole point — the reasoning

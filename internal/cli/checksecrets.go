@@ -146,8 +146,8 @@ func candidateFiles(repo string, includeIgnored bool) ([]string, error) {
 				}
 			}
 			// Also scan coop's own gitignored .agent/ working state — the box reads it (the task
-			// queue + agent notes), so a secret pasted into .agent/.../log.md, state.md, or
-			// BACKLOG.md is a real exposure the commit-candidate set (gitignored excluded) misses.
+			// queue + backlog + agent notes), so a secret pasted into a task's .agent/.../log.md or
+			// state.md is a real exposure the commit-candidate set (gitignored excluded) misses.
 			rels = append(rels, ignoredAgentFiles(repo)...)
 			return rels, nil
 		}

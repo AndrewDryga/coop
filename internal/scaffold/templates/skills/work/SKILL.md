@@ -22,7 +22,7 @@ If there's no plan yet and the change is non-trivial, run `/spec` first.
 
 ## Rules while working
 - **No scope creep.** Build the approved slice. A good idea that wasn't in the plan
-  → `.agent/BACKLOG.md` as "later", don't build it now. If the plan turns out wrong,
+  → the backlog (`coop backlog add`) as "later", don't build it now. If the plan turns out wrong,
   stop and re-plan with the user — don't silently redesign.
 - **Readable, no bloat.** Match the surrounding style. Delete dead code you pass.
   No speculative options or abstractions. Comments say *why*, not *what*.

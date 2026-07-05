@@ -150,3 +150,24 @@ VERIFY
    summary: tasks migrated per state, decisions folded in, and anything that did
    not map cleanly.
 ```
+
+## A legacy `.agent/BACKLOG.md` → the backlog drawer
+
+Older coop repos kept unscheduled ideas in a single `.agent/BACKLOG.md` (one `##`
+section per idea). As of this release the backlog is a **task-folder drawer** —
+`.agent/tasks/xx_backlog/` — managed with `coop backlog`, so an idea that's ready is
+promoted with a folder move (`coop backlog promote <id>`) instead of a hand-rewrite,
+and `coop init` no longer writes `BACKLOG.md`.
+
+It's a short, do-it-by-hand migration — a backlog is usually a handful of items and
+they're prose, not structured data. For each `##` section in `.agent/BACKLOG.md`:
+
+```text
+coop backlog add "<the item's title>"
+```
+
+then paste the section's notes into the new item's `task.md` (its path is printed by
+`coop backlog`, or `coop tasks path <id>`). A `— DEFERRED (<why>)` item carries the
+reason across; a shipped or cancelled one you can just drop. When every item has moved,
+delete `.agent/BACKLOG.md` and verify with `coop backlog`. (There's nothing to convert
+if you never used the file — `coop backlog add` creates the drawer on demand.)

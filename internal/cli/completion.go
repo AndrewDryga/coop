@@ -92,6 +92,13 @@ func (a *app) completionCandidates(prev []string) []string {
 		if len(prev) == 2 && taskIDVerb(prev[1]) {
 			return a.taskIDs()
 		}
+	case "backlog":
+		if len(prev) == 1 {
+			return backlogVerbs
+		}
+		if len(prev) == 2 && (prev[1] == "rm" || prev[1] == "promote") {
+			return a.backlogIDs()
+		}
 	case "fleet":
 		if len(prev) == 1 {
 			return []string{"init", "up", "down", "split", "watch", "prune"}
@@ -144,6 +151,26 @@ func (a *app) taskIDs() []string {
 	var ids []string
 	for _, rel := range rels {
 		for _, it := range readTaskTree(filepath.Join(repo, rel)) {
+			ids = append(ids, it.ID)
+		}
+	}
+	return ids
+}
+
+// backlogIDs lists the backlog item ids across the configured queue(s) — local reads, for
+// `coop backlog rm|promote <TAB>` completion.
+func (a *app) backlogIDs() []string {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return nil
+	}
+	rels, err := taskQueues(a.cfg, repo, nil)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, rel := range rels {
+		for _, it := range readBacklog(filepath.Join(repo, rel)) {
 			ids = append(ids, it.ID)
 		}
 	}

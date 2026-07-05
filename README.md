@@ -913,7 +913,7 @@ committed.
 | File | What it's for |
 |---|---|
 | `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
-| `BACKLOG.md` | anything noted but not scheduled — discovered work, chores, and product ideas; one item per `##` section, never auto-worked, a human promotes one into `tasks/00_todo/` |
+| the backlog | unscheduled ideas, as task folders in the `tasks/xx_backlog/` drawer (`coop backlog`) — outside the lifecycle, so never auto-worked and never nagged by the Stop hook; `coop backlog promote <id>` moves one into `tasks/00_todo/` when it's ready |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (committed) |
 | `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos) and the [`serve:` ports](#see-the-dev-server-in-your-browser) |
 
@@ -938,7 +938,7 @@ overrides). Members keep their **own** queues for their own work; the root keeps
 for changes that span members.
 
 `coop init` at the root detects the members (direct child dirs that have a `.agent/`),
-writes the `project.yaml`, and scaffolds each member with just its queue + backlog —
+writes the `project.yaml`, and scaffolds each member with just its own task queue —
 members share the root's AGENTS.md, skills, rules, and box, though a large member may
 commit its own `rules/` if it wants them. `coop tasks queues` prints the resolved queue
 paths when a script (or the Stop hook) needs them.

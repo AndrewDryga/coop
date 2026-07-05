@@ -34,6 +34,10 @@ const (
 	stateInProgress = taskstate.InProgress
 	stateBlocked    = taskstate.Blocked
 	stateDone       = taskstate.Done
+	// stateBacklog is the staging drawer for unscheduled ideas (`coop backlog`). It lives OUTSIDE
+	// taskStates on purpose, so readTaskTree/findTask/the loop/counters never see it — only the
+	// readBacklog-based `coop backlog` commands do. See taskstate.Backlog.
+	stateBacklog = taskstate.Backlog
 )
 
 // taskStates is the canonical ordered set of state directories.
@@ -245,6 +249,29 @@ func readTaskTree(root string) []taskItem {
 		}
 		return items[i].ID < items[j].ID
 	})
+	return items
+}
+
+// readBacklog enumerates the task folders under root's xx_backlog/, sorted by id. It reads ONE state
+// dir — unlike readTaskTree, which walks the four lifecycle states and deliberately skips backlog —
+// so it's the only path that surfaces backlog items (the `coop backlog` commands). A missing dir is
+// simply empty. No cross-state dedup is needed: a backlog item lives only here until it's promoted
+// (an atomic os.Rename out), so it can't be read in two states at once.
+func readBacklog(root string) []taskItem {
+	var items []taskItem
+	entries, err := os.ReadDir(filepath.Join(root, stateBacklog))
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if t, ok := parseTaskFolder(filepath.Join(root, stateBacklog, e.Name()), stateBacklog); ok {
+			items = append(items, t)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	return items
 }
 

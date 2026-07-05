@@ -78,7 +78,7 @@ staff: … · rules: … · security: … · pm: … · ux: …
 
 Keep it honest and short. If it's clean: **"SHIP — nothing blocking"** + the few suggestions worth the reader's time. Never manufacture findings to look thorough; never bury a real blocker in nits.
 
-**Then offer to queue it:** turn the BLOCKER/MAJOR items into tasks — `coop tasks add "<title>"` (one per fix, lands in `00_todo/`) so `/sweep` can drain them; smaller notes go in `.agent/BACKLOG.md`. Append on the user's go — never silently.
+**Then offer to queue it:** turn the BLOCKER/MAJOR items into tasks — `coop tasks add "<title>"` (one per fix, lands in `00_todo/`) so `/sweep` can drain them; smaller notes go in the backlog (`coop backlog add`). Append on the user's go — never silently.
 
 ## Relationship to other reviews
 `/review-board` is the heavyweight, on-demand whole-change review that ends in a plan. `/sweep` already runs a lighter self-review per item in its loop; reach for `/review-board` before landing anything substantial. Where your runtime has single-lens reviewers (a bug-only or security-only pass), this convenes those lenses and more — plus the fix plan.
