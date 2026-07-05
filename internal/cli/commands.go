@@ -481,6 +481,15 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		if ps := os.Getenv("COOP_ACP_PRESET"); ps != "" {
 			presetName, profile = ps, ""
+			// A preset ladder rotation (rate-limit failover) pins the lead to one rung: its model +
+			// account override the preset's first entry via applyOneOff below, WITHOUT dropping the preset
+			// (its roles/prompt still mount). Empty on the first spawn — the preset's own first entry is used.
+			if m := os.Getenv("COOP_ACP_LEAD_MODEL"); m != "" {
+				model = m
+			}
+			if cr := os.Getenv("COOP_ACP_LEAD_CRED"); cr != "" {
+				profile = cr
+			}
 		}
 	}
 	p, err := a.loadRunPreset(presetName)
@@ -541,7 +550,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 				}
 			}
 		}
-		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, a.acpPresetNames(repo, tool), serveURLs)
+		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, repo, a.acpPresetNames(repo, tool), serveURLs)
 		return a.cmdACPSupervise(inner, ctrl)
 	}
 	a.applyPreset(p, tool)
@@ -629,7 +638,22 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 			acpproxy.Trace("spawn box on credential=%s", cred)
 		} else if preset != "" {
 			env = append(env, "COOP_ACP_PRESET="+preset)
-			acpproxy.Trace("spawn box on preset=%s", preset)
+			// The preset's model ladder fails over on a rate limit: spawn the lead on the active rung
+			// (model+account), keeping the preset's roles. Empty when the ladder can't rotate (no accounts,
+			// preset won't load) — the inner then uses the preset's own first entry. Block first if that
+			// rung is still cooling (the all-rungs-limited wait path), same as the credential branch.
+			if model, cred := ctrl.presetTarget(); model != "" || cred != "" {
+				ctrl.waitForPresetRung(ctx)
+				if model != "" {
+					env = append(env, "COOP_ACP_LEAD_MODEL="+model)
+				}
+				if cred != "" {
+					env = append(env, "COOP_ACP_LEAD_CRED="+cred)
+				}
+				acpproxy.Trace("spawn box on preset=%s rung=%s@%s", preset, model, cred)
+			} else {
+				acpproxy.Trace("spawn box on preset=%s", preset)
+			}
 		}
 		if a.rt.SupportsCIDFile() {
 			if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {

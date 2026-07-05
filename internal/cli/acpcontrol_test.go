@@ -23,7 +23,7 @@ func newTestControl(t *testing.T) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", []string{"frontier"}, nil)
+	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", dir, []string{"frontier"}, nil)
 }
 
 func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMessage) {
@@ -267,7 +267,7 @@ func TestACPControlPresetOwnsModel(t *testing.T) {
 // TestACPControlSessionReadyNonClaude: mode=bypassPermissions is a claude option, so a non-claude lead
 // must NOT get it (yolo comes from autoReply instead); coop's model set still goes out.
 func TestACPControlSessionReadyNonClaude(t *testing.T) {
-	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", nil, nil)
+	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), nil, nil)
 	var joined string
 	for _, m := range c.sessionReady("s1") {
 		joined += string(m)
@@ -480,6 +480,78 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	}
 	if _, ok := c.limited["personal"]; !ok {
 		t.Error("personal must be marked limited so the factory waits")
+	}
+}
+
+// presetControl is a control on a preset session with a pre-built 2-rung ladder (fable→opus), bypassing
+// the disk load (presetRotation reuses c.rot when rotPreset matches the selection). A prompt is
+// in-flight so a rotation can transparently re-send it.
+func presetControl(t *testing.T) *acpControl {
+	t.Helper()
+	c := newTestControl(t)
+	c.sel = "preset:frontier"
+	c.rotPreset = "frontier"
+	c.rot = newRotation([]runTarget{
+		{model: "claude-fable-5", credential: "personal"},
+		{model: "claude-opus-4-8", credential: "personal"},
+	})
+	// Drive a real session/prompt so promptSession (keyed by the raw id) + lastPrompt are captured the
+	// way the wire does — the error below correlates back to it for the transparent re-send.
+	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	c.fromEditor(prompt)
+	return c
+}
+
+// TestACPControlPresetLadderFailover: a preset session rotates its MODEL ladder on a rate limit
+// (fable→opus) — the step a persistent ACP session can't take via the loop. The rung is advanced, the
+// prompt flagged for a transparent re-send, and the raw error is swallowed (coop_setup stays on the
+// preset; the model dropdown catches up via the replay). This is the reported "per-model rate limits
+// not handled" bug — before the fix maybeRotate returned early for any preset.
+func TestACPControlPresetLadderFailover(t *testing.T) {
+	c := presetControl(t)
+	// The Fable limit error, tagged structurally (errorKind) like the real adapter.
+	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"code":-32603,"message":"You've reached your Fable 5 limit.","data":{"errorKind":"rate_limit"}}}` + "\n")
+	out, restart := c.toEditor(errLine)
+
+	if !restart {
+		t.Fatal("a preset rate limit should trigger a restart (rotate + resend)")
+	}
+	if got := c.rot.active(); got.model != "claude-opus-4-8" {
+		t.Errorf("rung after the fable limit = %q, want claude-opus-4-8@personal", got)
+	}
+	if !c.resend["sess1"] {
+		t.Error("the prompt must be flagged for a transparent re-send")
+	}
+	s := string(out)
+	if strings.Contains(s, `"error"`) {
+		t.Errorf("the raw rate-limit error must not reach the editor:\n%s", s)
+	}
+	if !strings.Contains(s, "config_option_update") || !strings.Contains(s, `"preset:frontier"`) {
+		t.Errorf("expected a config_option_update keeping coop_setup on the preset:\n%s", s)
+	}
+}
+
+// TestACPControlPresetLadderAllLimited: when every rung is already limited, coop points at the
+// soonest-resetting rung and returns a waiting status (the factory blocks before respawning) rather
+// than forwarding the error — same shape as the credential all-limited path.
+func TestACPControlPresetLadderAllLimited(t *testing.T) {
+	c := presetControl(t)
+	c.rot.limited[c.rot.targets[1]] = time.Now().Add(30 * time.Minute) // opus already cooling
+	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"message":"reached your Fable 5 limit","data":{"errorKind":"rate_limit"}}}` + "\n")
+	out, restart := c.toEditor(errLine)
+
+	if !restart {
+		t.Fatal("all rungs limited should still restart (wait + resend)")
+	}
+	if !c.resend["sess1"] {
+		t.Error("the prompt must be flagged for a re-send after the wait")
+	}
+	s := string(out)
+	if strings.Contains(s, `"error"`) {
+		t.Errorf("the raw error must not reach the editor when waiting:\n%s", s)
+	}
+	if !strings.Contains(s, "config_option_update") {
+		t.Errorf("expected a config_option_update + wait status:\n%s", s)
 	}
 }
 

@@ -47,10 +47,12 @@ var stripConfigIDs = map[string]bool{"mode": true, "agent": true}
 // selector) and handles selecting a credential/preset by restarting the box on the chosen identity —
 // the conversation survives because the transcript sits on a shared, credential-independent store.
 type acpControl struct {
-	lead    string   // lead agent (claude/codex/gemini)
-	model   string   // coop's resolved model for the lead ("" → leave the adapter's default)
-	creds   []string // the lead's credentials (accounts), in order
-	presets []string // the repo's presets, in order
+	cfg     *config.Config // for expanding a selected preset's model ladder into rotation targets
+	repo    string         // repo root, to load a preset by name on a coop_setup switch
+	lead    string         // lead agent (claude/codex/gemini)
+	model   string         // coop's resolved model for the lead ("" → leave the adapter's default)
+	creds   []string       // the lead's credentials (accounts), in order
+	presets []string       // the repo's presets, in order
 
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
@@ -59,6 +61,13 @@ type acpControl struct {
 	cached  map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
 	limited map[string]time.Time       // account -> when its rate limit resets (skip until then)
 	nextID  int
+
+	// Preset rate-limit failover: a preset session rotates the lead's model ladder (fable→opus→…),
+	// unlike a credential session (which rotates accounts on one model). rot is the active preset's
+	// rotation (nil for a credential session); rotPreset names the preset it was built for, so it's
+	// rebuilt when the coop_setup selection moves to a different preset.
+	rot       *rotation
+	rotPreset string
 
 	// Transparent rate-limit resend: correlate a rate-limit error (which carries only a request id)
 	// back to its session, and re-send that prompt once the box is back on a fresh credential.
@@ -71,12 +80,13 @@ type acpControl struct {
 	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
 }
 
-func newACPControl(cfg *config.Config, lead, model, cred string, presets, serveURLs []string) *acpControl {
+func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, serveURLs []string) *acpControl {
 	sel := "cred:" + cfg.ActiveProfile(lead)
 	if cred != "" {
 		sel = "cred:" + cred
 	}
 	return &acpControl{
+		cfg: cfg, repo: repo,
 		lead: lead, model: model, creds: cfg.Profiles(lead), presets: presets,
 		accounts:      accountsFor(cfg, lead),
 		sel:           sel,
@@ -128,6 +138,49 @@ func (c *acpControl) selection() (cred, preset string) {
 	return "", ""
 }
 
+// presetRotation returns the active preset's model-ladder rotation, built once per preset from the
+// preset's lead ladder (expandLadder — the SAME targets `coop loop` cycles). Returns nil for a
+// credential session, or when the ladder can't be expanded (no signed-in account, or the preset won't
+// load) — the caller then falls back to the preset's own first entry with no failover. The rotation is
+// cached and rebuilt only when the selected preset changes, so its cursor + per-target limits persist
+// across respawns.
+func (c *acpControl) presetRotation() *rotation {
+	_, psName := c.selection()
+	if psName == "" {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rot != nil && c.rotPreset == psName {
+		return c.rot
+	}
+	c.rotPreset, c.rot = psName, nil
+	p, err := preset.Load(c.repo, psName)
+	if err != nil {
+		return nil
+	}
+	targets, err := expandLadder(c.cfg, p.LeadAgent, p.LeadModels)
+	if err != nil || len(targets) == 0 {
+		return nil
+	}
+	c.rot = newRotation(targets)
+	return c.rot
+}
+
+// presetTarget returns the active ladder rung's (model, credential) for the current preset — what the
+// factory spawns the lead on. ("","") when there's no rotation, so the inner falls back to the preset's
+// own first entry.
+func (c *acpControl) presetTarget() (model, cred string) {
+	rot := c.presetRotation()
+	if rot == nil {
+		return "", ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := rot.active()
+	return t.model, t.credential
+}
+
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
 // wait-for-reset path pointed at a still-cooling account only starts once it's usable. A no-op for an
 // account that isn't limited — the common case, including a normal rotation to a free account.
@@ -135,6 +188,28 @@ func (c *acpControl) waitForReset(ctx context.Context, cred string) {
 	c.mu.Lock()
 	until := c.limited[cred]
 	c.mu.Unlock()
+	sleepUntilReset(ctx, until, "credential "+cred)
+}
+
+// waitForPresetRung blocks until the active preset rung's rate limit resets (the all-rungs-limited wait
+// path — rotatePreset advanced the cursor to the soonest-resetting rung), mirroring waitForReset for a
+// credential. A no-op when the rung is already free (a normal rotation to a fresh rung).
+func (c *acpControl) waitForPresetRung(ctx context.Context) {
+	c.mu.Lock()
+	var until time.Time
+	label := "preset rung"
+	if c.rot != nil {
+		t := c.rot.active()
+		until, label = c.rot.limited[t], "preset rung "+t.String()
+	}
+	c.mu.Unlock()
+	sleepUntilReset(ctx, until, label)
+}
+
+// sleepUntilReset blocks until `until` passes (capped at limitMaxWait) or ctx is done; a no-op when
+// until is zero or already past. Shared by the credential and preset wait-for-reset paths, so a respawn
+// pointed at a still-cooling target only starts once it's usable.
+func sleepUntilReset(ctx context.Context, until time.Time, label string) {
 	d := time.Until(until)
 	if d <= 0 {
 		return
@@ -142,7 +217,7 @@ func (c *acpControl) waitForReset(ctx context.Context, cred string) {
 	if d > limitMaxWait {
 		d = limitMaxWait
 	}
-	acpproxy.Trace("waiting %s for credential %s to reset before spawning", d.Round(time.Second), cred)
+	acpproxy.Trace("waiting %s for %s to reset before spawning", d.Round(time.Second), label)
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -309,27 +384,30 @@ func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid stri
 	return nb
 }
 
-// maybeRotate handles a rate limit on a CREDENTIAL session (a preset rotates via its own models
-// ladder, not here) transparently, reusing the loop's detectLimit. On a JSON-RPC error whose message
-// trips the detector it marks the current account limited and, correlating the error back to the
-// prompt that triggered it: if another account is free, it swaps to it and flags the prompt for an
-// automatic re-send (returns nil,true — the error is swallowed, the turn just completes on the backup
-// credential); if none is free, it points at the account that resets soonest, returns a "waiting"
-// status (true) — the factory blocks until the reset — and flags the same re-send. Falls back to the
-// old switch-and-ask-to-resend note (or forwarding the error) only when it can't identify the prompt.
-// Returns (nil,false) to leave the line untouched (not an error, not a limit, or nothing to do).
+// maybeRotate handles a rate-limit error transparently, reusing the loop's detectLimit. A credential
+// session rotates ACCOUNTS on the fixed model; a preset session rotates the lead's MODEL LADDER
+// (fable→opus→…, via rotatePreset) — the step a persistent ACP session otherwise never takes, so a
+// per-model limit isn't a dead end. Either way it correlates the error back to the prompt that
+// triggered it and, if a free target exists, swaps to it and flags the prompt for an automatic re-send
+// (returns nil,true — the error is swallowed, the turn completes on the new target); if none is free it
+// points at the one that resets soonest, returns a "waiting" status (true, the factory blocks until the
+// reset), and flags the same re-send. Falls back to the switch-and-ask-to-resend note (or forwarding the
+// error) when it can't identify the prompt. Returns (nil,false) to leave the line untouched.
 func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	if !bytes.Contains(line, []byte(`"error"`)) {
 		return nil, false
 	}
 	cred, preset := c.selection()
-	if cred == "" || preset != "" {
+	if cred == "" && preset == "" {
 		return nil, false
 	}
 	var h struct {
 		ID    json.RawMessage `json:"id"`
 		Error *struct {
 			Message string `json:"message"`
+			Data    struct {
+				ErrorKind string `json:"errorKind"`
+			} `json:"data"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(line, &h) != nil || h.Error == nil || h.Error.Message == "" {
@@ -337,6 +415,11 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	}
 	now := time.Now()
 	hint := detectLimit(h.Error.Message, now)
+	// The adapter tags a rate-limit error structurally (data.errorKind == "rate_limit"); trust that
+	// even when the prose message doesn't trip detectLimit's keywords, so a reworded limit still rotates.
+	if h.Error.Data.ErrorKind == "rate_limit" {
+		hint.limited = true
+	}
 	if !hint.limited {
 		return nil, false
 	}
@@ -354,6 +437,12 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		delete(c.heldChunk, session)
 	}
 	c.mu.Unlock()
+
+	// A preset session rotates its model ladder (a rung is a model+account); a credential session
+	// rotates accounts on the fixed model (below).
+	if preset != "" {
+		return c.rotatePreset(session, canResend, until, now)
+	}
 
 	next := c.nextAccount(cred, until, now)
 	if next != "" {
@@ -386,6 +475,32 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
 	// Move the dropdown to the account we'll resume on, then the "waiting…" status line.
 	return append(c.configOptionUpdate(session), c.waitStatus(session, acct, at, now)...), true
+}
+
+// rotatePreset advances the active preset's model ladder on a rate limit: mark the current rung
+// limited, switch to the next free rung (a different model and/or account) and re-send; or, when every
+// rung is limited, point at the soonest-resetting rung and return a "waiting" status (the factory
+// blocks on it before respawning). Forwards the raw error (nil,false) when the preset has a single rung
+// — nothing to fail over to — or no prompt was captured to re-send. The box respawns on the new rung
+// because the factory reads presetTarget() (= rot.active()); the toolbar's model dropdown catches up
+// via the replay's config_option_update, while coop_setup stays on the preset.
+func (c *acpControl) rotatePreset(session string, canResend bool, until, now time.Time) (out []byte, rotated bool) {
+	rot := c.presetRotation()
+	if rot == nil || !rot.rotates() || !canResend {
+		return nil, false
+	}
+	c.mu.Lock()
+	prev := rot.active()
+	sleep, resetAt := rot.onLimit(until, 0, now)
+	next := rot.active()
+	c.resend[session] = true
+	c.mu.Unlock()
+	if sleep <= 0 {
+		acpproxy.Trace("preset rate limit on %s: rotating to %s + auto-resending", prev, next)
+		return c.configOptionUpdate(session), true
+	}
+	acpproxy.Trace("preset: all rungs rate limited — waiting for %s until %s + auto-resending", next, resetAt.Format(time.RFC3339))
+	return append(c.configOptionUpdate(session), c.waitStatus(session, next.credential, resetAt, now)...), true
 }
 
 // configOptionUpdate builds an ACP config_option_update notification (session/update carrying the full
@@ -466,13 +581,20 @@ func formatWait(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d", d/time.Minute, (d%time.Minute)/time.Second)
 }
 
-// chunkGate decides, for a credential session, whether to buffer a rate-limit notice chunk (hold) or
-// flush a previously buffered one because the turn produced other output / completed (flush). A held
-// chunk is only ever dropped by maybeRotate when a rate-limit error follows; anything else flushes it,
-// so no legitimate chunk is lost. Off for preset sessions (not auto-rotated here).
+// chunkGate decides whether to buffer a rate-limit notice chunk (hold) or flush a previously buffered
+// one because the turn produced other output / completed (flush). A held chunk is only ever dropped by
+// maybeRotate when a rate-limit error follows; anything else flushes it, so no legitimate chunk is
+// lost. A single-rung preset (no failover to hide the notice behind) is skipped, so its limit message
+// still reaches the user.
 func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
-	if cred, preset := c.selection(); cred == "" || preset != "" {
+	cred, preset := c.selection()
+	if cred == "" && preset == "" {
 		return false, nil
+	}
+	if preset != "" {
+		if rot := c.presetRotation(); rot == nil || !rot.rotates() {
+			return false, nil
+		}
 	}
 	if s, text, ok := agentChunk(line); ok && detectLimit(text, time.Now()).limited {
 		c.mu.Lock()

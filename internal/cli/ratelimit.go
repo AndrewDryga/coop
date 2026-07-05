@@ -20,10 +20,12 @@ var (
 	// Claude prints this in headless mode when a subscription limit is hit:
 	// "Claude AI usage limit reached|<unix_epoch>" — the epoch is the reset time.
 	usageLimitRe = regexp.MustCompile(`(?i)usage limit reached\s*\|\s*(\d{9,})`)
-	// Newer human-readable subscription notice (also seen in headless output):
-	// "You've hit your weekly limit · resets Jun 18, 8pm (UTC)". The window word
-	// ("weekly", "5-hour", …) varies and the "resets …" clause may be absent.
-	hitLimitRe = regexp.MustCompile(`(?i)hit your (?:[\w-]+ )?limit`)
+	// Newer human-readable subscription notice (also seen in headless output and ACP errors):
+	// "You've hit your weekly limit · resets Jun 18, 8pm (UTC)" and "You've reached your Fable 5
+	// limit. Run /usage-credits …". The verb (hit/reached) and the descriptor between "your" and
+	// "limit" — a window ("weekly") or a model name ("Fable 5", "Opus 4.8") — both vary, and the
+	// "resets …" clause may be absent; allow up to a few descriptor words.
+	hitLimitRe = regexp.MustCompile(`(?i)(?:hit|reached) your (?:[\w.-]+ ){0,3}limit`)
 	// The "resets <when>" clause that follows it, when present.
 	resetsRe = regexp.MustCompile(`(?i)resets?\s+([^\n·]+)`)
 	// A trailing timezone in parens at the end of that clause, e.g. "(UTC)".
