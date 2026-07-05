@@ -582,10 +582,11 @@ func formatWait(d time.Duration) string {
 }
 
 // chunkGate decides whether to buffer a rate-limit notice chunk (hold) or flush a previously buffered
-// one because the turn produced other output / completed (flush). A held chunk is only ever dropped by
-// maybeRotate when a rate-limit error follows; anything else flushes it, so no legitimate chunk is
-// lost. A single-rung preset (no failover to hide the notice behind) is skipped, so its limit message
-// still reaches the user.
+// one (flush). A held notice is dropped by maybeRotate when the rate-limit error follows; it's flushed
+// only when the turn produces REAL content or completes — NOT on a bookkeeping notification. That last
+// point matters: the adapter emits a usage_update BETWEEN the notice chunk and the error, and flushing
+// on it leaked the notice before maybeRotate could drop it (the reported "message wasn't suppressed").
+// A single-rung preset (no failover to hide the notice behind) is skipped, so its limit message shows.
 func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 	cred, preset := c.selection()
 	if cred == "" && preset == "" {
@@ -596,36 +597,43 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 			return false, nil
 		}
 	}
-	if s, text, ok := agentChunk(line); ok && detectLimit(text, time.Now()).limited {
-		c.mu.Lock()
-		c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
-		c.mu.Unlock()
-		return true, nil
-	}
-	// Not a notice chunk: the turn is producing normal output or completing → flush any held notice for
-	// its session. A notification carries the sessionId; a response is matched via the prompt it answers.
-	s := lineSession(line)
-	if s == "" {
-		if id := responseID(line); id != "" {
+	if s, text, ok := agentChunk(line); ok {
+		if detectLimit(text, time.Now()).limited {
 			c.mu.Lock()
-			s = c.promptSession[id]
-			delete(c.promptSession, id) // the prompt completed (any outcome) — stop tracking it
+			c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
 			c.mu.Unlock()
+			return true, nil
+		}
+		// A real (non-limit) content chunk in the same turn: the notice was a genuine warning the turn
+		// spoke around, so flush it just ahead of the content.
+		return false, c.takeHeld(s)
+	}
+	// A prompt's completion response flushes any held notice for its session. (A rate-limit error is
+	// intercepted by maybeRotate before chunkGate, so it never lands here.) Any OTHER notification
+	// (usage_update, tool calls, …) leaves the buffer intact — see the doc above.
+	if id := responseID(line); id != "" {
+		c.mu.Lock()
+		s := c.promptSession[id]
+		delete(c.promptSession, id) // the prompt completed — stop tracking it
+		c.mu.Unlock()
+		if s != "" {
+			return false, c.takeHeld(s)
 		}
 	}
-	if s == "" {
-		return false, nil
-	}
+	return false, nil
+}
+
+// takeHeld returns and clears a session's buffered rate-limit notice (empty when none).
+func (c *acpControl) takeHeld(s string) []byte {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	held := c.heldChunk[s]
 	delete(c.heldChunk, s)
-	c.mu.Unlock()
-	return false, held
+	return held
 }
 
 // agentChunk reports whether line is an agent_message_chunk session/update, returning its session id
-// and streamed text. lineSession returns a line's params.sessionId (notifications), and responseID
-// returns the request id of a success response — both "" when absent.
+// and streamed text. responseID returns the request id of a success response — "" when absent.
 func agentChunk(line []byte) (session, text string, ok bool) {
 	if !bytes.Contains(line, []byte("agent_message_chunk")) {
 		return "", "", false
@@ -646,21 +654,6 @@ func agentChunk(line []byte) (session, text string, ok bool) {
 		return "", "", false
 	}
 	return m.Params.SessionID, m.Params.Update.Content.Text, true
-}
-
-func lineSession(line []byte) string {
-	if !bytes.Contains(line, []byte("sessionId")) {
-		return ""
-	}
-	var m struct {
-		Params struct {
-			SessionID string `json:"sessionId"`
-		} `json:"params"`
-	}
-	if json.Unmarshal(line, &m) != nil {
-		return ""
-	}
-	return m.Params.SessionID
 }
 
 func responseID(line []byte) string {

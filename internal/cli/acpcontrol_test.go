@@ -555,6 +555,36 @@ func TestACPControlPresetLadderAllLimited(t *testing.T) {
 	}
 }
 
+// TestACPControlPresetSuppressesLimitChunk: the adapter streams the "You've reached your Fable 5
+// limit" notice, then a usage_update, THEN the error. The notice must stay buffered across the
+// usage_update and be dropped on the rotate — never reaching the editor. The reported regression was
+// the usage_update flushing the held notice before the error arrived.
+func TestACPControlPresetSuppressesLimitChunk(t *testing.T) {
+	c := presetControl(t)
+	notice := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."},"messageId":"m1"}}}` + "\n")
+	usage := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess1","update":{"sessionUpdate":"usage_update","used":0,"size":200000}}}` + "\n")
+	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"code":-32603,"message":"You've reached your Fable 5 limit.","data":{"errorKind":"rate_limit"}}}` + "\n")
+
+	if out, _ := c.toEditor(notice); out != nil {
+		t.Fatalf("the limit notice chunk must be held, not forwarded, got:\n%s", out)
+	}
+	// A usage_update between the notice and the error must NOT flush the held notice (the bug).
+	if out, _ := c.toEditor(usage); strings.Contains(string(out), "reached your Fable 5 limit") {
+		t.Errorf("usage_update flushed the held notice — it must stay buffered:\n%s", out)
+	}
+	// The error rotates and drops the held notice; it never reaches the editor.
+	out, restart := c.toEditor(errLine)
+	if !restart {
+		t.Fatal("the rate-limit error should rotate")
+	}
+	if strings.Contains(string(out), "reached your Fable 5 limit") {
+		t.Errorf("the limit notice leaked on the rotate:\n%s", out)
+	}
+	if got := c.takeHeld("sess1"); got != nil {
+		t.Errorf("the held notice should have been dropped by the rotation, got:\n%s", got)
+	}
+}
+
 // TestACPServeNotice: the published-port URLs are announced once, on a session/new result (which
 // carries sessionId + configOptions) — not on a ConfigOptionUpdate, not twice, and not without URLs.
 func TestACPServeNotice(t *testing.T) {
