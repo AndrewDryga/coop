@@ -21,7 +21,7 @@ lead:
   # A loop rotates it top-to-bottom (all accounts of entry 1, then entry 2, …),
   # keying rate limits per (model, account); a single run uses the first entry.
   # Omit models to use the agent's default model on all signed-in accounts.
-  models: [claude-fable-5, claude-opus-4-8@work]
+  models: [claude-fable-5, claude-opus-4-8@personal_backup]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
@@ -31,7 +31,6 @@ lead:
 # lowercase letters, digits, and dashes). Each role runs on its agent's DEFAULT
 # account; only the lead rotates accounts. Every field is documented below.
 roles:
-
   thinker:
     # mode: native — a Claude subagent that runs inside the lead's session (no
     # separate box; native is Claude-only). With no subagent: below, coop generates
