@@ -223,12 +223,15 @@ func (c *acpControl) serveNoticeFor(line []byte) []byte {
 }
 
 // rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a
-// session/new|load|resume result or a ConfigOptionUpdate) it drops the mode+subagent dropdowns and the
-// modes mirror, defaults the model to coop's, and prepends coop's selector. Other lines pass through.
+// session/new|load|resume result or a config_option_update) it drops the mode+subagent dropdowns and the
+// modes mirror, defaults the model to coop's, and prepends coop's selector. On a session result that
+// carries NO configOptions (the gemini/codex adapters, unlike claude-agent-acp) it still injects coop's
+// selector, so the credential/preset switcher appears for every agent. Other lines pass through.
 func (c *acpControl) rewriteToEditor(line []byte) []byte {
-	// Fast path: only session/new|load|resume results and ConfigOptionUpdate notifications carry these,
-	// so skip parsing the (often large) prompt/tool-call traffic entirely.
-	if !bytes.Contains(line, []byte("configOptions")) && !bytes.Contains(line, []byte(`"modes"`)) {
+	// Fast path: only session/new|load|resume results (a result WITH a sessionId) and config_option_update
+	// notifications carry a toolbar, so skip parsing the (often large) prompt/tool-call traffic entirely.
+	isSessionResult := bytes.Contains(line, []byte(`"sessionId"`)) && bytes.Contains(line, []byte(`"result"`))
+	if !isSessionResult && !bytes.Contains(line, []byte("configOptions")) && !bytes.Contains(line, []byte(`"modes"`)) {
 		return line
 	}
 	var m map[string]json.RawMessage
@@ -257,6 +260,13 @@ func (c *acpControl) rewriteToEditor(line []byte) []byte {
 		}
 		if _, hasCO := inner["configOptions"]; hasCO {
 			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], sid)
+			changed = true
+		} else if key == "result" && sid != "" {
+			// A session/new|load|resume RESULT with no configOptions — the gemini/codex adapters don't emit
+			// the claude-agent-acp toolbar. coop still owns the toolbar, so synthesize one from an empty set
+			// (rewriteConfigOptions prepends coop_setup); without this the credential/preset switcher never
+			// appears for those agents (the reported "gemini shows no dropdowns at all").
+			inner["configOptions"] = c.rewriteConfigOptions(json.RawMessage("[]"), sid)
 			changed = true
 		} else if rewrote := c.rewriteUpdateConfigOptions(inner["update"], sid); rewrote != nil {
 			inner["update"] = rewrote

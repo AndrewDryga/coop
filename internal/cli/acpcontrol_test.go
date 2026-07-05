@@ -148,6 +148,30 @@ func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
 	}
 }
 
+// TestACPControlInjectsSetupWhenAdapterHasNoConfigOptions: the gemini/codex adapters return a
+// session/new result with a sessionId but NO configOptions (only claude-agent-acp emits that toolbar).
+// coop must still inject its credential/preset selector so the coop dropdown appears for every agent —
+// the reported "gemini shows no dropdown options at all".
+func TestACPControlInjectsSetupWhenAdapterHasNoConfigOptions(t *testing.T) {
+	c := newTestControl(t)
+	// A gemini-shaped session/new result: sessionId + a models field, but no configOptions and no modes.
+	in := `{"jsonrpc":"2.0","id":"2","result":{"sessionId":"g1","models":{"currentModelId":"auto","availableModels":[{"modelId":"auto","name":"Auto"}]}}}` + "\n"
+	out := toEd(c, []byte(in))
+	ids, res := configOptionIDs(t, out)
+	if string(res["sessionId"]) != `"g1"` {
+		t.Errorf("sessionId lost: %s", res["sessionId"])
+	}
+	if len(ids) == 0 || ids[0] != "coop_setup" {
+		t.Errorf("coop_setup must be injected even when the adapter sends no configOptions, got %v", ids)
+	}
+	if _, ok := res["models"]; !ok {
+		t.Error("the adapter's own models field should be preserved, not dropped")
+	}
+	if !strings.Contains(string(out), `"preset:frontier"`) {
+		t.Errorf("the injected coop_setup should list the presets:\n%s", out)
+	}
+}
+
 // TestACPControlPassthrough: a non-config line (the bulk of ACP traffic) is returned byte-identical.
 func TestACPControlPassthrough(t *testing.T) {
 	c := newTestControl(t)
