@@ -5,9 +5,10 @@ Capture it the moment you see it, then stay on task. This file is NOT auto-worke
 by the Stop hook; a human promotes an item into a real task folder (`.agent/tasks/00_todo/`) when
 it's ready — that's where it gets a spec, the gate, and a commit, so don't over-plan it here.
 
-**One item = one `##` section.** Give it enough to pick it up cold, then stop. When an item is
-resolved, mark it in the heading (`— SHIPPED <date>` / `— DEFERRED (<why>)`) and leave it as a
-record, or delete it.
+**One item = one `##` section.** Give it enough to pick it up cold, then stop. When an item **ships**
+or the user **cancels** it, **delete it** — a shipped feature's record is its commits, a canceled one
+only invites re-litigating, and either left here just rots the list. Only a `— DEFERRED (<why>)` item
+stays as a record, so the reason survives and no one re-proposes it.
 
 ## Template
 
