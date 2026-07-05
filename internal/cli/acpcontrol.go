@@ -244,14 +244,26 @@ func (c *acpControl) rewriteToEditor(line []byte) []byte {
 		if json.Unmarshal(raw, &inner) != nil {
 			continue
 		}
-		_, hasCO := inner["configOptions"]
-		_, hasModes := inner["modes"]
-		if !hasCO && !hasModes {
-			continue
+		// configOptions ride two shapes: directly on a session/new|load|resume RESULT (result.configOptions,
+		// beside a modes mirror), or nested in a config_option_update NOTIFICATION (params.update.
+		// configOptions) — which the adapter pushes on a mid-session change AND coop's replay rebuilds after
+		// a box swap. Rewrite wherever they sit, so coop's toolbar (coop_setup + stripped mode/agent + model
+		// retarget) survives both; missing the nested shape is what dropped the coop dropdown after a switch.
+		sid := sessionIDOf(inner)
+		changed := false
+		if _, hasModes := inner["modes"]; hasModes {
+			delete(inner, "modes") // coop is always yolo; no permission-mode dropdown
+			changed = true
 		}
-		delete(inner, "modes") // coop is always yolo; no permission-mode dropdown
-		if hasCO {
-			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], sessionIDOf(inner))
+		if _, hasCO := inner["configOptions"]; hasCO {
+			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], sid)
+			changed = true
+		} else if rewrote := c.rewriteUpdateConfigOptions(inner["update"], sid); rewrote != nil {
+			inner["update"] = rewrote
+			changed = true
+		}
+		if !changed {
+			continue
 		}
 		if nb, err := json.Marshal(inner); err == nil {
 			m[key] = nb
@@ -261,6 +273,30 @@ func (c *acpControl) rewriteToEditor(line []byte) []byte {
 		}
 	}
 	return line
+}
+
+// rewriteUpdateConfigOptions rewrites a session/update notification's nested update.configOptions —
+// the config_option_update shape the adapter pushes on a mid-session change, and the one coop's replay
+// rebuilds after a box swap. Returns the re-marshalled update object, or nil when there's no update or
+// it carries no configOptions (the caller then leaves the line untouched). Without this, a
+// config_option_update bypasses coop's toolbar rewrite and the coop_setup dropdown vanishes after a switch.
+func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid string) json.RawMessage {
+	if len(update) == 0 {
+		return nil
+	}
+	var u map[string]json.RawMessage
+	if json.Unmarshal(update, &u) != nil {
+		return nil
+	}
+	if _, ok := u["configOptions"]; !ok {
+		return nil
+	}
+	u["configOptions"] = c.rewriteConfigOptions(u["configOptions"], sid)
+	nb, err := json.Marshal(u)
+	if err != nil {
+		return nil
+	}
+	return nb
 }
 
 // maybeRotate handles a rate limit on a CREDENTIAL session (a preset rotates via its own models

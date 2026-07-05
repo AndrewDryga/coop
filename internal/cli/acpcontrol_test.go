@@ -97,6 +97,57 @@ func TestACPControlRewrite(t *testing.T) {
 	}
 }
 
+// TestACPControlRewriteConfigUpdateNotification: coop's toolbar rewrite must ALSO apply to a
+// config_option_update NOTIFICATION (params.update.configOptions), not just a session/new result — it's
+// the shape the adapter pushes on a mid-session change and the one coop's replay rebuilds after a
+// credential/preset switch. Missing it dropped the coop_setup dropdown from the toolbar after a switch
+// (the reported bug: switching profile→credential left only the raw adapter dropdowns).
+func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
+	c := newTestControl(t)
+	c.sel = "cred:work" // a credential session (preset == ""), so the model retarget applies too
+	in := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"config_option_update","configOptions":[` +
+		`{"id":"mode","type":"select","currentValue":"default","options":[]},` +
+		`{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"},{"value":"sonnet","name":"Sonnet"}]},` +
+		`{"id":"effort","type":"select","currentValue":"default","options":[]},` +
+		`{"id":"agent","type":"select","currentValue":"default","options":[]}]}}}` + "\n"
+	out := toEd(c, []byte(in))
+	// The configOptions live at params.update.configOptions in a notification (not m["result"]).
+	var m, params, update map[string]json.RawMessage
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("output not JSON: %v\n%s", err, out)
+	}
+	json.Unmarshal(m["params"], &params)
+	if string(params["sessionId"]) != `"s1"` {
+		t.Errorf("sessionId lost in the rewrite: %s", params["sessionId"])
+	}
+	json.Unmarshal(params["update"], &update)
+	var opts []map[string]json.RawMessage
+	if err := json.Unmarshal(update["configOptions"], &opts); err != nil {
+		t.Fatalf("update.configOptions missing/unparseable — the notification wasn't rewritten:\n%s", out)
+	}
+	var ids []string
+	for _, o := range opts {
+		var id string
+		json.Unmarshal(o["id"], &id)
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 || ids[0] != "coop_setup" {
+		t.Errorf("coop_setup must be first in a config_option_update too, got %v", ids)
+	}
+	for _, bad := range []string{"mode", "agent"} {
+		if slices.Contains(ids, bad) {
+			t.Errorf("%s dropdown not stripped in a config_option_update: %v", bad, ids)
+		}
+	}
+	s := string(out)
+	if !strings.Contains(s, `"currentValue":"cred:work"`) {
+		t.Errorf("coop_setup should reflect the active selection cred:work:\n%s", s)
+	}
+	if !strings.Contains(s, `"currentValue":"opus[1m]"`) {
+		t.Errorf("model not retargeted to coop's in a config_option_update:\n%s", s)
+	}
+}
+
 // TestACPControlPassthrough: a non-config line (the bulk of ACP traffic) is returned byte-identical.
 func TestACPControlPassthrough(t *testing.T) {
 	c := newTestControl(t)
