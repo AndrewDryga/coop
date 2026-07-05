@@ -35,6 +35,15 @@
   localhost only; publishing needs `COOP_EGRESS=open`; a host port already in use is skipped (noted on
   the server log). Your dev server must listen on `0.0.0.0` (not localhost) inside the box.
 
+- **Preset contracts push real delegation.** The generated lead contract now names the delegate role
+  the **default implementer for mechanical work**, with the why (typing boilerplate burns the lead's
+  context and altitude on work a cheaper model does fine) and a threshold (write it yourself only when
+  the change is smaller than the prompt it would take to specify); the hand-off template now spells
+  out what a good delegate prompt carries (files, exact change, how to verify — it sees none of the
+  lead's conversation), and the consult role is cued at decision points (a plan about to execute, a
+  security-sensitive change, a tradeoff about to lock in). The scaffolded `roles/lead.md` gains a
+  matching "Route before you write" discipline: classify judgment vs mechanical before typing.
+
 - **Preset native subagents no longer share the repo's `.claude/agents`.** The generated
   `coop-<role>.md` files used to be assembled into a snapshot mounted OVER the repo's agents dir —
   so your own subagents were frozen copies for the box's lifetime (host edits invisible, the dir

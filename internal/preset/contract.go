@@ -66,13 +66,21 @@ func roleContract(r *Role, lead string) string {
 	case ModeConsult:
 		fmt.Fprintf(&b, "## %s — read-only consult (%s, %s)\n", r.Name, r.Agent, model)
 		writeWhen(&b, r.When)
+		b.WriteString("Ask it at the moments that are expensive to get wrong — a plan you're about to\n")
+		b.WriteString("execute, a security-sensitive change, a tradeoff you're about to lock in.\n")
 		b.WriteString("It analyses and reports; it NEVER edits a file or runs a mutating command. Ask it:\n\n")
 		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Name)
 	case ModeDelegate:
 		fmt.Fprintf(&b, "## %s — write-capable delegate (%s, %s)\n", r.Name, r.Agent, model)
 		writeWhen(&b, r.When)
+		b.WriteString("The lead's DEFAULT implementer for mechanical work — anything specifiable\n")
+		b.WriteString("exactly in a few sentences: boilerplate, repetitive edits, scaffolding,\n")
+		b.WriteString("mechanical refactors. Typing those yourself burns your context and altitude\n")
+		b.WriteString("on work a cheaper model does fine; by the time you can picture the diff, the\n")
+		b.WriteString("spec is already written — hand it off and keep leading. Write it yourself\n")
+		b.WriteString("only when the change is smaller than the prompt it would take to specify.\n")
 		b.WriteString("It MAY edit files in this worktree but must NEVER commit; delegate runs are\nserialized (one at a time). Hand it a task with:\n\n")
-		fmt.Fprintf(&b, "  coop-delegate %s <<'EOF'\n  <a self-contained implementation prompt>\n  EOF\n\n", r.Name)
+		fmt.Fprintf(&b, "  coop-delegate %s <<'EOF'\n  <a self-contained prompt: the files to touch, the exact change, how to\n   verify — it sees none of your conversation>\n  EOF\n\n", r.Name)
 		b.WriteString("When it returns, YOU review its `git diff`, run the gate, fix or revert what\nfalls short, and make the commit yourself — the delegate's work ships under\nyour review or not at all.\n")
 	}
 	// A role whose prompt reaches its runner elsewhere doesn't dump it into the lead contract:
