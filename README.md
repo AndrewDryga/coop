@@ -213,6 +213,7 @@ spelled out here (there's room to render them).
 | `coop tasks watch` | live board of the queue + any active forks, merged and deduped by id (auto-exits when every task's done; Ctrl-C anytime) |
 | `coop tasks add "<title>"` · `claim` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change) |
 | `coop tasks decisions [-i]` · `lint` · `split <n>` | what's blocked on a decision (`-i` to answer) · check the tree · carve todo tasks into per-fork slices |
+| `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 
 **Services** — the box's `compose.agent.yml` sidecars ([details](#services))
 

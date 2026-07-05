@@ -11,6 +11,16 @@ The numeric prefix is just a sort key: it makes a plain `ls .agent/tasks` list t
 lifecycle order instead of alphabetically (`99_` keeps done last). `coop tasks` prints the
 clean names — todo · in_progress · blocked · done.
 
+There's one more directory, off to the side of the lifecycle:
+
+- `xx_backlog/<id>/`      — unscheduled ideas (`xx_` sorts it last; NOT picked by the loop)
+
+The backlog is the **same folder format**, but it lives OUTSIDE the lifecycle: the loop, the
+Stop hook, `coop tasks`, and every counter ignore it, so an idea waits there with no nagging.
+Manage it with `coop backlog` — `add "<title>"` to capture, `promote <id>` to move it into
+`00_todo/` when it's ready (a folder move, not a rewrite), `rm <id>` to drop it. Not-yet-ready
+work belongs in the backlog, never in `00_todo/`.
+
 A state change is a folder move — use the commands, not a manual `mv`:
 `coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>`.
 The directory IS the status; there is no status field to keep in sync. A finished task is
