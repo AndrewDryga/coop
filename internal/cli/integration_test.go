@@ -25,6 +25,25 @@ func appFor(repo string) *app {
 	return &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot}}}
 }
 
+func appForDerivedQueues(repo string) *app {
+	return &app{cfg: &config.Config{RepoOverride: repo}}
+}
+
+func writeUmbrellaProject(t *testing.T, repo string, subs ...string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("subprojects:\n")
+	for _, sub := range subs {
+		fmt.Fprintf(&b, "  - %s\n", sub)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // captureStdout returns whatever fn writes to os.Stdout (list/decisions print there;
 // ui.Info goes to stderr). Colors are off under `go test` (no tty), so output is plain.
 func captureStdout(t *testing.T, fn func()) string {
@@ -163,6 +182,92 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	code, err := a.cmdTasks([]string{"--tasks", "done"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop tasks done") {
 		t.Errorf("`tasks --tasks done` should be a usage error suggesting `coop tasks done`, got code=%d err=%v", code, err)
+	}
+}
+
+func TestIntegrationUmbrellaAddRequiresProject(t *testing.T) {
+	repo := t.TempDir()
+	writeUmbrellaProject(t, repo, "portal", "runner", "packs")
+	code, err := appForDerivedQueues(repo).cmdTasks([]string{"add", "Fix auth retry"})
+	if code != 2 || err == nil {
+		t.Fatalf("umbrella add without --project = (%d, %v), want usage error", code, err)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"this umbrella project has multiple task queues; choose one with --project <name>",
+		"usage:\n  coop tasks add --project <project> \"<title>\"",
+		"root    .agent/tasks",
+		"repo-wide or cross-project work",
+		"portal  portal/.agent/tasks",
+		"runner  runner/.agent/tasks",
+		"coop tasks add --project portal \"Fix auth retry\"",
+		"--context \"portal auth retries can loop forever\"",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("umbrella add error missing %q:\n%s", want, msg)
+		}
+	}
+	for _, rel := range []string{tasksRoot, "portal/" + tasksRoot, "runner/" + tasksRoot, "packs/" + tasksRoot} {
+		if isTaskDir(filepath.Join(repo, rel)) {
+			t.Errorf("refused add should not create queue %s", rel)
+		}
+	}
+}
+
+func TestIntegrationUmbrellaAddProjectTargetsRootAndSubproject(t *testing.T) {
+	repo := t.TempDir()
+	writeUmbrellaProject(t, repo, "portal", "runner")
+	a := appForDerivedQueues(repo)
+
+	if code, err := a.cmdTasks([]string{"add", "--project", "root", "Update shared release checklist"}); code != 0 || err != nil {
+		t.Fatalf("add root project: code=%d err=%v", code, err)
+	}
+	rootItems := readTaskTree(filepath.Join(repo, tasksRoot))
+	if len(rootItems) != 1 || rootItems[0].Title != "Update shared release checklist" {
+		t.Fatalf("root add wrote %+v, want one root task", rootItems)
+	}
+
+	if code, err := a.cmdTasks([]string{"add", "--project=runner", "Fix auth retry",
+		"--context", "runner auth retries can loop forever",
+		"--acceptance", "make check green + retry cap test",
+		"--approach", "cap retries and surface the final error",
+		"--subtask", "add retry cap",
+		"--subtask", "test the failure path"}); code != 0 || err != nil {
+		t.Fatalf("add runner project: code=%d err=%v", code, err)
+	}
+	runnerRoot := filepath.Join(repo, "runner", tasksRoot)
+	runnerItems := readTaskTree(runnerRoot)
+	if len(runnerItems) != 1 || runnerItems[0].Title != "Fix auth retry" {
+		t.Fatalf("runner add wrote %+v, want one runner task", runnerItems)
+	}
+	body := readFileString(filepath.Join(runnerItems[0].Dir, "task.md"))
+	for _, want := range []string{
+		"**Context:** runner auth retries can loop forever",
+		"**Acceptance criteria:** make check green + retry cap test",
+		"**Approach:** cap retries and surface the final error",
+		"- [ ] add retry cap",
+		"- [ ] test the failure path",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("runner task missing %q:\n%s", want, body)
+		}
+	}
+	if portalItems := readTaskTree(filepath.Join(repo, "portal", tasksRoot)); len(portalItems) != 0 {
+		t.Fatalf("runner add should not write portal queue, got %+v", portalItems)
+	}
+}
+
+func TestIntegrationUmbrellaAddRejectsUnknownProject(t *testing.T) {
+	repo := t.TempDir()
+	writeUmbrellaProject(t, repo, "portal", "runner")
+	code, err := appForDerivedQueues(repo).cmdTasks([]string{"add", "--project", "myproject", "Fix auth retry"})
+	if code != 2 || err == nil {
+		t.Fatalf("unknown project = (%d, %v), want usage error", code, err)
+	}
+	for _, want := range []string{`unknown project "myproject"`, "projects:", "portal  portal/.agent/tasks"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("unknown project error missing %q:\n%s", want, err)
+		}
 	}
 }
 

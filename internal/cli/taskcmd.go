@@ -275,6 +275,10 @@ func newTaskFiles(id, title, now string, values map[string]string, subtasks []st
 // for `coop backlog add` — the two share every bit of parsing/validation). cmdLabel is the command as
 // typed ("tasks add" / "backlog add"), so error and usage lines name the right command.
 func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, error) {
+	return tasksFolderAddWithProject(root, args, state, cmdLabel, "")
+}
+
+func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, projectName string) (int, error) {
 	// Optional structured flags carve the title from the body: with any of
 	// --context/--acceptance/--approach/--subtask the task is created FILLED and validated up front;
 	// with none, it's the placeholder scaffold you edit. The flag names ARE the shape (taskSections).
@@ -363,13 +367,17 @@ func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, er
 			return -1, err
 		}
 	}
+	where := ""
+	if projectName != "" {
+		where = " in " + projectName
+	}
 	switch {
 	case state == stateBacklog:
 		ui.OK("backlogged %s — promote it when it's ready: coop backlog promote %s", id, id)
 	case structured:
-		ui.OK("added %s (filled from flags); log.md + state.md seeded", id)
+		ui.OK("added %s%s (filled from flags); log.md + state.md seeded", id, where)
 	default:
-		ui.OK("added %s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id)
+		ui.OK("added %s%s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id, where)
 	}
 	return 0, nil
 }

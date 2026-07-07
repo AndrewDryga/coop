@@ -335,7 +335,8 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   ls [--all]       list tasks by state, with counts (recent done capped; --all shows all)
   watch            live board: the queue + any active forks, deduped by id (auto-exits when done).
                    Per-fork fleet view: coop fleet watch
-  add "<title>"    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
+  add [--project <name>] "<title>"
+                   scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to todo (claim it to start); add "<answer>" to record in decision.md
@@ -356,8 +357,9 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   --tasks or COOP_TASKS. Paths are repo-relative. With several queues (a monorepo), ls, lint, and decisions
   (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
   rm) find their task in whichever queue holds it — erroring only when an id matches in
-  more than one queue (split slices share ids with their source). Only add and split need
-  a single --tasks, since they create into a queue.
+  more than one queue (split slices share ids with their source). In a monorepo, add requires
+  --project root|<subproject> so creation picks an explicit queue; with raw --tasks overrides,
+  add and split still need a single --tasks because they create into a queue.
 
 coop backlog — park unscheduled ideas as task folders (.agent/tasks/xx_backlog/).
 
