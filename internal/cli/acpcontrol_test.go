@@ -654,3 +654,69 @@ func TestWaitForReset(t *testing.T) {
 		t.Errorf("waitForReset must abort on ctx cancel, took %s", d)
 	}
 }
+
+// TestACPControlStructuralLimits verifies exact structured provider signals, not just prose, drive
+// rate-limit rotation. Field names alone must not be enough.
+func TestACPControlStructuralLimits(t *testing.T) {
+	cases := []struct {
+		name    string
+		error   string
+		restart bool
+	}{
+		{
+			"codex top-level usageLimitExceeded",
+			`{"code":-32603,"message":"provider declined the request","codexErrorInfo":"usageLimitExceeded"}`,
+			true,
+		},
+		{
+			"codex nested usageLimitExceeded",
+			`{"code":-32603,"message":"provider declined the request","data":{"codexErrorInfo":"usageLimitExceeded"}}`,
+			true,
+		},
+		{
+			"gemini resource exhausted",
+			`{"code":-32603,"message":"provider declined the request","data":{"code":"RESOURCE_EXHAUSTED"}}`,
+			true,
+		},
+		{
+			"codexErrorInfo field with non-limit value",
+			`{"code":-32603,"message":"provider declined the request","codexErrorInfo":"internalServerError"}`,
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := presetControl(t)
+			line := []byte(`{"jsonrpc":"2.0","id":"req1","error":` + tc.error + `}` + "\n")
+			_, restart := c.toEditor(line)
+			if restart != tc.restart {
+				t.Fatalf("restart = %v, want %v", restart, tc.restart)
+			}
+		})
+	}
+}
+
+func TestACPControlOutputLimitDoesNotRotateOrHold(t *testing.T) {
+	c := presetControl(t)
+	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"message":"Output Limit Reached: maximum output length"}}` + "\n")
+	out, restart := c.toEditor(errLine)
+	if restart {
+		t.Fatal("an ACP output limit is not a rate limit and must not rotate")
+	}
+	if !strings.Contains(string(out), "Output Limit Reached") {
+		t.Fatalf("output-limit error should pass through, got: %s", out)
+	}
+
+	c = presetControl(t)
+	chunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Output Limit Reached: maximum output length"}}}}` + "\n")
+	out, restart = c.toEditor(chunk)
+	if restart {
+		t.Fatal("an ACP output-limit chunk is not a rate limit and must not rotate")
+	}
+	if !strings.Contains(string(out), "Output Limit Reached") {
+		t.Fatalf("output-limit chunk should pass through immediately, got: %s", out)
+	}
+	if got := c.takeHeld("sess1"); got != nil {
+		t.Fatalf("output-limit chunk must not be held as a rate-limit notice, got: %s", got)
+	}
+}

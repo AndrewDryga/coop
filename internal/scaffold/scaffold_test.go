@@ -42,10 +42,7 @@ func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
 // fallback — and asserts shellcheck finds nothing. CI only shellchecks install.sh, so without
 // this a generated hook could ship with warnings. Skipped when shellcheck isn't installed.
 func TestGeneratedHooksShellcheckClean(t *testing.T) {
-	sc, err := exec.LookPath("shellcheck")
-	if err != nil {
-		t.Skip("shellcheck not installed")
-	}
+	sc := shellcheckPath(t)
 	hooks := map[string]string{
 		"pre-commit (all langs)":  preCommitHook(GateLangs),
 		"claude gate (all langs)": claudeCommitGate(GateLangs),
@@ -61,6 +58,18 @@ func TestGeneratedHooksShellcheckClean(t *testing.T) {
 			t.Errorf("%s is not shellcheck-clean:\n%s", name, out)
 		}
 	}
+}
+
+func shellcheckPath(t *testing.T) string {
+	t.Helper()
+	sc, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck not installed")
+	}
+	if out, err := exec.Command(sc, "--version").CombinedOutput(); err != nil {
+		t.Skipf("shellcheck not usable: %v\n%s", err, out)
+	}
+	return sc
 }
 
 // A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its

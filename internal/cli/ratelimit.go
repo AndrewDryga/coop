@@ -10,10 +10,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// limitHint is what an iteration's output told us about a model rate/usage limit.
+// limitHint is what an iteration's output told us about a model rate/usage limit or output/token exhaustion.
 type limitHint struct {
-	limited bool      // the model is rate- or usage-limited
-	resetAt time.Time // when it resets (zero = unknown)
+	limited       bool      // the model is rate- or usage-limited
+	outputLimited bool      // the model reached its maximum output length limit
+	resetAt       time.Time // when it resets (zero = unknown)
 }
 
 var (
@@ -26,18 +27,23 @@ var (
 	// "limit" — a window ("weekly") or a model name ("Fable 5", "Opus 4.8") — both vary, and the
 	// "resets …" clause may be absent; allow up to a few descriptor words.
 	hitLimitRe = regexp.MustCompile(`(?i)(?:hit|reached) your (?:[\w.-]+ ){0,3}limit`)
-	// The "resets <when>" clause that follows it, when present.
-	resetsRe = regexp.MustCompile(`(?i)resets?\s+([^\n·]+)`)
+	// The "resets <when>" or "try again at <when>" clause that follows it, when present.
+	resetsRe = regexp.MustCompile(`(?i)(?:resets?|try again at)\s+([^\n·]+)`)
 	// A trailing timezone in parens at the end of that clause, e.g. "(UTC)".
 	tzParenRe = regexp.MustCompile(`\(([A-Za-z]{2,5})\)\s*$`)
 	// API-style hints carrying a delay: "retry-after: 30" (bare = seconds), "retry after 30s",
 	// "try again in 5 minutes", "retry after 2 hours". The unit is optional and scaled by its
 	// first letter (m→minutes, h→hours, else seconds) in the caller.
 	retryAfterRe = regexp.MustCompile(`(?i)(?:retry[ -]?after|try again in)[^\d]{0,8}(\d{1,7})\s*([a-z]+)?`)
+	// Output/token exhaustion is recoverable by immediately asking the same model to continue; it is
+	// not a provider rate limit, so it must not rotate credentials or sleep until a reset.
+	outputLimitRe = regexp.MustCompile(`(?i)(?:output limit|max(?:imum)? output length|max(?:imum)?[_ -]?output[_ -]?tokens?|output length limit|finish[_ ]?reason["'\s:=]+(?:length|max[_ -]?tokens?))`)
 	// Broad markers with no parseable reset — a limit we should back off from.
 	limitMarkers = []string{
 		"usage limit", "rate limit", "rate-limit", "rate limited",
-		"ratelimited", "overloaded", "quota",
+		"ratelimited", "overloaded", "resource exhausted",
+		"quota exceeded", "quota limit", "exceeded quota", "insufficient quota",
+		"usagelimit", "usagelimitexceeded",
 	}
 	// The HTTP 429 status, matched with word boundaries. A bare Contains(lower, "429") also
 	// matched an unrelated number an agent happened to print — a line count ("1429 files"), a
@@ -59,6 +65,9 @@ func detectLimit(output string, now time.Time) limitHint {
 			return limitHint{limited: true, resetAt: time.Unix(epoch, 0)}
 		}
 		return limitHint{limited: true}
+	}
+	if outputLimitRe.MatchString(output) {
+		return limitHint{limited: true, outputLimited: true}
 	}
 	// "You've hit your weekly limit · resets Jun 18, 8pm (UTC)" — parse the stated
 	// reset so the loop sleeps until then rather than backing off into the wall.
@@ -112,7 +121,9 @@ func parseResetTime(output string, now time.Time) time.Time {
 	if m == nil {
 		return time.Time{}
 	}
-	s := strings.TrimSpace(m[1])
+	s := strings.ToLower(strings.TrimSpace(m[1]))
+	// Strip spaces before AM/PM so "3:04 PM" becomes "3:04PM" matching Go's "3:04pm" layout
+	s = regexp.MustCompile(`(?i)\s+(am|pm)\b`).ReplaceAllString(s, "$1")
 	loc := time.Local
 	if tz := tzParenRe.FindStringSubmatch(s); tz != nil {
 		switch strings.ToUpper(tz[1]) {
@@ -248,6 +259,7 @@ const (
 	actContinue loopAction = iota // success — advance to the next item
 	actWait                       // rate/usage limited — pause, then retry this item
 	actRetry                      // other failure — short backoff, then retry this item
+	actRetryNow                   // output/token limit — immediately resume this item
 	actStop                       // a cap tripped — give up
 )
 
@@ -269,14 +281,19 @@ const (
 
 // decideIteration interprets one iteration's result, updates the failure/wait
 // counters in place, and returns the action loop() should take (with the pause
-// and reset time for actWait). Keeping the cap-and-counter logic here, pure and
-// unit-tested, separates it from the container run and the actual sleeps.
+// and reset time for actWait). Output/token limits are a separate immediate
+// retry action, so ordinary failures keep their backoff. Keeping the cap-and-
+// counter logic here, pure and unit-tested, separates it from the container run
+// and the actual sleeps.
 func decideIteration(code int, err error, out string, now time.Time, fails, waits *int) (action loopAction, wait time.Duration, resetAt time.Time) {
 	if err == nil && code == 0 {
 		*fails, *waits = 0, 0
 		return actContinue, 0, time.Time{}
 	}
 	if hint := detectLimit(out, now); hint.limited {
+		if hint.outputLimited {
+			return actRetryNow, 0, time.Time{}
+		}
 		if *waits++; *waits > maxLimitWaits {
 			return actStop, 0, time.Time{}
 		}

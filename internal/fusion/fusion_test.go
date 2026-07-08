@@ -17,10 +17,7 @@ var allAgents = []string{"claude", "codex", "gemini"}
 // string constant, so the normal shellcheck pass can't see it; run it here when
 // shellcheck is available (skipped otherwise, so CI without it still passes).
 func TestConsultWrapperShellcheck(t *testing.T) {
-	sc, err := exec.LookPath("shellcheck")
-	if err != nil {
-		t.Skip("shellcheck not installed")
-	}
+	sc := shellcheckPath(t)
 	f := filepath.Join(t.TempDir(), "coop-consult")
 	if err := os.WriteFile(f, []byte(ConsultWrapper), 0o644); err != nil {
 		t.Fatal(err)
@@ -28,6 +25,18 @@ func TestConsultWrapperShellcheck(t *testing.T) {
 	if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
 		t.Errorf("shellcheck flagged the consult wrapper:\n%s", out)
 	}
+}
+
+func shellcheckPath(t *testing.T) string {
+	t.Helper()
+	sc, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck not installed")
+	}
+	if out, err := exec.Command(sc, "--version").CombinedOutput(); err != nil {
+		t.Skipf("shellcheck not usable: %v\n%s", err, out)
+	}
+	return sc
 }
 
 func TestValid(t *testing.T) {

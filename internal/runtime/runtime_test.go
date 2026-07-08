@@ -108,16 +108,41 @@ func TestRunInterruptibleCancelKillsGroup(t *testing.T) {
 	}
 }
 
-// waitGone polls until pid is no longer signalable (gone) or the deadline passes.
+// waitGone polls until pid is no longer running or the deadline passes.
 func waitGone(pid int, d time.Duration) error {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		if syscall.Kill(pid, 0) != nil {
+		if processGoneOrZombie(pid) {
 			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return errors.New("process still alive")
+	return errors.New("process still running")
+}
+
+func processGoneOrZombie(pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return true
+	}
+	state, ok := procState(pid)
+	return ok && state == 'Z'
+}
+
+func procState(pid int) (byte, bool) {
+	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "status"))
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "State:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] != "" {
+				return fields[1][0], true
+			}
+			return 0, false
+		}
+	}
+	return 0, false
 }
 
 func TestSilent(t *testing.T) {

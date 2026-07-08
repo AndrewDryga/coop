@@ -11,55 +11,74 @@ import (
 func TestDetectLimit(t *testing.T) {
 	now := time.Unix(1_000_000_000, 0)
 	cases := []struct {
-		name        string
-		output      string
-		wantLimited bool
-		wantReset   time.Time // zero = expect unknown
+		name              string
+		output            string
+		wantLimited       bool
+		wantOutputLimited bool
+		wantReset         time.Time // zero = expect unknown
 	}{
 		{"claude usage limit with epoch",
-			"…working…\nClaude AI usage limit reached|1700000000\n", true, time.Unix(1700000000, 0)},
+			"…working…\nClaude AI usage limit reached|1700000000\n", true, false, time.Unix(1700000000, 0)},
 		{"usage limit with millisecond epoch",
-			"Claude AI usage limit reached|1700000000000", true, time.Unix(1700000000, 0)},
+			"Claude AI usage limit reached|1700000000000", true, false, time.Unix(1700000000, 0)},
 		{"retry-after seconds",
-			"Error: rate limited. Please retry after 45s.", true, now.Add(45 * time.Second)},
+			"Error: rate limited. Please retry after 45s.", true, false, now.Add(45 * time.Second)},
 		{"try again in N seconds",
-			"overloaded; try again in 30 seconds", true, now.Add(30 * time.Second)},
+			"overloaded; try again in 30 seconds", true, false, now.Add(30 * time.Second)},
 		{"retry after N minutes",
-			"rate limited; try again in 5 minutes", true, now.Add(5 * time.Minute)},
+			"rate limited; try again in 5 minutes", true, false, now.Add(5 * time.Minute)},
 		{"retry after N hours",
-			"Please retry after 2 hours.", true, now.Add(2 * time.Hour)},
+			"Please retry after 2 hours.", true, false, now.Add(2 * time.Hour)},
 		{"bare http retry-after (seconds)",
-			"429; retry-after: 30", true, now.Add(30 * time.Second)},
+			"429; retry-after: 30", true, false, now.Add(30 * time.Second)},
 		// A non-time unit ("attempts", "ways") is ordinary prose, not a retry-after — don't trip.
 		{"non-time unit (attempts) is not a limit",
-			"I'll retry after 3 attempts to fix the test", false, time.Time{}},
+			"I'll retry after 3 attempts to fix the test", false, false, time.Time{}},
 		{"non-time unit (ways) is not a limit",
-			"let me try again in 2 ways", false, time.Time{}},
+			"let me try again in 2 ways", false, false, time.Time{}},
 		// An absurd hours value overflows int64; it must saturate to a long wait, not flip negative
 		// (which would make limitWait clamp to the 10s minimum — a busy retry against a real limit).
 		{"absurd retry-after hours saturates",
-			"Please retry after 9999999 hours.", true, now.Add(limitMaxWait)},
+			"Please retry after 9999999 hours.", true, false, now.Add(limitMaxWait)},
 		{"broad rate-limit keyword, no reset",
-			"request failed: rate limit exceeded", true, time.Time{}},
+			"request failed: rate limit exceeded", true, false, time.Time{}},
 		{"http 429, no reset",
-			"HTTP 429 Too Many Requests", true, time.Time{}},
+			"HTTP 429 Too Many Requests", true, false, time.Time{}},
 		{"weekly subscription limit with stated reset",
 			"coop: shadowed 4 secret path(s)\nYou've hit your weekly limit · resets Oct 18, 8pm (UTC)\n",
-			true, time.Date(now.Year(), time.October, 18, 20, 0, 0, 0, time.UTC)},
+			true, false, time.Date(now.Year(), time.October, 18, 20, 0, 0, 0, time.UTC)},
 		{"subscription limit with no reset clause",
-			"You've hit your weekly limit.", true, time.Time{}},
+			"You've hit your weekly limit.", true, false, time.Time{}},
 		{"normal success output",
-			"flipped [x], committed abc123, done", false, time.Time{}},
+			"flipped [x], committed abc123, done", false, false, time.Time{}},
 		{"unrelated failure",
-			"Error: file not found: foo.go", false, time.Time{}},
+			"Error: file not found: foo.go", false, false, time.Time{}},
 		{"429 inside a larger number is not a limit",
-			"build failed: 1429 files scanned, exit 1", false, time.Time{}},
+			"build failed: 1429 files scanned, exit 1", false, false, time.Time{}},
+		{"quota in an unrelated type name is not a limit",
+			"generated PolicyRuleQuotaResponse type", false, false, time.Time{}},
+		{"codexErrorInfo field name alone is not a limit",
+			`{"error":{"message":"provider failed","codexErrorInfo":"internalServerError"}}`, false, false, time.Time{}},
+		{"gemini output limit reached",
+			"Output Limit Reached\nThe model stopped because it reached its maximum output length.", true, true, time.Time{}},
+		{"gemini finish reason max tokens",
+			`{"finishReason":"MAX_TOKENS"}`, true, true, time.Time{}},
+		{"codex finish reason length",
+			`{"finish_reason":"length"}`, true, true, time.Time{}},
+		{"token-per-minute rate limit is not an output limit",
+			"rate limit exceeded for max_tokens_per_minute quota", true, false, time.Time{}},
+		{"codex usage limit with absolute reset time",
+			"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 1:26 AM.",
+			true, false, time.Date(now.Year(), now.Month(), now.Day()+1, 1, 26, 0, 0, time.Local)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := detectLimit(c.output, now)
 			if got.limited != c.wantLimited {
 				t.Fatalf("limited = %v, want %v", got.limited, c.wantLimited)
+			}
+			if got.outputLimited != c.wantOutputLimited {
+				t.Fatalf("outputLimited = %v, want %v", got.outputLimited, c.wantOutputLimited)
 			}
 			if c.wantReset.IsZero() {
 				if !got.resetAt.IsZero() {
@@ -98,6 +117,12 @@ func TestParseResetTime(t *testing.T) {
 		{"no resets clause", base, "You've hit your weekly limit.", time.Time{}},
 		{"unparseable when", base, "resets soon, hang tight", time.Time{}},
 		{"unrecognized tz falls back to backoff", base, "resets Jun 18, 8pm (PST)", time.Time{}},
+		{"try again at am time",
+			base, "try again at 1:26 AM",
+			time.Date(2026, time.June, 17, 1, 26, 0, 0, time.Local)},
+		{"try again at pm time with space",
+			base, "try again at 8:30 PM",
+			time.Date(2026, time.June, 16, 20, 30, 0, 0, time.Local)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -185,6 +210,12 @@ func TestDecideIteration(t *testing.T) {
 	fails, waits = 0, maxLimitWaits
 	if a, _, _ := decideIteration(1, nil, "rate limit", now, &fails, &waits); a != actStop {
 		t.Errorf("at limit cap: action = %d, want actStop", a)
+	}
+
+	// An output limit resumes immediately and does not increment fails/waits.
+	fails, waits = 2, 3
+	if a, wait, _ := decideIteration(1, nil, "Output Limit Reached: maximum output length", now, &fails, &waits); a != actRetryNow || wait != 0 || fails != 2 || waits != 3 {
+		t.Errorf("output limit: action=%d wait=%v fails=%d waits=%d, want actRetryNow/0/2/3", a, wait, fails, waits)
 	}
 }
 

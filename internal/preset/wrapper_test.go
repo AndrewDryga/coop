@@ -13,10 +13,7 @@ import (
 // TestDelegateWrapperShellcheck keeps the embedded coop-delegate script clean, like the
 // coop-consult wrapper's check (skipped when shellcheck isn't installed).
 func TestDelegateWrapperShellcheck(t *testing.T) {
-	sc, err := exec.LookPath("shellcheck")
-	if err != nil {
-		t.Skip("shellcheck not installed")
-	}
+	sc := shellcheckPath(t)
 	f := filepath.Join(t.TempDir(), "coop-delegate")
 	if err := os.WriteFile(f, []byte(DelegateWrapper), 0o644); err != nil {
 		t.Fatal(err)
@@ -24,6 +21,18 @@ func TestDelegateWrapperShellcheck(t *testing.T) {
 	if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
 		t.Errorf("shellcheck flagged the delegate wrapper:\n%s", out)
 	}
+}
+
+func shellcheckPath(t *testing.T) string {
+	t.Helper()
+	sc, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck not installed")
+	}
+	if out, err := exec.Command(sc, "--version").CombinedOutput(); err != nil {
+		t.Skipf("shellcheck not usable: %v\n%s", err, out)
+	}
+	return sc
 }
 
 // delegateHarness lays out everything a wrapper run needs: the script, a stub agent

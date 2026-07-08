@@ -403,24 +403,14 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	}
 	var h struct {
 		ID    json.RawMessage `json:"id"`
-		Error *struct {
-			Message string `json:"message"`
-			Data    struct {
-				ErrorKind string `json:"errorKind"`
-			} `json:"data"`
-		} `json:"error"`
+		Error json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(line, &h) != nil || h.Error == nil || h.Error.Message == "" {
+	if json.Unmarshal(line, &h) != nil || len(h.Error) == 0 {
 		return nil, false
 	}
 	now := time.Now()
-	hint := detectLimit(h.Error.Message, now)
-	// The adapter tags a rate-limit error structurally (data.errorKind == "rate_limit"); trust that
-	// even when the prose message doesn't trip detectLimit's keywords, so a reworded limit still rotates.
-	if h.Error.Data.ErrorKind == "rate_limit" {
-		hint.limited = true
-	}
-	if !hint.limited {
+	hint := acpErrorLimitHint(h.Error, now)
+	if !hint.limited || hint.outputLimited {
 		return nil, false
 	}
 	until := hint.resetAt
@@ -598,7 +588,7 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 		}
 	}
 	if s, text, ok := agentChunk(line); ok {
-		if detectLimit(text, time.Now()).limited {
+		if hint := detectLimit(text, time.Now()); hint.limited && !hint.outputLimited {
 			c.mu.Lock()
 			c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
 			c.mu.Unlock()
@@ -668,6 +658,66 @@ func responseID(line []byte) string {
 		return ""
 	}
 	return string(m.ID)
+}
+
+func acpErrorLimitHint(raw json.RawMessage, now time.Time) limitHint {
+	var msg struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(raw, &msg)
+	hint := detectLimit(msg.Message, now)
+
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return hint
+	}
+	structuredRate, structuredOutput := false, false
+	walkJSONStrings(v, "", func(key, value string) {
+		k := compactJSONName(key)
+		v := strings.ToLower(strings.TrimSpace(value))
+		vc := compactJSONName(value)
+		switch {
+		case vc == "usagelimitexceeded":
+			structuredRate = true
+		case k == "errorkind" && (v == "rate_limit" || vc == "ratelimit"):
+			structuredRate = true
+		case vc == "resourceexhausted":
+			structuredRate = true
+		case (k == "finishreason" || k == "stopreason") && (vc == "length" || vc == "maxtokens"):
+			structuredOutput = true
+		}
+	})
+	if structuredRate {
+		hint.limited = true
+		hint.outputLimited = false
+	} else if structuredOutput {
+		hint.limited = true
+		hint.outputLimited = true
+	}
+	return hint
+}
+
+func walkJSONStrings(v any, key string, visit func(string, string)) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, child := range x {
+			walkJSONStrings(child, k, visit)
+		}
+	case []any:
+		for _, child := range x {
+			walkJSONStrings(child, key, visit)
+		}
+	case string:
+		visit(key, x)
+	}
+}
+
+func compactJSONName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "_", "")
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, " ", "")
+	return s
 }
 
 // nextAccount marks cur rate-limited until `until`, then returns the next signed-in account (cyclic

@@ -1553,6 +1553,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			} else {
 				sleepForLimit(wait, resetAt, wake)
 			}
+		case actRetryNow:
+			ui.Info("iteration reached model output limit — resuming immediately")
 		case actRetry:
 			ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
 			sleepOrWake(10*time.Second, wake)
