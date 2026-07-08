@@ -131,8 +131,6 @@
   logs are pruned to the newest few on startup (a running server's log is never pruned). It holds
   prompts and file contents — treat it as sensitive.
 
-## 3.0.0
-
 - **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's
   actionable state on ONE line — task counts and fork/loop activity, `·`-separated, non-zero
   segments only (`3 todo · 1 blocked · 2 forks · 1 looping`); nothing when idle, so an embedding
