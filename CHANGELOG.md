@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- `coop tasks lint` now flags a task id that sits in more than one state dir (a `cp` instead of a
+  coop move). The queue readers deliberately show such a task once — that dedup protects the loop,
+  `coop tasks watch`, and the Stop hook from torn mid-rename reads — so a persistent duplicate was
+  invisible everywhere; lint re-checks each candidate (a task mid-move exists in at most one dir at
+  any instant) and reports only real copies, naming the dirs and which copy the listing shows.
+
 - **The backlog is a task-folder drawer now, not `.agent/BACKLOG.md` — `coop backlog`.** Unscheduled
   ideas live as task folders in a `.agent/tasks/xx_backlog/` drawer, driven by a new top-level command:
   `coop backlog` (list), `coop backlog add "<title>"` (capture — same `--context/--acceptance/--approach/

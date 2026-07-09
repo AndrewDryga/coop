@@ -224,7 +224,9 @@ func readTaskTree(root string) []taskItem {
 	// The four ReadDir calls below aren't one atomic snapshot, so a task being moved between state
 	// dirs (an os.Rename) can be read in BOTH — once in the source dir, once in the destination.
 	// Dedup by id, keeping the first (lifecycle-earliest) occurrence, so a torn read can't inflate
-	// the counts (coop tasks watch) or flash a false "✓ done" as the last task finishes.
+	// the counts (coop tasks watch) or flash a false "✓ done" as the last task finishes. A
+	// PERSISTENT duplicate (a copy mistake, not a rename in flight) is surfaced by `coop tasks
+	// lint` via duplicateTaskIDs — this hot path stays quiet by design.
 	seen := map[string]bool{}
 	for _, state := range taskStates {
 		stateDir := filepath.Join(root, state)
@@ -250,6 +252,42 @@ func readTaskTree(root string) []taskItem {
 		return items[i].ID < items[j].ID
 	})
 	return items
+}
+
+// duplicateTaskIDs reports task ids that PERSISTENTLY sit in more than one state dir — a copy
+// mistake (cp instead of a coop move), which readTaskTree's torn-read dedup masks forever on the
+// hot path. Each candidate is re-checked with a second look: a task mid-rename exists in at most
+// one dir at any instant (os.Rename is atomic), so only ids still present in ≥2 dirs on the
+// second look are returned. Map: id → the state dirs (lifecycle order) that hold it.
+func duplicateTaskIDs(root string) map[string][]string {
+	found := map[string][]string{}
+	for _, state := range taskStates {
+		entries, err := os.ReadDir(filepath.Join(root, state))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() && fileExists(filepath.Join(root, state, e.Name(), "task.md")) {
+				found[e.Name()] = append(found[e.Name()], state)
+			}
+		}
+	}
+	dups := map[string][]string{}
+	for id, states := range found {
+		if len(states) < 2 {
+			continue
+		}
+		var still []string
+		for _, state := range states {
+			if fileExists(filepath.Join(root, state, id, "task.md")) {
+				still = append(still, state)
+			}
+		}
+		if len(still) > 1 {
+			dups[id] = still
+		}
+	}
+	return dups
 }
 
 // readBacklog enumerates the task folders under root's xx_backlog/, sorted by id. It reads ONE state

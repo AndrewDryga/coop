@@ -361,6 +361,31 @@ func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
 	}
 }
 
+// A task id copied into TWO state dirs (cp instead of a coop move) is deliberately masked by
+// readTaskTree's torn-read dedup, so `coop tasks` and the loop stay quiet — lint is the surface
+// that flags the persistent duplicate. readTaskTree itself must keep showing exactly one.
+func TestTasksFolderLintFlagsDuplicateIDs(t *testing.T) {
+	root := t.TempDir()
+	if err := scaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	task := "# D\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n"
+	writeTaskFile(t, filepath.Join(root, stateTodo, "dup", "task.md"), task)
+	writeTaskFile(t, filepath.Join(root, stateDone, "dup", "task.md"), task)
+	if got := len(readTaskTree(root)); got != 1 {
+		t.Fatalf("readTaskTree sees %d items, want 1 — the dedup must keep masking the hot path", got)
+	}
+	if code, err := tasksFolderLint(root); err != nil || code != 1 {
+		t.Fatalf("lint of a duplicated id: code=%d err=%v (want 1)", code, err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, stateDone, "dup")); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderLint(root); code != 0 || err != nil {
+		t.Errorf("after removing the stale copy, lint should be clean: code=%d err=%v", code, err)
+	}
+}
+
 // `coop tasks add` seeds self-documenting task.md + log.md + state.md (but not decision.md,
 // which would make a todo task lint-dirty), and the result is lint-clean out of the box.
 func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {

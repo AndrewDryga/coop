@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1094,6 +1095,14 @@ func tasksFolderLint(root string) (int, error) {
 				add(t.ID, "not self-contained: "+issue)
 			}
 		}
+	}
+	// An id sitting in TWO state dirs is a copy mistake (cp instead of a coop move). readTaskTree
+	// deliberately masks it — its dedup exists for torn mid-rename reads — so lint is where the
+	// persistent case surfaces (duplicateTaskIDs re-checks, so a task mid-move never flags).
+	dups := duplicateTaskIDs(root)
+	for _, id := range slices.Sorted(maps.Keys(dups)) {
+		add(id, fmt.Sprintf("exists in %s — a task lives in ONE state dir; only the %s copy is listed, so keep the real one and delete the rest",
+			strings.Join(dups[id], " AND "), dups[id][0]))
 	}
 	if len(findings) == 0 {
 		if len(items) == 0 {
