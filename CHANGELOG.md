@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- `coop fork review` prints a review dossier, not just a brief + diff. Between the commits and
+  the patch it now maps the risk, all parent-computed from git facts: the fork's task log is
+  labeled as the agent's claim (it's the fork's own voice — it can't steer its review); policy
+  findings from the exact scan `coop fork merge` enforces print as advisory ⚠ lines at review
+  time instead of first surfacing as a failed merge (a clean fork gets `✓ nothing flagged`);
+  the changed files are risk-ordered — config & instructions (AGENTS.md/`.agent/`/`.claude/`…,
+  dependency manifests + lockfiles, Dockerfile*, Makefile, CI) first, then code by churn, then
+  tests, then docs, each with `+N -N`; and a `gate:` line says whether a merge gate is
+  configured. No new flags; `--stat`/`--tool`/`--open`/`COOP_REVIEW_CMD` behave as before.
+
 - `coop tasks lint` now flags a task id that sits in more than one state dir (a `cp` instead of a
   coop move). The queue readers deliberately show such a task once — that dedup protects the loop,
   `coop tasks watch`, and the Stop hook from torn mid-rename reads — so a persistent duplicate was

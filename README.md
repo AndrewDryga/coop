@@ -190,7 +190,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
-| `coop fork review <name> [--stat\|--tool]` | brief + diff; `--stat` = brief only, `--tool` = your `git difftool` |
+| `coop fork review <name> [--stat\|--tool]` | dossier + diff; `--stat` = dossier only, `--tool` = your `git difftool` |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
@@ -300,7 +300,7 @@ The lifecycle mirrors a contractor's PR: open → work → review → land.
 coop fork perf codex     # open: clone into ../<repo>-forks/perf, run codex there
 coop fork perf           # re-enter: continues codex's last session by default
 coop fork ls             # list your forks (branch, changes, state, last activity)
-coop fork review perf    # review: a brief, then the diff
+coop fork review perf    # review: the dossier, then the diff
 coop fork merge perf     # land: rebase onto your branch, then close the fork
 coop fork rm perf        # or discard it (confirms first; refuses unmerged/dirty work without --force)
 ```
@@ -334,13 +334,17 @@ work without `--force`).
 
 ### Review — in your terminal or your IDE
 
-`coop fork review <name>` opens with a brief — the commits, the files changed, and
-the agent's own reasoning (the latest task `log.md`) — then shows the diff in your pager.
-No setup needed. To review in an IDE instead:
+`coop fork review <name>` opens with a dossier that maps the risk before the patch:
+the commits; the agent's claim (the latest task `log.md`, labeled — it's the fork's own
+voice); policy findings from the same scan `coop fork merge` enforces, so nothing first
+surfaces as a failed merge; the changed files risk-ordered (config & instructions, then
+code by churn, then tests, then docs, each with `+N -N`); and whether a merge gate is
+configured. Then the diff shows in your pager. No setup needed. To review in an IDE
+instead:
 
 | | |
 |---|---|
-| `--stat` | brief only, skip the diff |
+| `--stat` | dossier only, skip the diff |
 | `--tool` | open each changed file in your GUI difftool |
 
 To review in your editor's SCM panel instead, open the fork as a folder with `coop fork

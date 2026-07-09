@@ -87,7 +87,7 @@ func forkHelpText(p ui.Palette) string {
 		{"coop fork <name> <agent> --loop", "loop the fork on a tasks folder (-d detaches)"},
 		{"coop fork ls", "list this repo's forks"},
 		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
-		{"coop fork review <name>", "brief + diff (--stat, --tool, --open)"},
+		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open)"},
 		{"coop fork <name> acp [agent]", "front the fork as an ACP agent (for editors)"},
 		{"coop fork merge <name>", "rebase onto your branch and land it (--all = fleet)"},
 		{"coop fork rm <name>", "discard a fork (confirms; refuses unmerged/dirty without --force)"},
@@ -882,9 +882,11 @@ func (a *app) runReviewCmd(repo, ws, name, ref string) (int, error) {
 	return 0, nil
 }
 
-// forkBrief prints a review summary before the diff — commits, files changed, and
-// the agent's own reasoning from the fork's latest task log — so a reviewer gets a map
-// before reading the patch.
+// forkBrief prints the review dossier before the diff — commits, the agent's claim,
+// policy findings, risk-ordered files, and the gate status — so a reviewer gets a map
+// of the risk before reading the patch. Everything except the task log is computed by
+// the parent from git facts; the log is the fork's own voice and is labeled as such,
+// so a fork can't steer its review via its narrative.
 func (a *app) forkBrief(repo, ws, name, ref string) {
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	files := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
@@ -898,15 +900,36 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 		fmt.Println(ui.Bold("commits:"))
 		fmt.Println(indent(log))
 	}
-	if files != "" {
-		fmt.Println(ui.Bold("files:"))
-		fmt.Println(indent(files))
-	}
 	if why := latestTaskLog(ws, 12); strings.TrimSpace(why) != "" {
-		fmt.Println(ui.Bold("why (latest task log):"))
+		fmt.Println(ui.Bold("why (agent's claim — latest task log):"))
 		fmt.Println(indent(why))
 	} else {
 		fmt.Printf("%s no completed task yet\n", ui.Bold("why:"))
+	}
+	if files != "" { // the sections below are diff-derived; an empty diff has nothing to map
+		// The SAME scan `coop fork merge` enforces — printed here so findings surface at
+		// review, not as a failed merge. Advisory: review's exit code stays 0.
+		if warns := policyScan(repo, ref); len(warns) == 0 {
+			fmt.Printf("%s %s nothing flagged\n", ui.Bold("policy:"), ui.Green("✓"))
+		} else {
+			fmt.Printf("%s %s %s — these block 'coop fork merge' without --force\n",
+				ui.Bold("policy:"), ui.Yellow("⚠"), ui.Count(len(warns), "finding"))
+			for _, w := range warns {
+				fmt.Println(indent(w))
+			}
+		}
+		fmt.Println(ui.Bold("files:"))
+		for _, sec := range classifyChanged(files, gitOut(repo, "diff", "--numstat", "HEAD..."+ref)) {
+			fmt.Println(indent(sec.title + ":"))
+			for _, f := range sec.files {
+				fmt.Println(indent(indent(f.render())))
+			}
+		}
+		if len(a.cfg.Gate) == 0 {
+			fmt.Printf("%s none configured (COOP_GATE)\n", ui.Bold("gate:"))
+		} else {
+			fmt.Printf("%s runs at merge — rolled back on failure\n", ui.Bold("gate:"))
+		}
 	}
 	fmt.Println(ui.Bold("diff:"))
 }
