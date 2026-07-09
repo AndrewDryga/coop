@@ -22,773 +22,175 @@
 
 ## 3.0.0
 
-- **The backlog is a task-folder drawer now, not `.agent/BACKLOG.md` — `coop backlog`.** Unscheduled
-  ideas live as task folders in a `.agent/tasks/xx_backlog/` drawer, driven by a new top-level command:
-  `coop backlog` (list), `coop backlog add "<title>"` (capture — same `--context/--acceptance/--approach/
-  --subtask` flags as `coop tasks add`), `coop backlog rm <id>` (drop), and `coop backlog promote <id>`
-  (make it live work — a folder move into `00_todo/`, its id and notes intact, not a hand-rewrite). The
-  drawer sits OUTSIDE the lifecycle states, so the loop, the Stop hook, and every `coop tasks` counter
-  ignore it — an idea waits there with zero nagging until you promote it; in a monorepo it rolls up and
-  resolves across queues like `coop tasks`. This RETIRES `.agent/BACKLOG.md`: `coop init` no longer
-  writes it, and the AGENTS.md/README/skills point at `coop backlog`. Upgrading a repo that still has
-  one? Move each `##` item with `coop backlog add`, then delete the file — steps in MIGRATING.md.
+coop v3 is a clean break organized around three ideas: the work queue is folders, not a
+file; a stored account (a credential) and an orchestration recipe (a preset) are two
+different things; and model is the one rotation axis. The CLI ships no backward-compat
+aliases — every retired spelling exits with the exact rewrite to run instead — and
+[`MIGRATING.md`](MIGRATING.md) walks each conversion.
+
+### Breaking changes
+
+- **Tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.** One
+  folder per task under four state directories — `00_todo/`, `10_in_progress/`, `50_blocked/`,
+  `99_done/` — and a task's state IS which directory it sits in: every transition is an atomic
+  folder move, there is no `status:` field, and there is no legacy fallback. Each task carries
+  its own `spec.md`, `log.md`, resume `state.md`, `decision.md` (replacing the global
+  `PENDING_DECISIONS.md`), and `screenshots/`/`artifacts/`. `coop tasks` drives it all
+  (`add`/`claim`/`block`/`unblock`/`done`/`rm`/`ls`/`lint`/`decisions`/`path`), and the loop,
+  fleet, Stop hook, and `coop init` are folder-native. A finished task is moved to `99_done/`,
+  never deleted; prune by hand with `coop tasks rm --all-done`. MIGRATING.md has a one-shot,
+  LLM-ready conversion prompt for a legacy `TASKS.md`.
+- **`coop profiles` is now `coop credentials`; recipes are presets.** A credential is a stored
+  account/login (its own rate-limit pool); a preset is the orchestration recipe. `coop profiles`
+  tombstones with the rewrite; the `--profile` flag is removed outright (`--credential` is the
+  one name — an agent's own `--profile` still passes through after `--`). New `coop presets
+  [name]` lists/shows recipes; `coop presets init` scaffolds a runnable template. On-disk
+  credential storage is unchanged.
+- **Loop pools are gone — rotation is the lead's model-first `models:` ladder.** `coop loop
+  pool` and `pools.json` are retired; the ladder's entries are `model` or `model@account`, a
+  bare model fans out across every signed-in account, and limits key per (model, account).
+  Presets drop lead `model:`/`credentials:` for one `models:` list, roles drop `credentials:`
+  (a role runs on its agent's default account), `--model` gains the `opus@work` shortcut, and
+  the credential-first `work@opus` form plus `coop credentials <cred> model` are retired — a
+  credential is just an account. Precedence: `--model`/fleet `model:` > the active ladder
+  entry > `COOP_LOOP_MODEL`/preset > `COOP_<AGENT>_MODEL` > the agent default.
+- **v3 keeps no compat aliases.** Retired with tombstones (exit 2 + the rewrite): `coop clone`
+  (→ `coop fork`), `coop pool`/`coop loop pool`, `coop profiles` (→ `coop credentials`),
+  verb-first credential edits (→ the path grammar `coop credentials <agent> <credential>
+  <default|rm>`), `coop tasks start` (→ `claim`), `coop loop --debug` (→ `--debug-on-fail`).
+  The forgiving spellings are gone too: `ls` and `rm` are the only list/delete verbs —
+  `list`/`remove` are not accepted.
+- **`coop status` is removed — `coop tasks watch` is the live board.** One task-centric view
+  of the queue draining in place; with a fleet running it merges every active fork (deduped by
+  task id, each in-progress task tagged by its fork). The per-fork board stays at
+  `coop fleet watch`.
+- **`.agent/BACKLOG.md` is retired — `coop backlog` is a task-folder drawer.** Unscheduled
+  ideas live in `.agent/tasks/xx_backlog/`, outside the lifecycle, so the loop, Stop hook, and
+  counters ignore them: `coop backlog add|rm|promote` — promote is a folder move into
+  `00_todo/`, not a rewrite. In a monorepo it rolls up across queues like `coop tasks`.
+- **`.agent/fleet.yaml` is the fleet format.** `coop fleet init`/`split` write YAML; forks can
+  reference presets (`preset: frontier`) with per-fork `credential:`/`model:`/`consult:`
+  overrides. The pre-v3 one-line `.agent/fleet` is not read — its presence is an error until
+  translated (MIGRATING.md).
+- **`coop loop` exits 3 when it stops on a blocked decision.** The exit contract: `0` verified
+  done, `1` failure, `2` usage, `3` stopped with work in `50_blocked/` and nothing else
+  actionable — so cron/fleet/CI can tell "drained" from "stalled on a human decision".
+- **The legacy flat credential vault migrated automatically** to the per-agent
+  `<agent>/profiles/<name>/` layout on first run — one layout, no manual step.
+
+### Orchestration presets
+
+- **A preset is the whole multi-model arrangement in one YAML file**
+  (`.agent/presets/<name>/preset.yaml`): who leads (a `models:` ladder) and the roles it routes
+  to — each an agent + model + routing hints in one of three modes: `native` (a Claude
+  subagent, generated in-box from the role so nothing pollutes the repo's `.claude/agents`),
+  `consult` (a read-only peer via `coop-consult`, role-addressed with its prompt as persona),
+  or `delegate` (a write-capable `coop-delegate` worker that may edit but never commit —
+  HEAD is compared before/after and runs are serialized; the lead reviews, gates, commits).
+  coop generates the lead's routing contract with exact invocations and pushes real
+  delegation; `coop presets init` scaffolds a self-documenting, runnable template with
+  starter `roles/*.md` prompt files. `--preset` works on `coop <agent>`, `loop`, `fusion`,
+  `acp`, and `coop fork --loop`; explicit flags still win. (First external dependency:
+  gopkg.in/yaml.v3 — the binary stays static.)
+- **Pick the model for any run:** `--model` everywhere plus `coop models` (the per-agent
+  menu); `--credential <name>` picks the account for a single run; a fleet fork can pin its
+  own `credential:`. `coop credentials` gained the path grammar (each token narrows down to
+  one credential), flags an expired login, and deletes with
+  `coop credentials <agent> <credential> rm`.
+- **`coop loop` reads project-specific audit checks from `.agent/audit.md`** and appends them
+  to the end-of-loop audit.
+
+### ACP — driving coop from an editor (Zed)
+
+- **coop owns the editor toolbar.** The proxy is always in the path: every provider runs in
+  yolo mode (the box is the sandbox — coop answers `session/request_permission` itself, so the
+  editor never prompts), the permission/subagent dropdowns are dropped, the model dropdown
+  defaults to coop's model, and a new coop dropdown switches the credential or preset
+  mid-session — transparently: the box restarts on the new identity, the handshake replays,
+  and a shared session-transcript store means `session/load` finds the conversation on the new
+  account. Every `coop acp` session survives a box restart (rebuild/OOM) for free;
+  `--supervise` is accepted but no longer needed.
+- **Rate limits are handled transparently — coop rotates (or waits) and re-sends.** A
+  rate-limited turn no longer errors: coop swallows the error, suppresses the adapter's limit
+  notice (only when a real limit error follows — output that merely mentions "rate limit" is
+  never dropped), restarts on the next signed-in account, and re-sends your prompt; the
+  toolbar dropdown moves to the credential you're now on. With every account cooling, it
+  waits out the nearest reset (telling the editor when) and then re-sends. Same-provider
+  only; a preset session rotates its own `models:` ladder instead.
+- **Restart correctness:** the toolbar shows the restarted box's real config (the replayed
+  `session/load`'s `configOptions` forward as updates); a switch before your first message
+  re-creates the turn-less session instead of erroring "Session not found"; a failed reload
+  warns instead of silently losing history; an editor disconnect mid-restart no longer
+  orphans the new box.
+- **Opt-in wire tracing:** `COOP_ACP_TRACE=1` (or the `~/.config/coop/acp-debug` sentinel,
+  which works on an already-running server) appends the editor↔box wire and restart events to
+  a bounded, auto-pruned `~/.config/coop/acp-trace-<pid>.log`. It holds prompts and file
+  contents — treat it as sensitive.
+
+### Monorepos
+
+- **`.agent/project.yaml` replaces a hand-maintained `COOP_TASKS`.** List `subprojects:` and
+  every task consumer — `coop tasks`, `loop`, `prompt`, `fleet` status, completion, the Stop
+  hook — spans all their queues; the root keeps its own queue for cross-member work.
+  `coop init` scaffolds members with their own queue, sharing the root's AGENTS.md.
+- **`serve.ports` publishes a dev server in the box to your host browser** (each listed port
+  maps through).
+
+### Security & reliability
+
+- **Hardening from the end-to-end and multi-agent audits:** secret shadowing covers
+  `*.yaml`/`*.yml` credential files and matches case-insensitively (`.ENV`, `ID_RSA`);
+  template suffixes (`id_rsa.example`) stay shadowed; the fork merge gate reuses the same
+  shadow denylist (so `kubeconfig`, `.npmrc`, `.netrc`, `service_account.json`, `*.kdbx`
+  can't land silently); `coop check-secrets` also flags `secret_key_base`-family keys,
+  passwords in connection-string URLs, and `github_pat_…` tokens; `COOP_EGRESS` fails closed
+  (an unrecognized value means offline, and anything but an explicit `open` forces
+  `--network none`); `coop login --credential` rejects traversal/collision names; fork
+  commands reject a name that escapes the forks directory.
+- **Deletions confirm before they happen.** Every unrecoverable delete (`coop tasks rm`,
+  `credentials rm`, `fork rm`, backlog `rm`) runs one shared gate: `--yes` proceeds, piped
+  runs refuse without it, a TTY prompt defaults to No. `coop fork <name> --fresh` runs the
+  same unmerged/dirty guard as `fork rm` instead of silently discarding work.
+- **The loop is a better overnight citizen:** Ctrl-C finishes the current task then stops
+  (a second Ctrl-C is immediate; foreground fork loops get the same); the machine is kept
+  awake while it runs; "queue verified done" is only reported when the audit didn't reopen
+  work; an unrelated number containing `429` no longer stalls it as a false rate limit; task
+  activity shows tool paths repo-relative and flags anything outside the repo.
+- **Session/setup fixes:** `coop acp --supervise` survives a box restart again; a fork (or
+  `--consult`) with one signed-in agent launches with that agent instead of none; a deleted
+  credential named "default" stays deleted; concurrent config edits no longer corrupt state;
+  remote (HTTP/SSE) MCP servers in `mcp.json` reach every agent, not just claude.
+- **Staying current:** once a day coop notes when the binary, box image, or their skew is
+  stale; `coop update` refreshes agent CLI packages from npm's stable `latest`;
+  `COOP_NO_ASDF=1` no longer breaks Node-based agents; `make casts` refuses to ship a
+  dirty/dev version into the site's terminal casts; scaffolded `postgres:18` services start
+  out of the box.
+
+### CLI quality
+
+- **One reference, gated:** `help.go` is the single source for the CLI reference — docs, the
+  man page, and `site/llms.txt` regenerate from it and CI fails on drift; a CLI-conformance
+  test graduates the repo's committed taste rules (verbs, usage placeholders, help style)
+  into the gate.
+- **Consistency:** `ls`/`rm` verbs and one usage-placeholder lexicon everywhere; grammar
+  parity across launch paths (`coop loop --credential` works like `coop <agent>
+  --credential`); split slices are named consistently; typo suggestions now catch 3-rune
+  slips; a bare command group prints its help, never an `unknown command ""` error (bare
+  `coop tasks` lists the queue).
+- **Output:** stdout stays machine-clean when piped (color and decoration gate on a TTY);
+  task and decision lists render in color with breathing room; progress bars show blocked
+  work in red; the live watch view no longer garbles; errors name the fix (`coop up` with no
+  compose points at `coop init --services`); `coop doctor` warns when probing an alpine
+  stand-in instead of the real box image; `coop help` opens with a FIRST RUN line for a
+  fresh machine.
+- **Quality of life:** `coop prompt` prints a one-line repo status for your shell prompt or
+  tmux (non-zero segments only, read-only and cheap); `coop completion bash|zsh` ships shell
+  completions; `coop tasks add` fills a task inline (`--context/--acceptance/--approach/
+  --subtask`); `:d` in `coop tasks decisions -i` marks a task done; a new `/review-board`
+  skill convenes the heavyweight pre-merge review; `coop init` scaffolds the orchestrator
+  pattern and guidance; filesystem-only commands no longer demand a container runtime; a
+  fresh fork's `coop fork ls`/`review` no longer shows inherited state as fork activity.
 
-- **Monorepo support via `.agent/project.yaml` — no more hand-maintained `COOP_TASKS`.** Drop a
-  committed `.agent/project.yaml` at the repo root listing the member projects, and coop aggregates
-  every subproject's task queue automatically:
-  ```yaml
-  subprojects: [runner, packs, portal, mcp]
-  ```
-  `coop tasks`, `coop loop`, `coop prompt`, `coop fleet` (status), completion, and the Stop-hook guard
-  now span all of them — previously you had to export `COOP_TASKS="portal/.agent/tasks
-  runner/.agent/tasks …"` by hand. An explicit `COOP_TASKS`/`--tasks` still overrides; a single repo
-  is unchanged. New `coop tasks queues` prints each configured queue's path (the composable primitive
-  the Stop hook uses). `coop init` scaffolds each member with ONLY its own task queue (it
-  shares the root's AGENTS.md/`.claude`); both members and the root keep a queue — members for their
-  own work, the root for changes spanning members. The generated `.gitignore` ignores `.agent/` state
-  at any depth (`**/.agent/*`) and commits knowledge — `rules`/`skills`/`presets`/`audit` — at any
-  depth too (a large member may carry its own), keeping only the single `project.yaml` top-level
-  (`!.agent/project.yaml`).
-  (`coop fork --loop`/`coop fleet split` still take one queue — multi-queue seeding is backlogged.)
-
-- **See a dev server in your browser — `.agent/project.yaml` → `serve.ports`.** List the ports your
-  dev server listens on inside the box:
-  ```yaml
-  serve:
-    ports: [5173, 3000]
-  ```
-  and coop publishes each to a **stable, per-repo host port** — deterministic, so the URL is the same
-  every launch and distinct per project, which means one shared editor agent definition serves many
-  projects without host-port collisions. Works for `coop acp` and `coop run`; in the editor coop
-  announces the URLs once per session (`🌐 box :5173 → http://localhost:24187`). Ports bind to
-  localhost only; publishing needs `COOP_EGRESS=open`; a host port already in use is skipped (noted on
-  the server log). Your dev server must listen on `0.0.0.0` (not localhost) inside the box.
-
-- **Preset contracts push real delegation.** The generated lead contract now names the delegate role
-  the **default implementer for mechanical work**, with the why (typing boilerplate burns the lead's
-  context and altitude on work a cheaper model does fine) and a threshold (write it yourself only when
-  the change is smaller than the prompt it would take to specify); the hand-off template now spells
-  out what a good delegate prompt carries (files, exact change, how to verify — it sees none of the
-  lead's conversation), and the consult role is cued at decision points (a plan about to execute, a
-  security-sensitive change, a tradeoff about to lock in). The scaffolded `roles/lead.md` gains a
-  matching "Route before you write" discipline: classify judgment vs mechanical before typing.
-
-- **Preset native subagents no longer share the repo's `.claude/agents`.** The generated
-  `coop-<role>.md` files used to be assembled into a snapshot mounted OVER the repo's agents dir —
-  so your own subagents were frozen copies for the box's lifetime (host edits invisible, the dir
-  read-only in-box), and deleting your agents took coop's preset role down with them. They now mount
-  as the box's **user-level** `~/.claude/agents`: claude merges the two levels, the repo's
-  `.claude/agents` stays the live repo mount you own (edit, add, delete — with or without a preset),
-  coop's roles can't be deleted from inside, and a repo agent with the same name still deliberately
-  overrides (project beats user).
-
-- **coop owns the ACP editor toolbar — yolo, model-from-coop, and a live credential/preset switch.**
-  The ACP proxy is now always in the path (not just `--supervise`), so coop controls the session an
-  editor (Zed, …) drives: (1) it runs **every provider** (claude/codex/gemini) in **yolo** mode —
-  the box is the sandbox, so coop's proxy approves each `session/request_permission` itself (and for
-  claude also sets `bypassPermissions`), and the editor never shows a permission prompt, whatever the
-  adapter's own settings; (2) it **drops** the permission-mode and subagent dropdowns; (3) it keeps
-  the model dropdown but **defaults it to coop's model** (`--model`/the agent default), still
-  overridable in-editor; (4) it adds a first **coop**
-  dropdown to switch the **credential** (account) or **preset** (recipe) mid-session. The switch is
-  **transparent — the conversation is preserved**: coop restarts the box on the new identity (only on
-  a real change — re-selecting the current one, as an editor does when it applies its default config
-  at startup, is a no-op) and replays the ACP handshake, and an ACP box shares a credential-independent
-  session-transcript store so `session/load` still finds the conversation on the new account. Every `coop acp` session also
-  now survives a box restart (rebuild/OOM) for free, and a bad `--credential` fails fast before any
-  box spawns. `--supervise` is accepted but no longer needed. (Switching PROVIDERS — claude↔codex↔
-  gemini — is not offered: it can't carry the conversation across adapters today; it's on the
-  backlog with a hard "must stay transparent" bar.)
-
-- **ACP: rate limits are handled transparently — coop rotates (or waits) and re-sends for you.**
-  When the provider rate-limits a turn mid-session, coop no longer errors the turn or asks you to
-  resend: it swallows the error, suppresses the "you've hit your limit" notice the adapter streams,
-  restarts on your next signed-in account, and **re-sends your prompt automatically** — the turn just
-  completes on the backup credential, conversation preserved. The **toolbar dropdown moves** to the
-  credential coop switched to (a `config_option_update`), so it always shows what you're on. When
-  **every** account is cooling (or
-  you have just one), coop points at the account that resets soonest, tells the editor `Waiting for a
-  reset on credential X in MM:SS (at <time>) — your message will send automatically`, waits out the
-  reset, then re-sends. The limit-notice suppression only ever drops a chunk that a rate-limit error
-  actually follows, so legitimate output that merely mentions "rate limit"/"quota"/429 is never lost.
-  Same-provider only: it never changes the model or the provider; a preset session rotates via its own
-  `models:` ladder, not here. (Detection covers rate limits surfaced as a JSON-RPC error.)
-
-- **ACP: the toolbar shows the box's real config after a switch or restart.** Switching to a preset
-  used to leave the model dropdown on the old value even though the box was already running the
-  preset's model — the acknowledgment echoed coop's cache, and the restarted box's real config (in the
-  replayed `session/load` result) was swallowed. The proxy now forwards each re-established session's
-  `configOptions` to the editor as a `config_option_update`, so the dropdowns land on the truth.
-  Related fix: on a preset session coop no longer force-sets (or displays) its launch-time model over
-  the preset's — the preset's lead ladder owns the model.
-
-- **ACP: a lost-reload after a box restart is no longer silent.** If a restored session's
-  `session/load` comes back an error on the new box (e.g. its transcript wasn't on the shared store),
-  coop warns on the ACP server log instead of leaving the editor with a context-less session.
-
-- **ACP: a switch or box restart before your first message no longer errors.** A credential/preset
-  switch made — or a box death (rebuild/OOM) hitting — an opened-but-unused thread used to fail with
-  a confusing "Session not found": the restart replayed `session/load`, but a session that hasn't had
-  a turn yet has no transcript to load. coop now **re-creates** such a turn-less session on the new
-  box (via `session/new`) and remaps its id under the hood, so the editor's session keeps working —
-  nothing is lost, because there was no conversation. A session that has already had a turn still
-  reloads its transcript as before.
-
-- **ACP: an editor disconnect during a box restart no longer orphans the new box.** If the editor
-  went away in the brief window while a restart's replay was in flight, the freshly-spawned box could
-  be left running with `coop acp` blocked forever waiting on it (in prod it was reaped by the shutdown
-  signal; the leak was real regardless). The teardown and the swap-in now coordinate, so exactly one
-  stops the new box and `coop acp` always exits cleanly.
-
-- **ACP: opt-in wire tracing to debug a misbehaving editor session.** Off by default, zero cost;
-  turn it on by setting `COOP_ACP_TRACE=1` in the editor's server env, or by creating the sentinel
-  `~/.config/coop/acp-debug` (which works on an ALREADY-running server — editors keep one coop process
-  alive across threads). coop then appends the editor↔box ACP wire, coop's own replies, and
-  restart/spawn events to `~/.config/coop/acp-trace-<pid>.log`. The log is bounded — each file
-  rotates to a single `.log.1` backup past a size cap (~2× the cap per server), and old per-process
-  logs are pruned to the newest few on startup (a running server's log is never pruned). It holds
-  prompts and file contents — treat it as sensitive.
-
-- **`coop prompt` — a one-line repo status for your shell prompt or tmux.** Prints this repo's
-  actionable state on ONE line — task counts and fork/loop activity, `·`-separated, non-zero
-  segments only (`3 todo · 1 blocked · 2 forks · 1 looping`); nothing when idle, so an embedding
-  prompt stays clean. Read-only and cheap — task dirs + fork pidfiles, no per-fork git and no
-  docker — so it's safe on every prompt redraw. Wire it into starship or tmux
-  (`set -g status-right '#(cd #{pane_current_path}; coop prompt)'`).
-
-- **BREAKING: `coop profiles` is now `coop credentials`.** The split is complete: a CREDENTIAL is a
-  stored account/login (its own rate-limit pool); an orchestration recipe is a PRESET. The command,
-  help, and every hint now say credentials (`coop credentials claude work model opus`,
-  `coop login claude --credential work`); `coop profiles` tombstones with the rewrite. The
-  `--profile` flag is removed entirely — no tombstone, `--credential` is the one name; an agent's
-  OWN `--profile` still reaches it after a `--`. A new `coop presets [name]` command lists the repo's presets (a
-  broken one shows its error) and shows one recipe in full; `coop presets init [name]` scaffolds
-  the documented frontier template, valid and runnable as written. On-disk credential storage is
-  unchanged (`<agent>/profiles/<name>/`) — nothing to migrate.
-
-- **Preset consult roles are role-addressed, with their prompt as the peer's persona.** Every
-  role now resolves by its ROLE name — `@coop-<role>` (native), `coop-consult <role>` (consult),
-  `coop-delegate <role>` (delegate). An explicit `mode: consult` role was the odd one out: the
-  lead was told to call `coop-consult <agent>`, its `prompt:` only shaped the lead (never the
-  peer), and two consult roles on one agent collided on a shared model. Now it wires like the
-  native→consult degrade always did — `COOP_CONSULT_<ROLE>_*` carries the role's agent + model,
-  and its prompt (if any) mounts as the persona the peer adopts — so `coop-consult reviewer`
-  runs the reviewer's agent on the reviewer's model *as* the reviewer, and same-agent consult
-  roles stay distinct. A promptless consult role behaves as before (the peer answers as itself),
-  and raw `coop-consult <agent>` still works for a persona-less opinion.
-
-- **`coop credentials` no longer cries "token expired" on a live claude login.** The status read
-  only the OAuth access-token expiry and ignored the refresh token, so a working claude account —
-  which the CLI silently renews on use — showed "token expired" and read as blocked. Now a profile
-  that carries a refresh token reads as signed in; only an expired token with no refresh token (a
-  genuinely dead OAuth login) still says "token expired".
-
-- **`coop acp --supervise` survives a box restart again.** On the first resume the supervisor
-  fork-bombed itself: every generation's box carries the same supervisor id, but the per-generation
-  teardown ran a supervisor-wide `KillByLabel(<id>)` — so stopping the dead box also killed the
-  just-spawned replacement, over and over until the rapid-fail guard gave up ("agent exited 5 times
-  within 2s of starting; giving up"), and the editor's session never came back. Per-generation
-  teardown now removes only its own box (by cidfile); the supervisor-wide sweep runs once, at final
-  teardown. The acp-e2e resume test goes from a 64s failure to a 7s pass.
-
-- **BREAKING: loop pools are gone — a loop rotates a preset's model-first `models:` ladder.** The
-  persistent `coop loop pool` registry and `pools.json` are retired (`coop loop pool` tombstones; a
-  stray `pools.json` is ignored, no warning). The rotation now IS the `models:` ladder of the loop's
-  lead: each entry is `model` or `model@account`, and a BARE model fans out across every signed-in
-  account (default first, rotating on rate limit) — exactly what a pool used to do, so pools became
-  redundant. Fallbacks are the order you write them (`[claude-opus-4-8, claude-fable-5@work]` steps
-  opus → fable), and limits are keyed per (model, account), so `opus@personal` stays usable while
-  `opus@work` cools. This makes model the one axis everywhere: presets drop lead `model:`/`credentials:`
-  for one `models:` ladder, roles drop `credentials:` (they run on their agent's default account),
-  a fleet fork takes a single `model:`/`credential:` (a full ladder → a `preset:`), `--model` gains
-  a `--model opus@work` shortcut (the `--credential work@opus` `@`-form is retired), and a credential
-  no longer carries a model — `coop credentials <cred> model` is retired (both spellings tombstone;
-  set the model with `--model` or a preset). A credential is just an account. Model precedence is
-  tiered: `--model`/fleet `model:` > the active ladder entry's model > `COOP_LOOP_MODEL`/preset >
-  `COOP_<AGENT>_MODEL` > the agent CLI default.
-
-- **`coop loop` takes project-specific audit checks in `.agent/audit.md`.** The end-of-loop
-  auditor always verifies each shipped task's gate passes and has a commit; now, if
-  `.agent/audit.md` is present, its Markdown is appended to the audit prompt and the final pass
-  reopens any task that fails one of your checks (changelog updated, docs regenerated, no stray
-  TODOs, …). Inlined into the prompt, so it works the same for every agent; committed by default
-  (un-ignored like presets). Opt-in — no file is scaffolded. See `coop help loop`.
-
-- **A preset's native role generates its subagent in-box, from the role.** A native role's
-  `model:` used to be inert (the model came from the referenced `.claude/agents/<name>.md`).
-  Now a native role with no `subagent:` generates a `coop-<role>` Claude subagent **inside the
-  box** — its frontmatter carrying the role's `model:` (so it finally takes effect), a
-  `when:`-derived description, and the role's `prompt:` as the system prompt. It's overlaid
-  into the box's project `.claude/agents/` and never written to your repo (`.gitignore` gains
-  `.claude/agents/coop-*.md`); the `coop-` prefix can't collide with hand-authored subagents.
-  `subagent:` stays as an optional escape hatch — set it to reference an existing subagent
-  instead of generating one. The frontier template's `thinker` now generates `coop-thinker`
-  from a scaffolded `roles/thinker.md` (`coop init`'s `deep-reasoner`/`fast-worker` are
-  unchanged, for interactive auto-delegation). Native subagents run inside a Claude session,
-  so under a codex/gemini lead (`coop codex --preset frontier`) a native role **degrades to a
-  faithful read-only consult** on its agent — same model + persona, invoked as
-  `coop-consult <role>` — instead of an in-session subagent, so a non-Claude lead still gets
-  Claude's deep reasoning. `coop-consult` gained role-addressing to carry it
-  (`COOP_CONSULT_<ROLE>_{AGENT,MODEL,CONTRACT}`, persona prepended); the ad-hoc
-  fusion/`--consult` peer ask stays agent-addressed.
-
-- **Orchestration presets: the whole multi-model arrangement in one YAML file.** A preset
-  (`.agent/presets/<name>/preset.yaml`) declares who leads (a model-first `models:` ladder) and
-  which roles it routes work to — each role an agent + model + routing hints (a role runs on its
-  agent's default account), in one of three modes: `native` (a
-  Claude subagent), `consult` (a read-only peer via coop-consult), or `delegate` (a NEW
-  write-capable `coop-delegate` wrapper: it may edit the worktree but never commits — HEAD is
-  compared before/after and a commit fails loud — and runs are serialized; the lead reviews the
-  diff, runs the gate, and owns the commit). coop generates the lead's routing contract from the
-  YAML (exact invocations included); `coop presets init` scaffolds a self-documenting template (a
-  leading comment on every field) plus starter prompt files under `roles/` (`roles/lead.md`,
-  `roles/<name>.md`) that append to the generated contract — never replacing it — and read as
-  usable defaults for any project. `--preset <name>` works on `coop <agent>`, `loop`, `fusion`, `acp`, and
-  `coop fork <name> --loop`; explicit agent/`--model`/`--credential` flags still win. Credentials
-  are the public name for stored accounts/logins (rate-limit slots): launch surfaces take
-  `--credential`/`--credentials`, and `coop models` now lists
-  `claude-fable-5`, `claude-opus-4-8`, `gpt-5.5`, and `gemini-3.5-flash` for the frontier recipe.
-  See the README's "Presets" section and `coop help presets`. (First external dependency:
-  gopkg.in/yaml.v3 — dependency-free itself, the binary stays static.)
-
-- **`.agent/fleet.yaml` is the fleet format.** `coop fleet init`/`split` write YAML, every fleet
-  command reads it, and forks can reference presets (`preset: frontier`) with per-fork
-  `credential:`/`model:`/`consult:` overriding the preset for that fork only. The pre-v3 one-line
-  `.agent/fleet` is NOT read — its presence (alone or alongside fleet.yaml) is an error until it's
-  translated and deleted (see MIGRATING.md).
-
-- **coop now tells you when it's stale — binary, box image, and the skew between them.** Once a day,
-  the first interactive command checks GitHub in the background and mentions a newer release after
-  the command's output (gh-style; never blocks anything; `COOP_NO_UPDATE_CHECK=1` opts out).
-  `coop update --check` is the on-demand dry-run: binary vs latest release plus the box image's
-  build age and staleness, changing nothing and needing no container runtime. Every base-image
-  build now stamps which coop built it and from what box definition, so launches can warn — never
-  block — when a newer binary runs over an old image (the kubectl-style skew `update --self-only`
-  used to leave invisible), and when the image is a month old (its baked agent CLIs churn weekly).
-  `coop loop` surfaces the same nudges once at startup.
-
-- **Site casts can't ship a dirty version anymore.** `make casts` regenerates the site's terminal
-  recordings, and the generator now refuses to capture the real `coop help` from an untagged or
-  `+dirty` binary (the live help.cast once shipped `coop v0.0.0-…+dirty` to every visitor). The
-  release checklist re-trues the casts at the tag, and the scripted loop scene's closing line now
-  reports a possible count (`3/3 in 3 iterations` — the loop works one task per iteration).
-
-- **The legacy flat credential vault is retired — one layout, migrated automatically.** Credentials
-  and sessions now always live under `<config>/<agent>/profiles/<name>/`; the old flat
-  `<config>/<agent>/` layout, where an un-named "default" login sat directly in the agent dir, is gone.
-  The first `coop` command after upgrading moves any flat login into `profiles/default` for you — no
-  action, no error — so `AgentProfileDir`, `Profiles`, and the profile-`rm` guard no longer carry a
-  second on-disk shape and every future profile feature is written once. A downgrade to ≥v2.6 still
-  reads `profiles/`.
-
-- **Progress bars show blocked work in red — everywhere.** Every coop progress bar (`coop tasks
-  watch`'s overall + per-queue bars, `coop fleet watch`'s fleet + per-fork bars, and the `coop loop`
-  live bar) now renders blocked tasks as a red segment (done cyan, blocked red, the rest empty) instead
-  of a done-only fill. `coop tasks watch`'s per-queue breakdown lines also print the blocked count in
-  red — so a queue parked on a decision is visible at a glance, not just in the overall header.
-
-- **Shell completions for bash and zsh.** `coop completion bash|zsh` prints a completion script (its
-  commands and verbs come from the same source the dispatch and help do, so it can't drift), and a
-  hidden `coop __complete` offers live values — existing fork names, task ids, credential names —
-  all from local reads. The scripts ship in the release archive. Install:
-  `coop completion bash > ~/.local/share/bash-completion/completions/coop` (bash) or
-  `coop completion zsh > "${fpath[1]}/_coop"` (zsh).
-
-- **`help.go` is now the single source for the CLI reference, with a drift gate.** A new
-  `tools/gendocs` renders the whole reference (the overview plus every command page) from `internal/cli`
-  into `docs/cli.md` (offline reference) and `site/llms.txt` (an agent-readable manual); `coop help
-  --all` prints the same bytes. `go run ./tools/gendocs -check` — wired into `make check` — fails if a
-  `help.go` edit wasn't regenerated, so the docs can't silently drift. The render is deterministic and
-  plain (no color, version, host paths, or state), so it's byte-identical on every machine.
-
-- **A CLI-conformance test graduates the taste rules into the gate.** The committed `.agent/rules`
-  (`ls` everywhere, `rm` everywhere, every verb documented, retired aliases stay dead) were enforced
-  only by review — and drift crept in. A new table-driven test now walks the CLI surface and asserts
-  them mechanically, so a lister that resurrects `list`, a destructive verb that resurrects `remove`, a
-  verb added with no help row, or a re-minted retired alias fails CI. (Also documents the `clear`
-  bulk-delete verb in `coop tasks --help`, which the test surfaced as undocumented.)
-
-- **Grammar consistency across launch paths.** `coop loop --credential <name>` runs a one-off on the
-  given account, and `coop fork <name> acp --credential` is accepted like plain `coop acp` (it was
-  rejected). `coop fusion --consult` is a documented no-op (a council always consults) instead of
-  leaking coop's flag into the governor's CLI. `coop fusion claude -- --help` now runs the agent's
-  `--help` rather than coop's page (help detection stops at `--`). `coop tasks clear` is added as a
-  bulk-delete idiom (it clears the done archive, gated like `rm --all-done`). And usage strings now
-  share one placeholder lexicon (`<name>`/`<model>`/`<path>`/`<id>`, ASCII `...`) instead of spelling
-  the same value `p`/`m`/`<m>`/`<dir>` with mixed ellipses.
-
-- **BREAKING: v3 has a clean CLI — no backward-compat aliases.** Renamed commands are retired with a
-  tombstone (exit 2 + the exact rewrite, one shared registry): `coop clone` (→ `coop fork`),
-  `coop pool`/`coop loop pool` (retired — a loop rotates a preset's `models:` ladder), the old
-  `coop profiles` name (→ `coop credentials`), the verb-first credential edits (→ the path grammar
-  `coop credentials <agent> <credential> <default|rm>`), `coop tasks start` (→ `claim`), and
-  `coop loop --debug` (→ `--debug-on-fail`). And the forgiving *spelling* aliases are
-  dropped too: **`ls` and `rm` are the only spellings** — `list`/`remove` are no longer accepted. See
-  MIGRATING.md.
-
-- **A gentler first run.** `coop help` now leads with a FIRST RUN line — `coop build → coop login
-  <agent> → coop doctor` — until an agent is signed in (a pure-local check, so it still works before
-  Docker). `coop help <agent>` documents coop's own wrapper flags (`--credential`, `--model`,
-  `--consult`, `--`) instead of just punting to the agent's CLI, and a first `coop claude` with no
-  stored credential prints a one-line login nudge (TTY only, never blocks). Every top-level help line
-  now fits an 80-column terminal (was up to 109, wrapping the two-column layout), and the fleet/ACP
-  rows read in plain words instead of defining themselves.
-
-- **`coop fork ls`/`review` stop showing inherited state as fork activity.** A fresh fork's UPDATED
-  column showed the base commit time it inherited from the clone (a seconds-old fork could read "3
-  minutes ago"); it now shows the fork's own latest commit, falling back to the clone's age when the
-  fork hasn't committed. And `coop fork review`'s "why (latest task log)" now reads only completed
-  (`99_done`) task logs, so a seeded `00_todo` template no longer masquerades as the fork's work — with
-  a clear "no completed task yet" when it hasn't finished anything.
-
-- **Filesystem-only commands no longer need a container runtime.** coop detected the runtime up front
-  for every command, so `coop tasks ls`/`lint`, `credentials`, `models`, `init`, `check-secrets`,
-  `fork ls`/`path`, and the group help pages all failed on a machine without Docker — even though they
-  never touch a container. Detection is now lazy: only box-running commands (agent launch, `run`,
-  `shell`, `build`, `doctor`, `up`/`down`, `acp`, `fusion`, loops, and a gated `fork merge`) resolve
-  it, so install→init→browse-the-queue and CI `coop tasks lint` work before Docker exists. Box
-  commands keep the same actionable "runtime not found" error.
-
-- **Fork destroyers stop losing work quietly.** `coop fork <name> --fresh` recreated a fork by
-  destroying the old clone with no check — it now runs the same unmerged/dirty guard as `fork rm`
-  (recreate anyway with `--fresh --force`), and fails fast before any image work. `coop fork rm` now
-  confirms before deleting (default No at a terminal; `--yes` to skip; distinct from `--force`, which
-  overrides the unmerged/dirty guard). `fork rm/merge/stop/logs` reject a second name (`fork rm a b`
-  used to act on only `b` and report success). And a post-merge cleanup now keeps a fork whose
-  worktree has uncommitted changes (an interrupted iteration) instead of discarding them.
-
-- **Deletions now confirm before they happen.** `coop tasks rm` (which matches by substring and has
-  no undo — the queue is gitignored), `coop tasks rm --all-done`, and `coop credentials rm` all went
-  straight to `os.RemoveAll` with no prompt. They now route through one shared gate: at a terminal it
-  asks first (naming the resolved id / the count / the credential, and defaulting to No); piped it
-  refuses unless you pass `--yes`. `--yes` skips the prompt and is distinct from `--force` (which
-  overrides a safety guard, not the confirmation). `tasks rm` also echoes the resolved id *before*
-  deleting, not after.
-
-- **Consistent verb recognition across the command families.** `coop fork list` now lists (an alias
-  for `coop fork ls`, matching `coop tasks`), and `list`/`watch`/`remove` join the reserved fork
-  names so a fork can't shadow a subcommand — `coop fork ls` warns if a pre-existing fork already
-  does. `coop fleet ls` and `coop credentials ls` stop erroring blankly and point at the real lister
-  (`coop fork ls` / bare `coop credentials`). The `coop tasks` unknown-subcommand hint now includes the
-  flagship `watch` (both it and `isTasksSubcommand` derive from one list, so they can't drift). And
-  `coop help status` shows the same removal tombstone as `coop status` (one shared source). `coop
-  fork --help` states the policy: new fork actions are verb-first, and a fork can't be named a verb.
-
-- **Typo suggestions now catch 3-rune slips.** The did-you-mean floor ignored anything under 4
-  runes, so `coop lop` got no "did you mean loop" and — worse — `coop fork lss` (a distance-1 typo of
-  `ls`) slipped past the guard and silently cloned a stray `lss` fork. The floor now allows 3-rune
-  inputs at edit-distance 1 (`lop`→loop, `lss`→`coop fork ls`) while keeping 1-2-rune inputs
-  suggestion-free (so `ls`/`cp` still route to the run-in-box hint). A verb-adjacent new fork name is
-  refused unless you pass an explicit agent (`coop fork lss claude` still creates `lss` on purpose).
-
-- **Split slices and seeded fork queues get all four state dirs.** `coop tasks split` /
-  `coop fleet split` wrote slices containing only `00_todo/`, and fork loops seed a fork's queue by
-  copying that tree — so an in-box agent following the documented "move a task's folder between state
-  dirs" protocol hit a bare `mv 00_todo/x 10_in_progress/` with no `10_in_progress/`, which *renames*
-  the folder into a file and silently corrupts the queue (observed losing a claimed task mid-fleet-run
-  on 2026-07-01). Split producers, `coop tasks add`, and fork seeding now scaffold all four state dirs
-  up front, and `coop tasks lint` flags any queue missing one so pre-fix trees get caught.
-
-- **`coop tasks add` can fill a task inline.** Pass `--context`, `--acceptance`, `--approach`, and
-  repeatable `--subtask` to create a complete, ready-to-work task in one call instead of scaffolding
-  then editing — all-or-nothing (give every section flag, or none for the placeholder scaffold). The
-  scaffold, these flags, and `coop tasks lint` now derive the task shape from one source, and lint
-  checks that all three sections are present (not just Acceptance).
-
-- **`coop tasks watch` is one queue-ordered list.** The live board split tasks into per-state
-  sections; it now shows a single list — in progress, then todo, then blocked — with each row's icon
-  colored to match the top counter (in-progress yellow, todo cyan, blocked red). Active work
-  (in-progress and blocked) is never hidden behind the `+N more` cap; only the todo backlog tail is.
-
-- **Bare `coop tasks` now lists the queue.** It printed the help page, yet the docs, MIGRATING
-  guide, scaffold templates, and its own error strings all call bare `coop tasks` "the listing." It
-  now lists (like `coop credentials`); `coop tasks --help` (or `coop tasks help`) still shows the
-  reference.
-
-- **`:d` in `coop tasks decisions -i` marks a task done.** When a blocked decision's real answer is
-  "already handled," you no longer have to answer → unblock → claim → done: type `:d` (or `:d
-  <reason>` to record why in `decision.md`) to move the task straight to `99_done/`. The walker's key
-  legend is colorized to match.
-
-- **Clearer errors, and consistent split-slice naming.** `coop up` with no compose now points at
-  `coop init --services postgres,redis` (not `--stack`, which only scaffolds an asdf Dockerfile);
-  a missing `.agent/fleet` points at `coop fleet init`; and `coop tasks split` now names its slices
-  `.agent/tasks.slice<n>` to match `coop fleet split` (the two were `tasks.<n>` vs `tasks.slice<n>`).
-
-- **`coop doctor` warns loudly when it's probing an alpine stand-in.** With no box image built,
-  doctor falls back to a stock `alpine` (skipping the non-root USER and toolchain checks) — it only
-  disclosed this in a dim aside, so a newcomer read a green bill of health and then hit a failing
-  `coop claude`. It now prints a yellow ⚠ telling you to run `coop build` and re-run. The docs that
-  claimed `coop doctor` "builds the box" (it never did) are corrected.
-
-- **BREAKING — `coop loop` exits 3 when it stops with work blocked on a human decision.** Every loop
-  outcome used to exit 0, so cron/fleet/CI couldn't tell "queue drained" from "stalled on a blocked
-  task" without scraping stderr. The exit contract is now `0` verified done (or the audit reopened
-  work — re-run); `1` failure; `2` usage; `3` stopped with a task in `50_blocked/` and nothing else
-  actionable. A script that treated any non-zero loop exit as failure should special-case 3.
-
-- **Stdout views stay clean when piped.** `coop help`, a command's `--help` page, `coop credentials`,
-  `coop models`, and `coop fork ls` colored their output through the stderr-gated
-  helpers, so `coop credentials | grep` or `coop fork ls | wc -l` from an interactive shell received raw
-  ANSI escapes. They now gate color on stdout (via `ui.For(os.Stdout)`), so a pipe or redirect gets
-  plain text.
-
-- **Scaffolded `postgres:18` services start out of the box.** `coop init --services postgres`
-  mounted the data volume at `/var/lib/postgresql/data`, which the postgres 18+ image refuses — the
-  container exited 1, and auto-up (`COOP_AUTO_UP=1`) silently continued without the database. The
-  scaffold now mounts `pgdata` at `/var/lib/postgresql`. Already scaffolded before the fix? Move the
-  mount up one level (see Troubleshooting).
-
-- **`coop loop` no longer reports "queue verified done" when the audit reopened work.** The
-  end-of-run audit reopens failed done tasks by moving them into `10_in_progress/`, but the closing
-  banner checked `00_todo/` only — so it printed a green "verified done" over a queue that still had
-  reopened work, and an unattended user (or a wrapper keying off the message) walked away. It now
-  counts everything actionable and prints `⚠ audit reopened N task(s) — run 'coop loop' to work them`.
-
-- **`coop tasks path <id>` prints a task's resolved folder.** The companion to `coop fork path`:
-  resolve a task by id or slug fragment and print its directory, so `cat "$(coop tasks path
-  <id>)/task.md"` works from a shell or hook instead of hunting the four state dirs by hand. It
-  spans configured queues like the other id commands.
-
-- **Security — fork commands reject a name that escapes the forks directory.** `coop fork rm ..`
-  `filepath.Join`-cleaned the name before deleting, so `..` resolved to the parent of all your
-  projects and `os.RemoveAll` wiped it — a live, unrecoverable data-loss bug. Every name-taking
-  fork verb (`rm`, `stop`, `open`, `logs`, `review`, `path`, `merge`, and `--fresh`) now validates
-  the name up front and refuses anything that isn't a single safe path segment.
-
-- **`coop loop` keeps the machine awake while it runs.** An overnight drain is pointless if the
-  laptop idle-sleeps midway through it, so the loop now holds a system sleep inhibitor for its
-  duration — macOS `caffeinate -i -m -s`, tied to coop's own process (`-w`) so it self-releases
-  even on a hard kill, and released the moment the loop returns. Best-effort (a missing tool just
-  runs the loop unchanged) and on by default; set `COOP_CAFFEINATE=0` to opt out. Covers `coop
-  loop` and fork loops (foreground and detached). The display is deliberately left free to sleep.
-
-- **BREAKING — tasks are folders now (`.agent/tasks/`); the single `.agent/TASKS.md` is gone.**
-  The work queue is one folder per task under four state directories — `00_todo/` ·
-  `10_in_progress/` · `50_blocked/` · `99_done/` — and a task's workflow state is simply which
-  directory it sits in. There is no `status:` field and **no legacy fallback**: coop no longer
-  reads a single-file `TASKS.md`.
-
-  *Why it's better.* A finished task physically leaves the queue (its folder moves to
-  `99_done/`), so the "done but never pruned" rot that bloated a single `TASKS.md` is gone and
-  the loop never re-scans shipped work. State can't drift from reality, because the directory
-  *is* the state — every transition is an atomic folder move (`os.Rename`) in `.agent/tasks`,
-  which `coop init` keeps as gitignored local working state (not versioned). Each task carries
-  its own design (`spec.md`), working journal (`log.md`), resume note
-  (`state.md`), pending decision (`decision.md`, replacing the global `PENDING_DECISIONS.md`),
-  and `screenshots/`/`artifacts/` instead of everything piling into shared top-level files. The
-  numeric directory prefix is a pure sort key, so a plain `ls .agent/tasks` lists the states in
-  lifecycle order (todo → in_progress → blocked → done) rather than alphabetically (`99_` keeps
-  done last); `coop tasks` still prints the clean names. `coop tasks` drives it all —
-  `add`/`claim`/`block`/`unblock`/`done`/`rm`/`ls`/`lint`/`decisions` — and the loop, `coop fleet`,
-  the Stop hook, and `coop init` are folder-native. Subtasks are a `- [ ]`
-  checklist inside `task.md`. A finished
-  task is **moved** to `99_done/`, never deleted: the loop and `/sweep` only ever move tasks
-  between states, so done tasks accumulate as the shipped record until you prune them by hand with
-  `coop tasks rm --all-done` (or `coop tasks rm <id>` for one).
-
-  *Migrating.* It's a one-time, content-preserving conversion an LLM handles well (the old task
-  bodies are prose to map, not a rigid parse). Commit first, then paste the prompt below to any
-  coding agent **running in the repo**; afterward verify with `coop tasks` and `coop tasks lint`.
-  The full version (with the `decision.md` / `PENDING_DECISIONS.md` handling spelled out) is in
-  [`MIGRATING.md`](MIGRATING.md):
-
-  ```text
-  Convert this repo's legacy coop task queue to the folder format; lose no content.
-  SOURCE: `.agent/TASKS.md` — each top-level `- [ ] / [w] / [x] / [B] <title>` is one task and
-  the indented bullets beneath it are its body; `.agent/PENDING_DECISIONS.md` holds decisions.
-  Ignore the legend, the `[E]` example, and any `- [ ]` lines inside ``` fenced code blocks.
-  TARGET: a folder per task; the task's STATE is its directory (use the NN_ prefix verbatim):
-    `- [ ]` -> `.agent/tasks/00_todo/`      `- [w]` -> `.agent/tasks/10_in_progress/`
-    `- [B]` -> `.agent/tasks/50_blocked/`    `- [x]` -> `.agent/tasks/99_done/`
-  For each task write `.agent/tasks/<state>/<YYYY-MM-DD-slug>/task.md`: frontmatter (id, title,
-  labels, updated) + the body mapped into **Context** / **Acceptance criteria** / **Approach**
-  and a `## Subtasks` checklist; never add a `status:` field. For a `[B]` task also write
-  `<id>/decision.md` (question, options, recommendation, resolution), folding in any matching
-  `PENDING_DECISIONS.md` entry. Then delete `.agent/TASKS.md` and `.agent/PENDING_DECISIONS.md`,
-  and report the tasks migrated per state.
-  ```
-
-- **New `coop tasks watch`; `coop status` removed.** `coop tasks watch` is a live, task-centric
-  board — the queue itself (in progress / todo / blocked) draining in place, with overall progress;
-  it auto-exits only when every task is done, and keeps watching a blocked or idle queue. With a
-  fleet running it merges in every active fork and the tasks it claimed — one view, deduped by task
-  id, with each in-progress task tagged by the fork on it — so it's the single place to see all the
-  work and who's doing what. The fleet's per-fork board stays at `coop fleet watch` (snapshot:
-  `coop fork ls`). `coop status` is gone: it was a third entry point that overlapped `coop fork ls`,
-  and its `--watch` was a straight alias for `coop fleet watch`. Listing is normalized too — `ls` is
-  the canonical verb everywhere (`coop tasks ls`, `coop fork ls`), with `list` kept as a forgiving
-  alias, matching `rm`/`remove`.
-
-- **The loop hands off mid-task through a per-task `state.md`.** Each `coop loop` iteration runs a
-  fresh headless agent with no memory of the last, so a task interrupted mid-flight used to be
-  resumed only by reverse-engineering the uncommitted `git diff`. Now the work prompt has the agent
-  keep a small, overwritten resume note in the in-progress task's folder (`state.md`: status ·
-  what's done · next action · traps), refreshed at each checkpoint, and read first when resuming
-  it. Because it's
-  plain markdown in the repo, the next iteration can be a *different* agent (claude → codex → gemini)
-  and still resume cleanly — the groundwork for switching agents, not just credentials,
-  between iterations. The agent finalizes the note as its last step on a task — even when done — so
-  a review can reopen it and the next agent picks up the requested changes from the note rather than
-  the diff.
-
-- **Self-documenting task files, and a first-class blocked-decision flow.** `coop tasks add` seeds
-  `task.md` + `log.md` + `state.md` (and `coop tasks block` a `decision.md`), each opening with a
-  short header that explains the file and its format — so a resume snapshot, the *why* journal, and
-  a blocked one-way-door decision are all by-the-book without leaving the folder. The `task.md`
-  header directs the agent that picks the task up to replace its `<…>` placeholders (Context /
-  Acceptance / Approach) *before* writing code, or block it — so a vague title can't be coded
-  against blind. A blocked decision is then resolved from the CLI: `coop tasks decisions` lists the
-  open ones with their full recommendation, or `-i` walks them one at a time to answer in place;
-  answering — inline with `coop tasks unblock <id> "<answer>"` or at the interactive prompt —
-  records the answer into `decision.md` and returns the task to `todo` for the loop to pick up.
-  `.agent/tasks/README.md` is the full reference: a description, template, and worked example for
-  every per-task file.
-
-- **New `/review-board` skill — the heavyweight, on-demand pre-merge review.** Convenes a
-  board of expert hats (correctness, security, PM/UX/maintainer, and any hat the change
-  earns) as parallel reviewers, checks the diff against the project's *own* `.agent/rules/`
-  and gate — no hardcoded laws — then synthesizes one ranked verdict and an ordered fix plan
-  you can queue with `coop tasks add`. Ships into new projects via `coop init`, and is
-  agent-agnostic: it falls back to a sequential pass where parallel subagents aren't available.
-
-- **Security hardening (from end-to-end and multi-agent audits).** Secret shadowing now covers
-  `*.yaml`/`*.yml` credential files and matches filenames case-insensitively, so
-  `config/credentials.yaml`, `.ENV`, and `ID_RSA` no longer slip into the box (notably on
-  case-insensitive filesystems); a template/sample suffix (`*.example`/`*.sample`/`*.template`) no
-  longer un-shadows a private-key pattern, so `id_rsa.example` stays shadowed — only exact public
-  CA-bundle names still override `*.pem`. The fork **merge gate** now reuses that same shadow denylist
-  instead of a separate regex that had drifted, so `kubeconfig`, `.npmrc`, `.netrc`,
-  `service_account.json`, `*.kdbx`, etc. can no longer land silently on `coop fork merge`. `coop
-  check-secrets` (and the merge gate) also flag `secret_key_base`/`master_key`/`encryption_key`, a
-  password embedded in a connection-string URL (`postgres://user:pw@host`), and GitHub fine-grained
-  tokens (`github_pat_…`), and note how many gitignored-but-box-visible files the default scan
-  skipped. `COOP_EGRESS` fails closed — an unrecognized value (a typo like `None`) is treated as
-  offline, and the box forces `--network none` for any egress value other than an explicit `open`
-  (defense in depth at the boundary). `coop login --credential` rejects a traversal/collision name,
-  so credentials can't be written outside the agent vault.
-
-- **Per-fork credentials in the fleet.** Give each fleet fork its own account — `credential: <name>`
-  on the fork in `.agent/fleet.yaml` (or a `model: <m>@<account>` pin; a full fallback ladder comes
-  from a `preset:`) — so forks run in parallel on separate rate limits instead of contending for one.
-  `coop fleet up` validates the credentials up front. Also exposed on
-  `coop fork <name> <agent> --credential <name>` (loop and interactive). Forks with no `credential:`
-  keep the agent's marked default.
-
-- **Pick a credential for a single run with `--credential <name>`.** Previously account selection
-  only worked for `coop login`; on a run the flag was forwarded to the agent and rejected. Now
-  `coop claude --credential work` runs that one session on the `work` account without changing the
-  default (`coop credentials <agent> <name> default` still sets the persistent one). It works on
-  every agent-launch path — `coop <agent>`, `coop fusion <agent>`, and `coop acp <agent>` (so an
-  editor can pin two ACP entries to different accounts). coop consumes the flag only before a `--`,
-  so an agent's own flags (e.g. codex's `--profile`) still pass through after it; a nonexistent
-  credential errors instead of creating an empty husk dir.
-
-- **`coop credentials` flags an expired login.** "signed in" used to mean only that a credentials
-  file existed, so a dead OAuth token read as fine yet 401'd mid-run. `coop credentials` now detects
-  an expired token (one with no refresh token — see the refresh-token entry above) and points you at
-  `coop login <agent> --credential <name>` to refresh it.
-
-- **Delete a stored credential with `coop credentials <agent> <credential> rm`.** Removes that credential's login
-  token and session history. It refuses to delete the marked default (set another first) and never
-  touches the legacy flat layout's whole agent dir. Use it to clear a stray credential left behind
-  by an earlier login layout, e.g. `coop credentials claude default rm`.
-
-- **Remote (HTTP/SSE) MCP servers in `mcp.json` are covered for every agent.** Besides stdio
-  servers, an HTTP server — `{ "type": "http", "url": …, "headers": … }` — reaches all three:
-  claude and gemini read the canonical `headers` directly, and codex (which has no inline-header
-  support — only `bearer_token_env_var` / OAuth) authenticates via `bearer_token_env_var`, so set
-  both on a server you want all three to use. coop now flags a codex HTTP server that carries
-  `headers` but no `bearer_token_env_var`, so the auth gap is visible instead of a silent 401. See
-  `agents/mcp.json.example`.
-
-- **Reliability fixes (from end-to-end and multi-agent audits).** Concurrent config edits (e.g.
-  `coop credentials <agent> <name> default`) no longer lose updates (writes are locked + atomic), and
-  `coop fork -d` claims its pidfile atomically (the worker owns it on exit) so two concurrent
-  detaches can't start two loops racing one worktree; `coop fork stop` confirms the worker is dead
-  (escalating to SIGKILL) before clearing the pidfile. `coop fork merge` rebases the fork's branch by
-  name, so it can't sign/land the wrong branch if an agent left another checked out.
-  `coop fork --credential <typo>` fails before cloning (no stray fork), a fork can't be named `acp`,
-  and a fork name with whitespace/`=` and a duplicate task id across states are rejected/de-duped. Regenerating a Codex MCP config no longer drops a user's own
-  `[mcp_servers_backup]`-style tables, and numeric MCP env values render as plain digits. The
-  unattended loop no longer false-"stall"s when it's parking one-way-door tasks into `50_blocked/`
-  (progress = done *or* blocked), parses minute/hour `retry-after` hints, and falls back to backoff
-  on an unrecognized reset timezone instead of waking hours early; `coop tasks watch`/`fleet watch`
-  counts no longer briefly inflate on a torn read of a task move. Fusion's governor is told to consult
-  only authenticated peers.
-
-- **CLI consistency.** `coop version`, `coop loop`, and `coop acp` reject stray or malformed
-  arguments instead of silently ignoring them; `coop fork merge` with no name reports a usage
-  error; `coop help help`/`coop help version` no longer print a broken pointer; `--consult`/`--supervise`
-  honor the `--` separator; `coop fleet down` surfaces a running fork no longer in the fleet; and
-  `coop credentials` flags a dangling default.
-
-- **`coop update` now refreshes agent CLI packages from npm's stable `latest` tags.** The shared
-  box's built-in npm specs are `@anthropic-ai/claude-code@latest`, `@openai/codex@latest`,
-  `@google/gemini-cli@latest`, `@agentclientprotocol/claude-agent-acp@latest`, and
-  `@agentclientprotocol/codex-acp@latest`, so a fresh `coop update` picks up agent fixes without
-  a coop source change. Codex profiles are also hardened before launch with a best-effort SQLite
-  trigger that ignores inserts into `logs_2.sqlite`'s feedback-log table (openai/codex#28224);
-  sessions, auth, MCP config, and memories are left alone.
-
-- **`COOP_NO_ASDF=1` no longer breaks Node-based agent CLIs when the shared asdf volume has a
-  stale Node shim.** The flag still skips `.tool-versions` provisioning, but the entrypoint now
-  always repairs a broken bare `node` by selecting an installed asdf Node fallback when needed.
-
-- **Readable, colorized output across the CLI.** `coop tasks` and `coop tasks decisions` render in
-  color — colored state headers, wrapped titles, a gray task id, and `[n/m]` subtask / `⚠` decision
-  markers — instead of a flat monochrome list, degrading cleanly on a narrow terminal or under
-  `NO_COLOR`. Command results now speak in one voice: a green `✓` for success, a yellow `⚠` for a
-  caution, a red `✗` for a failure, plain text for a neutral note — replacing the old
-  `coop: <command>: …` prefix that just echoed the command back at you (so `coop tasks lint` reads
-  `✓ no issues — 1 task checked`). The loop's per-iteration line reads `· using <agent> model
-  <model> profile <profile>` with the values lifted out of the dim label, and `coop fleet watch`
-  repaints only on a real change (no flicker), with the task counts aligned in a right-sized column.
-
-- **The unattended loop's live view no longer garbles.** The bottom status bar was overprinted by
-  coop's own `coop:` lines and the sibling-services startup; those now scroll cleanly above the bar
-  (ui routes them through it), the auto-start no longer dumps docker compose's repainting progress
-  (it's discarded — `coop up` shows it), and the streamed Bash activity shows the real command
-  instead of the `cd …` an agent prefixes to reach a monorepo subdir. The bar also skips a repaint
-  when nothing changed (same content + width), like `coop fleet watch`, so it sits still instead of
-  flickering. The loop prompt also reminds the agent to read a file before editing it.
-
-- **Shared guidance for using agent orchestration well.** The repo contract, `coop init` scaffold,
-  and global `INSTRUCTIONS.md.example` now teach every supported agent to set a persistent goal when
-  its runtime has one, batch independent read-only work, and use native subagents or task workers for
-  research and second opinions while keeping writes serialized in the current checkout. The wording is
-  capability-based so Claude, Codex, and Gemini use their native equivalents without inventing
-  unavailable slash commands or trying to run host-side Coop commands from inside the box.
-
-- **`rm` is the one verb for deleting things.** Every destructive subcommand advertises `rm` —
-  `coop tasks rm`, `coop fork rm`, `coop credentials rm` — and `rm` is the only accepted spelling
-  (the clean-CLI entry above drops the `remove` alias).
-
-- **Clearer `coop help`.** Tasks get their own `TASKS` section instead of one line under
-  `UNATTENDED`, and `coop up`/`coop down` name the actual services defined in `compose.agent.yml`,
-  dimmed (with a "none yet" hint) when there's no compose file to act on.
-
-- **A bare command group prints its help instead of an error.** `coop fleet` with no subcommand
-  used to fail with an "unknown command" error built from an empty token; it now prints the
-  group's help and exits 0 — the natural way to discover the subcommands. (Bare `coop tasks`
-  goes further and lists the queue — see its own entry; `coop credentials` already showed a
-  sensible default view.)
-
-- **Task-queue niceties.** `coop tasks --tasks <dir> add` bootstraps a missing secondary queue on
-  demand, so a monorepo can start a per-component queue without a root `coop init`. (The single-loop
-  progress view — done/total · blocked · the active task — is now part of `coop tasks watch`.)
-
-
-- **`coop tasks` works across every configured queue.** With several queues (a monorepo's
-  `COOP_TASKS`, or repeated `--tasks`), only `ls` and the non-interactive `decisions` used to roll
-  up — everything else bailed with "works one queue at a time". Now `decisions -i` walks every
-  queue's open decisions in one interactive session (each header names the queue), `lint` rolls up
-  with the worst exit code, `rm --all-done` clears every archive, and the id-addressed commands
-  (`claim`/`block`/`unblock`/`done`/`rm <id>`) find their task in whichever queue holds it — same
-  exact-then-substring matching as before, erroring only when an id matches in more than one queue
-  (`split` slices share ids with their source, so acting on an arbitrary copy would touch the wrong
-  tree). Only `add` and `split` still need a single `--tasks`, since they create into a queue.
-
-- **The orchestrator pattern, scaffolded and documented.** `coop init` now writes two starter
-  subagents alongside the skills: `.claude/agents/deep-reasoner.md` (pinned to Opus — reasoning-heavy
-  phases: architecture, complex debugging, algorithm design) and `.claude/agents/fast-worker.md`
-  (pinned to Sonnet — mechanical, fully-specified work). They're native Claude Code subagents whose
-  descriptions route delegation automatically, so a lead running on a bigger model (`coop claude
-  --model claude-fable-5 --consult`) spends its own tokens on planning and synthesis while each
-  delegated turn bills at the subagent's cheaper model. The README's new "orchestrator pattern"
-  recipe ties it together with the existing pieces: per-profile model marks for the lead, and
-  codex/gemini as read-only peer engineers via `coop-consult` under `--consult`/fusion — including
-  the gotcha that a plain run deliberately doesn't mount peer credentials, so peers only answer in
-  a consult/fusion box. Existing files are never clobbered; edit the subagents freely.
-
-  And the pattern now runs unattended: **`coop loop --consult`** (and
-  `coop fork <name> <agent> --loop --consult`) opts every iteration into peer consultation — the
-  box mounts the authed peers' credentials and the `coop-consult` wrapper, so a headless lead can
-  get second opinions on hard calls. A fleet opts in per fork with **`consult=1`** on its
-  `.agent/fleet` line. Off by default everywhere, since it widens each iteration's credential
-  scope to the authed peers.
-
-- **Pick the model for any run — `--model` everywhere and `coop models`.**
-  Every launch path now takes `--model <m>`: `coop claude --model opus`, `coop fusion claude
-  --model fable`, `coop loop --model haiku`, `coop fork risky claude --model opus`, `coop acp
-  claude --model sonnet`, and a fleet fork's `model:` field. For standing defaults, put a
-  `models:` ladder in a preset (each entry `model` or `model@account` — see the model-first
-  entry above), or set `COOP_<AGENT>_MODEL` agent-wide and `COOP_LOOP_MODEL` for loops only (so
-  overnight runs grind on a cheaper model than your interactive sessions). `coop models [agent]`
-  is the model menu — one line per agent with its known models (examples — any id the CLI
-  accepts works; coop never validates one) and a short how-to.
-
-- **`coop credentials` gained a path grammar** — each token narrows: `coop credentials` lists
-  every agent, `coop credentials claude` one agent, `coop credentials claude personal` shows that
-  credential, and a trailing attribute edits one property of it: `default` (mark it what a plain
-  `coop claude` runs), `rm`. So credential edits read as a path — `coop credentials claude
-  personal default` — instead of a verb sandwich (`coop profiles default claude default` read
-  like a stutter). The verb-first forms tombstone with the rewrite (see the clean-CLI entry).
-
-  *How it reaches every feature.* The precedence is most-specific-first: `--model` (or a fleet
-  fork's `model:`) › the rotation ladder's active entry › `COOP_LOOP_MODEL` (loop runs) ›
-  `COOP_<AGENT>_MODEL` › a model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
-  The resolved model rides each agent's command
-  as its native `--model` flag (interactive, headless loop iterations, fork session resume, the
-  fusion governor, gemini's ACP), is exported as the agent's own model env var for flagless
-  adapter binaries (claude-agent-acp reads `ANTHROPIC_MODEL`), and reaches fusion/consult *peers*
-  via `COOP_PEER_MODEL_<AGENT>` vars the `coop-consult` wrapper expands — so each peer answers on its
-  own configured model. One gap, by design: codex under ACP keeps reading its model from its own
-  `config.toml` (its adapter takes no flags and codex has no model env var).
-
-- **Fixed: a deleted credential named "default" kept reappearing (empty, "not signed in").**
-  Every box run pre-created the active credential's dir for ALL THREE agents — even agents the run
-  never touched — and with no credential marked default (or via a bare `coop login <agent>`, which
-  targeted one literally named "default"), that materialized a husk `default` dir seeded
-  with settings files, resurrecting it after every deletion. Three changes close it: a run now
-  pre-creates homes only for the agents it actually mounts (the launched agent plus authed
-  fusion/consult peers); a bare `coop login <agent>` signs into the agent's MARKED default
-  credential — the one your runs actually use, so re-authing an expired subscription lands in the
-  right slot instead of a fresh "default"; and a custom-`COOP_LOOP_CMD` loop pins the marked
-  default too.
-
-- **Fixed: a fork (or `coop <agent> --consult`) with only one agent signed in launched with no
-  instructions at all.** The lead agent's global instruction file — its `CLAUDE.md` / `AGENTS.md` /
-  `GEMINI.md`, carrying the box environment briefing and your shared `INSTRUCTIONS.md` — was
-  silently not mounted whenever the lead had no authenticated peer to consult. Since `coop fork`
-  always runs the agent as a consult lead, a single-agent `coop fork <name>` gave the agent none of
-  that context (it would rediscover the box the hard way, e.g. investigating the expected missing
-  bubblewrap). The lead now always receives its base instructions; the read-only consult directive
-  is still added only when a peer is actually signed in.
-
-- **Fixed: an unrelated number containing `429` could stall the loop as if rate limited.** The
-  loop's rate-limit detector matched the bare substring `429`, so a failed iteration whose output
-  happened to contain e.g. `1429 files` was treated as an HTTP 429 and made the loop wait. It now
-  matches the status only as a standalone `429`.
-
-- **A foreground `coop fork <name> --loop` now gets the same Ctrl-C soft stop as `coop loop`.**
-  The graceful-stop handler was gated to exclude every fork, though its rationale only covered
-  *detached* workers (which have no terminal); a foreground fork loop was hard-killed mid-iteration.
-  It's now keyed on owning a terminal, so a foreground fork loop finishes the current task then
-  stops, while the detached worker (stdin is `/dev/null`) is still left to `coop fork stop`.
-
-- **`coop loop` stops gracefully on Ctrl-C — finish the current task, then stop.** A first Ctrl-C
-  on a foreground loop is now a *soft* stop: the running iteration finishes and commits, then the
-  loop stops before claiming the next task, instead of the box being killed mid-task. Press Ctrl-C
-  again to stop now — the running box is torn down cleanly (SIGTERM then SIGKILL of its whole
-  process group, so no container is orphaned). The rate-limit and retry waits wake on the stop too,
-  so Ctrl-C stays responsive even during a long wait.
-
-  *Why it's better.* The old Ctrl-C was a hard kill — it tore the box down mid-iteration, losing
-  the in-flight turn's uncommitted work. The soft stop lets the agent reach a clean, committed
-  checkpoint before the loop exits. It works by running each iteration's box in its own process
-  group, so the terminal's Ctrl-C reaches only coop, which then decides whether to let the box
-  finish (first press) or tear it down (second). Detached fork loops are unaffected — they have no
-  terminal and are still stopped with `coop fork stop`.
-
-- **Loop activity shows tool paths repo-relative, and flags anything outside the repo.** In the
-  live `coop loop` view, a file tool's path now renders relative to the repo root —
-  `✎ Edit internal/cli/streamjson.go` instead of the full container mount path. When the agent
-  reads or writes a path *outside* the repo tree, the line keeps the whole path and is flagged
-  with a yellow `⚠`, so an escape from the working tree stands out at a glance. The root is the
-  repo's real in-box mount (`box.Workdir`), so the inside/outside call matches where the repo
-  actually lives in the box — and a shared string prefix (`…/proj-x` vs `…/proj`) is never
-  mistaken for containment.
 
 ## 2.10.1
 
