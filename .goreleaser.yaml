@@ -54,12 +54,15 @@ signs:
     output: true
 
 changelog:
-  # Delegate to GitHub's auto-generated release notes (categorized via
-  # .github/release.yml, with a "Full Changelog" compare link).
-  use: github-native
+  # Release notes come from CHANGELOG.md (the workflow extracts the top section and
+  # passes it via --release-notes). github-native rendered from labeled PRs, and this
+  # repo lands direct commits — v3.0.0's notes came out as two dependabot bumps.
+  disable: "true"
 
 release:
   github:
     owner: AndrewDryga
     name: coop
   prerelease: auto
+  footer: |
+    **Full Changelog**: https://github.com/AndrewDryga/coop/compare/{{ .PreviousTag }}...{{ .Tag }}

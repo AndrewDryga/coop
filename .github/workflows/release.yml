@@ -27,10 +27,20 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v3.1.1' # pin cosign so its CLI defaults can't drift the release
+      # The release body is CHANGELOG.md's top section — the story /release finalized for
+      # this tag. Empty notes fail the job loudly: tagging with an unfinalized changelog
+      # is the mistake that shipped v3.0.0 with dependabot noise as its release page.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk '/^## /{n++; next} n==1' CHANGELOG.md | grep -v '^<!--' > /tmp/release-notes.md
+          if ! grep -q '[^[:space:]]' /tmp/release-notes.md; then
+            echo "CHANGELOG.md's top section is empty — finalize it (see the /release skill) before tagging" >&2
+            exit 1
+          fi
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7
         with:
           version: 'v2.16.0' # pin the goreleaser binary, not a floating "~> v2"
-          args: release --clean
+          args: release --clean --release-notes /tmp/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Cryptographic proof each archive was built by this workflow. Verify with:
