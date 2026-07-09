@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +28,71 @@ func newFakeChild() *fakeChild {
 
 func (f *fakeChild) child() *Child {
 	return &Child{In: f.inW, Out: f.outR, Stop: func() { f.outW.Close(); f.inR.Close() }}
+}
+
+// proxyHarness wires a full Run around in-memory pipes — the prologue every restart-flavored
+// proxy test used to copy. The test writes editor frames to clientIn, reads what the editor
+// would see from clientOut, and talks as box i via children[i] (whose inR side is pre-wrapped
+// in childIn[i]). n children are queued into the factory: child 0 is the first live box, each
+// restart consumes the next.
+type proxyHarness struct {
+	clientIn  *io.PipeWriter
+	clientOut *bufio.Reader
+	children  []*fakeChild
+	childIn   []*bufio.Reader
+	done      chan error
+	t         *testing.T
+}
+
+func newProxyHarness(t *testing.T, n int, hooks *Hooks) *proxyHarness {
+	t.Helper()
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	h := &proxyHarness{clientIn: clientInW, clientOut: bufio.NewReader(clientOutR), done: make(chan error, 1), t: t}
+	queue := make(chan *fakeChild, n)
+	for i := 0; i < n; i++ {
+		c := newFakeChild()
+		h.children = append(h.children, c)
+		h.childIn = append(h.childIn, bufio.NewReader(c.inR))
+		queue <- c
+	}
+	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
+	go func() { h.done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+	return h
+}
+
+// initialize drives the plain initialize round-trip through child i (id 1, empty params and
+// result) — request forwarded to the box, result forwarded back. A test that asserts ON the
+// handshake itself (passthrough, the ToEditor restart) keeps its own inline copy instead.
+func (h *proxyHarness) initialize(i int) {
+	h.t.Helper()
+	writeLine(h.t, h.clientIn, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(h.t, h.childIn[i])
+	writeLine(h.t, h.children[i].outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(h.t, h.clientOut)
+}
+
+// newSession drives the plain session/new round-trip through child i (id 2); the box assigns sid.
+func (h *proxyHarness) newSession(i int, sid string) {
+	h.t.Helper()
+	writeLine(h.t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(h.t, h.childIn[i])
+	writeLine(h.t, h.children[i].outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"`+sid+`"}}`)
+	readLine(h.t, h.clientOut)
+}
+
+// shutdown closes the editor side and waits for Run to return, failing the test on a hang.
+// It returns Run's error so a test can assert on it (or ignore it, as most do).
+func (h *proxyHarness) shutdown() error {
+	h.t.Helper()
+	h.clientIn.Close()
+	select {
+	case err := <-h.done:
+		return err
+	case <-time.After(3 * time.Second):
+		h.t.Fatal("Run did not return after client close")
+		return nil
+	}
 }
 
 func readLine(t *testing.T, br *bufio.Reader) []byte {
@@ -60,22 +123,13 @@ func writeLine(t *testing.T, w io.Writer, s string) {
 }
 
 func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
+	h := newProxyHarness(t, 2, nil)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1 := h.childIn[0]
 
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, nil) }()
-
-	childIn1 := bufio.NewReader(c1.inR)
-	clientOut := bufio.NewReader(clientOutR)
-
-	// initialize → forwarded to child1, response forwarded back.
+	// initialize → forwarded to child1, response forwarded back. Inline (not h.initialize):
+	// the forwarding assertions ARE this test's subject.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"x":1}}`)
 	if m := method(t, readLine(t, childIn1)); m != "initialize" {
 		t.Fatalf("child1 first frame = %q, want initialize", m)
@@ -111,7 +165,7 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 	c1.outW.Close()
 
 	// The proxy respawns child2 and replays initialize + session/load(S1).
-	childIn2 := bufio.NewReader(c2.inR)
+	childIn2 := h.childIn[1]
 	var sawInit, sawAuth, sawLoad bool
 	for i := 0; i < 3; i++ {
 		line := readLine(t, childIn2)
@@ -149,14 +203,8 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 	}
 
 	// Clean shutdown: closing the client makes Run return without respawning.
-	clientInW.Close()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run returned %v, want nil on clean client close", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after client close")
+	if err := h.shutdown(); err != nil {
+		t.Fatalf("Run returned %v, want nil on clean client close", err)
 	}
 }
 
@@ -177,14 +225,6 @@ func idStr(t *testing.T, line []byte) string {
 // ResumePrompt is fed through the client path — reaching the new box remapped + tracked — and its
 // response reaches the editor, completing the turn transparently (coop's rate-limit auto-resend).
 func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
 	resumed := false
 	hooks := &Hooks{ResumePrompt: func(sid string) []byte {
 		if sid == "S1" && !resumed {
@@ -193,23 +233,13 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 		}
 		return nil
 	}}
+	h := newProxyHarness(t, 2, hooks)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1, childIn2 := h.childIn[0], h.childIn[1]
 
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
-
-	childIn1 := bufio.NewReader(c1.inR)
-	childIn2 := bufio.NewReader(c2.inR)
-	clientOut := bufio.NewReader(clientOutR)
-
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
-	readLine(t, clientOut)
-
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
-	readLine(t, clientOut)
+	h.initialize(0)
+	h.newSession(0, "S1")
 
 	// A prompt turns the session, so the restart reloads it (rather than re-creating it).
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`)
@@ -249,26 +279,13 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 		t.Fatalf("resumed prompt response never reached the editor, got %s", line)
 	}
 
-	clientInW.Close()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after client close")
-	}
+	h.shutdown()
 }
 
 // TestProxyReplayForwardsConfigUpdate: the editor never sees the replayed session/load result, so the
 // proxy forwards its configOptions as a config_option_update — through ToEditor, so coop's toolbar
 // rewrite applies — bringing the toolbar up to the restarted box's truth (e.g. a preset's model).
 func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
 	sawUpdate := false
 	hooks := &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
 		if bytes.Contains(line, []byte("config_option_update")) {
@@ -276,22 +293,13 @@ func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
 		}
 		return line, false
 	}}
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+	h := newProxyHarness(t, 2, hooks)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1, childIn2 := h.childIn[0], h.childIn[1]
 
-	childIn1 := bufio.NewReader(c1.inR)
-	childIn2 := bufio.NewReader(c2.inR)
-	clientOut := bufio.NewReader(clientOutR)
-
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
-	readLine(t, clientOut)
-
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
-	readLine(t, clientOut)
+	h.initialize(0)
+	h.newSession(0, "S1")
 
 	// A prompt turns the session so the restart reloads it.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`)
@@ -323,24 +331,12 @@ func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
 		t.Error("the synthesized update must pass through ToEditor (coop's toolbar rewrite)")
 	}
 
-	clientInW.Close()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after client close")
-	}
+	h.shutdown()
 }
 
 // TestProxyAutoReplyAnswersChildRequest: an agent→editor request the hook claims (a permission ask)
 // is answered straight to the child and NOT forwarded to the editor; other traffic still flows.
 func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-	c1 := newFakeChild()
-	queue := make(chan *fakeChild, 1)
-	queue <- c1
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
 	hooks := &Hooks{AutoReply: func(line []byte) ([]byte, bool) {
 		h := parse(line)
 		if h.Method != "session/request_permission" {
@@ -348,12 +344,9 @@ func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
 		}
 		return []byte(`{"jsonrpc":"2.0","id":` + string(h.ID) + `,"result":{"outcome":{"outcome":"selected","optionId":"ok"}}}` + "\n"), false
 	}}
-
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
-
-	childIn := bufio.NewReader(c1.inR)
-	clientOut := bufio.NewReader(clientOutR)
+	h := newProxyHarness(t, 1, hooks)
+	c1 := h.children[0]
+	childIn, clientOut := h.childIn[0], h.clientOut
 
 	// Child asks for permission → coop answers the child directly (id 7), editor never sees the ask.
 	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{"options":[{"optionId":"ok","kind":"allow_once"}]}}`)
@@ -368,36 +361,22 @@ func TestProxyAutoReplyAnswersChildRequest(t *testing.T) {
 		t.Fatalf("editor should see the update after the swallowed permission, got %q", m)
 	}
 
-	clientInW.Close()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after client close")
-	}
+	h.shutdown()
 }
 
 // TestProxyToEditorRestart: a ToEditor hook that returns restart=true (coop auto-rotating on a
 // rate limit) forwards the line to the editor AND respawns the box, replaying the handshake.
 func TestProxyToEditorRestart(t *testing.T) {
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
 	hooks := &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
 		return line, bytes.Contains(line, []byte("ratelimited")) // forward always; restart on the limit line
 	}}
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
-
-	childIn1 := bufio.NewReader(c1.inR)
-	childIn2 := bufio.NewReader(c2.inR)
-	clientOut := bufio.NewReader(clientOutR)
+	h := newProxyHarness(t, 2, hooks)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1, childIn2 := h.childIn[0], h.childIn[1]
 
 	// Bring child1 up with initialize, so a restart has a handshake to replay (our sync point).
+	// Inline (not h.initialize): the method assertion and non-empty result are part of the point.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
 	if m := method(t, readLine(t, childIn1)); m != "initialize" {
 		t.Fatalf("child1 frame = %q, want initialize", m)
@@ -414,18 +393,13 @@ func TestProxyToEditorRestart(t *testing.T) {
 	// The proxy respawned child2 and replayed initialize — read it, answer its synthetic id so replay
 	// completes and child2 goes live (proves the ToEditor restart swapped the box).
 	replayed := readLine(t, childIn2)
-	h := parse(replayed)
-	if h.Method != "initialize" {
-		t.Fatalf("expected initialize replayed on child2, got %q", h.Method)
+	fr := parse(replayed)
+	if fr.Method != "initialize" {
+		t.Fatalf("expected initialize replayed on child2, got %q", fr.Method)
 	}
-	writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
+	writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
 
-	clientInW.Close()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after client close")
-	}
+	h.shutdown()
 }
 
 // TestProxyReplayWarnsOnFailedLoad: if a restored session's session/load comes back an error on the
@@ -469,33 +443,20 @@ func TestProxyReplayTimeoutFailsPending(t *testing.T) {
 	replayStartupGrace, replayIdleTimeout = 150*time.Millisecond, 150*time.Millisecond
 	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
 
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, nil) }()
-
-	childIn1 := bufio.NewReader(c1.inR)
-	clientOut := bufio.NewReader(clientOutR)
+	h := newProxyHarness(t, 2, nil)
+	c1 := h.children[0]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1 := h.childIn[0]
 
 	// Bring child1 up with one in-flight request, then kill it.
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
-	readLine(t, clientOut)
+	h.initialize(0)
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{}}`)
 	readLine(t, childIn1)
 	c1.outW.Close() // child1 dies
 
 	// child2 receives the replayed initialize but NEVER answers (a hang). Drain its input so the
 	// replay writer isn't blocked, then let the timeout fire.
-	childIn2 := bufio.NewReader(c2.inR)
+	childIn2 := h.childIn[1]
 	go func() {
 		for {
 			if _, err := childIn2.ReadBytes('\n'); err != nil {
@@ -510,7 +471,7 @@ func TestProxyReplayTimeoutFailsPending(t *testing.T) {
 	}
 	// ...and Run gives up rather than blocking forever on the hung child.
 	select {
-	case err := <-done:
+	case err := <-h.done:
 		if err == nil {
 			t.Fatal("expected a non-nil error when replay times out")
 		}
@@ -626,14 +587,6 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 	replayStartupGrace, replayIdleTimeout = 2*time.Second, 2*time.Second
 	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
 
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
 	// A coop-driven switch: an editor line carrying "__switch__" is handled here and restarts the box.
 	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, bool) {
 		if bytes.Contains(line, []byte("__switch__")) {
@@ -641,20 +594,15 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 		}
 		return false, nil, false
 	}}
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+	h := newProxyHarness(t, 2, hooks)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1, childIn2 := h.childIn[0], h.childIn[1]
 
-	childIn1 := bufio.NewReader(c1.inR)
-	childIn2 := bufio.NewReader(c2.inR)
-	clientOut := bufio.NewReader(clientOutR)
+	h.initialize(0)
 
-	// initialize.
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
-	readLine(t, clientOut)
-
-	// session/new → box assigns S1. NO prompt follows, so the session is turn-less.
+	// session/new → box assigns S1. NO prompt follows, so the session is turn-less. Inline
+	// (not h.newSession): the response-id assertion is this test's own sync point.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w","mcpServers":[]}}`)
 	readLine(t, childIn1)
 	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
@@ -718,12 +666,7 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 		t.Fatalf("box→editor update sessionId = %q, want S1 (the editor's id)", sid)
 	}
 
-	clientInW.Close()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after client close")
-	}
+	h.shutdown()
 }
 
 // TestProxyDisconnectDuringReplayReturnsCleanly: if the editor disconnects WHILE a restart's replay
@@ -735,31 +678,18 @@ func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
 	replayStartupGrace, replayIdleTimeout = 3*time.Second, 3*time.Second
 	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
 
-	clientInR, clientInW := io.Pipe()
-	clientOutR, clientOutW := io.Pipe()
-	c1, c2 := newFakeChild(), newFakeChild()
-	queue := make(chan *fakeChild, 2)
-	queue <- c1
-	queue <- c2
-	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-
 	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, bool) {
 		if bytes.Contains(line, []byte("__switch__")) {
 			return true, nil, true
 		}
 		return false, nil, false
 	}}
-	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+	h := newProxyHarness(t, 2, hooks)
+	c2 := h.children[1]
+	clientInW := h.clientIn
+	childIn2 := h.childIn[1]
 
-	childIn1 := bufio.NewReader(c1.inR)
-	childIn2 := bufio.NewReader(c2.inR)
-	clientOut := bufio.NewReader(clientOutR)
-
-	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	readLine(t, childIn1)
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
-	readLine(t, clientOut)
+	h.initialize(0)
 
 	// An intentional restart: replay(child2) begins and blocks waiting for the initialize response.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/set_config_option","params":{"configId":"__switch__"}}`)
@@ -775,161 +705,8 @@ func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
 	writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
 
 	select {
-	case <-done:
+	case <-h.done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return after a mid-replay disconnect (the new box was orphaned)")
-	}
-}
-
-// resetTrace clears the package-level trace state so each trace test is isolated (and restores it
-// after). White-box: the tracer is package-global, like warnOut.
-func resetTrace(t *testing.T) {
-	t.Helper()
-	clear := func() {
-		traceMu.Lock()
-		if c, ok := traceOut.(io.Closer); ok {
-			c.Close()
-		}
-		traceOut, traceGaveUp, traceLastAt, traceWritten = nil, false, time.Time{}, 0
-		traceMu.Unlock()
-	}
-	clear()
-	t.Cleanup(clear)
-}
-
-// TestTraceWritesWhenEnabled: with COOP_ACP_TRACE set, the wire + events land in
-// <config>/acp-trace-<pid>.log.
-func TestTraceWritesWhenEnabled(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir) // traces land under <dir>/coop, not the real config
-	t.Setenv("COOP_ACP_TRACE", "1")
-	resetTrace(t)
-
-	traceLine("editor→box", []byte(`{"jsonrpc":"2.0","id":1,"method":"session/new"}`+"\n"))
-	Trace("restart requested")
-
-	path := filepath.Join(dir, "coop", fmt.Sprintf("acp-trace-%d.log", os.Getpid()))
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("trace file not written: %v", err)
-	}
-	for _, want := range []string{"editor→box", "session/new", "restart requested"} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("trace missing %q:\n%s", want, b)
-		}
-	}
-}
-
-// TestTraceEnabledBySentinel: the sentinel file turns tracing on with no env var (so it works on an
-// already-running server).
-func TestTraceEnabledBySentinel(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("COOP_ACP_TRACE", "") // env OFF; only the sentinel enables it
-	if err := os.MkdirAll(filepath.Join(dir, "coop"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "coop", traceSentinel), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	resetTrace(t)
-
-	Trace("via sentinel")
-	path := filepath.Join(dir, "coop", fmt.Sprintf("acp-trace-%d.log", os.Getpid()))
-	if b, err := os.ReadFile(path); err != nil || !strings.Contains(string(b), "via sentinel") {
-		t.Fatalf("sentinel did not enable tracing (err=%v): %s", err, b)
-	}
-}
-
-// TestTraceOffByDefault: with neither the env var nor the sentinel, tracing writes nothing.
-func TestTraceOffByDefault(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir) // fresh config dir, no sentinel
-	t.Setenv("COOP_ACP_TRACE", "")
-	resetTrace(t)
-
-	traceLine("editor→box", []byte("{}\n"))
-	Trace("nope")
-
-	if got, _ := filepath.Glob(filepath.Join(dir, "coop", "acp-trace-*.log")); len(got) > 0 {
-		t.Errorf("tracing wrote while off: %v", got)
-	}
-}
-
-// TestTraceRotatesAtCap: the primary log never exceeds the byte cap; overflow rolls into a .1 backup,
-// so a long-running server's trace stays bounded (~2× the cap).
-func TestTraceRotatesAtCap(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("COOP_ACP_TRACE", "1")
-	resetTrace(t)
-	old := traceMaxBytes
-	traceMaxBytes = 300
-	defer func() { traceMaxBytes = old }()
-
-	for i := 0; i < 80; i++ {
-		Trace("line %02d — filler to push past the tiny test cap xxxxxxxxxx", i)
-	}
-	base := filepath.Join(dir, "coop", fmt.Sprintf("acp-trace-%d.log", os.Getpid()))
-	fi, err := os.Stat(base)
-	if err != nil {
-		t.Fatalf("primary log: %v", err)
-	}
-	if fi.Size() > traceMaxBytes {
-		t.Errorf("primary log %d bytes exceeds cap %d — rotation didn't bound it", fi.Size(), traceMaxBytes)
-	}
-	if _, err := os.Stat(base + ".1"); err != nil {
-		t.Errorf("expected a .1 backup after rotation: %v", err)
-	}
-}
-
-// TestTracePrunesOldFiles: opening a new trace prunes old per-pid logs to the newest traceKeepFiles,
-// but never removes a log whose pid is still running.
-func TestTracePrunesOldFiles(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("COOP_ACP_TRACE", "1")
-	cdir := filepath.Join(dir, "coop")
-	if err := os.MkdirAll(cdir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Five stale logs from dead pids (huge, non-existent), oldest→newest by mtime, each with a .1.
-	base := time.Now().Add(-time.Hour)
-	stale := []int{2000000001, 2000000002, 2000000003, 2000000004, 2000000005}
-	for i, pid := range stale {
-		p := filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", pid))
-		if err := os.WriteFile(p, []byte("old\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p+".1", []byte("older\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		mt := base.Add(time.Duration(i) * time.Minute)
-		os.Chtimes(p, mt, mt)
-	}
-	old := traceKeepFiles
-	traceKeepFiles = 3
-	defer func() { traceKeepFiles = old }()
-	resetTrace(t)
-
-	Trace("hi") // opens our log and prunes
-
-	if _, err := os.Stat(filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", os.Getpid()))); err != nil {
-		t.Fatalf("our own log was removed: %v", err)
-	}
-	remaining := 0
-	for _, pid := range stale {
-		if _, err := os.Stat(filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", pid))); err == nil {
-			remaining++
-		}
-	}
-	if remaining != traceKeepFiles-1 {
-		t.Errorf("kept %d stale logs, want %d (newest, minus our own slot)", remaining, traceKeepFiles-1)
-	}
-	// The oldest three (and their .1) should be gone; the newest two survive.
-	for _, pid := range stale[:3] {
-		if _, err := os.Stat(filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log.1", pid))); err == nil {
-			t.Errorf("stale backup for pid %d not pruned", pid)
-		}
 	}
 }
