@@ -815,3 +815,44 @@ func TestMoveTaskDirRefusesDuplicateDest(t *testing.T) {
 		t.Fatalf("move onto a duplicate dest = (%d, %v), want a clean 'already exists' error", code, err)
 	}
 }
+
+// The multi-queue decisions roll-up: queues with no open decision are skipped (no bare
+// banner over nothing), a blocked task's decision prints under its queue's banner, an
+// all-clear across queues exits 0 with no stdout listing, and an unknown flag exits 2.
+func TestTasksDecisionsRollup(t *testing.T) {
+	repo := t.TempDir()
+	rels := []string{"svc-a/.agent/tasks", "svc-b/.agent/tasks"}
+
+	// Nothing exists yet: all-clear, exit 0, nothing on stdout (the note goes to stderr).
+	out := captureStdout(t, func() {
+		if code, err := tasksDecisionsAll(repo, rels, nil); code != 0 || err != nil {
+			t.Errorf("empty rollup: code=%d err=%v", code, err)
+		}
+	})
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("all-clear rollup should print no stdout listing, got:\n%s", out)
+	}
+
+	// svc-a has only a todo (no decisions); svc-b has a blocked task with a decision.
+	writeTaskFile(t, filepath.Join(repo, "svc-a/.agent/tasks", stateTodo, "2026-01-01-plain", "task.md"), "# plain\n")
+	writeTaskFile(t, filepath.Join(repo, "svc-b/.agent/tasks", stateBlocked, "2026-01-01-stuck", "task.md"), "# stuck\n")
+	writeTaskFile(t, filepath.Join(repo, "svc-b/.agent/tasks", stateBlocked, "2026-01-01-stuck", "decision.md"),
+		"# Decision: pick a database?\n\n**Recommendation:** A — boring wins\n")
+
+	out = captureStdout(t, func() {
+		if code, err := tasksDecisionsAll(repo, rels, nil); code != 0 || err != nil {
+			t.Errorf("rollup: code=%d err=%v", code, err)
+		}
+	})
+	if !strings.Contains(out, "svc-b/.agent/tasks") || !strings.Contains(out, "pick a database?") {
+		t.Errorf("rollup should show svc-b's decision under its banner, got:\n%s", out)
+	}
+	if strings.Contains(out, "svc-a/.agent/tasks") {
+		t.Errorf("a queue with no open decision must not print a banner, got:\n%s", out)
+	}
+
+	// The main user-facing failure path: an unknown flag is a usage error.
+	if code, err := tasksDecisionsAll(repo, rels, []string{"--bogus"}); code != 2 || err == nil {
+		t.Errorf("unknown flag = (%d, %v), want (2, error)", code, err)
+	}
+}

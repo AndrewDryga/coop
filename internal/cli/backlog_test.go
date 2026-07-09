@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // The backlog drawer (xx_backlog) must be INVISIBLE to the lifecycle machinery: `coop backlog add`
@@ -156,5 +159,103 @@ func TestQueueOfBacklogTask(t *testing.T) {
 	}
 	if _, err := queueOfBacklogTask(repo, rels, "missing"); err == nil {
 		t.Error("an absent backlog id should error")
+	}
+}
+
+// coop backlog through the app dispatcher (cmdBacklog), single queue: the default queue
+// derives from the repo (no COOP_TASKS needed), add→ls→promote round-trips, and the
+// failure paths exit 2 with a usage/unknown error — the CLI surface, not just the helpers.
+func TestCmdBacklogDispatch(t *testing.T) {
+	repo := t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+
+	if code, err := a.cmdBacklog([]string{"add", "a shiny idea"}); code != 0 || err != nil {
+		t.Fatalf("cmdBacklog add: code=%d err=%v", code, err)
+	}
+	root := filepath.Join(repo, ".agent", "tasks")
+	items := readBacklog(root)
+	if len(items) != 1 {
+		t.Fatalf("after add, backlog = %+v, want 1 item", items)
+	}
+	id := items[0].ID
+
+	out := captureStdout(t, func() {
+		if code, err := a.cmdBacklog(nil); code != 0 || err != nil {
+			t.Errorf("bare cmdBacklog: code=%d err=%v", code, err)
+		}
+	})
+	if !strings.Contains(out, "a shiny idea") || !strings.Contains(out, id) {
+		t.Errorf("bare backlog should list the idea, got:\n%s", out)
+	}
+
+	if code, err := a.cmdBacklog([]string{"promote", id}); code != 0 || err != nil {
+		t.Fatalf("cmdBacklog promote: code=%d err=%v", code, err)
+	}
+	if tree := readTaskTree(root); len(tree) != 1 || tree[0].State != stateTodo {
+		t.Fatalf("after promote, tree = %+v, want the id in todo", tree)
+	}
+
+	// Failure paths through the dispatcher: unknown verb; rm refused without --yes (no TTY).
+	if code, err := a.cmdBacklog([]string{"bogus"}); code != 2 || err == nil {
+		t.Errorf("unknown verb = (%d, %v), want (2, error)", code, err)
+	}
+	if code, err := a.cmdBacklog([]string{"add", "drop me"}); code != 0 || err != nil {
+		t.Fatalf("second add: code=%d err=%v", code, err)
+	}
+	dropID := readBacklog(root)[0].ID
+	if code, err := a.cmdBacklog([]string{"rm", dropID}); code != 2 || err == nil {
+		t.Errorf("rm without --yes piped = (%d, %v), want a refusal (2)", code, err)
+	}
+	if code, err := a.cmdBacklog([]string{"rm", dropID, "--yes"}); code != 0 || err != nil {
+		t.Fatalf("rm --yes: code=%d err=%v", code, err)
+	}
+	if len(readBacklog(root)) != 0 {
+		t.Error("after rm --yes, the drawer should be empty")
+	}
+}
+
+// coop backlog in a monorepo (project.yaml subprojects): bare ls rolls up every queue
+// under its banner (empty drawers say so), the id commands route to whichever queue
+// holds the id, and add refuses to guess a target queue.
+func TestCmdBacklogMonorepo(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("subprojects:\n  - svc-a\n  - svc-b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	rootA := filepath.Join(repo, "svc-a", ".agent", "tasks")
+	if code, err := tasksFolderAdd(rootA, []string{"an a-side idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+		t.Fatalf("seed svc-a: code=%d err=%v", code, err)
+	}
+	id := readBacklog(rootA)[0].ID
+
+	out := captureStdout(t, func() {
+		if code, err := a.cmdBacklog(nil); code != 0 || err != nil {
+			t.Errorf("rollup: code=%d err=%v", code, err)
+		}
+	})
+	for _, want := range []string{"svc-a/.agent/tasks", "svc-b/.agent/tasks", "an a-side idea", "(backlog empty)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rollup missing %q:\n%s", want, out)
+		}
+	}
+
+	// add must not guess which queue in a monorepo.
+	if code, err := a.cmdBacklog([]string{"add", "which queue?"}); code != 2 || err == nil || !strings.Contains(err.Error(), "one queue at a time") {
+		t.Errorf("monorepo add = (%d, %v), want the one-queue refusal", code, err)
+	}
+	// promote routes to the queue that holds the id.
+	if code, err := a.cmdBacklog([]string{"promote", id}); code != 0 || err != nil {
+		t.Fatalf("monorepo promote: code=%d err=%v", code, err)
+	}
+	if tree := readTaskTree(rootA); len(tree) != 1 || tree[0].State != stateTodo {
+		t.Fatalf("promote should land in svc-a's todo, tree = %+v", tree)
+	}
+	// an id no queue holds fails loudly.
+	if code, err := a.cmdBacklog([]string{"promote", "no-such-id"}); code != 1 || err == nil {
+		t.Errorf("promote of an absent id = (%d, %v), want (1, error)", code, err)
 	}
 }
