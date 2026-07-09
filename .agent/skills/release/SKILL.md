@@ -23,8 +23,8 @@ each time — this is the contract; follow it.
   entry under the release where the code actually shipped (`git tag --contains <commit>` shows
   which one already has it). Cutting a version for unchanged code misdates the feature.
 - The `## Unreleased` entries ARE the release. Empty ⇒ nothing to cut; say so and stop.
-- Optional dry-run: `make snapshot` (GoReleaser `--snapshot --clean`, no publish) to catch
-  config breakage before any tag exists.
+- Optional dry-run: `make snapshot` (GoReleaser `--snapshot --clean --skip=sign`, no publish;
+  signing is CI-only keyless OIDC) to catch config breakage before any tag exists.
 
 ## 2. Pick the version (semver — or take the user's)
 - Latest: `git tag --sort=v:refname | tail -1`.

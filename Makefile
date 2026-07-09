@@ -22,8 +22,10 @@ lint: ## gofmt check + go vet (+ staticcheck if installed)
 	@go vet ./...
 	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; else echo "(staticcheck not installed — skipping)"; fi
 
-snapshot: ## Build a local release snapshot with GoReleaser (no publish)
-	@goreleaser release --snapshot --clean
+# Signing is intentionally skipped: release signatures are keyless (Sigstore via GitHub
+# OIDC), which only exists in the release workflow — a local snapshot validates packaging.
+snapshot: ## Build a local release snapshot with GoReleaser (no publish, no signing)
+	@goreleaser release --snapshot --clean --skip=sign
 
 doctor: ## Integration check: prove isolation holds (needs a runtime)
 	@go run . doctor
