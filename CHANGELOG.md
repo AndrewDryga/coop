@@ -20,6 +20,8 @@
   invisible everywhere; lint re-checks each candidate (a task mid-move exists in at most one dir at
   any instant) and reports only real copies, naming the dirs and which copy the listing shows.
 
+## 3.0.0
+
 - **The backlog is a task-folder drawer now, not `.agent/BACKLOG.md` — `coop backlog`.** Unscheduled
   ideas live as task folders in a `.agent/tasks/xx_backlog/` drawer, driven by a new top-level command:
   `coop backlog` (list), `coop backlog add "<title>"` (capture — same `--context/--acceptance/--approach/
