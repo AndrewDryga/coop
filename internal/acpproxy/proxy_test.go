@@ -282,6 +282,54 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	h.shutdown()
 }
 
+// TestProxyReplayDropsHistoryRestream: an adapter answering a replayed session/load may first
+// re-stream the stored conversation as session/update notifications. Those must NEVER reach the
+// editor — it already shows the conversation, so forwarding would duplicate its view (and any
+// dangling user turn the dead box persisted before a rate-limit resend would render twice; coop's
+// v3 waiver of that stored duplicate leans on this drop). Post-replay updates still flow.
+func TestProxyReplayDropsHistoryRestream(t *testing.T) {
+	h := newProxyHarness(t, 2, nil)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1, childIn2 := h.childIn[0], h.childIn[1]
+
+	h.initialize(0)
+	h.newSession(0, "S1")
+
+	// A prompt turns the session (so the restart reloads it) and stays in flight.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`)
+	readLine(t, childIn1)
+	c1.outW.Close() // child1 dies
+
+	// child2 replay: on session/load, re-stream "history" BEFORE answering — like an adapter
+	// replaying the stored transcript — then answer the load.
+	for {
+		fr := parse(readLine(t, childIn2))
+		if fr.Method == "session/load" {
+			writeLine(t, c2.outW, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1","update":{"marker":"replayed-history"}}}`)
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
+			break
+		}
+		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
+	}
+
+	// The first thing the editor sees post-swap is the failed in-flight id 3 — NOT the re-stream.
+	errLine := readLine(t, clientOut)
+	if id := idStr(t, errLine); id != "3" || strings.Contains(string(errLine), "replayed-history") {
+		t.Fatalf("first post-swap frame must be the failed id 3, got: %s", errLine)
+	}
+
+	// A LIVE update after the swap still flows — proving the stream is open and only the
+	// replay-time re-stream was dropped.
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1","update":{"marker":"live"}}}`)
+	live := readLine(t, clientOut)
+	if !strings.Contains(string(live), `"live"`) || strings.Contains(string(live), "replayed-history") {
+		t.Fatalf("expected the live update next, got: %s", live)
+	}
+
+	h.shutdown()
+}
+
 // TestProxyReplayForwardsConfigUpdate: the editor never sees the replayed session/load result, so the
 // proxy forwards its configOptions as a config_option_update — through ToEditor, so coop's toolbar
 // rewrite applies — bringing the toolbar up to the restarted box's truth (e.g. a preset's model).

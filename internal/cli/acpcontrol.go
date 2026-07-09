@@ -114,6 +114,14 @@ func (c *acpControl) hooks() *acpproxy.Hooks {
 
 // resumePrompt returns the prompt to transparently re-send for a session once its box is back after a
 // rate-limit rotation/wait, or nil. One-shot: the flag is cleared so a later restart doesn't re-send.
+//
+// Known, accepted artifact (v3 waiver): the box that died on the limit usually persisted this prompt
+// as a dangling user turn in the adapter's OWN session transcript before erroring, so after the
+// replayed session/load the resend leaves that stored transcript with the user message twice.
+// Removing it would mean racing surgery on the adapter's private session JSONL for zero functional
+// gain: the duplicate never renders in the editor (the resend reuses the editor's original request,
+// and replay drops the adapter's history re-stream — TestProxyReplayDropsHistoryRestream), and the
+// model treats an adjacent identical user message benignly, so multi-turn use is unaffected.
 func (c *acpControl) resumePrompt(session string) []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
