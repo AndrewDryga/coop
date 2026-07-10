@@ -12,6 +12,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestUpdateCheckDue(t *testing.T) {
@@ -138,15 +139,16 @@ func TestCmdUpdateCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var lines []string
+	ui.SetLiveSink(func(s string) { lines = append(lines, s) })
+	defer ui.SetLiveSink(nil)
+
 	a := &app{cfg: cfg}
-	var code int
-	var err error
-	joined := captureStderr(t, func() {
-		code, err = a.cmdUpdateCheck()
-	})
+	code, err := a.cmdUpdateCheck()
 	if code != 0 || err != nil {
 		t.Fatalf("cmdUpdateCheck: code=%d err=%v", code, err)
 	}
+	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"v2.9.0 → v9.0.0",                  // the binary line
 		"built 40 days ago",                // the box build age

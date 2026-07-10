@@ -29,7 +29,8 @@ func TestClip(t *testing.T) {
 	}
 }
 
-// visible counts runes outside ANSI escapes, for asserting clip's width.
+// visible counts runes outside ANSI escapes, for asserting clip's width. A carriage return is
+// cursor motion (Region parks the cursor with one), not a visible cell.
 func visible(s string) int {
 	n := 0
 	for i := 0; i < len(s); {
@@ -42,7 +43,9 @@ func visible(s string) int {
 			}
 			continue
 		}
-		n++
+		if s[i] != '\r' {
+			n++
+		}
 		i++
 	}
 	return n
@@ -111,6 +114,47 @@ func TestProgressBarStatesBlockedNeverHidden(t *testing.T) {
 		if got := ProgressBarStates(c.done, c.blocked, c.total, c.w); got != c.want {
 			t.Errorf("ProgressBarStates(d=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.blocked, c.total, c.w, got, c.want)
 		}
+	}
+}
+
+func TestRegion(t *testing.T) {
+	var buf strings.Builder
+	r := NewRegion(&buf, func() int { return 40 })
+
+	// First paint: no cursor-up (nothing drawn yet); history then the bar appear.
+	r.Update("hello", []string{"BAR"})
+	if s := buf.String(); !strings.Contains(s, "hello") || !strings.Contains(s, "BAR") {
+		t.Fatalf("first update missing content: %q", s)
+	}
+	if strings.Contains(buf.String(), "\033[1A") {
+		t.Errorf("first paint should not move the cursor up: %q", buf.String())
+	}
+	// Every paint parks the cursor at column 0: a Ctrl-C echoed as ^C then overtypes the bar's
+	// first cells instead of extending its last line past the final column, where the wrap would
+	// desync the erase math and leak stale bar frames into scrollback.
+	if !strings.HasSuffix(buf.String(), "\r") {
+		t.Errorf("paint must park the cursor at column 0: %q", buf.String())
+	}
+
+	// A refresh of a 1-line region erases (\r\033[J) and repaints, no cursor-up.
+	buf.Reset()
+	r.Update("", []string{"BAR2"})
+	if s := buf.String(); !strings.Contains(s, "\033[J") || !strings.Contains(s, "BAR2") {
+		t.Errorf("refresh should erase and repaint: %q", s)
+	}
+
+	// Region lines are clipped to the width so they never wrap.
+	buf.Reset()
+	r.Update("", []string{strings.Repeat("x", 100)})
+	if got := visible(buf.String()); got > 40 {
+		t.Errorf("region line not clipped to width: visible=%d (%q)", got, buf.String())
+	}
+
+	// Clear erases.
+	buf.Reset()
+	r.Clear()
+	if !strings.Contains(buf.String(), "\033[J") {
+		t.Errorf("clear should erase the region: %q", buf.String())
 	}
 }
 

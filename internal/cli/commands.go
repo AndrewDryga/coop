@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -1609,11 +1610,16 @@ func watchInterrupt(sig <-chan os.Signal, onSoft, onHard func()) {
 	onHard()
 }
 
-// loopInterruptInfo starts on a fresh line because an interactive terminal may echo Ctrl-C as
-// literal ^C at the current cursor without advancing it. Without the leading newline, coop's
-// notice is glued to that echo (or to a partial agent line).
+// loopInterruptInfo prints a stop notice. On the plain line-oriented path it starts on a fresh
+// line, because an interactive terminal may echo Ctrl-C as literal ^C at the current cursor
+// without advancing it — without the leading newline, coop's notice is glued to that echo (or to
+// a partial agent line). While the loop's live bar is up, the region positions lines itself (and
+// wipes the echo on its next repaint), and a raw newline would desync the region's cursor
+// bookkeeping — so there the notice goes through ui alone.
 func loopInterruptInfo(msg string) {
-	fmt.Fprintln(os.Stderr)
+	if !ui.LiveActive() {
+		fmt.Fprintln(os.Stderr)
+	}
 	ui.Info("%s", msg)
 }
 
@@ -1717,7 +1723,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// (not the agent's headless form). Best-effort like the review pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), sink, peers)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink, peers)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1765,7 +1771,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			agent = a.applyTarget(rot)
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			ui.Info("%s", progressBanner(n, c, active))
-			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), sink, peers)
+			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
 				break
@@ -1804,7 +1810,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 					if cNow, _ := queueProgress(hosts); cNow.Done > c.Done {
 						ui.Info("between-tasks audit — reviewing the task just completed")
 						a.withReviewModel(agent, func() {
-							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), sink, peers)
+							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), hosts, sink, peers)
 						})
 					}
 				}
@@ -1852,7 +1858,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
 		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
 		a.withReviewModel(agent, func() {
-			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), sink, peers)
+			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, peers)
 		})
 		// A stop that landed during the review pass is honored before the next round is decided.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
@@ -2011,14 +2017,35 @@ func (a *app) debugShell(repo, img, agent string) {
 	})
 }
 
+const progressPoll = 2 * time.Second // how often the live bar re-reads the queue while an iteration runs
+
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
-// capturing the tail so a rate-limit notice can be detected. Output stays newline-delimited on
-// every terminal: a main-screen live region can leak repaints into block-based terminals and
-// collide with the terminal driver's Ctrl-C echo. The iteration banner carries task progress.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, sink io.Writer, peers []agents.Target) (code int, output string, err error) {
+// capturing the tail so a rate-limit notice can be detected. hosts are the queue files the
+// live bar watches for task progress. On compatible terminals the agent's output is funneled
+// into the scroll history above a sticky progress bar (a Docker-build-style live view). Warp's
+// block-based main screen and non-terminal output go straight to the terminal unchanged.
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
-	outWs := []io.Writer{os.Stdout}
-	errWs := []io.Writer{os.Stderr, tail}
+	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
+
+	termOut, termErr := io.Writer(os.Stdout), io.Writer(os.Stderr)
+	var bar *loopBar
+	var funnel *lineWriter
+	if live {
+		region := ui.NewRegion(os.Stderr, func() int { return ui.TermWidth(os.Stderr) })
+		c0, a0 := queueProgress(hosts)
+		bar = newLoopBar(region, time.Now(), c0, a0)
+		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
+		termOut, termErr = funnel, funnel
+		// Route coop's own status lines (ui.Info etc. — from here AND box.Run's startup: "shadowed",
+		// "starting sibling services") through the bar too, so they scroll above it instead of
+		// overprinting it. Deferred clear restores plain stderr once the iteration's bar is gone.
+		ui.SetLiveSink(bar.history)
+		defer ui.SetLiveSink(nil)
+	}
+
+	outWs := []io.Writer{termOut}
+	errWs := []io.Writer{termErr, tail}
 	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
 		outWs = append(outWs, sink)
 		errWs = append(errWs, sink)
@@ -2034,6 +2061,14 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		stdoutW = io.MultiWriter(append(outWs, tail)...)
 	}
 
+	var wg sync.WaitGroup
+	var stop chan struct{}
+	if live {
+		stop = make(chan struct{})
+		wg.Add(2)
+		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
+		go func() { defer wg.Done(); spinLoop(bar, stop) }()
+	}
 	// Named --consult peers make each iteration a consult lead: box.Run then mounts exactly
 	// those peers' credentials, the coop-consult wrapper, and the second-opinion directive. A
 	// preset does the same with ITS roles: the routing contract mounts via ConsultLead.
@@ -2048,8 +2083,39 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		Stderr: io.MultiWriter(errWs...),
 		Ctx:    ctx,
 	})
+	if live {
+		close(stop)
+		wg.Wait() // no goroutine repaints the region after this, so the teardown below is clean
+	}
 	if dec != nil {
 		dec.flush() // before tail.String(): the last events must reach the rate-limit tail
 	}
+	if live {
+		funnel.flush()
+		bar.stop()
+	}
 	return code, tail.String(), err
+}
+
+// monitorProgress watches the queue while an iteration runs and pushes each task state change
+// into the live bar — the agent moves task folders between state dirs as it works and the host
+// sees those moves through the bind mount, so the bar's count and active task move live even
+// while the agent's own output is still buffered. It returns when stop is closed.
+func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
+	t := time.NewTicker(progressPoll)
+	defer t.Stop()
+	last, _ := queueProgress(hosts) // the bar was built with this baseline
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			// c.total()==0 while we had a baseline is a torn read (a folder caught mid-move) — a
+			// running loop always has tasks; keep the last good counts rather than blink to 0/0.
+			if c, active := queueProgress(hosts); c != last && (c.total() > 0 || last.total() == 0) {
+				bar.setProgress(c, active)
+				last = c
+			}
+		}
+	}
 }

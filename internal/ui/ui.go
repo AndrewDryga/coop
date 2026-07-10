@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // Raw SGR codes — always defined. Both the stderr-gated package vars below and the
@@ -87,8 +88,45 @@ func TermWidth(f *os.File) int {
 	return 80
 }
 
-// emit writes one fully formatted UI line to stderr.
+// liveSink, when set, receives each ui status line (trailing newline trimmed) instead of os.Stderr,
+// so a live region — the loop's bottom bar — can scroll it cleanly into the history above itself
+// rather than have it overprint the bar. The owner sets it while the region is up, clears it after.
+// It is guarded by liveSinkMu: the loop sets/clears it on the main goroutine while the interrupt
+// watcher (and any other caller) can emit concurrently, so an unguarded var would race — and a
+// two-read check-then-call could even read non-nil then call nil after a clear, panicking.
+var (
+	liveSinkMu sync.Mutex
+	liveSink   func(string)
+)
+
+// SetLiveSink routes ui status lines through fn (a live region's funnel); nil restores os.Stderr.
+func SetLiveSink(fn func(string)) {
+	liveSinkMu.Lock()
+	liveSink = fn
+	liveSinkMu.Unlock()
+}
+
+// LiveActive reports whether a live sink currently owns ui output — a live region is on screen,
+// so the terminal is not line-oriented right now and callers must not write raw newlines around
+// their ui calls to position them.
+func LiveActive() bool {
+	liveSinkMu.Lock()
+	defer liveSinkMu.Unlock()
+	return liveSink != nil
+}
+
+// emit writes one fully-formatted ui line: through the live sink if active (the region positions
+// lines itself, so the trailing newline is trimmed), else straight to stderr. It snapshots the
+// sink under the lock into a local, so a concurrent SetLiveSink can't turn a non-nil check into a
+// nil call.
 func emit(s string) {
+	liveSinkMu.Lock()
+	sink := liveSink
+	liveSinkMu.Unlock()
+	if sink != nil {
+		sink(strings.TrimRight(s, "\n"))
+		return
+	}
 	fmt.Fprint(os.Stderr, s)
 }
 
