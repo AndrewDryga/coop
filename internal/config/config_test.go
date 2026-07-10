@@ -58,9 +58,6 @@ func TestDefaults(t *testing.T) {
 	if c.MaxReviewRounds != 5 {
 		t.Errorf("MaxReviewRounds = %d, want 5 (default)", c.MaxReviewRounds)
 	}
-	if c.FusionGovernor != "codex" {
-		t.Errorf("FusionGovernor = %q, want codex", c.FusionGovernor)
-	}
 }
 
 func TestEnvOverrides(t *testing.T) {

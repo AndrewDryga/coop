@@ -290,17 +290,18 @@ coop fusion <governor> --peer <agent>… — one agent leads, named peers advise
 
   Usage: coop fusion <governor>[:model][/effort][@account] --peer <agent>… [--preset <name>] [args...]
 
-  The governor is a target (defaults to COOP_FUSION_GOVERNOR); its :model and @account
-  fold into this run, the peers keep their own defaults. Peers advise read-only; only
-  the governor writes. Lighter, opt-in variant: coop <agent> --consult <peer>…
+  The governor is a REQUIRED target — name it (or let a --preset's lead govern); there is
+  no implicit default. Its :model, /effort, and @account fold into this run; the peers keep
+  their own. Peers advise read-only; only the governor writes. Lighter, opt-in variant:
+  coop <agent> --consult <peer>…
 
   --peer <agent> names a council member (repeatable, at least one required — or a
   preset that supplies consult roles): coop fusion claude --peer codex:gpt-5.5 --peer gemini.
   Each <peer> is a target; only the named peers' credentials mount. There is no implicit
   "consult everyone signed in".
 
-  --preset <name> loads an orchestration preset: its lead is the default governor,
-  and its role routing rides along with the council directive ('coop help presets').
+  --preset <name> loads an orchestration preset: its lead governs when you don't name a
+  governor, and its role routing rides along with the council directive ('coop help presets').
 
   Like coop <agent>, it forwards extra args to the governor — a leading target
   picks the governor; anything else (or anything after a --) passes through.

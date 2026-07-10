@@ -362,7 +362,7 @@ func TestParseLoopArgs(t *testing.T) {
 }
 
 func TestParseGovernor(t *testing.T) {
-	a := &app{cfg: &config.Config{FusionGovernor: "codex"}}
+	a := &app{cfg: &config.Config{}}
 	cases := []struct {
 		name        string
 		args        []string
@@ -371,14 +371,14 @@ func TestParseGovernor(t *testing.T) {
 		wantProfile string
 		wantRest    []string
 	}{
-		{"default governor, no args", nil, "codex", "", "", nil},
+		{"no governor named — empty, the caller requires one", nil, "", "", "", nil},
 		{"positional governor", []string{"claude"}, "claude", "", "", nil},
 		// The governor is a target: its model + account fold out for the one-off selection.
 		{"governor target model+account", []string{"claude:opus-4.8@work"}, "claude", "opus-4.8", "work", nil},
 		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", "", "", []string{"exec"}},
-		{"passthrough args keep order", []string{"exec", "foo"}, "codex", "", "", []string{"exec", "foo"}},
+		{"passthrough args keep order", []string{"exec", "foo"}, "", "", "", []string{"exec", "foo"}},
 		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", "", "", []string{"-p", "hi"}},
-		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "codex", "", "", []string{"--governor", "claude"}},
+		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "", "", "", []string{"--governor", "claude"}},
 		// A SECOND agent token is NOT swallowed as the governor — only the first is; the rest passes through.
 		{"second agent token passes through", []string{"codex", "gemini"}, "codex", "", "", []string{"gemini"}},
 	}

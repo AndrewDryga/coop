@@ -56,7 +56,6 @@ type Config struct {
 	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
 	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline); an unrecognized value fails CLOSED to "none"
 
-	FusionGovernor string // COOP_FUSION_GOVERNOR — default governing agent for `coop fusion`
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (default 1800, owned by the wrapper)
 
 	Editor    string // COOP_EDITOR — editor for `coop fork review --open` (else $VISUAL/$EDITOR or a detected GUI editor)
@@ -175,7 +174,6 @@ func Load() *Config {
 		NoNewPrivileges: flag("COOP_NO_NEW_PRIVILEGES"),
 		Egress:          get("COOP_EGRESS", "open"),
 
-		FusionGovernor: get("COOP_FUSION_GOVERNOR", "codex"),
 		ConsultTimeout: get("COOP_CONSULT_TIMEOUT", ""),
 
 		Editor:    get("COOP_EDITOR", ""),

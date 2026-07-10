@@ -496,7 +496,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	switch {
 	case isFusion:
 		consumed = 1
-		governor, toolSet = a.cfg.FusionGovernor, false
+		governor, toolSet = "", false // named explicitly (or via a --preset lead) — no implicit default
 		if len(args) > 1 {
 			t, terr := agents.ParseTarget(args[1])
 			if terr != nil {
@@ -552,6 +552,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	if isFusion {
 		governor = presetLeadAgent(p, governor, toolSet)
+		if governor == "" {
+			return 2, errors.New("coop acp fusion: name the governor — coop acp fusion <agent> (or --preset <name>, whose lead governs)")
+		}
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
 		}
@@ -810,6 +813,9 @@ func (a *app) cmdFusion(args []string) (int, error) {
 		return 2, err
 	}
 	governor = presetLeadAgent(p, governor, govSet)
+	if governor == "" {
+		return 2, errors.New("coop fusion: name the governor — coop fusion <agent> --peer <agent>… (or --preset <name>, whose lead governs)")
+	}
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
 	}
@@ -843,8 +849,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 // whether the command named one (so a --preset's lead only fills the default); model/profile
 // carry the governor target's model + single account for the one-off selection.
 func (a *app) parseGovernor(args []string) (governor, model, profile, effort string, rest []string, explicit bool, err error) {
-	governor = a.cfg.FusionGovernor
-	tookGov := false
+	tookGov := false // no implicit default — the governor is named explicitly (or via a --preset lead)
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":

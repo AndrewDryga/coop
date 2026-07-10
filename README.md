@@ -731,7 +731,7 @@ betting the run on one model's blind spots. It's a mode like any other agent —
 interactive, headless, or in Zed:
 
 ```bash
-coop fusion codex --peer claude --peer gemini    # codex governs (the COOP_FUSION_GOVERNOR default); named peers advise
+coop fusion codex --peer claude --peer gemini    # codex governs (named explicitly); named peers advise
 coop fusion claude --peer codex --peer gemini    # claude governs instead
 coop fusion claude --peer codex --peer gemini -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
 ```
@@ -1264,7 +1264,6 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `NO_COLOR` | — | present at any value (even empty) disables ANSI color everywhere ([no-color.org](https://no-color.org)) |
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
-| `COOP_FUSION_GOVERNOR` | `codex` | default leader for `coop fusion` |
 | `COOP_CONSULT_TIMEOUT` | `1800` | per-peer `coop-consult` timeout in seconds; a peer that doesn't answer in time is skipped so the lead synthesizes from whoever did |
 | `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
