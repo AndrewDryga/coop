@@ -194,3 +194,16 @@ func latestCodexSession(codexDir, cwd string) string {
 	})
 	return bestID
 }
+
+// ACPRateLimitSignals: codex-acp surfaces a limit as codexErrorInfo=usageLimitExceeded
+// (top-level or nested); the value alone is the proof, whatever key carries it.
+func (codexAgent) ACPRateLimitSignals() []ACPSignal {
+	return []ACPSignal{{Value: "usageLimitExceeded"}}
+}
+
+// ACPSessionConfig: codex-acp exposes no config option coop must force (yolo is
+// enforced protocol-side by the controller's autoReply).
+func (codexAgent) ACPSessionConfig() map[string]string { return nil }
+
+// BoxEnv: codex stores everything under its mounted ~/.codex — nothing extra needed.
+func (codexAgent) BoxEnv(string) []string { return nil }

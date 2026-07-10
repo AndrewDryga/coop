@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
@@ -417,7 +420,7 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return nil, false
 	}
 	now := time.Now()
-	hint := acpErrorLimitHint(h.Error, now)
+	hint := acpErrorLimitHint(h.Error, now, acpRateSignals(c.lead))
 	if !hint.limited || hint.outputLimited {
 		return nil, false
 	}
@@ -668,7 +671,27 @@ func responseID(line []byte) string {
 	return string(m.ID)
 }
 
-func acpErrorLimitHint(raw json.RawMessage, now time.Time) limitHint {
+// acpRateSignals returns the structured limit markers to match for a session led by
+// lead: the adapter's own (each owns its wire format — see Agent.ACPRateLimitSignals),
+// or, for a lead that isn't a registered agent (fusion fronts whichever agent leads the
+// council), the union of every adapter's so no provider's limit goes unrecognized.
+func acpRateSignals(lead string) []agents.ACPSignal {
+	if a, ok := agents.Get(lead); ok {
+		return a.ACPRateLimitSignals()
+	}
+	var all []agents.ACPSignal
+	for _, n := range agents.Names() {
+		if a, ok := agents.Get(n); ok {
+			all = append(all, a.ACPRateLimitSignals()...)
+		}
+	}
+	return all
+}
+
+// acpErrorLimitHint classifies a JSON-RPC error: prose detection (shared detectLimit)
+// plus the adapter-owned structured signals. It carries no provider constants itself —
+// a new agent brings its markers via ACPRateLimitSignals.
+func acpErrorLimitHint(raw json.RawMessage, now time.Time, signals []agents.ACPSignal) limitHint {
 	var msg struct {
 		Message string `json:"message"`
 	}
@@ -682,16 +705,16 @@ func acpErrorLimitHint(raw json.RawMessage, now time.Time) limitHint {
 	structuredRate, structuredOutput := false, false
 	walkJSONStrings(v, "", func(key, value string) {
 		k := compactJSONName(key)
-		v := strings.ToLower(strings.TrimSpace(value))
 		vc := compactJSONName(value)
-		switch {
-		case vc == "usagelimitexceeded":
-			structuredRate = true
-		case k == "errorkind" && (v == "rate_limit" || vc == "ratelimit"):
-			structuredRate = true
-		case vc == "resourceexhausted":
-			structuredRate = true
-		case (k == "finishreason" || k == "stopreason") && (vc == "length" || vc == "maxtokens"):
+		for _, s := range signals {
+			if (s.Key == "" || compactJSONName(s.Key) == k) && compactJSONName(s.Value) == vc {
+				structuredRate = true
+			}
+		}
+		// The output-token axis is deliberately SHARED, not per-agent: stopReason is the
+		// ACP-protocol stop-reason field, finishReason the common upstream-API leak, and
+		// length/MAX_TOKENS spell "output budget exhausted" across providers.
+		if (k == "finishreason" || k == "stopreason") && (vc == "length" || vc == "maxtokens") {
 			structuredOutput = true
 		}
 	})
@@ -874,8 +897,12 @@ func withField(obj json.RawMessage, key, value string) json.RawMessage {
 // (claude, codex; a no-op the adapter rejects and the proxy swallows otherwise).
 func (c *acpControl) sessionReady(sid string) [][]byte {
 	var msgs [][]byte
-	if c.lead == "claude" {
-		msgs = append(msgs, c.setConfig(sid, "mode", "bypassPermissions"))
+	// Adapter-owned force-sets (Agent.ACPSessionConfig), sorted for a stable wire order.
+	if a, ok := agents.Get(c.lead); ok {
+		forced := a.ACPSessionConfig()
+		for _, k := range slices.Sorted(maps.Keys(forced)) {
+			msgs = append(msgs, c.setConfig(sid, k, forced[k]))
+		}
 	}
 	// On a PRESET the preset's lead ladder owns the model — forcing coop's launch-time model here
 	// would silently override it in the box.

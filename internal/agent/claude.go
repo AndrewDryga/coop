@@ -211,3 +211,26 @@ func ensureWorkdirTrusted(m map[string]any, workdir string) bool {
 	wp["hasTrustDialogAccepted"] = true
 	return true
 }
+
+// ACPRateLimitSignals: claude-agent-acp tags a limit error with errorKind=rate_limit
+// in the error data (both rate_limit and rateLimit spellings compact-match).
+func (claudeAgent) ACPRateLimitSignals() []ACPSignal {
+	return []ACPSignal{{Key: "errorKind", Value: "rate_limit"}}
+}
+
+// ACPSessionConfig: force bypassPermissions so claude's own toolbar reflects coop's
+// yolo (the box is the sandbox) and it skips the per-tool permission round-trips.
+func (claudeAgent) ACPSessionConfig() map[string]string {
+	return map[string]string{"mode": "bypassPermissions"}
+}
+
+// BoxEnv: point $CLAUDE_CONFIG_DIR at the mounted ~/.claude so account + onboarding
+// state persists across disposable boxes (the default ~/.claude.json in $HOME would be
+// lost every run, re-prompting login), and turn off the bubblewrap subprocess env scrub
+// — the box ships no bubblewrap and is itself the isolation boundary.
+func (claudeAgent) BoxEnv(homeInBox string) []string {
+	return []string{
+		"CLAUDE_CONFIG_DIR=" + homeInBox + "/.claude",
+		"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+	}
+}

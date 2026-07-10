@@ -82,6 +82,22 @@ type Agent interface {
 	// Packages are the npm packages the box image installs for this agent — its CLI and
 	// (if separate) its ACP adapter.
 	Packages() []string
+	// ACPRateLimitSignals are the STRUCTURED markers this agent's ACP adapter embeds in
+	// a JSON-RPC error to signal a rate/usage limit — proof the ACP controller rotates
+	// on without parsing prose. The output-token axis (finishReason/stopReason =
+	// length/MAX_TOKENS) is a cross-provider convention owned by the controller, not
+	// declared here: stopReason is the ACP-protocol stop-reason field and finishReason
+	// the common upstream-API leak, so no single adapter owns them.
+	ACPRateLimitSignals() []ACPSignal
+	// ACPSessionConfig are per-session config options coop force-sets on this agent's
+	// ACP adapter after a session is (re)established — what the adapter exposes as a
+	// config option that must follow coop's policy (claude's mode=bypassPermissions, so
+	// its toolbar reflects yolo). Re-applied on every restart; nil when nothing is forced.
+	ACPSessionConfig() map[string]string
+	// BoxEnv are env vars this agent's CLI needs inside the box (beyond ModelEnv and
+	// credentials), given the box home dir. Exported into every box — a var is inert
+	// where its agent isn't running — so a new agent's env needs no box.Run edit.
+	BoxEnv(homeInBox string) []string
 }
 
 // Default is the agent used when a command takes one but none is given.
@@ -122,6 +138,15 @@ func Packages() []string {
 type MCPMount struct {
 	Content string
 	BoxPath string
+}
+
+// ACPSignal is one structured rate-limit marker in an ACP adapter's JSON-RPC errors: a
+// string value (optionally pinned to the JSON key carrying it; "" matches any key) that
+// structurally proves a rate/usage limit. Matching is compact — lowercased with _-/space
+// stripped — so RESOURCE_EXHAUSTED and resourceExhausted are one marker.
+type ACPSignal struct {
+	Key   string
+	Value string
 }
 
 var registry = map[string]Agent{}

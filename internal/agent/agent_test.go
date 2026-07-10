@@ -374,3 +374,57 @@ func TestLogin(t *testing.T) {
 		}
 	}
 }
+
+// TestACPRateLimitSignalsPinned pins each adapter's structured limit markers — the wire
+// format the ACP controller rotates on. A change here must be a conscious adapter edit
+// (the controller itself carries no provider constants).
+func TestACPRateLimitSignalsPinned(t *testing.T) {
+	want := map[string][]ACPSignal{
+		"claude": {{Key: "errorKind", Value: "rate_limit"}},
+		"codex":  {{Value: "usageLimitExceeded"}},
+		"gemini": {{Value: "RESOURCE_EXHAUSTED"}},
+	}
+	for name, w := range want {
+		a, ok := Get(name)
+		if !ok {
+			t.Fatalf("agent %s not registered", name)
+		}
+		got := a.ACPRateLimitSignals()
+		if len(got) != len(w) {
+			t.Fatalf("%s signals = %+v, want %+v", name, got, w)
+		}
+		for i := range w {
+			if got[i] != w[i] {
+				t.Errorf("%s signal[%d] = %+v, want %+v", name, i, got[i], w[i])
+			}
+		}
+	}
+}
+
+// TestACPSessionConfigAndBoxEnv pins the per-adapter session force-sets and box env:
+// claude forces bypassPermissions and carries its config-dir/env-scrub vars; the others
+// declare nothing. Every agent must answer without panicking (the box exports each
+// agent's BoxEnv unconditionally).
+func TestACPSessionConfigAndBoxEnv(t *testing.T) {
+	claude, _ := Get("claude")
+	if got := claude.ACPSessionConfig(); got["mode"] != "bypassPermissions" || len(got) != 1 {
+		t.Errorf("claude ACPSessionConfig = %v", got)
+	}
+	wantEnv := []string{"CLAUDE_CONFIG_DIR=/home/node/.claude", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0"}
+	if got := claude.BoxEnv("/home/node"); len(got) != 2 || got[0] != wantEnv[0] || got[1] != wantEnv[1] {
+		t.Errorf("claude BoxEnv = %v, want %v", got, wantEnv)
+	}
+	for _, n := range Names() {
+		a, _ := Get(n)
+		_ = a.ACPSessionConfig()
+		_ = a.BoxEnv("/home/node")
+		if n != "claude" {
+			if cfg := a.ACPSessionConfig(); len(cfg) != 0 {
+				t.Errorf("%s should force no session config, got %v", n, cfg)
+			}
+			if env := a.BoxEnv("/home/node"); len(env) != 0 {
+				t.Errorf("%s should need no box env, got %v", n, env)
+			}
+		}
+	}
+}

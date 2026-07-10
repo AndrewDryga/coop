@@ -157,3 +157,15 @@ func disableGeminiFolderTrust(m map[string]any) bool {
 	ft["enabled"] = false
 	return true
 }
+
+// ACPRateLimitSignals: gemini surfaces a quota hit as the Google API status
+// RESOURCE_EXHAUSTED; the value alone is the proof, whatever key carries it.
+func (geminiAgent) ACPRateLimitSignals() []ACPSignal {
+	return []ACPSignal{{Value: "RESOURCE_EXHAUSTED"}}
+}
+
+// ACPSessionConfig: gemini's adapter exposes no config option coop must force.
+func (geminiAgent) ACPSessionConfig() map[string]string { return nil }
+
+// BoxEnv: gemini stores everything under its mounted ~/.gemini — nothing extra needed.
+func (geminiAgent) BoxEnv(string) []string { return nil }

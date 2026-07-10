@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -655,44 +656,111 @@ func TestWaitForReset(t *testing.T) {
 	}
 }
 
+// presetControlFor is presetControl for an arbitrary lead agent — the structural-limit
+// tests build one per provider, because each session classifies by ITS adapter's signals.
+func presetControlFor(t *testing.T, lead string) *acpControl {
+	t.Helper()
+	dir := t.TempDir()
+	for _, p := range []string{"personal", "work"} {
+		if err := os.MkdirAll(filepath.Join(dir, lead, "profiles", p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", "", dir, []string{"frontier"}, nil)
+	c.sel = "preset:frontier"
+	c.rotPreset = "frontier"
+	c.rot = newRotation([]runTarget{
+		{model: "m1", credential: "personal"},
+		{model: "m2", credential: "personal"},
+	})
+	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	c.fromEditor(prompt)
+	return c
+}
+
 // TestACPControlStructuralLimits verifies exact structured provider signals, not just prose, drive
-// rate-limit rotation. Field names alone must not be enough.
+// rate-limit rotation — and that each session matches only ITS OWN adapter's signals (the seam:
+// acpcontrol carries no provider constants; Agent.ACPRateLimitSignals owns them).
 func TestACPControlStructuralLimits(t *testing.T) {
 	cases := []struct {
 		name    string
+		lead    string
 		error   string
 		restart bool
 	}{
 		{
 			"codex top-level usageLimitExceeded",
+			"codex",
 			`{"code":-32603,"message":"provider declined the request","codexErrorInfo":"usageLimitExceeded"}`,
 			true,
 		},
 		{
 			"codex nested usageLimitExceeded",
+			"codex",
 			`{"code":-32603,"message":"provider declined the request","data":{"codexErrorInfo":"usageLimitExceeded"}}`,
 			true,
 		},
 		{
 			"gemini resource exhausted",
+			"gemini",
 			`{"code":-32603,"message":"provider declined the request","data":{"code":"RESOURCE_EXHAUSTED"}}`,
 			true,
 		},
 		{
+			"claude errorKind rate_limit",
+			"claude",
+			`{"code":-32603,"message":"provider declined the request","data":{"errorKind":"rate_limit"}}`,
+			true,
+		},
+		{
 			"codexErrorInfo field with non-limit value",
+			"codex",
 			`{"code":-32603,"message":"provider declined the request","codexErrorInfo":"internalServerError"}`,
+			false,
+		},
+		{
+			// Ownership: another provider's marker on a claude-led session is foreign — the
+			// claude adapter never emits it, so it must not drive a rotation.
+			"codex marker is foreign on a claude session",
+			"claude",
+			`{"code":-32603,"message":"provider declined the request","codexErrorInfo":"usageLimitExceeded"}`,
 			false,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := presetControl(t)
+			c := presetControlFor(t, tc.lead)
 			line := []byte(`{"jsonrpc":"2.0","id":"req1","error":` + tc.error + `}` + "\n")
 			_, restart := c.toEditor(line)
 			if restart != tc.restart {
 				t.Fatalf("restart = %v, want %v", restart, tc.restart)
 			}
 		})
+	}
+}
+
+// TestACPErrorLimitHintSignalDriven pins the classifier's contract: it matches whatever
+// signals it is HANDED (compactly, key-pinned when a key is given) and carries no
+// provider constants of its own — plus the shared output-token axis that needs no
+// signals at all, and rate winning over output when both appear.
+func TestACPErrorLimitHintSignalDriven(t *testing.T) {
+	now := time.Now()
+	sig := []agents.ACPSignal{{Value: "quotaBlown"}, {Key: "reason", Value: "too_fast"}}
+	if h := acpErrorLimitHint(json.RawMessage(`{"message":"nope","data":{"x":"quotaBlown"}}`), now, sig); !h.limited || h.outputLimited {
+		t.Errorf("any-key signal should classify as a rate limit, got %+v", h)
+	}
+	if h := acpErrorLimitHint(json.RawMessage(`{"message":"nope","data":{"reason":"tooFast"}}`), now, sig); !h.limited {
+		t.Errorf("key-pinned signal should compact-match tooFast/too_fast, got %+v", h)
+	}
+	if h := acpErrorLimitHint(json.RawMessage(`{"message":"nope","data":{"other":"too_fast"}}`), now, sig); h.limited {
+		t.Errorf("a key-pinned value under the wrong key must not match, got %+v", h)
+	}
+	if h := acpErrorLimitHint(json.RawMessage(`{"message":"x","data":{"stopReason":"MAX_TOKENS"}}`), now, nil); !h.limited || !h.outputLimited {
+		t.Errorf("the shared output axis needs no signals, got %+v", h)
+	}
+	both := json.RawMessage(`{"message":"x","data":{"stopReason":"MAX_TOKENS","y":"quotaBlown"}}`)
+	if h := acpErrorLimitHint(both, now, sig); !h.limited || h.outputLimited {
+		t.Errorf("a structured rate signal outranks the output axis, got %+v", h)
 	}
 }
 

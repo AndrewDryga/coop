@@ -840,17 +840,17 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 			}
 		}
 		args = append(args, modelEnvArgs(cfg, spec, scope)...)
-		// Claude keeps its account + onboarding state in $CLAUDE_CONFIG_DIR — by
-		// default ~/.claude.json in $HOME, which the disposable box would lose,
-		// re-prompting login every run. Point it at the mounted ~/.claude dir so
-		// the config persists alongside the credentials. (Codex and Gemini already
-		// store everything under their mounted ~/.codex and ~/.gemini dirs.)
-		args = append(args, "-e", "CLAUDE_CONFIG_DIR="+cfg.HomeInBox+"/.claude")
-		// Claude Code wraps every subprocess in bubblewrap to scrub env vars from it.
-		// The box ships no bubblewrap (and is itself the sandbox), so without this it
-		// warns "bubblewrap is required for subprocess env scrubbing" before each
-		// command. Turn the scrub off — the container is the isolation boundary.
-		args = append(args, "-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
+		// Each agent's own box env (Agent.BoxEnv) — claude points $CLAUDE_CONFIG_DIR at
+		// the mounted ~/.claude and disables the bubblewrap env scrub. Exported for every
+		// registered agent unconditionally (a var is inert where its agent isn't running),
+		// so a new agent's env is a one-file adapter change, never a box.Run edit.
+		for _, name := range agents.Names() {
+			if a, ok := agents.Get(name); ok {
+				for _, kv := range a.BoxEnv(cfg.HomeInBox) {
+					args = append(args, "-e", kv)
+				}
+			}
+		}
 		// coop-consult reads COOP_CONSULT_TIMEOUT (seconds) for its per-peer timeout; forward an
 		// explicit, valid override so the knob works per-run. Empty/invalid falls back to the
 		// wrapper's built-in 30m default. (The wrapper exists only in fusion/consult boxes; the
