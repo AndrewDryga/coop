@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 4.0.0
 
 - **xAI's Grok Build (`grok`) is a fully baked-in provider.** `coop grok` (and fusion/fork/loop/acp,
