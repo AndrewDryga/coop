@@ -111,6 +111,30 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 	return out, nil
 }
 
+// composeTarget builds a fork's positional target (provider[:model][@account]) from a fleet
+// entry's separate agent/model/credential fields — the bridge from the fleet's still-separate
+// YAML keys (Task B folds them into agent:) to the one target grammar the fork CLI now takes.
+// model may itself carry an @account (the one-off spelling); giving BOTH that and a credential,
+// with different accounts, is a contradiction and errors.
+func composeTarget(agent, model, credential string) (string, error) {
+	modelPart, acctInModel, hasAt := strings.Cut(model, "@")
+	acct := credential
+	if hasAt && acctInModel != "" {
+		if credential != "" && credential != acctInModel {
+			return "", fmt.Errorf("account set twice: model %q pins @%s but credential is %q", model, acctInModel, credential)
+		}
+		acct = acctInModel
+	}
+	t := agent
+	if modelPart != "" {
+		t += ":" + modelPart
+	}
+	if acct != "" {
+		t += "@" + acct
+	}
+	return t, nil
+}
+
 func (a *app) loadFleet(repo string) ([]fleetEntry, error) {
 	// The pre-v3 one-line .agent/fleet is never read — even alongside a fleet.yaml, its
 	// presence is an error, so a stale copy can't sit there quietly diverging.
@@ -236,14 +260,19 @@ func (a *app) fleetUp(args []string) (int, error) {
 	var unsigned []string
 	for _, e := range fleet {
 		if e.agent == "" {
-			continue // the fork's preset supplies the lead; forkCreate validates after resolving it
+			// The preset supplies the lead; a per-fork model/credential has nowhere to attach (a
+			// preset's lead takes no override) — refuse here, not silently in a worker's log.
+			if e.model != "" || e.credential != "" {
+				return 2, fmt.Errorf("fleet up: fork %q sets model/credential but no agent — a preset's lead takes no per-fork override; name the agent (agent: <provider>:<model>@<account>) or make a variant preset", e.name)
+			}
+			continue // preset-only fork; forkCreate validates the lead after resolving it
 		}
 		if e.credential != "" && !box.ProfileAuthed(a.cfg, e.agent, e.credential) {
 			unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, e.agent, e.credential))
 		}
 	}
 	if len(unsigned) > 0 {
-		return 2, fmt.Errorf("fleet up: these credentials aren't signed in: %s — run: coop login <agent> --credential <name>", strings.Join(unsigned, ", "))
+		return 2, fmt.Errorf("fleet up: these accounts aren't signed in: %s — run: coop login <provider>@<account>", strings.Join(unsigned, ", "))
 	}
 	started := 0
 	for _, e := range fleet {
@@ -257,17 +286,15 @@ func (a *app) fleetUp(args []string) (int, error) {
 		}
 		forkArgs := []string{e.name}
 		if e.agent != "" { // empty = the fork's preset supplies the lead agent
-			forkArgs = append(forkArgs, e.agent)
+			tgt, terr := composeTarget(e.agent, e.model, e.credential)
+			if terr != nil {
+				return 2, fleetAbortErr(e.name, terr, started)
+			}
+			forkArgs = append(forkArgs, tgt) // the fork positional is one target: provider[:model][@account]
 		}
 		forkArgs = append(forkArgs, "--loop", "-d", "--tasks", tasks)
 		if e.preset != "" {
 			forkArgs = append(forkArgs, "--preset", e.preset)
-		}
-		if e.credential != "" {
-			forkArgs = append(forkArgs, "--credential", e.credential)
-		}
-		if e.model != "" {
-			forkArgs = append(forkArgs, "--model", e.model)
 		}
 		if e.consult {
 			forkArgs = append(forkArgs, "--consult")

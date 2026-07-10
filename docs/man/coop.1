@@ -79,14 +79,14 @@ Docs    https://coop.dryga.com
 
 coop fork — a throwaway clone handed to an agent; review and land it like a PR.
 
-  Usage: coop fork <name> [agent] | ls | review | merge | logs | rm | stop | open | path
+  Usage: coop fork <name> [target] | ls | review | merge | logs | rm | stop | open | path
 
-  coop fork <name> [agent]          open or re-enter a fork and run an agent
-  coop fork <name> <agent> --loop   loop the fork on a tasks folder (-d detaches)
+  coop fork <name> [target]         open or re-enter a fork and run an agent (target: claude:opus@work)
+  coop fork <name> <target> --loop  loop the fork on a tasks folder (-d detaches)
   coop fork ls                      list this repo's forks
   coop fork logs [name]             tail a fork's loop log (no name: all forks)
   coop fork review <name>           dossier + diff (--stat, --tool, --open)
-  coop fork <name> acp [agent]      front the fork as an ACP agent (for editors)
+  coop fork <name> acp [target]     front the fork as an ACP agent (for editors)
   coop fork merge <name>            rebase onto your branch and land it (--all = fleet)
   coop fork rm <name>               discard a fork (confirms; refuses unmerged/dirty without --force)
   coop fork open <name>             open the fork in your editor
@@ -99,8 +99,6 @@ FLAGS (every short flag has a long form):
       --fresh     recreate the fork from scratch (refuses unmerged/dirty without --force)
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
-      --credential  pin this fork's account (else the preset/default)
-      --model     model for this fork's agent (see 'coop models')
       --preset    orchestration preset for this fork (see 'coop help presets')
       --consult   with --loop, iterations may consult the authed peers read-only
   -f, --force     merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)

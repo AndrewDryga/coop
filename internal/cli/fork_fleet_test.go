@@ -193,6 +193,36 @@ forks:
 	}
 }
 
+// composeTarget bridges a fleet entry's separate agent/model/credential fields to the one
+// target grammar the fork CLI takes: :model and @account fold in, model's own @account is
+// honored, and a contradictory pair (model @a + credential b) errors.
+func TestComposeTarget(t *testing.T) {
+	cases := []struct {
+		agent, model, cred, want string
+		wantErr                  bool
+	}{
+		{"claude", "", "", "claude", false},
+		{"claude", "opus-4.8", "", "claude:opus-4.8", false},
+		{"claude", "", "work", "claude@work", false},
+		{"claude", "opus-4.8", "work", "claude:opus-4.8@work", false},
+		{"gemini", "gemini-3.5-flash@work", "", "gemini:gemini-3.5-flash@work", false},     // model carries the account
+		{"gemini", "gemini-3.5-flash@work", "work", "gemini:gemini-3.5-flash@work", false}, // same account, no conflict
+		{"gemini", "gemini-3.5-flash@work", "personal", "", true},                          // two different accounts → error
+	}
+	for _, c := range cases {
+		got, err := composeTarget(c.agent, c.model, c.cred)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("composeTarget(%q,%q,%q) = %q, want error", c.agent, c.model, c.cred, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("composeTarget(%q,%q,%q) = (%q, %v), want %q", c.agent, c.model, c.cred, got, err, c.want)
+		}
+	}
+}
+
 // The pre-v3 one-line .agent/fleet is NEVER read: alone or alongside fleet.yaml, its
 // presence errors with the migrate-and-delete pointer; fleet.yaml alone loads.
 func TestLoadFleetRejectsPreV3File(t *testing.T) {

@@ -239,19 +239,30 @@ func TestParseForkCreateConsult(t *testing.T) {
 	}
 }
 
-// TestParseForkCreateModel: --model rides forkArgs in both forms; a bare --model errors.
-func TestParseForkCreateModel(t *testing.T) {
-	if fa, err := parseForkCreate([]string{"perf", "codex", "--model", "gpt-5"}); err != nil || fa.model != "gpt-5" {
-		t.Errorf("parseForkCreate --model = ({model:%q}, %v), want gpt-5", fa.model, err)
+// TestParseForkCreateTarget: the positional target's :model and @account fold into forkArgs;
+// the retired --model/--credential flags tombstone (v3-clean) with the rewrite.
+func TestParseForkCreateTarget(t *testing.T) {
+	fa, err := parseForkCreate([]string{"perf", "codex:gpt-5"})
+	if err != nil || fa.agent != "codex" || fa.model != "gpt-5" || fa.credential != "" {
+		t.Errorf("parseForkCreate codex:gpt-5 = ({agent:%q model:%q cred:%q}, %v), want codex/gpt-5/\"\"", fa.agent, fa.model, fa.credential, err)
 	}
-	if fa, err := parseForkCreate([]string{"perf", "--model=opus", "--loop"}); err != nil || fa.model != "opus" {
-		t.Errorf("parseForkCreate --model= = ({model:%q}, %v), want opus", fa.model, err)
+	fa, err = parseForkCreate([]string{"perf", "claude:opus-4.8@work", "--loop"})
+	if err != nil || fa.agent != "claude" || fa.model != "opus-4.8" || fa.credential != "work" {
+		t.Errorf("parseForkCreate claude:opus-4.8@work = ({agent:%q model:%q cred:%q}, %v), want claude/opus-4.8/work", fa.agent, fa.model, fa.credential, err)
 	}
-	if _, err := parseForkCreate([]string{"perf", "--model"}); err == nil {
-		t.Error("parseForkCreate: a bare --model must error, not silently pick nothing")
+	// An account ladder (@a,b) only rotates under `coop loop` — a fork takes one account.
+	if _, err := parseForkCreate([]string{"perf", "claude@work,personal"}); err == nil {
+		t.Error("parseForkCreate: a >1-account target must error on a fork (loop-only ladder)")
 	}
-	if _, err := parseForkCreate([]string{"perf", "--model="}); err == nil {
-		t.Error("parseForkCreate: an empty --model= must error")
+	for _, tomb := range [][]string{
+		{"perf", "codex", "--model", "gpt-5"},
+		{"perf", "--model=opus", "--loop"},
+		{"perf", "claude", "--credential", "work"},
+		{"perf", "claude", "--credential=work"},
+	} {
+		if _, err := parseForkCreate(tomb); err == nil {
+			t.Errorf("parseForkCreate(%v): a retired flag must tombstone, not parse", tomb)
+		}
 	}
 }
 
@@ -436,16 +447,20 @@ func TestLatestTaskLogOnlyDone(t *testing.T) {
 	}
 }
 
-// `coop fork <name> acp --profile <p>` is accepted (like plain `coop acp`), not rejected as an
-// unexpected argument. A missing profile errors on the profile itself — proving the flag parsed.
+// `coop fork <name> acp claude@ghost` pins the account in the positional target (like plain
+// `coop acp`); an unknown account errors on the account itself. The retired --credential flag
+// tombstones with the rewrite.
 func TestForkACPAcceptsCredential(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	code, err := a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "credential") {
-		t.Fatalf("fork acp --credential ghost = (%d, %v), want (2, a credential error)", code, err)
+	code, err := a.forkACP("myfork", []string{"claude@ghost"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("fork acp claude@ghost = (%d, %v), want (2, an account error naming ghost)", code, err)
 	}
 	if strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:") {
-		t.Errorf("--credential should be accepted, not rejected as an argument: %v", err)
+		t.Errorf("a target's @account should be accepted, not rejected as an argument: %v", err)
+	}
+	if code, err := a.forkACP("myfork", []string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
+		t.Errorf("fork acp --credential (retired) = (%d, %v), want (2, tombstone)", code, err)
 	}
 }
 

@@ -54,25 +54,24 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 }
 
 func TestParseForkCreateCredential(t *testing.T) {
-	// --credential pins a single account (space or = form); --model may carry a model@account.
-	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--tasks", "q.md", "--credential", "work", "--model", "opus@work"})
+	// The target pins the account + model; it sits happily among the loop flags.
+	fa, err := parseForkCreate([]string{"perf", "claude:opus-4.8@work", "--loop", "--tasks", "q.md"})
 	if err != nil {
 		t.Fatalf("parseForkCreate err = %v", err)
 	}
-	if fa.credential != "work" || fa.model != "opus@work" {
-		t.Errorf("credential=%q model=%q, want work / opus@work", fa.credential, fa.model)
+	if fa.credential != "work" || fa.model != "opus-4.8" {
+		t.Errorf("credential=%q model=%q, want work / opus-4.8", fa.credential, fa.model)
 	}
-	if fa2, err := parseForkCreate([]string{"perf", "--credential=work"}); err != nil || fa2.credential != "work" {
-		t.Errorf("--credential=work → credential=%q err=%v, want work", fa2.credential, err)
-	}
-	// --profile is retired — no longer a coop flag, so it errors as an unknown argument, both forms.
-	for _, args := range [][]string{{"perf", "--profile", "work"}, {"perf", "--profile=work"}} {
+	// --profile/--credential/--model are all retired — each errors (unknown arg or tombstone),
+	// in both space and = forms.
+	for _, args := range [][]string{
+		{"perf", "--profile", "work"}, {"perf", "--profile=work"},
+		{"perf", "--credential", "work"}, {"perf", "--credential=work"},
+		{"perf", "--model", "opus"},
+	} {
 		if _, err := parseForkCreate(args); err == nil {
-			t.Errorf("parseForkCreate(%v): retired --profile must error as unknown, got nil", args)
+			t.Errorf("parseForkCreate(%v): a retired flag must error, got nil", args)
 		}
-	}
-	if _, err := parseForkCreate([]string{"perf", "--credential"}); err == nil {
-		t.Error("--credential with no value: want error")
 	}
 }
 

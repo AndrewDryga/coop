@@ -108,12 +108,12 @@ func TestPresetFlagParsing(t *testing.T) {
 		}
 	}
 
-	fa, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier", "--credential", "work"})
+	fa, err := parseForkCreate([]string{"api", "claude@work", "--loop", "--preset", "frontier"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fa.preset != "frontier" || fa.credential != "work" {
-		t.Errorf("fork parse: preset=%q credential=%q", fa.preset, fa.credential)
+	if fa.preset != "frontier" || fa.credential != "work" || fa.agent != "claude" {
+		t.Errorf("fork parse: agent=%q preset=%q credential=%q", fa.agent, fa.preset, fa.credential)
 	}
 	if _, err := parseForkCreate([]string{"api", "--loop", "--preset"}); err == nil {
 		t.Error("fork: a bare --preset must error")

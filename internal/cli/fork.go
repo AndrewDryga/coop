@@ -84,12 +84,12 @@ func forkHelp() (int, error) {
 // byte-stable reference render that `coop help --all` and gendocs concatenate into the manual.
 func forkHelpText(p ui.Palette) string {
 	rows := []struct{ cmd, desc string }{
-		{"coop fork <name> [agent]", "open or re-enter a fork and run an agent"},
-		{"coop fork <name> <agent> --loop", "loop the fork on a tasks folder (-d detaches)"},
+		{"coop fork <name> [target]", "open or re-enter a fork and run an agent (target: claude:opus@work)"},
+		{"coop fork <name> <target> --loop", "loop the fork on a tasks folder (-d detaches)"},
 		{"coop fork ls", "list this repo's forks"},
 		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
 		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open)"},
-		{"coop fork <name> acp [agent]", "front the fork as an ACP agent (for editors)"},
+		{"coop fork <name> acp [target]", "front the fork as an ACP agent (for editors)"},
 		{"coop fork merge <name>", "rebase onto your branch and land it (--all = fleet)"},
 		{"coop fork rm <name>", "discard a fork (confirms; refuses unmerged/dirty without --force)"},
 		{"coop fork open <name>", "open the fork in your editor"},
@@ -102,8 +102,6 @@ func forkHelpText(p ui.Palette) string {
 		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
-		{"    --credential", "pin this fork's account (else the preset/default)"},
-		{"    --model", "model for this fork's agent (see 'coop models')"},
 		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
 		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
 		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
@@ -119,7 +117,7 @@ func forkHelpText(p ui.Palette) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", p.Bold("coop fork"))
-	fmt.Fprint(&b, "  Usage: coop fork <name> [agent] | ls | review | merge | logs | rm | stop | open | path\n\n")
+	fmt.Fprint(&b, "  Usage: coop fork <name> [target] | ls | review | merge | logs | rm | stop | open | path\n\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
 	}
@@ -206,26 +204,40 @@ type forkArgs struct {
 	loop       bool
 	detach     bool
 	tasks      string // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
-	credential string // --credential <name>: pin the fork's account (else the ladder default)
-	model      string // --model <m[@account]>: the fork's model, optionally pinning the account
+	credential string // the fork's account, from the positional target's @account (else the ladder default)
+	model      string // the fork's model, from the positional target's :model (else the CLI/preset default)
 	consult    bool   // --consult: loop iterations may ask the authed peers (interactive forks always may)
 	preset     string // --preset <name>: the orchestration preset this fork's loop runs under
 	worker     bool   // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
-	fa := forkArgs{} // no implicit default — provider required (positional or the preset lead)
+	fa := forkArgs{} // no implicit default — provider required (positional target or the preset lead)
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini] [--loop --tasks <path> [-d]]")
+		return fa, errors.New("usage: coop fork <name> [<provider>[:model][@account]] [--loop --tasks <path> [-d]]")
 	}
 	fa.name = args[0]
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		x := rest[i]
 		switch {
-		case agents.Valid(x):
-			fa.agent = x
-			fa.agentSet = true
+		case isTargetHead(x):
+			// The agent is a target: provider[:model][@account]. Its model + single account fold
+			// into the fork's one-off selection (applyOneOff) — --model/--credential are retired.
+			t, terr := agents.ParseTarget(x)
+			if terr != nil {
+				return fa, terr
+			}
+			acct, aerr := singleAccount(t)
+			if aerr != nil {
+				return fa, aerr
+			}
+			fa.agent, fa.agentSet, fa.model, fa.credential = t.Provider, true, t.Model, acct
+		case x == "--model" || strings.HasPrefix(x, "--model="):
+			return fa, errors.New("--model is retired — put the model in the target: coop fork <name> <provider>:<model> (e.g. claude:opus-4.8)")
+		case x == "--credential", x == "--credentials",
+			strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
+			return fa, errors.New("--credential is retired — put the account in the target: coop fork <name> <provider>@<account> (e.g. claude@work)")
 		case x == "--fresh":
 			fa.fresh = true
 		case x == "--force", x == "-f":
@@ -249,18 +261,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
-		case x == "--credential", x == "--credentials":
-			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, fmt.Errorf("coop fork %s needs an account name", x)
-			}
-			i++
-			fa.credential = rest[i]
-		case strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
-			if _, val, _ := strings.Cut(x, "="); val == "" {
-				return fa, fmt.Errorf("coop fork %s needs an account name", strings.SplitN(x, "=", 2)[0])
-			} else {
-				fa.credential = val
-			}
 		case x == "--preset":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, errors.New("coop fork --preset needs a preset name")
@@ -270,16 +270,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 		case strings.HasPrefix(x, "--preset="):
 			if fa.preset = strings.TrimPrefix(x, "--preset="); fa.preset == "" {
 				return fa, errors.New("coop fork --preset needs a preset name")
-			}
-		case x == "--model":
-			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --model needs a model name")
-			}
-			i++
-			fa.model = rest[i]
-		case strings.HasPrefix(x, "--model="):
-			if fa.model = strings.TrimPrefix(x, "--model="); fa.model == "" {
-				return fa, errors.New("coop fork --model needs a model name")
 			}
 		case x == "--consult":
 			fa.consult = true
@@ -821,25 +811,27 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	consult, rest := extractConsult(rest)
-	// --credential picks the account, like plain `coop acp` / `coop <agent>` — accepted here too
-	// so `coop fork <name> acp --credential p` works, like plain acp.
-	profile, rest, err := extractRunProfile(rest)
-	if err != nil {
+	// --model/--credential are retired — name the fork's ACP session in the positional target
+	// (coop fork <name> acp claude:opus-4.8@work), like plain `coop acp`.
+	if err := retiredTargetFlagErr(rest); err != nil {
 		return 2, err
 	}
-	// --model pins the fork's ACP session model, like `coop acp --model` (an editor entry
-	// can carry it); applied before acpCommand so gemini's own-binary adapter takes the flag.
-	model, rest, err := extractRunModel(rest)
-	if err != nil {
-		return 2, err
-	}
-	agent := ""
+	agent, model, profile := "", "", ""
 	for _, x := range rest {
 		switch {
-		case agents.Valid(x):
-			agent = x
+		case isTargetHead(x):
+			// provider[:model][@account]: model + single account fold into the session's one-off
+			// selection, applied before acpCommand so gemini's own-binary adapter takes the flag.
+			t, terr := agents.ParseTarget(x)
+			if terr != nil {
+				return 2, terr
+			}
+			agent = t.Provider
+			if terr := foldTarget(t, &model, &profile); terr != nil {
+				return 2, terr
+			}
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--credential <name>] [--model <model>]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp [%s][:model][@account]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
 	if agent == "" {
