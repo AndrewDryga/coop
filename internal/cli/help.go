@@ -235,7 +235,7 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
     --preset <name>      run under an orchestration preset from .agent/presets/<name>/
-                         (lead + roles + models; see coop help presets)
+                         (lead + roles; see coop help presets)
     --consult <peer>…    a read-only second opinion from NAMED peers (repeatable); each
                          <peer> is a target: --consult codex:gpt-5.5 --consult gemini
     --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
@@ -567,7 +567,7 @@ var commandHelp = map[string]string{
   reported as done. The cap SCALES with the batch: half the tasks worked this run, clamped
   to [3, COOP_MAX_REVIEW_ROUNDS] (default 5) — a small batch still gets a few tries, a big
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
-  next target in its models ladder, or waits out the reset when all are limited.
+  next target in its agent: ladder, or waits out the reset when all are limited.
 
   Fully override the review prompt by committing .agent/loop/review.md (Markdown): its
   text replaces the built-in review instructions (coop still appends the queue paths and

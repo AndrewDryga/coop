@@ -500,7 +500,7 @@ next target and keeps going, only waiting once every target is limited. A [Zed (
 session](#drive-it-from-zed-acp) does the same transparently — rotate, re-send your
 prompt, move the toolbar dropdown; or wait for the nearest reset when every account is
 cooling. There is no persistent pool to configure: the rotation *is* the model-first
-`models:` ladder of the loop's lead. With no preset it rotates the agent's default model across every signed-in
+`agent:` ladder of the loop's lead. With no preset it rotates the agent's default model across every signed-in
 account; a bare model in a ladder does the same, while a pinned `model@account` runs just
 one. Limits are tracked per (model, account), so `claude-opus-4-8@personal` stays usable
 while `claude-opus-4-8@work` cools down. A ladder gives you **fallbacks** in the order you
@@ -544,7 +544,7 @@ coop acp claude:sonnet                              # pin an editor entry's mode
 ```
 
 For a *standing* model you don't retype, put it in a
-[preset](#presets-the-whole-arrangement-in-one-yaml-file): the lead's `models:` ladder is
+[preset](#presets-the-whole-arrangement-in-one-yaml-file): the lead's `agent:` ladder is
 the model (and, on a loop, the rotation across your accounts), and each role names its own.
 Pick the model in the target (`<agent>:<model>`) or a preset — a credential is just an account (which
 subscription); the model is a separate axis:
@@ -561,12 +561,12 @@ agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so
 runs can grind on a cheaper model than your interactive sessions (and `COOP_REVIEW_MODEL`
 flips that for the loop's [review pass](#run-it-unattended): a stronger model reviews the
 cheaper loop's work). In a fleet, give a fork
-its own with `model:` in `.agent/fleet.yaml`. Precedence, most specific first: the target's `:model` ›
+its own with `agent:` (a target — `provider[:model][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the target's `:model` ›
 the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AGENT>_MODEL` › a
 model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
 **Reasoning effort** is a sibling axis on the same target — `/effort` after the model:
-`coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
+`coop codex:gpt-5.5/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
 `low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
 (Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
 fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up

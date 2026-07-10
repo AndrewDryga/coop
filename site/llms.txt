@@ -403,7 +403,7 @@ coop loop [agent] — work the task queue until done, then review.
   reported as done. The cap SCALES with the batch: half the tasks worked this run, clamped
   to [3, COOP_MAX_REVIEW_ROUNDS] (default 5) — a small batch still gets a few tries, a big
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
-  next target in its models ladder, or waits out the reset when all are limited.
+  next target in its agent: ladder, or waits out the reset when all are limited.
 
   Fully override the review prompt by committing .agent/loop/review.md (Markdown): its
   text replaces the built-in review instructions (coop still appends the queue paths and
