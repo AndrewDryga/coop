@@ -32,6 +32,15 @@ jobs:
           staticcheck ./...
       - name: test
         run: go test ./...
+      - name: race
+        # internal/acpproxy is concurrent (the editor-reader goroutine vs the main loop share
+        # p.mu-guarded state) — a data race there wouldn't fail the plain test run. Its own step
+        # so a race failure is legible; -race is ~2-3× slower but this repo's suite is small.
+        run: go test -race ./...
+      - name: docs-fresh
+        # help.go is the single source for docs/cli.md, docs/man/coop.1, and site/llms.txt; fail if
+        # a help change wasn't regenerated (make docs). In `make check` locally, but was CI-blind.
+        run: go run ./tools/gendocs -check
       - name: build
         run: go build ./...
       - name: shellcheck
