@@ -637,8 +637,8 @@ func countDone(root string) int {
 }
 
 // tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.slice1 …
-// .agent/tasks.slicen), as COPIES — the source is untouched. Loop one fork per slice. The
-// slice<n> naming matches `coop fleet split` so the two stay consistent.
+// .agent/tasks.slicen), as COPIES — the source is untouched. Loop one fork per slice
+// (`coop fork slice1 --loop --tasks .agent/tasks.slice1`).
 func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, errors.New("usage: coop tasks split <n>")

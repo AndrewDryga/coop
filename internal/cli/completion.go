@@ -101,7 +101,7 @@ func (a *app) completionCandidates(prev []string) []string {
 		}
 	case "fleet":
 		if len(prev) == 1 {
-			return []string{"init", "up", "down", "split", "watch", "prune"}
+			return []string{"init", "up", "down", "watch", "prune"}
 		}
 	case "loop":
 		if len(prev) == 1 {

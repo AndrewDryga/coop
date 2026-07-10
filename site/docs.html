@@ -915,15 +915,19 @@ roles:
                         of the work, all running at the same time.
                     </p>
                     <p>
-                        Split the backlog into separate task trees and hand each
-                        fork one. <code>coop fleet up</code> starts them all in
-                        the background; <code>coop fleet watch</code> is the
-                        live board, showing each fork's progress, the task it's
-                        on, and who's finished.
+                        Split the backlog into separate task trees (<code>coop
+                        tasks split 3</code> slices the queue into copy-trees),
+                        declare a fork per slice in <code>.agent/fleet.yaml</code>
+                        (<code>coop fleet init</code> writes the template), then
+                        <code>coop fleet up</code> starts them all in the
+                        background; <code>coop fleet watch</code> is the live
+                        board, showing each fork's progress, the task it's on, and
+                        who's finished.
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> fleet split 3    <span class="t"># slice the todo queue 3 ways + write .agent/fleet.yaml</span>
+                    ><span class="k">coop</span> tasks split 3    <span class="t"># slice the todo queue 3 ways into copy-trees</span>
+<span class="k">coop</span> fleet init       <span class="t"># write .agent/fleet.yaml, then declare a fork per slice</span>
 <span class="k">coop</span> fleet up         <span class="t"># start every fork in .agent/fleet.yaml, detached</span>
 <span class="k">coop</span> fleet watch      <span class="t"># the live dashboard</span>
 <span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>

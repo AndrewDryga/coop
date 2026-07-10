@@ -312,7 +312,7 @@ the parent — so the agent can commit *as you* and ignores the same noise you d
 **Loop one unattended.** Point a fork at a task queue and it works it on its own:
 
 ```bash
-coop fork api codex --loop -d   # loops the repo's .agent/tasks; -d detaches — tail with coop fork logs api -f
+coop fork api codex --loop -d   # loops the repo's task queue(s); -d detaches — tail with coop fork logs api -f
 ```
 
 See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to run several at once.
@@ -963,10 +963,12 @@ coop fork logs -f      # tail every fork at once (compose-style, prefixed)
 coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
 ```
 
-`--tasks <path>` is optional — it defaults to the repo's own `.agent/tasks`. Pass it (as
-above) to hand each fork a separate slice, named independently from the fork. It seeds the fork's
-queue from that tree (once — a resumed loop keeps its own progress) and runs the loop
-with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
+`--tasks <path>` is optional — with none, the fork seeds *every* queue coop knows about:
+the repo's own `.agent/tasks`, plus each [monorepo](#monorepos) subproject's queue, each at
+its own relative path, so the in-fork loop aggregates them just like `coop loop` does. Pass
+`--tasks` (as above) to hand each fork one separate slice instead, named independently from
+the fork. It seeds the fork's queue from that tree (once — a resumed loop keeps its own
+progress) and runs the loop with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
 `../<repo>-forks/.coop/<name>.log`. When one finishes,
 [review and land it](#forks-hand-off-work-like-a-pr) like a PR, then `git push`. Add
 agents until *review*, not generation, is your bottleneck.

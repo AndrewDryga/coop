@@ -609,7 +609,7 @@ func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {
 // is hidden from the main help.
 func TestTopLevelListsAllGroupVerbs(t *testing.T) {
 	h := helpText(&config.Config{})
-	for _, verb := range []string{"init", "up", "down", "split", "watch", "prune"} {
+	for _, verb := range []string{"init", "up", "down", "watch", "prune"} {
 		if !strings.Contains(h, "coop fleet "+verb) {
 			t.Errorf("top-level help should list `coop fleet %s` as its own row", verb)
 		}

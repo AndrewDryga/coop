@@ -123,7 +123,6 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fleet init", "write the .agent/fleet.yaml template")
 	row("coop fleet up", "start every fork's loop, detached")
 	row("coop fleet down", "stop the fleet's running loops")
-	row("coop fleet split <n>", "slice the queue into n forks + fleet file")
 	row("coop fleet watch", "live dashboard of every fork's progress")
 	row("coop fleet prune", "drop forks no longer in the fleet file")
 
@@ -437,12 +436,11 @@ var commandHelp = map[string]string{
 
 	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
 
-  Usage: coop fleet <init|up|down|split|watch|prune>
+  Usage: coop fleet <init|up|down|watch|prune>
 
   init           write a .agent/fleet.yaml template
   up             start every fork in the fleet, looping its tasks, detached
   down           stop the fleet's running loops
-  split <n>      slice the queue into n forks (= coop tasks split) + write .agent/fleet.yaml
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
                  done; Ctrl-C anytime). Task-centric view: coop tasks watch
   prune          remove forks no longer in the fleet file (kept: running, dirty, or
@@ -486,7 +484,7 @@ var commandHelp = map[string]string{
   rm <id>          delete a task folder; --all-done (alias: clear) clears the done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
-  split <n>        slice the todo tasks into n trees (.agent/tasks.sliceN); coop fleet split makes a fleet
+  split <n>        slice the todo tasks into n copy-trees (.agent/tasks.sliceN); loop one fork per slice
   queues           print each configured queue's path, one per line (for scripts and the Stop hook)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the

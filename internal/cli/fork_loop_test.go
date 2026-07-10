@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 func TestParseForkCreateLoopFlags(t *testing.T) {
@@ -39,8 +40,8 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 		}
 	}
 
-	// --loop / -d without --tasks is allowed now — forkCreate defaults it to the repo's
-	// .agent/tasks (it knows the repo). --tasks without --loop is still an error.
+	// --loop / -d without --tasks is allowed now — runForkLoop defaults it to every
+	// project.TaskDirs queue (it knows the repo). --tasks without --loop is still an error.
 	if _, err := parseForkCreate([]string{"perf", "--loop"}); err != nil {
 		t.Errorf("parseForkCreate(--loop, no --tasks): want no error (defaults later), got %v", err)
 	}
@@ -304,5 +305,110 @@ func TestStreamLog(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("missing log produced %q", buf.String())
+	}
+}
+
+// TestSeedForkQueuesSingleRepo: the default (empty --tasks) in a single repo seeds exactly the
+// one .agent/tasks tree and returns [.agent/tasks] — byte-identical to the old single-queue path.
+func TestSeedForkQueuesSingleRepo(t *testing.T) {
+	repo := t.TempDir()
+	ws := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
+
+	queues, err := seedForkQueues(repo, ws, "", nil)
+	if err != nil {
+		t.Fatalf("seedForkQueues: %v", err)
+	}
+	if len(queues) != 1 || queues[0] != filepath.FromSlash(tasksRoot) {
+		t.Fatalf("queues = %v, want [%s]", queues, tasksRoot)
+	}
+	if !isTaskDir(filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-a")) {
+		t.Error("the fork's .agent/tasks was not seeded")
+	}
+	// All four state dirs are scaffolded so the in-box move protocol is safe.
+	for _, st := range taskStates {
+		if !isDirTest(filepath.Join(ws, tasksRoot, st)) {
+			t.Errorf("state dir %s missing in the seeded queue", st)
+		}
+	}
+}
+
+// TestSeedForkQueuesMonorepo: the default seeds EVERY project.TaskDirs queue at its own relative
+// path (root + each subproject), so a monorepo fork carries all its subprojects' queues, and the
+// returned queue list spans them.
+func TestSeedForkQueuesMonorepo(t *testing.T) {
+	repo := t.TempDir()
+	ws := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, project.File), "subprojects:\n  - api\n  - web\n")
+	// The root carries its own queue alongside the members' (TaskDirs includes it when present).
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-root", "task.md"), "# root\n")
+	writeTaskFile(t, filepath.Join(repo, "api", tasksRoot, stateTodo, "2026-01-02-api", "task.md"), "# api\n")
+	writeTaskFile(t, filepath.Join(repo, "web", tasksRoot, stateTodo, "2026-01-03-web", "task.md"), "# web\n")
+
+	queues, err := seedForkQueues(repo, ws, "", nil)
+	if err != nil {
+		t.Fatalf("seedForkQueues: %v", err)
+	}
+	want := []string{
+		filepath.FromSlash(tasksRoot),
+		filepath.Join("api", tasksRoot),
+		filepath.Join("web", tasksRoot),
+	}
+	if strings.Join(queues, "|") != strings.Join(want, "|") {
+		t.Fatalf("queues = %v, want %v", queues, want)
+	}
+	// Each queue's task rode along at its own relative path — a task never left its home tree.
+	for _, p := range []string{
+		filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-root"),
+		filepath.Join(ws, "api", tasksRoot, stateTodo, "2026-01-02-api"),
+		filepath.Join(ws, "web", tasksRoot, stateTodo, "2026-01-03-web"),
+	} {
+		if !isTaskDir(p) {
+			t.Errorf("missing seeded task: %s", p)
+		}
+	}
+}
+
+// TestSeedForkQueuesExplicitKeepsProgress: an explicit --tasks seeds one tree into .agent/tasks,
+// and a resumed fork (dst already present) is NOT re-seeded — onKept fires so the caller can say so.
+func TestSeedForkQueuesExplicitKeepsProgress(t *testing.T) {
+	repo := t.TempDir()
+	ws := t.TempDir()
+	src := filepath.Join(repo, "src-queue")
+	writeTaskFile(t, filepath.Join(src, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
+
+	if _, err := seedForkQueues(repo, ws, src, nil); err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	if !isTaskDir(filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-a")) {
+		t.Fatal("explicit --tasks was not seeded into .agent/tasks")
+	}
+	// Second call: the fork already has a queue → onKept fires, source not re-applied.
+	kept := false
+	if _, err := seedForkQueues(repo, ws, src, func() { kept = true }); err != nil {
+		t.Fatalf("resumed seed: %v", err)
+	}
+	if !kept {
+		t.Error("onKept should fire when the fork already has its queue")
+	}
+}
+
+func isDirTest(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
+// A default `coop fork <name> --loop` (no --tasks) in a repo with NO task queue fails fast
+// BEFORE any clone — no stray fork workspace is left behind — instead of cloning and only
+// erroring later in the worker's log.
+func TestForkLoopDefaultNoQueueFailsFast(t *testing.T) {
+	repo := t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkCreate([]string{"x", "--loop"})
+	if err == nil || !strings.Contains(err.Error(), "no task queue found") {
+		t.Fatalf("forkCreate(x --loop, no queue) = (%d, %v), want a 'no task queue found' error", code, err)
+	}
+	if pathExists(forkWorkspace(repo, "x")) {
+		t.Error("a fork workspace was created despite the fast-fail")
 	}
 }

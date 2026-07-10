@@ -76,8 +76,6 @@ func TestPolicyScan(t *testing.T) {
 	}
 }
 
-// The legend line and the ## Example block both contain "[ ]"/"[E]" but aren't real
-// tasks; fleet split must not turn them into phantom slice entries.
 // A real token in an ordinary (non-secret-named) file passes a filename check but must
 // be caught by policyScan's content scan.
 func TestPolicyScanContent(t *testing.T) {
@@ -222,34 +220,6 @@ func TestLoadFleetRejectsPreV3File(t *testing.T) {
 	}
 	if entries, err := a.loadFleet(repo); err != nil || len(entries) != 1 || entries[0].name != "b" {
 		t.Errorf("yaml alone should load: %v (%+v)", err, entries)
-	}
-}
-
-func TestFleetSplit(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "r")
-	for _, id := range []string{"2026-01-01-a", "2026-01-02-b", "2026-01-03-c"} {
-		writeTaskFile(t, filepath.Join(repo, ".agent", "tasks", stateTodo, id, "task.md"), "# "+id+"\n")
-	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.fleetSplit([]string{"2"}); err != nil || code != 0 {
-		t.Fatalf("fleetSplit = (%d, %v), want (0, nil)", code, err)
-	}
-	// Round-robin over the sorted todo list: slice1 gets a + c, slice2 gets b — as folder copies.
-	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", stateTodo, "2026-01-01-a")) ||
-		!isTaskDir(filepath.Join(repo, ".agent", "tasks.slice1", stateTodo, "2026-01-03-c")) {
-		t.Error("slice1 should hold a and c")
-	}
-	if !isTaskDir(filepath.Join(repo, ".agent", "tasks.slice2", stateTodo, "2026-01-02-b")) {
-		t.Error("slice2 should hold b")
-	}
-	// It also writes .agent/fleet.yaml with each fork's explicit tasks dir.
-	fleet, _ := os.ReadFile(filepath.Join(repo, ".agent", "fleet.yaml"))
-	if !strings.Contains(string(fleet), "slice1:") || !strings.Contains(string(fleet), "tasks: .agent/tasks.slice1") {
-		t.Errorf(".agent/fleet.yaml = %q, want an explicit slice1 entry", fleet)
-	}
-	parsed, err := parseFleetYAML(string(fleet))
-	if err != nil || len(parsed) != 2 {
-		t.Errorf("written .agent/fleet.yaml does not parse back: %v (%d entries)", err, len(parsed))
 	}
 }
 

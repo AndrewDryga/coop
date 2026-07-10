@@ -14,6 +14,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -100,7 +101,7 @@ func forkHelpText(p ui.Palette) string {
 		{"    --new", "start a fresh agent session on re-entry"},
 		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
-		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)"},
+		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
 		{"    --credential", "pin this fork's account (else the preset/default)"},
 		{"    --model", "model for this fork's agent (see 'coop models')"},
 		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
@@ -331,14 +332,23 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.credential != "" && !slices.Contains(a.cfg.Profiles(fa.agent), fa.credential) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s --credential %s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
-	// --loop with no --tasks defaults to the repo's own queue (.agent/tasks); per-fork slices are
-	// the explicit case. resolveImage below re-resolves the repo, but that does image work too.
+	// --loop with no --tasks is the monorepo-aware default: runForkLoop seeds every
+	// project.TaskDirs queue (just .agent/tasks in a single repo) at its own path. Leaving
+	// fa.tasks empty is the signal for that; an explicit --tasks is the single-queue override,
+	// resolved+validated just below. Fail fast HERE if the repo has no queue at all — before any
+	// clone — so a queue-less repo can't leave a stray fork behind and its worker error in a log.
 	if fa.loop && fa.tasks == "" {
 		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 		if err != nil {
 			return -1, err
 		}
-		fa.tasks = filepath.Join(repo, ".agent", "tasks")
+		dirs, err := project.TaskDirs(repo)
+		if err != nil {
+			return -1, err
+		}
+		if !slices.ContainsFunc(dirs, func(rel string) bool { return pathExists(filepath.Join(repo, rel)) }) {
+			return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(dirs, ", "))
+		}
 	}
 	if fa.tasks != "" { // resolve to an absolute path now, so a detached worker still finds it
 		abs, err := filepath.Abs(fa.tasks)

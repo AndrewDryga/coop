@@ -34,7 +34,6 @@ UNATTENDED
   coop fleet init                   write the .agent/fleet.yaml template
   coop fleet up                     start every fork's loop, detached
   coop fleet down                   stop the fleet's running loops
-  coop fleet split <n>              slice the queue into n forks + fleet file
   coop fleet watch                  live dashboard of every fork's progress
   coop fleet prune                  drop forks no longer in the fleet file
 
@@ -92,7 +91,7 @@ FLAGS (every short flag has a long form):
       --new       start a fresh agent session on re-entry
       --fresh     recreate the fork from scratch (refuses unmerged/dirty without --force)
   -d, --detach    with --loop, run it in the background
-  -t, --tasks     with --loop, the tasks folder that seeds the queue (defaults to .agent/tasks)
+  -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
       --credential  pin this fork's account (else the preset/default)
       --model     model for this fork's agent (see 'coop models')
       --preset    orchestration preset for this fork (see 'coop help presets')
@@ -292,12 +291,11 @@ coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
 coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
 
-  Usage: coop fleet <init|up|down|split|watch|prune>
+  Usage: coop fleet <init|up|down|watch|prune>
 
   init           write a .agent/fleet.yaml template
   up             start every fork in the fleet, looping its tasks, detached
   down           stop the fleet's running loops
-  split <n>      slice the queue into n forks (= coop tasks split) + write .agent/fleet.yaml
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
                  done; Ctrl-C anytime). Task-centric view: coop tasks watch
   prune          remove forks no longer in the fleet file (kept: running, dirty, or
@@ -341,7 +339,7 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   rm <id>          delete a task folder; --all-done (alias: clear) clears the done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
-  split <n>        slice the todo tasks into n trees (.agent/tasks.sliceN); coop fleet split makes a fleet
+  split <n>        slice the todo tasks into n copy-trees (.agent/tasks.sliceN); loop one fork per slice
   queues           print each configured queue's path, one per line (for scripts and the Stop hook)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the

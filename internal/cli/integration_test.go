@@ -15,7 +15,7 @@ import (
 
 // End-to-end tests for the folder task system: they drive the real `coop tasks` dispatcher
 // and the shared readers across the full feature set (lifecycle, ordered dirs, remove,
-// multiple queues, fleet split) and assert the cross-cutting invariants the unit tests don't:
+// multiple queues, splitting) and assert the cross-cutting invariants the unit tests don't:
 // the on-disk dirs are the numeric-prefixed ones, they sort in lifecycle order, and a finished
 // task is MOVED (never deleted) by any automated path.
 
@@ -339,52 +339,6 @@ func TestIntegrationListShowsCleanLabels(t *testing.T) {
 	for _, leaked := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done"} {
 		if strings.Contains(out, leaked) {
 			t.Errorf("on-disk prefix %q leaked into list output:\n%s", leaked, out)
-		}
-	}
-}
-
-// TestIntegrationFleetSplitValidQueues ties fleet split to the readers: a split must round-
-// robin the todo folders into sibling slice trees that are themselves valid prefixed queues,
-// leave the source untouched, and write a .agent/fleet that parses back to those slices.
-func TestIntegrationFleetSplitValidQueues(t *testing.T) {
-	repo := t.TempDir()
-	root := filepath.Join(repo, tasksRoot)
-	for _, id := range []string{"2026-01-01-a", "2026-01-02-b", "2026-01-03-c"} {
-		writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# "+id+"\n")
-	}
-	if code, err := appFor(repo).fleetSplit([]string{"2"}); code != 0 || err != nil {
-		t.Fatalf("fleet split 2: code=%d err=%v", code, err)
-	}
-
-	// Each slice is a valid, readable queue with the prefixed dir, totaling the source's todos.
-	total := 0
-	for _, slice := range []string{"tasks.slice1", "tasks.slice2"} {
-		sroot := filepath.Join(repo, ".agent", slice)
-		if !isTaskDir(filepath.Join(sroot, "00_todo")) {
-			t.Errorf("%s is not a prefixed queue", slice)
-		}
-		c, _ := taskTreeCounts(readTaskTree(sroot))
-		total += c.Todo
-	}
-	if total != 3 {
-		t.Errorf("slices hold %d todo task(s), want 3 (the source's)", total)
-	}
-	// Source is untouched (the slices are copies).
-	if c, _ := taskTreeCounts(readTaskTree(root)); c.Todo != 3 {
-		t.Errorf("source queue changed by split: todo=%d, want 3", c.Todo)
-	}
-	// The written .agent/fleet.yaml parses back and names the slice dirs.
-	fleet, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet.yaml"))
-	if err != nil {
-		t.Fatalf(".agent/fleet.yaml not written: %v", err)
-	}
-	entries, err := parseFleetYAML(string(fleet))
-	if err != nil || len(entries) != 2 {
-		t.Fatalf(".agent/fleet does not parse to 2 forks: %v (%d)", err, len(entries))
-	}
-	for _, e := range entries {
-		if !strings.HasPrefix(e.tasks, filepath.Join(".agent", "tasks.")) {
-			t.Errorf("fleet entry %q points at %q, not a slice dir", e.name, e.tasks)
 		}
 	}
 }

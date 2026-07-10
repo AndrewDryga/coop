@@ -16,6 +16,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -143,33 +144,77 @@ func runningForkNames(repo string, names []string) []string {
 	return live
 }
 
-// runForkLoop seeds the fork's queue from the tasks tree given to --tasks (only when
-// the fork has none yet, so a resumed loop keeps its own progress), then runs the
-// unattended loop with the chosen agent, capturing output to the fork's log.
+// seedForkQueues copies the task queue(s) into a fork's workspace and returns the repo-relative
+// queue list the in-fork loop should work. An explicit --tasks source (tasks != "") seeds that one
+// tree into .agent/tasks — the single-queue rule. The default (tasks == "") seeds every
+// project.TaskDirs queue at its own relative path, so a monorepo fork carries all its subprojects'
+// queues and the in-fork loop aggregates them via the copied .agent/project.yaml. A queue the fork
+// already has is left as-is (a resumed loop keeps its progress); a monorepo member with no queue yet
+// is skipped. onKept, when non-nil, is called for an already-seeded explicit source (to say --tasks
+// wasn't re-applied). Single repo: TaskDirs is [.agent/tasks], so the default seeds exactly that one
+// tree — byte-identical to the old single-queue path.
+func seedForkQueues(repo, ws, tasks string, onKept func()) ([]string, error) {
+	type seed struct{ src, rel string }
+	var seeds []seed
+	var queues []string
+	if tasks != "" {
+		rel := filepath.FromSlash(tasksRoot)
+		seeds = []seed{{src: tasks, rel: rel}}
+		queues = []string{rel}
+	} else {
+		dirs, err := project.TaskDirs(repo)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range dirs {
+			seeds = append(seeds, seed{src: filepath.Join(repo, rel), rel: rel})
+			queues = append(queues, rel)
+		}
+	}
+	for _, s := range seeds {
+		dst := filepath.Join(ws, s.rel)
+		switch {
+		case pathExists(dst):
+			if tasks != "" && onKept != nil {
+				onKept() // the fork already has its queue; the explicit --tasks isn't re-applied
+			}
+		case !pathExists(s.src):
+			// a monorepo member may not have created its queue yet — nothing to seed
+		default:
+			if err := copyTree(s.src, dst); err != nil {
+				return nil, err
+			}
+			// The source may predate the four-state scaffold (or be a slice with only 00_todo); guarantee
+			// all four in the seeded queue so the in-box move protocol can't rename a task into a missing dir.
+			if err := scaffoldStateDirs(dst); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return queues, nil
+}
+
+// runForkLoop seeds the fork's queue(s) from the tasks tree(s) — an explicit --tasks source or,
+// by default, every project.TaskDirs queue (only queues the fork doesn't yet have, so a resumed
+// loop keeps its own progress) — then runs the unattended loop with the chosen agent, capturing
+// output to the fork's log.
 // detached=true means this process IS the background worker (its stdio is already the
-// log, and it owns the pidfile). tasks is an absolute path resolved by the caller;
+// log, and it owns the pidfile). tasks is an absolute path resolved by the caller
+// (empty = the monorepo-aware default);
 // credential/model are the fork's --credential/--model one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
 func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string, consult, detached bool) (int, error) {
-	// Seed the fork's queue from the --tasks source tree into the worktree's .agent/tasks (only
-	// when the fork has none yet, so a resumed loop keeps its own progress). The source is a task
-	// tree — the repo's .agent/tasks or a per-fork .agent/tasks.<name> slice from fleet split.
-	forkRel := filepath.FromSlash(tasksRoot)
-	dst := filepath.Join(ws, forkRel)
-	if tasks != "" && !pathExists(dst) {
-		if err := copyTree(tasks, dst); err != nil {
-			return -1, err
-		}
-		// The source may predate the four-state scaffold (or be a slice with only 00_todo); guarantee
-		// all four in the seeded queue so the in-box move protocol can't rename a task into a missing dir.
-		if err := scaffoldStateDirs(dst); err != nil {
-			return -1, err
-		}
-	} else if tasks != "" {
-		// The fork already has a queue (a resumed loop keeps its progress), so the
-		// source isn't re-seeded — say so instead of silently ignoring it.
+	// Seed the fork's queue(s) from the source tree(s) into the worktree and get back the
+	// repo-relative queue list the in-fork loop works. An explicit --tasks seeds that one tree
+	// into .agent/tasks (the single-queue rule); the default (no --tasks) seeds every
+	// project.TaskDirs queue at its own relative path, so a monorepo fork carries all its
+	// subprojects' queues. A queue the fork already has is kept (a resumed loop keeps its progress).
+	forkQueue, err := seedForkQueues(repo, ws, tasks, func() {
 		ui.Info("%s already has a queue — keeping its progress; --tasks not re-applied (use --fresh to reseed)", name)
+	})
+	if err != nil {
+		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	var sink io.Writer
@@ -203,8 +248,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
-	// A fork works its own seeded queue (the .agent/tasks tree) in the worktree.
-	forkQueue := []string{forkRel}
+	// A fork works its own seeded queue(s) in the worktree.
 	code, err := a.loop(ws, img, agent, name, rot, forkQueue, sink, consult, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)
@@ -213,9 +257,10 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string
 }
 
 // detachForkLoop re-execs coop as a session-leader background worker whose stdio is
-// the fork's log, records its pid, and returns immediately. tasks is an absolute path
-// (resolved by the caller) forwarded so the worker seeds the same queue; model, preset,
-// and consult are forwarded too, so the worker re-loads the same recipe and scope.
+// the fork's log, records its pid, and returns immediately. An explicit tasks path
+// (absolute, resolved by the caller) is forwarded so the worker seeds the same queue; an
+// empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. model,
+// preset, and consult are forwarded too, so the worker re-loads the same recipe and scope.
 func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, presetName string, consult bool) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
@@ -236,7 +281,12 @@ func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, preset
 	if err != nil {
 		return -1, fmt.Errorf("locate coop binary: %w", err)
 	}
-	reExec := []string{"fork", name, agent, "--loop", "--tasks", tasks, "--_detached"}
+	reExec := []string{"fork", name, agent, "--loop", "--_detached"}
+	if tasks != "" {
+		// An explicit --tasks is forwarded; the default (empty) is omitted so the worker re-derives
+		// the monorepo-aware queue set from project.TaskDirs itself.
+		reExec = append(reExec, "--tasks", tasks)
+	}
 	if credential != "" {
 		reExec = append(reExec, "--credential", credential)
 	}

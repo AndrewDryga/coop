@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fork --loop` is monorepo-aware by default.** With no `--tasks`, a fork now seeds
+  *every* queue coop knows about — the repo's own `.agent/tasks` plus each `.agent/project.yaml`
+  subproject's queue, each at its own relative path — so a monorepo fork carries all its
+  subprojects' work and the in-fork loop aggregates them exactly like `coop loop` does (a task
+  never leaves its home queue, so colliding ids across subprojects can't mix). An explicit
+  `--tasks <path>` still hands the fork one queue. A single repo is unchanged (`.agent/tasks`).
+
+- **`coop fleet split` is removed.** It dumb-round-robined one queue into per-fork slices and
+  wrote `.agent/fleet.yaml` for you; a fleet is now always authored explicitly (`coop fleet init`
+  writes the template). `coop tasks split <n>` still slices a queue into copy-trees for a
+  hand-wired fleet.
+
 - `coop fork review` prints a review dossier, not just a brief + diff. Between the commits and
   the patch it now maps the risk, all parent-computed from git facts: the fork's task log is
   labeled as the agent's claim (it's the fork's own voice — it can't steer its review); policy
