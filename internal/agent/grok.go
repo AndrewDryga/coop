@@ -173,9 +173,14 @@ func (grokAgent) DelegateExec() string {
 
 func (grokAgent) ShellPrelude() string { return "" }
 
-// InstallScript is empty PENDING a human supply-chain decision: grok installs via
-// `curl -fsSL https://x.ai/cli/install.sh | bash` (not npm), and piping an installer into
-// the box-image build is a supply-chain surface (pin a checksummed release vs. accept the
-// piped script). Until that's chosen and the box e2e is run, grok is registered but not
-// baked into the image — see the task's decision.md.
-func (grokAgent) InstallScript() string { return "" }
+// InstallScript bakes grok's CLI into the box image. grok ships a piped installer
+// (`curl … | bash`), not npm and not a checksummed release — so, per the settled supply-chain
+// call, coop runs THAT (we don't invent a checksum grok doesn't publish; matching how grok
+// distributes). The installer symlinks /usr/local/bin/grok into $HOME/.grok (root's home during
+// this root build layer), which the box's non-root `node` user can't traverse — so we resolve
+// the real binary and replace the symlink with a world-executable copy, verified as the node
+// user in a box e2e. `curl -f` fails the build on an HTTP error instead of piping an error page.
+func (grokAgent) InstallScript() string {
+	return `curl -fsSL https://x.ai/cli/install.sh | bash` +
+		` && b="$(readlink -f /usr/local/bin/grok)" && rm -f /usr/local/bin/grok && install -m 0755 "$b" /usr/local/bin/grok`
+}

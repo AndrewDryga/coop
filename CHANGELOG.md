@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **xAI's Grok Build (`grok`) is a fully baked-in provider.** `coop grok` (and fusion/fork/loop/acp,
+  `--consult grok`, presets) run it like any other agent. grok ships a piped installer
+  (`curl … | bash`), not npm and not a checksummed release, so — matching how grok distributes —
+  coop bakes that into the box image rather than inventing a checksum grok doesn't publish; the
+  installer's `/usr/local/bin/grok` symlink into root's home is replaced with a world-executable
+  copy so the box's `node` user runs it. Verified end-to-end on a host box build: the image builds,
+  `grok` runs as `node`, and `coop credentials` detects its `auth.json`. Sign in with `coop login grok`.
+
 - **One way to name a run: the target grammar `provider[:model][@account]`, and peers that
   participate only when named.** Every launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
   `fork <name> [acp]`, `login` — now takes a single **target** for WHO runs: `claude`,

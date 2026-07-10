@@ -138,24 +138,23 @@ func TestDockerfileAgentUntracked(t *testing.T) {
 	}
 }
 
-// TestBaseDockerfileInstallLayer: the current three agents install via npm, so the
-// script-install layer is EMPTY (no stray RUN). renderInstallLayer proves a
-// script-installed agent's InstallScript becomes a root RUN line before USER node — the
-// image seam for a non-npm agent (e.g. an install-script CLI), without editing image.go.
+// TestBaseDockerfileInstallLayer: grok installs via a script (curl … | bash), so the
+// script-install layer carries its RUN line while the npm-only agents (claude/codex/gemini)
+// contribute nothing — proving Agent.InstallScript becomes a root RUN line before USER node, the
+// image seam for a non-npm agent, without editing image.go.
 func TestBaseDockerfileInstallLayer(t *testing.T) {
-	if got := installLayer(); got != "" {
-		t.Errorf("with npm-only agents the install layer must be empty, got:\n%s", got)
+	got := installLayer()
+	if !strings.HasPrefix(got, "RUN ") || !strings.Contains(got, "curl -fsSL https://x.ai/cli/install.sh") {
+		t.Errorf("grok's script install must land as a root RUN line, got:\n%s", got)
 	}
-	// The template still resolves (both %s filled) even with an empty install layer.
+	// The template resolves (both %s filled) and embeds the install layer.
 	df := BaseDockerfile()
 	if strings.Contains(df, "%s") || strings.Contains(df, "%!") {
 		t.Errorf("install-layer %%s left unresolved:\n%s", df)
 	}
-	// A script-installed agent's RUN line lands as root, before USER node.
-	line := "RUN curl -fsSL https://x.ai/cli/install.sh | bash"
-	df2 := strings.Replace(BaseDockerfile(), "\nUSER node", "\n"+line+"\nUSER node", 1)
-	run := strings.Index(df2, line)
-	user := strings.LastIndex(df2, "USER node")
+	// The script-install RUN lands as root, before USER node.
+	run := strings.Index(df, "RUN curl -fsSL https://x.ai/cli/install.sh")
+	user := strings.LastIndex(df, "USER node")
 	if run < 0 || user < 0 || run > user {
 		t.Errorf("a script-install RUN must precede USER node (run@%d user@%d)", run, user)
 	}
