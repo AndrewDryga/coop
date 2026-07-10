@@ -53,11 +53,12 @@ signs:
       - "--yes"
     output: true
 
-changelog:
-  # Release notes come from CHANGELOG.md (the workflow extracts the top section and
-  # passes it via --release-notes). github-native rendered from labeled PRs, and this
-  # repo lands direct commits — v3.0.0's notes came out as two dependabot bumps.
-  disable: "true"
+# Release notes are CHANGELOG.md's top section: the workflow extracts it and passes it via
+# `--release-notes`, which GoReleaser's changelog pipe reads and uses verbatim — it returns
+# before commit/PR-based generation, so a direct-commit repo can't leak dependabot-bump noise
+# like v3.0.0's page did. The pipe must stay ENABLED for that file to be read: do NOT add
+# `changelog.disable` — it skips the whole pipe (Skip() returns Disable), dropping the notes and
+# leaving only the footer. That was the v4.0.0 regression: an empty body but the compare link.
 
 release:
   github:

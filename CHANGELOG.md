@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **GitHub release pages show the changelog again, not an empty body.** v4.0.0 published with an
+  empty release body (only the compare-link footer): `.goreleaser.yaml` set `changelog.disable:
+  "true"`, and GoReleaser's changelog pipe — the same one that reads the workflow's
+  `--release-notes` file — is skipped wholesale when disabled, so the extracted `CHANGELOG.md`
+  section was dropped. The disable is gone; a provided notes file is used verbatim and still
+  returns before commit/PR generation, so a direct-commit repo can't leak dependabot-bump noise.
+
 ## 4.0.0
 
 - **xAI's Grok Build (`grok`) is a fully baked-in provider.** `coop grok` (and fusion/fork/loop/acp,
