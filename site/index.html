@@ -447,13 +447,13 @@
                                 >lead:
   agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
 roles:
-  thinker:                 <span class="t"># deep thinking, in-session</span>
-    mode: native
-    agent: claude:claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent</span>
-  critic:                  <span class="t"># read-only, another vendor</span>
+  thinker:       <span class="t"># deep thinking, in-session</span>
+    mode: native <span class="t"># coop generates a coop-thinker subagent</span>
+    agent: claude:claude-opus-4-8
+  critic:        <span class="t"># read-only, another vendor</span>
     mode: consult
     agent: codex:gpt-5.5
-  fast:                    <span class="t"># cheap, write-capable</span>
+  fast:          <span class="t"># cheap, write-capable</span>
     mode: delegate
     agent: gemini:gemini-3.5-flash</pre>
                             </div>
@@ -512,7 +512,7 @@ roles:
   "agent_servers": {
     "coop": {
       "command": "coop",
-      "args": ["acp", "claude"]  <span class="t">// or codex / gemini / grok / fusion</span>
+      "args": ["acp", "claude"]  <span class="t">// or codex/gemini/grok/fusion</span>
     }
   }
 }</pre>
@@ -724,9 +724,9 @@ roles:
                             </p>
                             <pre
                                 class="code"
-                            ><span class="k">coop</span> doctor       <span class="t"># prove isolation</span>
+                            ><span class="k">coop</span> doctor <span class="t"># prove isolation</span>
 <span class="k">coop</span> login claude
-<span class="k">coop</span> claude       <span class="t"># go</span></pre>
+<span class="k">coop</span> claude <span class="t"># go</span></pre>
                         </div>
                         <div class="step">
                             <span class="n">03</span>
@@ -736,7 +736,7 @@ roles:
                                 and let the loop drain it.
                             </p>
                             <pre class="code"><span class="k">coop</span> init
-<span class="k">coop</span> tasks add <span class="s">"…"</span>  <span class="t"># a folder per task under .agent/tasks/</span>
+<span class="k">coop</span> tasks add <span class="s">"…"</span>
 <span class="k">coop</span> loop</pre>
                         </div>
                     </div>
