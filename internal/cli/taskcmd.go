@@ -314,6 +314,11 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 		structured = true
 		if flag == "subtask" {
 			subtasks = append(subtasks, val)
+		} else if values[heading] != "" {
+			// Repeated section flag (e.g. several --acceptance): ACCUMULATE, don't overwrite.
+			// A silent last-wins dropped every earlier value — real data loss on a multi-clause
+			// paste. Join as paragraphs so each clause survives under its heading.
+			values[heading] += "\n\n" + val
 		} else {
 			values[heading] = val
 		}

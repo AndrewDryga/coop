@@ -479,6 +479,37 @@ func TestTasksFolderAddStructuredFlags(t *testing.T) {
 	}
 }
 
+// A REPEATED section flag must accumulate, not silently last-wins — a paste with several
+// --acceptance clauses used to keep only the last, dropping the rest (real data loss).
+func TestTasksFolderAddRepeatedSectionFlag(t *testing.T) {
+	root := t.TempDir()
+	code, err := tasksFolderAdd(root, []string{"harden", "the", "endpoint",
+		"--context", "the MCP surface needs certifying",
+		"--acceptance", "OAuth is fail-closed: token must carry mcp scope",
+		"--acceptance", "Streamable HTTP method/header/origin validated",
+		"--acceptance", "risk-tier mapping explicit and tested",
+		"--approach", "start with failing tests",
+		"--subtask", "oauth tests"}, stateTodo, "tasks add")
+	if code != 0 || err != nil {
+		t.Fatalf("repeated-flag add: code=%d err=%v", code, err)
+	}
+	body := readFileString(filepath.Join(readTaskTree(root)[0].Dir, "task.md"))
+	// ALL three acceptance clauses survive (not just the last), under the one heading.
+	for _, want := range []string{
+		"OAuth is fail-closed: token must carry mcp scope",
+		"Streamable HTTP method/header/origin validated",
+		"risk-tier mapping explicit and tested",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("repeated --acceptance dropped a clause %q:\n%s", want, body)
+		}
+	}
+	// They accumulate under a SINGLE Acceptance heading (not one heading per flag).
+	if n := strings.Count(body, "**Acceptance criteria:**"); n != 1 {
+		t.Errorf("want one Acceptance heading, got %d", n)
+	}
+}
+
 // `coop tasks block` writes a decision.md that's self-documenting and easy for a human to
 // answer: the structured sections, a HUMAN reply marker, and the exact unblock command.
 func TestValidateArgs(t *testing.T) {
