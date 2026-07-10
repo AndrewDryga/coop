@@ -59,19 +59,6 @@ func IsTerminal(f *os.File) bool {
 	return isTerminalFd(f.Fd())
 }
 
-// CanRenderLive reports whether stdout and stderr support a cursor-addressing live display.
-// A pseudo-terminal may still be a tty while TERM=dumb declares that it cannot interpret the
-// escape sequences Region and AltScreen need; callers must use their plain one-shot fallback.
-func CanRenderLive(stdout, stderr *os.File) bool {
-	return canRenderLive(os.Getenv("TERM"), IsTerminal(stdout), IsTerminal(stderr))
-}
-
-// canRenderLive keeps the capability decision pure so it can be tested without replacing the
-// process standard streams. TERM=dumb is the conventional opt-out for cursor-addressing output.
-func canRenderLive(term string, stdoutTTY, stderrTTY bool) bool {
-	return term != "dumb" && stdoutTTY && stderrTTY
-}
-
 // colorEnabled reports whether ANSI color should be emitted for stream f: f must be a terminal
 // AND NO_COLOR must be unset. NO_COLOR follows the no-color.org convention — its mere presence
 // (any value, including empty) disables color — so `NO_COLOR=1 coop …` is plain everywhere.

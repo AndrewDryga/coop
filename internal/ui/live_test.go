@@ -87,26 +87,6 @@ func TestProgressBarStates(t *testing.T) {
 	}
 }
 
-func TestCanRenderLive(t *testing.T) {
-	for _, c := range []struct {
-		name                 string
-		term                 string
-		stdoutTTY, stderrTTY bool
-		want                 bool
-	}{
-		{"ansi terminal", "xterm-256color", true, true, true},
-		{"dumb terminal", "dumb", true, true, false},
-		{"stdout pipe", "xterm-256color", false, true, false},
-		{"stderr pipe", "xterm-256color", true, false, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := canRenderLive(c.term, c.stdoutTTY, c.stderrTTY); got != c.want {
-				t.Errorf("canRenderLive(%q, %t, %t) = %t, want %t", c.term, c.stdoutTTY, c.stderrTTY, got, c.want)
-			}
-		})
-	}
-}
-
 func TestRegion(t *testing.T) {
 	var buf strings.Builder
 	r := NewRegion(&buf, func() int { return 40 })

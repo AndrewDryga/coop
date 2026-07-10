@@ -11,6 +11,13 @@ import (
 
 const spinInterval = 120 * time.Millisecond // live-bar spinner cadence
 
+// loopBarSupported reports whether the terminal can safely host the bottom-pinned main-screen
+// Region. Warp's block-based output can retain an erased bar frame as ordinary command output;
+// its alternate screen works normally, so this compatibility guard is intentionally loop-only.
+func loopBarSupported(termProgram string, stdoutTTY, stderrTTY bool) bool {
+	return termProgram != "WarpTerminal" && stdoutTTY && stderrTTY
+}
+
 // loopBar is the loop's sticky bottom status while an iteration runs: a spinner, a progress
 // bar, the done/total counts, the active task, and elapsed time — pinned below the agent's
 // scrolling activity. history() funnels one line of agent/loop output into the scrollback

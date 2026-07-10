@@ -79,9 +79,9 @@ func (a *app) fleetWatch() (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	// No live-capable terminal, or no forks to watch (a lone local loop) → the one-shot roll-up, which
+	// No TTY to animate, or no forks to watch (a lone local loop) → the one-shot roll-up, which
 	// still reports the local queue. Keeps `coop fleet watch` pipe-safe and useful before a fleet.
-	if !ui.CanRenderLive(os.Stdout, os.Stderr) || len(forkNames(repo)) == 0 {
+	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkNames(repo)) == 0 {
 		return a.fleetSnapshot(repo)
 	}
 
