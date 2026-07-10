@@ -70,18 +70,18 @@ The fleet is YAML-only. The pre-v3 one-line `.agent/fleet` is **not read** — i
 ```yaml
 forks:
   <name>:
-    agent: <agent>            # omit to default (or to take a preset's lead)
+    agent: <provider>[:model][@account]   # a TARGET (was agent + profile=a,b + model=m);
+                                           #   omit to take a preset's lead. e.g. gemini:gemini-3.5-flash@work
     tasks: <tasks-path>
-    credential: a             # was profile=a,b — a fork runs one account; for a
-                              #   multi-account rotation, point it at a preset instead
-    model: <m>                # was model=m — may be model@account
-    consult: true             # was consult=1
+    preset: <name>                         # optional orchestration preset
 ```
 
-Delete `.agent/fleet` once translated. A fork takes a single `model:`/`credential:`;
-for a full model-first ladder (fallbacks across models and accounts), set
-`preset: <name>` instead — an orchestration preset from `.agent/presets/` whose lead
-`models:` ladder the fork's loop rotates (see `coop help presets`).
+Delete `.agent/fleet` once translated. The model + account ride `agent:` as one target
+(`model:`/`credential:` are retired); a fork takes ONE account, so for a full model-first
+rotation ladder set `preset: <name>` instead — an orchestration preset from `.agent/presets/`
+whose lead `agent:` ladder the fork's loop rotates (see `coop help presets`). The old
+`consult=1` has no fleet spelling yet — a fork's loop names its peers explicitly (coming to
+the fleet grammar); a bare `consult: true` refuses at `coop fleet up` until then.
 
 ## Monorepos: a hand-set `COOP_TASKS` → `.agent/project.yaml`
 

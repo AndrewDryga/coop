@@ -118,7 +118,7 @@ func TestFleetInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf(".agent/fleet.yaml not written: %v", err)
 	}
-	for _, want := range []string{"forks:", "tasks:", "credential:", "preset:", "coop fleet up"} {
+	for _, want := range []string{"forks:", "tasks:", "agent:", "preset:", "coop fleet up"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("fleet template missing %q:\n%s", want, body)
 		}
@@ -145,20 +145,18 @@ func TestFleetInit(t *testing.T) {
 	}
 }
 
-// .agent/fleet.yaml is the primary fleet format: author order is preserved, per-fork
-// preset/credentials/model/consult parse, a fork names its agent OR a preset (no implicit
-// default), and every invalid shape errors with the fork named.
+// .agent/fleet.yaml is the primary fleet format: author order is preserved, agent: is a target
+// (provider[:model][@account]), a fork names its agent OR a preset (no implicit default), and
+// every invalid shape errors with the fork named.
 func TestParseFleetYAML(t *testing.T) {
 	got, err := parseFleetYAML(`
 forks:
   core:
     tasks: .agent/tasks.core
     preset: frontier
-    credential: work
   chores:
-    agent: gemini
+    agent: gemini:gemini-3.5-flash@work
     tasks: .agent/tasks.chores
-    model: gemini-3.5-flash@work
     consult: false
   plain:
     agent: claude
@@ -169,8 +167,8 @@ forks:
 		t.Fatal(err)
 	}
 	want := []fleetEntry{
-		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier", credential: "work"},
-		{name: "chores", agent: "gemini", tasks: ".agent/tasks.chores", model: "gemini-3.5-flash@work"},
+		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier"},
+		{name: "chores", agent: "gemini:gemini-3.5-flash@work", tasks: ".agent/tasks.chores"},
 		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain", consult: true},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -178,14 +176,17 @@ forks:
 	}
 
 	for name, in := range map[string]string{
-		"malformed":      "forks: [\n",
-		"no forks map":   "other: {}\n",
-		"missing tasks":  "forks:\n  a: {agent: claude}\n",
-		"unknown agent":  "forks:\n  a: {agent: borg, tasks: t}\n",
-		"unknown field":  "forks:\n  a: {tasks: t, credentials: [work]}\n", // v3: single credential:, not the plural list
-		"pre-v3 profile": "forks:\n  a: {tasks: t, profile: work}\n",
-		"bad name":       "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
-		"duplicate":      "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
+		"malformed":          "forks: [\n",
+		"no forks map":       "other: {}\n",
+		"missing tasks":      "forks:\n  a: {agent: claude}\n",
+		"unknown provider":   "forks:\n  a: {agent: borg, tasks: t}\n",
+		"model retired":      "forks:\n  a: {agent: claude, tasks: t, model: opus}\n",      // → put it in agent:
+		"credential retired": "forks:\n  a: {agent: claude, tasks: t, credential: work}\n", // → put it in agent:
+		"account ladder":     "forks:\n  a: {agent: \"claude@work,personal\", tasks: t}\n", // a fork takes one account
+		"unknown field":      "forks:\n  a: {tasks: t, sidekick: yes}\n",
+		"pre-v3 profile":     "forks:\n  a: {tasks: t, profile: work}\n",
+		"bad name":           "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
+		"duplicate":          "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
 	} {
 		if _, err := parseFleetYAML(in); err == nil {
 			t.Errorf("%s: want an error, got none", name)
@@ -193,9 +194,9 @@ forks:
 	}
 }
 
-// composeTarget bridges a fleet entry's separate agent/model/credential fields to the one
-// target grammar the fork CLI takes: :model and @account fold in, model's own @account is
-// honored, and a contradictory pair (model @a + credential b) errors.
+// composeTarget rebuilds a target from the pieces a fork parsed out of one (detachForkLoop's
+// re-exec): :model and @account fold in, model's own @account is honored, and a contradictory
+// pair (model @a + credential b) errors.
 func TestComposeTarget(t *testing.T) {
 	cases := []struct {
 		agent, model, cred, want string

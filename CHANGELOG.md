@@ -29,7 +29,10 @@
   `@account`). The lead's `agent:` holds a target or a same-provider fallback **ladder**
   (`agent: [claude:fable-5, claude:opus-4-8@work]`), folding in the old `models:` list. Both retired
   keys tombstone with the rewrite. (A cross-provider lead ladder — rotating vendors mid-loop — isn't
-  supported yet; a lead ladder names one provider.)
+  supported yet; a lead ladder names one provider.) **`.agent/fleet.yaml` follows suit**: a fork's
+  `agent:` is a target (`agent: gemini:gemini-3.5-flash@work`) and the per-fork `model:`/`credential:`
+  keys retire — the model + account ride `agent:` (a fork still takes one account; a rotation lives in
+  a preset).
 
 - **`coop loop`'s end-of-loop pass is now a customizable, DEMANDING review that loops until it
   accepts.** Commit `.agent/loop/review.md` to FULLY override the review prompt (committed config,
