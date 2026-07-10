@@ -19,7 +19,8 @@ are the spine: this repo's `AGENTS.md` and the worked examples in `.agent/rules/
 Build *to* them, then *check the diff against them*.
 
 ## 1. Arm
-- `touch .agent/active` — arms the Stop hook: until you remove it, trying to stop
+- `printf '%s' "$CLAUDE_CODE_SESSION_ID" > .agent/active` — arms the Stop hook for THIS
+  session (writing your own id also reclaims a stale marker). Until you remove it, trying to stop
   while any task remains in `00_todo/` is blocked. (It's git-ignored.)
 - Read `AGENTS.md` in full (the gate **and** the contract), `.agent/tasks/README.md`,
   and every `.agent/rules/*.md` (the taste KB). Run `coop tasks` to announce the
