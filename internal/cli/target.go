@@ -83,6 +83,25 @@ func singleAccount(t agents.Target) (string, error) {
 	}
 }
 
+// foldTarget folds a positional target's model + single account into a run's one-off
+// model/profile strings — acp and fork thread these through their inner box rather than
+// through selectRun*. Only a non-empty segment overwrites, so a bare `provider` leaves an
+// env-supplied model/account (a preset-rotation rung) intact. A >1-account ladder errors
+// (loop-only). The caller takes the provider from t.Provider.
+func foldTarget(t agents.Target, model, profile *string) error {
+	if t.Model != "" {
+		*model = t.Model
+	}
+	acct, err := singleAccount(t)
+	if err != nil {
+		return err
+	}
+	if acct != "" {
+		*profile = acct
+	}
+	return nil
+}
+
 // applyTarget seeds a single run's model + account selection from a target (the loop uses the
 // rotation ladder instead). A >1-account ladder is rejected (loop-only).
 func (a *app) applyRunTarget(t agents.Target) error {

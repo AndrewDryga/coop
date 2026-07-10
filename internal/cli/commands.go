@@ -446,19 +446,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 	_, args = extractSupervise(args)
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
 	consult, args := extractConsult(args)
-	// --credential pins this ACP session to one account — so an editor can point a "claude (work)"
-	// agent_servers entry at ["acp","claude","--credential","work"]. Read before the tool token; ACP
-	// takes no extra args (the leftover check below rejects them), so there's no agent-flag passthrough.
-	profile, args, err := extractRunProfile(args)
-	if err != nil {
-		return 2, err
-	}
-	// --model pins the session's model the same way, so an editor entry can run e.g.
-	// ["acp","claude","--model","opus"]. Applied before acpCommand builds the adapter
-	// command, so gemini's (its own binary) carries the flag; claude's separate adapter
-	// binary picks it up via ModelEnv in box.Run instead.
-	model, args, err := extractRunModel(args)
-	if err != nil {
+	// --model/--credential are retired on this surface too — pin the session in the positional
+	// target instead, so an editor's agent_servers entry runs ["acp","claude:opus-4.8@work"].
+	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err
 	}
 	// --preset: routing + role wiring for the editor session; the preset's lead is the
@@ -467,9 +457,49 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// The positional target pins the session's agent, model, and account. Parsed BEFORE the
+	// inner env-override block so a preset-rotation rung (COOP_ACP_LEAD_MODEL/_CRED) still wins
+	// over the launch-time model/account. fusion is a keyword (a governor target follows), not
+	// itself a provider, so it isn't parsed as a target.
+	model, profile := "", ""
+	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
+	governor := ""
+	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
+	isFusion := len(args) > 0 && args[0] == "fusion"
+	switch {
+	case isFusion:
+		consumed = 1
+		governor, toolSet = a.cfg.FusionGovernor, false
+		if len(args) > 1 {
+			t, terr := agents.ParseTarget(args[1])
+			if terr != nil {
+				return 2, terr
+			}
+			governor, toolSet = t.Provider, true
+			if terr := foldTarget(t, &model, &profile); terr != nil {
+				return 2, terr
+			}
+			consumed = 2
+		}
+	case len(args) > 0:
+		t, terr := agents.ParseTarget(args[0])
+		if terr != nil {
+			return 2, terr
+		}
+		tool, toolSet = t.Provider, true
+		if terr := foldTarget(t, &model, &profile); terr != nil {
+			return 2, terr
+		}
+		consumed = 1
+	}
+	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
+	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
+	if leftover := args[consumed:]; len(leftover) > 0 {
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]][:model][@account] [--preset <name>])", leftover[0])
+	}
 	// A running ACP session can switch its credential/preset via coop's selector; the supervisor
 	// re-execs the inner box with the choice in the env (COOP_ACP_CREDENTIAL/COOP_ACP_PRESET), which
-	// overrides the launch flags so the switched identity drives loadRunPreset + the lead below.
+	// overrides the launch target so the switched identity drives loadRunPreset + the lead below.
 	if os.Getenv("COOP_ACP_INNER") != "" {
 		if cr := os.Getenv("COOP_ACP_CREDENTIAL"); cr != "" {
 			profile, presetName = cr, ""
@@ -491,19 +521,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
-	consumed := 0              // positional tokens accounted for (the agent, plus a governor under fusion)
-	if len(args) > 0 {
-		tool, toolSet = args[0], true
-		consumed = 1
-	}
-	governor := ""
-	if tool == "fusion" {
-		governor, toolSet = a.cfg.FusionGovernor, false
-		if len(args) > 1 {
-			governor, toolSet = args[1], true
-			consumed = 2
-		}
+	if isFusion {
 		governor = presetLeadAgent(p, governor, toolSet)
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
@@ -515,15 +533,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if !agents.Valid(tool) {
 		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
 	}
-	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
-	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
-	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]] [--credential <name>] [--model <model>] [--preset <name>])", leftover[0])
-	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).
 	if profile != "" && !slices.Contains(a.cfg.Profiles(tool), profile) {
-		return 2, fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", tool, profile, tool, profile)
+		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	// The outer process owns the editor stream via the proxy; it builds coop's control layer (the
 	// toolbar rewrite + credential/preset selector) and re-execs `coop acp <inner>` (COOP_ACP_INNER

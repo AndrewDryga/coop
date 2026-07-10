@@ -523,8 +523,11 @@ func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	if code, err := a.cmdFusion([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
 		t.Errorf("cmdFusion --credential ghost = (%d, %v), want 2 + error", code, err)
 	}
+	if code, err := a.cmdACP([]string{"claude@ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdACP claude@ghost = (%d, %v), want 2 + error", code, err)
+	}
 	if code, err := a.cmdACP([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdACP --credential ghost = (%d, %v), want 2 + error", code, err)
+		t.Errorf("cmdACP --credential (retired) = (%d, %v), want 2 + tombstone", code, err)
 	}
 }
 
