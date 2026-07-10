@@ -55,8 +55,8 @@ func TestDefaults(t *testing.T) {
 	if c.MCPInBox != "/home/node/.mcp.json" {
 		t.Errorf("MCPInBox = %q", c.MCPInBox)
 	}
-	if c.MaxReviewRounds != 3 {
-		t.Errorf("MaxReviewRounds = %d, want 3 (default)", c.MaxReviewRounds)
+	if c.MaxReviewRounds != 5 {
+		t.Errorf("MaxReviewRounds = %d, want 5 (default)", c.MaxReviewRounds)
 	}
 	if c.FusionGovernor != "codex" {
 		t.Errorf("FusionGovernor = %q, want codex", c.FusionGovernor)

@@ -42,8 +42,9 @@ type Config struct {
 
 	ServicesNet     string   // COOP_SERVICES_NET — override the services network name
 	LoopModel       string   // COOP_LOOP_MODEL — model for loop iterations (falls back to the per-agent default)
+	ReviewModel     string   // COOP_REVIEW_MODEL — model for the loop's review + between-tasks audit iterations (empty = the loop's model)
 	LoopCmd         []string // COOP_LOOP_CMD — override the loop's per-iteration command
-	MaxReviewRounds int      // COOP_MAX_REVIEW_ROUNDS — work→review rounds before a task the review keeps reopening is blocked (default 3)
+	MaxReviewRounds int      // COOP_MAX_REVIEW_ROUNDS — the ceiling for the (batch-scaled) work→review rounds before a task the review keeps reopening is blocked (default 5)
 	TasksFiles      []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
 	Gate            []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs    []string // COOP_RUN_ARGS — extra args passed to the container runtime
@@ -157,8 +158,9 @@ func Load() *Config {
 
 		ServicesNet:     get("COOP_SERVICES_NET", ""),
 		LoopModel:       get("COOP_LOOP_MODEL", ""),
+		ReviewModel:     get("COOP_REVIEW_MODEL", ""),
 		LoopCmd:         shellSplit(get("COOP_LOOP_CMD", "")),
-		MaxReviewRounds: getInt("COOP_MAX_REVIEW_ROUNDS", 3),
+		MaxReviewRounds: getInt("COOP_MAX_REVIEW_ROUNDS", 5),
 		TasksFiles:      shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
 		Gate:            shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs:    shellSplit(get("COOP_RUN_ARGS", "")),
@@ -359,6 +361,11 @@ func (c *Config) SetActiveModel(agent, model string) {
 	}
 	c.activeModels[agent] = model
 }
+
+// ActiveModel returns the run's EXPLICIT top-tier model for agent ("" when none), so a caller
+// that temporarily overrides it (the loop swapping in COOP_REVIEW_MODEL for the review pass) can
+// snapshot and restore the prior value.
+func (c *Config) ActiveModel(agent string) string { return c.activeModels[agent] }
 
 // SetTargetModel selects the active rotation target's model — a loop applies it at start and
 // on every rotation, so an `opus@work` target runs opus until the rotation moves on. It

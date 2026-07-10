@@ -125,8 +125,19 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 		}
 	}
 	rev := loopReviewPrompt("/repo", []string{".agent/tasks"})
-	// The default prompt: bookkeeping, a SINGLE whole-repo gate (not per task), reopen, no self-fix.
-	for _, want := range []string{"99_done/", "a SINGLE time across the WHOLE repo", "NOT once per task", "make no commits"} {
+	// The demanding default prompt: a senior reviewer's bar — every acceptance criterion met, the
+	// repo's rules obeyed, the FAILURE path tested, the change polished (docs updated), a SINGLE
+	// whole-repo gate, reopen-by-moving, and no self-fix/commits.
+	for _, want := range []string{
+		"SENIOR REVIEWER", "99_done/",
+		"acceptance criterion",                      // 1. meets its goal
+		".agent/rules",                              // 2. follows the standards
+		"FAILURE/edge path",                         // 3. tested for real
+		"docs/README/CHANGELOG",                     // 4. polished
+		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate
+		"MOVING its folder back to 10_in_progress/", // reopen by moving
+		"make no commits",
+	} {
 		if !strings.Contains(rev, want) {
 			t.Errorf("default review prompt missing %q:\n%s", want, rev)
 		}
@@ -158,37 +169,125 @@ func TestLoopReviewPromptOverride(t *testing.T) {
 	if !strings.HasPrefix(rev, "My custom review: only check the docs.") {
 		t.Errorf("review.md should be the base:\n%s", rev)
 	}
-	if strings.Contains(rev, "Review pass — verify") {
-		t.Errorf("an override should REPLACE the default, not append to it:\n%s", rev)
+	if strings.Contains(rev, "SENIOR REVIEWER") {
+		t.Errorf("an override should REPLACE the built-in default, not append to it:\n%s", rev)
 	}
 	if !strings.Contains(rev, "its folder back to 10_in_progress/") {
 		t.Errorf("the fixed context footer must trail an override too:\n%s", rev)
 	}
 }
 
-// .agent/audit.md, when present, is appended to the review prompt so the pass also runs the
-// project's own checks; absent, the generated prompt carries no appendix. Kept for backward
-// compatibility beside the review.md override.
+// .agent/loop/audit.md, when present, is appended to the review prompt so the pass also runs the
+// project's own checks; absent, the generated prompt carries no appendix. It lives under loop/ (the
+// migrated home — the old .agent/audit.md is tombstoned, see TestLegacyAuditTombstone).
 func TestLoopReviewInstructionsAppended(t *testing.T) {
 	repo := t.TempDir()
 	// No file → no appendix.
 	if rev := loopReviewPrompt(repo, []string{".agent/tasks"}); strings.Contains(rev, "project-specific checks") {
-		t.Errorf("review prompt should carry no appendix without .agent/audit.md:\n%s", rev)
+		t.Errorf("review prompt should carry no appendix without .agent/loop/audit.md:\n%s", rev)
 	}
-	// With the file → its (trimmed) text is appended after the base, before the footer.
+	// The OLD path is no longer read — a legacy .agent/audit.md must NOT feed the prompt.
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "audit.md"), []byte("\nVerify CHANGELOG.md gained an entry.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "audit.md"), []byte("legacy check — must be ignored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rev := loopReviewPrompt(repo, []string{".agent/tasks"}); strings.Contains(rev, "legacy check") {
+		t.Errorf("the tombstoned .agent/audit.md must NOT be read into the prompt:\n%s", rev)
+	}
+	// With the file at the NEW path → its (trimmed) text is appended after the base, before the footer.
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "loop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop", "audit.md"), []byte("\nVerify CHANGELOG.md gained an entry.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rev := loopReviewPrompt(repo, []string{".agent/tasks"})
 	if !strings.HasPrefix(rev, "Review pass") {
 		t.Errorf("the default review body should still lead:\n%s", rev)
 	}
-	if !strings.Contains(rev, "project-specific checks (from .agent/audit.md)") ||
+	if !strings.Contains(rev, "project-specific checks (from .agent/loop/audit.md)") ||
 		!strings.Contains(rev, "Verify CHANGELOG.md gained an entry.") {
-		t.Errorf("review prompt should append .agent/audit.md's text:\n%s", rev)
+		t.Errorf("review prompt should append .agent/loop/audit.md's text:\n%s", rev)
+	}
+}
+
+// TestLegacyAuditTombstone: a leftover .agent/audit.md fires a one-time note pointing at the new
+// .agent/loop/audit.md; absent → no note (and the note names both paths so a human can migrate).
+func TestLegacyAuditTombstone(t *testing.T) {
+	repo := t.TempDir()
+	if got := legacyAuditTombstone(repo); got != "" {
+		t.Errorf("no legacy file → no tombstone note, got %q", got)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "audit.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	note := legacyAuditTombstone(repo)
+	if !strings.Contains(note, ".agent/audit.md") || !strings.Contains(note, ".agent/loop/audit.md") {
+		t.Errorf("tombstone note must name both the old and new paths, got %q", note)
+	}
+}
+
+// TestLoopBetweenPrompt: the between-tasks audit is OFF unless .agent/loop/between.md exists and is
+// non-empty; present → its (trimmed) text IS the prompt base and the fixed footer trails.
+func TestLoopBetweenPrompt(t *testing.T) {
+	repo := t.TempDir()
+	if betweenAuditEnabled(repo) {
+		t.Error("between audit must be OFF without .agent/loop/between.md")
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "loop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An empty file still counts as absent (opt-in requires real content).
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop", "between.md"), []byte("\n  \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if betweenAuditEnabled(repo) {
+		t.Error("an empty between.md must NOT enable the between audit")
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop", "between.md"), []byte("\nAudit the task just moved to 99_done/.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !betweenAuditEnabled(repo) {
+		t.Error("a non-empty between.md must enable the between audit")
+	}
+	p := loopBetweenPrompt(repo, []string{".agent/tasks"})
+	if !strings.HasPrefix(p, "Audit the task just moved to 99_done/.") {
+		t.Errorf("between.md text should be the prompt base:\n%s", p)
+	}
+	if !strings.Contains(p, "its folder back to 10_in_progress/") {
+		t.Errorf("the fixed context footer must trail the between prompt:\n%s", p)
+	}
+}
+
+// TestWithReviewModel: COOP_REVIEW_MODEL is applied to the review/audit iteration ONLY, then the
+// prior model is restored — so the work loop keeps its own model; unset → no swap at all.
+func TestWithReviewModel(t *testing.T) {
+	// Set: the model is the review model DURING fn, restored to the prior explicit model after.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), ReviewModel: "opus-review"}}
+	a.cfg.SetActiveModel("claude", "sonnet-work") // the work loop's active model
+	var during string
+	a.withReviewModel("claude", func() { during = a.cfg.ModelFor("claude") })
+	if during != "opus-review" {
+		t.Errorf("review iteration model = %q, want opus-review", during)
+	}
+	if got := a.cfg.ModelFor("claude"); got != "sonnet-work" {
+		t.Errorf("after the review pass the work model must be restored: got %q, want sonnet-work", got)
+	}
+	// Unset: no swap — fn runs on whatever the loop model is, and nothing changes.
+	b := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	b.cfg.SetActiveModel("claude", "sonnet-work")
+	b.withReviewModel("claude", func() {
+		if got := b.cfg.ModelFor("claude"); got != "sonnet-work" {
+			t.Errorf("unset COOP_REVIEW_MODEL → loop model reviews, got %q", got)
+		}
+	})
+	if got := b.cfg.ModelFor("claude"); got != "sonnet-work" {
+		t.Errorf("unset COOP_REVIEW_MODEL → model unchanged, got %q", got)
 	}
 }
 

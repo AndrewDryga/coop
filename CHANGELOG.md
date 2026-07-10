@@ -4,19 +4,28 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **`coop loop`'s end-of-loop pass is now a customizable REVIEW that loops until it accepts.**
-  Three changes to what was a one-shot audit: (1) commit `.agent/loop/review.md` to FULLY override
-  the review prompt (like a preset, it's committed config — the scaffold `.gitignore` now allowlists
-  `.agent/loop/`), while `.agent/audit.md` still appends as the light "add a check" layer, and coop
-  always appends a fixed context footer (the queue paths, `AGENTS.md`, and the "coop isn't installed
-  — reopen by moving the folder" mechanics). (2) The DEFAULT review now does bookkeeping (every
-  `99_done/` task has an implementing commit + a final `state.md`) and runs the repo's gate **once**
-  across the whole repo (not once per task), reopening anything not actually done — it still never
-  fixes task code itself. (3) Structural **loop-until-accepted**: after the review the loop re-reads
-  the queue and, if the review reopened anything, DRAINS and reviews again — repeating until a review
-  reopens nothing, bounded by `COOP_MAX_REVIEW_ROUNDS` (default 3); on cap-exceed the persistently
-  reopened task is blocked for a human (`50_blocked/` + a `decision.md`) so the loop exits 3, not a
-  false "done".
+- **`coop loop`'s end-of-loop pass is now a customizable, DEMANDING review that loops until it
+  accepts.** Commit `.agent/loop/review.md` to FULLY override the review prompt (committed config,
+  like a preset — the scaffold `.gitignore` allowlists `.agent/loop/`), while `.agent/loop/audit.md`
+  appends as the light "add a check" layer, and coop always appends a fixed context footer (the queue
+  paths, `AGENTS.md`, and the "coop isn't installed — reopen by moving the folder" mechanics). The
+  **default review is now a senior reviewer's bar**: per `99_done/` task it verifies the goal is met
+  (every acceptance criterion + subtask), the standards are followed (`AGENTS.md` + `.agent/rules`, no
+  scope creep), the **failure path** is tested, and the change is polished (docs/CHANGELOG updated),
+  plus bookkeeping — then runs the repo's gate **once** across the whole repo (not per task),
+  reopening anything short of "merge with no changes"; it still never fixes task code itself.
+  Structural **loop-until-accepted**: after the review the loop re-drains anything reopened and
+  reviews again until a review reopens nothing. The round cap now **scales with the batch** —
+  `clamp(tasks worked / 2, 3, COOP_MAX_REVIEW_ROUNDS)`, and `COOP_MAX_REVIEW_ROUNDS`'s default rose
+  **3 → 5** — so a small batch still gets a few tries and a 100-task overnight run can't ping-pong one
+  stuck task forever; on cap-exceed the persistently reopened task is blocked for a human
+  (`50_blocked/` + a `decision.md`) so the loop exits 3, not a false "done". New knobs:
+  **`COOP_REVIEW_MODEL`** runs the review pass (and the between audit below) on its own, typically
+  stronger model — a capable model reviews the cheaper loop's work; and an opt-in
+  **`.agent/loop/between.md`** runs a per-task audit AFTER each completed task (its text is the
+  prompt) that reviews the just-finished task and may reopen it before the loop moves on (absent = no
+  between-task step). The review's project checks **moved `.agent/audit.md` → `.agent/loop/audit.md`**
+  (beside `review.md`/`between.md`); the old path is no longer read and coop warns once if it lingers.
 
 - **`coop models` shows LIVE models, not just a hardcoded list.** Each agent's line is now the
   real model catalog when a fresh one is cached (dim `(live)`), falling back to the curated static

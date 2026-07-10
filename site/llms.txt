@@ -391,21 +391,34 @@ coop loop [agent] — work the task queue until done, then review.
 
   Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m[@account]>] [--credential <name>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]
 
-  A fresh agent per iteration works the todo tasks; when the queue empties, a review
-  pass re-checks the shipped tasks — bookkeeping (every done task has an implementing
-  commit and a final state.md) plus the repo's gate run ONCE across the whole repo —
-  and reopens anything not actually done. If the review reopened work, the loop drains
-  and reviews AGAIN, repeating until a review reopens nothing (verified done) or the
-  round cap (COOP_MAX_REVIEW_ROUNDS, default 3) is hit — then the task the review keeps
-  reopening is blocked for a human (exit 3), not reported as done. On a rate limit it
-  rotates to the next target in its models ladder, or waits out the reset when all are
-  limited.
+  A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
+  review pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
+  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/rules, no scope
+  creep), the FAILURE path tested, the change polished (docs/CHANGELOG updated), plus
+  bookkeeping — then runs the repo's gate ONCE across the whole repo, reopening anything
+  short of "merge with no changes". If the review reopened work, the loop drains and
+  reviews AGAIN, repeating until a review reopens nothing (verified done) or the round cap
+  is hit — then the task the review keeps reopening is blocked for a human (exit 3), not
+  reported as done. The cap SCALES with the batch: half the tasks worked this run, clamped
+  to [3, COOP_MAX_REVIEW_ROUNDS] (default 5) — a small batch still gets a few tries, a big
+  overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
+  next target in its models ladder, or waits out the reset when all are limited.
 
   Fully override the review prompt by committing .agent/loop/review.md (Markdown): its
   text replaces the built-in review instructions (coop still appends the queue paths and
-  reopen mechanics). Or just ADD checks in .agent/audit.md — its text is appended to
+  reopen mechanics). Or just ADD checks in .agent/loop/audit.md — its text is appended to
   whichever review prompt is in effect, reopening any shipped task that fails one (e.g.
-  changelog updated, docs regenerated, no stray TODOs).
+  changelog updated, docs regenerated, no stray TODOs). (The old .agent/audit.md moved
+  here — git mv it into .agent/loop/; coop warns once if the old path lingers.)
+
+  Commit .agent/loop/between.md to run a per-task audit AFTER each completed task (opt-in;
+  its text is the prompt, like review.md): it reviews the just-finished task against its
+  goal + the repo's rules and may reopen it, so the loop reworks it before moving on.
+  Absent → no between-task step (an extra box iteration per task is the cost).
+
+  COOP_REVIEW_MODEL runs the review pass (and the between-tasks audit) on its own,
+  typically STRONGER model — the cheap loop model does the work, a more capable model
+  reviews it. Unset → the review runs on the loop's model.
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its models: ladder is the rotation, and each iteration gets the

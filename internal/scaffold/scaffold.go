@@ -276,10 +276,11 @@ func (s *scaffolder) updateGitignore() error {
 	content := string(data)
 	orig := content
 	// **/.agent/* ignores .agent/ state at any depth, so a monorepo member's working state (its
-	// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets/audit — is un-ignored
-	// at any depth as well, since a large monorepo member may carry its own; only project.yaml is
-	// TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays root-anchored.
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/audit.md\n!**/.agent/loop/\n!.agent/project.yaml\n" +
+	// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets and the loop/ config
+	// (review.md/audit.md/between.md) — is un-ignored at any depth as well, since a large monorepo
+	// member may carry its own; only project.yaml is TOP-LEVEL (the single subprojects+serve config),
+	// so its un-ignore stays root-anchored.
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop/\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place; likewise
@@ -296,8 +297,10 @@ func (s *scaffolder) updateGitignore() error {
 		// Block present but predates project.yaml — un-ignore the top-level config so it's committed.
 		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!.agent/project.yaml\n", 1)
 	}
-	// loop/ (holds review.md — committed config, like audit.md) postdates the block; un-ignore it in
-	// an older gitignore that already carries the block but not the loop line.
+	// loop/ (the committed loop config — review.md/audit.md/between.md) postdates the block; un-ignore
+	// it in an older gitignore that already carries the block but not the loop line. Every pre-loop
+	// block un-ignored .agent/audit.md, so that line is a reliable anchor to insert after (and current
+	// blocks fold audit.md under loop/, so they already contain the loop line and skip this).
 	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/loop/") {
 		content = strings.Replace(content, "!**/.agent/audit.md\n", "!**/.agent/audit.md\n!**/.agent/loop/\n", 1)
 	}
@@ -307,7 +310,7 @@ func (s *scaffolder) updateGitignore() error {
 	if err := os.WriteFile(gi, []byte(content), 0o644); err != nil {
 		return err
 	}
-	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/audit.md/loop + project.yaml tracked)")
+	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/loop + project.yaml tracked)")
 	return nil
 }
 

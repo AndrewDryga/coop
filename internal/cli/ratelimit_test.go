@@ -294,6 +294,30 @@ func TestProgressStall(t *testing.T) {
 	}
 }
 
+// TestReviewRoundCap covers the batch-scaled cap: half the tasks worked, floored at 3 and
+// ceilinged at COOP_MAX_REVIEW_ROUNDS — so a tiny batch still gets 3 rounds and a big overnight
+// batch caps at the ceiling.
+func TestReviewRoundCap(t *testing.T) {
+	const max = 5
+	cases := []struct{ tasks, want int }{
+		{0, 3},   // nothing worked → the floor
+		{4, 3},   // 4/2=2 → floored to 3
+		{6, 3},   // 6/2=3 → exactly the floor
+		{8, 4},   // 8/2=4 → between floor and ceiling
+		{10, 5},  // 10/2=5 → the ceiling
+		{100, 5}, // huge batch → still the ceiling
+	}
+	for _, c := range cases {
+		if got := reviewRoundCap(c.tasks, max); got != c.want {
+			t.Errorf("reviewRoundCap(%d, %d) = %d, want %d", c.tasks, max, got, c.want)
+		}
+	}
+	// A ceiling below the floor (COOP_MAX_REVIEW_ROUNDS=1, a one-shot review) still wins.
+	if got := reviewRoundCap(100, 1); got != 1 {
+		t.Errorf("reviewRoundCap(100, 1) = %d, want 1 (a sub-floor ceiling wins)", got)
+	}
+}
+
 // TestReviewRoundOutcome covers the three loop-until-accepted convergence paths: a review that
 // reopens nothing is accepted immediately; a review that reopens work re-drains while rounds
 // remain; and one that never converges is capped (block the stuck task → exit 3).

@@ -1287,6 +1287,23 @@ func (a *app) applyLoopModel(agent string) {
 	}
 }
 
+// withReviewModel runs fn with agent's model swapped to COOP_REVIEW_MODEL — so the review pass (and
+// the between-tasks audit) can run on a stronger model than the cheaper work loop — then restores
+// the prior top-tier model so the next work round rotates as before. It uses the top model tier so
+// the review model wins for these iterations regardless of the work loop's rotation target; unset →
+// no swap (the loop's model reviews). fn builds AND runs the iteration, so the model is in effect
+// when the box command is assembled (the adapters read cfg.ModelFor at build time).
+func (a *app) withReviewModel(agent string, fn func()) {
+	if a.cfg.ReviewModel == "" {
+		fn()
+		return
+	}
+	prev := a.cfg.ActiveModel(agent)
+	a.cfg.SetActiveModel(agent, a.cfg.ReviewModel)
+	defer a.cfg.SetActiveModel(agent, prev)
+	fn()
+}
+
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
 // --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
 // one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
@@ -1332,25 +1349,32 @@ func loopWorkPrompt(repo string, queues []string) string {
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
 }
 
-// defaultReviewPrompt is the built-in review pass when .agent/loop/review.md is absent: it does
-// bookkeeping, runs the repo's gate ONCE across the whole repo (not per task), and reopens anything
-// not actually done — but never fixes task code itself (the work loop does that next round). The
-// fixed context footer (reviewContextFooter) supplies the queue paths + the "coop isn't installed,
-// move folders yourself" mechanics, so this text stays static and unit-testable.
-const defaultReviewPrompt = "Review pass — verify the just-drained queue is ACTUALLY done. Do NOT fix any task's code or make commits of your own: when something is wrong you REOPEN the task (the work loop fixes it next round).\n" +
-	"1. Bookkeeping: for every task folder in 99_done/, confirm the git log holds a commit that implements it and the folder has a final state.md; confirm the queue is internally consistent (no id in two state dirs, no half-moved folder).\n" +
-	"2. Gate ONCE: run the repo's gate (per AGENTS.md) a SINGLE time across the WHOLE repo — NOT once per task. If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — and note the failure in its log.md.\n" +
-	"3. Reopen not-done: move any task that isn't actually done (gate red, missing commit, incomplete work) back to 10_in_progress/, noting what's missing in its log.md.\n" +
-	"Reopen by MOVING folders only; change no task code and make no commits."
+// defaultReviewPrompt is the built-in review pass when .agent/loop/review.md is absent: a senior
+// reviewer's bar over work done unattended overnight — per done task it checks the goal is met, the
+// repo's standards are followed, the failure path is tested, and the change is polished, then runs
+// the repo's gate ONCE across the whole repo (not per task) — reopening anything short of "merge with
+// no changes" but never fixing task code itself (the work loop does that next round). The fixed
+// context footer (reviewContextFooter) supplies the queue paths + the "coop isn't installed, move
+// folders yourself" mechanics, so this text stays static and unit-testable.
+const defaultReviewPrompt = "Review pass — you are the SENIOR REVIEWER for work done unattended overnight. Make sure every shipped task is CORRECT, meets its stated goal, follows this repo's standards, and is genuinely polished — not merely \"the gate is green.\" You do NOT fix code or make commits: when something falls short you REOPEN the task with a SPECIFIC, actionable note, and the work loop fixes it next round. Be demanding — the bar is work you'd merge with no changes.\n" +
+	"For EVERY task folder in 99_done/:\n" +
+	"1. Meets its goal — read its task.md and the diff of its commit (git log/git show). Does the work satisfy EVERY acceptance criterion and cover every subtask? If any is unmet or a subtask was skipped, reopen it.\n" +
+	"2. Follows the standards — it obeys AGENTS.md and every rule in .agent/rules, matches the surrounding code's style, and adds NO scope creep: no unrequested features or knobs, no unrelated refactors, no churn. Reopen violations.\n" +
+	"3. Tested for real — it has tests that exercise the FAILURE/edge path, not just the happy path, and they actually cover the new behavior. Reopen thin or missing tests.\n" +
+	"4. Polished — no debug prints, commented-out or dead code, leftover TODO/FIXME, or stray files; comments say why, not what; a user-visible change updated the docs/README/CHANGELOG. Reopen anything unpolished.\n" +
+	"5. Bookkeeping — a commit implementing it exists in git log, a final state.md is present, and the queue is internally consistent (no id in two state dirs, no half-moved folder).\n" +
+	"Then ONCE across the WHOLE repo (not per task), run the repo's gate (per AGENTS.md). If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — with the failure.\n" +
+	"Reopen a task by MOVING its folder back to 10_in_progress/ and writing in its log.md exactly what's wrong and what \"done\" requires. Change no task code; make no commits."
 
 // loopReviewPrompt is the end-of-loop review pass's prompt: a base (a full override from
-// .agent/loop/review.md when present, else defaultReviewPrompt), then the optional .agent/audit.md
-// append (legacy "extra project checks" knob), then a fixed context footer with the concrete queue
-// paths and reopen mechanics — so whatever the base says, the agent always has the mechanics.
+// .agent/loop/review.md when present, else defaultReviewPrompt), then the optional
+// .agent/loop/audit.md append ("extra project checks" knob), then a fixed context footer with the
+// concrete queue paths and reopen mechanics — so whatever the base says, the agent always has the
+// mechanics.
 func loopReviewPrompt(repo string, queues []string) string {
 	p := reviewPromptBase(repo)
 	if extra := loopReviewInstructions(repo); extra != "" {
-		p += "\n\nAlso apply these project-specific checks (from .agent/audit.md), reopening any task that fails one:\n" + extra
+		p += "\n\nAlso apply these project-specific checks (from .agent/loop/audit.md), reopening any task that fails one:\n" + extra
 	}
 	return p + "\n\n" + reviewContextFooter(repo, queues)
 }
@@ -1376,18 +1400,47 @@ func reviewContextFooter(repo string, queues []string) string {
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
 }
 
-// loopReviewInstructions reads optional, project-specific review criteria from .agent/audit.md,
-// appended to the review prompt so the pass also checks whatever this repo cares about (changelog
-// updated, no stray TODOs, docs regenerated, …). Kept as .agent/audit.md for backward compatibility
-// — .agent/loop/review.md is the primary knob (a full override); audit.md is the light "add a check"
-// layer. Absent or empty → "". Read on the host and inlined, so there is no in-box path to resolve
-// and it behaves the same for every agent.
+// loopReviewInstructions reads optional, project-specific review criteria from
+// .agent/loop/audit.md, appended to the review prompt so the pass also checks whatever this repo
+// cares about (changelog updated, no stray TODOs, docs regenerated, …). It lives under
+// .agent/loop/ beside review.md and between.md — the loop-only knobs (its predecessor
+// .agent/audit.md is tombstoned; see legacyAuditTombstone). .agent/loop/review.md is the primary
+// knob (a full override); audit.md is the light "add a check" layer. Absent or empty → "". Read on
+// the host and inlined, so there is no in-box path to resolve and it behaves the same for every agent.
 func loopReviewInstructions(repo string) string {
-	data, err := os.ReadFile(filepath.Join(repo, ".agent", "audit.md"))
+	data, err := os.ReadFile(filepath.Join(repo, ".agent", "loop", "audit.md"))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// legacyAuditTombstone returns a one-time warning when the OLD .agent/audit.md still exists — its
+// checks moved to .agent/loop/audit.md (loop-only, beside review.md/between.md), and coop does NOT
+// silently read the old path. Empty when the legacy file is absent. loop() surfaces it once at start
+// so an unmigrated repo isn't silently ignored. Pure (returns the string), so it's unit-testable.
+func legacyAuditTombstone(repo string) string {
+	if !fileExists(filepath.Join(repo, ".agent", "audit.md")) {
+		return ""
+	}
+	return "found a legacy .agent/audit.md — its review checks now live in .agent/loop/audit.md and the old path is NO LONGER read; move it there (git mv .agent/audit.md .agent/loop/audit.md), then delete the old file"
+}
+
+// loopBetweenPrompt is the optional per-task audit run after each completed task when
+// .agent/loop/between.md is present: the file's (trimmed) contents ARE the prompt base (a full
+// override, like review.md — there is no built-in default; the feature is off unless the file
+// exists), then the same fixed context footer with the queue paths and reopen mechanics. It reviews
+// the just-completed task and may reopen it — the work loop reworks it before moving on.
+func loopBetweenPrompt(repo string, queues []string) string {
+	data, _ := os.ReadFile(filepath.Join(repo, ".agent", "loop", "between.md"))
+	return strings.TrimSpace(string(data)) + "\n\n" + reviewContextFooter(repo, queues)
+}
+
+// betweenAuditEnabled reports whether the opt-in per-task audit is on: a non-empty
+// .agent/loop/between.md exists. Absent or empty → off (today's behavior, zero cost).
+func betweenAuditEnabled(repo string) bool {
+	data, err := os.ReadFile(filepath.Join(repo, ".agent", "loop", "between.md"))
+	return err == nil && strings.TrimSpace(string(data)) != ""
 }
 
 // blockReopenedTasks parks every task still reopened after the review round cap (anything left in
@@ -1514,6 +1567,22 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// stream-json marker in the command is what runIteration keys the decoder off.
 	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues)
+	// The review pass (end-of-loop) and the optional between-tasks audit both run only under the
+	// review-aware agent form, not a custom COOP_LOOP_CMD. between.md is opt-in — an extra box
+	// iteration per completed task — so it's off unless the file exists. Both can run on a stronger
+	// COOP_REVIEW_MODEL than the work loop (see withReviewModel).
+	betweenEnabled := len(custom) == 0 && betweenAuditEnabled(repo)
+	betweenPrompt := ""
+	if betweenEnabled {
+		betweenPrompt = loopBetweenPrompt(repo, queues)
+	}
+	// Tombstone the legacy .agent/audit.md once: its checks moved to .agent/loop/audit.md, which
+	// coop reads instead — don't silently ignore an unmigrated repo (only the review-aware form reads it).
+	if len(custom) == 0 {
+		if note := legacyAuditTombstone(repo); note != "" {
+			ui.Warn("%s", note)
+		}
+	}
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/review prompt.
 	iterCmd := func(prompt string) []string {
@@ -1582,14 +1651,16 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	// Loop-until-accepted: drain the work queue, run the review pass, and if the review reopened
 	// anything, drain and review AGAIN — repeating until a review reopens nothing (accepted) or the
-	// round cap is hit (block the stuck task for a human). maxReviewRounds bounds the ping-pong so a
-	// task that can't self-heal doesn't spin forever. A custom COOP_LOOP_CMD has no review pass.
-	maxReviewRounds := a.cfg.MaxReviewRounds
+	// round cap is hit (block the stuck task for a human). The cap scales with the batch —
+	// clamp(tasks worked/2, 3, COOP_MAX_REVIEW_ROUNDS) — so a big overnight batch can't ping-pong one
+	// stuck task forever while a tiny batch still gets a few tries (computed per round from the run's
+	// completed count; the hard ceiling bounds it). A custom COOP_LOOP_CMD has no review pass.
 	for reviewRound := 1; ; reviewRound++ {
 		for n := 1; ; {
 			// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
-			// below — stops here, before the next task is claimed.
-			if softStop.Load() {
+			// below — stops here, before the next task is claimed; a second (hard) Ctrl-C that
+			// canceled iterCtx during a between-tasks audit stops here too, before respawning a box.
+			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 				break
 			}
 			// Surface queue progress + the task being worked, so a long run shows movement
@@ -1637,6 +1708,18 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				if stop != nil {
 					return code, stop
 				}
+				// Optional between-tasks audit: if this iteration moved a task to 99_done/ and
+				// .agent/loop/between.md is present, review that just-completed task now (on the review
+				// model). It may reopen it — the next inner iteration picks the reopened task back up and
+				// reworks it before the loop moves on. Off (no extra iteration) unless the file exists.
+				if betweenEnabled {
+					if cNow, _ := queueProgress(hosts); cNow.Done > c.Done {
+						ui.Info("between-tasks audit — reviewing the task just completed")
+						a.withReviewModel(agent, func() {
+							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), hosts, sink, consult)
+						})
+					}
+				}
 			case actWait:
 				// A rate/usage limit is expected on long runs. With more than one profile in
 				// the pool, switch to another subscription and retry immediately; otherwise wait
@@ -1675,8 +1758,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if len(custom) > 0 {
 			break
 		}
+		// Scale the cap to this run's batch (completed tasks), clamped to [3, COOP_MAX_REVIEW_ROUNDS].
+		maxReviewRounds := reviewRoundCap(completed, a.cfg.MaxReviewRounds)
 		ui.Info("queue empty — running review pass (round %d/%d)", reviewRound, maxReviewRounds)
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, consult)
+		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
+		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
+		a.withReviewModel(agent, func() {
+			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, consult)
+		})
 		// A stop that landed during the review pass is honored before the next round is decided.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 			cf, _ := queueProgress(hosts)

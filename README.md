@@ -556,7 +556,9 @@ coop claude --preset frontier      # a standing lead model + roles, from the pre
 
 Two env knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`) is the
 agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so unattended
-runs can grind on a cheaper model than your interactive sessions. In a fleet, give a fork
+runs can grind on a cheaper model than your interactive sessions (and `COOP_REVIEW_MODEL`
+flips that for the loop's [review pass](#run-it-unattended): a stronger model reviews the
+cheaper loop's work). In a fleet, give a fork
 its own with `model:` in `.agent/fleet.yaml`. Precedence, most specific first: `--model` ›
 the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AGENT>_MODEL` › a
 model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
@@ -883,21 +885,34 @@ in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric 
 per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
 in `10_in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini`
 to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
-command if you need something custom. When the queue empties, a fresh **review** pass
-re-checks the shipped tasks: bookkeeping (every `99_done/` task has an implementing commit
-and a final `state.md`) plus the repo's gate run **once** across the whole repo, then it
-reopens anything that doesn't hold up. If the review reopened work, the loop drains and
-reviews **again** — repeating until a review reopens nothing (verified done) or it hits the
-round cap (`COOP_MAX_REVIEW_ROUNDS`, default `3`), at which point the task the review keeps
-reopening is blocked for a human rather than reported as done.
+command if you need something custom. When the queue empties, a fresh, **demanding review**
+pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
+criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
+the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping
+(every `99_done/` task has an implementing commit and a final `state.md`) — then it runs the
+repo's gate **once** across the whole repo and reopens anything short of "merge with no
+changes". If the review reopened work, the loop drains and reviews **again** — repeating
+until a review reopens nothing (verified done) or it hits the round cap, at which point the
+task the review keeps reopening is blocked for a human rather than reported as done. The cap
+**scales with the batch**: half the tasks worked this run, clamped to
+`[3, COOP_MAX_REVIEW_ROUNDS]` (default `5`) — a small batch still gets a few tries, a big
+overnight batch can't ping-pong one stuck task forever.
 
-Tune the review two ways. To **replace** it wholesale, commit `.agent/loop/review.md`
-(Markdown): its text becomes the review prompt (coop still appends the queue paths and the
-reopen mechanics). To just **add** checks, drop them in `.agent/audit.md` — its text is
+Tune the review. To **replace** it wholesale, commit `.agent/loop/review.md` (Markdown):
+its text becomes the review prompt (coop still appends the queue paths and the reopen
+mechanics). To just **add** checks, drop them in `.agent/loop/audit.md` — its text is
 appended to whichever review prompt is in effect, so the pass also reopens a shipped task
 that fails one (e.g. the CHANGELOG gained an entry, the docs were regenerated, no stray
-`TODO`s). Both are committed with the repo (shared, like a preset) and opt-in — no file is
-scaffolded for you.
+`TODO`s). To review **after each task** rather than only at the end, commit
+`.agent/loop/between.md` — when present, the loop runs a per-task audit (its text is the
+prompt) right after each completed task and may reopen it before moving on (an extra box
+iteration per task; off unless the file exists). Set `COOP_REVIEW_MODEL` to run the review
+pass and the between-tasks audit on a stronger model than the cheaper work loop. All are
+committed with the repo (shared, like a preset) and opt-in — no file is scaffolded for you.
+
+> The review checks moved from `.agent/audit.md` to `.agent/loop/audit.md` (beside
+> `review.md`/`between.md`). `git mv .agent/audit.md .agent/loop/audit.md`; coop warns once
+> if the old path lingers and no longer reads it.
 
 **Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
 queue is verified done; `1` a failure; `2` a usage error; `3` the loop stopped with a task blocked
@@ -1257,7 +1272,8 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
 | `COOP_LOOP_MODEL` | — | model for loop iterations (overnight runs on a cheaper model than interactive) |
-| `COOP_MAX_REVIEW_ROUNDS` | `3` | how many work→review rounds `coop loop` runs before blocking a task the review keeps reopening (bounds the drain↔review ping-pong) |
+| `COOP_REVIEW_MODEL` | — | model for `coop loop`'s review pass + between-tasks audit — a stronger model reviews the cheaper loop's work (unset = the loop's model) |
+| `COOP_MAX_REVIEW_ROUNDS` | `5` | the ceiling for `coop loop`'s work→review rounds before blocking a task the review keeps reopening; the actual cap scales with the batch (`clamp(tasks/2, 3, this)`) |
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |

@@ -341,6 +341,22 @@ const (
 	reviewCapReached                       // the review still reopens at the round cap — block the stuck task for a human (exit 3)
 )
 
+// reviewRoundCap scales the work↔review round cap with the batch: half the tasks worked this run,
+// floored at 3 (a tiny batch still gets a few tries) and ceilinged at max (COOP_MAX_REVIEW_ROUNDS),
+// so a 100-task overnight batch caps at max instead of ping-ponging one stuck task forever. The
+// floor is applied before the ceiling, so a max set BELOW 3 (e.g. COOP_MAX_REVIEW_ROUNDS=1, a
+// one-shot review) still wins. Pure, so the clamp is unit-tested.
+func reviewRoundCap(tasks, max int) int {
+	cap := tasks / 2
+	if cap < 3 {
+		cap = 3
+	}
+	if cap > max {
+		cap = max
+	}
+	return cap
+}
+
 // reviewRoundOutcome decides what loop() does after a review pass, given the just-finished round
 // number (1-based), the cap, and whether the review reopened any actionable work (todo+in_progress
 // > 0). Nothing reopened → accepted (done). Otherwise continue while rounds remain, else give up and

@@ -309,10 +309,11 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets/
-	// audit.md, and loop/ — the review.md override) at any depth; only project.yaml is top-level.
+	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets and
+	// loop/ — the review.md/audit.md/between.md loop config) at any depth; only project.yaml is
+	// top-level. audit.md now lives under loop/, so the block no longer allowlists it separately.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/audit.md", "!**/.agent/loop/", "!.agent/project.yaml", "!.gemini/skills"} {
+	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/loop/", "!.agent/project.yaml", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}
