@@ -207,3 +207,30 @@ func (codexAgent) ACPSessionConfig() map[string]string { return nil }
 
 // BoxEnv: codex stores everything under its mounted ~/.codex — nothing extra needed.
 func (codexAgent) BoxEnv(string) []string { return nil }
+
+// codexText is the jq filter that pulls the agent's reply text out of codex's --json
+// stream; the wrapper emits it once (ShellPrelude) since fresh and resume both use it.
+const codexText = `codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }`
+
+func (codexAgent) ConsultFresh() string {
+	return `out=$(run codex exec -s read-only ${model:+--model "$model"} --json "$prompt"); st=$?
+# Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
+# and writing an empty idfile would make the next --continue run "codex exec resume ''".
+tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
+if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
+printf '%s\n' "$out" | codex_text
+# Propagate codex's own exit status (timeout/error), not the codex_text pipe's 0, so a
+# consult failure is observable like claude/gemini's instead of always looking successful.
+exit "$st"`
+}
+
+func (codexAgent) ConsultResume() string {
+	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st"`
+}
+
+func (codexAgent) DelegateExec() string {
+	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} "$prompt"`
+}
+
+func (codexAgent) ShellPrelude() string  { return codexText }
+func (codexAgent) InstallScript() string { return "" }

@@ -234,3 +234,23 @@ func (claudeAgent) BoxEnv(homeInBox string) []string {
 		"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
 	}
 }
+
+// coop-consult / coop-delegate shell — the wrapper generators concatenate these per-agent
+// arms (see internal/fusion/wrapper.go, internal/preset/wrapper.go). They run against the
+// wrapper's $prompt/$id/$model/$idfile and its run/new_id helpers.
+
+func (claudeAgent) ConsultFresh() string {
+	return "printf '%s' \"$id\" >\"$idfile\"\n" +
+		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} "$prompt"`
+}
+
+func (claudeAgent) ConsultResume() string {
+	return `run claude -p --permission-mode plan --resume "$id" ${model:+--model "$model"} "$prompt"`
+}
+
+func (claudeAgent) DelegateExec() string {
+	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} "$prompt"`
+}
+
+func (claudeAgent) ShellPrelude() string  { return "" }
+func (claudeAgent) InstallScript() string { return "" }

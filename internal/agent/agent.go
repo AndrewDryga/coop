@@ -98,6 +98,22 @@ type Agent interface {
 	// credentials), given the box home dir. Exported into every box — a var is inert
 	// where its agent isn't running — so a new agent's env needs no box.Run edit.
 	BoxEnv(homeInBox string) []string
+	// ConsultFresh is the shell body for a fresh read-only consult session in the
+	// coop-consult wrapper — run against the wrapper's variables $prompt, $id, $model
+	// (uniformly resolved) and $idfile, plus the run/new_id helpers. It analyses and
+	// reports; it never edits files.
+	ConsultFresh() string
+	// ConsultResume is the shell body for resuming a consult by $id (read from $idfile).
+	ConsultResume() string
+	// DelegateExec is the write-capable shell body for coop-delegate — run against
+	// $prompt and $model. The wrapper enforces commit:never and serialization around it.
+	DelegateExec() string
+	// ShellPrelude is optional helper-function shell the wrappers emit ONCE before the
+	// per-agent case (e.g. codex's output filter); "" for agents that need none.
+	ShellPrelude() string
+	// InstallScript is a non-npm box-image install command (e.g. an install-script
+	// download); "" means this agent installs via Packages() on the npm layer.
+	InstallScript() string
 }
 
 // Default is the agent used when a command takes one but none is given.

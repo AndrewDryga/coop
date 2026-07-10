@@ -1,27 +1,102 @@
 package fusion
 
+import (
+	"sort"
+	"strings"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+)
+
 // ConsultWrapperPath is where coop mounts the coop-consult script inside the box — on
 // PATH, so the governor/lead invokes it as a bare `coop-consult`.
 const ConsultWrapperPath = "/usr/local/bin/coop-consult"
 
-// ConsultWrapper is the `coop-consult` script coop mounts into every fusion and
+// ConsultWrapper renders the `coop-consult` script coop mounts into every fusion and
 // --consult box. It gives the lead a uniform `coop-consult <peer> --fresh|--continue`
-// interface over the three peers' read-only consult commands, hiding the per-agent
-// session-id mechanics: claude/gemini start a session under a generated --session-id
-// and resume it with --resume; codex (which can't preset an id) has its thread_id
-// captured from `codex exec --json` and resumes with `codex exec resume`. Continuity
-// lets a follow-up turn send only the delta instead of re-pasting the static context;
-// the first line printed reports whether the session continued or started fresh, so the
-// lead can tell when a --continue fell back to fresh and must resend full context. The
-// peer stays READ-ONLY throughout (plan / read-only sandbox), so it never edits files.
+// interface over each registered peer's read-only consult command, hiding the per-agent
+// session-id mechanics — the per-agent shell comes from each adapter (ConsultFresh /
+// ConsultResume / ShellPrelude), so adding a provider needs no edit here. claude/gemini
+// start a session under a generated --session-id and resume it with --resume; codex
+// captures its thread_id from `codex exec --json` and resumes with `codex exec resume`.
+// Continuity lets a follow-up turn send only the delta; the first line printed reports
+// whether the session continued or started fresh, so the lead can tell when a --continue
+// fell back to fresh. The peer stays READ-ONLY throughout.
 //
-// Keep the per-agent read-only flags here in sync with each adapter's ConsultCmd —
-// TestConsultWrapperMatchesAdapters asserts it.
-const ConsultWrapper = `#!/bin/sh
+// The per-agent read-only flags come from each adapter's ConsultCmd family —
+// TestConsultWrapperMatchesAdapters asserts each rendered arm carries them.
+func ConsultWrapper() string { return renderConsult(registeredConsults()) }
+
+// consultInput is the narrow slice of an Agent the consult generator needs — so a drift
+// test can pass a fake 4th agent without implementing the whole Agent interface. Every
+// registered agent satisfies it.
+type consultInput interface {
+	Name() string
+	ConsultFresh() string
+	ConsultResume() string
+	ShellPrelude() string
+}
+
+// registeredConsults returns every registered agent as a consultInput, sorted by name for
+// a deterministic script.
+func registeredConsults() []consultInput {
+	names := agents.Names() // already sorted
+	out := make([]consultInput, 0, len(names))
+	for _, n := range names {
+		if a, ok := agents.Get(n); ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// caseArm renders one `<name>)\n<body indented one tab>\n\t;;` arm; body lines are
+// indented uniformly (each fragment is flush-left).
+func caseArm(name, body string) string {
+	var b strings.Builder
+	b.WriteString(name + ")\n")
+	for _, line := range strings.Split(body, "\n") {
+		if line == "" {
+			b.WriteString("\n")
+			continue
+		}
+		b.WriteString("\t" + line + "\n")
+	}
+	b.WriteString("\t;;\n")
+	return b.String()
+}
+
+// preludes collects every agent's ShellPrelude (deduped, in order) — helper functions the
+// case arms rely on, emitted once before the dispatch (codex's codex_text filter).
+func preludes(as []consultInput) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, a := range as {
+		if p := a.ShellPrelude(); p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func renderConsult(as []consultInput) string {
+	names := make([]string, len(as))
+	var fresh, resume strings.Builder
+	for i, a := range as {
+		names[i] = a.Name()
+		fresh.WriteString(caseArm(a.Name(), a.ConsultFresh()))
+		resume.WriteString(caseArm(a.Name(), a.ConsultResume()))
+	}
+	sort.Strings(names)
+	peerAlt := strings.Join(names, " | ")
+	peerList := strings.Join(names, "|")
+
+	var b strings.Builder
+	b.WriteString(`#!/bin/sh
 # coop-consult — ask a peer read-only, with optional cross-turn continuity.
 # Generated and mounted by coop; do not edit.
 #   coop-consult <peer|role> <--fresh|--continue> [prompt]
-# <peer> is claude|codex|gemini (fusion / --consult ad-hoc). A preset CONSULT ROLE — or a
+# <peer> is ` + peerList + ` (fusion / --consult ad-hoc). A preset CONSULT ROLE — or a
 # native role degraded under a non-Claude lead — is addressed by its ROLE name: coop exports
 # COOP_CONSULT_<ROLE>_{AGENT,MODEL,CONTRACT}, so it runs on the role's own agent + model with
 # its persona (CONTRACT) prepended to the prompt. The target is READ-ONLY: it analyses and
@@ -29,8 +104,8 @@ const ConsultWrapper = `#!/bin/sh
 # last one for that target (send only the delta). Prompt is the trailing arg or piped on
 # stdin. The first line printed is the session status to read. Each consult is time-bounded
 # (default 30m; set COOP_CONSULT_TIMEOUT in seconds).
-# The model comes from COOP_PEER_MODEL_<PEER> (a role's COOP_CONSULT_<ROLE>_MODEL overrides
-# it), expanded into the --model flag below.
+# The model is resolved into $model below (a role's COOP_CONSULT_<ROLE>_MODEL wins over the
+# per-peer COOP_PEER_MODEL_<PEER>), expanded into the --model flag in each arm.
 set -u
 
 die() { echo "coop-consult: $1" >&2; exit 2; }
@@ -50,22 +125,21 @@ eval "peer=\${COOP_CONSULT_${key}_AGENT:-}"
 eval "rolemodel=\${COOP_CONSULT_${key}_MODEL:-}"
 eval "persona=\${COOP_CONSULT_${key}_CONTRACT:-}"
 if [ -n "$peer" ]; then
-	# Role mode: the role's model overrides the per-peer model the branches below expand.
-	if [ -n "$rolemodel" ]; then
-		case "$peer" in
-		claude) COOP_PEER_MODEL_CLAUDE=$rolemodel ;;
-		codex) COOP_PEER_MODEL_CODEX=$rolemodel ;;
-		gemini) COOP_PEER_MODEL_GEMINI=$rolemodel ;;
-		esac
-	fi
+	role=1
 else
 	peer=$name
 	persona=
+	role=
 fi
 case "$peer" in
-claude | codex | gemini) ;;
-*) die "unknown peer: $name (expected claude|codex|gemini, or a preset consult role)" ;;
+` + peerAlt + `) ;;
+*) die "unknown peer: $name (expected ` + peerList + `, or a preset consult role)" ;;
 esac
+# Resolve the model into one $model: a role's own model wins; else the per-peer default
+# coop exported (COOP_PEER_MODEL_<PEER>). One var, so every arm expands it the same way.
+peerkey=$(printf '%s' "$peer" | tr 'a-z-' 'A-Z_')
+eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"
+if [ -n "$role" ] && [ -n "$rolemodel" ]; then model=$rolemodel; fi
 prompt=${*:-}
 [ -n "$prompt" ] || prompt=$(cat)
 # A role's persona (its contract) is prepended so the peer answers AS that role.
@@ -86,9 +160,11 @@ new_id() {
 			sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/'
 	fi
 }
-# codex --json prints one JSON object per line; pull the agent's reply text.
-codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }
-
+`)
+	if p := preludes(as); p != "" {
+		b.WriteString(p + "\n")
+	}
+	b.WriteString(`
 # Bound every consult so a slow or wedged peer can't stall the lead's wait. Default 30m;
 # on timeout the peer is skipped with a notice (on stderr, so it survives codex's $()
 # capture and the codex_text pipe) and the lead synthesizes from whoever answered. -k
@@ -110,10 +186,7 @@ case "$mode" in
 		id=$(cat "$idfile")
 		echo "[$peer: continued — recalls your earlier consult; send only the delta]"
 		case "$peer" in
-		claude) run claude -p --permission-mode plan --resume "$id" ${COOP_PEER_MODEL_CLAUDE:+--model "$COOP_PEER_MODEL_CLAUDE"} "$prompt" ;;
-		gemini) run gemini --approval-mode plan --resume "$id" ${COOP_PEER_MODEL_GEMINI:+--model "$COOP_PEER_MODEL_GEMINI"} -p "$prompt" ;;
-		codex) out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${COOP_PEER_MODEL_CODEX:+--model "$COOP_PEER_MODEL_CODEX"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st" ;;
-		*) die "unknown peer: $peer" ;;
+` + indentArms(resume.String(), "\t\t") + `		*) die "unknown peer: $peer" ;;
 		esac
 		exit
 	fi
@@ -126,25 +199,22 @@ esac
 # Fresh session (also the fallback when --continue found no stored id).
 id=$(new_id)
 case "$peer" in
-claude)
-	printf '%s' "$id" >"$idfile"
-	run claude -p --permission-mode plan --session-id "$id" ${COOP_PEER_MODEL_CLAUDE:+--model "$COOP_PEER_MODEL_CLAUDE"} "$prompt"
-	;;
-gemini)
-	printf '%s' "$id" >"$idfile"
-	run gemini --approval-mode plan --session-id "$id" ${COOP_PEER_MODEL_GEMINI:+--model "$COOP_PEER_MODEL_GEMINI"} -p "$prompt"
-	;;
-codex)
-	out=$(run codex exec -s read-only ${COOP_PEER_MODEL_CODEX:+--model "$COOP_PEER_MODEL_CODEX"} --json "$prompt"); st=$?
-	# Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
-	# and writing an empty idfile would make the next --continue run "codex exec resume ''".
-	tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
-	if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
-	printf '%s\n' "$out" | codex_text
-	# Propagate codex's own exit status (timeout/error), not the codex_text pipe's 0, so a
-	# consult failure is observable like claude/gemini's instead of always looking successful.
-	exit "$st"
-	;;
-*) die "unknown peer: $peer" ;;
+` + fresh.String() + `*) die "unknown peer: $peer" ;;
 esac
-`
+`)
+	return b.String()
+}
+
+// indentArms prefixes every non-empty line of a rendered case-arm block with pad — used to
+// nest the --continue arms under the outer `if [ -f "$idfile" ]` block.
+func indentArms(arms, pad string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(arms, "\n"), "\n") {
+		if line == "" {
+			b.WriteString("\n")
+			continue
+		}
+		b.WriteString(pad + line + "\n")
+	}
+	return b.String()
+}

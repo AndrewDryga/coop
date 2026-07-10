@@ -11,7 +11,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
-var allAgents = []string{"claude", "codex", "gemini"}
+var allAgents = agents.Names() // from the registry, so a new agent is covered without editing tests
 
 // TestConsultWrapperShellcheck keeps the embedded coop-consult script clean. It's a Go
 // string constant, so the normal shellcheck pass can't see it; run it here when
@@ -19,7 +19,7 @@ var allAgents = []string{"claude", "codex", "gemini"}
 func TestConsultWrapperShellcheck(t *testing.T) {
 	sc := shellcheckPath(t)
 	f := filepath.Join(t.TempDir(), "coop-consult")
-	if err := os.WriteFile(f, []byte(ConsultWrapper), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(ConsultWrapper()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
@@ -136,7 +136,7 @@ func TestConsultWrapperMatchesAdapters(t *testing.T) {
 		ag, _ := agents.Get(peer)
 		cmd := ag.ConsultCmd("Q") // e.g. [claude -p --permission-mode plan Q]
 		for _, tok := range cmd[:len(cmd)-1] {
-			if !strings.Contains(ConsultWrapper, tok) {
+			if !strings.Contains(ConsultWrapper(), tok) {
 				t.Errorf("coop-consult wrapper missing %s consult flag %q (adapter ConsultCmd drifted?)", peer, tok)
 			}
 		}
@@ -150,7 +150,7 @@ func TestConsultWrapperMatchesAdapters(t *testing.T) {
 		"--approval-mode plan --resume",          // gemini
 		`resume "$id" -c sandbox_mode=read-only`, // codex
 	} {
-		if !strings.Contains(ConsultWrapper, want) {
+		if !strings.Contains(ConsultWrapper(), want) {
 			t.Errorf("coop-consult resume invocation missing %q — a --continue may have lost its read-only flag", want)
 		}
 	}
@@ -160,11 +160,15 @@ func TestConsultWrapperMatchesAdapters(t *testing.T) {
 // into its --model flag (box.Run exports the var when a model is configured), in the fresh
 // AND resume forms — so a profile-marked / COOP_<AGENT>_MODEL model reaches consults too.
 func TestConsultWrapperCarriesModelOverrides(t *testing.T) {
-	for _, v := range []string{"COOP_PEER_MODEL_CLAUDE", "COOP_PEER_MODEL_GEMINI", "COOP_PEER_MODEL_CODEX"} {
-		want := "${" + v + `:+--model "$` + v + `"}`
-		if n := strings.Count(ConsultWrapper, want); n < 2 {
-			t.Errorf("wrapper expands %s %d time(s), want it in both the fresh and resume invocations", v, n)
-		}
+	w := ConsultWrapper()
+	// The per-peer model (COOP_PEER_MODEL_<PEER>, exported by box.Run) is resolved once into a
+	// single $model via the generic eval, so a new agent is covered without a new arm.
+	if !strings.Contains(w, `eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"`) {
+		t.Error("wrapper must resolve COOP_PEER_MODEL_<PEER> into $model generically")
+	}
+	// Every arm expands that $model — at least the fresh + resume form for each agent.
+	if n := strings.Count(w, `${model:+--model "$model"}`); n < 2*len(agents.Names()) {
+		t.Errorf("uniform $model expansion appears %d time(s), want >= %d (fresh+resume per agent)", n, 2*len(agents.Names()))
 	}
 }
 
@@ -174,7 +178,7 @@ func TestConsultWrapperCarriesModelOverrides(t *testing.T) {
 // "latest". (The primary-side guard lives in each adapter's Resume/Interactive; this is the
 // consult side.) --fresh mints and writes the id; --continue reads it.
 func TestConsultWrapperContinuityIsolated(t *testing.T) {
-	w := ConsultWrapper
+	w := ConsultWrapper()
 	if !strings.Contains(w, `idfile="/tmp/coop-consult-${key}.id"`) {
 		t.Error("consult continuity must key a coop-owned per-target /tmp idfile, not an agent session store")
 	}
@@ -253,8 +257,51 @@ func TestConsultWrapperResolvesRoles(t *testing.T) {
 		"COOP_CONSULT_${key}_CONTRACT",
 		`cat "$persona"`, // the role's persona is prepended to the prompt
 	} {
-		if !strings.Contains(ConsultWrapper, want) {
+		if !strings.Contains(ConsultWrapper(), want) {
 			t.Errorf("consult wrapper missing role-resolution %q", want)
+		}
+	}
+}
+
+// fakeConsult is a minimal 4th agent for the drift test — enough of the interface for the
+// consult generator, so we can prove a newly-registered agent is dispatched without a
+// hand-edited case arm.
+type fakeConsult struct{}
+
+func (fakeConsult) Name() string { return "grokfake" }
+func (fakeConsult) ConsultFresh() string {
+	return `run grokfake --plan --session-id "$id" ${model:+--model "$model"} "$prompt"`
+}
+func (fakeConsult) ConsultResume() string {
+	return `run grokfake --plan --resume "$id" ${model:+--model "$model"} "$prompt"`
+}
+func (fakeConsult) ShellPrelude() string { return "" }
+
+// TestConsultWrapperDispatchesNewAgent: a 4th agent needs no edit here — passed to the
+// generator, its case arms and peer validation appear, and the rendered script still passes
+// shellcheck. This is the structural guarantee behind "adding an agent is one file".
+func TestConsultWrapperDispatchesNewAgent(t *testing.T) {
+	reals := registeredConsults()
+	w := renderConsult(append(reals, fakeConsult{}))
+
+	// It's a valid peer (validation case), and both dispatch blocks carry its arm.
+	if !strings.Contains(w, "grokfake") {
+		t.Fatal("the new agent never appears in the rendered wrapper")
+	}
+	if strings.Count(w, "grokfake)\n") < 2 {
+		t.Errorf("the new agent must have a fresh AND a resume case arm, got:\n%s", w)
+	}
+	if !strings.Contains(w, `run grokfake --plan --resume "$id"`) {
+		t.Error("the new agent's resume invocation is missing from the --continue block")
+	}
+
+	if sc := shellcheckPath(t); sc != "" {
+		f := filepath.Join(t.TempDir(), "coop-consult")
+		if err := os.WriteFile(f, []byte(w), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
+			t.Errorf("shellcheck flagged the wrapper with a 4th agent:\n%s", out)
 		}
 	}
 }

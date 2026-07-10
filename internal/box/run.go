@@ -268,7 +268,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// --consult directive was injected, so the lead's `coop-consult <peer>` calls resolve.
 	// It carries the per-agent session-id mechanics for cross-turn continuity.
 	if consultWired {
-		if p, err := writeTempFile(fusion.ConsultWrapper); err != nil {
+		if p, err := writeTempFile(fusion.ConsultWrapper()); err != nil {
 			ui.Info("consult: skipped wrapper wiring: %v", err)
 		} else if err := os.Chmod(p, 0o755); err != nil {
 			ui.Info("consult: skipped wrapper wiring: %v", err)
@@ -400,7 +400,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 	// env the wrapper resolves a role's agent/model/contract from — so the box needs no
 	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
 	if spec.Preset.HasDelegate() {
-		if p, err := writeTempFile(preset.DelegateWrapper); err != nil {
+		if p, err := writeTempFile(preset.DelegateWrapper()); err != nil {
 			ui.Info("delegate: skipped wrapper wiring: %v", err)
 		} else if err := os.Chmod(p, 0o755); err != nil {
 			ui.Info("delegate: skipped wrapper wiring: %v", err)

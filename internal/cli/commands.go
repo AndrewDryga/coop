@@ -511,7 +511,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		governor = presetLeadAgent(p, governor, toolSet)
 		if !fusion.Valid(governor, agents.Names()) {
-			return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
+			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
 		}
 		tool = governor
 	} else {
@@ -717,6 +717,10 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	return 0, nil
 }
 
+// agentChoices lists the registered agents for a "use one of …" error, from the registry so a
+// new agent is offered without editing the string. Sorted (agents.Names()), comma-separated.
+func agentChoices() string { return strings.Join(agents.Names(), ", ") }
+
 // cmdFusion runs a council: the governor agent (a leading `claude|codex|gemini`, else
 // COOP_FUSION_GOVERNOR) runs normally — it edits and does the real work — while a fusion
 // instruction injected into its instruction file tells it to consult its two peers
@@ -751,7 +755,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	governor, rest, govSet := a.parseGovernor(args)
 	governor = presetLeadAgent(p, governor, govSet)
 	if !fusion.Valid(governor, agents.Names()) {
-		return 2, fmt.Errorf("unknown governor %q — use claude, codex, or gemini", governor)
+		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
 	}
 	a.applyPreset(p, governor)
 	if err := a.applyOneOff(governor, model, profile); err != nil {
@@ -877,7 +881,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	ui.Info("installed versions:")
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Batch: true, Quiet: true,
-		Cmd:       []string{"sh", "-c", "npm ls -g --depth=0 2>/dev/null | grep -iE 'claude|codex|gemini|acp' || true"},
+		Cmd:       []string{"sh", "-c", "npm ls -g --depth=0 2>/dev/null | grep -iE '" + strings.Join(append(agents.Names(), "acp"), "|") + "' || true"},
 		ExtraArgs: []string{"-e", "COOP_NO_ASDF=1"}, // skip the .tool-versions provision for a quick version print
 	})
 	if selfFailed {

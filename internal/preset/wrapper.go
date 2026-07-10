@@ -1,6 +1,10 @@
 package preset
 
-import "strings"
+import (
+	"strings"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+)
 
 // DelegateWrapperPath is where coop mounts the coop-delegate script inside the box —
 // on PATH, beside coop-consult, so the lead invokes it as a bare `coop-delegate`.
@@ -10,6 +14,11 @@ const DelegateWrapperPath = "/usr/local/bin/coop-delegate"
 // role "fast" → COOP_DELEGATE_FAST_AGENT / _MODEL / _CONTRACT.
 func EnvKey(role string) string {
 	return strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
+}
+
+// delegateArm renders one `<name>) <body> ;;` write-capable dispatch arm.
+func delegateArm(name, body string) string {
+	return name + ") " + body + " ;;\n"
 }
 
 // DelegateWrapper is the `coop-delegate` script coop mounts when a preset declares a
@@ -25,7 +34,38 @@ func EnvKey(role string) string {
 // by host coop (see box.Run), so the wrapper needs no YAML parser in the box. These
 // are coordination guarantees for leads that route through the wrapper — not an OS
 // permission layer.
-const DelegateWrapper = `#!/bin/sh
+//
+// The per-agent write-capable dispatch comes from each adapter's DelegateExec, so adding
+// a provider needs no edit here.
+func DelegateWrapper() string { return renderDelegate(registeredDelegates()) }
+
+// delegateInput is the narrow slice of an Agent the delegate generator needs — so a drift
+// test can pass a fake 4th agent without the whole Agent interface.
+type delegateInput interface {
+	Name() string
+	DelegateExec() string
+}
+
+func registeredDelegates() []delegateInput {
+	names := agents.Names() // sorted → deterministic script
+	out := make([]delegateInput, 0, len(names))
+	for _, n := range names {
+		if a, ok := agents.Get(n); ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func renderDelegate(as []delegateInput) string {
+	var arms strings.Builder
+	for _, a := range as {
+		arms.WriteString(delegateArm(a.Name(), a.DelegateExec()))
+	}
+	return strings.Replace(delegateWrapperTmpl, "@@ARMS@@\n", arms.String(), 1)
+}
+
+const delegateWrapperTmpl = `#!/bin/sh
 # coop-delegate — hand a write-capable delegate role one implementation task.
 # Generated and mounted by coop from the active preset; do not edit.
 #   coop-delegate <role> [prompt]
@@ -64,9 +104,7 @@ trap 'rmdir "$lock" 2>/dev/null' EXIT INT TERM
 
 before=$(git rev-parse HEAD 2>/dev/null || echo none)
 case "$agent" in
-claude) claude -p --dangerously-skip-permissions ${model:+--model "$model"} "$prompt" ;;
-gemini) gemini --yolo ${model:+--model "$model"} -p "$prompt" ;;
-codex) codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} "$prompt" ;;
+@@ARMS@@
 *) die "role $role names unknown agent: $agent" ;;
 esac
 st=$?

@@ -20,7 +20,22 @@ import (
 // .tool-versions at runtime, with no per-project Dockerfile needed. It runs as the
 // non-root `node` user and is built from stdin, so the base never needs a checkout.
 func BaseDockerfile() string {
-	return fmt.Sprintf(baseDockerfileTemplate, strings.Join(agents.Packages(), " "))
+	return fmt.Sprintf(baseDockerfileTemplate, strings.Join(agents.Packages(), " "), installLayer())
+}
+
+// installLayer renders a RUN line for each agent whose CLI installs via a script rather than
+// npm (Agent.InstallScript) — run as root before USER node, after the npm layer. Empty for the
+// npm-only agents, so the layer is absent unless a script-installed agent is registered.
+func installLayer() string {
+	var b strings.Builder
+	for _, n := range agents.Names() { // sorted → a reproducible image
+		if a, ok := agents.Get(n); ok {
+			if s := a.InstallScript(); s != "" {
+				b.WriteString("RUN " + s + "\n")
+			}
+		}
+	}
+	return b.String()
 }
 
 // Base-image references for the shared box. coop build pins the FROM image to a
@@ -135,6 +150,9 @@ ENV ASDF_DATA_DIR=/home/node/.asdf \
     KERL_BUILD_DOCS=no \
     KERL_CONFIGURE_OPTIONS="--without-wx --without-observer --without-debugger --without-et --without-megaco --without-javac"
 
+# Script-installed agent CLIs (Agent.InstallScript) — run as root, after the npm layer. Empty
+# for the npm-only agents, so this expands to nothing unless such an agent is registered.
+%s
 USER node
 ENTRYPOINT ["/usr/local/bin/coop-entry"]
 WORKDIR /workspace

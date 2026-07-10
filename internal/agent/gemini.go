@@ -169,3 +169,19 @@ func (geminiAgent) ACPSessionConfig() map[string]string { return nil }
 
 // BoxEnv: gemini stores everything under its mounted ~/.gemini — nothing extra needed.
 func (geminiAgent) BoxEnv(string) []string { return nil }
+
+func (geminiAgent) ConsultFresh() string {
+	return "printf '%s' \"$id\" >\"$idfile\"\n" +
+		`run gemini --approval-mode plan --session-id "$id" ${model:+--model "$model"} -p "$prompt"`
+}
+
+func (geminiAgent) ConsultResume() string {
+	return `run gemini --approval-mode plan --resume "$id" ${model:+--model "$model"} -p "$prompt"`
+}
+
+func (geminiAgent) DelegateExec() string {
+	return `gemini --yolo ${model:+--model "$model"} -p "$prompt"`
+}
+
+func (geminiAgent) ShellPrelude() string  { return "" }
+func (geminiAgent) InstallScript() string { return "" }

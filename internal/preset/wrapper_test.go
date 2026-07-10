@@ -15,7 +15,7 @@ import (
 func TestDelegateWrapperShellcheck(t *testing.T) {
 	sc := shellcheckPath(t)
 	f := filepath.Join(t.TempDir(), "coop-delegate")
-	if err := os.WriteFile(f, []byte(DelegateWrapper), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(DelegateWrapper()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
@@ -55,7 +55,7 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 	h := &delegateHarness{t: t, dir: t.TempDir(), repo: t.TempDir()}
 	h.argsLog = filepath.Join(h.dir, "argv")
 	h.lock = filepath.Join(h.dir, "lock")
-	if err := os.WriteFile(filepath.Join(h.dir, "coop-delegate"), []byte(DelegateWrapper), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(h.dir, "coop-delegate"), []byte(DelegateWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, cmd := range [][]string{
@@ -189,8 +189,34 @@ func TestDelegateWrapperInvocations(t *testing.T) {
 		"gemini --yolo",
 		"codex exec --dangerously-bypass-approvals-and-sandbox",
 	} {
-		if !strings.Contains(DelegateWrapper, want) {
+		if !strings.Contains(DelegateWrapper(), want) {
 			t.Errorf("delegate wrapper missing the write-capable invocation %q", want)
+		}
+	}
+}
+
+// fakeDelegate is a minimal 4th agent for the drift test — enough for the delegate generator.
+type fakeDelegate struct{}
+
+func (fakeDelegate) Name() string { return "grokfake" }
+func (fakeDelegate) DelegateExec() string {
+	return `grokfake --write ${model:+--model "$model"} "$prompt"`
+}
+
+// TestDelegateWrapperDispatchesNewAgent: a 4th agent's write-capable arm is generated from the
+// registry with no hand-edit, and the rendered script still shellchecks clean.
+func TestDelegateWrapperDispatchesNewAgent(t *testing.T) {
+	w := renderDelegate(append(registeredDelegates(), fakeDelegate{}))
+	if !strings.Contains(w, `grokfake) grokfake --write`) {
+		t.Fatalf("the new agent's delegate arm is missing:\n%s", w)
+	}
+	if sc := shellcheckPath(t); sc != "" {
+		f := filepath.Join(t.TempDir(), "coop-delegate")
+		if err := os.WriteFile(f, []byte(w), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(sc, f).CombinedOutput(); err != nil {
+			t.Errorf("shellcheck flagged the delegate wrapper with a 4th agent:\n%s", out)
 		}
 	}
 }
