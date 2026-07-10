@@ -57,23 +57,35 @@ func ComposeFile(repo string) string {
 	return ""
 }
 
-// composeDecoyStrays returns the host paths, under repo, of the compose decoys that do not
-// exist yet. ComposeDecoyMounts shadows every composeFileRels path read-only in the box, and
-// Docker materializes a bind-mount target that's missing; because those targets sit inside the
+// composeDecoyStrays returns the host paths, under repo, that the compose decoys can strand.
+// ComposeDecoyMounts shadows every composeFileRels path read-only in the box, and Docker
+// materializes a bind-mount target that's missing; because those targets sit inside the
 // read-write repo bind, an absent one lands in the repo on the host and outlives the container
 // — a stray empty compose.agent.yml. box.Run snapshots these before the run and removes the
-// empty ones after (removeEmptyStrays), so a launch leaves none behind. A path that already
-// exists is a real compose file and is not returned.
+// empty ones after (removeComposeStrays), so a launch leaves none behind.
+//
+// A path that already exists as an EMPTY file is also returned: ComposeFile treats zero bytes
+// as "no compose file", and the box path is shadowed read-only, so an empty one can only be
+// debris from an earlier run whose deferred cleanup never fired (a hard-killed coop — an ACP
+// generation swap SIGKILLs the inner process; a Ctrl-C mid-iteration). Adopting it lets any
+// later run on the repo self-heal. A non-empty file is a real compose file and is not returned.
 func composeDecoyStrays(repo string) []string {
 	var strays []string
 	for _, rel := range composeFileRels {
 		p := filepath.Join(repo, filepath.FromSlash(rel))
-		if _, err := os.Stat(p); os.IsNotExist(err) {
+		fi, err := os.Stat(p)
+		if os.IsNotExist(err) || (err == nil && !fi.IsDir() && fi.Size() == 0) {
 			strays = append(strays, p)
 		}
 	}
 	return strays
 }
+
+// CleanComposeStrays removes coop's compose-decoy debris under repo right now — the empty
+// files (and then-empty parent dirs) whose in-process deferred cleanup never ran. The ACP
+// supervisor calls it once at session teardown: every box generation it spawns is torn down
+// by SIGKILLing the inner coop (the swap path), so box.Run's own defer can never fire there.
+func CleanComposeStrays(repo string) { removeComposeStrays(repo, composeDecoyStrays(repo)) }
 
 // removeComposeStrays deletes, under repo, each snapshot path Docker left as an empty mountpoint
 // for a compose decoy, plus any directory it had to create for one (e.g. .agent/ for

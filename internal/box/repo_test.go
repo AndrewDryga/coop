@@ -88,6 +88,37 @@ func TestComposeDecoyStrayCleanup(t *testing.T) {
 	}
 }
 
+// An orphan from a hard-killed run — the empty mountpoint whose deferred cleanup never fired
+// (an ACP generation swap SIGKILLs the inner coop; a Ctrl-C mid-iteration) — is adopted by the
+// next run's snapshot and by the supervisor's teardown sweep (CleanComposeStrays), so it never
+// outlives the session. A real (non-empty) compose file is never adopted.
+func TestComposeStrayOrphanAdoption(t *testing.T) {
+	repo := t.TempDir()
+	for _, rel := range composeFileRels { // debris exactly as a killed run leaves it
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, nil, 0o644)
+	}
+	if got := len(composeDecoyStrays(repo)); got != len(composeFileRels) {
+		t.Fatalf("existing empty strays must be adopted: got %d candidates, want %d", got, len(composeFileRels))
+	}
+	real := filepath.Join(repo, filepath.FromSlash(composeFileRels[0]))
+	os.WriteFile(real, []byte("services: {}\n"), 0o644)
+	if got := len(composeDecoyStrays(repo)); got != len(composeFileRels)-1 {
+		t.Fatalf("a non-empty compose file must not be adopted: got %d candidates", got)
+	}
+	CleanComposeStrays(repo)
+	if _, err := os.Stat(real); err != nil {
+		t.Errorf("teardown sweep deleted a real compose file: %v", err)
+	}
+	for _, rel := range composeFileRels[1:] {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("orphaned stray %s not removed (err=%v)", rel, err)
+		}
+	}
+}
+
 // A directory that predates the run — a real .agent/ with tasks — is never pruned, even though
 // the compose stray dropped inside it is removed.
 func TestComposeStrayCleanupSparesRealDir(t *testing.T) {
