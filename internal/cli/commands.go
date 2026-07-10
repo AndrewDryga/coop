@@ -735,16 +735,10 @@ func agentChoices() string { return strings.Join(agents.Names(), ", ") }
 // read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
-	// --credential picks the governor's credential, like a plain `coop <agent>` run; read it
-	// before governor parsing so the governor's own --profile (codex's flag) is still reachable after a `--`.
-	profile, args, err := extractRunProfile(args)
-	if err != nil {
-		return 2, err
-	}
-	// --model picks the governor's model, same shape (`coop fusion claude --model opus`);
-	// the peers keep their own profile/agent defaults.
-	model, args, err := extractRunModel(args)
-	if err != nil {
+	// --model/--credential are retired — pin the governor in its target (coop fusion
+	// claude:opus-4.8@work); the peers keep their own defaults. `--`-aware, so the
+	// governor's OWN flags (codex's --profile) still pass through after a `--`.
+	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err
 	}
 	// --consult is a documented no-op for fusion (a council always consults its peers). Strip it so it
@@ -760,7 +754,12 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	governor, rest, govSet := a.parseGovernor(args)
+	// The governor target names the agent; its model + account fold into this run's one-off
+	// selection (the peers keep their own).
+	governor, model, profile, rest, govSet, err := a.parseGovernor(args)
+	if err != nil {
+		return 2, err
+	}
 	governor = presetLeadAgent(p, governor, govSet)
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
@@ -783,26 +782,34 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	})
 }
 
-// parseGovernor takes a leading `claude|codex|gemini` token as the governor (else
-// COOP_FUSION_GOVERNOR); everything else passes through to the governor. explicit
-// reports whether the command named one (so a --preset's lead only fills the default).
-func (a *app) parseGovernor(args []string) (governor string, rest []string, explicit bool) {
+// parseGovernor takes a leading target (provider[:model][@account]) as the governor (else
+// COOP_FUSION_GOVERNOR); everything else passes through to the governor. explicit reports
+// whether the command named one (so a --preset's lead only fills the default); model/profile
+// carry the governor target's model + single account for the one-off selection.
+func (a *app) parseGovernor(args []string) (governor, model, profile string, rest []string, explicit bool, err error) {
 	governor = a.cfg.FusionGovernor
 	tookGov := false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":
-			return governor, append(rest, args[i+1:]...), tookGov // everything after passes through
-		case !tookGov && len(rest) == 0 && agents.Valid(args[i]):
-			// Only the FIRST leading agent name is the governor: `coop fusion claude` (matches
-			// `coop acp fusion claude`); otherwise the default / COOP_FUSION_GOVERNOR. A second
+			return governor, model, profile, append(rest, args[i+1:]...), tookGov, nil // everything after passes through
+		case !tookGov && len(rest) == 0 && isTargetHead(args[i]):
+			// Only the FIRST leading target is the governor: `coop fusion claude:opus@work`
+			// (matches `coop acp fusion …`); otherwise the default / COOP_FUSION_GOVERNOR. A second
 			// agent token passes through to the governor (not silently swallowed as the governor).
-			governor, tookGov = args[i], true
+			t, terr := agents.ParseTarget(args[i])
+			if terr != nil {
+				return governor, model, profile, rest, tookGov, terr
+			}
+			governor, tookGov = t.Provider, true
+			if terr := foldTarget(t, &model, &profile); terr != nil {
+				return governor, model, profile, rest, tookGov, terr
+			}
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return governor, rest, tookGov
+	return governor, model, profile, rest, tookGov, nil
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {

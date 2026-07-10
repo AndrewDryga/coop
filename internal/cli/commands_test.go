@@ -366,25 +366,38 @@ func TestParseLoopArgs(t *testing.T) {
 func TestParseGovernor(t *testing.T) {
 	a := &app{cfg: &config.Config{FusionGovernor: "codex"}}
 	cases := []struct {
-		name     string
-		args     []string
-		wantGov  string
-		wantRest []string
+		name        string
+		args        []string
+		wantGov     string
+		wantModel   string
+		wantProfile string
+		wantRest    []string
 	}{
-		{"default governor, no args", nil, "codex", nil},
-		{"positional governor", []string{"claude"}, "claude", nil},
-		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", []string{"exec"}},
-		{"passthrough args keep order", []string{"exec", "foo"}, "codex", []string{"exec", "foo"}},
-		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", []string{"-p", "hi"}},
-		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "codex", []string{"--governor", "claude"}},
+		{"default governor, no args", nil, "codex", "", "", nil},
+		{"positional governor", []string{"claude"}, "claude", "", "", nil},
+		// The governor is a target: its model + account fold out for the one-off selection.
+		{"governor target model+account", []string{"claude:opus-4.8@work"}, "claude", "opus-4.8", "work", nil},
+		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", "", "", []string{"exec"}},
+		{"passthrough args keep order", []string{"exec", "foo"}, "codex", "", "", []string{"exec", "foo"}},
+		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", "", "", []string{"-p", "hi"}},
+		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "codex", "", "", []string{"--governor", "claude"}},
 		// A SECOND agent token is NOT swallowed as the governor — only the first is; the rest passes through.
-		{"second agent token passes through", []string{"codex", "gemini"}, "codex", []string{"gemini"}},
+		{"second agent token passes through", []string{"codex", "gemini"}, "codex", "", "", []string{"gemini"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gov, rest, _ := a.parseGovernor(c.args)
+			gov, model, profile, rest, _, err := a.parseGovernor(c.args)
+			if err != nil {
+				t.Fatalf("parseGovernor(%v) errored: %v", c.args, err)
+			}
 			if gov != c.wantGov {
 				t.Errorf("governor = %q, want %q", gov, c.wantGov)
+			}
+			if model != c.wantModel {
+				t.Errorf("model = %q, want %q", model, c.wantModel)
+			}
+			if profile != c.wantProfile {
+				t.Errorf("profile = %q, want %q", profile, c.wantProfile)
 			}
 			if !slices.Equal(rest, c.wantRest) {
 				t.Errorf("rest = %v, want %v", rest, c.wantRest)
@@ -520,8 +533,11 @@ func TestSelectRunProfile(t *testing.T) {
 // (before any box/Docker work) on fusion and acp too, not just a plain agent run.
 func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if code, err := a.cmdFusion([]string{"claude@ghost"}); code != 2 || err == nil {
+		t.Errorf("cmdFusion claude@ghost = (%d, %v), want 2 + error", code, err)
+	}
 	if code, err := a.cmdFusion([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdFusion --credential ghost = (%d, %v), want 2 + error", code, err)
+		t.Errorf("cmdFusion --credential (retired) = (%d, %v), want 2 + tombstone", code, err)
 	}
 	if code, err := a.cmdACP([]string{"claude@ghost"}); code != 2 || err == nil {
 		t.Errorf("cmdACP claude@ghost = (%d, %v), want 2 + error", code, err)

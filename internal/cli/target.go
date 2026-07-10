@@ -46,10 +46,15 @@ func takeHeadTarget(args []string) (t agents.Target, ok bool, rest []string, err
 	return t, true, args[1:], nil
 }
 
-// retiredTargetFlagErr tombstones --model/--credential (v3-clean): they're now segments of
-// the positional target. "" when neither is present.
+// retiredTargetFlagErr tombstones coop's own --model/--credential (v3-clean): they're now
+// segments of the positional target. Stops at a "--" separator — like the extractors it
+// replaces — so an agent's OWN --model after `--` (coop claude -- --model x) still passes
+// through untouched. nil when neither coop flag is present.
 func retiredTargetFlagErr(args []string) error {
 	for _, a := range args {
+		if a == "--" {
+			return nil // everything after is the agent's, not coop's
+		}
 		f, _, _ := strings.Cut(a, "=")
 		switch f {
 		case "--model":
