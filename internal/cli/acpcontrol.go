@@ -885,6 +885,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 		}
 		if head.ID == "model" {
 			hasModel = true
+			c.cacheModels(parseClaudeModelOption(head.Options)) // free refresh of `coop models` for claude
 			if preset == "" && model != "" && optionHasValue(head.Options, model) {
 				item = withField(item, "currentValue", model) // default to coop's model; still switchable
 			}
@@ -896,6 +897,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 	if !hasModel {
 		if synth := c.synthModelOption(models, preset, model); synth != nil {
 			out = append(out, synth)
+			c.cacheModels(parseGeminiModels(models)) // free refresh of `coop models` for gemini
 			c.mu.Lock()
 			c.leadUsesSetModel = true
 			c.mu.Unlock()
@@ -911,6 +913,14 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 		c.mu.Unlock()
 	}
 	return b
+}
+
+// cacheModels writes the lead's models to its per-agent cache during a normal ACP session —
+// the free, opportunistic refresh that keeps `coop models` live for claude/gemini at zero
+// extra cost (the session/new models are already parsed here). Best-effort: an empty list or
+// a write error is ignored, so the plain `coop models` just falls back to the static list.
+func (c *acpControl) cacheModels(models []modelInfo) {
+	_ = writeModelsCache(c.cfg, c.lead, models)
 }
 
 // setupOption builds coop's first dropdown (the lead's credentials + the repo's presets) as JSON.

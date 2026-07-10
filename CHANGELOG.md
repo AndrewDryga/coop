@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop models` shows LIVE models, not just a hardcoded list.** Each agent's line is now the
+  real model catalog when a fresh one is cached (dim `(live)`), falling back to the curated static
+  list (dim `(examples)`) — coop still never validates `--model`, so any id the CLI accepts works
+  either way. The list is fetched auth-free: claude/gemini populate the cache for FREE on every
+  `coop acp` session (the proxy already parses the ACP `session/new` models), and the new
+  `coop models --refresh` runs grok/codex's native CLI on the host (`grok models`, `codex debug
+  models`). Plain `coop models` stays instant and never touches the container runtime — it only
+  reads a per-agent cache under `~/.config/coop/agents/<agent>/models_cache.json` (14-day TTL).
+  Every refresh path is best-effort: an absent CLI, timeout, or parse error degrades silently to
+  the cache-then-static list and never errors or hangs. (A `--refresh` that drives claude/gemini
+  through a box ACP handshake is deferred — their cache already refreshes on `coop acp`.)
+
 - **The ACP path's host-side fs/terminal boundary is now documented.** Over ACP the editor
   services `fs/read_text_file` / `fs/write_text_file` / `terminal/*` requests host-side, and
   coop's proxy forwards them to the editor unfiltered — so when you drive an agent from Zed, the

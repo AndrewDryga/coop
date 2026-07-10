@@ -1047,3 +1047,28 @@ func TestSleepUntilReset(t *testing.T) {
 		t.Errorf("canceled wait took %s, want prompt return", el)
 	}
 }
+
+// TestACPControlOpportunisticModelCache: a normal ACP session/new refreshes `coop models`
+// for free — the claude configOptions `model` select lands in the per-agent cache as coop
+// rewrites the toolbar, so a later `coop models` reads it as live.
+func TestACPControlOpportunisticModelCache(t *testing.T) {
+	c := newTestControl(t)
+	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[` +
+		`{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"},{"value":"sonnet","name":"Sonnet"}]}]}}` + "\n"
+	toEd(c, []byte(in))
+	got, ok := loadModelsCache(c.cfg, "claude")
+	if !ok || len(got) != 2 || got[0].ID != "opus[1m]" || got[1].ID != "sonnet" {
+		t.Fatalf("claude session/new should cache the model option ids, got (%v, %v)", got, ok)
+	}
+}
+
+// TestACPControlOpportunisticGeminiCache: the same free refresh for gemini — its `models`
+// field (no native model option, coop synthesizes the dropdown) lands in the cache.
+func TestACPControlOpportunisticGeminiCache(t *testing.T) {
+	c := newGeminiControl(t, "")
+	toEd(c, []byte(geminiSessionNew))
+	got, ok := loadModelsCache(c.cfg, "gemini")
+	if !ok || len(got) != 2 || got[0].ID != "gemini-2.5-pro" || got[1].ID != "gemini-2.5-flash" {
+		t.Fatalf("gemini session/new should cache the availableModels ids, got (%v, %v)", got, ok)
+	}
+}
