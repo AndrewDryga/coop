@@ -39,12 +39,32 @@
   the cache-then-static list and never errors or hangs. (A `--refresh` that drives claude/gemini
   through a box ACP handshake is deferred — their cache already refreshes on `coop acp`.)
 
+- **Presets can live globally in `~/.config/coop/presets` — shared across every repo.** A preset
+  is looked up in the repo's `.agent/presets/` first, then the global root; on a name collision the
+  repo wins (so a project can override a personal recipe). `coop presets` marks global-sourced
+  recipes `(global)` and `coop presets <name>` prints the resolved path; a global preset's
+  `roles/*.md` prompt files resolve under its own folder. Relocate the root with
+  `COOP_PRESETS_DIR`. A repo with no global dir behaves exactly as before.
+
+- **ACP: gemini gets a real model dropdown in the editor toolbar.** gemini's adapter reports its
+  models via ACP's `models` field (not a `configOptions` entry), so Zed showed no model picker for
+  it. coop now synthesizes the dropdown from that field and translates a pick into the adapter's
+  `session/set_model`, re-applying the choice after a box swap — claude's and codex's native model
+  options are untouched.
+
 - **The ACP path's host-side fs/terminal boundary is now documented.** Over ACP the editor
   services `fs/read_text_file` / `fs/write_text_file` / `terminal/*` requests host-side, and
   coop's proxy forwards them to the editor unfiltered — so when you drive an agent from Zed, the
   box's isolation is only as strong as the editor's own fs/terminal sandbox (a prompt-injected
   agent could ask the editor to touch an absolute host path outside the repo). The README's ACP
   section now spells this out; `coop loop`/`coop claude` have no such channel and are unaffected.
+
+- **Security: an in-box agent can no longer plant a compose file for coop to auto-run on the
+  host.** coop's auto-up runs `compose.agent.yml` / `.agent/compose.yml` on the HOST daemon before
+  a networked box starts, and those paths live in the read-write repo mount — so a prompt-injected
+  agent could author one (`privileged: true`, a `/` bind mount) and have the next launch execute it
+  host-side. The box now shadows both paths read-only: an existing file stays usable exactly as
+  committed, but an agent can't create or modify one from inside the box.
 
 - **A rate-limit wait no longer over-waits across a laptop suspend.** The loop's `sleepForLimit`
   and the ACP respawn's `sleepUntilReset` built their countdown on Go's monotonic clock, which
@@ -53,6 +73,15 @@
   to a WALL-clock deadline (monotonic reading stripped) and re-check it on short (≤1m) ticks, so
   reopening the laptop past the reset ends the wait within a tick; the unknown-reset path still
   backs off by duration, and Ctrl-C / ctx-cancel still bail promptly.
+
+- **Unattended runs can no longer spin forever on a wedged limit.** Two give-up caps: the loop's
+  output/token-limit path (which retried the same iteration immediately, forever, if a model kept
+  maxing out or a failing gate echoed `finish_reason: length`) now backs off after the first
+  consecutive hit and stops after 5, and the transparent ACP failover (which could
+  respawn→wait→resend indefinitely when every credential stayed limited with no reset time) forwards
+  the real limit error to the editor after 12 consecutive all-limited waits. A completed turn or a
+  free rotation resets either chain. The ACP path also no longer swallows an "approaching your
+  limit" advisory when a turn ends in a non-limit error — it's flushed ahead of the failure.
 
 - **`:d` in `coop tasks decisions -i` now DELETES the current decision's task, not marks it done.**
   `:d` read as delete/drop, so v3's "mark done" mnemonic was backwards; the mark-done shortcut is
@@ -73,6 +102,26 @@
   wrote `.agent/fleet.yaml` for you; a fleet is now always authored explicitly (`coop fleet init`
   writes the template). `coop tasks split <n>` still slices a queue into copy-trees for a
   hand-wired fleet.
+
+- **A `/sweep`'s Stop-guard no longer holds other sessions hostage.** The `.agent/active`
+  sentinel was repo-global: a sweep armed it and every concurrent session in the repo (say, Zed on
+  the host) got its Stop hook blocked too, and a crashed sweep left the flag stuck until deleted by
+  hand. The sweep now writes its own session id into the marker and the guard releases any session
+  that is provably a different one — the sweep's own hold is unchanged, and re-arming self-heals a
+  stale marker.
+
+- **`coop tasks add` no longer drops repeated section flags.** Passing `--acceptance` (or
+  `--context`/`--approach`) more than once silently kept only the LAST value; repeats now accumulate
+  as paragraphs under the one heading, like `--subtask` always did.
+
+- **Future GitHub releases get real notes.** The release workflow now renders the release body from
+  `CHANGELOG.md`'s top section at the tag (and fails loudly if it's empty) instead of GitHub's
+  PR-label notes — which, for a repo of direct commits, published v3.0.0 with two dependabot bumps
+  as its whole story.
+
+- CLI polish: `coop tasks queues` completes and typo-suggests; `coop loop <TAB>` no longer offers
+  the retired `pool`; `completion` is listed once; and `coop tasks decisions -i` draws a bold
+  colored divider between decisions so the boundary is visible while you answer.
 
 - `coop fork review` prints a review dossier, not just a brief + diff. Between the commits and
   the patch it now maps the risk, all parent-computed from git facts: the fork's task log is
