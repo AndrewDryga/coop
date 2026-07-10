@@ -52,9 +52,10 @@ func TestValid(t *testing.T) {
 
 func TestPeers(t *testing.T) {
 	cases := map[string][]string{
-		"codex":  {"claude", "gemini"},
-		"claude": {"codex", "gemini"},
-		"gemini": {"claude", "codex"},
+		"codex":  {"claude", "gemini", "grok"},
+		"claude": {"codex", "gemini", "grok"},
+		"gemini": {"claude", "codex", "grok"},
+		"grok":   {"claude", "codex", "gemini"},
 	}
 	for governor, want := range cases {
 		if got := Peers(governor, allAgents); !slices.Equal(got, want) {
@@ -70,6 +71,9 @@ func TestConsultCmds(t *testing.T) {
 		"claude": {"claude", "-p", "--permission-mode", "plan", "Q"},
 		"gemini": {"gemini", "--approval-mode", "plan", "-p", "Q"},
 		"codex":  {"codex", "exec", "-s", "read-only", "Q"},
+		// grok locks read-only via a tool allowlist — NOT --permission-mode plan, which is a
+		// no-op in headless (only bypassPermissions takes effect via that flag).
+		"grok": {"grok", "--tools", "read_file,grep,list_dir", "-p", "Q"},
 	}
 	for tool, want := range cases {
 		ag, ok := agents.Get(tool)

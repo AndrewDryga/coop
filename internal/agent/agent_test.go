@@ -13,8 +13,8 @@ import (
 func cleanCmdEnv(t *testing.T) {
 	t.Helper()
 	for _, e := range []string{
-		"COOP_CLAUDE_CMD", "COOP_CODEX_CMD", "COOP_GEMINI_CMD",
-		"COOP_CLAUDE_MODEL", "COOP_CODEX_MODEL", "COOP_GEMINI_MODEL",
+		"COOP_CLAUDE_CMD", "COOP_CODEX_CMD", "COOP_GEMINI_CMD", "COOP_GROK_CMD",
+		"COOP_CLAUDE_MODEL", "COOP_CODEX_MODEL", "COOP_GEMINI_MODEL", "COOP_GROK_MODEL",
 	} {
 		if v, ok := os.LookupEnv(e); ok {
 			os.Unsetenv(e)
@@ -34,8 +34,8 @@ func mustWrite(t *testing.T, path, body string) {
 }
 
 func TestRegistry(t *testing.T) {
-	if got := Names(); !slices.Equal(got, []string{"claude", "codex", "gemini"}) {
-		t.Errorf("Names() = %v, want [claude codex gemini]", got)
+	if got := Names(); !slices.Equal(got, []string{"claude", "codex", "gemini", "grok"}) {
+		t.Errorf("Names() = %v, want [claude codex gemini grok]", got)
 	}
 	if !Valid("codex") || Valid("nope") {
 		t.Error("Valid: codex should be valid, nope should not")
@@ -49,7 +49,8 @@ func TestRegistry(t *testing.T) {
 	if Default() != "claude" {
 		t.Errorf("Default() = %q, want claude", Default())
 	}
-	// Packages is the union across agents (claude 2 + codex 2 + gemini 1).
+	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
+	// binary, not npm, so it adds none).
 	if got := Packages(); len(got) != 5 ||
 		!slices.Contains(got, claudeCLIPackage) ||
 		!slices.Contains(got, claudeACPPackage) ||
@@ -82,6 +83,13 @@ func TestCommands(t *testing.T) {
 			[]string{"gemini", "--yolo", "-p", "go"},
 			[]string{"gemini", "--acp"},
 			[]string{"gemini", "--approval-mode", "plan", "-p", "q"}},
+		{"grok",
+			[]string{"grok", "--permission-mode", "bypassPermissions"},
+			// -p takes the prompt as its value, so the prompt is last, after the mode flags.
+			[]string{"grok", "--permission-mode", "bypassPermissions", "-p", "go"},
+			[]string{"grok", "agent", "stdio"},
+			// read-only via the tool allowlist, NOT --permission-mode plan (a no-op in headless).
+			[]string{"grok", "--tools", "read_file,grep,list_dir", "-p", "q"}},
 	}
 	for _, c := range cases {
 		a, _ := Get(c.name)
@@ -109,6 +117,7 @@ func TestModelSelection(t *testing.T) {
 	cfg.SetActiveModel("claude", "opus")
 	cfg.SetActiveModel("codex", "gpt-5")
 	cfg.SetActiveModel("gemini", "gemini-2.5-pro")
+	cfg.SetActiveModel("grok", "grok-4.5")
 	cases := []struct {
 		name                 string
 		interactive, acp     []string
@@ -118,6 +127,8 @@ func TestModelSelection(t *testing.T) {
 		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5"}, []string{"codex-acp"}, true},
 		// gemini's ACP is its own binary, so the model rides the ACP command too.
 		{"gemini", []string{"gemini", "--yolo", "--model", "gemini-2.5-pro"}, []string{"gemini", "--acp", "--model", "gemini-2.5-pro"}, true},
+		// grok's ACP is its own binary; the model flag goes BEFORE the `stdio` mode.
+		{"grok", []string{"grok", "--permission-mode", "bypassPermissions", "--model", "grok-4.5"}, []string{"grok", "agent", "--model", "grok-4.5", "stdio"}, true},
 	}
 	for _, c := range cases {
 		a, _ := Get(c.name)
@@ -175,6 +186,7 @@ func TestEmptyCmdOverrideStillRunnable(t *testing.T) {
 		{"claude", "COOP_CLAUDE_CMD", "claude"},
 		{"codex", "COOP_CODEX_CMD", "codex"},
 		{"gemini", "COOP_GEMINI_CMD", "gemini"},
+		{"grok", "COOP_GROK_CMD", "grok"},
 	} {
 		t.Setenv(c.env, "")
 		a, _ := Get(c.name)
@@ -253,6 +265,20 @@ func TestResume(t *testing.T) {
 		t.Error("gemini Resume must match a session in a 64-char-hash bucket (the gemini 0.46+ scheme)")
 	}
 
+	// grok resumes the exact coop-owned id, matched by file content anywhere under sessions/
+	// (its working-dir bucketing is version-dependent, so a content scan can't silently miss).
+	grok, _ := Get("grok")
+	mustWrite(t, filepath.Join(cfg.AgentDir("grok"), "sessions", "some-cwd-bucket", "s.jsonl"),
+		`{"sessionId":"`+id+`"}`)
+	if cmd, ok := grok.Resume(cfg, ws, id); !ok ||
+		!slices.Equal(cmd, []string{"grok", "--permission-mode", "bypassPermissions", "--resume", id}) {
+		t.Errorf("grok Resume = (%v, %v)", cmd, ok)
+	}
+	// A different id (no matching session) must not resume.
+	if cmd, ok := grok.Resume(cfg, ws, "88888888-2222-4333-8444-555555555555"); ok {
+		t.Errorf("grok Resume matched an id with no session: %v", cmd)
+	}
+
 	// codex ignores the id and resumes its most-recent INTERACTIVE session for the cwd,
 	// skipping a newer `codex exec` (source=="exec") loop/consult session.
 	codex, _ := Get("codex")
@@ -276,8 +302,8 @@ func TestStartSessionAndPreset(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	id := "11111111-2222-4333-8444-555555555555"
 
-	// claude/gemini preset a caller-chosen id; codex cannot.
-	for name, want := range map[string]bool{"claude": true, "gemini": true, "codex": false} {
+	// claude/gemini/grok preset a caller-chosen id; codex cannot.
+	for name, want := range map[string]bool{"claude": true, "gemini": true, "grok": true, "codex": false} {
 		a, _ := Get(name)
 		if a.PresetSessionID() != want {
 			t.Errorf("%s PresetSessionID = %v, want %v", name, a.PresetSessionID(), want)
@@ -291,6 +317,10 @@ func TestStartSessionAndPreset(t *testing.T) {
 	gemini, _ := Get("gemini")
 	if cmd := gemini.StartSession(cfg, id); !slices.Equal(cmd, []string{"gemini", "--yolo", "--session-id", id}) {
 		t.Errorf("gemini StartSession = %v", cmd)
+	}
+	grok, _ := Get("grok")
+	if cmd := grok.StartSession(cfg, id); !slices.Equal(cmd, []string{"grok", "--permission-mode", "bypassPermissions", "--session-id", id}) {
+		t.Errorf("grok StartSession = %v", cmd)
 	}
 	// codex ignores the id and just starts interactively.
 	codex, _ := Get("codex")
@@ -308,6 +338,7 @@ func TestMetadata(t *testing.T) {
 		{"claude", "CLAUDE.md", ".credentials.json", "ANTHROPIC_API_KEY"},
 		{"codex", "AGENTS.md", "auth.json", "OPENAI_API_KEY"},
 		{"gemini", "GEMINI.md", "gemini-credentials.json", "GEMINI_API_KEY"},
+		{"grok", "AGENTS.md", "auth.json", "XAI_API_KEY"},
 	}
 	for _, c := range cases {
 		a, _ := Get(c.name)
@@ -331,10 +362,12 @@ func TestMCP(t *testing.T) {
 	if m, err := claude.MCP(cfg); err != nil || len(m) != 0 {
 		t.Errorf("claude MCP = %v, %v; want none (reads mcp.json directly)", m, err)
 	}
-	// gemini/codex generate a config file at their native path.
+	// gemini/codex/grok generate a config file at their native path (grok reuses codex's
+	// [mcp_servers.*] TOML shape).
 	for name, boxPath := range map[string]string{
 		"gemini": "/home/node/.gemini/settings.json",
 		"codex":  "/home/node/.codex/config.toml",
+		"grok":   "/home/node/.grok/config.toml",
 	} {
 		ag, _ := Get(name)
 		m, err := ag.MCP(cfg)
@@ -367,6 +400,7 @@ func TestLogin(t *testing.T) {
 		"claude": {"claude", "auth", "login"},
 		"gemini": {"gemini"},
 		"codex":  {"codex", "login", "--device-auth"},
+		"grok":   {"grok", "login", "--device-auth"},
 	} {
 		a, _ := Get(name)
 		if got := a.Login(cfg); !slices.Equal(got, want) {
@@ -383,6 +417,9 @@ func TestACPRateLimitSignalsPinned(t *testing.T) {
 		"claude": {{Key: "errorKind", Value: "rate_limit"}},
 		"codex":  {{Value: "usageLimitExceeded"}},
 		"gemini": {{Value: "RESOURCE_EXHAUSTED"}},
+		// grok's ACP limit marker isn't captured yet (needs a live limit in a box) — pin the
+		// current honest state: no structured signal, so it rotates only on the output-token axis.
+		"grok": nil,
 	}
 	for name, w := range want {
 		a, ok := Get(name)
