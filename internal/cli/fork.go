@@ -103,7 +103,7 @@ func forkHelpText(p ui.Palette) string {
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
 		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
-		{"    --consult", "with --loop, iterations may consult the authed peers read-only"},
+		{"    --consult <agent>", "with --loop, a peer iterations may consult read-only (repeatable)"},
 		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
 		{"-y, --yes", "merge/rm: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
@@ -203,12 +203,12 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      string // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
-	credential string // the fork's account, from the positional target's @account (else the ladder default)
-	model      string // the fork's model, from the positional target's :model (else the CLI/preset default)
-	consult    bool   // --consult: loop iterations may ask the authed peers (interactive forks always may)
-	preset     string // --preset <name>: the orchestration preset this fork's loop runs under
-	worker     bool   // internal: this process IS the detached loop worker (--_detached)
+	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
+	credential string   // the fork's account, from the positional target's @account (else the ladder default)
+	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
+	consult    []string // --consult <target> (repeatable): the peers a loop iteration may ask read-only
+	preset     string   // --preset <name>: the orchestration preset this fork's loop runs under
+	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
@@ -272,7 +272,17 @@ func parseForkCreate(args []string) (forkArgs, error) {
 				return fa, errors.New("coop fork --preset needs a preset name")
 			}
 		case x == "--consult":
-			fa.consult = true
+			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
+				return fa, errors.New("coop fork --consult needs a peer: --consult <agent> (repeatable)")
+			}
+			i++
+			fa.consult = append(fa.consult, rest[i])
+		case strings.HasPrefix(x, "--consult="):
+			if v := strings.TrimPrefix(x, "--consult="); v == "" {
+				return fa, errors.New("coop fork --consult needs a peer: --consult <agent> (repeatable)")
+			} else {
+				fa.consult = append(fa.consult, v)
+			}
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
 			fa.loop = true
@@ -286,11 +296,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
 	}
-	// An interactive fork is ALWAYS a consult lead (forkCreate sets it unconditionally), so the
-	// flag only means something for a loop — accepting it elsewhere would imply it toggles a thing
-	// it doesn't.
-	if fa.consult && !fa.loop {
-		return fa, errors.New("coop fork --consult only applies with --loop (an interactive fork may always consult its peers)")
+	// --consult names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
+	if len(fa.consult) > 0 && !fa.loop {
+		return fa, errors.New("coop fork --consult only applies with --loop (name each peer: --consult <agent>)")
 	}
 	return fa, nil
 }
@@ -399,13 +407,20 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}
 	saveForkAgent(ws, fa.agent)
 	if fa.loop {
+		// The worker/foreground paths run the loop here, so resolve --consult to peer targets
+		// (validate authed, reject an @account). The detach path re-execs `coop fork … --consult
+		// <t>` and the worker re-resolves, so it forwards the raw values instead.
+		peers, err := a.resolvePeers("--consult", fa.consult)
+		if err != nil {
+			return 2, err
+		}
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.consult, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, peers, true)
 		case fa.detach:
 			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.preset, fa.consult)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.consult, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, peers, false)
 		}
 	}
 	// Pin this interactive session's account/model from --credential / --model (model@account
@@ -810,7 +825,10 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !validForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
-	consult, rest := extractConsult(rest)
+	consultVals, rest, err := extractConsult(rest)
+	if err != nil {
+		return 2, err
+	}
 	// --model/--credential are retired — name the fork's ACP session in the positional target
 	// (coop fork <name> acp claude:opus-4.8@work), like plain `coop acp`.
 	if err := retiredTargetFlagErr(rest); err != nil {
@@ -852,12 +870,16 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
+	peers, err := a.resolvePeers("--consult", consultVals)
+	if err != nil {
+		return 2, err
+	}
 	lead := ""
-	if consult {
+	if len(peers) > 0 {
 		lead = agent
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead,
+		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }

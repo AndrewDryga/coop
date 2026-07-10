@@ -353,7 +353,7 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
 	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: "false"}}
 
-	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, false, false, false)
+	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, false)
 	if err == nil {
 		t.Fatalf("expected loop to fail at the image check, got (%d, nil)", code)
 	}

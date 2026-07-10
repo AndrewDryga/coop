@@ -2,9 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 )
 
 // noProviderErr is coop's one actionable message when a launch names no provider (and no
@@ -105,6 +107,28 @@ func foldTarget(t agents.Target, model, profile *string) error {
 		*profile = acct
 	}
 	return nil
+}
+
+// resolvePeers parses each --peer/--consult value into a peer target and validates it: a known,
+// authed provider with an optional :model and NO account — a peer runs on its default account
+// (only the lead rotates accounts). kind names the flag for the error ("--consult"/"--peer").
+// Unknown or unauthed → a usage error naming the peer + the fix; never a silent skip.
+func (a *app) resolvePeers(kind string, vals []string) ([]agents.Target, error) {
+	var peers []agents.Target
+	for _, v := range vals {
+		t, err := agents.ParseTarget(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s %q: %w", kind, v, err)
+		}
+		if len(t.Accounts) > 0 {
+			return nil, fmt.Errorf("%s %q: a peer runs on its default account — drop the @account (name it %s or %s:<model>)", kind, v, t.Provider, t.Provider)
+		}
+		if !slices.Contains(box.AuthedAgents(a.cfg), t.Provider) {
+			return nil, fmt.Errorf("%s %q isn't signed in — run: coop login %s (see 'coop credentials')", kind, t.Provider, t.Provider)
+		}
+		peers = append(peers, t)
+	}
+	return peers, nil
 }
 
 // applyTarget seeds a single run's model + account selection from a target (the loop uses the

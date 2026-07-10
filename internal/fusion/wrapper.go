@@ -131,9 +131,17 @@ else
 	persona=
 	role=
 fi
+# The peer must be BOTH a registered adapter AND in this run's council (COOP_PEERS — the
+# agents whose credentials coop actually mounted). The second check is the security gate:
+# it refuses a peer the run never named, so a compromised lead can't consult (and thereby
+# drive) an unlisted agent even though its adapter arm exists below.
 case "$peer" in
 ` + peerAlt + `) ;;
 *) die "unknown peer: $name (expected ` + peerList + `, or a preset consult role)" ;;
+esac
+case " ${COOP_PEERS:-} " in
+*" $peer "*) ;;
+*) die "peer not in this run's council: $name (COOP_PEERS='${COOP_PEERS:-}')" ;;
 esac
 # Resolve the model into one $model: a role's own model wins; else the per-peer default
 # coop exported (COOP_PEER_MODEL_<PEER>). One var, so every arm expands it the same way.

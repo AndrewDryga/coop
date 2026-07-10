@@ -48,21 +48,21 @@ func (a *app) resolveImage() (repo, img string, err error) {
 
 // runInBox runs a command in the box against the current repo with the default
 // homes/network/cache toggles (the common interactive path). agent names the agent
-// being driven (claude/codex/gemini) so its credentials are mounted and, with consult,
-// it gets the second-opinion directive plus its authenticated peers' credentials. Pass
+// being driven (claude/codex/gemini) so its credentials are mounted and, with named peers,
+// it gets the second-opinion directive plus exactly those peers' credentials. Pass
 // "" for raw commands (coop run/shell) that aren't an agent session — they mount no
 // agent credentials.
-func (a *app) runInBox(cmd []string, agent string, consult bool) (int, error) {
+func (a *app) runInBox(cmd []string, agent string, peers []agents.Target) (int, error) {
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
 	}
 	lead := ""
-	if consult || (a.preset != nil && agent != "") {
+	if len(peers) > 0 || (a.preset != nil && agent != "") {
 		lead = agent // a preset makes the agent a lead too: its routing contract mounts via ConsultLead
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Preset: a.preset,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 	})
 }
@@ -81,7 +81,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 		// `coop run` runs a raw command; it does not default to an agent (use `coop claude`).
 		return 2, errors.New("usage: coop run -- <cmd...>")
 	}
-	return a.runInBox(args, "", false) // raw command runner — not an agent session
+	return a.runInBox(args, "", nil) // raw command runner — not an agent session
 }
 
 // launchAgent runs a named agent: its autonomous default command, with any extra CLI
@@ -97,7 +97,10 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		return 2, err
 	}
 	tool := t.Provider
-	consult, args := extractConsult(args)
+	consultVals, args, err := extractConsult(args)
+	if err != nil {
+		return 2, err
+	}
 	// `coop claude login` reads as "log in to claude" — route it to the sign-in flow like
 	// `coop login claude`; the account rides the target (`coop claude@work login`).
 	if len(args) >= 1 && args[0] == "login" {
@@ -129,7 +132,11 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		return 2, err
 	}
 	a.nudgeIfUnauthed(tool)
-	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, consult)
+	peers, err := a.resolvePeers("--consult", consultVals)
+	if err != nil {
+		return 2, err
+	}
+	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, peers)
 }
 
 // nudgeIfUnauthed prints one heads-up (TTY only, never blocks) when the credential this run will use
@@ -210,10 +217,41 @@ func extractBoolFlag(args []string, flag string) (found bool, rest []string) {
 	return found, rest
 }
 
-// extractConsult opts a normal run into the second-opinion directive — letting the agent
-// consult its authenticated peers read-only on hard calls (see box.RunSpec.ConsultLead).
-func extractConsult(args []string) (consult bool, rest []string) {
-	return extractBoolFlag(args, "--consult")
+// extractConsult pulls every --consult <target> (repeatable) out of a normal/loop/fork-loop
+// run's args — each value is one peer the lead may consult read-only on hard calls (see
+// box.RunSpec.Peers). The OLD boolean --consult (no value) is retired (v3-clean): a valueless
+// occurrence returns the rewrite. `--`-aware.
+func extractConsult(args []string) (consult, rest []string, err error) {
+	return extractRepeatable(args, "--consult", "name each peer: --consult <agent> [--consult <agent> …]")
+}
+
+// extractPeer pulls every --peer <target> (repeatable) out of fusion's args; each value is one
+// council peer. Fusion requires ≥1 (checked by the caller). `--`-aware.
+func extractPeer(args []string) (peers, rest []string, err error) {
+	return extractRepeatable(args, "--peer", "name each peer: --peer <agent> [--peer <agent> …]")
+}
+
+// extractRepeatable collects every `--flag <value>` occurrence (repeatable) out of args, in
+// order, returning the values and the remaining args. A valueless occurrence (the old boolean
+// spelling, or a typo) errors, pointing at the repeatable form. Stops at `--` — everything after
+// is the agent's own, forwarded verbatim (so an agent's OWN --consult/--peer still reaches it).
+func extractRepeatable(args []string, flag, tombstone string) (vals, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			return vals, append(rest, args[i:]...), nil
+		}
+		if args[i] == flag || strings.HasPrefix(args[i], flag+"=") {
+			v, n, _, e := flagValue(args, i, flag)
+			if e != nil {
+				return nil, nil, fmt.Errorf("%s takes a value now — %s", flag, tombstone)
+			}
+			vals = append(vals, v)
+			i += n - 1
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	return vals, rest, nil
 }
 
 // dropDashDash removes the first "--" from args. coop uses "--" to mark the end of ITS own flags;
@@ -387,7 +425,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		where = fmt.Sprintf(" (credential %s)", profile)
 	}
 	ui.Info("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
-	return a.runInBox(ag.Login(a.cfg), tool, false) // mounts only the agent being logged in to
+	return a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
 }
 
 // acpCommand maps an agent to its ACP adapter command inside the box.
@@ -415,7 +453,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// default — strip and ignore it so an existing editor config that still passes it keeps working.
 	_, args = extractSupervise(args)
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
-	consult, args := extractConsult(args)
+	consultVals, args, err := extractConsult(args)
+	if err != nil {
+		return 2, err
+	}
 	// --model/--credential are retired on this surface too — pin the session in the positional
 	// target instead, so an editor's agent_servers entry runs ["acp","claude:opus-4.8@work"].
 	if err := retiredTargetFlagErr(args); err != nil {
@@ -542,8 +583,12 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	lead := "" // --consult opts into the second-opinion directive (a no-op under fusion)
-	if consult || a.preset != nil {
+	peers, err := a.resolvePeers("--consult", consultVals)
+	if err != nil {
+		return 2, err
+	}
+	lead := "" // named peers (or a preset) opt the session into the second-opinion directive
+	if len(peers) > 0 || a.preset != nil {
 		lead = tool // a preset's routing contract mounts via ConsultLead too
 	}
 	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
@@ -559,7 +604,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
 		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
-		FusionGovernor: governor, ConsultLead: lead, Preset: a.preset, Quiet: true,
+		FusionGovernor: governor, ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
 		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
@@ -711,9 +756,24 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err
 	}
-	// --consult is a documented no-op for fusion (a council always consults its peers). Strip it so it
-	// isn't leaked into the governor's own CLI as an unknown flag.
-	_, args = extractConsult(args)
+	// The council is named EXPLICITLY with --peer (repeatable). --consult is the normal-run
+	// spelling; on fusion it's a mistake worth naming rather than leaking to the governor's CLI.
+	for _, x := range args {
+		if x == "--" {
+			break
+		}
+		if x == "--consult" || strings.HasPrefix(x, "--consult=") {
+			return 2, errors.New("coop fusion names its council with --peer, not --consult (e.g. coop fusion claude --peer codex --peer gemini)")
+		}
+	}
+	peerVals, args, err := extractPeer(args)
+	if err != nil {
+		return 2, err
+	}
+	peers, err := a.resolvePeers("--peer", peerVals)
+	if err != nil {
+		return 2, err
+	}
 	// --preset: the preset's lead is the default governor (an explicit one still wins), and
 	// its role routing rides along with the council directive.
 	presetName, args, err := extractRunPreset(args)
@@ -723,6 +783,11 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
 		return 2, err
+	}
+	// Fusion needs a council: at least one --peer, OR a preset that supplies consult roles.
+	// No implicit "consult everyone signed in" — the peers participate only when named.
+	if len(peers) == 0 && (p == nil || !p.HasConsult()) {
+		return 2, errors.New("fusion needs its council — name each peer: coop fusion <governor> --peer <agent> [--peer <agent> …]")
 	}
 	// The governor target names the agent; its model + account fold into this run's one-off
 	// selection (the peers keep their own).
@@ -744,10 +809,17 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	}
 	// The governor's autonomous default command, plus any extra args you pass through.
 	cmd := append(append([]string{}, a.defaultCmd(governor)...), dropDashDash(rest)...)
-	ui.Info("fusion: %s governs; peers %s consulted read-only", governor,
-		strings.Join(fusion.Peers(governor, agents.Names()), " + "))
+	council := make([]string, 0, len(peers))
+	for _, pt := range peers {
+		council = append(council, pt.String())
+	}
+	desc := strings.Join(council, " + ")
+	if desc == "" {
+		desc = "the preset's roles"
+	}
+	ui.Info("fusion: %s governs; peers %s consulted read-only", governor, desc)
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, Preset: a.preset,
+		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 }
@@ -1190,38 +1262,35 @@ func promptGateLangs(in io.Reader) []string {
 	return chosen
 }
 
-// loopAgent picks the agent for `coop loop [claude|codex|gemini]` (default claude),
-// erroring on any unexpected token.
 // parseLoopArgs resolves `coop loop`'s leading target (provider[:model][@account,…]) and its
-// boolean flags. Model + account come from the target — `--model`/`--credential` are retired.
-// hasTarget is false when no positional was given (a preset then supplies the lead).
-func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, consult, debugOnFail, preflight bool, err error) {
+// boolean flags. Model + account come from the target — `--model`/`--credential` are retired;
+// `--consult`/`--tasks`/`--preset` are pre-extracted by cmdLoop. hasTarget is false when no
+// positional was given (a preset then supplies the lead).
+func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, debugOnFail, preflight bool, err error) {
 	preflight = def
 	if err = retiredTargetFlagErr(args); err != nil {
-		return agents.Target{}, false, false, false, preflight, err
+		return agents.Target{}, false, false, preflight, err
 	}
 	t, hasTarget, rest, err := takeHeadTarget(args)
 	if err != nil {
-		return agents.Target{}, false, false, false, preflight, err
+		return agents.Target{}, false, false, preflight, err
 	}
 	for _, x := range rest {
 		switch x {
-		case "--consult":
-			consult = true
 		case "--debug-on-fail":
 			debugOnFail = true
 		case "--debug": // v3: renamed to --debug-on-fail
 			note, _ := removedCommandNote("loop --debug")
-			return t, hasTarget, consult, debugOnFail, preflight, errors.New(note)
+			return t, hasTarget, debugOnFail, preflight, errors.New(note)
 		case "--preflight":
 			preflight = true
 		case "--no-preflight":
 			preflight = false
 		default:
-			return t, hasTarget, consult, debugOnFail, preflight, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s][:model][@account] [--tasks <path>] [--preset <name>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+			return t, hasTarget, debugOnFail, preflight, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s][:model][@account] [--tasks <path>] [--preset <name>] [--consult <agent>]… [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
 		}
 	}
-	return t, hasTarget, consult, debugOnFail, preflight, nil
+	return t, hasTarget, debugOnFail, preflight, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1237,7 +1306,15 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	t, hasTarget, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
+	consultVals, rest, err := extractConsult(rest)
+	if err != nil {
+		return 2, err
+	}
+	peers, err := a.resolvePeers("--consult", consultVals)
+	if err != nil {
+		return 2, err
+	}
+	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
 	}
@@ -1275,7 +1352,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, "", rot, queues, nil, consult, debugOnFail, preflight) // local loop: no fork label
+	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight) // local loop: no fork label
 }
 
 // applyLoopModel puts COOP_LOOP_MODEL in the fallback tier — the loop's standing default
@@ -1504,7 +1581,7 @@ func watchInterrupt(sig <-chan os.Signal, onSoft, onHard func()) {
 // peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
-func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, consult, debugOnFail, preflight bool) (int, error) {
+func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -1599,7 +1676,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// (not the agent's headless form). Best-effort like the review pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink, consult)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink, peers)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1646,7 +1723,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			a.applyTarget(agent, rot)
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			ui.Info("%s", progressBanner(n, c, active))
-			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, consult)
+			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
 				break
@@ -1685,7 +1762,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 					if cNow, _ := queueProgress(hosts); cNow.Done > c.Done {
 						ui.Info("between-tasks audit — reviewing the task just completed")
 						a.withReviewModel(agent, func() {
-							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), hosts, sink, consult)
+							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), hosts, sink, peers)
 						})
 					}
 				}
@@ -1733,7 +1810,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
 		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
 		a.withReviewModel(agent, func() {
-			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, consult)
+			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, peers)
 		})
 		// A stop that landed during the review pass is honored before the next round is decided.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
@@ -1899,7 +1976,7 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // live bar watches for task progress. In a fully interactive run the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view);
 // otherwise it goes straight to the terminal unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, consult bool) (code int, output string, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 
@@ -1944,15 +2021,15 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
 		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
-	// --consult makes each iteration a consult lead: box.Run then mounts the authed peers'
-	// credentials, the coop-consult wrapper, and the second-opinion directive. A preset
-	// does the same with ITS roles: the routing contract mounts via ConsultLead.
+	// Named --consult peers make each iteration a consult lead: box.Run then mounts exactly
+	// those peers' credentials, the coop-consult wrapper, and the second-opinion directive. A
+	// preset does the same with ITS roles: the routing contract mounts via ConsultLead.
 	lead := ""
-	if consult || a.preset != nil {
+	if len(peers) > 0 || a.preset != nil {
 		lead = agent
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Preset: a.preset,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),

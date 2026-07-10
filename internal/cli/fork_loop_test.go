@@ -204,7 +204,7 @@ func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{}}
-	code, err := a.detachForkLoop(repo, "perf", "claude", "", "", "", "", false)
+	code, err := a.detachForkLoop(repo, "perf", "claude", "", "", "", "", nil)
 	if err == nil {
 		t.Fatal("detachForkLoop started a second worker for an already-running fork")
 	}

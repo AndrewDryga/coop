@@ -267,6 +267,36 @@ func TestConsultWrapperResolvesRoles(t *testing.T) {
 	}
 }
 
+// TestConsultWrapperRefusesUnlistedPeer: the security gate. A registered adapter that is NOT in
+// this run's council (COOP_PEERS) is refused before any work — so a lead can't consult (and
+// thereby drive) an agent the run never named, even though the adapter's case arm exists.
+func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	f := filepath.Join(t.TempDir(), "coop-consult")
+	if err := os.WriteFile(f, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// codex IS a registered adapter but NOT listed → refused with the council message, exit ≠ 0.
+	cmd := exec.Command("sh", f, "codex", "--fresh", "hi")
+	cmd.Env = append(os.Environ(), "COOP_PEERS=claude gemini")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("wrapper allowed an unlisted peer:\n%s", out)
+	}
+	if !strings.Contains(string(out), "not in this run's council") {
+		t.Errorf("expected the council-refusal message, got:\n%s", out)
+	}
+	// A LISTED peer clears the council gate (it then tries to run the agent, which isn't
+	// installed here — but that's a different failure, never the council refusal).
+	cmd = exec.Command("sh", f, "claude", "--fresh", "hi")
+	cmd.Env = append(os.Environ(), "COOP_PEERS=claude gemini")
+	if out, _ := cmd.CombinedOutput(); strings.Contains(string(out), "not in this run's council") {
+		t.Errorf("a listed peer must clear the council gate, got:\n%s", out)
+	}
+}
+
 // fakeConsult is a minimal 4th agent for the drift test — enough of the interface for the
 // consult generator, so we can prove a newly-registered agent is dispatched without a
 // hand-edited case arm.

@@ -295,70 +295,68 @@ func TestWithReviewModel(t *testing.T) {
 // no target (hasTarget=false) and the provider is required (caller errors or a preset lead
 // supplies it). A malformed/unknown token errors; --model/--credential tombstone.
 func TestLoopTargetResolution(t *testing.T) {
-	if _, has, _, _, _, err := parseLoopArgs(nil, false); err != nil || has {
+	if _, has, _, _, err := parseLoopArgs(nil, false); err != nil || has {
 		t.Errorf("parseLoopArgs(nil) = (has=%v, %v), want (false, nil) — no implicit default", has, err)
 	}
 	for _, ag := range []string{"claude", "codex", "gemini"} {
-		tg, has, _, _, _, err := parseLoopArgs([]string{ag}, false)
+		tg, has, _, _, err := parseLoopArgs([]string{ag}, false)
 		if err != nil || !has || tg.Provider != ag {
 			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, %v), want provider=%q", ag, tg, has, err, ag)
 		}
 	}
-	if tg, has, _, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has ||
+	if tg, has, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has ||
 		tg.Provider != "claude" || tg.Model != "opus-4.8" || len(tg.Accounts) != 1 || tg.Accounts[0] != "work" {
 		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, %v)", tg, err)
 	}
-	if _, _, _, _, _, err := parseLoopArgs([]string{"bogus"}, false); err == nil {
+	if _, _, _, _, err := parseLoopArgs([]string{"bogus"}, false); err == nil {
 		t.Error("parseLoopArgs(bogus): want error (unknown token)")
 	}
-	if _, _, _, _, _, err := parseLoopArgs([]string{"claude", "--model", "opus"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
+	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--model", "opus"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
 		t.Errorf("--model should tombstone, got %v", err)
 	}
-	if _, _, _, _, _, err := parseLoopArgs([]string{"claude", "--credential", "work"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
+	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--credential", "work"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
 		t.Errorf("--credential should tombstone, got %v", err)
 	}
 }
 
 func TestParseLoopArgs(t *testing.T) {
+	// --consult is pre-extracted by cmdLoop (see TestExtractConsult), so parseLoopArgs never sees
+	// it — it resolves the target + the boolean flags only.
 	cases := []struct {
 		args          []string
 		def           bool // COOP_PREFLIGHT default
 		wantAgent     string
 		wantModel     string
-		wantConsult   bool
 		wantDebug     bool
 		wantPreflight bool
 		wantErr       bool
 	}{
-		{nil, false, "", "", false, false, false, false},
-		{[]string{"codex"}, false, "codex", "", false, false, false, false},
-		{[]string{"--debug-on-fail"}, false, "", "", false, true, false, false},
-		{[]string{"gemini", "--debug"}, false, "", "", false, false, false, true},        // v3: --debug retired → error
-		{[]string{"--debug-on-fail", "codex"}, false, "", "", false, false, false, true}, // a target must LEAD; a trailing positional errors
-		{[]string{"bogus"}, false, "", "", false, false, false, true},
+		{nil, false, "", "", false, false, false},
+		{[]string{"codex"}, false, "codex", "", false, false, false},
+		{[]string{"--debug-on-fail"}, false, "", "", true, false, false},
+		{[]string{"gemini", "--debug"}, false, "", "", false, false, true},        // v3: --debug retired → error
+		{[]string{"--debug-on-fail", "codex"}, false, "", "", false, false, true}, // a target must LEAD; a trailing positional errors
+		{[]string{"bogus"}, false, "", "", false, false, true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
-		{[]string{"--preflight"}, false, "", "", false, false, true, false},
-		{[]string{"codex", "--preflight"}, false, "codex", "", false, false, true, false},
-		{nil, true, "", "", false, false, true, false},                         // COOP_PREFLIGHT=1 default
-		{[]string{"--no-preflight"}, true, "", "", false, false, false, false}, // flag overrides default-on
+		{[]string{"--preflight"}, false, "", "", false, true, false},
+		{[]string{"codex", "--preflight"}, false, "codex", "", false, true, false},
+		{nil, true, "", "", false, true, false},                         // COOP_PREFLIGHT=1 default
+		{[]string{"--no-preflight"}, true, "", "", false, false, false}, // flag overrides default-on
 		// The model/account ride the target now; --model/--credential tombstone (error).
-		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", false, false, false, false},
-		{[]string{"claude:opus@work"}, false, "claude", "opus", false, false, false, false},
-		{[]string{"--model", "haiku"}, false, "", "", false, false, false, true},               // retired
-		{[]string{"claude", "--credential", "work"}, false, "", "", false, false, false, true}, // retired
-		// --consult opts iterations into peer consultation, composing with the other flags.
-		{[]string{"--consult"}, false, "", "", true, false, false, false},
-		{[]string{"claude:claude-fable-5", "--consult"}, false, "claude", "claude-fable-5", true, false, false, false},
+		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", false, false, false},
+		{[]string{"claude:opus@work"}, false, "claude", "opus", false, false, false},
+		{[]string{"--model", "haiku"}, false, "", "", false, false, true},               // retired
+		{[]string{"claude", "--credential", "work"}, false, "", "", false, false, true}, // retired
 	}
 	for _, c := range cases {
-		tg, _, consult, debug, preflight, err := parseLoopArgs(c.args, c.def)
+		tg, _, debug, preflight, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || consult != c.wantConsult || debug != c.wantDebug || preflight != c.wantPreflight) {
-			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q consult=%v debug=%v preflight=%v), want (%q, %q, %v, %v, %v)",
-				c.args, c.def, tg.Provider, tg.Model, consult, debug, preflight, c.wantAgent, c.wantModel, c.wantConsult, c.wantDebug, c.wantPreflight)
+		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || debug != c.wantDebug || preflight != c.wantPreflight) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q debug=%v preflight=%v), want (%q, %q, %v, %v)",
+				c.args, c.def, tg.Provider, tg.Model, debug, preflight, c.wantAgent, c.wantModel, c.wantDebug, c.wantPreflight)
 		}
 	}
 }
@@ -406,26 +404,68 @@ func TestParseGovernor(t *testing.T) {
 	}
 }
 
+// TestExtractConsult: --consult is REPEATABLE, one peer target per flag. The old boolean form
+// (no value) errors with the rewrite; each value is collected in order; after `--` an agent's own
+// --consult passes through verbatim.
 func TestExtractConsult(t *testing.T) {
 	cases := []struct {
 		args     []string
-		want     bool
+		want     []string
 		wantRest []string
+		wantErr  bool
 	}{
-		{nil, false, nil},
-		{[]string{"-p", "hi"}, false, []string{"-p", "hi"}},
-		{[]string{"--consult"}, true, nil},
-		{[]string{"--consult", "-p", "hi"}, true, []string{"-p", "hi"}},
-		{[]string{"-p", "hi", "--consult"}, true, []string{"-p", "hi"}},
+		{nil, nil, nil, false},
+		{[]string{"-p", "hi"}, nil, []string{"-p", "hi"}, false},
+		{[]string{"--consult", "codex"}, []string{"codex"}, nil, false},
+		{[]string{"--consult", "codex:gpt-5.5", "--consult", "gemini"}, []string{"codex:gpt-5.5", "gemini"}, nil, false},
+		{[]string{"--consult=codex", "-p", "hi"}, []string{"codex"}, []string{"-p", "hi"}, false},
+		{[]string{"-p", "hi", "--consult", "gemini"}, []string{"gemini"}, []string{"-p", "hi"}, false},
+		// The old boolean spelling (no value) errors with the rewrite.
+		{[]string{"--consult"}, nil, nil, true},
+		{[]string{"--consult", "--other"}, nil, nil, true},
 		// After --, a --consult is the agent's own arg, not coop's — passed through verbatim.
-		{[]string{"--", "--consult"}, false, []string{"--", "--consult"}},
-		{[]string{"--consult", "--", "--consult"}, true, []string{"--", "--consult"}},
+		{[]string{"--", "--consult", "x"}, nil, []string{"--", "--consult", "x"}, false},
 	}
 	for _, c := range cases {
-		got, rest := extractConsult(c.args)
-		if got != c.want || !slices.Equal(rest, c.wantRest) {
+		got, rest, err := extractConsult(c.args)
+		if (err != nil) != c.wantErr {
+			t.Errorf("extractConsult(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
+			continue
+		}
+		if c.wantErr {
+			continue
+		}
+		if !slices.Equal(got, c.want) || !slices.Equal(rest, c.wantRest) {
 			t.Errorf("extractConsult(%v) = (%v, %v), want (%v, %v)", c.args, got, rest, c.want, c.wantRest)
 		}
+	}
+}
+
+// TestResolvePeers: a --peer/--consult value is one peer target — a known, authed provider with
+// an optional :model and NO account. An @account, an unauthed provider, and an unknown provider
+// each error (naming the peer); an empty list is no peers, no error.
+func TestResolvePeers(t *testing.T) {
+	dir := t.TempDir()
+	// claude authed (a credential file); codex/gemini not signed in.
+	os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755)
+	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
+	a := &app{cfg: &config.Config{ConfigDir: dir}}
+
+	peers, err := a.resolvePeers("--consult", []string{"claude:opus-4.8"})
+	if err != nil || len(peers) != 1 || peers[0].Provider != "claude" || peers[0].Model != "opus-4.8" {
+		t.Fatalf("resolvePeers(claude:opus-4.8) = (%+v, %v)", peers, err)
+	}
+	if _, err := a.resolvePeers("--consult", []string{"claude@work"}); err == nil {
+		t.Error("a peer with an @account must be rejected (a peer runs on its default account)")
+	}
+	if _, err := a.resolvePeers("--peer", []string{"codex"}); err == nil {
+		t.Error("an unauthed peer must be rejected")
+	}
+	if _, err := a.resolvePeers("--peer", []string{"borg"}); err == nil {
+		t.Error("an unknown provider must be rejected")
+	}
+	if peers, err := a.resolvePeers("--consult", nil); err != nil || peers != nil {
+		t.Errorf("resolvePeers(nil) = (%v, %v), want (nil, nil)", peers, err)
 	}
 }
 

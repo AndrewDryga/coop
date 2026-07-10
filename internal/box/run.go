@@ -46,7 +46,7 @@ type RunSpec struct {
 	// env-file API key this run may mount — so a plain `coop claude` box can't read the
 	// Codex/Gemini credentials. Empty for a raw/maintenance run (no agent session), which
 	// mounts no agent credentials at all. FusionGovernor/ConsultLead (below) widen the
-	// scope to authenticated peers, since the lead is told to invoke them. See
+	// scope to the EXPLICIT peers in Peers, since the lead is told to invoke them. See
 	// credentialScope. Ignored when Homes is false.
 	Agent string
 
@@ -75,9 +75,18 @@ type RunSpec struct {
 
 	// ConsultLead names the lead agent of a normal (non-fusion) run: it gets a
 	// light, optional "second opinion" directive merged into its instruction file,
-	// naming the authenticated peers it may consult read-only on hard calls. Scoped
+	// naming the EXPLICIT peers (Peers) it may consult read-only on hard calls. Scoped
 	// to the lead so peers it spawns don't recurse. Empty = no consult directive.
 	ConsultLead string
+
+	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
+	// --peer (fusion) / --consult (a normal or loop run), each provider[:model] (no
+	// account: a peer runs on its default). It REPLACES the old implicit "every authed
+	// agent is a peer" policy: only these providers' credentials mount as peers, only
+	// they are named in the consult directive, and the in-box coop-consult refuses any
+	// other (COOP_PEERS). A preset's own consult/delegate roles join separately (their
+	// role agents also mount + become consultable). Empty = the lead consults no ad-hoc peer.
+	Peers []agents.Target
 
 	// Preset, when set, is the loaded orchestration preset for this run: the lead's
 	// instruction file gets the generated routing block (roles, modes, exact consult/
@@ -225,11 +234,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if spec.Homes && spec.FusionGovernor != "" {
 		if file := instructionFile(spec.FusionGovernor); file != "" {
 			base := agentBaseInstructions(cfg, spec.FusionGovernor, file)
-			// Name only AUTHENTICATED peers in the council directive — credentials are scoped to
-			// authed peers (credentialScope), so telling the governor it MUST consult an unsigned
-			// peer just wastes turns on a consult that can't authenticate. With no authed peer,
-			// fusion degenerates to a normal run: mount the governor's plain instructions, no directive.
-			peers := authedPeers(cfg, spec.FusionGovernor)
+			// Name only the EXPLICIT peers in the council directive — credentials are scoped to
+			// exactly them (credentialScope), so an unnamed agent is never consulted. With no peer
+			// named, fusion degenerates to a normal run: mount the governor's plain instructions,
+			// no directive. (The CLI requires ≥1 --peer for fusion, so this is the degenerate guard.)
+			peers := excluding(peerProviders(spec.Peers), spec.FusionGovernor)
 			content := base
 			if len(peers) > 0 {
 				content = fusion.GovernorInstructions(base, spec.FusionGovernor, append([]string{spec.FusionGovernor}, peers...))
@@ -258,7 +267,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// running with no instructions at all. (Fusion's stronger directive takes over
 	// when FusionGovernor is set, so the two never both apply.)
 	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
-		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset); ok {
+		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers)); ok {
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("consult: skipped instruction wiring: %v", err)
 			} else {
@@ -626,13 +635,13 @@ func assembleAgentsDir(gen []genFile) (string, error) {
 
 // leadInstructionMount builds the instruction file a consult lead receives: its base
 // instructions (the box env note + the user's) plus the optional second-opinion directive
-// naming any authenticated peers. content is ALWAYS at least the base — the lead is excluded
+// naming the EXPLICIT peers (peers). content is ALWAYS at least the base — the lead is excluded
 // from instructionPlan (it is meant to get this augmented file instead), so returning nothing
 // would leave it running with no instructions at all. wired reports whether a consult directive
 // was actually injected, so the caller mounts coop-consult only when there is a peer to consult.
-// ok is false only when the agent has no native instruction file. Pure, so the "no authed peer
+// ok is false only when the agent has no native instruction file. Pure, so the "no named peer
 // still mounts the base" invariant is unit-tested without a container.
-func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset) (content, file string, wired, ok bool) {
+func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string) (content, file string, wired, ok bool) {
 	file = instructionFile(lead)
 	if file == "" {
 		return "", "", false, false
@@ -649,7 +658,7 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset) (co
 		}
 		return content, file, p.HasConsult() || len(p.DegradedNativeRoles(lead)) > 0, true
 	}
-	peers := authedPeers(cfg, lead)
+	peers = excluding(peers, lead)
 	return fusion.LeadInstructions(base, peers), file, len(peers) > 0, true
 }
 
@@ -762,9 +771,21 @@ func appendROMounts(args []string, ms []extraMount) []string {
 func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 	consults := spec.FusionGovernor != "" || spec.ConsultLead != "" ||
 		(spec.Preset != nil && spec.Preset.HasConsult())
+	// An explicit peer target's :model pins that peer's model (COOP_PEER_MODEL_<X>); otherwise
+	// the peer runs the config default (cfg.ModelFor). The lead isn't in Peers, so it always
+	// falls through to cfg.ModelFor.
+	peerModel := map[string]string{}
+	for _, p := range spec.Peers {
+		if p.Model != "" {
+			peerModel[p.Provider] = p.Model
+		}
+	}
 	var args []string
 	for _, agent := range scope {
-		model := cfg.ModelFor(agent)
+		model := peerModel[agent]
+		if model == "" {
+			model = cfg.ModelFor(agent)
+		}
 		if model == "" {
 			continue
 		}
@@ -846,6 +867,13 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 			}
 		}
 		args = append(args, modelEnvArgs(cfg, spec, scope)...)
+		// COOP_PEERS is the space-separated peer set (scope minus the lead) — exactly the agents
+		// whose credentials this box mounts as peers. The in-box coop-consult refuses any target
+		// not in it, so a compromised lead can't consult (and thus can't drive) an agent the run
+		// never named. Inert where the wrapper isn't mounted.
+		if len(scope) > 1 {
+			args = append(args, "-e", "COOP_PEERS="+strings.Join(scope[1:], " "))
+		}
 		// Each agent's own box env (Agent.BoxEnv) — claude points $CLAUDE_CONFIG_DIR at
 		// the mounted ~/.claude and disables the bubblewrap env scrub. Exported for every
 		// registered agent unconditionally (a var is inert where its agent isn't running),

@@ -93,7 +93,7 @@ FLAGS (every short flag has a long form):
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
       --preset    orchestration preset for this fork (see 'coop help presets')
-      --consult   with --loop, iterations may consult the authed peers read-only
+      --consult <agent>  with --loop, a peer iterations may consult read-only (repeatable)
   -f, --force     merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)
   -y, --yes       merge/rm: skip the delete confirm (required without a TTY)
   -f, --follow    logs: keep streaming new output

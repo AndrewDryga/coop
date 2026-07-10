@@ -259,6 +259,12 @@ func (a *app) fleetUp(args []string) (int, error) {
 	// detached worker's log. (A fork with no profile= falls back to the repo pool / all signed-in.)
 	var unsigned []string
 	for _, e := range fleet {
+		// The boolean consult: meant "ask every other signed-in agent" — that implicit peer policy
+		// is retired. A fork's loop now names its peers explicitly, which the fleet YAML can't yet
+		// express (Task B gives it a peers list); until then, refuse rather than silently drop it.
+		if e.consult {
+			return 2, fmt.Errorf("fleet up: fork %q sets consult: true, but the implicit 'consult everyone' peer policy is retired — name peers explicitly (coming to the fleet grammar); drop consult: for now", e.name)
+		}
 		if e.agent == "" {
 			// The preset supplies the lead; a per-fork model/credential has nowhere to attach (a
 			// preset's lead takes no override) — refuse here, not silently in a worker's log.
@@ -296,9 +302,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 		if e.preset != "" {
 			forkArgs = append(forkArgs, "--preset", e.preset)
 		}
-		if e.consult {
-			forkArgs = append(forkArgs, "--consult")
-		}
+		// e.consult is refused up front (the implicit peer policy is retired), so no --consult here.
 		if code, err := a.cmdFork(forkArgs); err != nil {
 			return code, fleetAbortErr(e.name, err, started)
 		}

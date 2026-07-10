@@ -204,7 +204,7 @@ func seedForkQueues(repo, ws, tasks string, onKept func()) ([]string, error) {
 // credential/model are the fork's --credential/--model one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string, consult, detached bool) (int, error) {
+func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string, peers []agents.Target, detached bool) (int, error) {
 	// Seed the fork's queue(s) from the source tree(s) into the worktree and get back the
 	// repo-relative queue list the in-fork loop works. An explicit --tasks seeds that one tree
 	// into .agent/tasks (the single-queue rule); the default (no --tasks) seeds every
@@ -249,7 +249,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
 	// A fork works its own seeded queue(s) in the worktree.
-	code, err := a.loop(ws, img, agent, name, rot, forkQueue, sink, consult, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
+	code, err := a.loop(ws, img, agent, name, rot, forkQueue, sink, peers, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}
@@ -261,7 +261,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string
 // (absolute, resolved by the caller) is forwarded so the worker seeds the same queue; an
 // empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. model,
 // preset, and consult are forwarded too, so the worker re-loads the same recipe and scope.
-func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, presetName string, consult bool) (int, error) {
+func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, presetName string, consult []string) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
@@ -281,23 +281,24 @@ func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, preset
 	if err != nil {
 		return -1, fmt.Errorf("locate coop binary: %w", err)
 	}
-	reExec := []string{"fork", name, agent, "--loop", "--_detached"}
+	// The worker re-parses these, so forward the agent+model+account as ONE positional target
+	// (--model/--credential are retired) — composeTarget round-trips the fork's one-off selection.
+	target, err := composeTarget(agent, model, credential)
+	if err != nil {
+		clearForkPidIfMine(repo, name)
+		return -1, err
+	}
+	reExec := []string{"fork", name, target, "--loop", "--_detached"}
 	if tasks != "" {
 		// An explicit --tasks is forwarded; the default (empty) is omitted so the worker re-derives
 		// the monorepo-aware queue set from project.TaskDirs itself.
 		reExec = append(reExec, "--tasks", tasks)
 	}
-	if credential != "" {
-		reExec = append(reExec, "--credential", credential)
-	}
-	if model != "" {
-		reExec = append(reExec, "--model", model)
-	}
 	if presetName != "" {
 		reExec = append(reExec, "--preset", presetName) // the worker re-loads the preset itself
 	}
-	if consult {
-		reExec = append(reExec, "--consult")
+	for _, peer := range consult { // one --consult per named peer (repeatable), re-resolved by the worker
+		reExec = append(reExec, "--consult", peer)
 	}
 	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork

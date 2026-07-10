@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
@@ -25,22 +26,19 @@ func TestAuthedAgents(t *testing.T) {
 	if got := AuthedAgents(cfg); !slices.Equal(got, []string{"codex", "gemini"}) {
 		t.Errorf("AuthedAgents = %v, want [codex gemini]", got)
 	}
-	if got := authedPeers(cfg, "codex"); !slices.Equal(got, []string{"gemini"}) {
-		t.Errorf("authedPeers(codex) = %v, want [gemini]", got)
-	}
-
-	// With only the lead authed there are no peers → nothing to consult.
-	soloDir := t.TempDir()
-	os.MkdirAll(filepath.Join(soloDir, "codex"), 0o755)
-	os.WriteFile(filepath.Join(soloDir, "codex", "auth.json"), []byte("{}"), 0o644)
-	solo := &config.Config{ConfigDir: soloDir}
-	if got := authedPeers(solo, "codex"); len(got) != 0 {
-		t.Errorf("authedPeers with only the lead authed = %v, want none", got)
-	}
 }
 
-// TestCredentialScope: a plain agent run mounts only its own home; fusion/consult also get
-// authenticated peers; a raw run (no agent) and a homes-off run get nothing.
+func peerTargets(names ...string) []agents.Target {
+	ts := make([]agents.Target, len(names))
+	for i, n := range names {
+		ts[i] = agents.Target{Provider: n}
+	}
+	return ts
+}
+
+// TestCredentialScope: a plain agent run mounts only its own home; a fusion/consult run ALSO
+// mounts exactly the EXPLICIT peers it named (spec.Peers) plus a preset's role agents — never a
+// blanket "every authed agent". A raw run (no agent) and a homes-off run get nothing.
 func TestCredentialScope(t *testing.T) {
 	dir := t.TempDir()
 	// claude + gemini authed (so they're consultable peers); codex is not. Creds live in the
@@ -63,8 +61,11 @@ func TestCredentialScope(t *testing.T) {
 		{"plain claude", RunSpec{Homes: true, Agent: "claude"}, []string{"claude"}},
 		{"raw run", RunSpec{Homes: true}, nil},
 		{"homes off", RunSpec{Agent: "claude"}, nil},
-		{"consult claude", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude", "gemini"}},
-		{"fusion codex", RunSpec{Homes: true, Agent: "codex", FusionGovernor: "codex"}, []string{"codex", "claude", "gemini"}},
+		// Narrowing: a consult with NO named peer mounts the lead alone — gemini is authed but
+		// unnamed, so its credentials stay out (the old policy would have widened to it).
+		{"consult, no named peer → lead only", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude"}},
+		{"consult names gemini", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Peers: peerTargets("gemini")}, []string{"claude", "gemini"}},
+		{"fusion names its council", RunSpec{Homes: true, Agent: "codex", FusionGovernor: "codex", Peers: peerTargets("claude", "gemini")}, []string{"codex", "claude", "gemini"}},
 		{"claude lead keeps native in-session", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: nativePreset}, []string{"claude"}},
 		{"codex lead degrades native to a claude consult", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Preset: nativePreset}, []string{"codex", "claude"}},
 	}

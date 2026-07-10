@@ -27,46 +27,54 @@ func AuthedAgents(cfg *config.Config) []string {
 	return authed
 }
 
-// credentialScope is the set of agents whose credential home (~/.<name>) and env-file API
-// key a run may mount. A plain agent run (spec.Agent set) gets only that agent; a fusion
-// governor or consult lead also gets its authenticated peers, since it is explicitly told
-// to invoke them read-only; a raw or maintenance run (no agent) gets none. Homes off → none.
+// runPrimary is the lead agent whose box this is: the fusion governor, else the consult lead,
+// else the launched agent. "" for a raw/maintenance run (no agent session).
+func runPrimary(spec RunSpec) string {
+	switch {
+	case spec.FusionGovernor != "":
+		return spec.FusionGovernor
+	case spec.ConsultLead != "":
+		return spec.ConsultLead
+	default:
+		return spec.Agent
+	}
+}
+
+// credentialScope is the set of agents whose credential home (~/.<name>) and env-file API key a
+// run may mount. A plain agent run (spec.Agent set) gets only that agent; a fusion governor or
+// consult lead ALSO gets the EXPLICIT peers it was told to invoke (spec.Peers) — never a blanket
+// "every authed agent" widening — plus a preset's own role agents; a raw or maintenance run (no
+// agent) gets none. Homes off → none. Narrowing to the named peers is the security dividend: an
+// agent the run didn't name never has its credentials mounted.
 func credentialScope(cfg *config.Config, spec RunSpec) []string {
 	if !spec.Homes {
 		return nil
 	}
-	primary := spec.Agent
-	// A preset scopes precisely: only its consult/delegate role agents join (below), never
-	// the blanket every-authed-peer widening — the preset says exactly who plays.
-	consultsPeers := spec.FusionGovernor != "" || (spec.ConsultLead != "" && spec.Preset == nil)
-	switch {
-	case spec.FusionGovernor != "":
-		primary = spec.FusionGovernor
-	case spec.ConsultLead != "":
-		primary = spec.ConsultLead
-	}
+	primary := runPrimary(spec)
 	if primary == "" {
 		return nil // raw/maintenance run — no agent session, no credentials
 	}
 	scope := []string{primary}
-	if consultsPeers {
-		scope = append(scope, authedPeers(cfg, primary)...)
-	}
-	// A preset's consult/delegate roles run their own agent CLIs from inside the lead's box,
-	// so their (authed) agents join the scope. A native role under a Claude lead runs in-session
-	// and adds nothing — but under a non-Claude lead it degrades to a consult on its own agent,
-	// which then also needs mounting.
-	if spec.Preset != nil {
-		add := func(agent string) {
-			if agent != primary && !slices.Contains(scope, agent) && ProfileAuthed(cfg, agent, cfg.ActiveProfile(agent)) {
-				scope = append(scope, agent)
-			}
+	add := func(agent string, gate bool) {
+		if agent != "" && agent != primary && !slices.Contains(scope, agent) && gate {
+			scope = append(scope, agent)
 		}
+	}
+	// The EXPLICIT peers named by --peer/--consult mount as peers (they were validated authed at
+	// the CLI; scope them unconditionally — the run asked for them by name).
+	for _, p := range spec.Peers {
+		add(p.Provider, true)
+	}
+	// A preset's consult/delegate roles run their own agent CLIs from inside the lead's box, so
+	// their (authed) agents join the scope. A native role under a Claude lead runs in-session and
+	// adds nothing — but under a non-Claude lead it degrades to a consult on its own agent, which
+	// then also needs mounting.
+	if spec.Preset != nil {
 		for _, agent := range spec.Preset.RoleAgents() {
-			add(agent)
+			add(agent, ProfileAuthed(cfg, agent, cfg.ActiveProfile(agent)))
 		}
 		for _, r := range spec.Preset.DegradedNativeRoles(primary) {
-			add(r.Agent)
+			add(r.Agent, ProfileAuthed(cfg, r.Agent, cfg.ActiveProfile(r.Agent)))
 		}
 	}
 	return scope
@@ -122,15 +130,24 @@ func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
 	return writeTempFile(strings.Join(kept, "\n"))
 }
 
-// authedPeers returns the authenticated agents other than lead, preserving order.
-func authedPeers(cfg *config.Config, lead string) []string {
-	peers := make([]string, 0, len(agents.Names()))
-	for _, a := range AuthedAgents(cfg) {
-		if a != lead {
-			peers = append(peers, a)
+// peerProviders returns the provider names of a run's explicit peers, order-preserving.
+func peerProviders(peers []agents.Target) []string {
+	out := make([]string, 0, len(peers))
+	for _, p := range peers {
+		out = append(out, p.Provider)
+	}
+	return out
+}
+
+// excluding returns names with every element equal to drop removed, order-preserving.
+func excluding(names []string, drop string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if n != drop {
+			out = append(out, n)
 		}
 	}
-	return peers
+	return out
 }
 
 // envFileKeys parses a KEY=VALUE env file into the set of keys with a non-empty

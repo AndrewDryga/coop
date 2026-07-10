@@ -313,25 +313,29 @@ func TestModelEnvArgs(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("consult run env args = %v, want %v", got, want)
 	}
+
+	// An EXPLICIT peer target's :model pins COOP_PEER_MODEL_<X>, overriding the config default
+	// (codex's active model is gpt-5, but the --consult codex:gpt-5.5 target wins).
+	got = modelEnvArgs(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude",
+		Peers: []agents.Target{{Provider: "codex", Model: "gpt-5.5"}}}, []string{"claude", "codex"})
+	want = []string{"-e", "ANTHROPIC_MODEL=opus", "-e", "COOP_PEER_MODEL_CLAUDE=opus", "-e", "COOP_PEER_MODEL_CODEX=gpt-5.5"}
+	if !slices.Equal(got, want) {
+		t.Errorf("explicit peer model env args = %v, want %v", got, want)
+	}
 }
 
 // TestLeadInstructionMount: a consult lead is ALWAYS excluded from instructionPlan, so it must
-// still receive its base instructions here even with no authenticated peer — otherwise it would
-// run with none (no box env note, no INSTRUCTIONS.md). With a peer authed, the second-opinion
-// directive is injected and coop-consult is wired.
+// still receive its base instructions here even with NO named peer — otherwise it would run with
+// none (no box env note, no INSTRUCTIONS.md). With a peer NAMED, the second-opinion directive is
+// injected and coop-consult is wired.
 func TestLeadInstructionMount(t *testing.T) {
 	dir := t.TempDir()
-	// Only claude signed in → authedPeers(claude) is empty. Creds live in profiles/default (the
-	// flat vault is retired — migrateFlatVaults moves it there at startup).
 	if err := os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
 
-	content, file, wired, ok := leadInstructionMount(cfg, "claude", nil)
+	content, file, wired, ok := leadInstructionMount(cfg, "claude", nil, nil)
 	if !ok || file != "CLAUDE.md" {
 		t.Fatalf("leadInstructionMount ok=%v file=%q, want true CLAUDE.md", ok, file)
 	}
@@ -339,19 +343,16 @@ func TestLeadInstructionMount(t *testing.T) {
 		t.Errorf("a consult lead with no peers must still get the box env note, got:\n%s", content)
 	}
 	if wired {
-		t.Error("no authed peer → no consult directive, so wired must be false")
+		t.Error("no named peer → no consult directive, so wired must be false")
 	}
 
-	// With a peer signed in, the directive is injected and coop-consult is wired.
-	if err := os.WriteFile(filepath.Join(dir, "env"), []byte("OPENAI_API_KEY=real\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	content, _, wired, _ = leadInstructionMount(cfg, "claude", nil)
+	// With a peer NAMED, the directive is injected and coop-consult is wired.
+	content, _, wired, _ = leadInstructionMount(cfg, "claude", nil, []string{"codex"})
 	if !wired {
-		t.Error("with an authed peer, expected the consult directive to be wired")
+		t.Error("with a named peer, expected the consult directive to be wired")
 	}
 	if !strings.Contains(content, "second opinion") {
-		t.Errorf("with an authed peer, expected the second-opinion directive, got:\n%s", content)
+		t.Errorf("with a named peer, expected the second-opinion directive, got:\n%s", content)
 	}
 }
 
@@ -515,7 +516,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("BASE RULES"), 0o644)
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 
-	content, file, wired, ok := leadInstructionMount(cfg, "claude", frontierPreset())
+	content, file, wired, ok := leadInstructionMount(cfg, "claude", frontierPreset(), nil)
 	if !ok || file != "CLAUDE.md" {
 		t.Fatalf("mount = (file=%q, ok=%v)", file, ok)
 	}
@@ -535,7 +536,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	// A delegate-only preset wires no consult (nothing read-only to call).
 	delegateOnly := &preset.Preset{Name: "d", LeadAgent: "claude",
 		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"}}}
-	if _, _, wired, _ := leadInstructionMount(cfg, "claude", delegateOnly); wired {
+	if _, _, wired, _ := leadInstructionMount(cfg, "claude", delegateOnly, nil); wired {
 		t.Error("a delegate-only preset must not mount coop-consult")
 	}
 }

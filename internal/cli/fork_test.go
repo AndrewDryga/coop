@@ -227,15 +227,19 @@ func TestParseForkCreate(t *testing.T) {
 	}
 }
 
-// TestParseForkCreateConsult: --consult rides a loop fork's args; on a non-loop fork it's
-// rejected — an interactive fork may ALWAYS consult, so accepting the flag there would imply
-// it toggles something it doesn't.
+// TestParseForkCreateConsult: --consult <peer> is repeatable and rides a loop fork's args; on a
+// non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), and a valueless
+// --consult errors (the old boolean spelling is retired).
 func TestParseForkCreateConsult(t *testing.T) {
-	if fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult"}); err != nil || !fa.consult {
-		t.Errorf("parseForkCreate --loop --consult = ({consult:%v}, %v), want true", fa.consult, err)
+	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex", "--consult", "gemini:gemini-3.5-flash"})
+	if err != nil || !slices.Equal(fa.consult, []string{"codex", "gemini:gemini-3.5-flash"}) {
+		t.Errorf("parseForkCreate --consult (repeatable) = ({consult:%v}, %v), want [codex gemini:gemini-3.5-flash]", fa.consult, err)
 	}
-	if _, err := parseForkCreate([]string{"perf", "--consult"}); err == nil {
-		t.Error("parseForkCreate: --consult without --loop must error (interactive forks always consult)")
+	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult"}); err == nil {
+		t.Error("parseForkCreate: a valueless --consult must error (retired boolean spelling)")
+	}
+	if _, err := parseForkCreate([]string{"perf", "claude", "--consult", "codex"}); err == nil {
+		t.Error("parseForkCreate: --consult without --loop must error (name peers on a loop)")
 	}
 }
 
