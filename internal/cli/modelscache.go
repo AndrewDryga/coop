@@ -13,7 +13,7 @@ import (
 )
 
 // modelsCacheTTL is how long a fetched model list counts as "live" for `coop models`. Past
-// it, coop falls back to the curated static Models() — an honest "(examples)" beats a stale
+// it, coop falls back to the curated static Models() — honest examples beat a stale
 // "(live)". The cache refreshes for free on every `coop acp` session (claude/gemini) and on
 // demand with `coop models --refresh` (grok/codex, via their auth-free native CLI).
 const modelsCacheTTL = 14 * 24 * time.Hour
@@ -40,23 +40,24 @@ func modelsCachePath(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "models_cache.json")
 }
 
-// loadModelsCache reads agent's cached live models. The bool reports whether the list is
-// USABLE as "live" — present, parseable, non-empty, and within the TTL — so a caller shows
-// "(live)" only on true. Any problem (absent, corrupt, empty, expired) returns (nil, false)
-// with no error: the caller falls back to the static Models(). Never blocks or spawns anything.
-func loadModelsCache(cfg *config.Config, agent string) ([]modelInfo, bool) {
+// loadModelsCache reads agent's cached model list. The bool reports whether the list is
+// USABLE as live — present, parseable, non-empty, and within the TTL — so a caller trusts
+// mc.Models only on true. An expired cache returns (mc, false) with FetchedAt intact, so
+// the menu can say HOW stale it is; anything unreadable returns a zero modelsCache. The
+// caller falls back to the static Models(). Never blocks or spawns anything.
+func loadModelsCache(cfg *config.Config, agent string) (modelsCache, bool) {
 	b, err := os.ReadFile(modelsCachePath(cfg, agent))
 	if err != nil {
-		return nil, false
+		return modelsCache{}, false
 	}
 	var mc modelsCache
 	if json.Unmarshal(b, &mc) != nil || len(mc.Models) == 0 {
-		return nil, false
+		return modelsCache{}, false
 	}
 	if time.Since(mc.FetchedAt) > modelsCacheTTL {
-		return nil, false
+		return mc, false
 	}
-	return mc.Models, true
+	return mc, true
 }
 
 // writeModelsCache atomically replaces agent's cache with models, stamped now. Best-effort:

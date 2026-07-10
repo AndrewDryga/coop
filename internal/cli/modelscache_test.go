@@ -23,19 +23,23 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := loadModelsCache(cfg, "claude")
-	if !ok || len(got) != 2 || got[0].ID != "opus" || got[1].ID != "sonnet" {
+	if !ok || len(got.Models) != 2 || got.Models[0].ID != "opus" || got.Models[1].ID != "sonnet" {
 		t.Fatalf("warm cache = (%v, %v), want the two written models live", got, ok)
+	}
+	if got.FetchedAt.IsZero() {
+		t.Error("a live cache should carry its FetchedAt for the Last-refreshed line")
 	}
 	// An empty fetch is a no-op — it must not wipe the good cache.
 	if err := writeModelsCache(cfg, "claude", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := loadModelsCache(cfg, "claude"); !ok || len(got) != 2 {
+	if got, ok := loadModelsCache(cfg, "claude"); !ok || len(got.Models) != 2 {
 		t.Fatalf("empty write clobbered the cache: (%v, %v)", got, ok)
 	}
 }
 
-// TestModelsCacheExpiry: a cache stamped past the TTL is not "live" — coop falls back to static.
+// TestModelsCacheExpiry: a cache stamped past the TTL is not "live" — coop falls back to
+// static — but its FetchedAt survives so the menu can say how stale the last fetch is.
 func TestModelsCacheExpiry(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	stale := modelsCache{
@@ -50,8 +54,17 @@ func TestModelsCacheExpiry(t *testing.T) {
 	if err := os.WriteFile(modelsCachePath(cfg, "claude"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := loadModelsCache(cfg, "claude"); ok {
+	mc, ok := loadModelsCache(cfg, "claude")
+	if ok {
 		t.Error("an expired cache must not read as live")
+	}
+	if mc.FetchedAt.IsZero() {
+		t.Error("an expired cache should keep FetchedAt for the stale note")
+	}
+	// And the menu says so: static examples with a "stale" Last-refreshed line.
+	out := captureStdout(t, func() { (&app{cfg: cfg}).cmdModels([]string{"claude"}) })
+	if !strings.Contains(out, "— stale") || !strings.Contains(out, "claude-sonnet-5") {
+		t.Errorf("an expired cache should show the static list with a stale note:\n%s", out)
 	}
 }
 
@@ -134,28 +147,29 @@ func TestParseClaudeModelOption(t *testing.T) {
 	}
 }
 
-// TestModelsDisplayPrefersLiveCache: with a warm cache, `coop models <agent>` shows the cached
-// ids annotated "(live)"; with no cache it shows the static Models() annotated "(examples)".
+// TestModelsDisplayPrefersLiveCache: with a warm cache, an agent's block shows the cached
+// ids and a fresh "Last refreshed"; with no cache it shows the static Models() and says the
+// list was never refreshed — freshness is an explicit fact, not a tag.
 func TestModelsDisplayPrefersLiveCache(t *testing.T) {
 	a := modelsApp(t)
-	// Cold: the claude line shows the static list, annotated "(examples)".
+	// Cold: the claude block shows the static list and "never".
 	cold := captureStdout(t, func() { a.cmdModels([]string{"claude"}) })
-	if !strings.Contains(cold, "claude-sonnet-5 (examples)") {
-		t.Errorf("cold menu should end the static list with the (examples) tag:\n%s", cold)
+	if !strings.Contains(cold, "claude-sonnet-5") || !strings.Contains(cold, "Last refreshed: never") {
+		t.Errorf("cold block should show the static list and a never-refreshed line:\n%s", cold)
 	}
-	// Warm: the claude line shows the cached id, annotated "(live)".
+	// Warm: the claude block shows the cached id and when it was fetched.
 	if err := writeModelsCache(a.cfg, "claude", []modelInfo{{ID: "opus-live-xyz"}}); err != nil {
 		t.Fatal(err)
 	}
 	warm := captureStdout(t, func() { a.cmdModels([]string{"claude"}) })
-	if !strings.Contains(warm, "opus-live-xyz (live)") {
-		t.Errorf("warm menu should show the cached id annotated (live):\n%s", warm)
+	if !strings.Contains(warm, "opus-live-xyz") || !strings.Contains(warm, "Last refreshed: just now") {
+		t.Errorf("warm block should show the cached id and a just-now refresh line:\n%s", warm)
 	}
 }
 
 // TestRefreshFallsBackToStatic: --refresh for an agent whose native CLI is absent (codex/grok
-// not on PATH under a scrubbed PATH) writes no cache, so the display stays static (examples) —
-// a refresh failure never errors or blanks the menu.
+// not on PATH under a scrubbed PATH) writes no cache, so the block stays static and its
+// Last-refreshed line says the refresh failed — never an error, never a blank menu.
 func TestRefreshFallsBackToStatic(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no codex/grok binary reachable → every native fetch fails
 	a := modelsApp(t)
@@ -167,7 +181,7 @@ func TestRefreshFallsBackToStatic(t *testing.T) {
 	if _, ok := loadModelsCache(a.cfg, "codex"); ok {
 		t.Error("a failed refresh must not write a cache")
 	}
-	if !strings.Contains(out, "o4-mini (examples)") {
-		t.Errorf("after a failed refresh the codex menu should stay static (examples):\n%s", out)
+	if !strings.Contains(out, "o4-mini") || !strings.Contains(out, "refresh failed") {
+		t.Errorf("after a failed refresh the codex block should stay static and note the failure:\n%s", out)
 	}
 }

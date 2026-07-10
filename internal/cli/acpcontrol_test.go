@@ -1057,7 +1057,7 @@ func TestACPControlOpportunisticModelCache(t *testing.T) {
 		`{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"},{"value":"sonnet","name":"Sonnet"}]}]}}` + "\n"
 	toEd(c, []byte(in))
 	got, ok := loadModelsCache(c.cfg, "claude")
-	if !ok || len(got) != 2 || got[0].ID != "opus[1m]" || got[1].ID != "sonnet" {
+	if !ok || len(got.Models) != 2 || got.Models[0].ID != "opus[1m]" || got.Models[1].ID != "sonnet" {
 		t.Fatalf("claude session/new should cache the model option ids, got (%v, %v)", got, ok)
 	}
 }
@@ -1068,7 +1068,7 @@ func TestACPControlOpportunisticGeminiCache(t *testing.T) {
 	c := newGeminiControl(t, "")
 	toEd(c, []byte(geminiSessionNew))
 	got, ok := loadModelsCache(c.cfg, "gemini")
-	if !ok || len(got) != 2 || got[0].ID != "gemini-2.5-pro" || got[1].ID != "gemini-2.5-flash" {
+	if !ok || len(got.Models) != 2 || got.Models[0].ID != "gemini-2.5-pro" || got.Models[1].ID != "gemini-2.5-flash" {
 		t.Fatalf("gemini session/new should cache the availableModels ids, got (%v, %v)", got, ok)
 	}
 }

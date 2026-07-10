@@ -27,17 +27,20 @@
   between-task step). The review's project checks **moved `.agent/audit.md` → `.agent/loop/audit.md`**
   (beside `review.md`/`between.md`); the old path is no longer read and coop warns once if it lingers.
 
-- **`coop models` shows LIVE models, not just a hardcoded list.** Each agent's line is now the
-  real model catalog when a fresh one is cached (dim `(live)`), falling back to the curated static
-  list (dim `(examples)`) — coop still never validates `--model`, so any id the CLI accepts works
-  either way. The list is fetched auth-free: claude/gemini populate the cache for FREE on every
-  `coop acp` session (the proxy already parses the ACP `session/new` models), and the new
-  `coop models --refresh` runs grok/codex's native CLI on the host (`grok models`, `codex debug
-  models`). Plain `coop models` stays instant and never touches the container runtime — it only
-  reads a per-agent cache under `~/.config/coop/agents/<agent>/models_cache.json` (14-day TTL).
-  Every refresh path is best-effort: an absent CLI, timeout, or parse error degrades silently to
-  the cache-then-static list and never errors or hangs. (A `--refresh` that drives claude/gemini
-  through a box ACP handshake is deferred — their cache already refreshes on `coop acp`.)
+- **`coop models` shows LIVE models, not just a hardcoded list — one readable block per agent.**
+  Each agent gets a block: a bold-cyan header, its `Models:` (the real cached catalog when a fresh
+  one exists, else the curated static examples), and an explicit `Last refreshed:` fact — a green
+  age when live, `never`, or a yellow stale age, with the refresh channel as the dim hint — coop
+  still never validates `--model`, so any id the CLI accepts works either way. The list is fetched
+  auth-free: claude/gemini populate the cache for FREE on every `coop acp` session (the proxy
+  already parses the ACP `session/new` models), and the new `coop models --refresh` runs
+  grok/codex's native CLI on the host (`grok models`, `codex debug models`), folding each outcome
+  into that block's `Last refreshed:` line. Plain `coop models` stays instant and never touches
+  the container runtime — it only reads a per-agent cache under
+  `~/.config/coop/agents/<agent>/models_cache.json` (14-day TTL). Every refresh path is
+  best-effort: an absent CLI, timeout, or parse error falls back to the cache-then-static list,
+  noted on the block, and never errors or hangs. (A `--refresh` that drives claude/gemini through
+  a box ACP handshake is deferred — their cache already refreshes on `coop acp`.)
 
 - **Presets can live globally in `~/.config/coop/presets` — shared across every repo.** A preset
   is looked up in the repo's `.agent/presets/` first, then the global root; on a name collision the

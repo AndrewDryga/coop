@@ -232,20 +232,20 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
 coop models [agent] — the model menu per agent.
 
-  Usage: coop models [claude|codex|gemini] [--refresh]
+  Usage: coop models [claude|codex|gemini|grok] [--refresh]
 
-  One line per agent with its models, then how to pick one. Each list is either LIVE
-  (dim '(live)') from a per-agent cache, or the curated static list (dim '(examples)')
-  when no fresh cache exists — model ids churn, so ANY id the agent's CLI accepts works
-  either way (coop never validates --model). A model is an axis of its own — set it with
-  --model or a preset's models: ladder, never on a credential.
+  A block per agent: its models and when that list was last refreshed. A fresh per-agent
+  cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
+  static examples — model ids churn, so ANY id the agent's CLI accepts works either way
+  (coop never validates --model). A model is an axis of its own — set it with --model or
+  a preset's models: ladder, never on a credential.
 
   Plain 'coop models' is instant and never needs the container runtime — it only reads
   the cache. The cache is refreshed two auth-free ways: claude/gemini populate it for free
   on every 'coop acp' session (the proxy already parses the models), and '--refresh' runs
   grok/codex's native CLI on the host ('grok models', 'codex debug models'). --refresh is
-  best-effort: an unavailable CLI, timeout, or parse error degrades silently to the last
-  cache or the static list — it never errors or hangs.
+  best-effort: an unavailable CLI, timeout, or parse error falls back to the last cache or
+  the static list, noted on that block's 'Last refreshed' line — it never errors or hangs.
 
   Pick per run with --model on any launch: 'coop claude --model fable',
   'coop fusion claude --model opus', 'coop loop --model haiku',
