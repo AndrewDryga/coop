@@ -59,10 +59,14 @@ type Hooks struct {
 	// InjectPrefix so the proxy can recognize and swallow their responses.
 	SessionReady func(sessionID string) [][]byte
 	// FromEditor inspects an editor→agent line before it's forwarded. handled=true → the proxy does
-	// NOT forward it to the adapter (coop handled it); resp (if non-nil) is written back to the editor;
-	// restart=true → the proxy tears down and respawns the box (a coop-driven switch, e.g. a new
-	// credential), NOT counted as a failure, then replays the session so the editor never disconnects.
-	FromEditor func(line []byte) (handled bool, resp []byte, restart bool)
+	// NOT forward the original line to the adapter (coop handled it); resp (if non-nil) is written back
+	// to the editor; toAdapter (if non-nil) is written to the current adapter INSTEAD of the original
+	// line — coop's translation of an editor request into the adapter's own protocol (e.g. a synthesized
+	// model dropdown's set_config_option → the adapter's session/set_model); its response is swallowed
+	// like any injected request, so toAdapter must carry an InjectPrefix id. restart=true → the proxy
+	// tears down and respawns the box (a coop-driven switch, e.g. a new credential), NOT counted as a
+	// failure, then replays the session so the editor never disconnects.
+	FromEditor func(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool)
 	// AutoReply lets coop answer an agent→editor REQUEST itself instead of bothering the editor — the
 	// yolo mechanism: coop approves every session/request_permission (the box is the sandbox) so no
 	// provider ever shows a permission prompt, uniformly, whatever each adapter's own settings are.
@@ -257,11 +261,23 @@ func (p *proxy) fromClient(line []byte) {
 	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
 	// to the editor directly, and optionally restarting the box on a new credential/preset.
 	if p.hooks != nil && p.hooks.FromEditor != nil {
-		if handled, resp, restart := p.hooks.FromEditor(line); handled {
+		if handled, resp, toAdapter, restart := p.hooks.FromEditor(line); handled {
 			Trace("coop handled the editor line itself (restart=%v)", restart)
 			if len(resp) > 0 {
 				traceLine("box→editor(coop)", resp)
 				_, _ = p.out.Write(resp)
+			}
+			// A translated adapter request (e.g. a synthesized model set → session/set_model). Write it
+			// to the CURRENT child; a write to a momentarily-dead child during a swap is dropped, exactly
+			// like fromClient's forward.
+			if len(toAdapter) > 0 {
+				p.mu.Lock()
+				c := p.child
+				p.mu.Unlock()
+				if c != nil {
+					traceLine("editor→box(coop)", toAdapter)
+					_, _ = c.In.Write(toAdapter)
+				}
 			}
 			if restart {
 				p.triggerRestart()

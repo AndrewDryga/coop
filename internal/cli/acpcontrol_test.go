@@ -173,6 +173,180 @@ func TestACPControlInjectsSetupWhenAdapterHasNoConfigOptions(t *testing.T) {
 	}
 }
 
+// newGeminiControl is a control whose lead switches its model via the gemini shape (session/new
+// `models` field + session/set_model), not a native `model` configOption.
+func newGeminiControl(t *testing.T, model string) *acpControl {
+	t.Helper()
+	dir := t.TempDir()
+	for _, p := range []string{"personal", "work"} {
+		if err := os.MkdirAll(filepath.Join(dir, "gemini", "profiles", p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return newACPControl(&config.Config{ConfigDir: dir}, "gemini", model, "", dir, []string{"frontier"}, nil)
+}
+
+// modelOption is the subset of a synthesized `model` configOption the tests assert on.
+type modelOption struct {
+	Type         string      `json:"type"`
+	CurrentValue string      `json:"currentValue"`
+	Options      []acpOption `json:"options"`
+}
+
+// findModelOption pulls the `model` configOption out of a rewritten session/new result.
+func findModelOption(t *testing.T, res map[string]json.RawMessage) modelOption {
+	t.Helper()
+	var opts []map[string]json.RawMessage
+	if err := json.Unmarshal(res["configOptions"], &opts); err != nil {
+		t.Fatalf("configOptions: %v", err)
+	}
+	for _, o := range opts {
+		var id string
+		json.Unmarshal(o["id"], &id)
+		if id == "model" {
+			b, _ := json.Marshal(o)
+			var m modelOption
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatal(err)
+			}
+			return m
+		}
+	}
+	t.Fatal("no model option found")
+	return modelOption{}
+}
+
+// The exact gemini session/new wire shape verified against @google/gemini-cli's ACP source: a `models`
+// field ({availableModels:[{modelId,name,description?}], currentModelId}) and NO native model option.
+const geminiSessionNew = `{"jsonrpc":"2.0","id":"2","result":{"sessionId":"g1","models":{"currentModelId":"gemini-2.5-pro","availableModels":[{"modelId":"gemini-2.5-pro","name":"Gemini 2.5 Pro"},{"modelId":"gemini-2.5-flash","name":"Gemini 2.5 Flash","description":"faster"}]}}}` + "\n"
+
+// TestACPControlSynthesizesGeminiModelDropdown: gemini's session/new carries model choices in a
+// `models` field with no `model` configOption, so coop synthesizes a coop-owned model select (after
+// coop_setup) listing availableModels, defaulting to currentModelId.
+func TestACPControlSynthesizesGeminiModelDropdown(t *testing.T) {
+	c := newGeminiControl(t, "") // no coop launch-model → currentValue tracks the box's currentModelId
+	out := toEd(c, []byte(geminiSessionNew))
+	ids, res := configOptionIDs(t, out)
+	if len(ids) < 2 || ids[0] != "coop_setup" || !slices.Contains(ids, "model") {
+		t.Fatalf("want coop_setup first + a synthesized model option, got %v", ids)
+	}
+	model := findModelOption(t, res)
+	if model.Type != "select" || model.CurrentValue != "gemini-2.5-pro" {
+		t.Errorf("model select currentValue = %q (type %q), want gemini-2.5-pro/select", model.CurrentValue, model.Type)
+	}
+	if len(model.Options) != 2 || model.Options[0].Value != "gemini-2.5-pro" || model.Options[1].Value != "gemini-2.5-flash" {
+		t.Errorf("model options = %+v, want the two availableModels by modelId", model.Options)
+	}
+	if !c.leadUsesSetModel {
+		t.Error("leadUsesSetModel must latch once coop synthesizes a model dropdown from a models field")
+	}
+}
+
+// TestACPControlTranslatesGeminiModelSet: setting coop's synthesized model dropdown is translated into
+// the adapter's session/set_model (a live switch, no restart), acked to the editor with the new value,
+// and remembered as coop's model so it rides the next box swap.
+func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
+	c := newGeminiControl(t, "")
+	toEd(c, []byte(geminiSessionNew)) // latch leadUsesSetModel + cache the option set
+
+	handled, resp, toAdapter, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	if !handled || restart {
+		t.Fatalf("a synthesized model set must be handled without a restart (handled=%v restart=%v)", handled, restart)
+	}
+	// The adapter gets a session/set_model{sessionId, modelId}, not a set_config_option.
+	var inj struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			ModelID   string `json:"modelId"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(toAdapter, &inj); err != nil {
+		t.Fatalf("no adapter inject: %v (%s)", err, toAdapter)
+	}
+	if inj.Method != "session/set_model" || inj.Params.SessionID != "g1" || inj.Params.ModelID != "gemini-2.5-flash" {
+		t.Errorf("inject = %s, want session/set_model{g1, gemini-2.5-flash}", toAdapter)
+	}
+	if c.model != "gemini-2.5-flash" {
+		t.Errorf("coop should remember the pick for the next swap, c.model = %q", c.model)
+	}
+	// The editor ack echoes the model option at its new value.
+	if !strings.Contains(string(resp), `"gemini-2.5-flash"`) {
+		t.Errorf("editor ack should show the new model value:\n%s", resp)
+	}
+}
+
+// TestACPControlGeminiModelSurvivesSwap: once coop owns a gemini model, sessionReady re-applies it with
+// session/set_model on every (re)established session — this is what carries the pick across a box swap.
+func TestACPControlGeminiModelSurvivesSwap(t *testing.T) {
+	c := newGeminiControl(t, "")
+	toEd(c, []byte(geminiSessionNew))
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+
+	msgs := c.sessionReady("g2") // a fresh session on the respawned box
+	var found bool
+	for _, m := range msgs {
+		if strings.Contains(string(m), `"session/set_model"`) && strings.Contains(string(m), `"gemini-2.5-flash"`) {
+			found = true
+		}
+		if strings.Contains(string(m), `"session/set_config_option"`) && strings.Contains(string(m), `"configId":"model"`) {
+			t.Errorf("a set_model lead must not force the model via set_config_option: %s", m)
+		}
+	}
+	if !found {
+		t.Errorf("sessionReady must re-apply the chosen gemini model via session/set_model, got %v", msgs)
+	}
+}
+
+// TestACPControlGeminiPresetModelWins: on a preset the ladder owns the model — the synthesized dropdown
+// shows the box's current model (never coop's), a live pick is NOT remembered as coop's model, and
+// sessionReady forces nothing (so a respawn returns to the preset's rung).
+func TestACPControlGeminiPresetModelWins(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	c.sel = "preset:frontier"
+	out := toEd(c, []byte(geminiSessionNew))
+	_, res := configOptionIDs(t, out)
+	if m := findModelOption(t, res); m.CurrentValue != "gemini-2.5-pro" {
+		t.Errorf("on a preset the dropdown shows the box's currentModelId, got %q", m.CurrentValue)
+	}
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	if c.model == "gemini-2.5-flash" {
+		t.Error("a preset session must not overwrite coop's model with a live pick — the ladder owns it")
+	}
+	for _, m := range c.sessionReady("g1") {
+		if strings.Contains(string(m), `"session/set_model"`) {
+			t.Errorf("sessionReady must not force a model on a preset session: %s", m)
+		}
+	}
+}
+
+// TestACPControlCodexNativeModelNotSynthesized: codex-acp emits BOTH a `models` field AND a native
+// `model` configOption (verified against codex-acp source), so coop must NOT synthesize its own — the
+// native option flows through and a model set stays a native set_config_option (leadUsesSetModel off).
+func TestACPControlCodexNativeModelNotSynthesized(t *testing.T) {
+	c := newGeminiControl(t, "")
+	codexNew := `{"jsonrpc":"2.0","id":"3","result":{"sessionId":"c1","models":{"currentModelId":"gpt-5.5","availableModels":[{"modelId":"gpt-5.5","name":"GPT-5.5"}]},"configOptions":[{"id":"model","type":"select","currentValue":"gpt-5.5","options":[{"value":"gpt-5.5","name":"GPT-5.5"}]}]}}`
+	out := toEd(c, []byte(codexNew+"\n"))
+	ids, _ := configOptionIDs(t, out)
+	// Exactly one model option — the adapter's native one, not a coop duplicate.
+	n := 0
+	for _, id := range ids {
+		if id == "model" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want exactly one (native) model option, got %d in %v", n, ids)
+	}
+	if c.leadUsesSetModel {
+		t.Error("leadUsesSetModel must stay off when the adapter already emits a native model option")
+	}
+	// A native model set passes through to the adapter (handled=false), never translated.
+	if h, _, adapter, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"c1","configId":"model","value":"gpt-5"}}`)); h || adapter != nil {
+		t.Errorf("a native model set must pass through (handled=%v, inject=%s)", h, adapter)
+	}
+}
+
 // TestACPControlPassthrough: a non-config line (the bulk of ACP traffic) is returned byte-identical.
 func TestACPControlPassthrough(t *testing.T) {
 	c := newTestControl(t)
@@ -192,18 +366,18 @@ func TestACPControlFromEditor(t *testing.T) {
 	c.cached["s"] = json.RawMessage(`[{"id":"coop_setup","currentValue":"cred:personal"},{"id":"model"}]`)
 
 	// A native option set (model/effort/fast) passes through to the adapter untouched.
-	if h, _, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/set_config_option","params":{"sessionId":"s","configId":"model","value":"sonnet"}}`)); h {
+	if h, _, _, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/set_config_option","params":{"sessionId":"s","configId":"model","value":"sonnet"}}`)); h {
 		t.Error("a native model set must pass through (handled=false), not be intercepted")
 	}
 
 	// A NO-OP coop_setup (same value) is handled but must NOT restart — else it respawns the box at
 	// startup before any transcript, and session/load fails "Resource not found" (the reported bug).
-	if h, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:personal"}}`)); !h || restart {
+	if h, _, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:personal"}}`)); !h || restart {
 		t.Errorf("no-op coop_setup = (handled=%v restart=%v), want handled with NO restart", h, restart)
 	}
 
 	// A real change restarts, updates the selection, and the ack echoes the NEW currentValue.
-	h, resp, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:work"}}`))
+	h, resp, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:work"}}`))
 	if !h || !restart {
 		t.Errorf("coop_setup change = (handled=%v restart=%v), want both true", h, restart)
 	}
@@ -372,7 +546,7 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	c.sel = "cred:personal"
 
 	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	if handled, _, _ := c.fromEditor(prompt); handled {
+	if handled, _, _, _ := c.fromEditor(prompt); handled {
 		t.Fatal("a session/prompt must pass through (handled=false)")
 	}
 	if c.lastPrompt["S"] == nil || c.promptSession[`"p1"`] != "S" {

@@ -67,11 +67,17 @@ type acpControl struct {
 
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
-	mu      sync.Mutex
-	sel     string                     // current coop_setup value: "cred:<name>" or "preset:<name>"
-	cached  map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
-	limited map[string]time.Time       // account -> when its rate limit resets (skip until then)
-	nextID  int
+	mu     sync.Mutex
+	sel    string                     // current coop_setup value: "cred:<name>" or "preset:<name>"
+	cached map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
+
+	// leadUsesSetModel latches true once a session/new result proves this lead exposes its models via a
+	// `models` field with no native `model` configOption (gemini), so coop synthesized the dropdown. It
+	// then routes an editor `model` set to session/set_model (fromEditor) and re-applies the chosen model
+	// after a box swap (sessionReady). Stays false for adapters with a native model option (claude, codex).
+	leadUsesSetModel bool
+	limited          map[string]time.Time // account -> when its rate limit resets (skip until then)
+	nextID           int
 
 	// Preset rate-limit failover: a preset session rotates the lead's model ladder (fable→opus→…),
 	// unlike a credential session (which rotates accounts on one model). rot is the active preset's
@@ -157,6 +163,15 @@ func (c *acpControl) selection() (cred, preset string) {
 		return "", v
 	}
 	return "", ""
+}
+
+// currentModel is coop's chosen model for the lead. Read under the lock because a set of coop's
+// synthesized model dropdown (gemini) mutates it from the editor goroutine while the box→editor
+// goroutine reads it to render the toolbar.
+func (c *acpControl) currentModel() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.model
 }
 
 // presetRotation returns the active preset's model-ladder rotation, built once per preset from the
@@ -355,14 +370,15 @@ func (c *acpControl) rewriteToEditor(line []byte) []byte {
 			changed = true
 		}
 		if _, hasCO := inner["configOptions"]; hasCO {
-			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], sid)
+			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid)
 			changed = true
 		} else if key == "result" && sid != "" {
-			// A session/new|load|resume RESULT with no configOptions — the gemini/codex adapters don't emit
-			// the claude-agent-acp toolbar. coop still owns the toolbar, so synthesize one from an empty set
-			// (rewriteConfigOptions prepends coop_setup); without this the credential/preset switcher never
-			// appears for those agents (the reported "gemini shows no dropdowns at all").
-			inner["configOptions"] = c.rewriteConfigOptions(json.RawMessage("[]"), sid)
+			// A session/new|load|resume RESULT with no configOptions — the gemini adapter doesn't emit the
+			// claude-agent-acp toolbar. coop still owns the toolbar, so synthesize one from an empty set
+			// (rewriteConfigOptions prepends coop_setup, plus a model select when the result carries a
+			// `models` field); without this the credential/preset switcher never appears for those agents
+			// (the reported "gemini shows no dropdowns at all").
+			inner["configOptions"] = c.rewriteConfigOptions(json.RawMessage("[]"), inner["models"], sid)
 			changed = true
 		} else if rewrote := c.rewriteUpdateConfigOptions(inner["update"], sid); rewrote != nil {
 			inner["update"] = rewrote
@@ -397,7 +413,9 @@ func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid stri
 	if _, ok := u["configOptions"]; !ok {
 		return nil
 	}
-	u["configOptions"] = c.rewriteConfigOptions(u["configOptions"], sid)
+	// A config_option_update carries only the option array — no models field — so pass nil; the model
+	// select, if any, was already synthesized at session/new and rides in the cached set.
+	u["configOptions"] = c.rewriteConfigOptions(u["configOptions"], nil, sid)
 	nb, err := json.Marshal(u)
 	if err != nil {
 		return nil
@@ -842,8 +860,10 @@ type permOption struct {
 // rewriteConfigOptions drops the stripped dropdowns, retargets the model to coop's (when it's one of
 // the adapter's offered values), prepends coop's credential/preset selector, and caches the result
 // per session so a set_config_option response can echo the full set. Native options pass through as
-// raw JSON so any fields coop doesn't model survive.
-func (c *acpControl) rewriteConfigOptions(raw json.RawMessage, sid string) json.RawMessage {
+// raw JSON so any fields coop doesn't model survive. When the adapter emits its models in a `models`
+// field instead of a native `model` configOption (gemini) and no `model` option is present, coop
+// synthesizes one from that field so the editor renders a coop-owned model dropdown.
+func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid string) json.RawMessage {
 	var arr []json.RawMessage
 	if json.Unmarshal(raw, &arr) != nil {
 		return raw
@@ -851,7 +871,9 @@ func (c *acpControl) rewriteConfigOptions(raw json.RawMessage, sid string) json.
 	// On a PRESET the preset's lead ladder owns the model — show the box's truth, never coop's
 	// launch-time model over it.
 	_, preset := c.selection()
+	model := c.currentModel() // snapshot: a synthesized-model switch mutates it from the editor goroutine
 	out := []json.RawMessage{c.setupOption()}
+	hasModel := false
 	for _, item := range arr {
 		var head struct {
 			ID      string      `json:"id"`
@@ -861,10 +883,23 @@ func (c *acpControl) rewriteConfigOptions(raw json.RawMessage, sid string) json.
 		if stripConfigIDs[head.ID] {
 			continue
 		}
-		if head.ID == "model" && preset == "" && c.model != "" && optionHasValue(head.Options, c.model) {
-			item = withField(item, "currentValue", c.model) // default to coop's model; still switchable
+		if head.ID == "model" {
+			hasModel = true
+			if preset == "" && model != "" && optionHasValue(head.Options, model) {
+				item = withField(item, "currentValue", model) // default to coop's model; still switchable
+			}
 		}
 		out = append(out, item)
+	}
+	// gemini-shape: no native model option, but a models field carrying the choices. Synthesize coop's
+	// own `model` select and latch the lead so fromEditor/sessionReady route via session/set_model.
+	if !hasModel {
+		if synth := c.synthModelOption(models, preset, model); synth != nil {
+			out = append(out, synth)
+			c.mu.Lock()
+			c.leadUsesSetModel = true
+			c.mu.Unlock()
+		}
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -893,6 +928,42 @@ func (c *acpControl) setupOption() json.RawMessage {
 	co := map[string]any{
 		"id": coopSetupID, "name": "coop", "description": "Run on a credential (account) or a preset (recipe)",
 		"category": "coop", "type": "select", "currentValue": cur, "options": opts,
+	}
+	b, _ := json.Marshal(co)
+	return b
+}
+
+// synthModelOption builds a coop-owned `model` select from an adapter's session/new `models` field
+// (gemini: {availableModels:[{modelId,name,description?}], currentModelId}). Returns nil when the field
+// is absent or carries no models. The current value shows coop's chosen model on a credential session
+// (so the pick survives a box swap once sessionReady re-applies it); on a preset the box's own current
+// model wins, since the preset ladder owns it.
+func (c *acpControl) synthModelOption(models json.RawMessage, preset, model string) json.RawMessage {
+	if len(models) == 0 {
+		return nil
+	}
+	var m struct {
+		CurrentModelID  string `json:"currentModelId"`
+		AvailableModels []struct {
+			ModelID     string `json:"modelId"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"availableModels"`
+	}
+	if json.Unmarshal(models, &m) != nil || len(m.AvailableModels) == 0 {
+		return nil
+	}
+	opts := make([]acpOption, 0, len(m.AvailableModels))
+	for _, am := range m.AvailableModels {
+		opts = append(opts, acpOption{Value: am.ModelID, Name: am.Name, Description: am.Description})
+	}
+	current := m.CurrentModelID
+	if preset == "" && model != "" && optionHasValue(opts, model) {
+		current = model
+	}
+	co := map[string]any{
+		"id": "model", "name": "Model", "description": "Model for the session",
+		"category": "model", "type": "select", "currentValue": current, "options": opts,
 	}
 	b, _ := json.Marshal(co)
 	return b
@@ -955,8 +1026,18 @@ func (c *acpControl) sessionReady(sid string) [][]byte {
 	}
 	// On a PRESET the preset's lead ladder owns the model — forcing coop's launch-time model here
 	// would silently override it in the box.
-	if _, preset := c.selection(); c.model != "" && preset == "" {
-		msgs = append(msgs, c.setConfig(sid, "model", c.model))
+	c.mu.Lock()
+	model, setModel := c.model, c.leadUsesSetModel
+	c.mu.Unlock()
+	if _, preset := c.selection(); model != "" && preset == "" {
+		// A lead that switches via session/set_model (gemini) has no `model` config option, so re-apply
+		// the chosen model with its own method — this is what carries the pick across a box swap, since the
+		// respawned box starts on its launch-time default. Others take the native set_config_option.
+		if setModel {
+			msgs = append(msgs, c.setModel(sid, model))
+		} else {
+			msgs = append(msgs, c.setConfig(sid, "model", model))
+		}
 	}
 	return msgs
 }
@@ -1005,11 +1086,29 @@ func (c *acpControl) setConfig(sid, id, value string) []byte {
 	return append(b, '\n')
 }
 
+// setModel builds a session/set_model request to the adapter (the ACP model-switch method gemini
+// exposes: params {sessionId, modelId}), with an InjectPrefix id so the proxy swallows its response.
+func (c *acpControl) setModel(sid, model string) []byte {
+	c.mu.Lock()
+	c.nextID++
+	n := c.nextID
+	c.mu.Unlock()
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      acpproxy.InjectPrefix + itoa(n),
+		"method":  "session/set_model",
+		"params":  map[string]any{"sessionId": sid, "modelId": model},
+	}
+	b, _ := json.Marshal(req)
+	return append(b, '\n')
+}
+
 // fromEditor intercepts the editor's set of coop's own selector: it updates the selection and asks
 // the proxy to restart the box on the new credential/preset, replying to the editor itself (the
-// adapter never sees coop_setup). Native option sets (model/effort/fast) return handled=false so
-// they pass through to the adapter unchanged.
-func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, restart bool) {
+// adapter never sees coop_setup). It also translates a set of coop's SYNTHESIZED model dropdown
+// (gemini) into the adapter's session/set_model. Native option sets (a real adapter model/effort/fast
+// option) return handled=false so they pass through to the adapter unchanged.
+func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool) {
 	var h struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -1020,7 +1119,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, restart
 		} `json:"params"`
 	}
 	if json.Unmarshal(line, &h) != nil {
-		return false, nil, false
+		return false, nil, nil, false
 	}
 	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it. Pass it
 	// through unchanged — coop only observes it here.
@@ -1030,10 +1129,22 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, restart
 		c.promptSession[string(h.ID)] = h.Params.SessionID
 		c.lastPrompt[h.Params.SessionID] = clone
 		c.mu.Unlock()
-		return false, nil, false
+		return false, nil, nil, false
+	}
+	// coop's synthesized model select (gemini): the adapter has no `model` config option, so translate
+	// the set into its session/set_model and ack the editor ourselves. leadUsesSetModel proves this lead
+	// is the synthesized-dropdown case; adapters with a native model option (claude, codex) fall through
+	// and their set_config_option{model} passes straight to the adapter.
+	if h.Method == "session/set_config_option" && h.Params.ConfigID == "model" {
+		c.mu.Lock()
+		synth := c.leadUsesSetModel
+		c.mu.Unlock()
+		if synth {
+			return c.setModelFromEditor(h.ID, h.Params.SessionID, h.Params.Value)
+		}
 	}
 	if h.Method != "session/set_config_option" || h.Params.ConfigID != coopSetupID {
-		return false, nil, false
+		return false, nil, nil, false
 	}
 	c.mu.Lock()
 	// Only a REAL change restarts. Editors (Zed) apply default_config_options at startup by SETTING
@@ -1061,7 +1172,67 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, restart
 	}
 	out := map[string]any{"jsonrpc": "2.0", "id": h.ID, "result": result}
 	b, _ := json.Marshal(out)
-	return true, append(b, '\n'), changed
+	return true, append(b, '\n'), nil, changed
+}
+
+// setModelFromEditor handles a set of coop's synthesized model dropdown: it records the pick as coop's
+// model (so it rides the next box swap — but never over a preset, whose ladder owns the model), emits a
+// session/set_model to the adapter for the live switch, and acks the editor with the refreshed option
+// set (coop_setup + the model option showing the new value). No box restart — this is a live switch.
+func (c *acpControl) setModelFromEditor(id json.RawMessage, sid, value string) (bool, []byte, []byte, bool) {
+	_, preset := c.selection()
+	c.mu.Lock()
+	if value != "" && preset == "" {
+		c.model = value
+	}
+	cached := c.cached[sid]
+	c.mu.Unlock()
+	refreshed := c.refreshModelAck(cached, value)
+	if len(refreshed) > 0 && sid != "" {
+		c.mu.Lock()
+		c.cached[sid] = refreshed
+		c.mu.Unlock()
+	}
+	result := map[string]json.RawMessage{}
+	if len(refreshed) > 0 {
+		result["configOptions"] = refreshed
+	}
+	ack := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	b, _ := json.Marshal(ack)
+	var inject []byte
+	if sid != "" && value != "" {
+		inject = c.setModel(sid, value)
+	}
+	return true, append(b, '\n'), inject, false
+}
+
+// refreshModelAck rebuilds the cached option array with a fresh coop_setup (slot 0) and the model
+// option's currentValue set to value — the ack a synthesized-model set echoes so the editor's dropdown
+// keeps the pick. Falls back to just coop_setup when there's no cache yet.
+func (c *acpControl) refreshModelAck(cached json.RawMessage, value string) json.RawMessage {
+	setup := c.setupOption()
+	var arr []json.RawMessage
+	if len(cached) > 0 {
+		_ = json.Unmarshal(cached, &arr)
+	}
+	if len(arr) == 0 {
+		arr = []json.RawMessage{setup}
+	} else {
+		arr[0] = setup
+		for i, it := range arr {
+			var head struct {
+				ID string `json:"id"`
+			}
+			if json.Unmarshal(it, &head) == nil && head.ID == "model" {
+				arr[i] = withField(it, "currentValue", value)
+			}
+		}
+	}
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return cached
+	}
+	return b
 }
 
 // refreshSetup returns the cached configOptions array with a freshly-built coop_setup (currentValue =

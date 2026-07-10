@@ -636,11 +636,11 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
 
 	// A coop-driven switch: an editor line carrying "__switch__" is handled here and restarts the box.
-	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, bool) {
+	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
 		if bytes.Contains(line, []byte("__switch__")) {
-			return true, nil, true
+			return true, nil, nil, true
 		}
-		return false, nil, false
+		return false, nil, nil, false
 	}}
 	h := newProxyHarness(t, 2, hooks)
 	c1, c2 := h.children[0], h.children[1]
@@ -726,11 +726,11 @@ func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
 	replayStartupGrace, replayIdleTimeout = 3*time.Second, 3*time.Second
 	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
 
-	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, bool) {
+	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
 		if bytes.Contains(line, []byte("__switch__")) {
-			return true, nil, true
+			return true, nil, nil, true
 		}
-		return false, nil, false
+		return false, nil, nil, false
 	}}
 	h := newProxyHarness(t, 2, hooks)
 	c2 := h.children[1]
