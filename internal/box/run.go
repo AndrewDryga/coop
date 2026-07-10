@@ -126,6 +126,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
 	}
+	// Shadow the sibling-services compose paths read-only so an in-box agent can't author one
+	// for coop to auto-run on the host (a privileged/host-bind compose = host compromise). Added
+	// after the ShadowCount message above so it doesn't count as a "secret path"; unconditional
+	// because the threat is the agent CREATING an absent file. See ComposeDecoyMounts.
+	mounts = append(mounts, ComposeDecoyMounts(workdir)...)
 	if !spec.Batch && !spec.Quiet {
 		for _, nudge := range StalenessNudges(cfg, spec.Repo, spec.Image) {
 			ui.Info("%s", nudge)
@@ -347,10 +352,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		if cf := ComposeFile(spec.Repo); cf != "" {
 			if !spec.Quiet {
 				// compose interpolates host paths/${VARS} and coop runs it on the HOST, automatically,
-				// every launch — so an agent-authored (untracked) compose.agent.yml is a side door
-				// around the box. Surface it like Dockerfile.agent, so a planted one is noticed.
+				// every launch. An in-box agent can no longer author one (ComposeDecoyMounts shadows the
+				// compose paths read-only), but a human-authored untracked file still auto-runs unreviewed
+				// — surface it like Dockerfile.agent so a planted one is noticed.
 				if fileUntracked(spec.Repo, filepath.Base(cf)) {
-					ui.Info("note: %s is untracked in git — coop auto-starts it on your host, and an agent can author one; review it", filepath.Base(cf))
+					ui.Info("note: %s is untracked in git — coop auto-starts it on your host; review it", filepath.Base(cf))
 				}
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))
 			}

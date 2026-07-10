@@ -76,6 +76,29 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 	return mounts, nil
 }
 
+// ComposeDecoyMounts returns a read-only file decoy for every sibling-services compose
+// path (composeFileRels), applied UNCONDITIONALLY — whether or not one exists on the host.
+//
+// This is the compose auto-up gate. coop auto-runs a compose file on the HOST docker daemon
+// on every networked launch (EnsureServices → `compose up`), so an in-box agent that could
+// write one would get host-root via `privileged: true` + a host bind mount. The agent's only
+// write channel to that host path is the read-write repo bind, so shadowing the path
+// read-only in the box removes the channel: the host can then only ever run a compose file
+// authored OUTSIDE the box — by the human on the host, which IS the authorization. Same trust
+// model as the secret decoys in ComputeMounts, and an allowlist-by-construction (the agent
+// can't write the file) rather than a deny-list that must enumerate every dangerous directive.
+//
+// Kept separate from ComputeMounts so it doesn't inflate that function's secret ShadowCount,
+// and unconditional (not gated on existence) because the threat is the agent CREATING a file
+// that isn't there yet — Docker creates the mountpoint if absent.
+func ComposeDecoyMounts(workdir string) []Mount {
+	mounts := make([]Mount, 0, len(composeFileRels))
+	for _, rel := range composeFileRels {
+		mounts = append(mounts, Mount{Kind: Decoy, Target: workdir + "/" + rel, RO: true})
+	}
+	return mounts
+}
+
 // NewShadowDecider returns a predicate reporting whether a repo-relative slash path is
 // shadowed from the box: its basename matches SecretGlobs (and AllowGlobs doesn't whitelist
 // it), or a .coopignore in the root or an ancestor directory matches it (AllowGlobs does NOT

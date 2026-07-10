@@ -33,12 +33,20 @@ func ServicesProject(repo string) string {
 	return "coop-" + b.String()
 }
 
+// composeFileRels are the repo-relative (slash-form) paths coop recognizes as a
+// sibling-services compose file, in priority order. It is the single source of truth:
+// ComposeFile picks the first that exists to auto-run on the HOST daemon, and
+// ComposeDecoyMounts shadows exactly these paths read-only in the box so an in-box agent
+// can never author one. Keep the two uses in sync by editing only this list.
+var composeFileRels = []string{
+	"compose.agent.yml",
+	".agent/compose.yml",
+}
+
 // ComposeFile returns the repo's sibling-services compose file, or "" if none.
 func ComposeFile(repo string) string {
-	for _, f := range []string{
-		filepath.Join(repo, "compose.agent.yml"),
-		filepath.Join(repo, ".agent", "compose.yml"),
-	} {
+	for _, rel := range composeFileRels {
+		f := filepath.Join(repo, filepath.FromSlash(rel))
 		if fileExists(f) {
 			return f
 		}
