@@ -279,7 +279,7 @@ func (s *scaffolder) updateGitignore() error {
 	// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets/audit — is un-ignored
 	// at any depth as well, since a large monorepo member may carry its own; only project.yaml is
 	// TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays root-anchored.
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/audit.md\n!.agent/project.yaml\n" +
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/audit.md\n!**/.agent/loop/\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place; likewise
@@ -296,13 +296,18 @@ func (s *scaffolder) updateGitignore() error {
 		// Block present but predates project.yaml — un-ignore the top-level config so it's committed.
 		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!.agent/project.yaml\n", 1)
 	}
+	// loop/ (holds review.md — committed config, like audit.md) postdates the block; un-ignore it in
+	// an older gitignore that already carries the block but not the loop line.
+	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/loop/") {
+		content = strings.Replace(content, "!**/.agent/audit.md\n", "!**/.agent/audit.md\n!**/.agent/loop/\n", 1)
+	}
 	if content == orig {
 		return nil // already up to date
 	}
 	if err := os.WriteFile(gi, []byte(content), 0o644); err != nil {
 		return err
 	}
-	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/audit.md + project.yaml tracked)")
+	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/audit.md/loop + project.yaml tracked)")
 	return nil
 }
 

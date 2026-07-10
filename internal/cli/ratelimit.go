@@ -327,6 +327,35 @@ const (
 	maxStalls = 5
 )
 
+// The work↔review round cap is config.MaxReviewRounds (COOP_MAX_REVIEW_ROUNDS, default 3):
+// after each review pass the loop re-drains anything the review reopened, so this bounds the
+// ping-pong for a task that can't self-heal (reviewRoundOutcome below decides accept / continue /
+// cap→block).
+
+// reviewDecision is what the loop does after a review pass (see reviewRoundOutcome).
+type reviewDecision int
+
+const (
+	reviewAccepted   reviewDecision = iota // the review reopened nothing — the queue is verified done (exit 0)
+	reviewContinue                         // the review reopened work and rounds remain — drain again, then review again
+	reviewCapReached                       // the review still reopens at the round cap — block the stuck task for a human (exit 3)
+)
+
+// reviewRoundOutcome decides what loop() does after a review pass, given the just-finished round
+// number (1-based), the cap, and whether the review reopened any actionable work (todo+in_progress
+// > 0). Nothing reopened → accepted (done). Otherwise continue while rounds remain, else give up and
+// block the persistently-reopened task. Pure, so the three convergence paths — accept-immediately,
+// reopen-then-accept, never-converge → cap → block — are unit-tested without driving a box.
+func reviewRoundOutcome(round, cap int, reopened bool) reviewDecision {
+	if !reopened {
+		return reviewAccepted
+	}
+	if round < cap {
+		return reviewContinue
+	}
+	return reviewCapReached
+}
+
 // outputRetryBackoff spaces out consecutive output-limit resumes: the first is immediate
 // (the fast path for a single long turn), later ones back off, so a misfire can't
 // tight-loop box respawns before maxOutputRetries trips.

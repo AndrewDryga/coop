@@ -294,6 +294,35 @@ func TestProgressStall(t *testing.T) {
 	}
 }
 
+// TestReviewRoundOutcome covers the three loop-until-accepted convergence paths: a review that
+// reopens nothing is accepted immediately; a review that reopens work re-drains while rounds
+// remain; and one that never converges is capped (block the stuck task → exit 3).
+func TestReviewRoundOutcome(t *testing.T) {
+	const cap = 3
+	// Accept immediately: round 1, nothing reopened → done in one review pass.
+	if got := reviewRoundOutcome(1, cap, false); got != reviewAccepted {
+		t.Errorf("round 1, nothing reopened: got %v, want reviewAccepted", got)
+	}
+	// A clean review accepts at ANY round (e.g. after a reopen-then-fix), not just the first.
+	if got := reviewRoundOutcome(cap, cap, false); got != reviewAccepted {
+		t.Errorf("clean review at the last round: got %v, want reviewAccepted", got)
+	}
+	// Reopen with rounds remaining → drain again.
+	for r := 1; r < cap; r++ {
+		if got := reviewRoundOutcome(r, cap, true); got != reviewContinue {
+			t.Errorf("round %d/%d reopened: got %v, want reviewContinue", r, cap, got)
+		}
+	}
+	// Never converges: still reopening AT the cap → block the stuck task.
+	if got := reviewRoundOutcome(cap, cap, true); got != reviewCapReached {
+		t.Errorf("round %d/%d still reopening: got %v, want reviewCapReached", cap, cap, got)
+	}
+	// A cap of 1 (COOP_MAX_REVIEW_ROUNDS=1) is a one-shot review: reopen on round 1 → block now.
+	if got := reviewRoundOutcome(1, 1, true); got != reviewCapReached {
+		t.Errorf("cap 1, reopened: got %v, want reviewCapReached", got)
+	}
+}
+
 // fakeClock returns a scripted sequence of wall-clock readings (advancing one per call, then
 // holding the last), so a test can jump the clock forward mid-wait to simulate a laptop suspend.
 type fakeClock struct {

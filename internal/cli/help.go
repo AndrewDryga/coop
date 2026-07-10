@@ -119,7 +119,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fork path <name>", "print the fork's filesystem path")
 
 	group("UNATTENDED")
-	row("coop loop [agent]", "work the queue(s) until done, then audit")
+	row("coop loop [agent]", "work the queue(s) until done, then review")
 	row("coop fleet init", "write the .agent/fleet.yaml template")
 	row("coop fleet up", "start every fork's loop, detached")
 	row("coop fleet down", "stop the fleet's running loops")
@@ -546,17 +546,25 @@ var commandHelp = map[string]string{
   --include-ignored to scan the full visible tree too (deps/build dirs and
   shadowed files are still skipped).`,
 
-	"loop": `coop loop [agent] — work the task queue until done, then audit.
+	"loop": `coop loop [agent] — work the task queue until done, then review.
 
   Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m[@account]>] [--credential <name>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]
 
-  A fresh agent per iteration works the todo tasks; when the queue empties, an
-  auditor re-checks every shipped task. On a rate limit it rotates to the next
-  target in its models ladder, or waits out the reset when they're all limited.
+  A fresh agent per iteration works the todo tasks; when the queue empties, a review
+  pass re-checks the shipped tasks — bookkeeping (every done task has an implementing
+  commit and a final state.md) plus the repo's gate run ONCE across the whole repo —
+  and reopens anything not actually done. If the review reopened work, the loop drains
+  and reviews AGAIN, repeating until a review reopens nothing (verified done) or the
+  round cap (COOP_MAX_REVIEW_ROUNDS, default 3) is hit — then the task the review keeps
+  reopening is blocked for a human (exit 3), not reported as done. On a rate limit it
+  rotates to the next target in its models ladder, or waits out the reset when all are
+  limited.
 
-  Drop project-specific audit checks in .agent/audit.md (Markdown): its text is
-  appended to the auditor's prompt, and the final pass reopens any shipped task
-  that fails one (e.g. changelog updated, docs regenerated, no stray TODOs).
+  Fully override the review prompt by committing .agent/loop/review.md (Markdown): its
+  text replaces the built-in review instructions (coop still appends the queue paths and
+  reopen mechanics). Or just ADD checks in .agent/audit.md — its text is appended to
+  whichever review prompt is in effect, reopening any shipped task that fails one (e.g.
+  changelog updated, docs regenerated, no stray TODOs).
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its models: ladder is the rotation, and each iteration gets the
@@ -594,9 +602,10 @@ var commandHelp = map[string]string{
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 
-  Exit codes: 0 = queue verified done (or the audit reopened work — re-run); 1 = failure;
-  2 = usage; 3 = stopped with a task blocked on a human decision (resolve with
-  'coop tasks decisions', then re-run). So cron/CI can branch without parsing output.
+  Exit codes: 0 = queue verified done; 1 = failure; 2 = usage; 3 = stopped with a task
+  blocked on a human decision (including one the review kept reopening past the round cap)
+  — resolve with 'coop tasks decisions', then re-run. So cron/CI can branch without parsing
+  output.
 
   COOP_LOOP_CMD overrides the per-iteration command.`,
 
@@ -639,7 +648,7 @@ var commandHelp = map[string]string{
   (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
   root's for changes spanning members. A single repo gets a project.yaml template with
   commented serve/subprojects examples. The .gitignore ignores .agent/ state at any
-  depth (**/.agent/*) and commits knowledge — rules/skills/presets/audit — at any depth
+  depth (**/.agent/*) and commits knowledge — rules/skills/presets/audit/loop — at any depth
   too (a large member MAY add its own), keeping only project.yaml top-level. Never
   clobbers existing files.`,
 

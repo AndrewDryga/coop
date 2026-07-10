@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -39,12 +40,13 @@ type Config struct {
 	Caffeinate    bool // COOP_CAFFEINATE — hold a system sleep inhibitor (caffeinate on macOS) while a loop runs
 	NoUpdateCheck bool // COOP_NO_UPDATE_CHECK — opt out of the once-a-day update-available check
 
-	ServicesNet  string   // COOP_SERVICES_NET — override the services network name
-	LoopModel    string   // COOP_LOOP_MODEL — model for loop iterations (falls back to the per-agent default)
-	LoopCmd      []string // COOP_LOOP_CMD — override the loop's per-iteration command
-	TasksFiles   []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
-	Gate         []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
-	ExtraRunArgs []string // COOP_RUN_ARGS — extra args passed to the container runtime
+	ServicesNet     string   // COOP_SERVICES_NET — override the services network name
+	LoopModel       string   // COOP_LOOP_MODEL — model for loop iterations (falls back to the per-agent default)
+	LoopCmd         []string // COOP_LOOP_CMD — override the loop's per-iteration command
+	MaxReviewRounds int      // COOP_MAX_REVIEW_ROUNDS — work→review rounds before a task the review keeps reopening is blocked (default 3)
+	TasksFiles      []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
+	Gate            []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
+	ExtraRunArgs    []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
 	// Box resource/privilege caps (docker & podman; skipped on Apple `container`).
 	Memory          string // COOP_MEMORY — memory cap, e.g. "4g" (empty = unset)
@@ -122,6 +124,16 @@ func Load() *Config {
 			return false
 		}
 	}
+	// getInt reads a positive-integer setting; an unset, empty, non-numeric, or non-positive
+	// value keeps the default (a cap of 0 or less would wedge the loop, never intended).
+	getInt := func(key string, def int) int {
+		if v := get(key, ""); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				return n
+			}
+		}
+		return def
+	}
 
 	c := &Config{
 		BaseImage: get("COOP_BASE_IMAGE", "coop-box"),
@@ -143,12 +155,13 @@ func Load() *Config {
 		Caffeinate:    flag("COOP_CAFFEINATE"),
 		NoUpdateCheck: flagOff("COOP_NO_UPDATE_CHECK"),
 
-		ServicesNet:  get("COOP_SERVICES_NET", ""),
-		LoopModel:    get("COOP_LOOP_MODEL", ""),
-		LoopCmd:      shellSplit(get("COOP_LOOP_CMD", "")),
-		TasksFiles:   shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
-		Gate:         shellSplit(get("COOP_GATE", "")),
-		ExtraRunArgs: shellSplit(get("COOP_RUN_ARGS", "")),
+		ServicesNet:     get("COOP_SERVICES_NET", ""),
+		LoopModel:       get("COOP_LOOP_MODEL", ""),
+		LoopCmd:         shellSplit(get("COOP_LOOP_CMD", "")),
+		MaxReviewRounds: getInt("COOP_MAX_REVIEW_ROUNDS", 3),
+		TasksFiles:      shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
+		Gate:            shellSplit(get("COOP_GATE", "")),
+		ExtraRunArgs:    shellSplit(get("COOP_RUN_ARGS", "")),
 
 		Memory:          get("COOP_MEMORY", ""),
 		CPUs:            get("COOP_CPUS", ""),

@@ -121,7 +121,7 @@ coop tasks add "Add a /health endpoint"
 coop tasks add "Backfill tests for the parser"
 coop tasks add "Document the config file"
 
-coop loop                  # 6. disposable agents work the queue until done, then audit
+coop loop                  # 6. disposable agents work the queue until done, then review
 ```
 
 Prefer to steer an agent yourself? Skip the queue and go interactive:
@@ -201,7 +201,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then audit (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable); `--model`/`--preset` set the [rotation](#picking-models); `--consult` lets iterations ask the [peers](#the-orchestrator-pattern) read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+| `coop loop [agent] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then review (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable); `--model`/`--preset` set the [rotation](#picking-models); `--consult` lets iterations ask the [peers](#the-orchestrator-pattern) read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
@@ -873,7 +873,7 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 ```bash
 coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 coop tasks add "..."      # add a task (a folder under .agent/tasks/00_todo/)
-coop loop                 # disposable agents work the queue until it's done, then audit
+coop loop                 # disposable agents work the queue until it's done, then review
 coop loop codex           # …or pick the model: claude (default), codex, or gemini
 ```
 
@@ -883,24 +883,31 @@ in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric 
 per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
 in `10_in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini`
 to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
-command if you need something custom. When the queue empties, a fresh auditor re-checks
-every task in `99_done/` against the git log and reopens anything that doesn't hold up.
+command if you need something custom. When the queue empties, a fresh **review** pass
+re-checks the shipped tasks: bookkeeping (every `99_done/` task has an implementing commit
+and a final `state.md`) plus the repo's gate run **once** across the whole repo, then it
+reopens anything that doesn't hold up. If the review reopened work, the loop drains and
+reviews **again** — repeating until a review reopens nothing (verified done) or it hits the
+round cap (`COOP_MAX_REVIEW_ROUNDS`, default `3`), at which point the task the review keeps
+reopening is blocked for a human rather than reported as done.
 
-Extend that audit with your own checks: drop them in `.agent/audit.md` (Markdown) and
-they're appended to the auditor's prompt, so the final pass also reopens a shipped task
-that fails one — e.g. the CHANGELOG gained an entry, the docs were regenerated, no stray
-`TODO`s. It's committed with the repo (shared, like a preset) and opt-in — no file is
+Tune the review two ways. To **replace** it wholesale, commit `.agent/loop/review.md`
+(Markdown): its text becomes the review prompt (coop still appends the queue paths and the
+reopen mechanics). To just **add** checks, drop them in `.agent/audit.md` — its text is
+appended to whichever review prompt is in effect, so the pass also reopens a shipped task
+that fails one (e.g. the CHANGELOG gained an entry, the docs were regenerated, no stray
+`TODO`s). Both are committed with the repo (shared, like a preset) and opt-in — no file is
 scaffolded for you.
 
 **Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
-queue is verified done (or the audit reopened work — run `coop loop` again); `1` a failure; `2` a
-usage error; `3` the loop stopped with a task blocked on a human decision (resolve with `coop tasks
-decisions`, then re-run).
+queue is verified done; `1` a failure; `2` a usage error; `3` the loop stopped with a task blocked
+on a human decision — including one the review kept reopening past the round cap (resolve with `coop
+tasks decisions`, then re-run).
 
 Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
 starts working: it unblocks any `50_blocked/` task whose `decision.md` now has an answer —
 so a fresh run starts from a tidy queue. It works no
-task and makes no commits, and it's the symmetric front bookend to the audit pass. Off
+task and makes no commits, and it's the symmetric front bookend to the review pass. Off
 by default.
 
 `init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
@@ -1250,6 +1257,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
 | `COOP_LOOP_MODEL` | — | model for loop iterations (overnight runs on a cheaper model than interactive) |
+| `COOP_MAX_REVIEW_ROUNDS` | `3` | how many work→review rounds `coop loop` runs before blocking a task the review keeps reopening (bounds the drain↔review ping-pong) |
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |

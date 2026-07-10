@@ -1322,7 +1322,7 @@ func parseLoopArgs(args []string, def bool) (agent, model string, agentSet, cons
 	return agent, model, agentSet, consult, debugOnFail, preflight, err
 }
 
-// loopWorkPrompt and loopAuditPrompt name the queue dir(s) the iteration works as ABSOLUTE
+// loopWorkPrompt and loopReviewPrompt name the queue dir(s) the iteration works as ABSOLUTE
 // in-box paths (the box's working dir is repo, bind-mounted at its real path). A relative
 // ".agent/tasks" resolves fine for claude/codex (cwd-relative), but gemini's read_file rejects
 // a relative path — so the queues (and AGENTS.md) are named absolute for every agent. With
@@ -1332,25 +1332,106 @@ func loopWorkPrompt(repo string, queues []string) string {
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
 }
 
-func loopAuditPrompt(repo string, queues []string) string {
-	p := fmt.Sprintf("Audit: for every task folder in the 99_done/ of the queue(s) %s, verify its gate passes and a commit implementing it exists in the git log. `coop` is NOT installed in this box, so reopen any that fail by moving its folder back to 10_in_progress/ yourself, and note what is missing in its log.md. Do not fix anything yourself.", absJoin(repo, queues))
-	if extra := loopAuditInstructions(repo); extra != "" {
-		p += "\n\nAlso apply these project-specific audit checks (from .agent/audit.md), reopening any task that fails one:\n" + extra
+// defaultReviewPrompt is the built-in review pass when .agent/loop/review.md is absent: it does
+// bookkeeping, runs the repo's gate ONCE across the whole repo (not per task), and reopens anything
+// not actually done — but never fixes task code itself (the work loop does that next round). The
+// fixed context footer (reviewContextFooter) supplies the queue paths + the "coop isn't installed,
+// move folders yourself" mechanics, so this text stays static and unit-testable.
+const defaultReviewPrompt = "Review pass — verify the just-drained queue is ACTUALLY done. Do NOT fix any task's code or make commits of your own: when something is wrong you REOPEN the task (the work loop fixes it next round).\n" +
+	"1. Bookkeeping: for every task folder in 99_done/, confirm the git log holds a commit that implements it and the folder has a final state.md; confirm the queue is internally consistent (no id in two state dirs, no half-moved folder).\n" +
+	"2. Gate ONCE: run the repo's gate (per AGENTS.md) a SINGLE time across the WHOLE repo — NOT once per task. If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — and note the failure in its log.md.\n" +
+	"3. Reopen not-done: move any task that isn't actually done (gate red, missing commit, incomplete work) back to 10_in_progress/, noting what's missing in its log.md.\n" +
+	"Reopen by MOVING folders only; change no task code and make no commits."
+
+// loopReviewPrompt is the end-of-loop review pass's prompt: a base (a full override from
+// .agent/loop/review.md when present, else defaultReviewPrompt), then the optional .agent/audit.md
+// append (legacy "extra project checks" knob), then a fixed context footer with the concrete queue
+// paths and reopen mechanics — so whatever the base says, the agent always has the mechanics.
+func loopReviewPrompt(repo string, queues []string) string {
+	p := reviewPromptBase(repo)
+	if extra := loopReviewInstructions(repo); extra != "" {
+		p += "\n\nAlso apply these project-specific checks (from .agent/audit.md), reopening any task that fails one:\n" + extra
 	}
-	return p
+	return p + "\n\n" + reviewContextFooter(repo, queues)
 }
 
-// loopAuditInstructions reads optional, project-specific audit criteria from
-// .agent/audit.md, appended to the generated audit prompt so the final pass also checks
-// whatever this repo cares about (changelog updated, no stray TODOs, docs regenerated, …).
-// Absent or empty → "". Read on the host and inlined into the prompt, so there is no in-box
-// path for an agent to resolve and it behaves the same for every agent.
-func loopAuditInstructions(repo string) string {
+// reviewPromptBase is the review base: the trimmed contents of .agent/loop/review.md when present
+// (a FULL override — the dull option over a template with syntax to learn), else the built-in
+// default. review.md is committed config (the scaffold .gitignore allowlists .agent/loop/).
+func reviewPromptBase(repo string) string {
+	if data, err := os.ReadFile(filepath.Join(repo, ".agent", "loop", "review.md")); err == nil {
+		if s := strings.TrimSpace(string(data)); s != "" {
+			return s
+		}
+	}
+	return defaultReviewPrompt
+}
+
+// reviewContextFooter is appended to every review prompt (override or default) so the mechanics
+// never depend on the base text: the absolute in-box queue path(s), the AGENTS.md path, and the
+// reminder that `coop` is NOT installed here — a task is reopened by MOVING its folder back to
+// 10_in_progress/, not by running coop.
+func reviewContextFooter(repo string, queues []string) string {
+	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box — reopen a task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), and note what was missing in its log.md.",
+		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
+}
+
+// loopReviewInstructions reads optional, project-specific review criteria from .agent/audit.md,
+// appended to the review prompt so the pass also checks whatever this repo cares about (changelog
+// updated, no stray TODOs, docs regenerated, …). Kept as .agent/audit.md for backward compatibility
+// — .agent/loop/review.md is the primary knob (a full override); audit.md is the light "add a check"
+// layer. Absent or empty → "". Read on the host and inlined, so there is no in-box path to resolve
+// and it behaves the same for every agent.
+func loopReviewInstructions(repo string) string {
 	data, err := os.ReadFile(filepath.Join(repo, ".agent", "audit.md"))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// blockReopenedTasks parks every task still reopened after the review round cap (anything left in
+// todo/ or in_progress/ once the work loop drained the queue) into 50_blocked/ with a decision.md,
+// so the capped loop exits 3 (blocked on a human) instead of spinning or claiming a false "done".
+// The loop runs on the host, where coop's own task helpers are available, so it moves the folders
+// directly. Best-effort: a move/write failure is surfaced and skipped, never fatal — the closing
+// banner still reports the honest count.
+func blockReopenedTasks(hosts []string, rounds int) {
+	for _, host := range hosts {
+		for _, t := range readTaskTree(host) {
+			if t.State != stateTodo && t.State != stateInProgress {
+				continue
+			}
+			if err := moveTaskDir(host, t, stateBlocked); err != nil {
+				ui.Warn("could not block %s: %v", t.ID, err)
+				continue
+			}
+			writeReviewBlockDecision(filepath.Join(host, stateBlocked, t.ID, "decision.md"), t.ID, t.Title, rounds)
+		}
+	}
+}
+
+// writeReviewBlockDecision drops a decision.md explaining that the review kept reopening this task
+// past the round cap, so a human knows why it's parked — unless one already exists (don't clobber a
+// prior note). Best-effort; mirrors the `coop tasks block` stub shape.
+func writeReviewBlockDecision(path, id, title string, rounds int) {
+	if fileExists(path) {
+		return
+	}
+	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %d rounds\n\n"+
+		"**Blocks:** this task (`%s`).\n\n"+
+		"**The decision:** The unattended loop drained the queue and the review pass reopened this "+
+		"task %d times without it converging — the work loop can't get it to a state the review "+
+		"accepts. A human needs to look at why (a gate it can't make green, a spec gap, a flaky test) "+
+		"before it goes back in the queue.\n\n"+
+		"**Recommendation:** Read the review's reopen notes in this task's log.md, fix the underlying "+
+		"issue (or split/redefine the task), then `coop tasks unblock %s`.\n\n"+
+		"---\n\n"+
+		"**Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock %s -->\n",
+		title, rounds, id, rounds, id, id)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		ui.Warn("could not write decision.md for %s: %v", id, err)
+	}
 }
 
 // loopPreflightPrompt is the one-shot cleanup pass run before the work loop when
@@ -1371,8 +1452,10 @@ func absJoin(repo string, queues []string) string {
 }
 
 // loop works the .agent/tasks queue unattended until nothing actionable remains (todo/ and
-// in_progress/ both empty), then (unless a custom COOP_LOOP_CMD is set) runs a one-shot audit
-// pass over the results. A model rate/usage limit is not a failure: the loop waits for the
+// in_progress/ both empty), then (unless a custom COOP_LOOP_CMD is set) runs a review pass over the
+// results; if the review reopens anything, the loop drains and reviews again until a review reopens
+// nothing (accepted) or the round cap (config.MaxReviewRounds) is hit, which blocks the stuck task
+// for a human. A model rate/usage limit is not a failure: the loop waits for the
 // reset — parsed from the agent's own output when possible — and retries, so a long run
 // survives the limit. A task left in in_progress/ by an interrupted iteration is continued (the
 // work prompt points the next agent at its uncommitted partial work), not stranded; a
@@ -1430,9 +1513,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. The
 	// stream-json marker in the command is what runIteration keys the decoder off.
 	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
-	work, audit := loopWorkPrompt(repo, queues), loopAuditPrompt(repo, queues)
+	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues)
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
-	// otherwise the chosen agent's headless form carrying the work/audit prompt.
+	// otherwise the chosen agent's headless form carrying the work/review prompt.
 	iterCmd := func(prompt string) []string {
 		if len(custom) > 0 {
 			return custom
@@ -1475,7 +1558,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// task whose decision.md now has a filled-in Resolution. It works no task and deletes
 	// nothing: done tasks are pruned only by a human (`coop tasks rm --all-done`), never
 	// by an agent. Opt-in (--preflight / COOP_PREFLIGHT); skipped under a custom COOP_LOOP_CMD
-	// (not the agent's headless form). Best-effort like the audit pass — a failure never blocks work.
+	// (not the agent's headless form). Best-effort like the review pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
 		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink, consult)
@@ -1497,98 +1580,126 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	fails, waits, retries, completed, stalls := 0, 0, 0, 0, 0
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
-	for n := 1; ; {
-		// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
-		// below — stops here, before the next task is claimed.
-		if softStop.Load() {
+	// Loop-until-accepted: drain the work queue, run the review pass, and if the review reopened
+	// anything, drain and review AGAIN — repeating until a review reopens nothing (accepted) or the
+	// round cap is hit (block the stuck task for a human). maxReviewRounds bounds the ping-pong so a
+	// task that can't self-heal doesn't spin forever. A custom COOP_LOOP_CMD has no review pass.
+	maxReviewRounds := a.cfg.MaxReviewRounds
+	for reviewRound := 1; ; reviewRound++ {
+		for n := 1; ; {
+			// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
+			// below — stops here, before the next task is claimed.
+			if softStop.Load() {
+				break
+			}
+			// Surface queue progress + the task being worked, so a long run shows movement
+			// instead of a bare counter (the same queueProgress `coop tasks` uses).
+			c, active := queueProgress(hosts)
+			// Keep going while anything is actionable — a todo/ task or an in_progress/ one an
+			// interrupted iteration left mid-task. Stop only when both are empty (the rest is
+			// done/ or blocked/), so a task in_progress when the box died is continued, not stranded.
+			if c.Todo+c.Doing == 0 {
+				break
+			}
+			// Run this iteration on the pool's active target — its credential (the mount and the
+			// agent command both resolve cfg.AgentDir) and its model, if the target carries one.
+			a.applyTarget(agent, rot)
+			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
+			ui.Info("%s", progressBanner(n, c, active))
+			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, consult)
+			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
+			if iterCtx != nil && iterCtx.Err() != nil {
+				break
+			}
+			// A first Ctrl-C during this iteration: it ran to completion, so stop before the next
+			// (don't fall through to the retry/wait accounting).
+			if softStop.Load() {
+				break
+			}
+			action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
+			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
+			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
+			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
+				ui.Info("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
+				a.debugShell(repo, img, agent)
+				fails = 0 // the developer intervened; don't count this toward the stop cap
+				continue
+			}
+			switch action {
+			case actContinue:
+				completed++
+				n++
+				// A clean iteration that neither finishes/blocks a task NOR commits means the agent keeps
+				// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
+				// rather than loop forever (a commit or a block still counts as progress).
+				var stop error
+				prevHead, settledBaseline, stalls, stop = a.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
+				if stop != nil {
+					return code, stop
+				}
+			case actWait:
+				// A rate/usage limit is expected on long runs. With more than one profile in
+				// the pool, switch to another subscription and retry immediately; otherwise wait
+				// for the reset. Either way the same iteration is retried, not burned.
+				if rot.rotates() {
+					a.rotateOnLimit(agent, rot, resetAt, &waits, wake)
+				} else {
+					sleepForLimit(wait, resetAt, wake)
+				}
+			case actRetryNow:
+				if wait > 0 {
+					ui.Info("iteration reached model output limit (%d/%d) — resuming in %s", retries, maxOutputRetries, wait)
+					sleepOrWake(wait, wake)
+				} else {
+					ui.Info("iteration reached model output limit — resuming immediately")
+				}
+			case actRetry:
+				ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
+				sleepOrWake(10*time.Second, wake)
+			case actStop:
+				if waits > maxLimitWaits {
+					return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
+				}
+				return code, fmt.Errorf("iteration failed %d times since the last success — stopping", fails)
+			}
+		}
+		// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
+		// review pass and the drain summary — the queue isn't done, the user asked to stop.
+		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+			cf, _ := queueProgress(hosts)
+			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
+			return 0, nil
+		}
+		// A custom COOP_LOOP_CMD isn't the review-aware agent form, so it gets no review pass —
+		// today's behavior: drain the queue, then report.
+		if len(custom) > 0 {
 			break
 		}
-		// Surface queue progress + the task being worked, so a long run shows movement
-		// instead of a bare counter (the same queueProgress `coop tasks` uses).
-		c, active := queueProgress(hosts)
-		// Keep going while anything is actionable — a todo/ task or an in_progress/ one an
-		// interrupted iteration left mid-task. Stop only when both are empty (the rest is
-		// done/ or blocked/), so a task in_progress when the box died is continued, not stranded.
-		if c.Todo+c.Doing == 0 {
-			break
+		ui.Info("queue empty — running review pass (round %d/%d)", reviewRound, maxReviewRounds)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, consult)
+		// A stop that landed during the review pass is honored before the next round is decided.
+		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+			cf, _ := queueProgress(hosts)
+			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
+			return 0, nil
 		}
-		// Run this iteration on the pool's active target — its credential (the mount and the
-		// agent command both resolve cfg.AgentDir) and its model, if the target carries one.
-		a.applyTarget(agent, rot)
-		// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
-		ui.Info("%s", progressBanner(n, c, active))
-		code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, consult)
-		// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
-		if iterCtx != nil && iterCtx.Err() != nil {
-			break
-		}
-		// A first Ctrl-C during this iteration: it ran to completion, so stop before the next
-		// (don't fall through to the retry/wait accounting).
-		if softStop.Load() {
-			break
-		}
-		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
-		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
-		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
-		if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
-			ui.Info("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
-			a.debugShell(repo, img, agent)
-			fails = 0 // the developer intervened; don't count this toward the stop cap
-			continue
-		}
-		switch action {
-		case actContinue:
-			completed++
-			n++
-			// A clean iteration that neither finishes/blocks a task NOR commits means the agent keeps
-			// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
-			// rather than loop forever (a commit or a block still counts as progress).
-			var stop error
-			prevHead, settledBaseline, stalls, stop = a.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
-			if stop != nil {
-				return code, stop
-			}
-		case actWait:
-			// A rate/usage limit is expected on long runs. With more than one profile in
-			// the pool, switch to another subscription and retry immediately; otherwise wait
-			// for the reset. Either way the same iteration is retried, not burned.
-			if rot.rotates() {
-				a.rotateOnLimit(agent, rot, resetAt, &waits, wake)
-			} else {
-				sleepForLimit(wait, resetAt, wake)
-			}
-		case actRetryNow:
-			if wait > 0 {
-				ui.Info("iteration reached model output limit (%d/%d) — resuming in %s", retries, maxOutputRetries, wait)
-				sleepOrWake(wait, wake)
-			} else {
-				ui.Info("iteration reached model output limit — resuming immediately")
-			}
-		case actRetry:
-			ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
-			sleepOrWake(10*time.Second, wake)
-		case actStop:
-			if waits > maxLimitWaits {
-				return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
-			}
-			return code, fmt.Errorf("iteration failed %d times since the last success — stopping", fails)
-		}
-	}
-	// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
-	// audit pass and the drain summary — the queue isn't done, the user asked to stop.
-	if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+		// Re-read the queue AFTER the review: it may have reopened done tasks into 10_in_progress/.
+		// The review runs only once the work loop drained the queue, so anything now actionable was
+		// reopened just now — drain it again (loop-until-accepted), unless the round cap is hit.
 		cf, _ := queueProgress(hosts)
-		fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
-		return 0, nil
+		switch reviewRoundOutcome(reviewRound, maxReviewRounds, cf.Todo+cf.Doing > 0) {
+		case reviewContinue:
+			ui.Info("review reopened %s — draining again", ui.Count(cf.Todo+cf.Doing, "task"))
+			continue
+		case reviewCapReached:
+			// The work loop couldn't get these tasks to a state the review accepts within the cap —
+			// park them for a human rather than spin or claim a false "done" (exit 3 via loopExitCode).
+			ui.Info("review still reopening after %d rounds — blocking %s for a human", maxReviewRounds, ui.Count(cf.Todo+cf.Doing, "task"))
+			blockReopenedTasks(hosts, maxReviewRounds)
+		}
+		// reviewAccepted (nothing reopened) or reviewCapReached (just blocked) → the loop is done.
+		break
 	}
-	if len(custom) == 0 {
-		ui.Info("queue empty — running audit pass")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(audit), hosts, sink, consult)
-	}
-	// Re-read the queue AFTER the audit: it may have reopened done tasks into 10_in_progress/. The
-	// audit runs only once the work loop drained the queue, so anything now actionable was reopened
-	// just now — the banner must not claim success. (The old check saw 00_todo/ only and missed
-	// reopens, which land in 10_in_progress/.)
 	cf, _ := queueProgress(hosts)
 	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
 	return loopExitCode(cf), nil
@@ -1678,9 +1789,9 @@ func (a *app) advanceStall(repo string, hosts []string, prevHead string, settled
 
 // loopExitCode is the machine-readable companion to loopClosingBanner so cron/fleet/CI can branch on
 // the loop's outcome without parsing stderr prose: 3 when the loop stopped with work blocked on a
-// human decision and nothing else actionable, 0 otherwise — verified done, or an audit reopen, which
-// stays 0 by design (see the reopened-banner task). Failures (1) and usage errors (2) surface from
-// their own call sites, not here.
+// human decision and nothing else actionable (including a task the review kept reopening past the
+// round cap), 0 otherwise — verified done. Failures (1) and usage errors (2) surface from their own
+// call sites, not here.
 func loopExitCode(cf taskCounts) int {
 	if cf.Todo+cf.Doing == 0 && cf.Blocked > 0 {
 		return 3
@@ -1688,15 +1799,17 @@ func loopExitCode(cf taskCounts) int {
 	return 0
 }
 
-// loopClosingBanner picks the loop's final line from the post-audit queue counts: reopened work
+// loopClosingBanner picks the loop's final line from the post-review queue counts: reopened work
 // (todo, or reopened into in_progress) and tasks blocked on a human decision are NOT "done", so only
-// a truly drained queue earns the green "verified done". Pure, so the outcomes are unit-tested
-// without running the loop.
+// a truly drained queue earns the green "verified done". With loop-until-accepted the loop normally
+// exits either accepted (nothing reopened) or with the stuck task blocked, but the reopened branch
+// stays as a defensive fallback (e.g. a custom COOP_LOOP_CMD run). Pure, so the outcomes are
+// unit-tested without running the loop.
 func loopClosingBanner(cf taskCounts, completed int) string {
 	switch {
 	case cf.Todo+cf.Doing > 0:
 		return ui.Bold(ui.Yellow(fmt.Sprintf(
-			"⚠ audit reopened %s — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
+			"⚠ review reopened %s — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
 	case cf.Blocked > 0:
 		// Tasks parked in 50_blocked/ on a human decision are NOT done — don't report success.
 		return ui.Bold(ui.Yellow(fmt.Sprintf(

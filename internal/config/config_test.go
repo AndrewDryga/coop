@@ -55,6 +55,9 @@ func TestDefaults(t *testing.T) {
 	if c.MCPInBox != "/home/node/.mcp.json" {
 		t.Errorf("MCPInBox = %q", c.MCPInBox)
 	}
+	if c.MaxReviewRounds != 3 {
+		t.Errorf("MaxReviewRounds = %d, want 3 (default)", c.MaxReviewRounds)
+	}
 	if c.FusionGovernor != "codex" {
 		t.Errorf("FusionGovernor = %q, want codex", c.FusionGovernor)
 	}
@@ -71,8 +74,12 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("COOP_PREFLIGHT", "1")
 	t.Setenv("COOP_CAFFEINATE", "off")
 	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
+	t.Setenv("COOP_MAX_REVIEW_ROUNDS", "7")
 
 	c := Load()
+	if c.MaxReviewRounds != 7 {
+		t.Errorf("COOP_MAX_REVIEW_ROUNDS=7 should override the default: got %d", c.MaxReviewRounds)
+	}
 	if c.BaseImage != "custom-box" || c.Workdir != "/code" {
 		t.Errorf("env overrides not applied: %q %q", c.BaseImage, c.Workdir)
 	}

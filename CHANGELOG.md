@@ -4,6 +4,20 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop`'s end-of-loop pass is now a customizable REVIEW that loops until it accepts.**
+  Three changes to what was a one-shot audit: (1) commit `.agent/loop/review.md` to FULLY override
+  the review prompt (like a preset, it's committed config — the scaffold `.gitignore` now allowlists
+  `.agent/loop/`), while `.agent/audit.md` still appends as the light "add a check" layer, and coop
+  always appends a fixed context footer (the queue paths, `AGENTS.md`, and the "coop isn't installed
+  — reopen by moving the folder" mechanics). (2) The DEFAULT review now does bookkeeping (every
+  `99_done/` task has an implementing commit + a final `state.md`) and runs the repo's gate **once**
+  across the whole repo (not once per task), reopening anything not actually done — it still never
+  fixes task code itself. (3) Structural **loop-until-accepted**: after the review the loop re-reads
+  the queue and, if the review reopened anything, DRAINS and reviews again — repeating until a review
+  reopens nothing, bounded by `COOP_MAX_REVIEW_ROUNDS` (default 3); on cap-exceed the persistently
+  reopened task is blocked for a human (`50_blocked/` + a `decision.md`) so the loop exits 3, not a
+  false "done".
+
 - **`coop models` shows LIVE models, not just a hardcoded list.** Each agent's line is now the
   real model catalog when a fresh one is cached (dim `(live)`), falling back to the curated static
   list (dim `(examples)`) — coop still never validates `--model`, so any id the CLI accepts works

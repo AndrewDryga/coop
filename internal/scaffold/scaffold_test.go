@@ -126,6 +126,29 @@ func TestUpdateGitignoreUpgrade(t *testing.T) {
 	}
 }
 
+// TestUpdateGitignoreAddsLoop: a block that already has the monorepo pattern + audit.md but predates
+// loop/ (the review.md override home) gets the loop un-ignore inserted after audit.md, once.
+func TestUpdateGitignoreAddsLoop(t *testing.T) {
+	repo := t.TempDir()
+	old := "node_modules/\n\n# coop working state\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/audit.md\n!.agent/project.yaml\n"
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&scaffolder{repo: repo}).updateGitignore(); err != nil {
+		t.Fatal(err)
+	}
+	gi := string(mustRead(t, filepath.Join(repo, ".gitignore")))
+	if !strings.Contains(gi, "!**/.agent/audit.md\n!**/.agent/loop/\n") {
+		t.Errorf("loop/ un-ignore not inserted after audit.md:\n%s", gi)
+	}
+	// Idempotent: a second run doesn't add it again.
+	_ = (&scaffolder{repo: repo}).updateGitignore()
+	gi2 := string(mustRead(t, filepath.Join(repo, ".gitignore")))
+	if n := strings.Count(gi2, "!**/.agent/loop/"); n != 1 {
+		t.Errorf("loop/ un-ignore appears %d times, want 1:\n%s", n, gi2)
+	}
+}
+
 // TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
 // .claude/, rules), a project.yaml (the root's alone), nor the retired BACKLOG.md.
 func TestInitSubproject(t *testing.T) {
@@ -287,9 +310,9 @@ func TestInit(t *testing.T) {
 	}
 
 	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets/
-	// audit.md) at any depth; only project.yaml is top-level.
+	// audit.md, and loop/ — the review.md override) at any depth; only project.yaml is top-level.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/audit.md", "!.agent/project.yaml", "!.gemini/skills"} {
+	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/audit.md", "!**/.agent/loop/", "!.agent/project.yaml", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}

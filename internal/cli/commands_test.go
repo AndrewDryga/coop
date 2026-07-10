@@ -12,17 +12,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// The loop's closing banner must not claim "verified done" when the audit reopened work — which it
+// The loop's closing banner must not claim "verified done" when the review reopened work — which it
 // does by moving done tasks back into 10_in_progress/, not 00_todo/. Regression: the check looked at
 // 00_todo/ only, so a reopened task in in_progress fell through to the green "verified done".
 func TestLoopClosingBanner(t *testing.T) {
 	// Reopened INTO in_progress (the bug): not done, and names the count.
-	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "audit reopened") ||
+	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "review reopened") ||
 		!strings.Contains(b, "3 tasks") || strings.Contains(b, "verified done") {
 		t.Errorf("reopened-into-in_progress banner = %q", b)
 	}
 	// Reopened into todo: same outcome, singular count.
-	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "audit reopened") ||
+	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "review reopened") ||
 		!strings.Contains(b, "1 task") || strings.Contains(b, "verified done") {
 		t.Errorf("reopened-into-todo banner = %q", b)
 	}
@@ -39,7 +39,7 @@ func TestLoopClosingBanner(t *testing.T) {
 }
 
 // The loop's exit code lets cron/fleet/CI branch without parsing stderr: 3 iff it stopped with work
-// blocked on a human decision and nothing else actionable; 0 for verified-done and audit-reopened.
+// blocked on a human decision and nothing else actionable; 0 for verified-done and review-reopened.
 func TestLoopExitCode(t *testing.T) {
 	cases := []struct {
 		cf   taskCounts
@@ -75,8 +75,8 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
 		}
 	}
-	if audit := loopAuditPrompt(repo, []string{".agent/tasks"}); !strings.Contains(audit, "/home/node/proj/.agent/tasks") {
-		t.Errorf("audit prompt should name the absolute queue:\n%s", audit)
+	if review := loopReviewPrompt(repo, []string{".agent/tasks"}); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
+		t.Errorf("review prompt should name the absolute queue:\n%s", review)
 	}
 }
 
@@ -113,44 +113,82 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	}
 }
 
-// TestLoopPreflightAndAuditFolder: preflight only unblocks blocked/ tasks with an answered
-// decision (no code, no commits); audit re-checks the done/ archive against git and reopens by
-// moving the folder (coop isn't in the box).
-func TestLoopPreflightAndAuditFolder(t *testing.T) {
+// TestLoopPreflightAndReviewFolder: preflight only unblocks blocked/ tasks with an answered
+// decision (no code, no commits); the default review does bookkeeping + ONE whole-repo gate and
+// reopens by moving the folder (coop isn't in the box), and the fixed context footer carries the
+// queue paths + reopen mechanics.
+func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"})
 	for _, want := range []string{"do NOT work any task", "no commits", "moving its folder to 00_todo/", "50_blocked/"} {
 		if !strings.Contains(pre, want) {
 			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
 	}
-	aud := loopAuditPrompt("/repo", []string{".agent/tasks"})
-	if !strings.Contains(aud, "99_done/") || !strings.Contains(aud, "moving its folder back to 10_in_progress/") {
-		t.Errorf("audit prompt should re-check 99_done/ and reopen by moving the folder:\n%s", aud)
+	rev := loopReviewPrompt("/repo", []string{".agent/tasks"})
+	// The default prompt: bookkeeping, a SINGLE whole-repo gate (not per task), reopen, no self-fix.
+	for _, want := range []string{"99_done/", "a SINGLE time across the WHOLE repo", "NOT once per task", "make no commits"} {
+		if !strings.Contains(rev, want) {
+			t.Errorf("default review prompt missing %q:\n%s", want, rev)
+		}
+	}
+	// The fixed context footer: the absolute queue path, AGENTS.md, and the reopen mechanic.
+	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed"} {
+		if !strings.Contains(rev, want) {
+			t.Errorf("review prompt footer missing %q:\n%s", want, rev)
+		}
 	}
 }
 
-// .agent/audit.md, when present, is appended to the audit prompt so the final pass also runs
-// the project's own checks; absent, the generated prompt is unchanged.
-func TestLoopAuditInstructionsAppended(t *testing.T) {
+// The review base is a FULL override when .agent/loop/review.md is present (else the built-in
+// default); either way the fixed context footer is appended.
+func TestLoopReviewPromptOverride(t *testing.T) {
+	repo := t.TempDir()
+	// Absent → the built-in default leads.
+	if rev := loopReviewPrompt(repo, []string{".agent/tasks"}); !strings.HasPrefix(rev, "Review pass") {
+		t.Errorf("without review.md the built-in default should lead:\n%s", rev)
+	}
+	// Present → its trimmed text IS the base and the default is gone; the footer still trails.
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "loop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop", "review.md"), []byte("\nMy custom review: only check the docs.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rev := loopReviewPrompt(repo, []string{".agent/tasks"})
+	if !strings.HasPrefix(rev, "My custom review: only check the docs.") {
+		t.Errorf("review.md should be the base:\n%s", rev)
+	}
+	if strings.Contains(rev, "Review pass — verify") {
+		t.Errorf("an override should REPLACE the default, not append to it:\n%s", rev)
+	}
+	if !strings.Contains(rev, "its folder back to 10_in_progress/") {
+		t.Errorf("the fixed context footer must trail an override too:\n%s", rev)
+	}
+}
+
+// .agent/audit.md, when present, is appended to the review prompt so the pass also runs the
+// project's own checks; absent, the generated prompt carries no appendix. Kept for backward
+// compatibility beside the review.md override.
+func TestLoopReviewInstructionsAppended(t *testing.T) {
 	repo := t.TempDir()
 	// No file → no appendix.
-	if aud := loopAuditPrompt(repo, []string{".agent/tasks"}); strings.Contains(aud, "project-specific audit checks") {
-		t.Errorf("audit prompt should carry no appendix without .agent/audit.md:\n%s", aud)
+	if rev := loopReviewPrompt(repo, []string{".agent/tasks"}); strings.Contains(rev, "project-specific checks") {
+		t.Errorf("review prompt should carry no appendix without .agent/audit.md:\n%s", rev)
 	}
-	// With the file → its (trimmed) text is appended after the generated body.
+	// With the file → its (trimmed) text is appended after the base, before the footer.
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "audit.md"), []byte("\nVerify CHANGELOG.md gained an entry.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	aud := loopAuditPrompt(repo, []string{".agent/tasks"})
-	if !strings.HasPrefix(aud, "Audit:") {
-		t.Errorf("generated audit body should still lead:\n%s", aud)
+	rev := loopReviewPrompt(repo, []string{".agent/tasks"})
+	if !strings.HasPrefix(rev, "Review pass") {
+		t.Errorf("the default review body should still lead:\n%s", rev)
 	}
-	if !strings.Contains(aud, "project-specific audit checks (from .agent/audit.md)") ||
-		!strings.Contains(aud, "Verify CHANGELOG.md gained an entry.") {
-		t.Errorf("audit prompt should append .agent/audit.md's text:\n%s", aud)
+	if !strings.Contains(rev, "project-specific checks (from .agent/audit.md)") ||
+		!strings.Contains(rev, "Verify CHANGELOG.md gained an entry.") {
+		t.Errorf("review prompt should append .agent/audit.md's text:\n%s", rev)
 	}
 }
 
