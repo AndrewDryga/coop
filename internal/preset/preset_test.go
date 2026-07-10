@@ -119,7 +119,6 @@ func TestLoadValidation(t *testing.T) {
 		{"empty model in lead target", "lead: {agent: \"claude:\"}", nil, "empty model"},
 		{"bad account in lead target", "lead: {agent: \"claude:opus@../x\"}", nil, "invalid account"},
 		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, "empty account"},
-		{"cross-provider lead ladder", "lead: {agent: [claude:opus, codex:gpt-5]}", nil, "different provider"},
 		{"role model retired", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "retired"},
 		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
 		{"role credentials rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
@@ -144,6 +143,29 @@ func TestLoadValidation(t *testing.T) {
 				t.Errorf("error = %v, want it to contain %q", err, c.wantErr)
 			}
 		})
+	}
+}
+
+// A lead agent: ladder MAY be cross-provider — the loop rotates across agents. The lead is the
+// first rung's provider; a rung on a different provider records it (Provider set) so rotation
+// swaps the agent, while a same-provider rung leaves Provider "" (implicit lead).
+func TestLoadCrossProviderLead(t *testing.T) {
+	repo := writePreset(t, "x", "lead: {agent: [claude:opus, codex:gpt-5.5@work]}\n", nil)
+	p, err := Load(repo, "", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.LeadAgent != "claude" {
+		t.Errorf("LeadAgent = %q, want claude (the first rung)", p.LeadAgent)
+	}
+	if len(p.LeadModels) != 2 {
+		t.Fatalf("LeadModels = %+v, want 2 rungs", p.LeadModels)
+	}
+	if p.LeadModels[0] != (ModelTarget{Model: "opus"}) { // lead's own provider → Provider ""
+		t.Errorf("rung 0 = %+v, want {Model: opus} (implicit lead provider)", p.LeadModels[0])
+	}
+	if p.LeadModels[1] != (ModelTarget{Provider: "codex", Model: "gpt-5.5", Credential: "work"}) {
+		t.Errorf("rung 1 = %+v, want the codex rung with Provider set", p.LeadModels[1])
 	}
 }
 

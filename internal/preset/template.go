@@ -23,14 +23,15 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 
 # lead — REQUIRED: the agent that leads the session, as a TARGET or a fallback ladder.
 lead:
-  # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (one provider):
+  # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (a fallback ladder):
   #   claude                          the agent's default model, on EVERY signed-in account
   #   claude:claude-opus-4-8          that model, on every signed-in account (rotating)
   #   claude:claude-opus-4-8@work     that model pinned to the "work" account only
   #   [claude:claude-fable-5, claude:claude-opus-4-8@work]   a fallback LADDER
-  # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry 2, …),
-  # keying rate limits per (model, account); a single run uses the first entry. Model ids:
-  # coop models. Accounts (logins): coop credentials.
+  #   [claude:claude-opus-4-8, codex:gpt-5.5]   a CROSS-PROVIDER ladder (rotate vendors!)
+  # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry 2, …), running
+  # each rung's own agent, keying rate limits per (agent, model, account); a single run uses the
+  # first entry, and it's the default agent. Model ids: coop models. Accounts: coop credentials.
   agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead

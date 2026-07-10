@@ -1609,9 +1609,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	defer armKeepAwake(a.cfg)()
 	custom := a.cfg.LoopCmd
 	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
-	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. The
-	// stream-json marker in the command is what runIteration keys the decoder off.
-	stream := agent == "claude" && len(custom) == 0 && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
+	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. Decided
+	// per iteration in iterCmd (a cross-provider rotation can swap the active agent), keyed off the
+	// stream-json marker runIteration finds in the command.
+	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues)
 	// The review pass (end-of-loop) and the optional between-tasks audit both run only under the
 	// review-aware agent form, not a custom COOP_LOOP_CMD. between.md is opt-in — an extra box
@@ -1636,7 +1637,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			return custom
 		}
 		cmd := a.agentLoopCmd(agent, prompt)
-		if stream {
+		if agent == "claude" && tty { // only claude streams JSON; recomputed per iteration (agent may rotate)
 			cmd = append(cmd, "--output-format", "stream-json", "--verbose")
 		}
 		return cmd
@@ -1718,9 +1719,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if c.Todo+c.Doing == 0 {
 				break
 			}
-			// Run this iteration on the pool's active target — its credential (the mount and the
-			// agent command both resolve cfg.AgentDir) and its model, if the target carries one.
-			a.applyTarget(agent, rot)
+			// Run this iteration on the pool's active target — its provider (a cross-provider ladder
+			// swaps the agent per rung), its credential (the mount + the agent command both resolve
+			// cfg.AgentDir), and its model. applyTarget returns the active provider for THIS iteration.
+			agent = a.applyTarget(rot)
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			ui.Info("%s", progressBanner(n, c, active))
 			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, peers)
@@ -1771,7 +1773,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				// the pool, switch to another subscription and retry immediately; otherwise wait
 				// for the reset. Either way the same iteration is retried, not burned.
 				if rot.rotates() {
-					a.rotateOnLimit(agent, rot, resetAt, &waits, wake)
+					agent = a.rotateOnLimit(rot, resetAt, &waits, wake) // may swap the agent (cross-provider)
 				} else {
 					sleepForLimit(wait, resetAt, wake)
 				}

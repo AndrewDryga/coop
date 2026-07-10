@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,19 +19,26 @@ import (
 // (or a one-off --model/--credential), and "rotate all accounts" is just what a bare model
 // expands to. Pure (clock injected), so the policy is unit-tested without sleeping.
 
-// runTarget is one concrete thing a loop iteration runs: a model on an account. A bare
-// ladder model fans out to one runTarget per signed-in account; a pinned model@account is
-// one. The limit map is keyed by runTarget, so opus@work cooling leaves fable@work free.
+// runTarget is one concrete thing a loop iteration runs: a PROVIDER on an account, with a
+// model. A bare ladder model fans out to one runTarget per signed-in account; a pinned
+// model@account is one. A cross-provider lead ladder carries a different provider per rung, so
+// the loop swaps the agent as it rotates. The limit map is keyed by runTarget, so opus@work
+// cooling leaves fable@work (or codex) free.
 type runTarget struct {
+	provider   string // the agent this rung runs (varies across a cross-provider ladder)
 	credential string
 	model      string // "" = the account's default model resolves (mark/env/agent default)
 }
 
 func (t runTarget) String() string {
-	if t.model == "" {
-		return t.credential
+	s := t.provider
+	if t.model != "" {
+		s += ":" + t.model
 	}
-	return t.model + "@" + t.credential
+	if t.credential != "" {
+		s += "@" + t.credential
+	}
+	return s
 }
 
 // rotation is the loop's ordered targets + which are rate-limited + a sticky cursor that
@@ -63,18 +71,15 @@ func accountsFor(cfg *config.Config, agent string) []string {
 }
 
 // expandLadder turns a model-first ladder into the concrete rotation targets: a bare model
-// fans out across every signed-in account (default first), a pinned model@account is one
-// target (skipped if that account isn't signed in — a shared preset may name an account you
-// don't have). An empty ladder means the agent's default model across all accounts (the
-// zero-config default). Order preserved, deduped first-seen. Errors when nothing is
-// signed in — the loop can't run unauthenticated.
-func expandLadder(cfg *config.Config, agent string, ladder []preset.ModelTarget) ([]runTarget, error) {
-	accounts := accountsFor(cfg, agent)
-	if len(accounts) == 0 {
-		return nil, fmt.Errorf("%s has no signed-in account — run: coop login %s[@account]", agent, agent)
-	}
+// fans out across every signed-in account of its provider (default first), a pinned
+// model@account is one target (skipped if that account isn't signed in — a shared preset may
+// name an account you don't have). Each rung runs its own Provider (defaultAgent when unset —
+// a one-off ladder inherits the run's positional agent); a cross-provider lead ladder rotates
+// across agents. An empty ladder means defaultAgent's default model across all accounts. Order
+// preserved, deduped first-seen. Errors only when NOTHING in the ladder is signed in.
+func expandLadder(cfg *config.Config, defaultAgent string, ladder []preset.ModelTarget) ([]runTarget, error) {
 	if len(ladder) == 0 {
-		ladder = []preset.ModelTarget{{}} // default model, all accounts
+		ladder = []preset.ModelTarget{{}} // defaultAgent, default model, all accounts
 	}
 	var out []runTarget
 	seen := map[runTarget]bool{}
@@ -84,19 +89,34 @@ func expandLadder(cfg *config.Config, agent string, ladder []preset.ModelTarget)
 			out = append(out, t)
 		}
 	}
+	var missing []string // ladder providers with no signed-in account (reported only if NOTHING resolves)
 	for _, e := range ladder {
+		agent := e.Provider
+		if agent == "" {
+			agent = defaultAgent
+		}
+		accounts := accountsFor(cfg, agent)
+		if len(accounts) == 0 {
+			if !slices.Contains(missing, agent) {
+				missing = append(missing, agent)
+			}
+			continue
+		}
 		if e.Credential != "" {
 			if box.ProfileAuthed(cfg, agent, e.Credential) {
-				add(runTarget{credential: e.Credential, model: e.Model})
+				add(runTarget{provider: agent, credential: e.Credential, model: e.Model})
 			}
 			continue
 		}
 		for _, acct := range accounts {
-			add(runTarget{credential: acct, model: e.Model})
+			add(runTarget{provider: agent, credential: acct, model: e.Model})
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("%s: none of the models ladder's accounts are signed in — run 'coop login', or edit the preset", agent)
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("no signed-in account for %s — run: coop login %s[@account]", strings.Join(missing, ", "), missing[0])
+		}
+		return nil, fmt.Errorf("%s: none of the ladder's accounts are signed in — run 'coop login', or edit the preset", defaultAgent)
 	}
 	return out, nil
 }
@@ -106,7 +126,7 @@ func expandLadder(cfg *config.Config, agent string, ladder []preset.ModelTarget)
 // custom COOP_LOOP_CMD isn't an agent, so it never rotates — just its marked default account.
 func (a *app) buildRotation(agent string, ladder []preset.ModelTarget) (*rotation, error) {
 	if len(a.cfg.LoopCmd) > 0 {
-		return newRotation([]runTarget{{credential: a.cfg.DefaultProfileOf(agent)}}), nil
+		return newRotation([]runTarget{{provider: agent, credential: a.cfg.DefaultProfileOf(agent)}}), nil
 	}
 	targets, err := expandLadder(a.cfg, agent, ladder)
 	if err != nil {
@@ -115,29 +135,33 @@ func (a *app) buildRotation(agent string, ladder []preset.ModelTarget) (*rotatio
 	return newRotation(targets), nil
 }
 
-// applyTarget points cfg at the rotation's active target: the account the next iteration
+// applyTarget points cfg at the rotation's active target: the agent+account the next iteration
 // mounts, and its model (empty clears the tier, so a bare-model target falls through to the
 // account's mark / env / agent default). The one choke point for loop start + each rotation.
-func (a *app) applyTarget(agent string, r *rotation) {
+// Returns the active target's provider — the loop runs THAT agent this iteration (a cross-
+// provider ladder swaps it).
+func (a *app) applyTarget(r *rotation) string {
 	t := r.active()
-	a.cfg.SetActiveProfile(agent, t.credential)
-	a.cfg.SetTargetModel(agent, t.model)
+	a.cfg.SetActiveProfile(t.provider, t.credential)
+	a.cfg.SetTargetModel(t.provider, t.model)
+	return t.provider
 }
 
 // rotateOnLimit handles a rate limit with more than one target: advance, point cfg at the
 // new active target, and either switch immediately (a free rotation is progress) or, when
-// every target is limited, sleep until the soonest reset.
-func (a *app) rotateOnLimit(agent string, r *rotation, resetAt time.Time, waits *int, wake <-chan struct{}) {
+// every target is limited, sleep until the soonest reset. Returns the new active provider.
+func (a *app) rotateOnLimit(r *rotation, resetAt time.Time, waits *int, wake <-chan struct{}) string {
 	prev := r.active()
 	sleep, until := r.onLimit(resetAt, *waits, time.Now())
-	a.applyTarget(agent, r)
+	agent := a.applyTarget(r)
 	if sleep > 0 {
-		ui.Info("all %d %s targets are rate limited — waiting for the soonest reset", len(r.targets), agent)
+		ui.Info("all %d targets are rate limited — waiting for the soonest reset", len(r.targets))
 		sleepForLimit(sleep, until, wake)
-		return
+		return agent
 	}
-	ui.Info("%s target %q rate limited — switching to %q", agent, prev, r.active())
+	ui.Info("target %q rate limited — switching to %q", prev, r.active())
 	*waits = 0 // only consecutive all-limited waits count toward the stop cap
+	return agent
 }
 
 func (r *rotation) active() runTarget { return r.targets[r.idx] }

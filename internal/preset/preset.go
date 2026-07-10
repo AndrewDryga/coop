@@ -68,13 +68,14 @@ func (p *Preset) LeadModel() string {
 	return p.LeadModels[0].Model
 }
 
-// leadLadder parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a
-// same-provider target-LADDER (sequence [claude:fable, claude:opus@work]) — into the lead
-// provider and its model-first rotation ladder. Each entry is provider[:model][@account,…]: an
-// account list fans to one ladder entry per account; a single bare provider (no model, no
-// account) is the whole ladder's default (empty ladder = the agent's default model, all
-// accounts). Every entry must name the SAME provider — cross-provider lead ladders (rotating
-// across vendors mid-loop) aren't supported yet.
+// leadLadder parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a target
+// LADDER (sequence [claude:fable, claude:opus@work]) — into the lead provider (the first rung's)
+// and its model-first rotation ladder. Each entry is provider[:model][@account,…]: an account
+// list fans to one rung per account; a bare provider (no model, no account) uses the agent's
+// default. The ladder MAY be cross-provider ([claude:opus, codex:gpt-5]) — the loop rotates
+// across agents; a rung's Provider is recorded only when it differs from the lead (the first),
+// so a same-provider ladder stays terse. A single bare-lead entry collapses to the empty ladder
+// (the agent's default model, all accounts).
 func leadLadder(node *yaml.Node) (provider string, ladder []ModelTarget, err error) {
 	var raw []string
 	switch node.Kind {
@@ -97,20 +98,23 @@ func leadLadder(node *yaml.Node) (provider string, ladder []ModelTarget, err err
 		if perr != nil {
 			return "", nil, fmt.Errorf("[%d] %v", i, perr)
 		}
-		switch {
-		case provider == "":
-			provider = t.Provider
-		case t.Provider != provider:
-			return "", nil, fmt.Errorf("[%d] %q is a different provider than %q — a lead ladder is one provider (cross-provider lead rotation isn't supported yet)", i, t.Provider, provider)
+		if provider == "" {
+			provider = t.Provider // the lead = the first rung's provider
+		}
+		// A rung on the lead's own provider records Provider "" (implicit); a cross-provider rung
+		// records its provider so the loop swaps the agent on that rung.
+		rp := ""
+		if t.Provider != provider {
+			rp = t.Provider
 		}
 		if len(t.Accounts) == 0 {
-			ladder = append(ladder, ModelTarget{Model: t.Model})
+			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model})
 		}
 		for _, acct := range t.Accounts {
-			ladder = append(ladder, ModelTarget{Model: t.Model, Credential: acct})
+			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model, Credential: acct})
 		}
 	}
-	// A single bare-provider entry (no model, no account) is "default model, all accounts" — the
+	// A single bare-lead entry (no model, no account) is "default model, all accounts" — the
 	// empty ladder, identical to the pre-unification absent models:.
 	if len(ladder) == 1 && ladder[0] == (ModelTarget{}) {
 		ladder = nil

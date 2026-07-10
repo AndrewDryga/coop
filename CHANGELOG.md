@@ -28,8 +28,9 @@
   everywhere else instead of a separate `model:` (a role runs its agent's default account, so no
   `@account`). The lead's `agent:` holds a target or a same-provider fallback **ladder**
   (`agent: [claude:fable-5, claude:opus-4-8@work]`), folding in the old `models:` list. Both retired
-  keys tombstone with the rewrite. (A cross-provider lead ladder — rotating vendors mid-loop — isn't
-  supported yet; a lead ladder names one provider.) **`.agent/fleet.yaml` follows suit**: a fork's
+  keys tombstone with the rewrite. A lead ladder may even be **cross-provider**
+  (`agent: [claude:opus, codex:gpt-5.5]`) — the loop rotates across vendors on a rate limit, running
+  each rung's own agent (the lead, and a single run, use the first rung). **`.agent/fleet.yaml` follows suit**: a fork's
   `agent:` is a target (`agent: gemini:gemini-3.5-flash@work`) and the per-fork `model:`/`credential:`
   keys retire — the model + account ride `agent:` (a fork still takes one account; a rotation lives in
   a preset).

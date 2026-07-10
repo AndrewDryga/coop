@@ -40,8 +40,9 @@ target ladder); the separate `model:`/`models:` keys retire:
 | `lead: {agent: claude, models: [fable, opus@work]}` | `lead: {agent: [claude:fable, claude:opus@work]}` — one `agent:` ladder (each entry a target) |
 | a role's `agent: codex` + `model: gpt-5.5` | `agent: codex:gpt-5.5` — the model rides `agent:` (a role runs its default account; no `@account`) |
 
-A cross-provider lead ladder (rotating vendors mid-loop) isn't supported yet — a lead ladder names
-one provider.
+A lead ladder MAY be cross-provider (`agent: [claude:opus, codex:gpt-5.5]`) — the loop rotates
+across vendors on a rate limit, running each rung's agent. The lead (the default agent, and what a
+single run uses) is the first rung's provider.
 
 ## v3: retired command aliases
 

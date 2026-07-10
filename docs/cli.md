@@ -167,10 +167,11 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
   work to — each role an agent: target (provider[:model]) + routing hints. The lead's
-  agent: is a target, or a same-provider fallback ladder: a bare provider:model runs
-  on EVERY signed-in account (rotating on a rate limit), provider:model@account pins
-  one. On a loop it rotates the ladder top-to-bottom; a single run uses the first entry.
-  Accounts are your local logins (see coop credentials) — presets name models, not secrets.
+  agent: is a target, or a fallback ladder (even CROSS-PROVIDER, [claude:opus, codex:gpt-5.5]):
+  a bare provider:model runs on EVERY signed-in account (rotating on a rate limit),
+  provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
+  rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
+  local logins (see coop credentials) — presets name models, not secrets.
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
@@ -179,7 +180,7 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   .agent/presets/frontier/preset.yaml:
 
     lead:
-      # a target, or a same-provider ladder — fable on all accounts, then opus on work
+      # a target, or a ladder (cross-provider ok) — fable on all accounts, then opus on work
       agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
       prompt: roles/lead.md      # Optional Markdown, appended to the generated contract.
     roles:                       # agent: is a target — provider[:model], default account
