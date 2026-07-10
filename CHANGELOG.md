@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The ACP path's host-side fs/terminal boundary is now documented.** Over ACP the editor
+  services `fs/read_text_file` / `fs/write_text_file` / `terminal/*` requests host-side, and
+  coop's proxy forwards them to the editor unfiltered — so when you drive an agent from Zed, the
+  box's isolation is only as strong as the editor's own fs/terminal sandbox (a prompt-injected
+  agent could ask the editor to touch an absolute host path outside the repo). The README's ACP
+  section now spells this out; `coop loop`/`coop claude` have no such channel and are unaffected.
+
 - **A rate-limit wait no longer over-waits across a laptop suspend.** The loop's `sleepForLimit`
   and the ACP respawn's `sleepUntilReset` built their countdown on Go's monotonic clock, which
   *freezes* while a macOS lid is closed — so a "waiting Nh until `<reset>`" pause counted only

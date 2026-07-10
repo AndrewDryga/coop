@@ -857,6 +857,15 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 > and `@agentclientprotocol/codex-acp@latest` to its `npm install -g` line (else `coop acp` fails with
 > `codex-acp: not found`).
 
+> **One caveat on the boundary.** ACP has a second channel: the *editor* services
+> `fs/read_text_file`, `fs/write_text_file`, and `terminal/*` requests **host-side**, and
+> coop's proxy forwards them to Zed unfiltered (Claude's adapter uses client-side `fs` in
+> normal operation). So over ACP the box's isolation is only as strong as your editor's own
+> fs/terminal sandbox — a prompt-injected agent could ask the editor to read or write an
+> absolute host path outside the repo. The `coop loop`/`coop claude` path has no such channel
+> (the box is the only boundary that matters there); this applies specifically to driving an
+> agent from an editor over ACP.
+
 ## Run it unattended
 
 ### The loop
