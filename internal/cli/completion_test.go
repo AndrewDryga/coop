@@ -8,12 +8,17 @@ import (
 )
 
 func hasCand(cands []string, want string) bool {
+	return candCount(cands, want) > 0
+}
+
+func candCount(cands []string, want string) int {
+	n := 0
 	for _, c := range cands {
 		if c == want {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
 
 // completionCandidates mirrors the dispatch: commands + agents at the top, then per-family verbs.
@@ -28,6 +33,15 @@ func TestCompletionCandidates(t *testing.T) {
 	}
 	if hasCand(top, "clone") || hasCand(top, "pool") {
 		t.Error("retired aliases (clone/pool) must not be completed")
+	}
+	// completion appears exactly once (topLevelCommands already carries it — no separate prepend).
+	if n := candCount(top, "completion"); n != 1 {
+		t.Errorf("completion should be offered exactly once, got %d", n)
+	}
+	// The retired-form invariant must hold per-scope, not just top-level: `coop loop <TAB>` offered
+	// the tombstoned `pool` before this fix, and only the top-level list was ever checked.
+	if hasCand(a.completionCandidates([]string{"loop"}), "pool") {
+		t.Error("`coop loop` must not complete the retired `pool` (it's tombstoned)")
 	}
 
 	for _, w := range []string{"ls", "rm", "merge"} {

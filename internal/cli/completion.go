@@ -73,7 +73,7 @@ func (a *app) cmdComplete(words []string) (int, error) {
 // the local dynamic values (fork names, task ids, profiles).
 func (a *app) completionCandidates(prev []string) []string {
 	if len(prev) == 0 { // completing the command itself
-		return append(append([]string{"completion"}, topLevelCommands...), agents.Names()...)
+		return append(append([]string{}, topLevelCommands...), agents.Names()...)
 	}
 	switch prev[0] {
 	case "fork":
@@ -105,7 +105,7 @@ func (a *app) completionCandidates(prev []string) []string {
 		}
 	case "loop":
 		if len(prev) == 1 {
-			return append([]string{"pool"}, agents.Names()...)
+			return agents.Names() // `coop loop [agent]`; `pool` is retired (tombstoned), never completed
 		}
 	case "login", "credentials", "models", "fusion", "acp":
 		if len(prev) == 1 {
