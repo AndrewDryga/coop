@@ -143,20 +143,20 @@ func (a *app) nudgeIfUnauthed(tool string) {
 	}
 }
 
-// selectRunProfile points cfg at the credential profile chosen with --credential for a run of tool
-// (a no-op when profile is ""). It requires the profile to already exist — a typo otherwise
-// silently creates an empty husk dir (box.Run pre-creates the active profile), the very clutter
-// `coop credentials rm` cleans up — and notes (without blocking) one that exists but isn't signed in.
+// selectRunProfile points cfg at the credential profile chosen with the target's @account for a
+// run of tool (a no-op when profile is ""). It requires the profile to already exist — a typo
+// otherwise silently creates an empty husk dir (box.Run pre-creates the active profile), the very
+// clutter `coop credentials rm` cleans up — and notes (without blocking) one that isn't signed in.
 // Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP.
 func (a *app) selectRunProfile(tool, profile string) error {
 	if profile == "" {
 		return nil
 	}
 	if !slices.Contains(a.cfg.Profiles(tool), profile) {
-		return fmt.Errorf("%s has no credential %q — sign in first: coop login %s --credential %s", tool, profile, tool, profile)
+		return fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {
-		ui.Info("note: %s credential %q isn't signed in — run: coop login %s --credential %s", tool, profile, tool, profile)
+		ui.Info("note: %s account %q isn't signed in — run: coop login %s@%s", tool, profile, tool, profile)
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	return nil

@@ -320,7 +320,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// Validate a pinned --credential before any image/clone work, so a typo'd account fails
 	// fast and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
 	if fa.credential != "" && !slices.Contains(a.cfg.Profiles(fa.agent), fa.credential) {
-		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s --credential %s", fa.agent, fa.credential, fa.agent, fa.credential)
+		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
 	// --loop with no --tasks is the monorepo-aware default: runForkLoop seeds every
 	// project.TaskDirs queue (just .agent/tasks in a single repo) at its own path. Leaving
