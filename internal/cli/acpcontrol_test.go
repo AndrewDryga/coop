@@ -788,3 +788,67 @@ func TestACPControlOutputLimitDoesNotRotateOrHold(t *testing.T) {
 		t.Fatalf("output-limit chunk must not be held as a rate-limit notice, got: %s", got)
 	}
 }
+
+// TestACPFailoverGiveUpCap: the transparent failover must not respawn/wait forever. A free
+// rung rotates (and resets the chain); once every rung is limited, each wait counts, and
+// past maxACPLimitWaits the REAL limit error is forwarded to the editor instead of another
+// silent wait — the ACP analog of the loop's maxLimitWaits.
+func TestACPFailoverGiveUpCap(t *testing.T) {
+	c := presetControl(t)
+	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"code":-32603,"message":"reached your limit","data":{"errorKind":"rate_limit"}}}` + "\n")
+
+	// First limit: the second rung is free — a rotation, not a wait.
+	if _, restart := c.toEditor(errLine); !restart {
+		t.Fatal("first limit should rotate to the free rung")
+	}
+	// All rungs limited now: exactly maxACPLimitWaits silent waits are allowed…
+	for i := 1; i <= maxACPLimitWaits; i++ {
+		c.fromEditor(prompt)
+		if _, restart := c.toEditor(errLine); !restart {
+			t.Fatalf("wait %d/%d should still be a silent wait", i, maxACPLimitWaits)
+		}
+	}
+	// …then the chain is over: the raw error reaches the editor (no restart).
+	c.fromEditor(prompt)
+	out, restart := c.toEditor(errLine)
+	if restart {
+		t.Fatalf("wait %d should give up, not restart again", maxACPLimitWaits+1)
+	}
+	if !strings.Contains(string(out), "reached your limit") {
+		t.Fatalf("the real limit error should be forwarded, got: %s", out)
+	}
+	// The give-up cleared the chain — the next limit starts a fresh cycle (a wait again).
+	c.fromEditor(prompt)
+	if _, restart := c.toEditor(errLine); !restart {
+		t.Fatal("after a give-up, a new limit starts a fresh wait chain")
+	}
+}
+
+// TestACPHeldChunkFlushedOnErrorResponse: an "approaching your limit" advisory chunk is
+// held awaiting the turn's outcome; a NON-limit error response is a terminal outcome too —
+// the notice must flush ahead of it (and the tracking clear), not orphan in the buffer.
+func TestACPHeldChunkFlushedOnErrorResponse(t *testing.T) {
+	c := newTestControl(t)
+	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	c.fromEditor(prompt)
+
+	warn := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"you are approaching your rate limit"}}}}` + "\n")
+	if out, restart := c.toEditor(warn); out != nil || restart {
+		t.Fatalf("the limit advisory should be held, got out=%s restart=%v", out, restart)
+	}
+
+	errResp := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"code":-1,"message":"tool exploded"}}` + "\n")
+	out, restart := c.toEditor(errResp)
+	if restart {
+		t.Fatal("a non-limit error must not rotate")
+	}
+	warnIdx := strings.Index(string(out), "approaching your rate limit")
+	errIdx := strings.Index(string(out), "tool exploded")
+	if warnIdx == -1 || errIdx == -1 || warnIdx > errIdx {
+		t.Fatalf("held advisory should flush ahead of the terminal error, got: %s", out)
+	}
+	if held := c.takeHeld("sess1"); held != nil {
+		t.Fatalf("the buffer must be cleared after the flush, still holds: %s", held)
+	}
+}

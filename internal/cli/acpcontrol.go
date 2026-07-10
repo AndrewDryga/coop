@@ -21,6 +21,13 @@ import (
 // error gave no explicit reset time — long enough to matter, short enough to come back to.
 const defaultLimitCooldown = 5 * time.Minute
 
+// maxACPLimitWaits caps CONSECUTIVE all-limited waits per session — the ACP analog of the
+// loop's maxLimitWaits, sized for an interactive editor: 12 default cooldowns is about an
+// hour of respawn churn with no completed turn, after which the real limit error reaches
+// the editor instead of another silent "waiting…" cycle. A free rotation or a completed
+// turn breaks the chain.
+const maxACPLimitWaits = 12
+
 // acpPresetNames lists the repo's presets whose lead is the current ACP agent — the SAME-provider
 // presets safe to switch into transparently (a different-provider preset would be a provider switch,
 // which coop can't do without losing the conversation; see the backlog).
@@ -78,6 +85,7 @@ type acpControl struct {
 	lastPrompt    map[string][]byte // editor sessionId -> its latest prompt line (what to resend)
 	resend        map[string]bool   // editor sessionId -> re-send the last prompt after the next restart
 	heldChunk     map[string][]byte // editor sessionId -> a buffered rate-limit notice awaiting the turn's outcome
+	waits         map[string]int    // editor sessionId -> CONSECUTIVE all-limited waits (see maxACPLimitWaits)
 
 	serveURLs []string        // published-port lines to show the editor (e.g. "box :5173 → http://localhost:24187")
 	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
@@ -99,6 +107,7 @@ func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, 
 		lastPrompt:    map[string][]byte{},
 		resend:        map[string]bool{},
 		heldChunk:     map[string][]byte{},
+		waits:         map[string]int{},
 		serveURLs:     serveURLs,
 		reported:      map[string]bool{},
 	}
@@ -447,6 +456,7 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 
 	next := c.nextAccount(cred, until, now)
 	if next != "" {
+		c.clearWait(session) // a free rotation breaks the consecutive-wait chain
 		c.mu.Lock()
 		c.sel = "cred:" + next
 		if canResend {
@@ -467,6 +477,12 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	// reset and a captured prompt; otherwise forward the error so the user can wait/retry themselves.
 	acct, at := c.nearestReset()
 	if acct == "" || !canResend {
+		return nil, false
+	}
+	if c.bumpWait(session) > maxACPLimitWaits {
+		// Enough silent respawn churn with no completed turn — hand the user the truth.
+		c.clearWait(session)
+		acpproxy.Trace("acp: %d consecutive all-limited waits — forwarding the limit error", maxACPLimitWaits)
 		return nil, false
 	}
 	c.mu.Lock()
@@ -494,12 +510,23 @@ func (c *acpControl) rotatePreset(session string, canResend bool, until, now tim
 	prev := rot.active()
 	sleep, resetAt := rot.onLimit(until, 0, now)
 	next := rot.active()
-	c.resend[session] = true
 	c.mu.Unlock()
 	if sleep <= 0 {
+		c.clearWait(session) // a free rung breaks the consecutive-wait chain
+		c.mu.Lock()
+		c.resend[session] = true
+		c.mu.Unlock()
 		acpproxy.Trace("preset rate limit on %s: rotating to %s + auto-resending", prev, next)
 		return c.configOptionUpdate(session), true
 	}
+	if c.bumpWait(session) > maxACPLimitWaits {
+		c.clearWait(session)
+		acpproxy.Trace("preset: %d consecutive all-limited waits — forwarding the limit error", maxACPLimitWaits)
+		return nil, false
+	}
+	c.mu.Lock()
+	c.resend[session] = true
+	c.mu.Unlock()
 	acpproxy.Trace("preset: all rungs rate limited — waiting for %s until %s + auto-resending", next, resetAt.Format(time.RFC3339))
 	return append(c.configOptionUpdate(session), c.waitStatus(session, next.credential, resetAt, now)...), true
 }
@@ -609,13 +636,15 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 		// spoke around, so flush it just ahead of the content.
 		return false, c.takeHeld(s)
 	}
-	// A prompt's completion response flushes any held notice for its session. (A rate-limit error is
-	// intercepted by maybeRotate before chunkGate, so it never lands here.) Any OTHER notification
-	// (usage_update, tool calls, …) leaves the buffer intact — see the doc above.
-	if id := responseID(line); id != "" {
+	// A prompt's TERMINAL response — result or error — flushes any held notice for its session. (A
+	// rate-limit error is intercepted by maybeRotate before chunkGate, so an error here is a non-limit
+	// failure; without flushing on it the notice would be orphaned and the tracking would leak.) Any
+	// OTHER notification (usage_update, tool calls, …) leaves the buffer intact — see the doc above.
+	if id := terminalResponseID(line); id != "" {
 		c.mu.Lock()
 		s := c.promptSession[id]
-		delete(c.promptSession, id) // the prompt completed — stop tracking it
+		delete(c.promptSession, id) // the prompt completed (or failed) — stop tracking it
+		delete(c.waits, s)          // a finished turn breaks the consecutive-wait chain
 		c.mu.Unlock()
 		if s != "" {
 			return false, c.takeHeld(s)
@@ -633,8 +662,23 @@ func (c *acpControl) takeHeld(s string) []byte {
 	return held
 }
 
+// bumpWait counts one more consecutive all-limited wait for session and returns the total;
+// clearWait breaks the chain (a free rotation, a completed turn, or the give-up itself).
+func (c *acpControl) bumpWait(s string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.waits[s]++
+	return c.waits[s]
+}
+
+func (c *acpControl) clearWait(s string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.waits, s)
+}
+
 // agentChunk reports whether line is an agent_message_chunk session/update, returning its session id
-// and streamed text. responseID returns the request id of a success response — "" when absent.
+// and streamed text.
 func agentChunk(line []byte) (session, text string, ok bool) {
 	if !bytes.Contains(line, []byte("agent_message_chunk")) {
 		return "", "", false
@@ -657,15 +701,19 @@ func agentChunk(line []byte) (session, text string, ok bool) {
 	return m.Params.SessionID, m.Params.Update.Content.Text, true
 }
 
-func responseID(line []byte) string {
-	if !bytes.Contains(line, []byte(`"result"`)) {
+// terminalResponseID returns the request id of a TERMINAL response — one carrying a result
+// or an error. A request/notification that merely mentions "error" in its params has no
+// top-level error member, so it returns "".
+func terminalResponseID(line []byte) string {
+	if !bytes.Contains(line, []byte(`"result"`)) && !bytes.Contains(line, []byte(`"error"`)) {
 		return ""
 	}
 	var m struct {
 		ID     json.RawMessage `json:"id"`
 		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(line, &m) != nil || len(m.ID) == 0 || len(m.Result) == 0 {
+	if json.Unmarshal(line, &m) != nil || len(m.ID) == 0 || (len(m.Result) == 0 && len(m.Error) == 0) {
 		return ""
 	}
 	return string(m.ID)
