@@ -207,9 +207,10 @@
                         >
                         on your <code>PATH</code> it checks a keyless Sigstore
                         signature; otherwise it falls back to a SHA-256 check
-                        and tells you the signature wasn't verified. Prefer Go?
+                        and tells you the signature wasn't verified. Prefer to
+                        build from source?
                         <code
-                            >go install github.com/AndrewDryga/coop@latest</code
+                            >git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install</code
                         >
                         works too.
                     </div>
@@ -824,6 +825,11 @@ roles:
                         already-answered ones first).
                         <code>coop tasks watch</code> shows the live board — the
                         queue plus any running forks, deduped — while it works.
+                        For an at-a-glance status in your shell prompt or tmux,
+                        <code>coop prompt</code> prints this repo's state on one
+                        line (task counts and fork/loop activity, non-zero
+                        segments only) — read-only and cheap, safe on every
+                        redraw.
                     </p>
                     <div class="why">
                         <span class="why-label">Good fits</span>

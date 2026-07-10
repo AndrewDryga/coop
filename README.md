@@ -73,7 +73,6 @@ auto-detected. `coop` itself is a single static binary with no other dependencie
 <details><summary><b>Other ways to install</b></summary>
 
 ```bash
-go install github.com/AndrewDryga/coop@latest                              # with Go
 git clone https://github.com/AndrewDryga/coop && cd coop && make install   # from source
 ```
 </details>
@@ -438,7 +437,7 @@ run, `coop tasks watch` shows the deduped truth across the parent and its forks.
 One box, three agents. Each reads its config and credentials from
 `~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`, `~/.codex`, and
 `~/.gemini`. That directory lives outside any repo, so credentials never land in git —
-edit those files on the host and they take effect in the box. Only the *active* profile
+edit those files on the host and they take effect in the box. Only the *active* credential
 is mounted, so a running agent sees just the account it's using, not the whole vault.
 
 Each run mounts only the **launched agent's** credentials: `coop claude` mounts
@@ -449,12 +448,12 @@ The exceptions are the modes where the lead is explicitly told to call its peers
 `coop shell`) and maintenance runs (the merge gate, `coop doctor`) mount no agent
 credentials at all. `coop login <agent>` mounts only the agent being signed in.
 
-> **Blast radius.** That profile dir is mounted read-write — the agent must write its
+> **Blast radius.** That credential dir is mounted read-write — the agent must write its
 > session history, and OAuth refresh rewrites the token in place. So a prompt-injected
 > agent can (a) read its own credentials and try to exfiltrate them — set
 > `COOP_EGRESS=none` to cut the box off the network — and (b) write config its CLI
 > auto-loads next launch (e.g. a `settings.json` hook), which then runs in future boxes
-> for that profile. (b) stays *inside* the container — not a host escape — but it's a
+> for that credential. (b) stays *inside* the container — not a host escape — but it's a
 > durable foothold. A fuller fix (copy credentials into an ephemeral in-box location,
 > persist nothing host-side) is planned; for now, `COOP_EGRESS=none` covers the exfil half.
 
@@ -518,15 +517,15 @@ coop loop --preset frontier    # rotates that ladder; coop presets shows every r
 coop loop --model opus@work    # or a one-off single target, no preset
 ```
 
-Which profile a plain interactive `coop claude` uses is a mark you set, not a magic
-name — so you can name them all meaningfully. Profile properties are edited as a path
+Which credential a plain interactive `coop claude` uses is a mark you set, not a magic
+name — so you can name them all meaningfully. Credential properties are edited as a path
 (`coop credentials <agent> <credential> <attribute> [value]`):
 
 ```bash
 coop credentials claude personal default  # `coop claude` now runs on the personal account
 ```
 
-Profiles live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
+Credentials live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
 the repo, and only the active one is mounted into the box — so a running agent sees just
 the account it's using, not your whole vault. Switching accounts loses no work: each loop
 iteration is a fresh run, and the queue plus git carry the progress.
@@ -1223,6 +1222,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_CONSULT_TIMEOUT` | `1800` | per-peer `coop-consult` timeout in seconds; a peer that doesn't answer in time is skipped so the lead synthesizes from whoever did |
 | `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
+| `COOP_NO_UPDATE_CHECK` | (off) | set to opt out of the once-a-day "a newer coop/box is available" check |
 
 **Forks & loop**
 
