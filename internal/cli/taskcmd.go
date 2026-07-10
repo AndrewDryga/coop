@@ -819,6 +819,26 @@ func banner(p ui.Palette, path string) string {
 	return p.Cyan("▸") + " " + p.Bold(path) + " " + rule
 }
 
+// decisionDivider is the header BETWEEN decisions in the interactive browser (`coop tasks
+// decisions -i`). It's a stronger sibling of banner — a cyan ▸ + bold "decision N of M" + the
+// task location, then a cyan rule filling the width — so each decision is clearly bordered off
+// from the previous one as you scroll. Piped/no-color falls back to a plain, stable label the
+// tests match ("decision N of M"). where is the task id, optionally "queue · id" in a monorepo.
+func decisionDivider(p ui.Palette, n, total int, where string) string {
+	label := fmt.Sprintf("decision %d of %d", n, total)
+	if !p.Enabled() {
+		return "── " + label + " · " + where + " ──"
+	}
+	head := "▸ " + label + " · " + where + " "
+	rule := ""
+	if pad := bannerWidth() - len([]rune(head)); pad > 0 {
+		// A HEAVY rule (━, vs the queue banner's light ─) so the interactive divider reads as a
+		// strong border between decisions as you scroll through them.
+		rule = p.Cyan(strings.Repeat("━", pad))
+	}
+	return p.Cyan("▸ ") + p.Bold(label) + p.Dim(" · ") + p.Cyan(where) + " " + rule
+}
+
 // listMarkers renders a task's at-a-glance markers — subtask progress (plain while work remains,
 // gray once every box is checked so a finished count recedes) and a red ⚠ on a blocked task —
 // joined with two spaces, or "" when there are none (a task with no subtasks shows no count). They
@@ -932,7 +952,7 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		if ref.label != "" {
 			where = ref.label + " · " + t.ID // say which queue this decision lives in
 		}
-		fmt.Fprintf(out, "\n%s\n", p.Dim(fmt.Sprintf("── decision %d of %d · %s ──", i+1, len(refs), where)))
+		fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), where))
 		fprintDecisionBody(out, p, readFileString(decPath))
 		if decisionResolved(decPath) {
 			fmt.Fprintln(out, p.Green("✓ answered")+p.Dim(" — type a new answer to change it"))

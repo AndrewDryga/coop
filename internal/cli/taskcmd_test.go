@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestSlugify(t *testing.T) {
@@ -854,5 +856,16 @@ func TestTasksDecisionsRollup(t *testing.T) {
 	// The main user-facing failure path: an unknown flag is a usage error.
 	if code, err := tasksDecisionsAll(repo, rels, []string{"--bogus"}); code != 2 || err == nil {
 		t.Errorf("unknown flag = (%d, %v), want (2, error)", code, err)
+	}
+}
+
+// decisionDivider is the interactive browser's between-decisions border. No-color must keep the
+// stable "decision N of M · where" label (the roll-up/browser tests match on it and a pipe stays
+// plain); the label and location always survive so a redirect is still readable.
+func TestDecisionDividerPlain(t *testing.T) {
+	got := decisionDivider(ui.Palette{}, 2, 7, "runner · 2026-01-02-foo")
+	want := "── decision 2 of 7 · runner · 2026-01-02-foo ──"
+	if got != want {
+		t.Errorf("plain divider = %q, want %q", got, want)
 	}
 }
