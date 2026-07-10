@@ -204,7 +204,7 @@ func TestParseForkCreate(t *testing.T) {
 		wantFresh bool
 		wantErr   bool
 	}{
-		{[]string{"perf"}, "claude", false, false},
+		{[]string{"perf"}, "", false, false}, // no positional agent → "" (forkCreate errors later if no preset)
 		{[]string{"perf", "codex"}, "codex", false, false},
 		{[]string{"perf", "gemini", "--fresh"}, "gemini", true, false},
 		{[]string{}, "", false, true},

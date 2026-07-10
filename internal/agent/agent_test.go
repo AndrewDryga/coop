@@ -46,9 +46,6 @@ func TestRegistry(t *testing.T) {
 	if _, ok := Get("nope"); ok {
 		t.Error("Get(nope) should be absent")
 	}
-	if Default() != "claude" {
-		t.Errorf("Default() = %q, want claude", Default())
-	}
 	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
 	// binary, not npm, so it adds none).
 	if got := Packages(); len(got) != 5 ||

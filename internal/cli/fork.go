@@ -214,7 +214,7 @@ type forkArgs struct {
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
-	fa := forkArgs{agent: agents.Default()}
+	fa := forkArgs{} // no implicit default — provider required (positional or the preset lead)
 	if len(args) == 0 || args[0] == "" {
 		return fa, errors.New("usage: coop fork <name> [claude|codex|gemini] [--loop --tasks <path> [-d]]")
 	}
@@ -403,6 +403,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 			}
 			fa.agent = remembered
 		}
+	}
+	if fa.agent == "" { // provider required — no positional, no preset lead, no remembered agent (a fresh fork)
+		return 2, noProviderErr("fork <name>")
 	}
 	saveForkAgent(ws, fa.agent)
 	if fa.loop {
@@ -830,7 +833,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	agent := agents.Default()
+	agent := ""
 	for _, x := range rest {
 		switch {
 		case agents.Valid(x):
@@ -838,6 +841,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		default:
 			return 2, fmt.Errorf("usage: coop fork %s acp [%s] [--credential <name>] [--model <model>]", name, strings.Join(agents.Names(), "|"))
 		}
+	}
+	if agent == "" {
+		return 2, noProviderErr("fork <name> acp")
 	}
 	if err := a.applyOneOff(agent, model, profile); err != nil {
 		return 2, err

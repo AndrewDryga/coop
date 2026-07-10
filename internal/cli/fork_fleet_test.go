@@ -146,8 +146,8 @@ func TestFleetInit(t *testing.T) {
 }
 
 // .agent/fleet.yaml is the primary fleet format: author order is preserved, per-fork
-// preset/credentials/model/consult parse, agent defaults to the preset's lead (empty
-// here) or the default agent, and every invalid shape errors with the fork named.
+// preset/credentials/model/consult parse, a fork names its agent OR a preset (no implicit
+// default), and every invalid shape errors with the fork named.
 func TestParseFleetYAML(t *testing.T) {
 	got, err := parseFleetYAML(`
 forks:
@@ -161,6 +161,7 @@ forks:
     model: gemini-3.5-flash@work
     consult: false
   plain:
+    agent: claude
     tasks: .agent/tasks.plain
     consult: true
 `)
@@ -209,7 +210,7 @@ func TestLoadFleetRejectsPreV3File(t *testing.T) {
 	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "no longer read") {
 		t.Errorf("pre-v3 file alone: want the migrate-and-delete error, got %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  b: {tasks: t}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  b: {agent: claude, tasks: t}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "no longer read") {

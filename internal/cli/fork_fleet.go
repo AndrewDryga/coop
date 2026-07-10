@@ -104,7 +104,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown agent %q (use %s)", e.name, e.agent, strings.Join(agents.Names(), ", "))
 		}
 		if e.agent == "" && e.preset == "" {
-			e.agent = agents.Default() // no preset to supply a lead — claude, the standing default
+			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q needs an agent: or a preset: (no implicit default)", e.name)
 		}
 		out = append(out, e)
 	}

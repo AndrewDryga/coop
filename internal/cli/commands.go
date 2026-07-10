@@ -496,8 +496,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	tool, toolSet := agents.Default(), false
-	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
+	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
+	consumed := 0              // positional tokens accounted for (the agent, plus a governor under fusion)
 	if len(args) > 0 {
 		tool, toolSet = args[0], true
 		consumed = 1
@@ -1208,7 +1208,7 @@ func promptGateLangs(in io.Reader) []string {
 // loopAgent picks the agent for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
 func loopAgent(args []string) (agent string, explicit bool, err error) {
-	agent = agents.Default()
+	agent = "" // no implicit default — the provider is required (or a preset supplies the lead)
 	for _, x := range args {
 		if !agents.Valid(x) {
 			return "", false, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
@@ -1253,6 +1253,9 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	agent = presetLeadAgent(p, agent, agentSet)
+	if agent == "" { // provider required — no implicit claude default, and no preset supplied a lead
+		return 2, noProviderErr("loop")
+	}
 	a.applyPreset(p, agent)
 	a.applyLoopModel(agent) // COOP_LOOP_MODEL → the fallback tier (below a ladder target's model)
 	queues, err := taskQueues(a.cfg, repo, flags)

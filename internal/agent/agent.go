@@ -116,9 +116,6 @@ type Agent interface {
 	InstallScript() string
 }
 
-// Default is the agent used when a command takes one but none is given.
-func Default() string { return "claude" }
-
 // withModel appends `--model <model>` to cmd — the flag all three CLIs accept, on their
 // main command and their exec/resume forms alike. A no-op when no model is chosen, or when
 // cmd already names one (a COOP_<AGENT>_CMD baking its own --model/-m stays authoritative;

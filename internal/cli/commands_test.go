@@ -292,8 +292,10 @@ func TestWithReviewModel(t *testing.T) {
 }
 
 func TestLoopAgent(t *testing.T) {
-	if got, explicit, err := loopAgent(nil); err != nil || got != "claude" || explicit {
-		t.Errorf("loopAgent(nil) = (%q, explicit=%v, %v), want claude (defaulted)", got, explicit, err)
+	// No positional → no agent, not explicit (provider required; the caller errors or a preset
+	// supplies the lead). The implicit claude default is gone.
+	if got, explicit, err := loopAgent(nil); err != nil || got != "" || explicit {
+		t.Errorf("loopAgent(nil) = (%q, explicit=%v, %v), want (\"\", false, nil) — no implicit default", got, explicit, err)
 	}
 	for _, ag := range []string{"claude", "codex", "gemini"} {
 		if got, explicit, err := loopAgent([]string{ag}); err != nil || got != ag || !explicit {
@@ -320,24 +322,24 @@ func TestParseLoopArgs(t *testing.T) {
 		wantPreflight bool
 		wantErr       bool
 	}{
-		{nil, false, "claude", "", false, false, false, false},
+		{nil, false, "", "", false, false, false, false},
 		{[]string{"codex"}, false, "codex", "", false, false, false, false},
-		{[]string{"--debug-on-fail"}, false, "claude", "", false, true, false, false},
+		{[]string{"--debug-on-fail"}, false, "", "", false, true, false, false},
 		{[]string{"gemini", "--debug"}, false, "", "", false, false, false, true}, // v3: --debug retired → error
 		{[]string{"--debug-on-fail", "codex"}, false, "codex", "", false, true, false, false},
 		{[]string{"bogus"}, false, "", "", false, false, false, true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
-		{[]string{"--preflight"}, false, "claude", "", false, false, true, false},
+		{[]string{"--preflight"}, false, "", "", false, false, true, false},
 		{[]string{"codex", "--preflight"}, false, "codex", "", false, false, true, false},
-		{nil, true, "claude", "", false, false, true, false},                         // COOP_PREFLIGHT=1 default
-		{[]string{"--no-preflight"}, true, "claude", "", false, false, false, false}, // flag overrides default-on
+		{nil, true, "", "", false, false, true, false},                         // COOP_PREFLIGHT=1 default
+		{[]string{"--no-preflight"}, true, "", "", false, false, false, false}, // flag overrides default-on
 		// --model pins the loop's model, space or equals form; a bare --model is an error.
-		{[]string{"--model", "haiku"}, false, "claude", "haiku", false, false, false, false},
+		{[]string{"--model", "haiku"}, false, "", "haiku", false, false, false, false},
 		{[]string{"codex", "--model=gpt-5"}, false, "codex", "gpt-5", false, false, false, false},
-		{[]string{"--model", "haiku", "--debug-on-fail"}, false, "claude", "haiku", false, true, false, false},
+		{[]string{"--model", "haiku", "--debug-on-fail"}, false, "", "haiku", false, true, false, false},
 		{[]string{"--model"}, false, "", "", false, false, false, true},
 		// --consult opts iterations into peer consultation, composing with the other flags.
-		{[]string{"--consult"}, false, "claude", "", true, false, false, false},
+		{[]string{"--consult"}, false, "", "", true, false, false, false},
 		{[]string{"claude", "--model", "claude-fable-5", "--consult"}, false, "claude", "claude-fable-5", true, false, false, false},
 	}
 	for _, c := range cases {
