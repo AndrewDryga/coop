@@ -398,6 +398,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     ><span class="k">coop</span> claude           <span class="t"># Claude — no permission prompts, secrets hidden</span>
 <span class="k">coop</span> codex            <span class="t"># the same box, Codex instead</span>
 <span class="k">coop</span> gemini           <span class="t"># …or Gemini</span>
+<span class="k">coop</span> grok             <span class="t"># …or Grok (xAI)</span>
 <span class="k">coop</span> shell            <span class="t"># just a shell in the box, to look around</span>
 <span class="k">coop</span> run -- npm test  <span class="t"># run one command in the box and exit</span></pre>
                     <div class="why">
@@ -533,9 +534,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </div>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> fusion                 <span class="t"># the default governor leads</span>
-<span class="k">coop</span> fusion claude          <span class="t"># …or pick who leads</span>
-<span class="k">coop</span> claude --consult       <span class="t"># lighter, opt-in: a second opinion on hard calls only</span></pre>
+                    ><span class="k">coop</span> fusion claude --peer codex --peer gemini  <span class="t"># a council: claude governs, peers weigh in</span>
+<span class="k">coop</span> claude --consult codex                    <span class="t"># lighter, opt-in: one peer on hard calls only</span></pre>
                     <figure class="cast-figure">
                         <div class="term">
                             <div class="term-bar">
@@ -569,20 +569,20 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> login claude --credential work       <span class="t"># a second account…</span>
-<span class="k">coop</span> login claude --credential personal   <span class="t"># …and a third</span>
-<span class="k">coop</span> credentials                          <span class="t"># list them + which are signed in</span></pre>
+                    ><span class="k">coop</span> login claude@work       <span class="t"># a second account…</span>
+<span class="k">coop</span> login claude@personal   <span class="t"># …and a third</span>
+<span class="k">coop</span> credentials             <span class="t"># list them + which are signed in</span></pre>
                     <p>
                         There's no pool to configure: a loop rotates whatever
-                        its lead's <a href="#presets">models ladder</a> expands
-                        to. A bare model in that ladder fans out across
-                        <em>every</em>
+                        its lead's <a href="#presets">target ladder</a> expands
+                        to. A bare <code>provider:model</code> rung in that ladder
+                        fans out across <em>every</em>
                         signed-in account (the marked default first), so with no
                         setup a loop already uses all your accounts; a pinned
-                        <code>model@account</code> runs just one. Limits are
-                        tracked per (model, account), so
-                        <code>opus@personal</code> stays usable while
-                        <code>opus@work</code> cools down. Mark which account a
+                        <code>provider:model@account</code> runs just one. Limits
+                        are tracked per (model, account), so
+                        <code>claude:opus@personal</code> stays usable while
+                        <code>claude:opus@work</code> cools down. Mark which account a
                         plain <code>coop &lt;agent&gt;</code> uses with
                         <code
                             >coop credentials &lt;agent&gt; &lt;name&gt;
@@ -601,22 +601,22 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                 <section class="doc-section" id="models">
                     <h2>Pick the model</h2>
                     <p class="section-lead">
-                        The model is its own axis — pick it per run with
-                        <code>--model</code>, or as a standing recipe in a
-                        preset. A credential is just an account; models don't
-                        live on it.
+                        The model is its own axis — pick it per run in the
+                        target (<code>claude:opus</code>), or as a standing
+                        recipe in a preset. A credential is just an account;
+                        models don't live on it.
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> claude --model opus       <span class="t"># one run on the big model</span>
-<span class="k">coop</span> claude --model opus@work  <span class="t"># …pinned to a specific account</span>
-<span class="k">coop</span> loop --preset frontier   <span class="t"># a standing lead model + roles, from a preset</span>
-<span class="k">coop</span> models                    <span class="t"># the model menu per agent</span></pre>
+                    ><span class="k">coop</span> claude:opus            <span class="t"># one run on the big model</span>
+<span class="k">coop</span> claude:opus@work       <span class="t"># …pinned to a specific account</span>
+<span class="k">coop</span> loop --preset frontier  <span class="t"># a standing lead model + roles, from a preset</span>
+<span class="k">coop</span> models                 <span class="t"># the model menu per agent</span></pre>
                     <p>
-                        Precedence is most-specific-first: the
-                        <code>--model</code> flag, then the active
-                        <a href="#presets">ladder</a> entry's model (a loop
-                        stepping through a preset), then
+                        Precedence is most-specific-first: the model in the
+                        <strong>target</strong> (<code>claude:opus</code>), then
+                        the active <a href="#presets">ladder</a> entry's model (a
+                        loop stepping through a preset), then
                         <code>COOP_LOOP_MODEL</code> (loop runs only), then
                         <code>COOP_&lt;AGENT&gt;_MODEL</code>. Coop never
                         validates a model id — whatever the agent's own CLI
@@ -633,8 +633,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         work). A lead on a bigger model spends its tokens on
                         planning and synthesis while each delegated turn bills
                         at the subagent's cheaper model. Add
-                        <code>--consult</code> (or <code>consult: true</code> on
-                        a fleet fork) and the lead can also ask codex and gemini
+                        <code>--consult codex --consult gemini</code> — naming
+                        each peer — and the lead can also ask them
                         read-only — peer engineers with different blind spots,
                         no plugins required. Wrap the whole arrangement in a
                         <a href="#presets">preset</a>.
@@ -651,7 +651,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     <p>
                         The <a href="#fusion">fusion</a> and orchestrator
                         patterns above are wired up by hand — a model here, a
-                        <code>--consult</code> there. A <strong>preset</strong>
+                        <code>--consult codex</code> there. A <strong>preset</strong>
                         captures the whole recipe in
                         <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
                         who leads, on which models, and the named roles it can
@@ -666,12 +666,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> presets               <span class="t"># list every preset (a broken one shows its error)</span>
 <span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
                     <p>
-                        The lead carries a model-first
-                        <code>models:</code> ladder — the same ladder a loop
-                        rotates (a bare model fans across every account;
-                        <code>model@account</code> pins one). Each role sets a
-                        <strong>mode</strong> that decides how the lead reaches
-                        it:
+                        The lead's <code>agent:</code> holds one target or a
+                        fallback ladder of them — the same ladder a loop rotates
+                        (a bare <code>provider:model</code> fans across every
+                        account; <code>provider:model@account</code> pins one).
+                        Each role sets a <strong>mode</strong> that decides how
+                        the lead reaches it:
                     </p>
                     <table class="ref">
                         <tr>
@@ -714,18 +714,16 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         class="code"
                     ><span class="t"># .agent/presets/frontier/preset.yaml</span>
 lead:
-  agent: claude
-  models: [claude-fable-5, claude-opus-4-8@work]
+  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
 roles:
-  thinker:                 <span class="t"># deep thinking, in the lead's session</span>
+  thinker:                        <span class="t"># deep thinking, in the lead's session</span>
     mode: native
-    agent: claude
-    model: claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent from this</span>
+    agent: claude:claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent from this</span>
     prompt: roles/thinker.md
-  critic:                  <span class="t"># read-only cross-vendor review</span>
+  critic:                         <span class="t"># read-only cross-vendor review</span>
     mode: consult
     agent: codex
-  fast:                    <span class="t"># cheap, write-capable mechanical work</span>
+  fast:                           <span class="t"># cheap, write-capable mechanical work</span>
     mode: delegate
     agent: gemini</pre>
                     <div class="why">
@@ -742,9 +740,10 @@ roles:
                             (<code>coop-&lt;role&gt;</code>) in the box from the
                             role's model + prompt, never written to your repo.
                             <code>coop presets init</code> scaffolds the starter
-                            prompt files under <code>roles/</code>; an explicitly
-                            named agent or <code>--model</code> still overrides
-                            the recipe.
+                            prompt files under <code>roles/</code>; an explicit
+                            target on the command line
+                            (<code>claude:opus@work</code>) still overrides the
+                            recipe.
                         </p>
                     </div>
                 </section>
@@ -784,20 +783,23 @@ roles:
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> init             <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
-<span class="k">coop</span> tasks add <span class="s">"…"</span>  <span class="t"># a folder per task under .agent/tasks/</span>
-<span class="k">coop</span> loop             <span class="t"># disposable agents drain the queue, then audit</span>
-<span class="k">coop</span> loop --model claude-fable-5 --consult  <span class="t"># pin its model; let it ask the peers</span></pre>
+                    ><span class="k">coop</span> init                       <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
+<span class="k">coop</span> tasks add <span class="s">"…"</span>              <span class="t"># a folder per task under .agent/tasks/</span>
+<span class="k">coop</span> loop claude                <span class="t"># disposable agents drain the queue, then review</span>
+<span class="k">coop</span> loop claude:claude-fable-5 --consult codex  <span class="t"># pin its model; let it ask a peer</span></pre>
                     <p>
-                        <strong>It checks its own work.</strong> When the list
-                        is empty, coop starts one more agent as an auditor. It
-                        re-reads every task marked done and confirms the git
-                        history actually backs it up — reopening anything that
-                        doesn't. "Done" ends up meaning <em>verified</em>, not
-                        just claimed. Add your own bar in
-                        <code>.agent/audit.md</code> (Markdown) and the auditor
-                        runs those checks too — reopening a task that fails one
-                        (changelog updated, docs regenerated, no stray TODOs).
+                        <strong>It reviews its own work.</strong> When the list
+                        is empty, coop runs a review pass — a senior reviewer's
+                        bar re-reads every task marked done, confirms the git
+                        history backs it up, and reopens anything that falls
+                        short. If a pass reopened work, the loop drains and
+                        reviews again, repeating until a pass reopens nothing — so
+                        "done" ends up meaning <em>verified</em>, not just
+                        claimed. Fully replace the bar in
+                        <code>.agent/loop/review.md</code>, or just add checks in
+                        <code>.agent/loop/audit.md</code> — reopening a task that
+                        fails one (changelog updated, docs regenerated, no stray
+                        TODOs).
                     </p>
                     <p>
                         <strong>It survives the daily cap.</strong> Long runs
@@ -933,14 +935,14 @@ roles:
 <span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>
                     <p>
                         Each fork in <code>.agent/fleet.yaml</code> takes
-                        per-fork keys: <code>credential:</code> pins its account
-                        (give each one a different account so they don't
-                        contend), <code>model:</code> picks its model (may be
-                        <code>model@account</code>), <code>preset:</code> runs
-                        it under an <a href="#presets">orchestration preset</a>,
-                        and <code>consult: true</code> lets its iterations ask
-                        the other signed-in agents for a read-only second
-                        opinion.
+                        per-fork keys: <code>agent:</code> is its
+                        <a href="#models">target</a>
+                        (<code>provider:model@account</code>) — give each fork a
+                        different account so they don't contend —
+                        <code>tasks:</code> points at its slice, and
+                        <code>preset:</code> runs it under an
+                        <a href="#presets">orchestration preset</a> whose lead
+                        ladder the fork's loop rotates.
                     </p>
                     <div class="why">
                         <span class="why-label">Why run a fleet</span>
@@ -1002,7 +1004,7 @@ roles:
     <span class="s">"coop"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]   <span class="t">// or codex / gemini / fusion</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]   <span class="t">// or codex / gemini / grok / fusion</span>
     }
   }
 }</pre>

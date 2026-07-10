@@ -601,8 +601,8 @@ For a *standing* arrangement (a lead model + its roles you don't retype), put it
 The same arrangement runs unattended: `coop loop claude:claude-fable-5 --consult codex --consult gemini`
 makes every iteration orchestrate this way — the pinned subagents ride along in the
 repo, and `--consult` mounts the named peers into each iteration's box (fork loops take it
-too: `coop fork <name> claude --loop --consult codex --consult gemini`, and a fleet fork opts in with
-`consult: true`). Prefer `coop-consult` over vendor cross-agent plugins in the box:
+too: `coop fork <name> claude --loop --consult codex --consult gemini`). Prefer
+`coop-consult` over vendor cross-agent plugins in the box:
 nothing to install, peers stay read-only (one writer per tree), and the credential
 scoping is already handled.
 

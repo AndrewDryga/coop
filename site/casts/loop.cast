@@ -1,4 +1,4 @@
-{"version": 2, "width": 92, "height": 26, "env": {"TERM": "xterm-256color", "SHELL": "/bin/zsh"}, "title": "coop loop \u2014 ship the backlog overnight"}
+{"version": 2, "width": 92, "height": 26, "env": {"TERM": "xterm-256color", "SHELL": "/bin/zsh"}, "title": "coop loop — ship the backlog overnight"}
 [0.0, "o", "\u001b[2m~/code/acme-api\u001b[0m \u001b[92m❯\u001b[0m "]
 [0.392, "o", "c"]
 [0.433, "o", "o"]
@@ -9,6 +9,13 @@
 [0.642, "o", "o"]
 [0.683, "o", "o"]
 [0.725, "o", "p"]
+[0.756, "o", " "]
+[0.787, "o", "c"]
+[0.819, "o", "l"]
+[0.85, "o", "a"]
+[0.881, "o", "u"]
+[0.912, "o", "d"]
+[0.944, "o", "e"]
 [0.975, "o", "\r\n"]
 [2.075, "o", "\u001b[1m\u001b[36mcoop:\u001b[0m starting unattended loop on .agent/tasks with claude — 0/3 done (Ctrl-C to stop)\r\n"]
 [2.075, "o", "\u001b[K\u001b[36m⠋\u001b[0m [\u001b[36m\u001b[0m░░░░░░░░░░░░░░░░░░░░] \u001b[32m0\u001b[0m/3 done · now: Make POST /checkout idempotent \u001b[2m0:00\u001b[0m"]

@@ -53,9 +53,9 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | `coop clone <name>` | `coop fork <name>` |
 | `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`) |
 | `--profile <name>` (login/launch flags) | put the account in the target — `<agent>@<name>` (see the target-grammar section above). `--profile` is no longer a coop flag at all: on an agent launch it forwards to the agent like any other arg (codex has its own `--profile`); elsewhere it's an unknown argument |
-| `coop pool <add\|rm\|clear>` | Retired — there is no persistent pool. A loop rotates the model-first `models:` ladder of its preset's lead (`coop help presets`); a bare model in that ladder fans out across every signed-in account, which is what the pool used to do. A stray `pools.json` is ignored. |
+| `coop pool <add\|rm\|clear>` | Retired — there is no persistent pool. A loop rotates its preset lead's `agent:` target ladder (`coop help presets`); a bare `provider:model` rung in that ladder fans out across every signed-in account, which is what the pool used to do. A stray `pools.json` is ignored. |
 | `coop profiles <default\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|rm>` (a path) |
-| `coop profiles <name> model <m>` / a credential's model mark | Retired — a credential is just an account; the model is a separate axis. Set it inline in the target (`<agent>:<m>`) or in a preset's `models:` ladder (`coop help presets`). Both spellings of `coop credentials <cred> model` tombstone. |
+| `coop profiles <name> model <m>` / a credential's model mark | Retired — a credential is just an account; the model is a separate axis. Set it inline in the target (`<agent>:<m>`) or in a preset lead's `agent:` target ladder (`coop help presets`). Both spellings of `coop credentials <cred> model` tombstone. |
 | `coop status` | `coop tasks watch` (the queue + any active forks) / `coop fleet watch` (the per-fork board) |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |

@@ -6,7 +6,7 @@
         <title>coop — run agent loops in a box they can't escape</title>
         <meta
             name="description"
-            content="Run agent loops on your real repos — in a disposable box they can't escape, with your secrets shadowed, draining your task queue all night. One binary drives Claude, Codex, and Gemini."
+            content="Run agent loops on your real repos — in a disposable box they can't escape, with your secrets shadowed, draining your task queue all night. One binary drives Claude, Codex, Gemini, and Grok."
         />
         <link rel="canonical" href="https://coop.dryga.com/" />
         <meta name="theme-color" content="#0e1014" />
@@ -47,7 +47,7 @@
                 "name": "coop",
                 "applicationCategory": "DeveloperApplication",
                 "operatingSystem": "macOS, Linux",
-                "description": "Run agent loops on your real repos — in a disposable box they can't escape, with your secrets shadowed, draining your task queue all night. One binary drives Claude, Codex, and Gemini.",
+                "description": "Run agent loops on your real repos — in a disposable box they can't escape, with your secrets shadowed, draining your task queue all night. One binary drives Claude, Codex, Gemini, and Grok.",
                 "url": "https://coop.dryga.com/",
                 "downloadUrl": "https://github.com/AndrewDryga/coop",
                 "license": "https://github.com/AndrewDryga/coop/blob/main/LICENSE",
@@ -102,7 +102,8 @@
                             and nobody watching — exactly when you don't want
                             them loose on your laptop. Point coop's loop at your
                             task queue and it works the night through, rides
-                            through rate limits, and audits its own work — all
+                            through rate limits, and reviews its own work to a
+                            demanding bar — all
                             inside a disposable container that mounts only your
                             repo, shadows its secrets, and can't reach your home
                             dir, keys, or other projects. The cage is what lets
@@ -188,8 +189,8 @@
                             <p>
                                 A fresh agent per iteration drains the
                                 <code>.agent/tasks/</code> queue, rides through rate
-                                limits with credential failover, and audits its own
-                                work when the queue empties.
+                                limits with credential failover, and reviews its own
+                                work to a demanding bar each iteration.
                             </p>
                         </div>
                     </div>
@@ -234,8 +235,11 @@
                                 </li>
                                 <li>
                                     When the queue empties, a fresh
-                                    <b>auditor</b> re-checks every
-                                    shipped task against the git log.
+                                    <b>reviewer</b> holds every shipped
+                                    task to a senior reviewer's bar —
+                                    reopening anything short of done,
+                                    then draining and reviewing again
+                                    until the review is clean.
                                 </li>
                             </ul>
                         </div>
@@ -370,12 +374,12 @@
                                     model working alone.
                                 </li>
                                 <li>
-                                    Or add <code>--consult</code> to any run for
+                                    Or add <code>--consult codex</code> (repeatable) to any run for
                                     a lighter, opt-in second opinion.
                                 </li>
                                 <li>
                                     Capture the whole arrangement — lead, roles,
-                                    and models — as a reusable
+                                    and their targets — as a reusable
                                     <a href="docs.html#presets">preset</a>.
                                 </li>
                             </ul>
@@ -385,7 +389,7 @@
                                 <span class="dot r"></span
                                 ><span class="dot y"></span
                                 ><span class="dot g"></span
-                                ><span class="title">coop fusion claude</span>
+                                ><span class="title">coop fusion claude --peer codex --peer gemini</span>
                             </div>
                             <div class="term-body">
                                 <div
@@ -410,8 +414,8 @@
                             </p>
                             <ul>
                                 <li>
-                                    The lead's <b>models ladder</b> fans across
-                                    your accounts and falls back model → model on
+                                    The lead's <b>target ladder</b> fans across
+                                    your accounts and falls back rung → rung on
                                     a rate limit.
                                 </li>
                                 <li>
@@ -441,19 +445,17 @@
                                 <pre
                                     class="term-code"
                                 >lead:
-  agent: claude
-  models: [claude-fable-5, claude-opus-4-8@work]
+  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
 roles:
   thinker:                 <span class="t"># deep thinking, in-session</span>
     mode: native
-    agent: claude
-    model: claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent</span>
+    agent: claude:claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent</span>
   critic:                  <span class="t"># read-only, another vendor</span>
     mode: consult
-    agent: codex
+    agent: codex:gpt-5.5
   fast:                    <span class="t"># cheap, write-capable</span>
     mode: delegate
-    agent: gemini</pre>
+    agent: gemini:gemini-3.5-flash</pre>
                             </div>
                         </div>
                     </div>
@@ -510,7 +512,7 @@ roles:
   "agent_servers": {
     "coop": {
       "command": "coop",
-      "args": ["acp", "claude"]  <span class="t">// or codex / gemini / fusion</span>
+      "args": ["acp", "claude"]  <span class="t">// or codex / gemini / grok / fusion</span>
     }
   }
 }</pre>
