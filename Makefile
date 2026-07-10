@@ -36,6 +36,9 @@ docs: ## Regenerate docs/cli.md + site/llms.txt from internal/cli (help.go is th
 docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)
 	@go run ./tools/gendocs -check
 
+align: ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
+	@python3 tools/align-comments.py --check
+
 casts: build ## Regenerate the site terminal casts (refuses a dirty/untagged ./coop; needs python3)
 	@python3 tools/gen_casts.py
 
