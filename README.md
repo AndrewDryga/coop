@@ -121,7 +121,7 @@ coop tasks add "Add a /health endpoint"
 coop tasks add "Backfill tests for the parser"
 coop tasks add "Document the config file"
 
-coop loop                  # 6. disposable agents work the queue until done, then review
+coop loop claude           # 6. disposable agents work the queue until done, then review
 ```
 
 Prefer to steer an agent yourself? Skip the queue and go interactive:
@@ -130,7 +130,7 @@ Prefer to steer an agent yourself? Skip the queue and go interactive:
 coop claude           # sandboxed Claude — no permission prompts, secrets shadowed
 coop codex            # same box, Codex instead
 coop gemini           # ...or Gemini
-coop fusion           # a council: one model leads, the other two advise, then it synthesizes
+coop fusion claude --peer codex --peer gemini   # a council: claude leads, named peers advise, then it synthesizes
 coop shell            # a shell in the box, to look around
 coop run -- npm test  # run any command in the box
 ```
@@ -162,18 +162,18 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop claude` · `codex` · `gemini` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
-| `coop fusion [agent]` | a [governed council](#fusion-a-governed-council): that agent leads, the other two advise |
-| `coop acp [agent\|fusion] [--credential <name>] [--model <model>] [--consult]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry credential/model, `--consult` lets it ask the peers read-only |
-| `coop <agent> --consult` | [opt-in second opinion](#second-opinions---consult) — may ask authed peers on hard calls |
-| `coop <agent> --model <model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
+| `coop fusion <gov> --peer <agent>…` | a [governed council](#fusion-a-governed-council): the governor leads, the named peers advise |
+| `coop acp <agent>[:model][@account]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/account in the target; name each peer with `--consult <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <gov> --peer <agent>…` |
+| `coop <agent> --consult <peer>…` | [opt-in second opinion](#second-opinions---consult) — name each peer with `--consult <agent>` (repeatable); may ask those peers on hard calls |
+| `coop <agent>:<model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
 
 **Credentials, models & presets** ([details](#agents--config))
 
 | Command | What it does |
 |---|---|
-| `coop login <agent> [--credential <name>]` | [authenticate](#authentication) an agent (token persists in the config dir); `--credential` adds a second account |
+| `coop login <agent>[@<name>]` | [authenticate](#authentication) an agent (token persists in the config dir); `@<name>` adds a second account |
 | `coop credentials [agent [credential]]` | list stored credentials + which are signed in; a path grammar edits one (e.g. `coop credentials claude work default` · `… rm`) |
-| `coop models [agent]` | the model menu per agent ([picking models](#picking-models)) — set a model with `--model` or a [preset](#presets-the-whole-arrangement-in-one-yaml-file) |
+| `coop models [agent]` | the model menu per agent ([picking models](#picking-models)) — set one in the target (`<agent>:<model>`) or a [preset](#presets-the-whole-arrangement-in-one-yaml-file) |
 | `coop presets [name]` | list [orchestration presets](#presets-the-whole-arrangement-in-one-yaml-file) (lead + roles) or show one; `coop presets init` scaffolds the frontier recipe |
 
 **The box**
@@ -201,7 +201,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop loop [agent] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then review (`claude` default; `codex`/`gemini` too); `--tasks` picks the queue (default `.agent/tasks`, repeatable); `--model`/`--preset` set the [rotation](#picking-models); `--consult` lets iterations ask the [peers](#the-orchestrator-pattern) read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+| `coop loop [<agent>[:model][@account]] [--tasks <path>] [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then review (name the agent — `claude`/`codex`/`gemini` — or let a `--preset`'s lead supply it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / `--preset` set the [rotation](#picking-models); name each peer with `--consult <agent>` (repeatable) so iterations may ask them read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 | `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
@@ -443,8 +443,9 @@ is mounted, so a running agent sees just the account it's using, not the whole v
 Each run mounts only the **launched agent's** credentials: `coop claude` mounts
 `~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
 The exceptions are the modes where the lead is explicitly told to call its peers —
-`coop fusion` and `coop <agent> --consult` (and forks) — which also mount the
-*authenticated* peers so they can be consulted read-only. Raw runs (`coop run`,
+`coop fusion <gov> --peer …` and `coop <agent> --consult <peer>…` (and forks) — which
+also mount the **named** peers so they can be consulted read-only (only those you
+name, never everyone signed in). Raw runs (`coop run`,
 `coop shell`) and maintenance runs (the merge gate, `coop doctor`) mount no agent
 credentials at all. `coop login <agent>` mounts only the agent being signed in.
 
@@ -489,9 +490,9 @@ its own rate-limit pool — so a long unattended run can ride through a subscrip
 instead of parking on it (`coop profiles` was the pre-v3 name for the same thing):
 
 ```bash
-coop login claude --credential work       # a second account…
-coop login claude --credential personal   # …and a third
-coop credentials                          # list them and which are signed in
+coop login claude@work        # a second account…
+coop login claude@personal    # …and a third
+coop credentials              # list them and which are signed in
 ```
 
 When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to the
@@ -514,7 +515,7 @@ lead:
 
 ```bash
 coop loop --preset frontier    # rotates that ladder; coop presets shows every recipe
-coop loop --model opus@work    # or a one-off single target, no preset
+coop loop claude:opus@work     # or a one-off single target, no preset
 ```
 
 Which credential a plain interactive `coop claude` uses is a mark you set, not a magic
@@ -532,25 +533,25 @@ iteration is a fresh run, and the queue plus git carry the progress.
 
 ### Picking models
 
-Every launch takes `--model` — pick the model per run, on any path:
+Every launch names its model in the target (`<agent>:<model>`) — pick the model per run, on any path:
 
 ```bash
-coop claude --model opus               # one big-model interactive session
-coop fusion claude --model fable       # the governor's model (peers keep their own)
-coop loop --model haiku                # a cheap overnight grind
-coop fork risky claude --model opus    # a careful fork on the big model
-coop acp claude --model sonnet         # pin an editor entry's model
+coop claude:opus                              # one big-model interactive session
+coop fusion claude:fable --peer codex --peer gemini   # the governor's model (peers keep their own)
+coop loop claude:haiku                        # a cheap overnight grind
+coop fork risky claude:opus                   # a careful fork on the big model
+coop acp claude:sonnet                        # pin an editor entry's model
 ```
 
 For a *standing* model you don't retype, put it in a
 [preset](#presets-the-whole-arrangement-in-one-yaml-file): the lead's `models:` ladder is
 the model (and, on a loop, the rotation across your accounts), and each role names its own.
-Pick the model with `--model` or a preset — a credential is just an account (which
+Pick the model in the target (`<agent>:<model>`) or a preset — a credential is just an account (which
 subscription); the model is a separate axis:
 
 ```bash
 coop models                        # the model menu per agent
-coop claude --model opus           # one run on the big model
+coop claude:opus                   # one run on the big model
 coop claude --preset frontier      # a standing lead model + roles, from the preset
 ```
 
@@ -559,7 +560,7 @@ agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so
 runs can grind on a cheaper model than your interactive sessions (and `COOP_REVIEW_MODEL`
 flips that for the loop's [review pass](#run-it-unattended): a stronger model reviews the
 cheaper loop's work). In a fleet, give a fork
-its own with `model:` in `.agent/fleet.yaml`. Precedence, most specific first: `--model` ›
+its own with `model:` in `.agent/fleet.yaml`. Precedence, most specific first: the target's `:model` ›
 the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AGENT>_MODEL` › a
 model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
@@ -578,7 +579,7 @@ decomposes, and synthesizes, while pinned subagents execute and cross-vendor pee
 independent opinions. Everything below composes from pieces coop already has — no plugins.
 
 ```bash
-coop claude --consult --model claude-fable-5   # run it; --consult mounts the peers
+coop claude:claude-fable-5 --consult codex --consult gemini   # run it; --consult mounts the named peers
 ```
 
 For a *standing* arrangement (a lead model + its roles you don't retype), put it in a
@@ -589,25 +590,25 @@ For a *standing* arrangement (a lead model + its roles you don't retype), put it
   (pinned to Sonnet: boilerplate, tests, mechanical edits). They're native Claude Code
   subagents: the lead auto-delegates on their descriptions, each turn bills at *its*
   model, and the lead's context stays lean. Commit them; edit them freely.
-- **Peer engineers, not reviewers** — with `--consult` (or fusion), the lead can ask
-  codex and gemini read-only via `coop-consult <peer>`: different training, different
+- **Peer engineers, not reviewers** — with `--consult <peer>…` (or fusion), the lead can ask
+  the named peers (e.g. codex, gemini) read-only via `coop-consult <peer>`: different training, different
   blind spots. **The `--consult` flag matters** — a plain `coop claude` deliberately
   doesn't mount peer credentials, so peers only answer in a consult/fusion box.
 - **High-stakes calls** — task deep-reasoner *and* a peer on the same problem in
   parallel, without showing either the other's answer, then synthesize. (This is the
   move coop's fusion directive already teaches its governor.)
 
-The same arrangement runs unattended: `coop loop --model claude-fable-5 --consult`
+The same arrangement runs unattended: `coop loop claude:claude-fable-5 --consult codex --consult gemini`
 makes every iteration orchestrate this way — the pinned subagents ride along in the
-repo, and `--consult` mounts the peers into each iteration's box (fork loops take it
-too: `coop fork <name> claude --loop --consult`, and a fleet fork opts in with
+repo, and `--consult` mounts the named peers into each iteration's box (fork loops take it
+too: `coop fork <name> claude --loop --consult codex --consult gemini`, and a fleet fork opts in with
 `consult: true`). Prefer `coop-consult` over vendor cross-agent plugins in the box:
 nothing to install, peers stay read-only (one writer per tree), and the credential
 scoping is already handled.
 
 ### Presets: the whole arrangement in one YAML file
 
-The orchestrator pattern above is assembled by hand — a `--model` here, a `--consult`
+The orchestrator pattern above is assembled by hand — a `:model` here, a `--consult <peer>`
 there. A **preset** declares the whole arrangement once, as a runtime recipe under
 `.agent/presets/<name>/`: who leads, and which **roles** it routes work to. Three role
 modes cover the spectrum: `native` (a Claude subagent inside the lead's session),
@@ -647,7 +648,7 @@ roles:
 ```
 
 Run anything under it — the preset's lead is the default agent, and an explicit
-agent/`--model`/`--credential` still wins:
+target (`<agent>[:model][@account]`) still wins:
 
 ```bash
 coop presets init                # scaffold the recipe + starter prompt files, ready to edit
@@ -715,7 +716,7 @@ first use, and the server runs `--headless --no-sandbox` (the box is already the
 
 ## Fusion: a governed council
 
-One model leads (the *governor*) and does the real work; the other two advise
+One model leads (the *governor*) and does the real work; the peers you name with `--peer` advise
 read-only; the leader synthesizes the best of all three. A council that argues
 before it commits beats any of its members working alone — the synthesized answer
 outperforms even the single strongest model on its own, Fable 5 included. You stop
@@ -723,9 +724,9 @@ betting the run on one model's blind spots. It's a mode like any other agent —
 interactive, headless, or in Zed:
 
 ```bash
-coop fusion                    # the default governor leads (COOP_FUSION_GOVERNOR); the others advise
-coop fusion claude             # claude leads instead
-coop fusion claude -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
+coop fusion codex --peer claude --peer gemini    # codex governs (the COOP_FUSION_GOVERNOR default); named peers advise
+coop fusion claude --peer codex --peer gemini    # claude governs instead
+coop fusion claude --peer codex --peer gemini -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
 ```
 
 No extra service or protocol behind it: the leader is just that agent running
@@ -759,23 +760,24 @@ trivial steps.
 
 ```json
 "agent_servers": {
-  "coop fusion (codex)":  { "command": "coop", "args": ["acp", "fusion", "codex"] },
-  "coop fusion (claude)": { "command": "coop", "args": ["acp", "fusion", "claude"] },
-  "coop fusion (gemini)": { "command": "coop", "args": ["acp", "fusion", "gemini"] }
+  "coop fusion (codex)":  { "command": "coop", "args": ["acp", "fusion", "codex", "--peer", "claude", "--peer", "gemini"] },
+  "coop fusion (claude)": { "command": "coop", "args": ["acp", "fusion", "claude", "--peer", "codex", "--peer", "gemini"] },
+  "coop fusion (gemini)": { "command": "coop", "args": ["acp", "fusion", "gemini", "--peer", "claude", "--peer", "codex"] }
 }
 ```
 
 ### Second opinions (`--consult`)
 
-Outside fusion, add `--consult` to a normal run — `coop claude --consult` (or
-`codex`/`gemini`; in Zed, `coop acp claude --consult`) — for a lighter version of the
-same idea: on a genuinely hard or risky call the agent may consult its peers
-read-only and in parallel (through the same `coop-consult` wrapper) to catch blind
-spots, then decide. It's off by default and, unlike fusion, optional — no synthesis
-mandate, not for routine work; it defaults to `--fresh` so each hard call gets an
-independent second opinion. It only names peers that are authenticated: if no other
-agent is logged in, nothing is injected. And it's scoped to the agent you launched,
-so peers it spawns never recurse.
+Outside fusion, name peers with `--consult <agent>` (repeatable) on a normal run —
+`coop claude --consult codex --consult gemini` (or a `codex`/`gemini` lead; in Zed,
+`coop acp claude --consult codex`) — for a lighter version of the same idea: on a
+genuinely hard or risky call the agent may consult those peers read-only and in
+parallel (through the same `coop-consult` wrapper) to catch blind spots, then decide.
+It's off by default and, unlike fusion, optional — no synthesis mandate, not for
+routine work; it defaults to `--fresh` so each hard call gets an independent second
+opinion. Only the peers you name are consulted — there's no implicit "consult
+everyone signed in", and only a named peer's credentials mount (read-only). And it's
+scoped to the agent you launched, so peers it spawns never recurse.
 
 ## Drive it from Zed (ACP)
 
@@ -805,7 +807,7 @@ coop login claude    # or codex / gemini
     "coop": {
       "type": "custom",
       "command": "coop",           // absolute path if Zed's PATH lacks ~/.local/bin
-      "args": ["acp", "claude"],   // or "codex" / "gemini" / "fusion"
+      "args": ["acp", "claude"],   // or "codex" / "gemini"; pin with "claude:opus-4.8@work" (fusion: see above)
       "env": {}
     }
   }
@@ -833,7 +835,7 @@ coop's proxy sits between the editor and the box and owns the session:
   same-provider [presets](#presets-the-whole-arrangement-in-one-yaml-file). Switching
   restarts the box on the new identity and replays the session — the conversation
   survives, because ACP transcripts live on a shared, credential-independent store. The
-  model dropdown defaults to coop's `--model`/config (still switchable in-editor); the
+  model dropdown defaults to the target's `:model`/config (still switchable in-editor); the
   permission-mode dropdown is gone (always yolo).
 - **Rate limits are handled for you.** When a turn hits the provider's limit, coop
   swallows the error, rotates to your next signed-in account, re-sends your prompt, and
@@ -875,16 +877,16 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 ```bash
 coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 coop tasks add "..."      # add a task (a folder under .agent/tasks/00_todo/)
-coop loop                 # disposable agents work the queue until it's done, then review
-coop loop codex           # …or pick the model: claude (default), codex, or gemini
+coop loop claude          # disposable agents work the queue until it's done, then review
+coop loop codex           # …or name the agent: claude, codex, or gemini (or a --preset's lead)
 ```
 
 A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
 in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix sorts
 `ls` in lifecycle order; `coop tasks` shows the clean names). `loop` starts a fresh agent
 per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
-in `10_in_progress/`), and won't quit while either has work. Pass `claude`/`codex`/`gemini`
-to choose the model (default `claude`); `COOP_LOOP_CMD` still overrides the whole iteration
+in `10_in_progress/`), and won't quit while either has work. Name the agent
+(`claude`/`codex`/`gemini`, or let a `--preset`'s lead supply it); `COOP_LOOP_CMD` still overrides the whole iteration
 command if you need something custom. When the queue empties, a fresh, **demanding review**
 pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
