@@ -701,9 +701,10 @@ func TestRunDecisionBrowser(t *testing.T) {
 	}
 }
 
-// runDecisionBrowser: :d marks the current task done (99_done/) — a reason is optional since done is
-// terminal. `:d <reason>` records the reason into decision.md first; a bare `:d` just moves it.
-func TestRunDecisionBrowserMarkDone(t *testing.T) {
+// runDecisionBrowser: :d deletes (drops) the current decision's task after a y confirm read from
+// the browser's own scanner — an unrecoverable folder removal, not a "done" move. Deleting both
+// decisions empties the queue and finishes; the removed folders are gone from disk.
+func TestRunDecisionBrowserDelete(t *testing.T) {
 	root := t.TempDir()
 	for _, title := range []string{"alpha", "beta"} {
 		if code, err := tasksFolderAdd(root, []string{title}, stateTodo, "tasks add"); code != 0 || err != nil {
@@ -724,19 +725,49 @@ func TestRunDecisionBrowserMarkDone(t *testing.T) {
 	if len(decisions) != 2 {
 		t.Fatalf("want 2 blocked decisions, got %d", len(decisions))
 	}
-	in := strings.NewReader(":d already published\n:d\n") // first: reason recorded; second: bare :d
+	in := strings.NewReader(":d\ny\n:d\ny\n") // delete both, each behind a y confirm
 	var out bytes.Buffer
 	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
 		t.Fatalf("browser: code=%d err=%v", code, err)
 	}
 	for _, d := range decisions {
-		if got, err := findTask(root, d.ID); err != nil || got.State != stateDone {
-			t.Errorf(":d should move %s to done, got %v (err %v)", d.ID, got.State, err)
+		if got, err := findTask(root, d.ID); err == nil {
+			t.Errorf(":d should DELETE %s, but it still exists as %s", d.ID, got.State)
+		}
+		if _, err := os.Stat(d.Dir); !os.IsNotExist(err) {
+			t.Errorf(":d should remove %s from disk (stat err=%v)", d.Dir, err)
 		}
 	}
-	first, _ := findTask(root, decisions[0].ID)
-	if dec := readFileString(filepath.Join(first.Dir, "decision.md")); !strings.Contains(dec, "**Resolution:** already published") {
-		t.Errorf(":d <reason> should record the reason first:\n%s", dec)
+	if !strings.Contains(out.String(), "this can't be undone") {
+		t.Errorf("delete confirm should warn it can't be undone:\n%s", out.String())
+	}
+}
+
+// runDecisionBrowser: a declined :d confirm (a bare Enter defaults to No) is a safe no-op — the
+// task stays blocked on disk and the browser stays on it.
+func TestRunDecisionBrowserDeleteDeclined(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"alpha"}, stateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	it := readTaskTree(root)[0]
+	if code, err := tasksFolderBlock(root, []string{it.ID}); code != 0 || err != nil {
+		t.Fatalf("block: code=%d err=%v", code, err)
+	}
+	var decisions []taskItem
+	for _, d := range readTaskTree(root) {
+		if d.State == stateBlocked {
+			decisions = append(decisions, d)
+		}
+	}
+	in := strings.NewReader(":d\n\n:q\n") // :d, then a bare Enter declines (default No), then quit
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
+		t.Fatalf("browser: code=%d err=%v", code, err)
+	}
+	got, err := findTask(root, decisions[0].ID)
+	if err != nil || got.State != stateBlocked {
+		t.Fatalf("declined :d should leave the task blocked, got %v (err %v)", got.State, err)
 	}
 }
 

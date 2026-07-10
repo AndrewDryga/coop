@@ -940,7 +940,7 @@ func decisionsInteractive(root string, decisions []taskItem) (int, error) {
 func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
 	p := ui.For(os.Stdout)
 	sc := bufio.NewScanner(in)
-	answered, doneCount := 0, 0
+	answered, deleted := 0, 0
 	for i := 0; i >= 0; {
 		ref := refs[i]
 		t, err := findTask(ref.root, ref.id)
@@ -959,26 +959,31 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		}
 		key := func(k string) string { return p.Cyan(k) }
 		fmt.Fprintf(out, "%s%s%s%s%s%s%s%s%s%s%s",
-			p.Dim("answer ("), key("Enter"), p.Dim("=skip · "), key(":d"), p.Dim(" done · "),
+			p.Dim("answer ("), key("Enter"), p.Dim("=skip · "), key(":d"), p.Dim(" delete · "),
 			key(":n"), p.Dim(" next · "), key(":p"), p.Dim(" prev · "), key(":q"), p.Dim(" quit): "))
 		if !sc.Scan() {
 			break // EOF / ^D ends the session
 		}
 		line := strings.TrimSpace(sc.Text())
-		// :d [reason] marks the current task done — done is terminal, so a reason is optional. Record
-		// the reason into decision.md first (if given), then move the folder to 99_done/.
-		if line == ":d" || strings.HasPrefix(line, ":d ") {
-			if reason := strings.TrimSpace(strings.TrimPrefix(line, ":d")); reason != "" {
-				if err := recordResolution(decPath, reason); err != nil {
-					return -1, err
-				}
+		// :d deletes (drops) the current decision's task — an unrecoverable folder removal, so confirm
+		// inline first, reading the y/N from the browser's own scanner (default No, so a stray Enter
+		// cancels). A declined confirm is a safe no-op that stays on the current decision. Deleting
+		// the folder also drops its ref, so :p/:n never revisit a gone task.
+		if line == ":d" {
+			fmt.Fprintf(out, "%s %s? this can't be undone [y/N]: ", p.Red("delete"), p.Bold(t.ID))
+			if !sc.Scan() {
+				break // EOF at the confirm ends the session — nothing deleted
 			}
-			if err := moveTaskDir(ref.root, t, stateDone); err != nil {
+			if ans := strings.ToLower(strings.TrimSpace(sc.Text())); ans != "y" && ans != "yes" {
+				continue // declined: stay on the current decision
+			}
+			if err := os.RemoveAll(t.Dir); err != nil {
 				return -1, err
 			}
-			doneCount++
-			if i++; i >= len(refs) {
-				i = -1
+			deleted++
+			refs = append(refs[:i], refs[i+1:]...) // drop the gone ref; index i now points at the next
+			if i >= len(refs) {
+				i = -1 // deleted the last decision → done
 			}
 			continue
 		}
@@ -1011,12 +1016,12 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		}
 	}
 	switch {
-	case answered > 0 && doneCount > 0:
-		ui.OK("answered %s (back in todo) · marked %s done", ui.Count(answered, "decision"), ui.Count(doneCount, "task"))
+	case answered > 0 && deleted > 0:
+		ui.OK("answered %s (back in todo) · deleted %s", ui.Count(answered, "decision"), ui.Count(deleted, "task"))
 	case answered > 0:
 		ui.OK("answered %s — back in todo (claim to start)", ui.Count(answered, "decision"))
-	case doneCount > 0:
-		ui.OK("marked %s done", ui.Count(doneCount, "task"))
+	case deleted > 0:
+		ui.OK("deleted %s", ui.Count(deleted, "task"))
 	default:
 		ui.Note("no decisions answered — all still blocked")
 	}

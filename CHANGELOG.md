@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`:d` in `coop tasks decisions -i` now DELETES the current decision's task, not marks it done.**
+  `:d` read as delete/drop, so v3's "mark done" mnemonic was backwards; the mark-done shortcut is
+  dropped entirely (no replacement key). A decision is now closed by *answering* it (records the
+  resolution, unblocks to todo) or by `:d` deleting it. Delete is unrecoverable, so it confirms
+  inline first (`delete <id>? [y/N]`, default No — a stray Enter cancels), reading the y/N from the
+  browser's own input so a declined confirm is a safe no-op that stays on the decision. The closing
+  summary counts answered/deleted (the done count is gone).
+
 - **`coop fork --loop` is monorepo-aware by default.** With no `--tasks`, a fork now seeds
   *every* queue coop knows about — the repo's own `.agent/tasks` plus each `.agent/project.yaml`
   subproject's queue, each at its own relative path — so a monorepo fork carries all its
@@ -198,7 +206,8 @@ aliases — every retired spelling exits with the exact rewrite to run instead �
 - **Quality of life:** `coop prompt` prints a one-line repo status for your shell prompt or
   tmux (non-zero segments only, read-only and cheap); `coop completion bash|zsh` ships shell
   completions; `coop tasks add` fills a task inline (`--context/--acceptance/--approach/
-  --subtask`); `:d` in `coop tasks decisions -i` marks a task done; a new `/review-board`
+  --subtask`); `:d` in `coop tasks decisions -i` deletes the current decision's task (see
+  Unreleased); a new `/review-board`
   skill convenes the heavyweight pre-merge review; `coop init` scaffolds the orchestrator
   pattern and guidance; filesystem-only commands no longer demand a container runtime; a
   fresh fork's `coop fork ls`/`review` no longer shows inherited state as fork activity.
