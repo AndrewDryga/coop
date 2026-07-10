@@ -246,20 +246,20 @@ func (c *acpControl) waitForPresetRung(ctx context.Context) {
 // until is zero or already past. Shared by the credential and preset wait-for-reset paths, so a respawn
 // pointed at a still-cooling target only starts once it's usable.
 func sleepUntilReset(ctx context.Context, until time.Time, label string) {
-	d := time.Until(until)
+	now := time.Now()
+	d := until.Sub(now)
 	if d <= 0 {
 		return
 	}
-	if d > limitMaxWait {
-		d = limitMaxWait
+	deadline := until
+	if d > limitMaxWait { // bound a far-future reset so a bad value can't strand the respawn
+		deadline, d = now.Add(limitMaxWait), limitMaxWait
 	}
 	acpproxy.Trace("waiting %s for %s to reset before spawning", d.Round(time.Second), label)
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-	case <-ctx.Done():
-	}
+	// Re-check against the wall clock on short ticks (shared with the loop's sleepForLimit): a
+	// laptop suspend freezes the monotonic clock, so a single long timer would resume on wake still
+	// counting the closed time and over-wait past the reset.
+	waitUntilWall(deadline, limitTickCap, time.Now, ctx.Done(), nil)
 }
 
 // toEditor rewrites an agent→editor line. On any object carrying configOptions/modes (a

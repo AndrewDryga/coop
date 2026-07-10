@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A rate-limit wait no longer over-waits across a laptop suspend.** The loop's `sleepForLimit`
+  and the ACP respawn's `sleepUntilReset` built their countdown on Go's monotonic clock, which
+  *freezes* while a macOS lid is closed — so a "waiting Nh until `<reset>`" pause counted only
+  *awake* time and kept waiting past the real reset by roughly the closed duration. Both now anchor
+  to a WALL-clock deadline (monotonic reading stripped) and re-check it on short (≤1m) ticks, so
+  reopening the laptop past the reset ends the wait within a tick; the unknown-reset path still
+  backs off by duration, and Ctrl-C / ctx-cancel still bail promptly.
+
 - **`:d` in `coop tasks decisions -i` now DELETES the current decision's task, not marks it done.**
   `:d` read as delete/drop, so v3's "mark done" mnemonic was backwards; the mark-done shortcut is
   dropped entirely (no replacement key). A decision is now closed by *answering* it (records the

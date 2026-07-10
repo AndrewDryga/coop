@@ -1026,3 +1026,24 @@ func TestACPHeldChunkFlushedOnErrorResponse(t *testing.T) {
 		t.Fatalf("the buffer must be cleared after the flush, still holds: %s", held)
 	}
 }
+
+// sleepUntilReset shares the wall-clock-remaining logic with the loop's sleepForLimit, so it too is
+// suspend-robust and honors ctx cancellation. A canceled ctx must end the wait promptly rather than
+// sit on a long monotonic timer.
+func TestSleepUntilReset(t *testing.T) {
+	// A reset already in the past is a no-op.
+	start := time.Now()
+	sleepUntilReset(context.Background(), time.Now().Add(-time.Hour), "past")
+	if el := time.Since(start); el > 500*time.Millisecond {
+		t.Errorf("past reset slept %s, want ~0", el)
+	}
+
+	// A canceled ctx bails out of a long wait promptly.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start = time.Now()
+	sleepUntilReset(ctx, time.Now().Add(time.Hour), "cred")
+	if el := time.Since(start); el > 2*time.Second {
+		t.Errorf("canceled wait took %s, want prompt return", el)
+	}
+}

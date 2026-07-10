@@ -214,11 +214,55 @@ func sleepOrWake(d time.Duration, wake <-chan struct{}) bool {
 	}
 }
 
+// limitTickCap bounds each sleep segment of a rate-limit wait. Go timers run on the MONOTONIC
+// clock, which freezes while a laptop is suspended (macOS lid closed) and does not fire during
+// sleep — so a single long timer resumes on wake still owing the pre-suspend remainder and
+// over-waits past the real reset by roughly the closed duration. Waking at least this often
+// re-derives the remaining time from the WALL clock, so reopening the lid past the reset ends the
+// wait within one tick instead of counting leftover awake-time.
+const limitTickCap = time.Minute
+
+// waitUntilWall blocks until `deadline` passes on the WALL clock, or until stop fires. It strips
+// the monotonic reading from deadline and re-compares against nowFn() each cycle, sleeping at most
+// tickCap between checks, so a system-suspend gap can't inflate the wait: a frozen monotonic timer
+// resumes and re-evaluates against the real clock, returning promptly once the deadline is past.
+// onSegment, when non-nil, is called with the wall-clock remaining after each FULL tickCap segment
+// (not the final partial one) for progress narration. Returns true if it waited to the deadline,
+// false if stop fired first. nowFn defaults to time.Now when nil; it is injectable for tests.
+func waitUntilWall(deadline time.Time, tickCap time.Duration, nowFn func() time.Time, stop <-chan struct{}, onSegment func(remaining time.Duration)) bool {
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	deadline = deadline.Round(0) // drop the monotonic reading so Sub uses the wall clock
+	for {
+		remaining := deadline.Sub(nowFn())
+		if remaining <= 0 {
+			return true
+		}
+		seg, capped := remaining, false
+		if seg > tickCap {
+			seg, capped = tickCap, true
+		}
+		if !sleepOrWake(seg, stop) {
+			return false // stop requested — bail out of the wait
+		}
+		if capped && onSegment != nil {
+			onSegment(deadline.Sub(nowFn()))
+		}
+	}
+}
+
 // sleepForLimit pauses for the rate limit, narrating so a long wait visibly
 // stays alive (and so an unattended log shows why nothing is happening). It
 // returns early when wake fires — the loop's soft-stop path — so a Ctrl-C during
 // a long wait takes effect instead of hanging until the reset.
 func sleepForLimit(wait time.Duration, resetAt time.Time, wake <-chan struct{}) {
+	sleepForLimitAt(wait, resetAt, wake, time.Now)
+}
+
+// sleepForLimitAt is sleepForLimit with an injectable clock, so a test can jump the wall clock
+// past the reset mid-wait (simulating a laptop suspend) and assert the wait ends promptly.
+func sleepForLimitAt(wait time.Duration, resetAt time.Time, wake <-chan struct{}, nowFn func() time.Time) {
 	wait = wait.Round(time.Second)
 	if wait <= 0 {
 		return
@@ -228,28 +272,26 @@ func sleepForLimit(wait time.Duration, resetAt time.Time, wake <-chan struct{}) 
 		until = ", until " + resetAt.Local().Format("Mon 15:04 MST")
 	}
 	ui.Info("model rate limited — waiting %s%s, then continuing", wait, until)
-	deadline := time.Now().Add(wait)
 	// ~20 progress ticks regardless of total, so a multi-day wait doesn't spam
 	// the log (and a short one still reports more than once).
-	tick := wait / 20
-	if tick < time.Minute {
-		tick = time.Minute
-	} else if tick > time.Hour {
-		tick = time.Hour
+	narrate := wait / 20
+	if narrate < time.Minute {
+		narrate = time.Minute
+	} else if narrate > time.Hour {
+		narrate = time.Hour
 	}
-	for {
-		remaining := time.Until(deadline)
-		if remaining <= tick {
-			if remaining > 0 {
-				sleepOrWake(remaining, wake)
-			}
-			return
+	start := nowFn()
+	last := start
+	// Anchor the wait to a WALL-clock deadline (start + wait, monotonic stripped by waitUntilWall)
+	// and re-check it on a short cadence, so a suspend that freezes the monotonic clock can't
+	// inflate the wait past the real reset. Narration stays on the ~20-tick cadence via a wall-clock
+	// elapsed check, independent of the shorter re-check ticks.
+	waitUntilWall(start.Add(wait), limitTickCap, nowFn, wake, func(remaining time.Duration) {
+		if t := nowFn(); t.Sub(last) >= narrate {
+			last = t
+			ui.Info("  …%s remaining", remaining.Round(time.Minute))
 		}
-		if !sleepOrWake(tick, wake) {
-			return // stop requested — bail out of the wait
-		}
-		ui.Info("  …%s remaining", time.Until(deadline).Round(time.Minute))
-	}
+	})
 }
 
 // loopAction is what loop() should do after one iteration.
