@@ -57,6 +57,9 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 		if r.Model != "" {
 			a.cfg.SetActiveModel(r.Agent, r.Model) // the role runs on its agent's default account
 		}
+		if r.Effort != "" {
+			a.cfg.SetActiveEffort(r.Agent, r.Effort)
+		}
 	}
 	if lead == p.LeadAgent && len(p.LeadModels) > 0 {
 		// A run that doesn't rotate (single, or the loop before its first applyTarget) uses the
@@ -67,6 +70,7 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 			a.cfg.SetActiveProfile(lead, first.Credential)
 		}
 		a.cfg.SetTargetModel(lead, first.Model)
+		a.cfg.SetTargetEffort(lead, first.Effort)
 	}
 	a.preset = p
 }

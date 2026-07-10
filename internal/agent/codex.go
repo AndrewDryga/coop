@@ -37,7 +37,7 @@ func (codexAgent) base(cfg *config.Config) []string {
 	if len(b) == 0 {
 		b = []string{"codex"}
 	}
-	return withModel(b, cfg.ModelFor("codex"))
+	return withEffort(withModel(b, cfg.ModelFor("codex")), codexAgent{}, cfg.EffortFor("codex"))
 }
 
 func (a codexAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
@@ -98,6 +98,16 @@ func (codexAgent) Models() []string {
 // ModelEnv: codex reads no model env var (its default lives in config.toml), so the
 // flag in base() is the only coop-driven path.
 func (codexAgent) ModelEnv() string { return "" }
+
+// EffortFlag: codex takes reasoning effort as a config override, -c model_reasoning_effort=<level>
+// (minimal/low/medium/high/xhigh), on its main command and exec/resume alike.
+func (codexAgent) EffortFlag(level string) []string {
+	return []string{"-c", "model_reasoning_effort=" + level}
+}
+
+// EffortEnv: codex reads no effort env var (its default lives in config.toml), so the flag in
+// base() is the only coop-driven path — like its model.
+func (codexAgent) EffortEnv() string { return "" }
 
 func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
@@ -213,7 +223,7 @@ func (codexAgent) BoxEnv(string) []string { return nil }
 const codexText = `codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }`
 
 func (codexAgent) ConsultFresh() string {
-	return `out=$(run codex exec -s read-only ${model:+--model "$model"} --json "$prompt"); st=$?
+	return `out=$(run codex exec -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?
 # Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
 # and writing an empty idfile would make the next --continue run "codex exec resume ''".
 tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
@@ -225,11 +235,11 @@ exit "$st"`
 }
 
 func (codexAgent) ConsultResume() string {
-	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st"`
+	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st"`
 }
 
 func (codexAgent) DelegateExec() string {
-	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} "$prompt"`
+	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} "$prompt"`
 }
 
 func (codexAgent) ShellPrelude() string  { return codexText }

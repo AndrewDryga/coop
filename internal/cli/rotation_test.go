@@ -146,6 +146,42 @@ func TestExpandLadder(t *testing.T) {
 	}
 }
 
+// Effort rides the ladder into each rotation target, and applyTarget/applyRunTarget land it in
+// cfg so EffortFor (and thus the agent command) sees it — the full CLI glue for a /effort target.
+func TestEffortThreadsToConfig(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	signInCred(t, cfg, "codex", "work")
+	a := &app{cfg: cfg}
+
+	// Loop path: targetLadder → runTarget carries /high; applyTarget sets the rotation-target tier.
+	ladder := targetLadder(agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "high", Accounts: []string{"work"}})
+	rot, err := a.buildRotation("codex", ladder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := members(rot.targets); !slices.Contains(got, "codex:gpt-5.6-sol/high@work") {
+		t.Fatalf("rotation targets = %v, want one carrying /high", got)
+	}
+	a.applyTarget(rot)
+	if got := cfg.EffortFor("codex"); got != "high" {
+		t.Errorf("after applyTarget, EffortFor(codex) = %q, want high", got)
+	}
+
+	// Single-run path: applyRunTarget lands the effort in the top tier, alongside the model.
+	cfg2 := &config.Config{ConfigDir: t.TempDir()}
+	signInCred(t, cfg2, "codex", "work")
+	a2 := &app{cfg: cfg2}
+	if err := a2.applyRunTarget(agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"work"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg2.EffortFor("codex"); got != "xhigh" {
+		t.Errorf("after applyRunTarget, EffortFor(codex) = %q, want xhigh", got)
+	}
+	if got := cfg2.ModelFor("codex"); got != "gpt-5.6-sol" {
+		t.Errorf("model rides alongside: ModelFor(codex) = %q, want gpt-5.6-sol", got)
+	}
+}
+
 // A cross-provider ladder fans each rung across ITS OWN provider's accounts, so the loop rotates
 // across agents; a rung whose provider has no signed-in account is skipped, not fatal, as long as
 // another rung resolves.

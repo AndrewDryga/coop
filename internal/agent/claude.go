@@ -23,6 +23,7 @@ func (claudeAgent) base(cfg *config.Config) []string {
 		cmd = []string{"claude"}
 	}
 	cmd = withModel(cmd, cfg.ModelFor("claude"))
+	cmd = withEffort(cmd, claudeAgent{}, cfg.EffortFor("claude"))
 	if cfg.MCPActive() {
 		cmd = append(cmd, "--mcp-config", cfg.MCPInBox)
 	}
@@ -96,6 +97,13 @@ func (claudeAgent) Models() []string {
 // ModelEnv: Claude Code reads its default model from ANTHROPIC_MODEL — how the model
 // reaches the claude-agent-acp adapter (and any claude subprocess) that takes no flags.
 func (claudeAgent) ModelEnv() string { return "ANTHROPIC_MODEL" }
+
+// EffortFlag: Claude Code takes --effort <level> (low/medium/high/xhigh/max) on its command.
+func (claudeAgent) EffortFlag(level string) []string { return []string{"--effort", level} }
+
+// EffortEnv: the claude-agent-acp adapter takes no flags, so its effort rides
+// CLAUDE_CODE_EFFORT_LEVEL — the effort analog of ANTHROPIC_MODEL, which box.Run exports.
+func (claudeAgent) EffortEnv() string { return "CLAUDE_CODE_EFFORT_LEVEL" }
 
 func (claudeAgent) InstructionFile() string { return "CLAUDE.md" }
 
@@ -241,15 +249,15 @@ func (claudeAgent) BoxEnv(homeInBox string) []string {
 
 func (claudeAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$idfile\"\n" +
-		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} "$prompt"`
+		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
 }
 
 func (claudeAgent) ConsultResume() string {
-	return `run claude -p --permission-mode plan --resume "$id" ${model:+--model "$model"} "$prompt"`
+	return `run claude -p --permission-mode plan --resume "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
 }
 
 func (claudeAgent) DelegateExec() string {
-	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} "$prompt"`
+	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
 }
 
 func (claudeAgent) ShellPrelude() string  { return "" }

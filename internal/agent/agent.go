@@ -72,6 +72,17 @@ type Agent interface {
 	// a separate adapter binary that takes no flags (claude-agent-acp) still honors the
 	// chosen model.
 	ModelEnv() string
+	// EffortFlag returns the CLI args that set this agent's reasoning effort to level (a
+	// non-empty level like "high" — claude ["--effort","high"], codex ["-c",
+	// "model_reasoning_effort=high"], grok ["--reasoning-effort","high"]). nil means the agent
+	// takes no effort FLAG (gemini has none; a no-flag ACP adapter carries it via EffortEnv).
+	// Like a model id, level is passed through verbatim — the agent's own CLI validates it.
+	EffortFlag(level string) []string
+	// EffortEnv is the environment variable the agent's CLI reads a reasoning effort from
+	// ("" when it has none) — the effort analog of ModelEnv, for a no-flag ACP adapter
+	// (claude-agent-acp reads CLAUDE_CODE_EFFORT_LEVEL). box.Run exports it when an effort is
+	// resolved so that adapter still honors the chosen effort.
+	EffortEnv() string
 	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
 	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
 	MCP(cfg *config.Config) ([]MCPMount, error)
@@ -135,6 +146,47 @@ func hasModelFlag(cmd []string) bool {
 		}
 	}
 	return false
+}
+
+// withEffort appends the agent's reasoning-effort flag for level to cmd — each CLI spells it
+// differently (claude --effort, codex -c model_reasoning_effort=, grok --reasoning-effort), so
+// the agent supplies the spelling via EffortFlag. A no-op when no effort is chosen, the agent
+// has no flag form (gemini, or a no-flag adapter that reads EffortEnv), or cmd already sets it
+// (a COOP_<AGENT>_CMD baking its own stays authoritative).
+func withEffort(cmd []string, a Agent, level string) []string {
+	if level == "" {
+		return cmd
+	}
+	flag := a.EffortFlag(level)
+	if len(flag) == 0 || hasEffortFlag(cmd, flag) {
+		return cmd
+	}
+	return append(cmd, flag...)
+}
+
+// hasEffortFlag reports whether cmd already carries flag's effort setting — matched by its
+// identifying token: a "key=" config value's key (codex's -c model_reasoning_effort=), else
+// the "--flag" name (claude's --effort, grok's --reasoning-effort).
+func hasEffortFlag(cmd, flag []string) bool {
+	if len(flag) == 0 {
+		return false
+	}
+	marker := flag[0]
+	if last := flag[len(flag)-1]; strings.Contains(last, "=") {
+		marker = last[:strings.IndexByte(last, '=')+1]
+	}
+	for _, a := range cmd {
+		if a == marker || strings.HasPrefix(a, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// SupportsEffort reports whether the agent has any reasoning-effort control (a CLI flag or an
+// env var). A target that names an effort for an agent without one is rejected in ParseTarget.
+func SupportsEffort(a Agent) bool {
+	return len(a.EffortFlag("medium")) > 0 || a.EffortEnv() != ""
 }
 
 // Packages is the union of every agent's npm packages, for the box image's install.

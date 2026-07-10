@@ -442,6 +442,9 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 				if role.Model != "" {
 					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_MODEL="+role.Model)
 				}
+				if role.Effort != "" {
+					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_EFFORT="+role.Effort)
+				}
 			}
 		}
 	}
@@ -489,6 +492,9 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
 		if role.Model != "" {
 			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
+		}
+		if role.Effort != "" {
+			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_EFFORT="+role.Effort)
 		}
 	}
 	return
@@ -781,27 +787,47 @@ func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 	// the peer runs the config default (cfg.ModelFor). The lead isn't in Peers, so it always
 	// falls through to cfg.ModelFor.
 	peerModel := map[string]string{}
+	peerEffort := map[string]string{}
 	for _, p := range spec.Peers {
 		if p.Model != "" {
 			peerModel[p.Provider] = p.Model
 		}
+		if p.Effort != "" {
+			peerEffort[p.Provider] = p.Effort
+		}
 	}
 	var args []string
 	for _, agent := range scope {
+		ag, ok := agents.Get(agent)
 		model := peerModel[agent]
 		if model == "" {
 			model = cfg.ModelFor(agent)
 		}
-		if model == "" {
-			continue
-		}
-		if ag, ok := agents.Get(agent); ok {
-			if env := ag.ModelEnv(); env != "" {
-				args = append(args, "-e", env+"="+model)
+		if model != "" {
+			if ok {
+				if env := ag.ModelEnv(); env != "" {
+					args = append(args, "-e", env+"="+model)
+				}
+			}
+			if consults {
+				args = append(args, "-e", "COOP_PEER_MODEL_"+strings.ToUpper(agent)+"="+model)
 			}
 		}
-		if consults {
-			args = append(args, "-e", "COOP_PEER_MODEL_"+strings.ToUpper(agent)+"="+model)
+		// Effort rides the same way but resolves independently — an agent may carry an effort
+		// (env or peer flag) even when it takes the CLI's default model.
+		effort := peerEffort[agent]
+		if effort == "" {
+			effort = cfg.EffortFor(agent)
+		}
+		if effort != "" {
+			if ok {
+				if env := ag.EffortEnv(); env != "" {
+					args = append(args, "-e", env+"="+effort)
+				}
+			}
+			if consults {
+				args = append(args, "-e", "COOP_PEER_EFFORT_"+strings.ToUpper(agent)+"="+effort)
+			}
 		}
 	}
 	return args

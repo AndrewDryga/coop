@@ -179,12 +179,21 @@ func (a *app) selectRunModel(tool, model string) {
 	}
 }
 
+// selectRunEffort applies a single run's explicit reasoning effort (the target's /effort) to
+// tool's top tier, mirroring selectRunModel. Empty is a no-op (the agent's default stands).
+func (a *app) selectRunEffort(tool, effort string) {
+	if effort != "" {
+		a.cfg.SetActiveEffort(tool, effort)
+	}
+}
+
 // applyOneOff applies a single run's --model/--credential to tool: --model may carry a
 // model@account shortcut (the only pair spelling, matching a preset ladder entry), and
 // --credential pins the account. Both empty is a no-op — the preset/default stands. It's
 // the single-run analog of the loop's oneOffLadder; a bad shape (e.g. an account given in
 // both --model's @ and --credential) errors.
-func (a *app) applyOneOff(tool, model, credential string) error {
+func (a *app) applyOneOff(tool, model, credential, effort string) error {
+	a.selectRunEffort(tool, effort) // effort rides with the model but can be set even when model/account aren't
 	ladder, err := oneOffLadder(model, credential)
 	if err != nil {
 		return err
@@ -479,7 +488,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// inner env-override block so a preset-rotation rung (COOP_ACP_LEAD_MODEL/_CRED) still wins
 	// over the launch-time model/account. fusion is a keyword (a governor target follows), not
 	// itself a provider, so it isn't parsed as a target.
-	model, profile := "", ""
+	model, profile, effort := "", "", ""
 	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
 	governor := ""
 	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
@@ -497,6 +506,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 			if terr := foldTarget(t, &model, &profile); terr != nil {
 				return 2, terr
 			}
+			effort = t.Effort
 			consumed = 2
 		}
 	case len(args) > 0:
@@ -508,6 +518,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if terr := foldTarget(t, &model, &profile); terr != nil {
 			return 2, terr
 		}
+		effort = t.Effort
 		consumed = 1
 	}
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
@@ -580,7 +591,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return a.cmdACPSupervise(inner, ctrl)
 	}
 	a.applyPreset(p, tool)
-	if err := a.applyOneOff(tool, model, profile); err != nil {
+	if err := a.applyOneOff(tool, model, profile, effort); err != nil {
 		return 2, err
 	}
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
@@ -794,7 +805,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	}
 	// The governor target names the agent; its model + account fold into this run's one-off
 	// selection (the peers keep their own).
-	governor, model, profile, rest, govSet, err := a.parseGovernor(args)
+	governor, model, profile, effort, rest, govSet, err := a.parseGovernor(args)
 	if err != nil {
 		return 2, err
 	}
@@ -803,7 +814,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
 	}
 	a.applyPreset(p, governor)
-	if err := a.applyOneOff(governor, model, profile); err != nil {
+	if err := a.applyOneOff(governor, model, profile, effort); err != nil {
 		return 2, err
 	}
 	repo, img, err := a.resolveImage()
@@ -831,30 +842,31 @@ func (a *app) cmdFusion(args []string) (int, error) {
 // COOP_FUSION_GOVERNOR); everything else passes through to the governor. explicit reports
 // whether the command named one (so a --preset's lead only fills the default); model/profile
 // carry the governor target's model + single account for the one-off selection.
-func (a *app) parseGovernor(args []string) (governor, model, profile string, rest []string, explicit bool, err error) {
+func (a *app) parseGovernor(args []string) (governor, model, profile, effort string, rest []string, explicit bool, err error) {
 	governor = a.cfg.FusionGovernor
 	tookGov := false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":
-			return governor, model, profile, append(rest, args[i+1:]...), tookGov, nil // everything after passes through
+			return governor, model, profile, effort, append(rest, args[i+1:]...), tookGov, nil // everything after passes through
 		case !tookGov && len(rest) == 0 && isTargetHead(args[i]):
-			// Only the FIRST leading target is the governor: `coop fusion claude:opus@work`
+			// Only the FIRST leading target is the governor: `coop fusion claude:opus/high@work`
 			// (matches `coop acp fusion …`); otherwise the default / COOP_FUSION_GOVERNOR. A second
 			// agent token passes through to the governor (not silently swallowed as the governor).
 			t, terr := agents.ParseTarget(args[i])
 			if terr != nil {
-				return governor, model, profile, rest, tookGov, terr
+				return governor, model, profile, effort, rest, tookGov, terr
 			}
 			governor, tookGov = t.Provider, true
 			if terr := foldTarget(t, &model, &profile); terr != nil {
-				return governor, model, profile, rest, tookGov, terr
+				return governor, model, profile, effort, rest, tookGov, terr
 			}
+			effort = t.Effort
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return governor, model, profile, rest, tookGov, nil
+	return governor, model, profile, effort, rest, tookGov, nil
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
@@ -1363,8 +1375,12 @@ func (a *app) cmdLoop(args []string) (int, error) {
 // or the no-preset default). It sits below a ladder target's model and below an explicit
 // --model, and above the account's mark. Shared by `coop loop` and the fork loops.
 func (a *app) applyLoopModel(agent string) {
-	if a.cfg.LoopModel != "" {
-		a.cfg.SetFallbackModel(agent, a.cfg.LoopModel)
+	model, effort := a.cfg.LoopModelEffort() // COOP_LOOP_MODEL is model[/effort] — one var, both axes
+	if model != "" {
+		a.cfg.SetFallbackModel(agent, model)
+	}
+	if effort != "" {
+		a.cfg.SetFallbackEffort(agent, effort)
 	}
 }
 
@@ -1375,13 +1391,22 @@ func (a *app) applyLoopModel(agent string) {
 // no swap (the loop's model reviews). fn builds AND runs the iteration, so the model is in effect
 // when the box command is assembled (the adapters read cfg.ModelFor at build time).
 func (a *app) withReviewModel(agent string, fn func()) {
-	if a.cfg.ReviewModel == "" {
+	model, effort := a.cfg.ReviewModelEffort() // COOP_REVIEW_MODEL is model[/effort]
+	if model == "" && effort == "" {
 		fn()
 		return
 	}
-	prev := a.cfg.ActiveModel(agent)
-	a.cfg.SetActiveModel(agent, a.cfg.ReviewModel)
-	defer a.cfg.SetActiveModel(agent, prev)
+	prevM, prevE := a.cfg.ActiveModel(agent), a.cfg.ActiveEffort(agent)
+	if model != "" {
+		a.cfg.SetActiveModel(agent, model)
+	}
+	if effort != "" { // COOP_REVIEW_MODEL's /effort lets the review pass run at a different effort
+		a.cfg.SetActiveEffort(agent, effort)
+	}
+	defer func() {
+		a.cfg.SetActiveModel(agent, prevM)
+		a.cfg.SetActiveEffort(agent, prevE)
+	}()
 	fn()
 }
 
@@ -1978,12 +2003,12 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
 // capturing the tail so a rate-limit notice can be detected. hosts are the queue files the
-// live bar watches for task progress. In a fully interactive run the agent's output is funneled
+// live bar watches for task progress. When the terminal can render a live display, agent output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view);
 // otherwise it goes straight to the terminal unchanged.
 func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
-	live := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
+	live := ui.CanRenderLive(os.Stdout, os.Stderr)
 
 	termOut, termErr := io.Writer(os.Stdout), io.Writer(os.Stderr)
 	var bar *loopBar

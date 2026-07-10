@@ -384,7 +384,7 @@ func TestParseGovernor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gov, model, profile, rest, _, err := a.parseGovernor(c.args)
+			gov, model, profile, _, rest, _, err := a.parseGovernor(c.args)
 			if err != nil {
 				t.Fatalf("parseGovernor(%v) errored: %v", c.args, err)
 			}

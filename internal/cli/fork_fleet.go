@@ -118,7 +118,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 // fork parsed out of one — used by detachForkLoop to forward the fork's agent+model+account to
 // its re-exec'd worker as a single token. model may itself carry an @account (a contradiction
 // with a separate account is rejected).
-func composeTarget(agent, model, credential string) (string, error) {
+func composeTarget(agent, model, effort, credential string) (string, error) {
 	modelPart, acctInModel, hasAt := strings.Cut(model, "@")
 	acct := credential
 	if hasAt && acctInModel != "" {
@@ -130,6 +130,9 @@ func composeTarget(agent, model, credential string) (string, error) {
 	t := agent
 	if modelPart != "" {
 		t += ":" + modelPart
+	}
+	if effort != "" {
+		t += "/" + effort
 	}
 	if acct != "" {
 		t += "@" + acct

@@ -2,11 +2,12 @@
 
 ## Unreleased: the target grammar — one way to name a run
 
-Every launch names WHO runs with a single **target**: `provider[:model][@account]`
-(`claude`, `claude:opus`, `claude@work`, `claude:opus@work`). The provider is
-**required** — there is no implicit `claude` default — while the model stays optional (it
-falls to the agent CLI's default). `--model`, `--credential`, and the boolean `--consult`
-retire; peers are named explicitly.
+Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`
+(`claude`, `claude:opus`, `claude:opus/xhigh`, `claude@work`, `claude:opus@work`). The provider is
+**required** — there is no implicit `claude` default — while the model, an optional reasoning
+`/effort` (`low`/`medium`/`high`/`xhigh`/`max`, passed straight to the agent's CLI — Gemini has
+none and rejects it), and the account are all optional. `--model`, `--credential`, and the boolean
+`--consult` retire; peers are named explicitly.
 
 | Retired | Use |
 | --- | --- |

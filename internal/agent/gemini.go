@@ -95,6 +95,11 @@ func (geminiAgent) Models() []string {
 // covers coop-driven runs, this covers anything that takes no flags.
 func (geminiAgent) ModelEnv() string { return "GEMINI_MODEL" }
 
+// EffortFlag/EffortEnv: the Gemini CLI exposes no reasoning-effort control, so a target that
+// names one is rejected in ParseTarget (SupportsEffort is false for gemini).
+func (geminiAgent) EffortFlag(string) []string { return nil }
+func (geminiAgent) EffortEnv() string          { return "" }
+
 func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
 
 func (geminiAgent) AuthMarker() (file, envKey string) {

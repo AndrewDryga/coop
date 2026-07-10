@@ -84,6 +84,7 @@ esac
 key=$(printf '%s' "$role" | tr 'a-z-' 'A-Z_')
 eval "agent=\${COOP_DELEGATE_${key}_AGENT:-}"
 eval "model=\${COOP_DELEGATE_${key}_MODEL:-}"
+eval "effort=\${COOP_DELEGATE_${key}_EFFORT:-}" # always set (possibly empty) so the arm's ${effort:+…} is safe under set -u
 eval "contract=\${COOP_DELEGATE_${key}_CONTRACT:-}"
 [ -n "$agent" ] || die "unknown delegate role: $role (delegate roles come from the preset's mode: delegate entries)"
 

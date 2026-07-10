@@ -174,6 +174,68 @@ func TestWithModel(t *testing.T) {
 	}
 }
 
+func TestEffortSelection(t *testing.T) {
+	cleanCmdEnv(t)
+	cfg := &config.Config{}
+	cfg.SetActiveEffort("claude", "xhigh")
+	cfg.SetActiveEffort("codex", "high")
+	cfg.SetActiveEffort("gemini", "high") // gemini has no effort control → the flag never appears
+	cfg.SetActiveEffort("grok", "high")
+	cases := []struct {
+		name             string
+		interactive, acp []string
+	}{
+		{"claude", []string{"claude", "--dangerously-skip-permissions", "--effort", "xhigh"}, []string{"claude-agent-acp"}},
+		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"}, []string{"codex-acp"}},
+		{"gemini", []string{"gemini", "--yolo"}, []string{"gemini", "--acp"}}, // no effort flag anywhere
+		// grok's ACP is its own binary; the effort flag goes BEFORE the `stdio` mode, like the model.
+		{"grok", []string{"grok", "--permission-mode", "bypassPermissions", "--reasoning-effort", "high"}, []string{"grok", "agent", "--reasoning-effort", "high", "stdio"}},
+	}
+	for _, c := range cases {
+		a, _ := Get(c.name)
+		if got := a.Interactive(cfg); !slices.Equal(got, c.interactive) {
+			t.Errorf("%s Interactive with effort = %v, want %v", c.name, got, c.interactive)
+		}
+		if got := a.ACP(cfg); !slices.Equal(got, c.acp) {
+			t.Errorf("%s ACP with effort = %v, want %v", c.name, got, c.acp)
+		}
+	}
+	for name, want := range map[string]bool{"claude": true, "codex": true, "grok": true, "gemini": false} {
+		a, _ := Get(name)
+		if SupportsEffort(a) != want {
+			t.Errorf("SupportsEffort(%s) = %v, want %v", name, SupportsEffort(a), want)
+		}
+	}
+	// claude-agent-acp takes no flags, so claude's effort rides an env var instead.
+	if claude, _ := Get("claude"); claude.EffortEnv() != "CLAUDE_CODE_EFFORT_LEVEL" {
+		t.Errorf("claude EffortEnv = %q, want CLAUDE_CODE_EFFORT_LEVEL", claude.EffortEnv())
+	}
+}
+
+func TestWithEffort(t *testing.T) {
+	claude, _ := Get("claude")
+	gemini, _ := Get("gemini")
+	codex, _ := Get("codex")
+	if got := withEffort([]string{"claude"}, claude, ""); !slices.Equal(got, []string{"claude"}) {
+		t.Errorf("empty effort must be a no-op, got %v", got)
+	}
+	if got := withEffort([]string{"gemini"}, gemini, "high"); !slices.Equal(got, []string{"gemini"}) {
+		t.Errorf("withEffort for an effortless agent must be a no-op, got %v", got)
+	}
+	for _, baked := range [][]string{
+		{"claude", "--effort", "low"},
+		{"codex", "-c", "model_reasoning_effort=low"},
+	} {
+		a := claude
+		if baked[0] == "codex" {
+			a = codex
+		}
+		if got := withEffort(baked, a, "high"); !slices.Equal(got, baked) {
+			t.Errorf("withEffort(%v) must not append a duplicate, got %v", baked, got)
+		}
+	}
+}
+
 func TestEmptyCmdOverrideStillRunnable(t *testing.T) {
 	cfg := &config.Config{} // no mcp.json → no --mcp-config trailing claude's base
 	// An explicitly-empty override (COOP_<AGENT>_CMD="") must still produce a runnable command:

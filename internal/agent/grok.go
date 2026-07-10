@@ -31,7 +31,7 @@ func (grokAgent) base(cfg *config.Config) []string {
 	if len(b) == 0 { // an explicitly-empty override must still leave a runnable executable
 		b = []string{"grok"}
 	}
-	return withModel(b, cfg.ModelFor("grok"))
+	return withEffort(withModel(b, cfg.ModelFor("grok")), grokAgent{}, cfg.EffortFor("grok"))
 }
 
 func (a grokAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
@@ -47,7 +47,8 @@ func (a grokAgent) Headless(cfg *config.Config, prompt string) []string {
 // belongs to `grok agent` and must come BEFORE the `stdio` mode (the stdio subcommand takes
 // no options — artifacts/doc-15-agent-mode-ACP.md), so it's `grok agent [--model <m>] stdio`.
 func (grokAgent) ACP(cfg *config.Config) []string {
-	return append(withModel([]string{"grok", "agent"}, cfg.ModelFor("grok")), "stdio")
+	a := withEffort(withModel([]string{"grok", "agent"}, cfg.ModelFor("grok")), grokAgent{}, cfg.EffortFor("grok"))
+	return append(a, "stdio")
 }
 
 // ACPSessionDirs: grok persists sessions under ~/.grok/sessions/ (organized by working
@@ -119,6 +120,12 @@ func (grokAgent) Models() []string {
 // ModelEnv: grok reads no default-model env var; the model is -m/--model or config.toml.
 func (grokAgent) ModelEnv() string { return "" }
 
+// EffortFlag: grok takes --reasoning-effort <level> (alias --effort) on `grok` and `grok agent`.
+func (grokAgent) EffortFlag(level string) []string { return []string{"--reasoning-effort", level} }
+
+// EffortEnv: grok reads no effort env var; the flag in base()/ACP is the coop-driven path.
+func (grokAgent) EffortEnv() string { return "" }
+
 // InstructionFile: grok's primary project-rules file is AGENTS.md (it also reads CLAUDE.md
 // for compatibility).
 func (grokAgent) InstructionFile() string { return "AGENTS.md" }
@@ -160,15 +167,15 @@ func (grokAgent) BoxEnv(string) []string { return nil }
 
 func (grokAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$idfile\"\n" +
-		`run grok --tools "` + grokReadOnlyTools + `" --session-id "$id" ${model:+--model "$model"} -p "$prompt"`
+		`run grok --tools "` + grokReadOnlyTools + `" --session-id "$id" ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) ConsultResume() string {
-	return `run grok --tools "` + grokReadOnlyTools + `" --resume "$id" ${model:+--model "$model"} -p "$prompt"`
+	return `run grok --tools "` + grokReadOnlyTools + `" --resume "$id" ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) DelegateExec() string {
-	return `grok --permission-mode bypassPermissions ${model:+--model "$model"} -p "$prompt"`
+	return `grok --permission-mode bypassPermissions ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) ShellPrelude() string { return "" }

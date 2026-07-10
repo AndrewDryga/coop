@@ -352,6 +352,42 @@ func TestModelResolution(t *testing.T) {
 	}
 }
 
+// TestEffortResolution: EffortFor's precedence mirrors ModelFor — an explicit target /effort
+// beats the rotation target, which beats the standing default (preset lead / COOP_LOOP_MODEL's
+// /effort), which beats the agent-wide COOP_<AGENT>_MODEL's /effort; clearing falls through.
+func TestEffortResolution(t *testing.T) {
+	clearAgentEnv(t)
+	c := &Config{ConfigDir: t.TempDir()}
+
+	if got := c.EffortFor("claude"); got != "" {
+		t.Errorf("EffortFor with nothing set = %q, want \"\"", got)
+	}
+	// One var carries both axes: COOP_CLAUDE_MODEL=model/effort seeds the effort default too.
+	t.Setenv("COOP_CLAUDE_MODEL", "sonnet/low")
+	if got := c.EffortFor("claude"); got != "low" {
+		t.Errorf("EffortFor with env model/effort = %q, want low", got)
+	}
+	if got := c.ModelFor("claude"); got != "sonnet" {
+		t.Errorf("same var seeds the model: ModelFor = %q, want sonnet", got)
+	}
+	c.SetFallbackEffort("claude", "medium")
+	if got := c.EffortFor("claude"); got != "medium" {
+		t.Errorf("EffortFor with fallback = %q, want medium", got)
+	}
+	c.SetTargetEffort("claude", "high")
+	if got := c.EffortFor("claude"); got != "high" {
+		t.Errorf("EffortFor with target = %q, want high", got)
+	}
+	c.SetActiveEffort("claude", "xhigh")
+	if got := c.EffortFor("claude"); got != "xhigh" {
+		t.Errorf("EffortFor with active selection = %q, want xhigh", got)
+	}
+	c.SetActiveEffort("claude", "") // clearing the top tier falls back to the rotation target
+	if got := c.EffortFor("claude"); got != "high" {
+		t.Errorf("EffortFor after clearing selection = %q, want high", got)
+	}
+}
+
 func TestTasksFiles(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

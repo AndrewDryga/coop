@@ -206,6 +206,7 @@ type forkArgs struct {
 	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
 	credential string   // the fork's account, from the positional target's @account (else the ladder default)
 	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
+	effort     string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
 	consult    []string // --consult <target> (repeatable): the peers a loop iteration may ask read-only
 	preset     string   // --preset <name>: the orchestration preset this fork's loop runs under
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
@@ -232,7 +233,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if aerr != nil {
 				return fa, aerr
 			}
-			fa.agent, fa.agentSet, fa.model, fa.credential = t.Provider, true, t.Model, acct
+			fa.agent, fa.agentSet, fa.model, fa.effort, fa.credential = t.Provider, true, t.Model, t.Effort, acct
 		case x == "--model" || strings.HasPrefix(x, "--model="):
 			return fa, errors.New("--model is retired — put the model in the target: coop fork <name> <provider>:<model> (e.g. claude:opus)")
 		case x == "--credential", x == "--credentials",
@@ -416,16 +417,16 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, peers, true)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.preset, fa.consult)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.consult)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, peers, false)
+			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, false)
 		}
 	}
-	// Pin this interactive session's account/model from --credential / --model (model@account
-	// shortcut allowed), below any preset the fork carries.
-	if err := a.applyOneOff(fa.agent, fa.model, fa.credential); err != nil {
+	// Pin this interactive session's account/model/effort from the positional target, below any
+	// preset the fork carries.
+	if err := a.applyOneOff(fa.agent, fa.model, fa.credential, fa.effort); err != nil {
 		return 2, err
 	}
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
@@ -834,7 +835,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err := retiredTargetFlagErr(rest); err != nil {
 		return 2, err
 	}
-	agent, model, profile := "", "", ""
+	agent, model, profile, effort := "", "", "", ""
 	for _, x := range rest {
 		switch {
 		case isTargetHead(x):
@@ -848,6 +849,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			if terr := foldTarget(t, &model, &profile); terr != nil {
 				return 2, terr
 			}
+			effort = t.Effort
 		default:
 			return 2, fmt.Errorf("usage: coop fork %s acp [%s][:model][@account]", name, strings.Join(agents.Names(), "|"))
 		}
@@ -855,7 +857,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if agent == "" {
 		return 2, noProviderErr("fork <name> acp")
 	}
-	if err := a.applyOneOff(agent, model, profile); err != nil {
+	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
 		return 2, err
 	}
 	cmd, ok := acpCommand(a.cfg, agent)

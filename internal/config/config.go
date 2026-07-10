@@ -41,8 +41,8 @@ type Config struct {
 	NoUpdateCheck bool // COOP_NO_UPDATE_CHECK — opt out of the once-a-day update-available check
 
 	ServicesNet     string   // COOP_SERVICES_NET — override the services network name
-	LoopModel       string   // COOP_LOOP_MODEL — model for loop iterations (falls back to the per-agent default)
-	ReviewModel     string   // COOP_REVIEW_MODEL — model for the loop's review + between-tasks audit iterations (empty = the loop's model)
+	LoopModel       string   // COOP_LOOP_MODEL — model[/effort] for loop iterations (falls back to the per-agent default)
+	ReviewModel     string   // COOP_REVIEW_MODEL — model[/effort] for the loop's review + between-tasks audit iterations (empty = the loop's)
 	LoopCmd         []string // COOP_LOOP_CMD — override the loop's per-iteration command
 	MaxReviewRounds int      // COOP_MAX_REVIEW_ROUNDS — the ceiling for the (batch-scaled) work→review rounds before a task the review keeps reopening is blocked (default 5)
 	TasksFiles      []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
@@ -77,6 +77,10 @@ type Config struct {
 	activeModels   map[string]string // per-run EXPLICIT model (--model / fleet model=) — the top tier
 	targetModels   map[string]string // the active pool target's model (credential@model), below explicit
 	fallbackModels map[string]string // standing default (preset lead model / COOP_LOOP_MODEL), below a target
+
+	activeEfforts   map[string]string // per-run EXPLICIT reasoning effort (target /effort) — the top tier
+	targetEfforts   map[string]string // the active rotation target's effort, below explicit
+	fallbackEfforts map[string]string // standing default (preset lead effort / COOP_LOOP_MODEL's /effort), below a target
 }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
@@ -391,15 +395,30 @@ func (c *Config) SetFallbackModel(agent, model string) {
 // FallbackModel returns the run's standing default model for agent ("" when none set).
 func (c *Config) FallbackModel(agent string) string { return c.fallbackModels[agent] }
 
-// AgentModelDefault is the agent-wide default model from COOP_<AGENT>_MODEL (env, then
-// conf file — the same precedence as every other setting), or "". Resolved late (not in
-// Load) because config doesn't know the agent set.
-func (c *Config) AgentModelDefault(agent string) string {
+// splitModelEffort splits a model spec "model[/effort]" — the shared shape of the COOP_*_MODEL
+// env knobs and the target grammar's model+effort slot — into its parts; either may be empty.
+// One value carries both axes, so there is no separate COOP_*_EFFORT env var.
+func splitModelEffort(spec string) (model, effort string) {
+	m, e, _ := strings.Cut(spec, "/")
+	return strings.TrimSpace(m), strings.TrimSpace(e)
+}
+
+// agentModelSpec is the raw COOP_<AGENT>_MODEL value (env, then conf file — the same precedence
+// as every other setting), or "". Its shape is model[/effort], so it seeds BOTH the model and
+// the effort default.
+func (c *Config) agentModelSpec(agent string) string {
 	key := "COOP_" + strings.ToUpper(agent) + "_MODEL"
 	if v, ok := os.LookupEnv(key); ok {
 		return v
 	}
 	return c.conf[key]
+}
+
+// AgentModelDefault is the agent-wide default model — the model part of COOP_<AGENT>_MODEL
+// (model[/effort]), or "". Resolved late (not in Load) because config doesn't know the agent set.
+func (c *Config) AgentModelDefault(agent string) string {
+	m, _ := splitModelEffort(c.agentModelSpec(agent))
+	return m
 }
 
 // ModelFor resolves the model a run of agent should use, most specific first:
@@ -422,6 +441,77 @@ func (c *Config) ModelFor(agent string) string {
 		return m
 	}
 	return c.AgentModelDefault(agent)
+}
+
+// SetActiveEffort selects the reasoning effort a run of agent uses, overriding every other
+// tier — only an EXPLICIT target /effort lands here. Empty clears it, falling back to the
+// lower tiers.
+func (c *Config) SetActiveEffort(agent, effort string) {
+	if c.activeEfforts == nil {
+		c.activeEfforts = map[string]string{}
+	}
+	c.activeEfforts[agent] = effort
+}
+
+// ActiveEffort returns the run's EXPLICIT top-tier effort for agent ("" when none), so a
+// caller that temporarily overrides it (the review pass) can snapshot and restore it.
+func (c *Config) ActiveEffort(agent string) string { return c.activeEfforts[agent] }
+
+// SetTargetEffort selects the active rotation target's effort — applied at loop start and on
+// every rotation, below an explicit target /effort and above every static default. Empty
+// clears it.
+func (c *Config) SetTargetEffort(agent, effort string) {
+	if c.targetEfforts == nil {
+		c.targetEfforts = map[string]string{}
+	}
+	c.targetEfforts[agent] = effort
+}
+
+// SetFallbackEffort sets the run's standing default effort — a preset lead's effort, or the
+// loop applying COOP_LOOP_MODEL's /effort — below a target's effort but above COOP_<AGENT>_MODEL's.
+func (c *Config) SetFallbackEffort(agent, effort string) {
+	if c.fallbackEfforts == nil {
+		c.fallbackEfforts = map[string]string{}
+	}
+	c.fallbackEfforts[agent] = effort
+}
+
+// FallbackEffort returns the run's standing default effort for agent ("" when none set).
+func (c *Config) FallbackEffort(agent string) string { return c.fallbackEfforts[agent] }
+
+// AgentEffortDefault is the agent-wide default reasoning effort — the effort part of
+// COOP_<AGENT>_MODEL (its shape is model[/effort], e.g. "opus/high"), or "". One var carries
+// both axes, so there is no separate COOP_<AGENT>_EFFORT.
+func (c *Config) AgentEffortDefault(agent string) string {
+	_, e := splitModelEffort(c.agentModelSpec(agent))
+	return e
+}
+
+// LoopModelEffort / ReviewModelEffort split COOP_LOOP_MODEL / COOP_REVIEW_MODEL (each shaped
+// model[/effort]) into their parts, so one env var sets both the model and the effort for the
+// loop's work / review iterations.
+func (c *Config) LoopModelEffort() (model, effort string)   { return splitModelEffort(c.LoopModel) }
+func (c *Config) ReviewModelEffort() (model, effort string) { return splitModelEffort(c.ReviewModel) }
+
+// EffortFor resolves the reasoning effort a run of agent should use, most specific first:
+//  1. the explicit per-run choice (target /effort),
+//  2. the active rotation target's effort,
+//  3. the run's standing default (a preset lead's effort, else COOP_LOOP_MODEL's /effort),
+//  4. the agent-wide COOP_<AGENT>_MODEL's /effort.
+//
+// Like the model, effort is its own axis — never a property of a credential. "" means no
+// coop-level choice, so the agent CLI's own default applies (see agent.withEffort).
+func (c *Config) EffortFor(agent string) string {
+	if e := c.activeEfforts[agent]; e != "" {
+		return e
+	}
+	if e := c.targetEfforts[agent]; e != "" {
+		return e
+	}
+	if e := c.fallbackEfforts[agent]; e != "" {
+		return e
+	}
+	return c.AgentEffortDefault(agent)
 }
 
 // AgentProfileDir is the host folder for one named credential profile of an agent:

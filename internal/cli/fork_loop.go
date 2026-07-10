@@ -204,7 +204,7 @@ func seedForkQueues(repo, ws, tasks string, onKept func()) ([]string, error) {
 // credential/model are the fork's --credential/--model one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string, peers []agents.Target, detached bool) (int, error) {
+func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effort string, peers []agents.Target, detached bool) (int, error) {
 	// Seed the fork's queue(s) from the source tree(s) into the worktree and get back the
 	// repo-relative queue list the in-fork loop works. An explicit --tasks seeds that one tree
 	// into .agent/tasks (the single-queue rule); the default (no --tasks) seeds every
@@ -234,7 +234,8 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string
 			}
 		}
 	}
-	a.applyLoopModel(agent) // COOP_LOOP_MODEL → the fallback tier
+	a.applyLoopModel(agent)          // COOP_LOOP_MODEL (model[/effort]) → the fallback tier
+	a.selectRunEffort(agent, effort) // the fork target's /effort (top tier, persists across rotations)
 	// The fork's rotation ladder: a one-off --model/--credential wins; else its preset's models
 	// (a.preset, loaded by forkCreate); else the default (agent model across all accounts).
 	ladder, err := oneOffLadder(model, credential)
@@ -261,7 +262,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model string
 // (absolute, resolved by the caller) is forwarded so the worker seeds the same queue; an
 // empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. model,
 // preset, and consult are forwarded too, so the worker re-loads the same recipe and scope.
-func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, presetName string, consult []string) (int, error) {
+func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, consult []string) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
@@ -283,7 +284,7 @@ func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, preset
 	}
 	// The worker re-parses these, so forward the agent+model+account as ONE positional target
 	// (--model/--credential are retired) — composeTarget round-trips the fork's one-off selection.
-	target, err := composeTarget(agent, model, credential)
+	target, err := composeTarget(agent, model, effort, credential)
 	if err != nil {
 		clearForkPidIfMine(repo, name)
 		return -1, err

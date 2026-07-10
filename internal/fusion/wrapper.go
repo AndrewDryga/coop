@@ -123,6 +123,7 @@ key=$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')
 # agent/model/persona via COOP_CONSULT_<ROLE>_*; otherwise the name IS the peer agent.
 eval "peer=\${COOP_CONSULT_${key}_AGENT:-}"
 eval "rolemodel=\${COOP_CONSULT_${key}_MODEL:-}"
+eval "roleeffort=\${COOP_CONSULT_${key}_EFFORT:-}"
 eval "persona=\${COOP_CONSULT_${key}_CONTRACT:-}"
 if [ -n "$peer" ]; then
 	role=1
@@ -148,6 +149,10 @@ esac
 peerkey=$(printf '%s' "$peer" | tr 'a-z-' 'A-Z_')
 eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"
 if [ -n "$role" ] && [ -n "$rolemodel" ]; then model=$rolemodel; fi
+# Effort resolves the same way — a role's own effort wins over the per-peer default. Always
+# set (possibly empty) so each arm's ${effort:+…} is safe under set -u.
+eval "effort=\${COOP_PEER_EFFORT_${peerkey}:-}"
+if [ -n "$role" ] && [ -n "$roleeffort" ]; then effort=$roleeffort; fi
 prompt=${*:-}
 [ -n "$prompt" ] || prompt=$(cat)
 # A role's persona (its contract) is prepended so the peer answers AS that role.

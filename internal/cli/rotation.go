@@ -28,12 +28,16 @@ type runTarget struct {
 	provider   string // the agent this rung runs (varies across a cross-provider ladder)
 	credential string
 	model      string // "" = the account's default model resolves (mark/env/agent default)
+	effort     string // "" = the agent's own default reasoning effort (rides with the model, not a limit axis)
 }
 
 func (t runTarget) String() string {
 	s := t.provider
 	if t.model != "" {
 		s += ":" + t.model
+	}
+	if t.effort != "" {
+		s += "/" + t.effort
 	}
 	if t.credential != "" {
 		s += "@" + t.credential
@@ -104,12 +108,12 @@ func expandLadder(cfg *config.Config, defaultAgent string, ladder []preset.Model
 		}
 		if e.Credential != "" {
 			if box.ProfileAuthed(cfg, agent, e.Credential) {
-				add(runTarget{provider: agent, credential: e.Credential, model: e.Model})
+				add(runTarget{provider: agent, credential: e.Credential, model: e.Model, effort: e.Effort})
 			}
 			continue
 		}
 		for _, acct := range accounts {
-			add(runTarget{provider: agent, credential: acct, model: e.Model})
+			add(runTarget{provider: agent, credential: acct, model: e.Model, effort: e.Effort})
 		}
 	}
 	if len(out) == 0 {
@@ -144,6 +148,7 @@ func (a *app) applyTarget(r *rotation) string {
 	t := r.active()
 	a.cfg.SetActiveProfile(t.provider, t.credential)
 	a.cfg.SetTargetModel(t.provider, t.model)
+	a.cfg.SetTargetEffort(t.provider, t.effort)
 	return t.provider
 }
 
@@ -239,11 +244,11 @@ func oneOffLadder(modelFlag, credFlag string) ([]preset.ModelTarget, error) {
 // run's agent, carried separately (expandLadder takes it as a param).
 func targetLadder(t agents.Target) []preset.ModelTarget {
 	if len(t.Accounts) == 0 {
-		return []preset.ModelTarget{{Model: t.Model}}
+		return []preset.ModelTarget{{Model: t.Model, Effort: t.Effort}}
 	}
 	out := make([]preset.ModelTarget, len(t.Accounts))
 	for i, acct := range t.Accounts {
-		out[i] = preset.ModelTarget{Model: t.Model, Credential: acct}
+		out[i] = preset.ModelTarget{Model: t.Model, Effort: t.Effort, Credential: acct}
 	}
 	return out
 }

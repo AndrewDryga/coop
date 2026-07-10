@@ -86,6 +86,9 @@ func GeneratedSubagent(r *Role) (filename, content string) {
 	if r.Model != "" {
 		b.WriteString("model: " + r.Model + "\n")
 	}
+	if r.Effort != "" {
+		b.WriteString("effort: " + r.Effort + "\n") // Claude subagent frontmatter: low/medium/high/xhigh/max
+	}
 	b.WriteString("---\n\n")
 	b.WriteString(NativeBody(r) + "\n")
 	return name + ".md", b.String()

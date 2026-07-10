@@ -37,6 +37,7 @@ type Role struct {
 	Mode       string   // native | consult | delegate
 	Agent      string   // known agent
 	Model      string   // optional model id ("" = the agent's own default)
+	Effort     string   // optional reasoning-effort level ("" = the agent's own default)
 	When       []string // routing hints injected into the lead contract
 	Subagent   string   // native only, OPTIONAL: reference an existing subagent; empty ⇒ coop generates coop-<Name>
 	PromptText string   // roles/<name>.md content, appended to the generated contract
@@ -66,6 +67,15 @@ func (p *Preset) LeadModel() string {
 		return ""
 	}
 	return p.LeadModels[0].Model
+}
+
+// LeadEffort returns the lead's primary reasoning effort — the first ladder entry's effort, or
+// "" when none is declared. Used by the generated contract and applyPreset.
+func (p *Preset) LeadEffort() string {
+	if len(p.LeadModels) == 0 {
+		return ""
+	}
+	return p.LeadModels[0].Effort
 }
 
 // leadLadder parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a target
@@ -108,10 +118,10 @@ func leadLadder(node *yaml.Node) (provider string, ladder []ModelTarget, err err
 			rp = t.Provider
 		}
 		if len(t.Accounts) == 0 {
-			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model})
+			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model, Effort: t.Effort})
 		}
 		for _, acct := range t.Accounts {
-			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model, Credential: acct})
+			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model, Effort: t.Effort, Credential: acct})
 		}
 	}
 	// A single bare-lead entry (no model, no account) is "default model, all accounts" — the
@@ -320,7 +330,7 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	if len(t.Accounts) > 0 {
 		return r, bad("agent %q pins an account — a role runs its agent's default account (only the lead rotates); drop the @account", y.Agent)
 	}
-	r.Agent, r.Model = t.Provider, t.Model
+	r.Agent, r.Model, r.Effort = t.Provider, t.Model, t.Effort
 	if y.Credentials != nil || y.Credential != nil {
 		return r, bad("credentials only apply to the lead — a role runs on its agent's default account; put the rotation ladder in lead.agent")
 	}

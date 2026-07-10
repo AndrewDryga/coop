@@ -609,8 +609,9 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     <pre
                         class="code"
                     ><span class="k">coop</span> claude:opus            <span class="t"># one run on the big model</span>
+<span class="k">coop</span> claude:opus/xhigh      <span class="t"># …at max reasoning effort (low·medium·high·xhigh·max)</span>
 <span class="k">coop</span> claude:opus@work       <span class="t"># …pinned to a specific account</span>
-<span class="k">coop</span> loop --preset frontier  <span class="t"># a standing lead model + roles, from a preset</span>
+<span class="k">coop</span> loop --preset frontier <span class="t"># a standing lead model + roles, from a preset</span>
 <span class="k">coop</span> models                 <span class="t"># the model menu per agent</span></pre>
                     <p>
                         Precedence is most-specific-first: the model in the
@@ -622,6 +623,25 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         validates a model id — whatever the agent's own CLI
                         accepts works, and a bad one fails loudly in the agent's
                         own error, so new models work the day they ship.
+                    </p>
+                    <p>
+                        <strong>Reasoning effort</strong> is a sibling axis — add
+                        <code>/effort</code> to the same target
+                        (<code>claude:opus/xhigh</code>, <code>codex/high</code>):
+                        <code>low</code> · <code>medium</code> ·
+                        <code>high</code> · <code>xhigh</code> ·
+                        <code>max</code>. Coop passes the level straight to the
+                        agent's CLI (Claude's <code>--effort</code>, Codex's
+                        <code>model_reasoning_effort</code>, Grok's
+                        <code>--reasoning-effort</code>) and never validates it;
+                        Gemini has no effort control, so a <code>/effort</code>
+                        on it is rejected up front. It mirrors the model's
+                        precedence, and one env var carries both axes:
+                        <code>COOP_&lt;AGENT&gt;_MODEL</code>,
+                        <code>COOP_LOOP_MODEL</code>, and
+                        <code>COOP_REVIEW_MODEL</code> take
+                        <code>model/effort</code> (e.g. <code>opus/high</code>) —
+                        no separate effort var.
                     </p>
                     <p>
                         This is what makes the
@@ -662,8 +682,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> presets init          <span class="t"># scaffold the documented "frontier" recipe</span>
-<span class="k">coop</span> presets               <span class="t"># list every preset (a broken one shows its error)</span>
+                    ><span class="k">coop</span> presets init           <span class="t"># scaffold the documented "frontier" recipe</span>
+<span class="k">coop</span> presets                <span class="t"># list every preset (a broken one shows its error)</span>
 <span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
                     <p>
                         The lead's <code>agent:</code> holds one target or a

@@ -211,7 +211,7 @@ func TestComposeTarget(t *testing.T) {
 		{"gemini", "gemini-3.5-flash@work", "personal", "", true},                          // two different accounts → error
 	}
 	for _, c := range cases {
-		got, err := composeTarget(c.agent, c.model, c.cred)
+		got, err := composeTarget(c.agent, c.model, "", c.cred)
 		if c.wantErr {
 			if err == nil {
 				t.Errorf("composeTarget(%q,%q,%q) = %q, want error", c.agent, c.model, c.cred, got)

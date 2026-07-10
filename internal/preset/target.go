@@ -10,16 +10,24 @@ package preset
 type ModelTarget struct {
 	Provider   string // "" = the run's default agent (one-off); set per rung for a cross-provider ladder
 	Model      string
+	Effort     string // "" = the agent's own default; else a reasoning-effort level (see agents.Target.Effort)
 	Credential string // "" = fan out across all signed-in accounts
 }
 
-// String renders the rung in the model@account wire form (for `coop presets` + docs). The
-// provider is shown only when it differs from the ladder's lead (a cross-provider rung), so a
-// same-provider ladder stays terse.
+// String renders the rung in the [provider:]model[/effort][@account] wire form (for `coop
+// presets` + docs). The provider is shown only when it differs from the ladder's lead (a
+// cross-provider rung), so a same-provider ladder stays terse.
 func (t ModelTarget) String() string {
 	m := t.Model
 	if t.Provider != "" {
-		m = t.Provider + ":" + t.Model
+		if t.Model != "" {
+			m = t.Provider + ":" + t.Model
+		} else {
+			m = t.Provider
+		}
+	}
+	if t.Effort != "" {
+		m += "/" + t.Effort
 	}
 	if t.Credential == "" {
 		return m

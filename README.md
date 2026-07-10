@@ -127,12 +127,12 @@ coop loop claude           # 6. disposable agents work the queue until done, the
 Prefer to steer an agent yourself? Skip the queue and go interactive:
 
 ```bash
-coop claude           # sandboxed Claude — no permission prompts, secrets shadowed
-coop codex            # same box, Codex instead
-coop gemini           # ...or Gemini
-coop fusion claude --peer codex --peer gemini   # a council: claude leads, named peers advise, then it synthesizes
-coop shell            # a shell in the box, to look around
-coop run -- npm test  # run any command in the box
+coop claude                                   # sandboxed Claude — no permission prompts, secrets shadowed
+coop codex                                    # same box, Codex instead
+coop gemini                                   # ...or Gemini
+coop fusion claude --peer codex --peer gemini # a council: claude leads, named peers advise, then it synthesizes
+coop shell                                    # a shell in the box, to look around
+coop run -- npm test                          # run any command in the box
 ```
 
 Point it at a repo and go. Each agent launches with its own "don't stop to ask" flags
@@ -363,8 +363,8 @@ Detection (step 3) is just a best-effort fallback — with both `code` and `zed`
 installed it picks `code`. To choose, set one of the first two:
 
 ```bash
-git config --global core.editor "zed --wait"   # your standard git editor (git commit uses it too)
-export COOP_EDITOR="zed"                        # coop-only; overrides core.editor
+git config --global core.editor "zed --wait" # your standard git editor (git commit uses it too)
+export COOP_EDITOR="zed"                     # coop-only; overrides core.editor
 ```
 
 coop runs the editor command verbatim, so `core.editor = "zed --wait"` blocks the
@@ -536,11 +536,11 @@ iteration is a fresh run, and the queue plus git carry the progress.
 Every launch names its model in the target (`<agent>:<model>`) — pick the model per run, on any path:
 
 ```bash
-coop claude:opus                              # one big-model interactive session
-coop fusion claude:fable --peer codex --peer gemini   # the governor's model (peers keep their own)
-coop loop claude:haiku                        # a cheap overnight grind
-coop fork risky claude:opus                   # a careful fork on the big model
-coop acp claude:sonnet                        # pin an editor entry's model
+coop claude:opus                                    # one big-model interactive session
+coop fusion claude:fable --peer codex --peer gemini # the governor's model (peers keep their own)
+coop loop claude:haiku                              # a cheap overnight grind
+coop fork risky claude:opus                         # a careful fork on the big model
+coop acp claude:sonnet                              # pin an editor entry's model
 ```
 
 For a *standing* model you don't retype, put it in a
@@ -552,6 +552,7 @@ subscription); the model is a separate axis:
 ```bash
 coop models                        # the model menu per agent
 coop claude:opus                   # one run on the big model
+coop claude:opus/xhigh             # …at maximum reasoning effort (low·medium·high·xhigh·max)
 coop claude --preset frontier      # a standing lead model + roles, from the preset
 ```
 
@@ -563,6 +564,15 @@ cheaper loop's work). In a fleet, give a fork
 its own with `model:` in `.agent/fleet.yaml`. Precedence, most specific first: the target's `:model` ›
 the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AGENT>_MODEL` › a
 model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
+
+**Reasoning effort** is a sibling axis on the same target — `/effort` after the model:
+`coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
+`low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
+(Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
+fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up
+front. It mirrors the model's tiers, and one env var carries both axes — `COOP_<AGENT>_MODEL`,
+`COOP_LOOP_MODEL`, and `COOP_REVIEW_MODEL` take `model[/effort]` (e.g. `opus/high`), so there's no
+separate effort var (`COOP_REVIEW_MODEL=opus/xhigh` reviews at xhigh while the loop grinds low).
 
 The chosen model reaches consult peers and fusion advisors too (each peer resolves its
 own default), and `coop loop`'s live view prints the model each iteration actually ran —
@@ -622,26 +632,26 @@ lead:
   # one. On a loop it rotates top-to-bottom (running each rung's agent); a single run uses
   # the first. models:/model:/credentials: are retired — the model+account ride agent:.
   agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
-  prompt: roles/lead.md        # optional Markdown, appended to the generated contract
+  prompt: roles/lead.md           # optional Markdown, appended to the generated contract
 
 roles:
-  thinker:                     # deep thinking + review, in the lead's own session
+  thinker:                        # deep thinking + review, in the lead's own session
     mode: native
-    agent: claude:claude-opus-4-8   # a target — the model rides agent: (coop generates coop-thinker)
+    agent: claude:claude-opus-4-8 # a target — the model rides agent: (coop generates coop-thinker)
     when: [architecture, debugging, code-review, before-commit]
-    prompt: roles/thinker.md   # its system prompt (or set subagent: <name> to reuse one)
+    prompt: roles/thinker.md      # its system prompt (or set subagent: <name> to reuse one)
 
-  critic:                      # independent critique from another vendor, read-only
+  critic:                         # independent critique from another vendor, read-only
     mode: consult
-    agent: codex:gpt-5.5       # a role runs on its agent's default account (no @account)
+    agent: codex:gpt-5.5          # a role runs on its agent's default account (no @account)
     when: [plan-review, security, tradeoffs]
 
-  fast:                        # cheap mechanical work, write-capable
+  fast:                           # cheap mechanical work, write-capable
     mode: delegate
     agent: gemini:gemini-3.5-flash
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
-    commit: never              # it edits; the LEAD reviews the diff, gates, commits
-    concurrent: never          # delegate runs are serialized
+    commit: never                 # it edits; the LEAD reviews the diff, gates, commits
+    concurrent: never             # delegate runs are serialized
 ```
 
 Run anything under it — the preset's lead is the default agent, and an explicit
@@ -1268,8 +1278,8 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_EDITOR` | (detected) | editor for `coop fork review --open` |
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
-| `COOP_LOOP_MODEL` | — | model for loop iterations (overnight runs on a cheaper model than interactive) |
-| `COOP_REVIEW_MODEL` | — | model for `coop loop`'s review pass + between-tasks audit — a stronger model reviews the cheaper loop's work (unset = the loop's model) |
+| `COOP_LOOP_MODEL` | — | `model[/effort]` for loop iterations (e.g. `opus/low` — overnight runs on a cheaper/lighter setting than interactive) |
+| `COOP_REVIEW_MODEL` | — | `model[/effort]` for `coop loop`'s review pass + between-tasks audit — a stronger model/effort reviews the cheaper loop's work (unset = the loop's) |
 | `COOP_MAX_REVIEW_ROUNDS` | `5` | the ceiling for `coop loop`'s work→review rounds before blocking a task the review keeps reopening; the actual cap scales with the batch (`clamp(tasks/2, 3, this)`) |
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |

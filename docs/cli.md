@@ -182,23 +182,23 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
     lead:
       # a target, or a ladder (cross-provider ok) — fable on all accounts, then opus on work
       agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
-      prompt: roles/lead.md      # Optional Markdown, appended to the generated contract.
-    roles:                       # agent: is a target — provider[:model], default account
-      thinker:                   # native Claude subagent — deep thinking in-session
+      prompt: roles/lead.md           # Optional Markdown, appended to the generated contract.
+    roles:                            # agent: is a target — provider[:model], default account
+      thinker:                        # native Claude subagent — deep thinking in-session
         mode: native
-        agent: claude:claude-opus-4-8   # the model rides agent: (coop generates coop-thinker)
+        agent: claude:claude-opus-4-8 # the model rides agent: (coop generates coop-thinker)
         when: [architecture, debugging, code-review]
-        prompt: roles/thinker.md # its system prompt (or set subagent: <name> to reuse one)
-      critic:                    # read-only peer via coop-consult
+        prompt: roles/thinker.md      # its system prompt (or set subagent: <name> to reuse one)
+      critic:                         # read-only peer via coop-consult
         mode: consult
-        agent: codex:gpt-5.5     # omit the :model (agent: codex) for the agent's default
+        agent: codex:gpt-5.5          # omit the :model (agent: codex) for the agent's default
         when: [plan-review, security]
-      fast:                      # write-capable delegate via coop-delegate
+      fast:                           # write-capable delegate via coop-delegate
         mode: delegate
         agent: gemini:gemini-3.5-flash
         when: [boilerplate, bulk-edits, test-scaffolding]
-        commit: never            # the delegate edits; the LEAD reviews, gates, commits
-        concurrent: never        # delegate runs are serialized
+        commit: never                 # the delegate edits; the LEAD reviews, gates, commits
+        concurrent: never             # delegate runs are serialized
 
   coop generates the lead's routing contract from this — each role, when to use it, and
   its ROLE-ADDRESSED invocation (@coop-<role>, coop-consult <role>, coop-delegate <role>)
@@ -248,10 +248,17 @@ coop models [agent] — the model menu per agent.
   An account rides the SAME target (claude:opus@work). coop never validates a model
   id — a bad one fails in the agent's own error.
 
+  Reasoning effort is a sibling axis, set with /effort in the same target
+  (claude:opus/xhigh, codex/high): low · medium · high · xhigh · max — coop passes the
+  level through and the agent's CLI validates it (claude, codex, and grok have it; gemini
+  has none, so a /effort on gemini errors). One env var carries both axes — COOP_LOOP_MODEL
+  and COOP_<AGENT>_MODEL take model[/effort] (e.g. opus/high), so there is no separate effort
+  var. Precedence mirrors the model: the target's /effort > a rotation rung's effort > those.
+
 coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp <agent>[:model][@account] [--preset <name>] [--consult <peer>…]
-         coop acp fusion <governor>[:model][@account] [--consult <peer>…]
+  Usage: coop acp <agent>[:model][/effort][@account] [--preset <name>] [--consult <peer>…]
+         coop acp fusion <governor>[:model][/effort][@account] [--consult <peer>…]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor. coop always
@@ -286,7 +293,7 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
 
 coop fusion <governor> --peer <agent>… — one agent leads, named peers advise, it synthesizes.
 
-  Usage: coop fusion <governor>[:model][@account] --peer <agent>… [--preset <name>] [args...]
+  Usage: coop fusion <governor>[:model][/effort][@account] --peer <agent>… [--preset <name>] [args...]
 
   The governor is a target (defaults to COOP_FUSION_GOVERNOR); its :model and @account
   fold into this run, the peers keep their own defaults. Peers advise read-only; only
@@ -318,7 +325,7 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
   up and down take --prune (with optional --force) to prune in the same step.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
-  loop) and may set agent: (a TARGET — provider[:model][@account]; give each fork a
+  loop) and may set agent: (a TARGET — provider[:model][/effort][@account]; give each fork a
   DIFFERENT account so they run in parallel) and preset: (an orchestration preset; its
   lead + ladder drive the fork). A fork takes ONE account — a full rotation ladder lives
   in a preset. The old per-fork model:/credential: keys are retired (the model+account
@@ -387,7 +394,7 @@ coop backlog — park unscheduled ideas as task folders (.agent/tasks/xx_backlog
 
 coop loop [agent] — work the task queue until done, then review.
 
-  Usage: coop loop [<agent>[:model][@account,…]] [--tasks <path>]... [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][/effort][@account,…]] [--tasks <path>]... [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   review pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -416,7 +423,8 @@ coop loop [agent] — work the task queue until done, then review.
 
   COOP_REVIEW_MODEL runs the review pass (and the between-tasks audit) on its own,
   typically STRONGER model — the cheap loop model does the work, a more capable model
-  reviews it. Unset → the review runs on the loop's model.
+  reviews it. Unset → the review runs on the loop's model. It takes model[/effort], so the
+  same var can also raise the review effort (e.g. review at xhigh while the loop grinds at low).
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its lead agent: ladder is the rotation, and each iteration gets the
@@ -428,7 +436,8 @@ coop loop [agent] — work the task queue until done, then review.
   pins the model, claude@work,personal is an explicit account ladder — the loop rotates
   the rungs on a rate limit. COOP_LOOP_MODEL is the standing model below a rung's own,
   then the account's marked default ('coop models'), then COOP_<AGENT>_MODEL — so
-  overnight runs can grind on a cheaper model.
+  overnight runs can grind on a cheaper model. Both take model[/effort] (e.g. opus/low), so
+  one var sets the standing effort too; a target's /effort still pins it per run.
 
   --consult <peer>… lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the

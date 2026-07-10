@@ -142,5 +142,6 @@ func (a *app) applyRunTarget(t agents.Target) error {
 		return err
 	}
 	a.selectRunModel(t.Provider, t.Model)
+	a.selectRunEffort(t.Provider, t.Effort)
 	return nil
 }
