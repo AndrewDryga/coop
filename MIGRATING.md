@@ -1,6 +1,6 @@
 # Migrating
 
-## Unreleased: the target grammar — one way to name a run
+## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`
 (`claude`, `claude:opus`, `claude:opus/xhigh`, `claude@work`, `claude:opus@work`). The provider is
