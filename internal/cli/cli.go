@@ -202,7 +202,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "__complete": // hidden: dynamic completion candidates for the shell scripts
 		return a.cmdComplete(rest)
 	default:
-		if agents.Valid(sub) { // coop claude|codex|gemini|… — run the agent
+		if isTargetHead(sub) { // coop claude|claude:opus|… — run the agent target
 			return a.launchAgent(sub, rest)
 		}
 		// Don't ship an unrecognized command to the box to exec and fail with a cryptic

@@ -89,39 +89,33 @@ func (a *app) cmdRun(args []string) (int, error) {
 // flags and just adds yours. The agents' autonomous flags are global, so this is safe
 // even before subcommands (e.g. `coop codex resume --last`). coop's own --consult and
 // --credential are stripped first so they aren't forwarded to the agent.
-func (a *app) launchAgent(tool string, args []string) (int, error) {
+func (a *app) launchAgent(target string, args []string) (int, error) {
+	// The head is a target: provider[:model][@account]. The model/account ride it —
+	// --model/--credential are retired.
+	t, err := agents.ParseTarget(target)
+	if err != nil {
+		return 2, err
+	}
+	tool := t.Provider
 	consult, args := extractConsult(args)
-	// `coop claude login` reads as "log in to claude", not "prompt claude with the
-	// word login" — route it to the sign-in flow like `coop login claude` (honoring
-	// `--credential`, e.g. `coop claude login --credential work`).
+	// `coop claude login` reads as "log in to claude" — route it to the sign-in flow like
+	// `coop login claude`; the account rides the target (`coop claude@work login`).
 	if len(args) >= 1 && args[0] == "login" {
-		profile, rest, err := extractProfile(args[1:])
-		if err != nil {
-			return 2, err
+		acct, aerr := singleAccount(t)
+		if aerr != nil {
+			return 2, aerr
 		}
-		if len(rest) > 0 {
-			return 2, fmt.Errorf("unexpected argument %q after 'coop %s login'", rest[0], tool)
+		if len(args) > 1 {
+			return 2, fmt.Errorf("unexpected argument %q after 'coop %s login'", args[1], tool)
 		}
-		return a.loginTo(tool, profile)
+		return a.loginTo(tool, acct)
 	}
-	// `coop claude --credential work` runs on a chosen credential (one account/login); coop
-	// consumes the flag so it isn't forwarded. It's read only before a `--`, so an agent's own
-	// flags after the `--` (e.g. codex's own --profile for its config.toml) pass through.
-	profile, args, err := extractRunProfile(args)
-	if err != nil {
+	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err
 	}
-	// `coop claude --model opus` picks the model for this run, beating the profile/agent
-	// defaults (see config.ModelFor). Consumed like --credential — read only before a `--` —
-	// though forwarding it would usually work too, since the adapters skip appending a
-	// second --model when one is already present.
-	model, args, err := extractRunModel(args)
-	if err != nil {
-		return 2, err
-	}
-	// `coop claude --preset frontier` loads the orchestration preset: its roles seed the
-	// run (routing contract, role models/credentials, wrappers); `coop <agent>` names the
-	// lead explicitly, so the preset's lead.agent never overrides the command's own.
+	// `coop claude --preset frontier` loads the orchestration preset: its roles seed the run
+	// (routing contract, role models/credentials, wrappers); `coop <agent>` names the lead
+	// explicitly, so the preset's lead.agent never overrides the command's own.
 	presetName, args, err := extractRunPreset(args)
 	if err != nil {
 		return 2, err
@@ -131,7 +125,7 @@ func (a *app) launchAgent(tool string, args []string) (int, error) {
 		return 2, err
 	}
 	a.applyPreset(p, tool)
-	if err := a.applyOneOff(tool, model, profile); err != nil {
+	if err := a.applyRunTarget(t); err != nil {
 		return 2, err
 	}
 	a.nudgeIfUnauthed(tool)

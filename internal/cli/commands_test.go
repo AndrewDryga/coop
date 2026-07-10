@@ -470,14 +470,18 @@ func TestExtractRunProfile(t *testing.T) {
 }
 
 func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
-	// A nonexistent credential must error before any box work, so a typo never silently creates a husk.
+	// A nonexistent account in the target must error before any box work (claude@ghost), so a
+	// typo never silently creates a husk; and --credential tombstones.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	code, err := a.launchAgent("claude", []string{"--credential", "ghost", "-p", "hi"})
+	code, err := a.launchAgent("claude@ghost", []string{"-p", "hi"})
 	if code != 2 || err == nil {
-		t.Fatalf("launchAgent --credential ghost = (%d, %v), want 2 + error", code, err)
+		t.Fatalf("launchAgent claude@ghost = (%d, %v), want 2 + error", code, err)
 	}
 	if !strings.Contains(err.Error(), "ghost") {
-		t.Errorf("error should name the bad credential: %v", err)
+		t.Errorf("error should name the bad account: %v", err)
+	}
+	if _, e := a.launchAgent("claude", []string{"--credential", "work"}); e == nil || !strings.Contains(e.Error(), "retired") {
+		t.Errorf("--credential should tombstone, got %v", e)
 	}
 }
 

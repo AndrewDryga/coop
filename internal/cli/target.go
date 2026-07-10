@@ -60,3 +60,39 @@ func retiredTargetFlagErr(args []string) error {
 	}
 	return nil
 }
+
+// isTargetHead reports whether s begins with a registered provider (so `coop <s>` names an
+// agent run, not a command/preset). Used by the top-level dispatch.
+func isTargetHead(s string) bool {
+	beforeAt, _, _ := strings.Cut(s, "@")
+	provider, _, _ := strings.Cut(beforeAt, ":")
+	return agents.Valid(provider)
+}
+
+// singleAccount returns the one account of a target for a NON-loop run (interactive, acp, a
+// non-loop fork): "" for none, the account for one, an error for a ladder (@a,b only rotates
+// under `coop loop`).
+func singleAccount(t agents.Target) (string, error) {
+	switch len(t.Accounts) {
+	case 0:
+		return "", nil
+	case 1:
+		return t.Accounts[0], nil
+	default:
+		return "", fmt.Errorf("an account ladder (@%s) only applies to `coop loop`; a single run takes one account", strings.Join(t.Accounts, ","))
+	}
+}
+
+// applyTarget seeds a single run's model + account selection from a target (the loop uses the
+// rotation ladder instead). A >1-account ladder is rejected (loop-only).
+func (a *app) applyRunTarget(t agents.Target) error {
+	acct, err := singleAccount(t)
+	if err != nil {
+		return err
+	}
+	if err := a.selectRunProfile(t.Provider, acct); err != nil {
+		return err
+	}
+	a.selectRunModel(t.Provider, t.Model)
+	return nil
+}
