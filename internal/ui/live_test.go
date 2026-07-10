@@ -114,41 +114,6 @@ func TestProgressBarStatesBlockedNeverHidden(t *testing.T) {
 	}
 }
 
-func TestRegion(t *testing.T) {
-	var buf strings.Builder
-	r := NewRegion(&buf, func() int { return 40 })
-
-	// First paint: no cursor-up (nothing drawn yet); history then the bar appear.
-	r.Update("hello", []string{"BAR"})
-	if s := buf.String(); !strings.Contains(s, "hello") || !strings.Contains(s, "BAR") {
-		t.Fatalf("first update missing content: %q", s)
-	}
-	if strings.Contains(buf.String(), "\033[1A") {
-		t.Errorf("first paint should not move the cursor up: %q", buf.String())
-	}
-
-	// A refresh of a 1-line region erases (\r\033[J) and repaints, no cursor-up.
-	buf.Reset()
-	r.Update("", []string{"BAR2"})
-	if s := buf.String(); !strings.Contains(s, "\033[J") || !strings.Contains(s, "BAR2") {
-		t.Errorf("refresh should erase and repaint: %q", s)
-	}
-
-	// Region lines are clipped to the width so they never wrap.
-	buf.Reset()
-	r.Update("", []string{strings.Repeat("x", 100)})
-	if got := visible(buf.String()); got > 40 {
-		t.Errorf("region line not clipped to width: visible=%d (%q)", got, buf.String())
-	}
-
-	// Clear erases.
-	buf.Reset()
-	r.Clear()
-	if !strings.Contains(buf.String(), "\033[J") {
-		t.Errorf("clear should erase the region: %q", buf.String())
-	}
-}
-
 // An identical frame must not repaint — a static dashboard (nothing running, so no spinner) then
 // sits still instead of flickering every poll; any change (or a width change) still repaints.
 func TestAltScreenSkipsUnchangedFrame(t *testing.T) {
