@@ -429,56 +429,39 @@ func TestExtractConsult(t *testing.T) {
 	}
 }
 
-// TestExtractProfileAbsentIsEmpty: with no --credential, extractProfile returns "" — the
-// caller (loginTo) then resolves the agent's MARKED default. Returning the literal
-// "default" here made a bare `coop login claude` re-auth (and keep re-creating) a husk
-// profile named "default" while runs used the marked profile's expired token.
-func TestExtractProfileAbsentIsEmpty(t *testing.T) {
-	profile, rest, err := extractProfile([]string{"claude"})
-	if err != nil || profile != "" || !slices.Equal(rest, []string{"claude"}) {
-		t.Errorf("extractProfile(claude) = (%q, %v, %v), want (\"\", [claude], nil)", profile, rest, err)
+// TestCmdLoginTarget: the account rides the target (coop login claude@work); --credential
+// tombstones; a :model has no meaning for login; an account ladder is loop-only. The happy
+// path parses and reaches loginTo (which then needs a TTY) — proof the target flowed through.
+func TestCmdLoginTarget(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	// claude@work parses and flows to loginTo — non-TTY there, NOT a parse error.
+	if code, err := a.cmdLogin([]string{"claude@work"}); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+		t.Errorf("cmdLogin(claude@work) = (%d, %v), want it to parse and hit the TTY check", code, err)
 	}
-	if profile, _, _ := extractProfile([]string{"claude", "--credential", "work"}); profile != "work" {
-		t.Errorf("explicit --credential = %q, want work", profile)
+	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Errorf("cmdLogin --credential must tombstone, got %v", err)
 	}
-	// --profile is retired — no longer a coop flag, so it's left untouched (a plain arg), not intercepted.
-	if _, rest, err := extractProfile([]string{"claude", "--profile", "work"}); err != nil || !slices.Equal(rest, []string{"claude", "--profile", "work"}) {
-		t.Errorf("extractProfile should leave the retired --profile untouched, got rest=%v err=%v", rest, err)
+	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "no model") {
+		t.Errorf("cmdLogin claude:opus must reject the model, got %v", err)
+	}
+	if _, err := a.cmdLogin([]string{"claude@work,personal"}); err == nil {
+		t.Error("cmdLogin claude@work,personal must reject an account ladder (loop-only)")
 	}
 }
 
-func TestExtractRunProfile(t *testing.T) {
-	cases := []struct {
-		name        string
-		args        []string
-		wantProfile string
-		wantRest    []string
-		wantErr     bool
-	}{
-		{"none", []string{"-p", "hi"}, "", []string{"-p", "hi"}, false},
-		{"space form", []string{"--credential", "work", "-p", "hi"}, "work", []string{"-p", "hi"}, false},
-		{"equals form", []string{"--credential=work"}, "work", nil, false},
-		{"missing value", []string{"--credential"}, "", nil, true},
-		// --profile is retired: no longer a coop flag, so it's left in rest (a plain token), not errored.
-		{"retired --profile is a plain token", []string{"--profile", "work"}, "", []string{"--profile", "work"}, false},
-		// coop reads its flags only before --; the agent's own --profile passes through verbatim.
-		{"passthrough after --", []string{"--", "--profile", "codexprof"}, "", []string{"--", "--profile", "codexprof"}, false},
-		{"coop credential then passthrough", []string{"--credential", "work", "--", "--profile", "codexprof"},
-			"work", []string{"--", "--profile", "codexprof"}, false},
+// The retired --credential/--model no longer parse anywhere — the target grammar carries the
+// account/model (see TestParseTarget). A leftover --credential tombstones at each surface.
+func TestRetiredTargetFlagErr(t *testing.T) {
+	for _, args := range [][]string{{"--credential", "work"}, {"--credentials=work"}, {"--model", "opus"}, {"--model=opus"}} {
+		if err := retiredTargetFlagErr(args); err == nil {
+			t.Errorf("retiredTargetFlagErr(%v) = nil, want a tombstone", args)
+		}
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			profile, rest, err := extractRunProfile(c.args)
-			if (err != nil) != c.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
-			}
-			if c.wantErr {
-				return
-			}
-			if profile != c.wantProfile || !slices.Equal(rest, c.wantRest) {
-				t.Errorf("extractRunProfile(%v) = (%q, %v), want (%q, %v)", c.args, profile, rest, c.wantProfile, c.wantRest)
-			}
-		})
+	// It stops at `--`: the agent's OWN --model/--credential after `--` passes through untouched.
+	for _, args := range [][]string{{"--", "--model", "opus"}, {"claude", "--", "--credential", "x"}} {
+		if err := retiredTargetFlagErr(args); err != nil {
+			t.Errorf("retiredTargetFlagErr(%v) = %v, want nil (post-`--` is the agent's)", args, err)
+		}
 	}
 }
 

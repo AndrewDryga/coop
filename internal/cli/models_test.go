@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -113,36 +112,5 @@ func TestModelsMenuHasFrontierIDs(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing the recipe id %q:\n%s", want, out)
 		}
-	}
-}
-
-func TestExtractRunModel(t *testing.T) {
-	cases := []struct {
-		name      string
-		args      []string
-		wantModel string
-		wantRest  []string
-		wantErr   bool
-	}{
-		{"none", []string{"-p", "hi"}, "", []string{"-p", "hi"}, false},
-		{"space form", []string{"--model", "opus", "-p", "hi"}, "opus", []string{"-p", "hi"}, false},
-		{"equals form", []string{"--model=opus"}, "opus", nil, false},
-		{"missing value", []string{"--model"}, "", nil, true},
-		// coop reads --model only before --; the agent's own --model passes through verbatim.
-		{"passthrough after --", []string{"--", "--model", "raw"}, "", []string{"--", "--model", "raw"}, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			model, rest, err := extractRunModel(c.args)
-			if (err != nil) != c.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
-			}
-			if c.wantErr {
-				return
-			}
-			if model != c.wantModel || !slices.Equal(rest, c.wantRest) {
-				t.Errorf("extractRunModel(%v) = (%q, %v), want (%q, %v)", c.args, model, rest, c.wantModel, c.wantRest)
-			}
-		})
 	}
 }

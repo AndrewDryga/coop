@@ -260,20 +260,32 @@ func migrateFlatVaults(cfg *config.Config) {
 }
 
 func (a *app) cmdLogin(args []string) (int, error) {
-	profile, rest, err := extractProfile(args)
-	if err != nil {
+	// The account rides the target now (coop login claude@work); --credential is retired.
+	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err
 	}
 	// The agent is required — bare `coop login` must not silently default to one (it would open a
 	// browser and block); name it explicitly, like the help shows. A stray extra arg is a typo,
 	// not a second target, so reject it rather than silently ignore.
-	if len(rest) == 0 {
-		return 2, fmt.Errorf("usage: coop login <%s> [--credential <name>]", strings.Join(agents.Names(), "|"))
+	if len(args) == 0 {
+		return 2, fmt.Errorf("usage: coop login <%s>[@account]", strings.Join(agents.Names(), "|"))
 	}
-	if len(rest) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s> [--credential <name>])", rest[1], strings.Join(agents.Names(), "|"))
+	if len(args) > 1 {
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s>[@account])", args[1], strings.Join(agents.Names(), "|"))
 	}
-	return a.loginTo(rest[0], profile)
+	t, err := agents.ParseTarget(args[0])
+	if err != nil {
+		return 2, err
+	}
+	// login authenticates an account; a :model in the target has no meaning here.
+	if t.Model != "" {
+		return 2, fmt.Errorf("coop login takes no model — run: coop login %s@<account>", t.Provider)
+	}
+	acct, err := singleAccount(t)
+	if err != nil {
+		return 2, err
+	}
+	return a.loginTo(t.Provider, acct)
 }
 
 // flagValue extracts the value of a value-bearing flag at args[i], handling both
@@ -296,48 +308,6 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 		return "", 0, true, fmt.Errorf("%s needs a value", flag)
 	}
 	return "", 0, false, nil
-}
-
-// extractProfile pulls coop's own `--credential <name>` (or `--credential=<name>`; the
-// plural is an accepted spelling) out of login args, returning the chosen credential
-// ("" if absent — the caller resolves the agent's MARKED default, not one literally
-// named "default") and the remaining args. It lets a login target one of several stored
-// accounts. A flag with no value is an error, not a silent fall-back.
-func extractProfile(args []string) (profile string, rest []string, err error) {
-	for i := 0; i < len(args); i++ {
-		matched := false
-		for _, flag := range []string{"--credential", "--credentials"} {
-			if v, n, ok, e := flagValue(args, i, flag); ok {
-				if e != nil {
-					return "", nil, e
-				}
-				profile = v
-				i += n - 1
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			rest = append(rest, args[i])
-		}
-	}
-	return profile, rest, nil
-}
-
-// extractRunProfile pulls coop's own --credential <name> (or --credential=<name>; the
-// plural is an accepted spelling) out of an agent RUN's args, returning the chosen
-// credential ("" if none) and the remaining args. It stops at a "--" separator and forwards
-// everything after it verbatim — so an agent's own flags (e.g. codex's --profile) pass
-// through untouched. A flag with no value is an error, not a silent fall-back.
-func extractRunProfile(args []string) (profile string, rest []string, err error) {
-	return extractRunValue(args, "--credential", "--credentials")
-}
-
-// extractRunModel pulls coop's own --model <name> (or --model=<name>) out of an agent RUN's
-// args, `--`-aware like extractRunProfile — so `coop codex -- --model x` still reaches codex's
-// own flag untouched. A --model with no value is an error, not a silent no-op.
-func extractRunModel(args []string) (model string, rest []string, err error) {
-	return extractRunValue(args, "--model")
 }
 
 // extractRunValue is the shared extractor behind extractRunProfile/extractRunModel: it pulls

@@ -101,13 +101,6 @@ func TestPresetFlagParsing(t *testing.T) {
 		t.Error("a bare --preset must error")
 	}
 
-	// Both credential spellings parse.
-	for _, flag := range []string{"--credential", "--credentials"} {
-		if got, _, err := extractRunProfile([]string{flag, "work"}); err != nil || got != "work" {
-			t.Errorf("extractRunProfile(%s work) = (%q, %v)", flag, got, err)
-		}
-	}
-
 	fa, err := parseForkCreate([]string{"api", "claude@work", "--loop", "--preset", "frontier"})
 	if err != nil {
 		t.Fatal(err)
@@ -117,17 +110,6 @@ func TestPresetFlagParsing(t *testing.T) {
 	}
 	if _, err := parseForkCreate([]string{"api", "--loop", "--preset"}); err == nil {
 		t.Error("fork: a bare --preset must error")
-	}
-}
-
-// The loop takes a single --credential (both spellings), leaving the rest for parseLoopArgs.
-func TestLoopCredential(t *testing.T) {
-	cred, rest, err := extractRunProfile([]string{"claude", "--credentials", "work", "--consult"})
-	if err != nil || cred != "work" {
-		t.Fatalf("extractRunProfile = (%q, %v)", cred, err)
-	}
-	if strings.Join(rest, " ") != "claude --consult" {
-		t.Errorf("rest = %v, want [claude --consult]", rest)
 	}
 }
 
