@@ -876,6 +876,13 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 	case ttyStdinOnly:
 		args = append(args, "-i")
 	}
+	// The image's clock is UTC; hand every box the HOST's timezone so agents render
+	// clock times on the user's wall clock. Coop parses that prose back host-local when
+	// scheduling a rate-limit wait ("try again at 4:28 PM"), so a UTC render would land
+	// the wait hours off. TERM above is per-mode; the zone applies to every box.
+	if tz := hostTimezone(); tz != "" {
+		args = append(args, "-e", "TZ="+tz)
+	}
 	args = append(args, limits...) // resource/privilege caps (docker/podman; nil elsewhere)
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
 
@@ -969,6 +976,26 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 	}
 	args = append(args, "-w", workdir, spec.Image)
 	return append(args, spec.Cmd...)
+}
+
+// hostTimezone resolves the host's IANA zone name ("America/Merida"): $TZ when set,
+// else the /etc/localtime symlink, else Debian-style /etc/timezone. Empty when none
+// resolve — the box then keeps the image default (UTC).
+func hostTimezone() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	if link, err := os.Readlink("/etc/localtime"); err == nil {
+		if i := strings.Index(link, "/zoneinfo/"); i >= 0 {
+			return link[i+len("/zoneinfo/"):]
+		}
+	}
+	if b, err := os.ReadFile("/etc/timezone"); err == nil {
+		if tz := strings.TrimSpace(string(b)); tz != "" {
+			return tz
+		}
+	}
+	return ""
 }
 
 func writeTempFile(content string) (string, error) {

@@ -770,6 +770,7 @@ func acpErrorLimitHint(raw json.RawMessage, now time.Time, signals []agents.ACPS
 		return hint
 	}
 	structuredRate, structuredOutput := false, false
+	var proseReset time.Time
 	walkJSONStrings(v, "", func(key, value string) {
 		k := compactJSONName(key)
 		vc := compactJSONName(value)
@@ -784,6 +785,15 @@ func acpErrorLimitHint(raw json.RawMessage, now time.Time, signals []agents.ACPS
 		if (k == "finishreason" || k == "stopreason") && (vc == "length" || vc == "maxtokens") {
 			structuredOutput = true
 		}
+		// The reset time often hides in a NESTED string: codex-acp's top-level message is a
+		// generic "Internal error" while the human notice — "You've hit your usage limit. …
+		// try again at 4:28 PM." — rides in data.message. Mine every string for a stated
+		// reset (earliest wins) so the wait targets it instead of the 5-minute default.
+		if h := detectLimit(value, now); h.limited && !h.outputLimited && !h.resetAt.IsZero() {
+			if proseReset.IsZero() || h.resetAt.Before(proseReset) {
+				proseReset = h.resetAt
+			}
+		}
 	})
 	if structuredRate {
 		hint.limited = true
@@ -791,6 +801,9 @@ func acpErrorLimitHint(raw json.RawMessage, now time.Time, signals []agents.ACPS
 	} else if structuredOutput {
 		hint.limited = true
 		hint.outputLimited = true
+	}
+	if hint.limited && !hint.outputLimited && hint.resetAt.IsZero() {
+		hint.resetAt = proseReset
 	}
 	return hint
 }

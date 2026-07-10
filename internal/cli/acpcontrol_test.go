@@ -938,6 +938,30 @@ func TestACPErrorLimitHintSignalDriven(t *testing.T) {
 	}
 }
 
+// TestACPErrorLimitHintNestedProseReset pins the codex-acp wire shape captured live on
+// 2026-07-10: the JSON-RPC message is a generic "Internal error", and the human notice
+// carrying the reset clock time rides in data.message. The classifier must mine the
+// nested prose so the wait targets the stated reset, not the 5-minute default cooldown.
+func TestACPErrorLimitHintNestedProseReset(t *testing.T) {
+	now := time.Date(2026, 7, 10, 14, 27, 0, 0, time.Local)
+	raw := json.RawMessage(`{"code":-32603,"message":"Internal error","data":{"message":"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:28 PM.","codexErrorInfo":"usageLimitExceeded"}}`)
+	h := acpErrorLimitHint(raw, now, []agents.ACPSignal{{Value: "usageLimitExceeded"}})
+	if !h.limited || h.outputLimited {
+		t.Fatalf("captured codex limit error must classify as a rate limit, got %+v", h)
+	}
+	want := time.Date(2026, 7, 10, 16, 28, 0, 0, time.Local)
+	if !h.resetAt.Equal(want) {
+		t.Errorf("resetAt = %v, want %v (mined from data.message prose)", h.resetAt, want)
+	}
+	// A nested reset never RE-classifies: without the structured signal or limit prose in
+	// the top-level message, an ordinary error stays ordinary even when a nested string
+	// parses as a full limit notice (echoed user content must not drive a rotation).
+	plain := json.RawMessage(`{"code":-32603,"message":"boom","data":{"note":"You've hit your usage limit. Try again at 4:28 PM."}}`)
+	if h := acpErrorLimitHint(plain, now, nil); h.limited || !h.resetAt.IsZero() {
+		t.Errorf("nested prose alone must not classify the error as limited, got %+v", h)
+	}
+}
+
 func TestACPControlOutputLimitDoesNotRotateOrHold(t *testing.T) {
 	c := presetControl(t)
 	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"message":"Output Limit Reached: maximum output length"}}` + "\n")

@@ -63,11 +63,13 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	}
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}}
+	t.Setenv("TZ", "America/Merida") // pin hostTimezone so the exact-args check is machine-independent
 
 	// A plain `coop claude` mounts only its own credential home — never the Codex/Gemini ones.
 	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	want := []string{
 		"run", "--rm", "--label", "coop=box",
+		"-e", "TZ=America/Merida",
 		"-v", "/repo:/workspace",
 		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
@@ -76,6 +78,22 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("assembleArgs minimal:\n got %v\nwant %v", got, want)
+	}
+}
+
+// TestAssembleArgsHostTimezone: every box (any mode, Homes or not) carries the host's
+// timezone, so in-box agents render clock times ("try again at 4:28 PM") on the host's
+// wall clock — coop parses that prose back host-local when scheduling a rate-limit wait.
+func TestAssembleArgsHostTimezone(t *testing.T) {
+	t.Setenv("TZ", "Europe/Kyiv")
+	if got := hostTimezone(); got != "Europe/Kyiv" {
+		t.Fatalf("hostTimezone must honor $TZ first, got %q", got)
+	}
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
+	if !containsSeq(got, []string{"-e", "TZ=Europe/Kyiv"}) {
+		t.Errorf("box args must carry the host timezone: %v", got)
 	}
 }
 
