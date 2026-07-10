@@ -249,6 +249,41 @@ pre.code .t { color: var(--faint); }            /* comment */
 pre.code .k { color: var(--wood); }             /* command */
 pre.code .s { color: var(--green); }            /* string/flag */
 
+/* ---- themed scrollbars: the OS default draws a bright bar on the dark code boxes ---- */
+.term-code, pre.code, .static-term, .term-body {
+  scrollbar-width: thin;                                  /* Firefox */
+  scrollbar-color: rgba(154, 162, 175, 0.32) transparent; /* thumb, track — --muted @ 32% */
+}
+.term-code::-webkit-scrollbar,
+pre.code::-webkit-scrollbar,
+.static-term::-webkit-scrollbar,
+.term-body::-webkit-scrollbar { height: 10px; width: 10px; }
+.term-code::-webkit-scrollbar-track,
+pre.code::-webkit-scrollbar-track,
+.static-term::-webkit-scrollbar-track,
+.term-body::-webkit-scrollbar-track { background: transparent; }
+.term-code::-webkit-scrollbar-thumb,
+pre.code::-webkit-scrollbar-thumb,
+.static-term::-webkit-scrollbar-thumb,
+.term-body::-webkit-scrollbar-thumb {
+  background: rgba(154, 162, 175, 0.32);
+  border: 3px solid transparent;   /* inset so the bar reads as a slim ~4px pill */
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.term-code::-webkit-scrollbar-thumb:hover,
+pre.code::-webkit-scrollbar-thumb:hover,
+.static-term::-webkit-scrollbar-thumb:hover,
+.term-body::-webkit-scrollbar-thumb:hover { background: rgba(154, 162, 175, 0.5); }
+.term-code::-webkit-scrollbar-corner,
+pre.code::-webkit-scrollbar-corner,
+.static-term::-webkit-scrollbar-corner,
+.term-body::-webkit-scrollbar-corner { background: transparent; }
+/* the install one-liner is a single line + Copy button — hide its bar so the code stays
+   vertically centered with the $ and button (it still scrolls by drag/trackpad) */
+.cmd code { scrollbar-width: none; }
+.cmd code::-webkit-scrollbar { display: none; }
+
 /* ---- footer ------------------------------------------------------------- */
 .footer { border-top: 1px solid var(--border-soft); padding: 40px 0; color: var(--muted); }
 /* 3-col grid so the links sit dead-center regardless of the side widths */
