@@ -17,7 +17,7 @@ Coding agents are most useful with the brakes off (`--dangerously-skip-permissio
 `--yolo`) — and that's exactly when you don't want them loose on your laptop.
 Coop runs them in a disposable container that mounts only the repo you're working
 on, shadows its secrets, and can't reach your home dir, SSH keys, or other projects.
-One command, installed once; the same box drives Claude, Codex, and Gemini.
+One command, installed once; the same box drives Claude, Codex, Gemini, and Grok.
 
 ```bash
 cd ~/code/some-repo && coop claude     # a sandboxed Claude, brakes off, secrets hidden
@@ -161,7 +161,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop claude` · `codex` · `gemini` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
+| `coop claude` · `codex` · `gemini` · `grok` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
 | `coop fusion <gov> --peer <agent>…` | a [governed council](#fusion-a-governed-council): the governor leads, the named peers advise |
 | `coop acp <agent>[:model][@account]` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/account in the target; name each peer with `--consult <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <gov> --peer <agent>…` |
 | `coop <agent> --consult <peer>…` | [opt-in second opinion](#second-opinions---consult) — name each peer with `--consult <agent>` (repeatable); may ask those peers on hard calls |
@@ -202,7 +202,7 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop loop [<agent>[:model][@account]] [--tasks <path>] [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then review (name the agent — `claude`/`codex`/`gemini` — or let a `--preset`'s lead supply it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / `--preset` set the [rotation](#picking-models); name each peer with `--consult <agent>` (repeatable) so iterations may ask them read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
-| `coop fleet init` · `up` · `down` · `split <n>` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks) |
+| `coop fleet init` · `up` · `down` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks; `coop tasks split <n>` bootstraps the file) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
 
@@ -304,9 +304,9 @@ coop fork merge perf     # land: rebase onto your branch, then close the fork
 coop fork rm perf        # or discard it (confirms first; refuses unmerged/dirty work without --force)
 ```
 
-`coop fork <name>` opens a new fork or re-enters an existing one. The agent defaults
-to `claude`; pass `codex` or `gemini` to pick
-the model. A fork inherits your git identity, signing key, and global gitignore from
+`coop fork <name>` opens a new fork or re-enters an existing one. Name the agent as a
+target — `coop fork perf codex` (or `codex:gpt-5.5@work` to pick its model + account) —
+or omit it to take a `--preset`'s lead. A fork inherits your git identity, signing key, and global gitignore from
 the parent — so the agent can commit *as you* and ignores the same noise you do.
 
 **Loop one unattended.** Point a fork at a task queue and it works it on its own:
@@ -434,9 +434,9 @@ run, `coop tasks watch` shows the deduped truth across the parent and its forks.
 
 ## Agents & config
 
-One box, three agents. Each reads its config and credentials from
-`~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`, `~/.codex`, and
-`~/.gemini`. That directory lives outside any repo, so credentials never land in git —
+One box, four agents. Each reads its config and credentials from
+`~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`, `~/.codex`,
+`~/.gemini`, and `~/.grok`. That directory lives outside any repo, so credentials never land in git —
 edit those files on the host and they take effect in the box. Only the *active* credential
 is mounted, so a running agent sees just the account it's using, not the whole vault.
 
@@ -509,8 +509,8 @@ write them — step to a cheaper model, another account, or both:
 ```yaml
 # .agent/presets/frontier/preset.yaml — coop presets init scaffolds this
 lead:
-  agent: claude
-  models: [claude-opus-4-8, claude-fable-5@work]  # opus on all accounts, then fable on work
+  # agent: is a target, or a fallback LADDER — opus on all accounts, then fable on work
+  agent: [claude:claude-opus-4-8, claude:claude-fable-5@work]
 ```
 
 ```bash
@@ -617,31 +617,28 @@ delegate via `coop-delegate`). `.agent/presets/frontier/preset.yaml`:
 
 ```yaml
 lead:
-  agent: claude
-  # models is the lead's fallback ladder (model-first). A bare model runs on EVERY
-  # signed-in account (rotating on rate limit); model@account pins one. On a loop it
-  # rotates top-to-bottom; a single run uses the first.
-  models: [claude-fable-5, claude-opus-4-8@work]
+  # agent: is a TARGET, or a fallback LADDER (model-first, even cross-provider). A bare
+  # provider:model runs on EVERY signed-in account (rotating on rate limit); @account pins
+  # one. On a loop it rotates top-to-bottom (running each rung's agent); a single run uses
+  # the first. models:/model:/credentials: are retired — the model+account ride agent:.
+  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
   prompt: roles/lead.md        # optional Markdown, appended to the generated contract
 
 roles:
   thinker:                     # deep thinking + review, in the lead's own session
     mode: native
-    agent: claude
-    model: claude-opus-4-8     # coop generates a coop-thinker subagent from this role
+    agent: claude:claude-opus-4-8   # a target — the model rides agent: (coop generates coop-thinker)
     when: [architecture, debugging, code-review, before-commit]
     prompt: roles/thinker.md   # its system prompt (or set subagent: <name> to reuse one)
 
   critic:                      # independent critique from another vendor, read-only
     mode: consult
-    agent: codex
-    model: gpt-5.5             # a role runs on its agent's default account
+    agent: codex:gpt-5.5       # a role runs on its agent's default account (no @account)
     when: [plan-review, security, tradeoffs]
 
   fast:                        # cheap mechanical work, write-capable
     mode: delegate
-    agent: gemini
-    model: gemini-3.5-flash
+    agent: gemini:gemini-3.5-flash
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never              # it edits; the LEAD reviews the diff, gates, commits
     concurrent: never          # delegate runs are serialized
@@ -807,7 +804,7 @@ coop login claude    # or codex / gemini
     "coop": {
       "type": "custom",
       "command": "coop",           // absolute path if Zed's PATH lacks ~/.local/bin
-      "args": ["acp", "claude"],   // or "codex" / "gemini"; pin with "claude:opus-4.8@work" (fusion: see above)
+      "args": ["acp", "claude"],   // or "codex" / "gemini"; pin with "claude:opus@work" (fusion: see above)
       "env": {}
     }
   }
@@ -823,7 +820,7 @@ box and edits your files over ACP. Tool calls never prompt: coop runs every edit
 session in yolo, whatever the provider's own settings — the box is the boundary, so
 permission theater would only slow it down.
 
-Under the hood `coop acp [claude|codex|gemini|fusion]` runs the matching adapter
+Under the hood `coop acp [claude|codex|gemini|grok|fusion]` runs the matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`)
 inside the box over stdio. The repo mounts at its real host path — the same path
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
@@ -1019,32 +1016,30 @@ the first conflict or red gate, leaving the rest untouched.
 
 **Declare the fleet once** in `.agent/fleet.yaml` (run `coop fleet init` for a template
 with the format documented inline). Each fork needs `tasks:` (relative to the repo
-root) and may set `agent:`, `preset:` (an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file)
-— its lead becomes the fork's default agent), `credential:` (pin one account; give each
-fork a different one so they don't contend), `model:` (may be `model@account`), and
-`consult: true` (iterations may ask the [peer agents](#the-orchestrator-pattern)
-read-only). A fork runs one model/credential — for a full rotation ladder, point it at a
-preset. Per-fork values override the preset for that fork only:
+root) and may set `agent:` (a target — `provider[:model][@account]`; give each fork a
+different account so they don't contend) and `preset:` (an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file)
+— its lead becomes the fork's default agent). A fork takes ONE account — for a full
+rotation ladder, point it at a preset. The old per-fork `model:`/`credential:` keys are
+retired (the model+account ride `agent:`); a per-fork `consult: true` is refused for now
+(name peers explicitly — the fleet grammar for that is coming). An explicit `agent:`
+target overrides the preset's lead for that fork only:
 
 ```yaml
 forks:
   core:
     tasks: .agent/tasks.core
-    preset: frontier          # claude/fable lead + critic/fast roles, from the preset
-    credential: work
+    preset: frontier                 # claude/fable lead + critic/fast roles, from the preset
   perf:
-    agent: codex
+    agent: codex:gpt-5.5@work        # a target: provider, model, account
     tasks: .agent/tasks.perf
-    model: gpt-5.5@work
   deps:
-    agent: gemini
+    agent: gemini:gemini-3.5-flash
     tasks: .agent/tasks.deps
-    model: gemini-3.5-flash
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
 `coop fleet down` stops them. (The pre-v3 one-line `.agent/fleet` is not read — its
-presence is an error until you translate it to YAML and delete it; see MIGRATING.md.) To bootstrap the file, `coop fleet
+presence is an error until you translate it to YAML and delete it; see MIGRATING.md.) To bootstrap the file, `coop tasks
 split <n>` mechanically round-robins your `.agent/tasks/` todo folders into per-fork
 `.agent/tasks.slice<n>/` slices and writes a matching `.agent/fleet.yaml` with each
 slice's explicit path (use an agent for *semantic* slicing). It won't clobber a fleet

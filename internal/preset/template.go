@@ -17,7 +17,7 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 #             coop loop --preset %[1]s
 #   Inspect:  coop presets %[1]s
 #   Format:   coop help presets
-# An explicit target on the command line (claude:opus-4.8@work) overrides the lead +
+# An explicit target on the command line (claude:opus@work) overrides the lead +
 # ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset names
 # models and accounts, never the secrets themselves.
 

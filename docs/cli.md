@@ -147,7 +147,7 @@ coop credentials — list stored credentials; a path grammar edits one.
   reads or writes one property of it. A credential is one subscription; add more
   with 'coop login <agent>@<name>', then an unattended loop rotates across them on
   a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate
-  axis — set it inline (claude:opus-4.8) or in a preset, never on a credential.
+  axis — set it inline (claude:opus) or in a preset, never on a credential.
 
   default                mark this credential as what a plain 'coop <agent>' runs,
                          and the account a loop's rotation starts on. A mark you
@@ -175,7 +175,7 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
-  An explicit target (claude:opus-4.8@work) wins over the preset's lead + ladder.
+  An explicit target (claude:opus@work) wins over the preset's lead + ladder.
 
   .agent/presets/frontier/preset.yaml:
 
@@ -229,7 +229,7 @@ coop models [agent] — the model menu per agent.
   cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
   static examples — model ids churn, so ANY id the agent's CLI accepts works either way
   (coop never validates a model id). A model is an axis of its own — set it inline in the
-  target (claude:opus-4.8) or in a preset's lead agent: ladder, never on a credential.
+  target (claude:opus) or in a preset's lead agent: ladder, never on a credential.
 
   Plain 'coop models' is instant and never needs the container runtime — it only reads
   the cache. The cache is refreshed two auth-free ways: claude/gemini populate it for free
@@ -245,13 +245,13 @@ coop models [agent] — the model menu per agent.
   Precedence: the target's :model > the active rotation entry's model (a loop stepping
   through a preset's lead agent: ladder) > COOP_LOOP_MODEL (loop runs) > COOP_<AGENT>_MODEL
   (agent-wide) > a model baked into COOP_<AGENT>_CMD > the agent CLI's own default.
-  An account rides the SAME target (claude:opus-4.8@work). coop never validates a model
+  An account rides the SAME target (claude:opus@work). coop never validates a model
   id — a bad one fails in the agent's own error.
 
 coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
 
   Usage: coop acp <agent>[:model][@account] [--preset <name>] [--consult <peer>…]
-         coop acp fusion <governor>[:model][@account] --peer <agent>…
+         coop acp fusion <governor>[:model][@account] [--consult <peer>…]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor. coop always
@@ -266,7 +266,7 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
   rate limit it auto-rotates to your next signed-in account over that same path.
 
   The target pins the session's agent, model, and account — an editor can run two
-  entries on different ones, e.g. ["acp","claude:opus-4.8@work"].
+  entries on different ones, e.g. ["acp","claude:opus@work"].
 
   --preset <name> runs the session under an orchestration preset (its lead is the
   default agent when none is named; see 'coop help presets').
@@ -318,22 +318,22 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
   up and down take --prune (with optional --force) to prune in the same step.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
-  loop) and may set agent:, preset: (an orchestration preset; its lead + models ladder
-  drive the fork), model: (a one-off model, may be model@account), credential: (pin an
-  account — give each fork a DIFFERENT one so they run in parallel), and consult: true
-  (iterations may ask the other signed-in agents read-only). A full fallback ladder
-  lives in a preset; per-fork model:/credential: are single one-off overrides:
+  loop) and may set agent: (a TARGET — provider[:model][@account]; give each fork a
+  DIFFERENT account so they run in parallel) and preset: (an orchestration preset; its
+  lead + ladder drive the fork). A fork takes ONE account — a full rotation ladder lives
+  in a preset. The old per-fork model:/credential: keys are retired (the model+account
+  ride agent:); a per-fork consult: true is refused for now (name peers explicitly — the
+  fleet grammar for that is coming). An explicit agent: target overrides the preset lead:
 
     forks:
       core:
         tasks: .agent/tasks.core
         preset: frontier
       perf:
+        agent: codex:gpt-5.5@work
         tasks: .agent/tasks.perf
-        model: gpt-5.5@work
 
-  Per-fork model:/credential:/consult: override the preset for that fork only. The
-  pre-v3 one-line .agent/fleet is NOT read — its presence is an error until you
+  The pre-v3 one-line .agent/fleet is NOT read — its presence is an error until you
   translate it (see MIGRATING.md) and delete it. List forks: coop fork ls
 
 coop tasks — drive the task queue (a folder per task under .agent/tasks/).

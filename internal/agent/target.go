@@ -12,9 +12,9 @@ import (
 //	provider[:model][@account[,account…]]
 //
 //	claude                     provider only          (model → the CLI default; all accounts)
-//	claude:opus-4.8            provider + model
+//	claude:opus            provider + model
 //	claude@work                provider + account     (model → the CLI default)
-//	claude:opus-4.8@work       provider + model + account
+//	claude:opus@work       provider + model + account
 //	claude:opus@work,personal  provider + model + an ACCOUNT LADDER (fan out work → personal)
 //
 // `:` splits provider from model; `@` starts the account slot; `,` separates ACCOUNTS (and

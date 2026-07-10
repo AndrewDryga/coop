@@ -457,8 +457,15 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// Resolve the --consult peers HERE, before the outer/inner split — so an editor's
+	// agent_servers entry with a bad peer (unknown/unauthed, or an @account) fails fast in the
+	// OUTER process, not silently later inside the box.
+	peers, err := a.resolvePeers("--consult", consultVals)
+	if err != nil {
+		return 2, err
+	}
 	// --model/--credential are retired on this surface too — pin the session in the positional
-	// target instead, so an editor's agent_servers entry runs ["acp","claude:opus-4.8@work"].
+	// target instead, so an editor's agent_servers entry runs ["acp","claude:opus@work"].
 	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err
 	}
@@ -506,7 +513,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|fusion [governor]][:model][@account] [--preset <name>])", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|grok|fusion [governor]][:model][@account] [--preset <name>])", leftover[0])
 	}
 	// A running ACP session can switch its credential/preset via coop's selector; the supervisor
 	// re-execs the inner box with the choice in the env (COOP_ACP_CREDENTIAL/COOP_ACP_PRESET), which
@@ -542,7 +549,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		tool = presetLeadAgent(p, tool, toolSet)
 	}
 	if !agents.Valid(tool) {
-		return 2, errors.New("usage: coop acp [claude|codex|gemini|fusion [governor]]")
+		return 2, errors.New("usage: coop acp [claude|codex|gemini|grok|fusion [governor]]")
 	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).
@@ -582,10 +589,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
-	}
-	peers, err := a.resolvePeers("--consult", consultVals)
-	if err != nil {
-		return 2, err
 	}
 	lead := "" // named peers (or a preset) opt the session into the second-opinion directive
 	if len(peers) > 0 || a.preset != nil {
@@ -751,7 +754,7 @@ func agentChoices() string { return strings.Join(agents.Names(), ", ") }
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
 	// --model/--credential are retired — pin the governor in its target (coop fusion
-	// claude:opus-4.8@work); the peers keep their own defaults. `--`-aware, so the
+	// claude:opus@work); the peers keep their own defaults. `--`-aware, so the
 	// governor's OWN flags (codex's --profile) still pass through after a `--`.
 	if err := retiredTargetFlagErr(args); err != nil {
 		return 2, err

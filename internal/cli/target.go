@@ -60,7 +60,7 @@ func retiredTargetFlagErr(args []string) error {
 		f, _, _ := strings.Cut(a, "=")
 		switch f {
 		case "--model":
-			return fmt.Errorf("--model is retired — put the model in the target: coop <cmd> <provider>:<model> (e.g. claude:opus-4.8)")
+			return fmt.Errorf("--model is retired — put the model in the target: coop <cmd> <provider>:<model> (e.g. claude:opus)")
 		case "--credential", "--credentials":
 			return fmt.Errorf("--credential is retired — put the account in the target: coop <cmd> <provider>@<account> (e.g. claude@work)")
 		}

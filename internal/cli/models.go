@@ -38,7 +38,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 		}
 		names = []string{rest[0]}
 		if len(rest) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [<agent>] [--refresh]; pick a model inline like claude:opus-4.8, or in a preset)", rest[1])
+			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [<agent>] [--refresh]; pick a model inline like claude:opus, or in a preset)", rest[1])
 		}
 	}
 	p := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean

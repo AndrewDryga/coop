@@ -15,10 +15,10 @@
 - **One way to name a run: the target grammar `provider[:model][@account]`, and peers that
   participate only when named.** Every launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
   `fork <name> [acp]`, `login` — now takes a single **target** for WHO runs: `claude`,
-  `claude:opus-4.8`, `claude@work`, `claude:opus-4.8@work`. **The provider is required** (no more
+  `claude:opus`, `claude@work`, `claude:opus@work`. **The provider is required** (no more
   implicit `claude` default — a bare `coop`/`loop`/`acp`/`fusion` names the fix), while the model
   stays optional (it falls to the agent CLI's default). **`--model` and `--credential` retire**
-  everywhere — they were just target segments (`claude:opus-4.8@work`); each tombstones with the
+  everywhere — they were just target segments (`claude:opus@work`); each tombstones with the
   rewrite. `coop login claude@work` replaces `coop login claude --credential work`. An account
   **ladder** rides the target too (`claude@work,personal`, rotated by `coop loop` on a rate limit).
   Peers are now **explicit**: repeatable `--consult <peer>` on `coop <agent>`/`loop`/`acp`/`fork

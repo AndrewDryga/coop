@@ -4,24 +4,16 @@
 #             coop loop --preset frontier
 #   Inspect:  coop presets frontier
 #   Format:   coop help presets
-# A named agent overrides the lead; explicit --model / --credential override the
+# An explicit target on the command line (claude:opus@work) overrides the lead +
 # ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
 # names models and accounts, never the secrets themselves.
 
-# lead — REQUIRED: the default agent for the session, plus its model ladder.
+# lead — REQUIRED: the agent that leads the session, as a TARGET or a fallback ladder.
 lead:
-  # REQUIRED — one of: claude, codex, gemini.
-  agent: claude
-
-  # models — OPTIONAL model-first fallback ladder. Each entry is one of:
-  #   <model>            bare model → runs on EVERY signed-in account, rotating
-  #                      to the next on a rate limit.
-  #   <model>@<account>  pins that model to one account (see coop credentials).
-  #   {model: m, credential: a}   the same pair, written with keys.
-  # A loop rotates it top-to-bottom (all accounts of entry 1, then entry 2, …),
-  # keying rate limits per (model, account); a single run uses the first entry.
-  # Omit models to use the agent's default model on all signed-in accounts.
-  models: [claude-fable-5]
+  # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (a fallback
+  # ladder, even cross-provider). A bare provider:model runs on EVERY signed-in account
+  # (rotating on a rate limit); @account pins one. A loop rotates the list top-to-bottom.
+  agent: claude:claude-fable-5
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
@@ -34,11 +26,11 @@ roles:
   thinker:
     # mode: native — a Claude subagent that runs inside the lead's session (no
     # separate box; native is Claude-only). With no subagent: below, coop generates
-    # a coop-thinker subagent in the box from this role — model, when, and prompt.
+    # a coop-thinker subagent in the box from this role — its target's model, when, and prompt.
     mode: native
-    agent: claude
-    # model — the generated subagent runs on this (coop models); omit for the default.
-    model: claude-opus-4-8
+    # agent — a target: provider[:model]. The model (after ':') is what the generated
+    # subagent runs on; a bare provider uses the default. No @account (a role runs its default).
+    agent: claude:claude-opus-4-8
     # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
     when: [architecture, debugging, code-review, before-commit]
     # prompt — the generated subagent's system prompt. To reference an existing
@@ -49,10 +41,8 @@ roles:
     # mode: consult — a READ-ONLY peer via coop-consult for a second opinion
     # (often another vendor); it cannot edit files.
     mode: consult
-    # agent — one of: claude, codex, gemini.
-    agent: codex
-    # model — OPTIONAL; omit for the agent's default.
-    model: gpt-5.6-sol
+    # agent — a target: provider[:model] (omit the model for the agent's default).
+    agent: codex:gpt-5.6-sol
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
 
@@ -60,10 +50,8 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — one of: claude, codex, gemini.
-    agent: codex
-    # model — OPTIONAL; omit for the agent's default.
-    model: gpt-5.6-luna
+    # agent — a target: provider[:model].
+    agent: codex:gpt-5.6-luna
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     # commit — delegate-only; only "never" (the delegate never commits).

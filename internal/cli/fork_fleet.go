@@ -38,7 +38,7 @@ func fleetYAMLFile(repo string) string { return filepath.Join(repo, ".agent", "f
 
 // fleetForkYAML is one fork's YAML shape. Tasks is required; agent is a target
 // (provider[:model][@account]) and defaults to the preset's lead when omitted. model:/credential:
-// are retired — the model + account ride agent: (e.g. agent: claude:opus-4.8@work).
+// are retired — the model + account ride agent: (e.g. agent: claude:opus@work).
 type fleetForkYAML struct {
 	Agent   string `yaml:"agent"` // a target: provider[:model][@account]
 	Tasks   string `yaml:"tasks"`
@@ -75,7 +75,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 				switch key := node.Content[k].Value; key {
 				case "agent", "tasks", "preset", "consult":
 				case "model", "credential":
-					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %s: is retired — put it in agent: (a target, e.g. agent: claude:opus-4.8@work)", name, key)
+					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %s: is retired — put it in agent: (a target, e.g. agent: claude:opus@work)", name, key)
 				default:
 					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown key %q (known: agent, tasks, preset, consult)", name, key)
 				}

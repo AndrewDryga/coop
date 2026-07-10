@@ -3,14 +3,14 @@
 ## Unreleased: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][@account]`
-(`claude`, `claude:opus-4.8`, `claude@work`, `claude:opus-4.8@work`). The provider is
+(`claude`, `claude:opus`, `claude@work`, `claude:opus@work`). The provider is
 **required** — there is no implicit `claude` default — while the model stays optional (it
 falls to the agent CLI's default). `--model`, `--credential`, and the boolean `--consult`
 retire; peers are named explicitly.
 
 | Retired | Use |
 | --- | --- |
-| `coop <agent> --model <m>` | `coop <agent>:<m>` — e.g. `coop claude:opus-4.8` |
+| `coop <agent> --model <m>` | `coop <agent>:<m>` — e.g. `coop claude:opus` |
 | `coop <agent> --credential <acct>` | `coop <agent>@<acct>` — e.g. `coop claude@work` |
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
@@ -20,7 +20,7 @@ retire; peers are named explicitly.
 
 These apply on **every** launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
 `fork <name> [acp]`, and `login`. A Zed `agent_servers` entry names the agent as one token:
-`["acp","claude:opus-4.8@work"]` (a bare `["acp"]` now errors instead of defaulting).
+`["acp","claude:opus@work"]` (a bare `["acp"]` now errors instead of defaulting).
 
 Peers participate **only when named** — the old "every signed-in agent is a peer" policy is
 gone. A named peer's credentials are the only ones mounted for consultation (the box's
