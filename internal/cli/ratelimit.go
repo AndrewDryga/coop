@@ -38,10 +38,13 @@ var (
 	// Output/token exhaustion is recoverable by immediately asking the same model to continue; it is
 	// not a provider rate limit, so it must not rotate credentials or sleep until a reset.
 	outputLimitRe = regexp.MustCompile(`(?i)(?:output limit|max(?:imum)? output length|max(?:imum)?[_ -]?output[_ -]?tokens?|output length limit|finish[_ ]?reason["'\s:=]+(?:length|max[_ -]?tokens?))`)
-	// Broad markers with no parseable reset — a limit we should back off from.
+	// Broad markers with no parseable reset — a limit we should back off from. "at capacity"
+	// is codex's model-overload notice ("Selected model is at capacity. Please try a different
+	// model.") — a transient provider-side limit handled like an overload: rotate to the next
+	// rung (a different model heeds its own advice), or back off until it clears.
 	limitMarkers = []string{
 		"usage limit", "rate limit", "rate-limit", "rate limited",
-		"ratelimited", "overloaded", "resource exhausted",
+		"ratelimited", "overloaded", "at capacity", "resource exhausted",
 		"quota exceeded", "quota limit", "exceeded quota", "insufficient quota",
 		"usagelimit", "usagelimitexceeded",
 	}

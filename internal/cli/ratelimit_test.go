@@ -42,6 +42,8 @@ func TestDetectLimit(t *testing.T) {
 			"Please retry after 9999999 hours.", true, false, now.Add(limitMaxWait)},
 		{"broad rate-limit keyword, no reset",
 			"request failed: rate limit exceeded", true, false, time.Time{}},
+		{"codex model-at-capacity notice",
+			"Selected model is at capacity. Please try a different model.", true, false, time.Time{}},
 		{"http 429, no reset",
 			"HTTP 429 Too Many Requests", true, false, time.Time{}},
 		{"weekly subscription limit with stated reset",
