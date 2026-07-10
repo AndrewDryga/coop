@@ -385,8 +385,8 @@ func validProfileName(name string) bool {
 }
 
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
-// config dir for the chosen profile. Shared by `coop login [agent] [--profile p]` and
-// `coop <agent> login [--profile p]`.
+// config dir for the chosen credential. Shared by `coop login [agent] [--credential <name>]` and
+// `coop <agent> login [--credential <name>]`.
 func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {
@@ -727,8 +727,8 @@ func agentChoices() string { return strings.Join(agents.Names(), ", ") }
 // read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
-	// --profile picks the governor's credential profile, like a plain `coop <agent>` run; read it
-	// before governor parsing so the governor's own --profile is still reachable after a `--`.
+	// --credential picks the governor's credential, like a plain `coop <agent>` run; read it
+	// before governor parsing so the governor's own --profile (codex's flag) is still reachable after a `--`.
 	profile, args, err := extractRunProfile(args)
 	if err != nil {
 		return 2, err

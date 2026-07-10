@@ -231,7 +231,7 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-04-d", "task.md"), "# d\n")
 
 	if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
-		t.Fatalf("remove --all-done: code=%d err=%v", code, err)
+		t.Fatalf("rm --all-done: code=%d err=%v", code, err)
 	}
 	items := readTaskTree(root)
 	if len(items) != 2 {
@@ -244,11 +244,11 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 	}
 	// A second run is a clean no-op (nothing done left), not an error.
 	if code, err := tasksFolderRemove(root, []string{"--all-done"}); code != 0 || err != nil {
-		t.Errorf("remove --all-done with no done tasks should be a no-op, got (%d, %v)", code, err)
+		t.Errorf("rm --all-done with no done tasks should be a no-op, got (%d, %v)", code, err)
 	}
-	// Bare `remove` (no id, no flag) is a usage error.
+	// Bare `rm` (no id, no flag) is a usage error.
 	if code, _ := tasksFolderRemove(root, nil); code != 2 {
-		t.Errorf("remove with no args should be a usage error (2), got %d", code)
+		t.Errorf("rm with no args should be a usage error (2), got %d", code)
 	}
 }
 

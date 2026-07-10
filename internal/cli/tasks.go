@@ -333,7 +333,7 @@ func legacyMigrateErr(repo, legacyAbs, queueRel string) error {
 		"queue and does NOT migrate it)", rel, queueRel)
 }
 
-// tasksListAll rolls up `coop tasks list` across several configured queues (a monorepo with a
+// tasksListAll rolls up `coop tasks ls` across several configured queues (a monorepo with a
 // per-project .agent/tasks each), printing every queue under its rel-path header. A queue that
 // doesn't exist yet is noted, not fatal — the mutating commands still require a single target.
 func tasksListAll(repo string, rels []string) (int, error) {

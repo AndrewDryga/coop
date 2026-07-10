@@ -25,7 +25,7 @@ const (
 )
 
 // ANSI codes for the package-level helpers, blanked when stderr is not a terminal — coop's
-// progress and diagnostic lines go to stderr. A stdout view (e.g. `coop tasks list`) colors
+// progress and diagnostic lines go to stderr. A stdout view (e.g. `coop tasks ls`) colors
 // through a Palette gated on stdout instead.
 var (
 	cGreen   string
@@ -210,7 +210,7 @@ func Check() string { return cGreen + "✓" + cReset }
 func Cross() string { return cRed + "✗" + cReset }
 
 // Palette applies ANSI color gated on a chosen stream. Use For(os.Stdout) for a stdout view —
-// `coop tasks list` — so a redirect or pipe (`coop tasks ls > file`) stays plain text, where the
+// `coop tasks ls` — so a redirect or pipe (`coop tasks ls > file`) stays plain text, where the
 // package-level Bold/Gray/… helpers gate on stderr (coop's progress stream). Each method is the
 // identity function when color is off, so the call site reads the same with or without it.
 type Palette struct{ on bool }

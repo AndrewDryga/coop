@@ -559,7 +559,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	return 0, nil
 }
 
-// tasksFolderRemove deletes task folders — `remove <id>` for one (any state), or
+// tasksFolderRemove deletes task folders — `rm <id>` for one (any state), or
 // `remove --all-done` to clear the 99_done/ archive. It is a MANUAL, human action: the
 // loop and skills only ever MOVE a finished task to 99_done/, never delete it, so done
 // tasks accumulate until someone prunes them with this.

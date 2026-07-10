@@ -271,7 +271,7 @@ func TestIntegrationUmbrellaAddRejectsUnknownProject(t *testing.T) {
 	}
 }
 
-// TestIntegrationMultiQueueRollup: `coop tasks list`/`decisions`/`lint` roll up across several
+// TestIntegrationMultiQueueRollup: `coop tasks ls`/`decisions`/`lint` roll up across several
 // configured queues (a monorepo with a per-project .agent/tasks), each under its header, and the
 // id-addressed commands find their task in whichever queue holds it — erroring only when the id
 // matches in more than one queue, or the target queue is genuinely ambiguous (add).

@@ -24,7 +24,7 @@ const (
 	Backlog = "xx_backlog"
 )
 
-// All is the LIFECYCLE state directories in order — the list the loop and `coop tasks list` follow,
+// All is the LIFECYCLE state directories in order — the list the loop and `coop tasks ls` follow,
 // and the exact set `coop init` creates. Backlog is intentionally NOT here (see its doc); a test
 // pins that so no one "helpfully" adds it and makes the loop start working un-promoted ideas.
 var All = []string{Todo, InProgress, Blocked, Done}

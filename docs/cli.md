@@ -274,7 +274,8 @@ coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.
 
-  (--supervise is accepted but no longer needed — the proxy is always on.)
+  (--supervise is accepted as a no-op — the proxy is always on now, but older editor
+  (Zed) agent_servers entries still send it, and coop can't rewrite your editor config.)
 
 coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
 
