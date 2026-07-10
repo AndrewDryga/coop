@@ -32,6 +32,17 @@ spelling of the target). A per-fork `consult: true` in `.agent/fleet.yaml` now r
 fleet up`; name peers explicitly (the fleet grammar for that lands with the preset/fleet
 unification).
 
+**Presets follow the same grammar** — `agent:` holds a target (or, for the lead, a same-provider
+target ladder); the separate `model:`/`models:` keys retire:
+
+| Retired preset shape | Use |
+| --- | --- |
+| `lead: {agent: claude, models: [fable, opus@work]}` | `lead: {agent: [claude:fable, claude:opus@work]}` — one `agent:` ladder (each entry a target) |
+| a role's `agent: codex` + `model: gpt-5.5` | `agent: codex:gpt-5.5` — the model rides `agent:` (a role runs its default account; no `@account`) |
+
+A cross-provider lead ladder (rotating vendors mid-loop) isn't supported yet — a lead ladder names
+one provider.
+
 ## v3: retired command aliases
 
 v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/tombstoned; rewrite:

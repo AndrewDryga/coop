@@ -60,8 +60,10 @@ func ParseTarget(s string) (Target, error) {
 			if a == "" {
 				return Target{}, fmt.Errorf("%q has an empty account — list accounts as @a,b, not a trailing/`,,` comma", raw)
 			}
-			if strings.ContainsAny(a, ":@") {
-				return Target{}, fmt.Errorf("invalid account %q in %q — an account name has no ':' or '@'", a, raw)
+			// An account becomes a profile DIRECTORY name, so it must be a single path-safe
+			// segment — no separators or traversal, and no leading '-' (would look like a flag).
+			if strings.ContainsAny(a, ":@/\\") || a == "." || a == ".." || strings.HasPrefix(a, "-") {
+				return Target{}, fmt.Errorf("invalid account %q in %q — a single path-safe segment (no ':' '@' '/' '..' or leading '-')", a, raw)
 			}
 			t.Accounts = append(t.Accounts, a)
 		}

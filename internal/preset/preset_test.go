@@ -33,8 +33,7 @@ func writePreset(t *testing.T, name, yaml string, files map[string]string) strin
 
 const frontierYAML = `
 lead:
-  agent: claude
-  models: [claude-fable-5, claude-opus-4-8@work]
+  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
   prompt: lead.md
 
 roles:
@@ -106,23 +105,24 @@ func TestLoadValidation(t *testing.T) {
 		wantErr string
 	}{
 		{"malformed yaml", "lead: [not\n  a: map", nil, "malformed YAML"},
-		{"missing lead agent", "roles: {}", nil, "lead.agent is required"},
-		{"unknown lead agent", "lead: {agent: gpt4}", nil, "not a known agent"},
+		{"missing lead agent", "roles: {}", nil, "lead.agent: is required"},
+		{"unknown lead agent", "lead: {agent: gpt4}", nil, "unknown provider"},
 		{"unknown role agent", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: wat}}", nil, "unknown provider"},
 		{"missing mode", "lead: {agent: claude}\nroles: {r: {agent: codex}}", nil, "mode is required"},
 		{"bad mode", "lead: {agent: claude}\nroles: {r: {mode: boss, agent: codex}}", nil, "not one of native, consult, delegate"},
 		{"missing prompt file", "lead: {agent: claude, prompt: lead.md}", nil, "does not exist"},
 		{"missing role prompt file", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, prompt: roles/r.md}}", nil, "does not exist"},
 		{"lead model retired", "lead: {agent: claude, model: opus}", nil, "retired"},
+		{"lead models retired", "lead: {agent: claude, models: [x]}", nil, "retired"},
 		{"lead credentials retired", "lead: {agent: claude, credentials: [work]}", nil, "retired"},
-		{"empty models list", "lead: {agent: claude, models: []}", nil, "is empty"},
-		{"empty model in models", "lead: {agent: claude, models: [\"@work\"]}", nil, "invalid model"},
-		{"bad account in models", "lead: {agent: claude, models: [\"opus@../x\"]}", nil, "invalid account"},
-		{"empty account after at", "lead: {agent: claude, models: [\"opus@\"]}", nil, "empty account"},
-		{"unknown models key", "lead: {agent: claude, models: [{model: opus, acct: work}]}", nil, "unknown key"},
-		{"role model retired", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "retired"},
-		{"role account rejected", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
-		{"role credentials rejected", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
+		{"empty lead agent list", "lead: {agent: []}", nil, "empty list"},
+		{"empty model in lead target", "lead: {agent: \"claude:\"}", nil, "empty model"},
+		{"bad account in lead target", "lead: {agent: \"claude:opus@../x\"}", nil, "invalid account"},
+		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, "empty account"},
+		{"cross-provider lead ladder", "lead: {agent: [claude:opus, codex:gpt-5]}", nil, "different provider"},
+		{"role model retired", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "retired"},
+		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
+		{"role credentials rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
 		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "agent must be claude"},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},
 		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, "only 'never' is supported"},

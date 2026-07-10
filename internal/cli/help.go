@@ -275,7 +275,7 @@ var commandHelp = map[string]string{
 
   @account signs in a second (or third) account under a name, so one agent can
   hold several subscriptions: coop login claude@work. An unattended loop rotates
-  across all of them when one is rate limited (a bare model in a preset's models:
+  across all of them when one is rate limited (a bare model in a preset's lead agent:
   ladder fans out over every account). Without @account the sign-in targets the default.`,
 
 	"credentials": `coop credentials — list stored credentials; a path grammar edits one.
@@ -290,7 +290,7 @@ var commandHelp = map[string]string{
   (signed in? default?), a credential shows its detail, and a trailing attribute
   reads or writes one property of it. A credential is one subscription; add more
   with 'coop login <agent>@<name>', then an unattended loop rotates across them on
-  a rate limit (a bare model in a preset's models: ladder). The model is a separate
+  a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate
   axis — set it inline (claude:opus-4.8) or in a preset, never on a credential.
 
   default                mark this credential as what a plain 'coop <agent>' runs,
@@ -312,7 +312,7 @@ var commandHelp = map[string]string{
   cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
   static examples — model ids churn, so ANY id the agent's CLI accepts works either way
   (coop never validates a model id). A model is an axis of its own — set it inline in the
-  target (claude:opus-4.8) or in a preset's models: ladder, never on a credential.
+  target (claude:opus-4.8) or in a preset's lead agent: ladder, never on a credential.
 
   Plain 'coop models' is instant and never needs the container runtime — it only reads
   the cache. The cache is refreshed two auth-free ways: claude/gemini populate it for free
@@ -326,7 +326,7 @@ var commandHelp = map[string]string{
   'coop fork risky claude:opus --loop', 'coop acp claude:sonnet'.
 
   Precedence: the target's :model > the active rotation entry's model (a loop stepping
-  through a preset's models: ladder) > COOP_LOOP_MODEL (loop runs) > COOP_<AGENT>_MODEL
+  through a preset's lead agent: ladder) > COOP_LOOP_MODEL (loop runs) > COOP_<AGENT>_MODEL
   (agent-wide) > a model baked into COOP_<AGENT>_CMD > the agent CLI's own default.
   An account rides the SAME target (claude:opus-4.8@work). coop never validates a model
   id — a bad one fails in the agent's own error.`,
@@ -392,11 +392,11 @@ var commandHelp = map[string]string{
          coop presets init [name]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
-  work to — each role an agent + model + routing hints. The lead's models: list is
-  its fallback ladder (model-first): a bare model runs on EVERY signed-in account
-  (rotating on a rate limit), model@account pins one. On a loop it rotates the
-  ladder top-to-bottom; a single run uses the first entry. Accounts are your local
-  logins (see coop credentials) — presets name models, not secrets.
+  work to — each role an agent: target (provider[:model]) + routing hints. The lead's
+  agent: is a target, or a same-provider fallback ladder: a bare provider:model runs
+  on EVERY signed-in account (rotating on a rate limit), provider:model@account pins
+  one. On a loop it rotates the ladder top-to-bottom; a single run uses the first entry.
+  Accounts are your local logins (see coop credentials) — presets name models, not secrets.
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
@@ -405,9 +405,9 @@ var commandHelp = map[string]string{
   .agent/presets/frontier/preset.yaml:
 
     lead:
-      agent: claude
-      models: [claude-fable-5, claude-opus-4-8@work]   # ladder: fable on all
-      prompt: roles/lead.md      # accounts, then opus on work. Optional Markdown.
+      # a target, or a same-provider ladder — fable on all accounts, then opus on work
+      agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
+      prompt: roles/lead.md      # Optional Markdown, appended to the generated contract.
     roles:                       # agent: is a target — provider[:model], default account
       thinker:                   # native Claude subagent — deep thinking in-session
         mode: native
@@ -576,7 +576,7 @@ var commandHelp = map[string]string{
   reviews it. Unset → the review runs on the loop's model.
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
-  default agent, its models: ladder is the rotation, and each iteration gets the
+  default agent, its lead agent: ladder is the rotation, and each iteration gets the
   preset's role routing + wrappers ('coop help presets'). With no preset, the loop
   rotates the agent's default model across all signed-in accounts.
 

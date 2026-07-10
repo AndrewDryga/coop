@@ -17,7 +17,7 @@ func presetsRepo(t *testing.T) string {
 	if err := os.MkdirAll(good, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "lead: {agent: claude, models: [claude-fable-5@work]}\n" +
+	yaml := "lead: {agent: claude:claude-fable-5@work}\n" +
 		"roles:\n" +
 		"  critic: {mode: consult, agent: codex:gpt-5.5}\n" +
 		"  fast: {mode: delegate, agent: gemini, when: [boilerplate]}\n"
@@ -45,7 +45,7 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets() = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"frontier", "lead claude/claude-fable-5", "critic (consult codex)", "fast (delegate gemini)", "broken", "lead.agent is required"} {
+	for _, want := range []string{"frontier", "lead claude/claude-fable-5", "critic (consult codex)", "fast (delegate gemini)", "broken", "lead.agent: is required"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("listing missing %q:\n%s", want, list)
 		}

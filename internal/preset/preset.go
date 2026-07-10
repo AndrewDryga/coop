@@ -68,6 +68,56 @@ func (p *Preset) LeadModel() string {
 	return p.LeadModels[0].Model
 }
 
+// leadLadder parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a
+// same-provider target-LADDER (sequence [claude:fable, claude:opus@work]) — into the lead
+// provider and its model-first rotation ladder. Each entry is provider[:model][@account,…]: an
+// account list fans to one ladder entry per account; a single bare provider (no model, no
+// account) is the whole ladder's default (empty ladder = the agent's default model, all
+// accounts). Every entry must name the SAME provider — cross-provider lead ladders (rotating
+// across vendors mid-loop) aren't supported yet.
+func leadLadder(node *yaml.Node) (provider string, ladder []ModelTarget, err error) {
+	var raw []string
+	switch node.Kind {
+	case yaml.ScalarNode:
+		raw = []string{node.Value}
+	case yaml.SequenceNode:
+		if len(node.Content) == 0 {
+			return "", nil, fmt.Errorf("is an empty list — name at least one target, or write a single one")
+		}
+		for _, c := range node.Content {
+			raw = append(raw, c.Value)
+		}
+	case 0: // absent
+		return "", nil, fmt.Errorf("is required — a target: provider[:model][@account] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
+	default:
+		return "", nil, fmt.Errorf("must be a target (claude:opus@work) or a list of targets, not a map")
+	}
+	for i, s := range raw {
+		t, perr := agents.ParseTarget(s)
+		if perr != nil {
+			return "", nil, fmt.Errorf("[%d] %v", i, perr)
+		}
+		switch {
+		case provider == "":
+			provider = t.Provider
+		case t.Provider != provider:
+			return "", nil, fmt.Errorf("[%d] %q is a different provider than %q — a lead ladder is one provider (cross-provider lead rotation isn't supported yet)", i, t.Provider, provider)
+		}
+		if len(t.Accounts) == 0 {
+			ladder = append(ladder, ModelTarget{Model: t.Model})
+		}
+		for _, acct := range t.Accounts {
+			ladder = append(ladder, ModelTarget{Model: t.Model, Credential: acct})
+		}
+	}
+	// A single bare-provider entry (no model, no account) is "default model, all accounts" — the
+	// empty ladder, identical to the pre-unification absent models:.
+	if len(ladder) == 1 && ladder[0] == (ModelTarget{}) {
+		ladder = nil
+	}
+	return provider, ladder, nil
+}
+
 // roleName limits role names to env-safe tokens: the delegate wrapper turns a role
 // name into COOP_DELEGATE_<NAME>_* environment variables.
 var roleName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -80,10 +130,11 @@ type yamlPreset struct {
 }
 
 type yamlLead struct {
-	Agent  string         `yaml:"agent"`
-	Models *[]ModelTarget `yaml:"models"`
-	Prompt string         `yaml:"prompt"`
-	// Retired shapes — rejected with the models: rewrite so a v2 preset fails loud, not silently.
+	Agent  yaml.Node `yaml:"agent"` // a TARGET or a same-provider target-LADDER (folds in models:)
+	Prompt string    `yaml:"prompt"`
+	// Retired shapes — rejected with the agent:-target rewrite so a pre-unification preset fails
+	// loud, not silently. models: folded into agent: (each entry a provider:model@account target).
+	Models      any `yaml:"models"`
 	Model       any `yaml:"model"`
 	Credentials any `yaml:"credentials"`
 	Credential  any `yaml:"credential"`
@@ -207,28 +258,16 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 		return fmt.Errorf("preset %s: %s", name, fmt.Sprintf(format, a...))
 	}
 
-	// Lead.
-	if y.Lead.Agent == "" {
-		return nil, bad("lead.agent is required (one of %s)", strings.Join(agents.Names(), ", "))
+	// Lead. agent: is a TARGET or a same-provider target-ladder; its model+account fold in
+	// (models:/model:/credentials: are retired). LeadAgent is the provider; LeadModels the ladder.
+	if y.Lead.Models != nil || y.Lead.Model != nil || y.Lead.Credentials != nil || y.Lead.Credential != nil {
+		return nil, bad("lead.models/model/credentials are retired — fold them into agent: as a target ladder (e.g. agent: [claude:claude-fable-5, claude:claude-opus-4-8@work])")
 	}
-	if !agents.Valid(y.Lead.Agent) {
-		return nil, bad("lead.agent %q is not a known agent (use %s)", y.Lead.Agent, strings.Join(agents.Names(), ", "))
+	leadAgent, leadModels, err := leadLadder(&y.Lead.Agent)
+	if err != nil {
+		return nil, bad("lead.agent: %v", err)
 	}
-	p.LeadAgent = y.Lead.Agent
-	if y.Lead.Model != nil || y.Lead.Credentials != nil || y.Lead.Credential != nil {
-		return nil, bad("lead.model/credentials are retired — use one models: list, each entry model or model@account (e.g. models: [claude-fable-5, claude-opus-4-8@work])")
-	}
-	if y.Lead.Models != nil {
-		if len(*y.Lead.Models) == 0 {
-			return nil, bad("lead.models is empty — list at least one model (optionally model@account), or drop the key")
-		}
-		for i, t := range *y.Lead.Models {
-			if err := t.validate(); err != nil {
-				return nil, bad("lead.models[%d] %v", i, err)
-			}
-			p.LeadModels = append(p.LeadModels, t)
-		}
-	}
+	p.LeadAgent, p.LeadModels = leadAgent, leadModels
 	if p.LeadPromptText, err = promptText(p.Dir, y.Lead.Prompt); err != nil {
 		return nil, bad("lead.prompt: %v", err)
 	}

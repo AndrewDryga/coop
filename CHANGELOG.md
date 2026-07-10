@@ -23,6 +23,14 @@
   orthogonal axis — role wiring — not another spelling of the target); a per-fork `consult: true` in
   `.agent/fleet.yaml` now refuses at `coop fleet up`. See MIGRATING.md.
 
+- **Presets speak the same target grammar — `agent:` holds a target, and `model:`/`models:` retire.**
+  A role's `agent:` is now a target (`agent: codex:gpt-5.5`) — the model rides the same key as
+  everywhere else instead of a separate `model:` (a role runs its agent's default account, so no
+  `@account`). The lead's `agent:` holds a target or a same-provider fallback **ladder**
+  (`agent: [claude:fable-5, claude:opus-4-8@work]`), folding in the old `models:` list. Both retired
+  keys tombstone with the rewrite. (A cross-provider lead ladder — rotating vendors mid-loop — isn't
+  supported yet; a lead ladder names one provider.)
+
 - **`coop loop`'s end-of-loop pass is now a customizable, DEMANDING review that loops until it
   accepts.** Commit `.agent/loop/review.md` to FULLY override the review prompt (committed config,
   like a preset — the scaffold `.gitignore` allowlists `.agent/loop/`), while `.agent/loop/audit.md`

@@ -21,20 +21,17 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 # ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset names
 # models and accounts, never the secrets themselves.
 
-# lead — REQUIRED: the default agent for the session, plus its model ladder.
+# lead — REQUIRED: the agent that leads the session, as a TARGET or a fallback ladder.
 lead:
-  # REQUIRED — one of: claude, codex, gemini.
-  agent: claude
-
-  # models — OPTIONAL model-first fallback ladder. Each entry is one of:
-  #   <model>            bare model → runs on EVERY signed-in account, rotating
-  #                      to the next on a rate limit.
-  #   <model>@<account>  pins that model to one account (see coop credentials).
-  #   {model: m, credential: a}   the same pair, written with keys.
-  # A loop rotates it top-to-bottom (all accounts of entry 1, then entry 2, …),
-  # keying rate limits per (model, account); a single run uses the first entry.
-  # Omit models to use the agent's default model on all signed-in accounts.
-  models: [claude-fable-5, claude-opus-4-8@work]
+  # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (one provider):
+  #   claude                          the agent's default model, on EVERY signed-in account
+  #   claude:claude-opus-4-8          that model, on every signed-in account (rotating)
+  #   claude:claude-opus-4-8@work     that model pinned to the "work" account only
+  #   [claude:claude-fable-5, claude:claude-opus-4-8@work]   a fallback LADDER
+  # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry 2, …),
+  # keying rate limits per (model, account); a single run uses the first entry. Model ids:
+  # coop models. Accounts (logins): coop credentials.
+  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
