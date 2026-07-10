@@ -11,11 +11,11 @@ import (
 
 const spinInterval = 120 * time.Millisecond // live-bar spinner cadence
 
-// loopBarSupported reports whether the terminal can safely host the bottom-pinned main-screen
-// Region. Warp's block-based output can retain an erased bar frame as ordinary command output;
-// its alternate screen works normally, so this compatibility guard is intentionally loop-only.
-func loopBarSupported(termProgram string, stdoutTTY, stderrTTY bool) bool {
-	return termProgram != "WarpTerminal" && stdoutTTY && stderrTTY
+// loopBarSupported reports whether both output streams can host the bottom-pinned main-screen
+// Region. Terminal identity is deliberately irrelevant: the live bar is an interactive feature
+// everywhere, including Warp.
+func loopBarSupported(_ string, stdoutTTY, stderrTTY bool) bool {
+	return stdoutTTY && stderrTTY
 }
 
 // loopBar is the loop's sticky bottom status while an iteration runs: a spinner, a progress

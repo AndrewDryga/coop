@@ -18,7 +18,7 @@ func TestLoopBarSupported(t *testing.T) {
 	}{
 		{"regular terminal", "Apple_Terminal", true, true, true},
 		{"terminal without identifier", "", true, true, true},
-		{"Warp block output", "WarpTerminal", true, true, false},
+		{"Warp terminal", "WarpTerminal", true, true, true},
 		{"stdout pipe", "Apple_Terminal", false, true, false},
 		{"stderr pipe", "Apple_Terminal", true, false, false},
 	} {

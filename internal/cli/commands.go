@@ -2025,9 +2025,9 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
 // capturing the tail so a rate-limit notice can be detected. hosts are the queue files the
-// live bar watches for task progress. On compatible terminals the agent's output is funneled
-// into the scroll history above a sticky progress bar (a Docker-build-style live view). Warp's
-// block-based main screen and non-terminal output go straight to the terminal unchanged.
+// live bar watches for task progress. On interactive terminals the agent's output is funneled
+// into the scroll history above a sticky progress bar (a Docker-build-style live view).
+// Non-terminal output goes straight to the destination unchanged.
 func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))

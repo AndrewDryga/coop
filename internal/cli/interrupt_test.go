@@ -60,7 +60,7 @@ func TestWatchInterrupt(t *testing.T) {
 	})
 }
 
-// On the plain line-oriented path (no live bar: piped output, Warp) the notice starts on a fresh
+// On the plain line-oriented path (no live bar: piped output) the notice starts on a fresh
 // line, so it never glues onto the terminal's ^C echo or a partial agent line.
 func TestLoopInterruptInfoStartsFreshLine(t *testing.T) {
 	out := captureStderr(t, func() { loopInterruptInfo("stopping") })
