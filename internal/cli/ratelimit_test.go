@@ -173,8 +173,8 @@ func TestDecideIteration(t *testing.T) {
 	now := time.Unix(1_000_000_000, 0)
 
 	// Success resets both counters and advances.
-	fails, waits := 3, 2
-	if a, _, _ := decideIteration(0, nil, "done", now, &fails, &waits); a != actContinue {
+	fails, waits, retries := 3, 2, 0
+	if a, _, _ := decideIteration(0, nil, "done", now, &fails, &waits, &retries); a != actContinue {
 		t.Errorf("success: action = %d, want actContinue", a)
 	}
 	if fails != 0 || waits != 0 {
@@ -183,39 +183,83 @@ func TestDecideIteration(t *testing.T) {
 
 	// A rate limit bumps only waits and asks to wait (not fail).
 	fails, waits = 0, 0
-	a, wait, _ := decideIteration(1, nil, "Claude AI usage limit reached|1700000000", now, &fails, &waits)
+	a, wait, _ := decideIteration(1, nil, "Claude AI usage limit reached|1700000000", now, &fails, &waits, &retries)
 	if a != actWait || waits != 1 || fails != 0 || wait <= 0 {
 		t.Errorf("limit: action=%d wait=%v fails=%d waits=%d, want actWait/>0/0/1", a, wait, fails, waits)
 	}
 
 	// The newer human-readable weekly limit is a wait, not a failure.
 	fails, waits = 0, 0
-	if a, _, _ := decideIteration(1, nil, "You've hit your weekly limit · resets Jun 18, 8pm (UTC)", now, &fails, &waits); a != actWait || waits != 1 || fails != 0 {
+	if a, _, _ := decideIteration(1, nil, "You've hit your weekly limit · resets Jun 18, 8pm (UTC)", now, &fails, &waits, &retries); a != actWait || waits != 1 || fails != 0 {
 		t.Errorf("weekly limit: action=%d waits=%d fails=%d, want actWait/1/0", a, waits, fails)
 	}
 
 	// A non-limit failure bumps fails and asks to retry.
 	fails, waits = 0, 0
-	if a, _, _ := decideIteration(1, nil, "Error: boom", now, &fails, &waits); a != actRetry || fails != 1 {
+	if a, _, _ := decideIteration(1, nil, "Error: boom", now, &fails, &waits, &retries); a != actRetry || fails != 1 {
 		t.Errorf("failure: action=%d fails=%d, want actRetry/1", a, fails)
 	}
 
 	// Consecutive non-limit failures stop at the cap.
 	fails, waits = maxLoopFailures-1, 0
-	if a, _, _ := decideIteration(1, errors.New("x"), "boom", now, &fails, &waits); a != actStop {
+	if a, _, _ := decideIteration(1, errors.New("x"), "boom", now, &fails, &waits, &retries); a != actStop {
 		t.Errorf("at failure cap: action = %d, want actStop", a)
 	}
 
 	// Consecutive rate-limit waits stop at the cap.
 	fails, waits = 0, maxLimitWaits
-	if a, _, _ := decideIteration(1, nil, "rate limit", now, &fails, &waits); a != actStop {
+	if a, _, _ := decideIteration(1, nil, "rate limit", now, &fails, &waits, &retries); a != actStop {
 		t.Errorf("at limit cap: action = %d, want actStop", a)
 	}
 
-	// An output limit resumes immediately and does not increment fails/waits.
-	fails, waits = 2, 3
-	if a, wait, _ := decideIteration(1, nil, "Output Limit Reached: maximum output length", now, &fails, &waits); a != actRetryNow || wait != 0 || fails != 2 || waits != 3 {
-		t.Errorf("output limit: action=%d wait=%v fails=%d waits=%d, want actRetryNow/0/2/3", a, wait, fails, waits)
+	// A SINGLE output limit resumes immediately (the fast path) and leaves fails/waits untouched.
+	fails, waits, retries = 2, 3, 0
+	if a, wait, _ := decideIteration(1, nil, "Output Limit Reached: maximum output length", now, &fails, &waits, &retries); a != actRetryNow || wait != 0 || fails != 2 || waits != 3 || retries != 1 {
+		t.Errorf("output limit: action=%d wait=%v fails=%d waits=%d retries=%d, want actRetryNow/0/2/3/1", a, wait, fails, waits, retries)
+	}
+}
+
+// TestDecideIterationOutputLimitCapped: the output-limit path used to return actRetryNow forever,
+// respawning the box and burning quota with no give-up (introduced by eb36c66). Now a consecutive
+// RUN of output limits backs off after the first and stops at the cap, while a single one still
+// resumes at once and an intervening different outcome resets the run.
+func TestDecideIterationOutputLimitCapped(t *testing.T) {
+	now := time.Unix(1_000_000_000, 0)
+	out := "finish_reason: length"
+	var fails, waits, retries int
+
+	// First hit: immediate resume. Subsequent consecutive hits: a short backoff, until the cap.
+	for i := 1; i <= maxOutputRetries; i++ {
+		a, wait, _ := decideIteration(1, nil, out, now, &fails, &waits, &retries)
+		if a != actRetryNow {
+			t.Fatalf("hit %d: action=%d, want actRetryNow", i, a)
+		}
+		wantWait := outputRetryBackoff
+		if i == 1 {
+			wantWait = 0
+		}
+		if wait != wantWait {
+			t.Errorf("hit %d: wait=%v, want %v", i, wait, wantWait)
+		}
+	}
+	// One past the cap: give up instead of resuming forever, and reset the counter.
+	if a, _, _ := decideIteration(1, nil, out, now, &fails, &waits, &retries); a != actStop {
+		t.Fatalf("past the output-limit cap: action=%d, want actStop", a)
+	}
+	if retries != 0 {
+		t.Errorf("the counter should reset when the cap trips, got %d", retries)
+	}
+
+	// A single output limit followed by a NON-output outcome resets the run: a fresh run gets the
+	// full budget again, so a lone hit here and there never accumulates toward the cap.
+	fails, waits, retries = 0, 0, 0
+	decideIteration(1, nil, out, now, &fails, &waits, &retries) // retries -> 1
+	decideIteration(1, nil, "Error: boom", now, &fails, &waits, &retries)
+	if retries != 0 {
+		t.Errorf("a non-output failure must reset the output-limit run, got retries=%d", retries)
+	}
+	if a, _, _ := decideIteration(1, nil, out, now, &fails, &waits, &retries); a != actRetryNow || retries != 1 {
+		t.Errorf("after a reset, a fresh output limit resumes at once: action=%d retries=%d", a, retries)
 	}
 }
 

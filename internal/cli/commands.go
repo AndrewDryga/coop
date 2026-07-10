@@ -1494,7 +1494,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if rot.rotates() {
 		ui.Info("rotating %d targets on rate limit: %s", len(rot.targets), strings.Join(rot.members(), ", "))
 	}
-	fails, waits, completed, stalls := 0, 0, 0, 0
+	fails, waits, retries, completed, stalls := 0, 0, 0, 0, 0
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	for n := 1; ; {
@@ -1527,7 +1527,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if softStop.Load() {
 			break
 		}
-		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits)
+		action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
 		// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 		// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 		if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
@@ -1558,7 +1558,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				sleepForLimit(wait, resetAt, wake)
 			}
 		case actRetryNow:
-			ui.Info("iteration reached model output limit — resuming immediately")
+			if wait > 0 {
+				ui.Info("iteration reached model output limit (%d/%d) — resuming in %s", retries, maxOutputRetries, wait)
+				sleepOrWake(wait, wake)
+			} else {
+				ui.Info("iteration reached model output limit — resuming immediately")
+			}
 		case actRetry:
 			ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
 			sleepOrWake(10*time.Second, wake)

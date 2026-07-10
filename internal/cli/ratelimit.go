@@ -273,32 +273,55 @@ const (
 	// giving up — a backstop against a misfiring detector or a suspended account,
 	// set far above the handful of resets a real long run hits.
 	maxLimitWaits = 100
+	// maxOutputRetries caps CONSECUTIVE output/token-limit resumes. One is the common
+	// case (a turn that ran long — resume and it finishes); an UNBROKEN run means the
+	// same iteration keeps maxing out with no progress (a model wedged on output, or a
+	// gate whose failing output echoes "finish_reason: length"), so it gives up rather
+	// than respawn the box forever. Sized like maxLoopFailures.
+	maxOutputRetries = 5
 	// maxStalls is how many consecutive work iterations may complete no task before the
 	// loop gives up — a backstop against an in_progress/ task the agent keeps
 	// continuing but can't finish, which would otherwise spin forever.
 	maxStalls = 5
 )
 
-// decideIteration interprets one iteration's result, updates the failure/wait
-// counters in place, and returns the action loop() should take (with the pause
-// and reset time for actWait). Output/token limits are a separate immediate
-// retry action, so ordinary failures keep their backoff. Keeping the cap-and-
-// counter logic here, pure and unit-tested, separates it from the container run
-// and the actual sleeps.
-func decideIteration(code int, err error, out string, now time.Time, fails, waits *int) (action loopAction, wait time.Duration, resetAt time.Time) {
+// outputRetryBackoff spaces out consecutive output-limit resumes: the first is immediate
+// (the fast path for a single long turn), later ones back off, so a misfire can't
+// tight-loop box respawns before maxOutputRetries trips.
+const outputRetryBackoff = 5 * time.Second
+
+// decideIteration interprets one iteration's result, updates the failure/wait/retry
+// counters in place, and returns the action loop() should take (with the pause and
+// reset time for actWait, or the backoff for actRetryNow). Output/token limits are a
+// separate retry action with their OWN cap, so an unbroken run of them gives up instead
+// of resuming forever. Keeping the cap-and-counter logic here, pure and unit-tested,
+// separates it from the container run and the actual sleeps. retries counts consecutive
+// output-limit resumes; any other outcome resets it.
+func decideIteration(code int, err error, out string, now time.Time, fails, waits, retries *int) (action loopAction, wait time.Duration, resetAt time.Time) {
 	if err == nil && code == 0 {
-		*fails, *waits = 0, 0
+		*fails, *waits, *retries = 0, 0, 0
 		return actContinue, 0, time.Time{}
 	}
 	if hint := detectLimit(out, now); hint.limited {
 		if hint.outputLimited {
-			return actRetryNow, 0, time.Time{}
+			// An output limit is neither a failure nor a rate wait; only a consecutive RUN of
+			// them is a problem. Cap it so a wedged iteration can't respawn the box forever.
+			if *retries++; *retries > maxOutputRetries {
+				*retries = 0
+				return actStop, 0, time.Time{}
+			}
+			if *retries == 1 {
+				return actRetryNow, 0, time.Time{} // fast path: a single long turn resumes at once
+			}
+			return actRetryNow, outputRetryBackoff, time.Time{}
 		}
+		*retries = 0 // a rate wait breaks any output-limit run
 		if *waits++; *waits > maxLimitWaits {
 			return actStop, 0, time.Time{}
 		}
 		return actWait, limitWait(hint, *waits, now), hint.resetAt
 	}
+	*retries = 0 // a plain failure breaks any output-limit run
 	if *fails++; *fails >= maxLoopFailures {
 		return actStop, 0, time.Time{}
 	}
