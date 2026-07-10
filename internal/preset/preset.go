@@ -25,7 +25,7 @@ const Dir = ".agent/presets"
 
 // Role modes: how the lead reaches a role.
 const (
-	ModeNative   = "native"   // a native Claude subagent inside the lead's own session
+	ModeNative   = "native"   // a coop-generated Claude subagent (.claude/agents/) in the lead's session
 	ModeConsult  = "consult"  // a read-only peer via coop-consult
 	ModeDelegate = "delegate" // a write-capable delegate via coop-delegate
 )
@@ -335,7 +335,7 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	switch r.Mode {
 	case ModeNative:
 		if r.Agent != "claude" {
-			return r, bad("mode: native is Claude subagents — agent must be claude, not %s", r.Agent)
+			return r, bad("mode: native generates a Claude subagent (.claude/agents/) — its agent must be claude, not %s; a codex/gemini role uses consult or delegate", r.Agent)
 		}
 		// subagent is OPTIONAL: set = reference that existing .claude/agents/ subagent;
 		// empty = coop generates coop-<role> in the box from this role (model/when/prompt).
