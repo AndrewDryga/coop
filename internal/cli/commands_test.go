@@ -291,23 +291,31 @@ func TestWithReviewModel(t *testing.T) {
 	}
 }
 
-func TestLoopAgent(t *testing.T) {
-	// No positional → no agent, not explicit (provider required; the caller errors or a preset
-	// supplies the lead). The implicit claude default is gone.
-	if got, explicit, err := loopAgent(nil); err != nil || got != "" || explicit {
-		t.Errorf("loopAgent(nil) = (%q, explicit=%v, %v), want (\"\", false, nil) — no implicit default", got, explicit, err)
+// The loop's leading positional is a target (provider[:model][@account]); no positional →
+// no target (hasTarget=false) and the provider is required (caller errors or a preset lead
+// supplies it). A malformed/unknown token errors; --model/--credential tombstone.
+func TestLoopTargetResolution(t *testing.T) {
+	if _, has, _, _, _, err := parseLoopArgs(nil, false); err != nil || has {
+		t.Errorf("parseLoopArgs(nil) = (has=%v, %v), want (false, nil) — no implicit default", has, err)
 	}
 	for _, ag := range []string{"claude", "codex", "gemini"} {
-		if got, explicit, err := loopAgent([]string{ag}); err != nil || got != ag || !explicit {
-			t.Errorf("loopAgent(%q) = (%q, explicit=%v, %v), want %q explicit", ag, got, explicit, err, ag)
+		tg, has, _, _, _, err := parseLoopArgs([]string{ag}, false)
+		if err != nil || !has || tg.Provider != ag {
+			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, %v), want provider=%q", ag, tg, has, err, ag)
 		}
 	}
-	if _, _, err := loopAgent([]string{"bogus"}); err == nil {
-		t.Error("loopAgent(bogus): want error")
+	if tg, has, _, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has ||
+		tg.Provider != "claude" || tg.Model != "opus-4.8" || len(tg.Accounts) != 1 || tg.Accounts[0] != "work" {
+		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, %v)", tg, err)
 	}
-	// More than one agent is a usage error, not silently last-wins.
-	if _, _, err := loopAgent([]string{"claude", "codex"}); err == nil {
-		t.Error("loopAgent(claude codex): want error for more than one agent")
+	if _, _, _, _, _, err := parseLoopArgs([]string{"bogus"}, false); err == nil {
+		t.Error("parseLoopArgs(bogus): want error (unknown token)")
+	}
+	if _, _, _, _, _, err := parseLoopArgs([]string{"claude", "--model", "opus"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Errorf("--model should tombstone, got %v", err)
+	}
+	if _, _, _, _, _, err := parseLoopArgs([]string{"claude", "--credential", "work"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Errorf("--credential should tombstone, got %v", err)
 	}
 }
 
@@ -325,32 +333,32 @@ func TestParseLoopArgs(t *testing.T) {
 		{nil, false, "", "", false, false, false, false},
 		{[]string{"codex"}, false, "codex", "", false, false, false, false},
 		{[]string{"--debug-on-fail"}, false, "", "", false, true, false, false},
-		{[]string{"gemini", "--debug"}, false, "", "", false, false, false, true}, // v3: --debug retired → error
-		{[]string{"--debug-on-fail", "codex"}, false, "codex", "", false, true, false, false},
+		{[]string{"gemini", "--debug"}, false, "", "", false, false, false, true},        // v3: --debug retired → error
+		{[]string{"--debug-on-fail", "codex"}, false, "", "", false, false, false, true}, // a target must LEAD; a trailing positional errors
 		{[]string{"bogus"}, false, "", "", false, false, false, true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
 		{[]string{"--preflight"}, false, "", "", false, false, true, false},
 		{[]string{"codex", "--preflight"}, false, "codex", "", false, false, true, false},
 		{nil, true, "", "", false, false, true, false},                         // COOP_PREFLIGHT=1 default
 		{[]string{"--no-preflight"}, true, "", "", false, false, false, false}, // flag overrides default-on
-		// --model pins the loop's model, space or equals form; a bare --model is an error.
-		{[]string{"--model", "haiku"}, false, "", "haiku", false, false, false, false},
-		{[]string{"codex", "--model=gpt-5"}, false, "codex", "gpt-5", false, false, false, false},
-		{[]string{"--model", "haiku", "--debug-on-fail"}, false, "", "haiku", false, true, false, false},
-		{[]string{"--model"}, false, "", "", false, false, false, true},
+		// The model/account ride the target now; --model/--credential tombstone (error).
+		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", false, false, false, false},
+		{[]string{"claude:opus@work"}, false, "claude", "opus", false, false, false, false},
+		{[]string{"--model", "haiku"}, false, "", "", false, false, false, true},               // retired
+		{[]string{"claude", "--credential", "work"}, false, "", "", false, false, false, true}, // retired
 		// --consult opts iterations into peer consultation, composing with the other flags.
 		{[]string{"--consult"}, false, "", "", true, false, false, false},
-		{[]string{"claude", "--model", "claude-fable-5", "--consult"}, false, "claude", "claude-fable-5", true, false, false, false},
+		{[]string{"claude:claude-fable-5", "--consult"}, false, "claude", "claude-fable-5", true, false, false, false},
 	}
 	for _, c := range cases {
-		agent, model, _, consult, debug, preflight, err := parseLoopArgs(c.args, c.def)
+		tg, _, consult, debug, preflight, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (agent != c.wantAgent || model != c.wantModel || consult != c.wantConsult || debug != c.wantDebug || preflight != c.wantPreflight) {
-			t.Errorf("parseLoopArgs(%v, def=%v) = (%q, model=%q, consult=%v, debug=%v, preflight=%v), want (%q, %q, %v, %v, %v)",
-				c.args, c.def, agent, model, consult, debug, preflight, c.wantAgent, c.wantModel, c.wantConsult, c.wantDebug, c.wantPreflight)
+		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || consult != c.wantConsult || debug != c.wantDebug || preflight != c.wantPreflight) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q consult=%v debug=%v preflight=%v), want (%q, %q, %v, %v, %v)",
+				c.args, c.def, tg.Provider, tg.Model, consult, debug, preflight, c.wantAgent, c.wantModel, c.wantConsult, c.wantDebug, c.wantPreflight)
 		}
 	}
 }

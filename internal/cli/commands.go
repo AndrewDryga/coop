@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1207,18 +1208,36 @@ func promptGateLangs(in io.Reader) []string {
 
 // loopAgent picks the agent for `coop loop [claude|codex|gemini]` (default claude),
 // erroring on any unexpected token.
-func loopAgent(args []string) (agent string, explicit bool, err error) {
-	agent = "" // no implicit default — the provider is required (or a preset supplies the lead)
-	for _, x := range args {
-		if !agents.Valid(x) {
-			return "", false, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s] [--tasks <path>] [--model <model>] [--preset <name>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
-		}
-		if explicit {
-			return "", false, fmt.Errorf("coop loop: more than one agent given (%q and %q) — name just one", agent, x)
-		}
-		agent, explicit = x, true
+// parseLoopArgs resolves `coop loop`'s leading target (provider[:model][@account,…]) and its
+// boolean flags. Model + account come from the target — `--model`/`--credential` are retired.
+// hasTarget is false when no positional was given (a preset then supplies the lead).
+func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, consult, debugOnFail, preflight bool, err error) {
+	preflight = def
+	if err = retiredTargetFlagErr(args); err != nil {
+		return agents.Target{}, false, false, false, preflight, err
 	}
-	return agent, explicit, nil
+	t, hasTarget, rest, err := takeHeadTarget(args)
+	if err != nil {
+		return agents.Target{}, false, false, false, preflight, err
+	}
+	for _, x := range rest {
+		switch x {
+		case "--consult":
+			consult = true
+		case "--debug-on-fail":
+			debugOnFail = true
+		case "--debug": // v3: renamed to --debug-on-fail
+			note, _ := removedCommandNote("loop --debug")
+			return t, hasTarget, consult, debugOnFail, preflight, errors.New(note)
+		case "--preflight":
+			preflight = true
+		case "--no-preflight":
+			preflight = false
+		default:
+			return t, hasTarget, consult, debugOnFail, preflight, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s][:model][@account] [--tasks <path>] [--preset <name>] [--consult] [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+		}
+	}
+	return t, hasTarget, consult, debugOnFail, preflight, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1230,15 +1249,11 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	credential, rest, err := extractRunProfile(rest)
-	if err != nil {
-		return 2, err
-	}
 	presetName, rest, err := extractRunPreset(rest)
 	if err != nil {
 		return 2, err
 	}
-	agent, model, agentSet, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
+	t, hasTarget, consult, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
 	if err != nil {
 		return 2, err
 	}
@@ -1246,14 +1261,14 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	// --preset: the preset's lead agent is the default (an explicit agent still wins), its
-	// roles seed the run, and its models ladder becomes the rotation (below explicit flags).
+	// --preset: its lead agent is the default (a positional target still wins), its roles seed
+	// the run, and its models ladder becomes the rotation (below the positional target).
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
 		return 2, err
 	}
-	agent = presetLeadAgent(p, agent, agentSet)
-	if agent == "" { // provider required — no implicit claude default, and no preset supplied a lead
+	agent := presetLeadAgent(p, t.Provider, hasTarget)
+	if agent == "" { // provider required — no positional target, and no preset supplied a lead
 		return 2, noProviderErr("loop")
 	}
 	a.applyPreset(p, agent)
@@ -1262,14 +1277,13 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	// The rotation ladder (model-first): a one-off --model/--credential wins; else the preset
-	// lead's models; else the default (agent model across all signed-in accounts). expandLadder
-	// turns it into the concrete (model, account) targets the loop cycles on rate limits.
-	ladder, err := oneOffLadder(model, credential)
-	if err != nil {
-		return 2, err
-	}
-	if ladder == nil && p != nil && agent == p.LeadAgent {
+	// The rotation ladder: the positional target (its model + account ladder) wins; else the
+	// preset lead's models; else the default (agent model across all signed-in accounts).
+	// expandLadder turns it into the concrete (model, account) targets the loop cycles on limits.
+	var ladder []preset.ModelTarget
+	if hasTarget {
+		ladder = targetLadder(t)
+	} else if p != nil && agent == p.LeadAgent {
 		ladder = p.LeadModels
 	}
 	rot, err := a.buildRotation(agent, ladder)
@@ -1310,38 +1324,6 @@ func (a *app) withReviewModel(agent string, fn func()) {
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
 // --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
 // one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
-func parseLoopArgs(args []string, def bool) (agent, model string, agentSet, consult, debugOnFail, preflight bool, err error) {
-	preflight = def
-	var rest []string
-	for i := 0; i < len(args); i++ {
-		if v, n, ok, e := flagValue(args, i, "--model"); ok {
-			if e != nil {
-				return "", "", false, false, false, false, e
-			}
-			model = v
-			i += n - 1
-			continue
-		}
-		switch x := args[i]; x {
-		case "--consult":
-			consult = true
-		case "--debug-on-fail":
-			debugOnFail = true
-		case "--debug": // v3: renamed to --debug-on-fail
-			note, _ := removedCommandNote("loop --debug")
-			return agent, model, agentSet, consult, debugOnFail, preflight, errors.New(note)
-		case "--preflight":
-			preflight = true
-		case "--no-preflight":
-			preflight = false
-		default:
-			rest = append(rest, x)
-		}
-	}
-	agent, agentSet, err = loopAgent(rest)
-	return agent, model, agentSet, consult, debugOnFail, preflight, err
-}
-
 // loopWorkPrompt and loopReviewPrompt name the queue dir(s) the iteration works as ABSOLUTE
 // in-box paths (the box's working dir is repo, bind-mounted at its real path). A relative
 // ".agent/tasks" resolves fine for claude/codex (cwd-relative), but gemini's read_file rejects

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -206,4 +207,19 @@ func oneOffLadder(modelFlag, credFlag string) ([]preset.ModelTarget, error) {
 		cred = atAcct
 	}
 	return []preset.ModelTarget{{Model: model, Credential: cred}}, nil
+}
+
+// targetLadder turns one positional target into the loop's model-first ladder: no accounts
+// → a bare model that fans across every signed-in account (expandLadder's zero-config
+// default); an account ladder @a,b → one entry per account, in order. The provider is the
+// run's agent, carried separately (expandLadder takes it as a param).
+func targetLadder(t agents.Target) []preset.ModelTarget {
+	if len(t.Accounts) == 0 {
+		return []preset.ModelTarget{{Model: t.Model}}
+	}
+	out := make([]preset.ModelTarget, len(t.Accounts))
+	for i, acct := range t.Accounts {
+		out[i] = preset.ModelTarget{Model: t.Model, Credential: acct}
+	}
+	return out
 }
