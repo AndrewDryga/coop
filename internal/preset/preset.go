@@ -109,23 +109,60 @@ type yamlRole struct {
 	DenyPaths   any `yaml:"deny_paths"`
 }
 
-// Path returns the preset.yaml path for a named preset under repo.
-func Path(repo, name string) string {
-	return filepath.Join(repo, filepath.FromSlash(Dir), name, "preset.yaml")
+// roots returns the preset search roots in precedence order: the repo's
+// .agent/presets/ first, then the per-user global dir when non-empty. globalDir
+// == "" means repo-only, so every single-repo run is byte-identical to before.
+func roots(repo, globalDir string) []string {
+	rs := []string{filepath.Join(repo, filepath.FromSlash(Dir))}
+	if globalDir != "" {
+		rs = append(rs, globalDir)
+	}
+	return rs
 }
 
-// List returns the names of every preset folder under repo (a directory in
-// .agent/presets/ holding a preset.yaml), sorted. It doesn't validate them —
-// the lister must show a broken preset so it can be fixed, not hide it.
-func List(repo string) []string {
-	entries, err := os.ReadDir(filepath.Join(repo, filepath.FromSlash(Dir)))
-	if err != nil {
-		return nil
+// Path returns the resolved preset.yaml for name: the first search root that holds
+// it (repo wins over global), else the repo path — so an absent-preset message still
+// points at the conventional .agent/presets/ spot.
+func Path(repo, globalDir, name string) string {
+	rs := roots(repo, globalDir)
+	for _, root := range rs {
+		p := filepath.Join(root, name, "preset.yaml")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
+	return filepath.Join(rs[0], name, "preset.yaml")
+}
+
+// Origin reports whether name resolves to the global root (true) rather than the
+// repo (false) — the lister marks a global-sourced preset. A repo preset shadowing a
+// same-named global one is "repo" (repo wins), so it goes unmarked.
+func Origin(repo, globalDir, name string) (global bool) {
+	repoPath := filepath.Join(roots(repo, "")[0], name, "preset.yaml")
+	if _, err := os.Stat(repoPath); err == nil {
+		return false
+	}
+	return globalDir != ""
+}
+
+// List returns the names of every preset folder across the search roots (a directory
+// holding a preset.yaml), deduped with the repo winning a name collision, sorted. It
+// doesn't validate them — the lister must show a broken preset so it can be fixed, not
+// hide it.
+func List(repo, globalDir string) []string {
+	seen := map[string]bool{}
 	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			if _, err := os.Stat(Path(repo, e.Name())); err == nil {
+	for _, root := range roots(repo, globalDir) {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || seen[e.Name()] {
+				continue // repo iterated first, so a repo name shadows the global one
+			}
+			if _, err := os.Stat(filepath.Join(root, e.Name(), "preset.yaml")); err == nil {
+				seen[e.Name()] = true
 				names = append(names, e.Name())
 			}
 		}
@@ -144,16 +181,19 @@ func ValidName(name string) bool {
 	return !strings.ContainsAny(name, "/\\") && !strings.HasPrefix(name, "-")
 }
 
-// Load reads and validates .agent/presets/<name>/preset.yaml under repo, loading any
-// referenced Markdown prompt files. Every error names the preset and what to fix.
-func Load(repo, name string) (*Preset, error) {
+// Load reads and validates a named preset's preset.yaml — the repo's .agent/presets/
+// first, then the global dir (globalDir == "" = repo-only) — loading any referenced
+// Markdown prompt files (they resolve relative to the folder that won, so a global
+// preset's roles/*.md resolve under the global folder). Every error names the preset
+// and what to fix.
+func Load(repo, globalDir, name string) (*Preset, error) {
 	if !ValidName(name) {
 		return nil, fmt.Errorf("invalid preset name %q — a preset is a folder name under %s/", name, Dir)
 	}
-	path := Path(repo, name)
+	path := Path(repo, globalDir, name)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("no preset %q — expected %s (create the folder with a preset.yaml; see 'coop help presets')", name, filepath.Join(Dir, name, "preset.yaml"))
+		return nil, fmt.Errorf("no preset %q — expected it under %s (create the folder with a preset.yaml; see 'coop help presets')", name, strings.Join(roots(repo, globalDir), " or "))
 	}
 	var y yamlPreset
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))

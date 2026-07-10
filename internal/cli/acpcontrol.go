@@ -32,9 +32,10 @@ const maxACPLimitWaits = 12
 // presets safe to switch into transparently (a different-provider preset would be a provider switch,
 // which coop can't do without losing the conversation; see the backlog).
 func (a *app) acpPresetNames(repo, lead string) []string {
+	globalDir := a.cfg.GlobalPresetsDir()
 	var out []string
-	for _, name := range preset.List(repo) {
-		if p, err := preset.Load(repo, name); err == nil && p.LeadAgent == lead {
+	for _, name := range preset.List(repo, globalDir) {
+		if p, err := preset.Load(repo, globalDir, name); err == nil && p.LeadAgent == lead {
 			out = append(out, name)
 		}
 	}
@@ -175,7 +176,7 @@ func (c *acpControl) presetRotation() *rotation {
 		return c.rot
 	}
 	c.rotPreset, c.rot = psName, nil
-	p, err := preset.Load(c.repo, psName)
+	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), psName)
 	if err != nil {
 		return nil
 	}

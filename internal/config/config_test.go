@@ -109,6 +109,32 @@ func TestConfFilePrecedence(t *testing.T) {
 	}
 }
 
+func TestGlobalPresetsDir(t *testing.T) {
+	clearAgentEnv(t)
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	// Default: <BoxHome>/presets = <XDG_CONFIG_HOME>/coop/presets.
+	want := filepath.Join(home, "coop", "presets")
+	if got := Load().GlobalPresetsDir(); got != want {
+		t.Errorf("default GlobalPresetsDir = %q, want %q", got, want)
+	}
+
+	// Conf file overrides the default.
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	os.WriteFile(conf, []byte("COOP_PRESETS_DIR=/from/conf/presets\n"), 0o644)
+	t.Setenv("COOP_CONF", conf)
+	if got := Load().GlobalPresetsDir(); got != "/from/conf/presets" {
+		t.Errorf("conf GlobalPresetsDir = %q, want /from/conf/presets", got)
+	}
+
+	// Environment beats the conf file.
+	t.Setenv("COOP_PRESETS_DIR", "/from/env/presets")
+	if got := Load().GlobalPresetsDir(); got != "/from/env/presets" {
+		t.Errorf("env GlobalPresetsDir = %q, want /from/env/presets", got)
+	}
+}
+
 func TestCmd(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

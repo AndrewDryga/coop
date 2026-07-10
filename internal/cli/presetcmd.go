@@ -32,7 +32,8 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		return a.showPreset(repo, args[0])
 	}
 
-	names := preset.List(repo)
+	globalDir := a.cfg.GlobalPresetsDir()
+	names := preset.List(repo, globalDir)
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
 	if len(names) == 0 {
 		fmt.Println("no presets — scaffold the documented frontier recipe: coop presets init")
@@ -40,10 +41,16 @@ func (a *app) cmdPresets(args []string) (int, error) {
 	}
 	w := colWidth(names, 0, 24)
 	for _, name := range names {
-		p, err := preset.Load(repo, name)
+		// Pad the bare name to the column, THEN append the origin marker — so the dim
+		// "(global)" tag (and its ANSI codes) don't throw off the column alignment.
+		label := pal.Bold(padRight(name, w))
+		if preset.Origin(repo, globalDir, name) {
+			label += " " + pal.Dim("(global)")
+		}
+		p, err := preset.Load(repo, globalDir, name)
 		if err != nil {
 			// A broken preset must be visible in the listing — it would fail every --preset run.
-			fmt.Printf("  %s  %s\n", pal.Bold(padRight(name, w)), pal.Red("broken: "+err.Error()))
+			fmt.Printf("  %s  %s\n", label, pal.Red("broken: "+err.Error()))
 			continue
 		}
 		lead := p.LeadAgent
@@ -58,7 +65,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		if len(roles) > 0 {
 			summary = strings.Join(roles, pal.Dim(" · "))
 		}
-		fmt.Printf("  %s  lead %s  %s\n", pal.Bold(padRight(name, w)), lead, summary)
+		fmt.Printf("  %s  lead %s  %s\n", label, lead, summary)
 	}
 	fmt.Println()
 	fmt.Println(ui.Dim("  run one: coop <agent>|loop|fusion|acp --preset <name>   ·   format: coop help presets"))
@@ -86,12 +93,13 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 
 // showPreset prints one preset's full recipe — the path grammar's read at preset depth.
 func (a *app) showPreset(repo, name string) (int, error) {
-	p, err := preset.Load(repo, name)
+	globalDir := a.cfg.GlobalPresetsDir()
+	p, err := preset.Load(repo, globalDir, name)
 	if err != nil {
 		return 2, err
 	}
 	pal := ui.For(os.Stdout)
-	fmt.Println(pal.Bold(name) + pal.Dim("  ("+preset.Path(repo, name)+")"))
+	fmt.Println(pal.Bold(name) + pal.Dim("  ("+preset.Path(repo, globalDir, name)+")"))
 	lead := fmt.Sprintf("  %s  %s", pal.Bold(padRight("lead", 10)), p.LeadAgent)
 	if len(p.LeadModels) > 0 {
 		models := make([]string, len(p.LeadModels))

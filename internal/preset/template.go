@@ -178,7 +178,7 @@ func Scaffold(repo, name string) (string, error) {
 	if !ValidName(name) {
 		return "", fmt.Errorf("invalid preset name %q — a preset is a folder name under %s/ (lowercase, no '/', '..', or leading '-')", name, Dir)
 	}
-	path := Path(repo, name)
+	path := Path(repo, "", name) // scaffolding is repo-only; global authoring is by hand
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("preset %q already exists (%s) — edit it, or pick another name", name, filepath.Join(Dir, name, "preset.yaml"))
 	}

@@ -27,7 +27,7 @@ func (a *app) loadRunPreset(name string) (*preset.Preset, error) {
 	if err != nil {
 		return nil, err
 	}
-	return preset.Load(repo, name)
+	return preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
 }
 
 // presetLeadAgent resolves the launched agent under a preset: an agent the command

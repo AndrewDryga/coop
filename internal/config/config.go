@@ -194,6 +194,20 @@ func normalizeEgress(v string) (egress string, ok bool) {
 	}
 }
 
+// GlobalPresetsDir is the per-user presets root (~/.config/coop/presets): a second
+// location `--preset <name>` and `coop presets` load from when the repo doesn't define
+// the name (a repo preset wins a collision). COOP_PRESETS_DIR overrides the path — free
+// testability, and it lets a user relocate the folder.
+func (c *Config) GlobalPresetsDir() string {
+	if v, ok := os.LookupEnv("COOP_PRESETS_DIR"); ok {
+		return v
+	}
+	if v, ok := c.conf["COOP_PRESETS_DIR"]; ok {
+		return v
+	}
+	return filepath.Join(c.BoxHome, "presets")
+}
+
 // EnvFile is the optional file of KEY=VALUE pairs passed into every box.
 func (c *Config) EnvFile() string { return filepath.Join(c.ConfigDir, "env") }
 

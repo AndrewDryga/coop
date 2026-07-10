@@ -223,6 +223,13 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   moved — and the lead owns the diff review, the gate, and the commit. Model ids: coop models.
   Scaffold one: coop presets init.
 
+  WHERE presets live — two locations, repo wins: a preset resolves first from the
+  repo's .agent/presets/<name>/, then from a per-user global dir ~/.config/coop/presets/
+  (COOP_PRESETS_DIR overrides it), so a recipe like frontier applies across every repo
+  without symlinking. A repo preset shadows a same-named global one (repo wins wholesale,
+  no merging); coop presets tags a global-sourced one (global). init scaffolds into the
+  repo — author a global preset by hand (or copy one there).
+
 coop models [agent] — the model menu per agent.
 
   Usage: coop models [claude|codex|gemini]

@@ -654,6 +654,12 @@ coop loop --preset frontier      # unattended: lead credentials rotate, roles ri
 coop fusion --preset frontier    # council + the preset's roles
 ```
 
+Presets resolve from **two locations, repo wins**: the repo's `.agent/presets/<name>/`
+first, then a per-user global dir `~/.config/coop/presets/` (`COOP_PRESETS_DIR` overrides
+it) — so a recipe like `frontier` applies across every repo without symlinking. A repo
+preset shadows a same-named global one (no merging); `coop presets` tags a global-sourced
+one `(global)`. `coop presets init` scaffolds into the repo; author a global preset by hand.
+
 coop generates the lead's routing contract from the YAML — each role, when to use it,
 and its role-addressed invocation (`@coop-thinker`, `coop-consult critic --fresh "…"`, or a
 `coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. A **native** role

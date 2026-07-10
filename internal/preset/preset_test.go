@@ -68,7 +68,7 @@ var frontierFiles = map[string]string{
 
 func TestLoadFrontier(t *testing.T) {
 	repo := writePreset(t, "frontier", frontierYAML, frontierFiles)
-	p, err := Load(repo, "frontier")
+	p, err := Load(repo, "", "frontier")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestLoadValidation(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			repo := writePreset(t, "p", c.yaml, c.files)
-			_, err := Load(repo, "p")
+			_, err := Load(repo, "", "p")
 			if err == nil {
 				t.Fatalf("want error containing %q, got nil", c.wantErr)
 			}
@@ -150,10 +150,10 @@ func TestLoadValidation(t *testing.T) {
 }
 
 func TestLoadMissingPreset(t *testing.T) {
-	if _, err := Load(t.TempDir(), "ghost"); err == nil || !strings.Contains(err.Error(), `no preset "ghost"`) {
+	if _, err := Load(t.TempDir(), "", "ghost"); err == nil || !strings.Contains(err.Error(), `no preset "ghost"`) {
 		t.Errorf("missing preset: err = %v", err)
 	}
-	if _, err := Load(t.TempDir(), "../evil"); err == nil || !strings.Contains(err.Error(), "invalid preset name") {
+	if _, err := Load(t.TempDir(), "", "../evil"); err == nil || !strings.Contains(err.Error(), "invalid preset name") {
 		t.Errorf("traversal name: err = %v", err)
 	}
 }
@@ -162,7 +162,7 @@ func TestLoadMissingPreset(t *testing.T) {
 // with Markdown appended after (never replacing) the generated text.
 func TestLeadContract(t *testing.T) {
 	repo := writePreset(t, "frontier", frontierYAML, frontierFiles)
-	p, err := Load(repo, "frontier")
+	p, err := Load(repo, "", "frontier")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +231,10 @@ func TestScaffold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != Path(repo, "frontier") {
-		t.Errorf("path = %q, want %q", path, Path(repo, "frontier"))
+	if path != Path(repo, "", "frontier") {
+		t.Errorf("path = %q, want %q", path, Path(repo, "", "frontier"))
 	}
-	p, err := Load(repo, "frontier")
+	p, err := Load(repo, "", "frontier")
 	if err != nil {
 		t.Fatalf("the scaffolded template must load cleanly: %v", err)
 	}
@@ -357,5 +357,119 @@ func TestConsultWiredRoles(t *testing.T) {
 	}
 	if ConsultBody(&cs[1]) != "" {
 		t.Errorf("a promptless consult has no persona (the peer answers as itself), got %q", ConsultBody(&cs[1]))
+	}
+}
+
+// writePresetIn lays down <root>/<name>/preset.yaml (plus extra files) under an
+// arbitrary root — used to populate a global presets dir that is NOT <repo>/.agent/presets.
+func writePresetIn(t *testing.T, root, name, yaml string, files map[string]string) {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for rel, content := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A minimal valid preset body, parameterized by the lead prompt so a global and a repo
+// copy of the same name are distinguishable after Load.
+func soloYAML(prompt string) string {
+	y := "lead:\n  agent: claude\n"
+	if prompt != "" {
+		y += "  prompt: " + prompt + "\n"
+	}
+	return y
+}
+
+// Global presets: a preset loads from a second, global root; a same-named repo preset
+// SHADOWS it (repo wins); List unions + dedups + sorts; Path/Origin resolve the winning
+// root; a global preset's prompt files resolve under the global folder; a name in neither
+// root errors and names both searched locations.
+func TestGlobalPresets(t *testing.T) {
+	repo := t.TempDir()
+	global := t.TempDir()
+
+	// global-only preset, with a prompt file that must resolve UNDER the global folder.
+	writePresetIn(t, global, "orch", soloYAML("lead.md"), map[string]string{"lead.md": "GLOBAL LEAD"})
+	// a name present in BOTH roots — repo must win.
+	writePresetIn(t, global, "shared", soloYAML("lead.md"), map[string]string{"lead.md": "GLOBAL SHARED"})
+	repoDir := filepath.Join(repo, ".agent", "presets")
+	writePresetIn(t, repoDir, "shared", soloYAML("lead.md"), map[string]string{"lead.md": "REPO SHARED"})
+	// a repo-only preset.
+	writePresetIn(t, repoDir, "local", soloYAML(""), nil)
+
+	// Load: a global-only preset loads, and its prompt file resolves under the global folder.
+	p, err := Load(repo, global, "orch")
+	if err != nil {
+		t.Fatalf("global-only preset should load: %v", err)
+	}
+	if p.LeadPromptText != "GLOBAL LEAD" {
+		t.Errorf("global preset prompt = %q, want the file under the global folder", p.LeadPromptText)
+	}
+	if p.Dir != filepath.Join(global, "orch") {
+		t.Errorf("global preset Dir = %q, want it under the global root", p.Dir)
+	}
+
+	// Repo shadows a same-named global preset (repo wins wholesale).
+	sh, err := Load(repo, global, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sh.LeadPromptText != "REPO SHARED" {
+		t.Errorf("shared should resolve to the REPO copy, got %q", sh.LeadPromptText)
+	}
+
+	// List: union across roots, deduped (one "shared"), sorted.
+	got := List(repo, global)
+	want := []string{"local", "orch", "shared"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("List = %v, want %v", got, want)
+	}
+
+	// Path resolves to the winning root; Origin marks a global-sourced name only.
+	if Path(repo, global, "orch") != filepath.Join(global, "orch", "preset.yaml") {
+		t.Errorf("Path(orch) = %q, want the global path", Path(repo, global, "orch"))
+	}
+	if Path(repo, global, "shared") != filepath.Join(repoDir, "shared", "preset.yaml") {
+		t.Errorf("Path(shared) = %q, want the repo path (repo wins)", Path(repo, global, "shared"))
+	}
+	if !Origin(repo, global, "orch") {
+		t.Error("orch is global-sourced — Origin should be true")
+	}
+	if Origin(repo, global, "shared") {
+		t.Error("shared is shadowed by the repo — Origin should be false (repo wins)")
+	}
+	if Origin(repo, global, "local") {
+		t.Error("local is repo-only — Origin should be false")
+	}
+
+	// A name in NEITHER root errors and names both searched locations.
+	_, err = Load(repo, global, "ghost")
+	if err == nil {
+		t.Fatal("a name in neither root should error")
+	}
+	for _, loc := range []string{repoDir, global} {
+		if !strings.Contains(err.Error(), loc) {
+			t.Errorf("missing-preset error should name %q:\n%v", loc, err)
+		}
+	}
+
+	// globalDir == "" is repo-only: the global-only preset is invisible, single-repo unchanged.
+	if names := List(repo, ""); strings.Join(names, ",") != "local,shared" {
+		t.Errorf("repo-only List = %v, want [local shared]", names)
+	}
+	if _, err := Load(repo, "", "orch"); err == nil {
+		t.Error("repo-only Load must not find a global preset")
 	}
 }
