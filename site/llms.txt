@@ -177,22 +177,19 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
       agent: claude
       models: [claude-fable-5, claude-opus-4-8@work]   # ladder: fable on all
       prompt: roles/lead.md      # accounts, then opus on work. Optional Markdown.
-    roles:                       # roles run on their agent's default account
+    roles:                       # agent: is a target — provider[:model], default account
       thinker:                   # native Claude subagent — deep thinking in-session
         mode: native
-        agent: claude
-        model: claude-opus-4-8   # coop generates a coop-thinker subagent from this
+        agent: claude:claude-opus-4-8   # the model rides agent: (coop generates coop-thinker)
         when: [architecture, debugging, code-review]
         prompt: roles/thinker.md # its system prompt (or set subagent: <name> to reuse one)
       critic:                    # read-only peer via coop-consult
         mode: consult
-        agent: codex
-        model: gpt-5.5
+        agent: codex:gpt-5.5     # omit the :model (agent: codex) for the agent's default
         when: [plan-review, security]
       fast:                      # write-capable delegate via coop-delegate
         mode: delegate
-        agent: gemini
-        model: gemini-3.5-flash
+        agent: gemini:gemini-3.5-flash
         when: [boilerplate, bulk-edits, test-scaffolding]
         commit: never            # the delegate edits; the LEAD reviews, gates, commits
         concurrent: never        # delegate runs are serialized

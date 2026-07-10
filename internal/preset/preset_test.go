@@ -40,22 +40,19 @@ lead:
 roles:
   thinker:
     mode: native
-    agent: claude
-    model: claude-opus-4-8
+    agent: claude:claude-opus-4-8
     subagent: deep-reasoner
     when: [architecture, debugging]
     prompt: roles/thinker.md
 
   critic:
     mode: consult
-    agent: codex
-    model: gpt-5.5
+    agent: codex:gpt-5.5
     when: [plan-review, security]
 
   fast:
     mode: delegate
-    agent: gemini
-    model: gemini-3.5-flash
+    agent: gemini:gemini-3.5-flash
     when: [boilerplate, bulk-edits]
     commit: never
     concurrent: never
@@ -111,7 +108,7 @@ func TestLoadValidation(t *testing.T) {
 		{"malformed yaml", "lead: [not\n  a: map", nil, "malformed YAML"},
 		{"missing lead agent", "roles: {}", nil, "lead.agent is required"},
 		{"unknown lead agent", "lead: {agent: gpt4}", nil, "not a known agent"},
-		{"unknown role agent", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: wat}}", nil, "not a known agent"},
+		{"unknown role agent", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: wat}}", nil, "unknown provider"},
 		{"missing mode", "lead: {agent: claude}\nroles: {r: {agent: codex}}", nil, "mode is required"},
 		{"bad mode", "lead: {agent: claude}\nroles: {r: {mode: boss, agent: codex}}", nil, "not one of native, consult, delegate"},
 		{"missing prompt file", "lead: {agent: claude, prompt: lead.md}", nil, "does not exist"},
@@ -123,7 +120,8 @@ func TestLoadValidation(t *testing.T) {
 		{"bad account in models", "lead: {agent: claude, models: [\"opus@../x\"]}", nil, "invalid account"},
 		{"empty account after at", "lead: {agent: claude, models: [\"opus@\"]}", nil, "empty account"},
 		{"unknown models key", "lead: {agent: claude, models: [{model: opus, acct: work}]}", nil, "unknown key"},
-		{"empty role model", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, model: \"\"}}", nil, "model is empty"},
+		{"role model retired", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "retired"},
+		{"role account rejected", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
 		{"role credentials rejected", "lead: {agent: claude, models: [x]}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
 		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "agent must be claude"},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},

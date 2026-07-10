@@ -19,7 +19,7 @@ func presetsRepo(t *testing.T) string {
 	}
 	yaml := "lead: {agent: claude, models: [claude-fable-5@work]}\n" +
 		"roles:\n" +
-		"  critic: {mode: consult, agent: codex, model: gpt-5.5}\n" +
+		"  critic: {mode: consult, agent: codex:gpt-5.5}\n" +
 		"  fast: {mode: delegate, agent: gemini, when: [boilerplate]}\n"
 	if err := os.WriteFile(filepath.Join(good, "preset.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)

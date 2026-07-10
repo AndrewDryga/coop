@@ -17,9 +17,9 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 #             coop loop --preset %[1]s
 #   Inspect:  coop presets %[1]s
 #   Format:   coop help presets
-# A named agent overrides the lead; explicit --model / --credential override the
-# ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
-# names models and accounts, never the secrets themselves.
+# An explicit target on the command line (claude:opus-4.8@work) overrides the lead +
+# ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset names
+# models and accounts, never the secrets themselves.
 
 # lead — REQUIRED: the default agent for the session, plus its model ladder.
 lead:
@@ -50,9 +50,10 @@ roles:
     # separate box; native is Claude-only). With no subagent: below, coop generates
     # a coop-thinker subagent in the box from this role — model, when, and prompt.
     mode: native
-    agent: claude
-    # model — the generated subagent runs on this (coop models); omit for the default.
-    model: claude-opus-4-8
+    # agent — a target: provider[:model]. The model (after the ':') is what the generated
+    # subagent runs on (coop models); a bare provider uses the agent's default. A role runs
+    # its agent's DEFAULT account — no @account (only the lead rotates accounts).
+    agent: claude:claude-opus-4-8
     # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
     when: [architecture, debugging, code-review, before-commit]
     # prompt — the generated subagent's system prompt. To reference an existing
@@ -63,10 +64,9 @@ roles:
     # mode: consult — a READ-ONLY peer for a second opinion (often another
     # vendor), asked as coop-consult critic; it cannot edit files.
     mode: consult
-    # agent — one of: claude, codex, gemini.
-    agent: codex
-    # model — OPTIONAL; omit for the agent's default.
-    model: gpt-5.5
+    # agent — a target: provider[:model] (one of claude, codex, gemini). The model is
+    # optional; omit it (agent: codex) for the agent's default.
+    agent: codex:gpt-5.5
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
     # prompt — OPTIONAL persona the peer adopts for this role's consults
@@ -76,10 +76,9 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — one of: claude, codex, gemini.
-    agent: gemini
-    # model — OPTIONAL; omit for the agent's default.
-    model: gemini-3.5-flash
+    # agent — a target: provider[:model] (one of claude, codex, gemini); omit the model
+    # (agent: gemini) for the agent's default.
+    agent: gemini:gemini-3.5-flash
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     # commit — delegate-only; only "never" (the delegate never commits).

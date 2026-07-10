@@ -91,8 +91,8 @@ type yamlLead struct {
 
 type yamlRole struct {
 	Mode       string   `yaml:"mode"`
-	Agent      string   `yaml:"agent"`
-	Model      *string  `yaml:"model"`
+	Agent      string   `yaml:"agent"` // a TARGET: provider[:model] (the model rides here; no @account)
+	Model      any      `yaml:"model"` // retired — the model rides agent: (e.g. agent: codex:gpt-5.5)
 	When       []string `yaml:"when"`
 	Prompt     string   `yaml:"prompt"`
 	Subagent   string   `yaml:"subagent"`
@@ -266,20 +266,23 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 		return r, bad("mode %q is not one of native, consult, delegate", y.Mode)
 	}
 	if y.Agent == "" {
-		return r, bad("agent is required (one of %s)", strings.Join(agents.Names(), ", "))
+		return r, bad("agent is required — a target: provider[:model] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
 	}
-	if !agents.Valid(y.Agent) {
-		return r, bad("agent %q is not a known agent (use %s)", y.Agent, strings.Join(agents.Names(), ", "))
+	// agent: is a TARGET — provider[:model]. The model rides here (model: is retired); a role
+	// runs its agent's DEFAULT account, so an @account is rejected (only the lead rotates accounts).
+	t, terr := agents.ParseTarget(y.Agent)
+	if terr != nil {
+		return r, bad("agent %q: %v", y.Agent, terr)
 	}
-	r.Agent = y.Agent
+	if len(t.Accounts) > 0 {
+		return r, bad("agent %q pins an account — a role runs its agent's default account (only the lead rotates); drop the @account", y.Agent)
+	}
+	r.Agent, r.Model = t.Provider, t.Model
 	if y.Credentials != nil || y.Credential != nil {
-		return r, bad("credentials only apply to the lead — a role runs on its agent's default account; put the rotation ladder in lead.models")
+		return r, bad("credentials only apply to the lead — a role runs on its agent's default account; put the rotation ladder in lead.agent")
 	}
 	if y.Model != nil {
-		if *y.Model == "" {
-			return r, bad("model is empty — set a model id or drop the key")
-		}
-		r.Model = *y.Model
+		return r, bad("model: is retired for a role — put the model in agent: (e.g. agent: %s:<model>)", r.Agent)
 	}
 	if y.Permissions != nil || y.WritePaths != nil || y.DenyPaths != nil {
 		return r, bad("permissions/write_paths/deny_paths are not supported — coop can't enforce path-level permissions yet, so declaring them would only pretend to")
