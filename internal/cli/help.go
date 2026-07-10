@@ -91,11 +91,10 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	}
 
 	group("AGENTS")
-	row("coop claude|codex|gemini [args]", "a sandboxed agent (its flags + your args)")
-	row("coop fusion [agent]", "one leads, the others advise + synthesize")
-	row("coop acp [agent|fusion]", "serve as an editor agent (ACP; e.g. Zed)")
-	row("coop <agent> --consult", "a read-only second opinion from the others")
-	row("coop <agent> --model <model>", "run on a chosen model (fusion/fork/loop too)")
+	row("coop <agent>[:model][@account]", "a sandboxed agent (the target grammar)")
+	row("coop fusion <gov> --peer <a>…", "one leads, named peers advise")
+	row("coop acp <agent|fusion>", "serve as an editor agent (ACP; e.g. Zed)")
+	row("coop <agent> --consult <peer>…", "a read-only second opinion, named peers")
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
@@ -108,7 +107,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop shell", "an interactive shell in the box")
 
 	group("FORKS — review and land work like a PR")
-	row("coop fork <name> [agent]", "open or re-enter a fork and run an agent")
+	row("coop fork <name> [target]", "open or re-enter a fork and run an agent")
 	row("coop fork ls", "list this repo's forks")
 	row("coop fork review <name>", "show a fork's review dossier + diff")
 	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
@@ -228,14 +227,16 @@ const runHelp = `coop run — run a raw command in the box.
 // help-output-style — the detail is in coop credentials / coop models.
 const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex, or gemini).
 
-  Usage: coop <agent> [coop flags] [-- <agent args>]
+  Usage: coop <agent>[:model][@account] [coop flags] [-- <agent args>]
+
+  The agent is a TARGET — a provider, an optional :model, an optional @account:
+    claude · claude:opus-4.8 · claude@work · claude:opus-4.8@work
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --credential <name>  run on a stored credential — one account/login (see coop credentials)
-    --model <name>       run on a chosen model (see coop models)
     --preset <name>      run under an orchestration preset from .agent/presets/<name>/
-                         (lead + roles + models + credentials; see coop help presets)
-    --consult            add a read-only second opinion from the other agents on a hard call
+                         (lead + roles + models; see coop help presets)
+    --consult <peer>…    a read-only second opinion from NAMED peers (repeatable); each
+                         <peer> is a target: --consult codex:gpt-5.5 --consult gemini
     --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
 
   Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
@@ -267,15 +268,15 @@ var commandHelp = map[string]string{
 
 	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
 
-  Usage: coop login <claude|codex|gemini> [--credential <name>]
+  Usage: coop login <agent>[@account]
 
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
   refresh or switch accounts — e.g. after a usage limit.
 
-  --credential <name> signs in a second (or third) account under a name, so
-  one agent can hold several subscriptions. An unattended loop rotates across all
-  of them when one is rate limited (a bare model in a preset's models: ladder fans
-  out over every account). Without the flag the sign-in targets the default.`,
+  @account signs in a second (or third) account under a name, so one agent can
+  hold several subscriptions: coop login claude@work. An unattended loop rotates
+  across all of them when one is rate limited (a bare model in a preset's models:
+  ladder fans out over every account). Without @account the sign-in targets the default.`,
 
 	"credentials": `coop credentials — list stored credentials; a path grammar edits one.
 
@@ -288,9 +289,9 @@ var commandHelp = map[string]string{
   Each token narrows: no args lists every agent, an agent lists its credentials
   (signed in? default?), a credential shows its detail, and a trailing attribute
   reads or writes one property of it. A credential is one subscription; add more
-  with 'coop login <agent> --credential <name>', then an unattended loop rotates
-  across them on a rate limit (a bare model in a preset's models: ladder). The model
-  is a separate axis — set it with --model or a preset, never on a credential.
+  with 'coop login <agent>@<name>', then an unattended loop rotates across them on
+  a rate limit (a bare model in a preset's models: ladder). The model is a separate
+  axis — set it inline (claude:opus-4.8) or in a preset, never on a credential.
 
   default                mark this credential as what a plain 'coop <agent>' runs,
                          and the account a loop's rotation starts on. A mark you
@@ -299,10 +300,9 @@ var commandHelp = map[string]string{
                          history). Set a different default first if you're
                          removing the marked one.
 
-  Run on a specific credential without changing the default — works on any agent
-  launch: 'coop claude --credential <name>', 'coop fusion <agent> --credential
-  <name>', and 'coop acp <agent> --credential <name>' (so an editor entry can pin
-  an account).`,
+  Run on a specific account without changing the default — put it in the target on
+  any agent launch: 'coop claude@work', 'coop fusion claude@work --peer codex', and
+  'coop acp claude@work' (so an editor entry can pin an account).`,
 
 	"models": `coop models [agent] — the model menu per agent.
 
@@ -311,8 +311,8 @@ var commandHelp = map[string]string{
   A block per agent: its models and when that list was last refreshed. A fresh per-agent
   cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
   static examples — model ids churn, so ANY id the agent's CLI accepts works either way
-  (coop never validates --model). A model is an axis of its own — set it with --model or
-  a preset's models: ladder, never on a credential.
+  (coop never validates a model id). A model is an axis of its own — set it inline in the
+  target (claude:opus-4.8) or in a preset's models: ladder, never on a credential.
 
   Plain 'coop models' is instant and never needs the container runtime — it only reads
   the cache. The cache is refreshed two auth-free ways: claude/gemini populate it for free
@@ -321,19 +321,20 @@ var commandHelp = map[string]string{
   best-effort: an unavailable CLI, timeout, or parse error falls back to the last cache or
   the static list, noted on that block's 'Last refreshed' line — it never errors or hangs.
 
-  Pick per run with --model on any launch: 'coop claude --model fable',
-  'coop fusion claude --model opus', 'coop loop --model haiku',
-  'coop fork risky claude --model opus', 'coop acp claude --model sonnet'.
+  Pick per run inline in the target on any launch: 'coop claude:fable',
+  'coop fusion claude:opus --peer codex', 'coop loop claude:haiku',
+  'coop fork risky claude:opus --loop', 'coop acp claude:sonnet'.
 
-  Precedence: --model flag > the active rotation entry's model (a loop stepping
+  Precedence: the target's :model > the active rotation entry's model (a loop stepping
   through a preset's models: ladder) > COOP_LOOP_MODEL (loop runs) > COOP_<AGENT>_MODEL
   (agent-wide) > a model baked into COOP_<AGENT>_CMD > the agent CLI's own default.
-  --model may carry an account (--model opus@work). coop never validates a model id —
-  a bad one fails in the agent's own error.`,
+  An account rides the SAME target (claude:opus-4.8@work). coop never validates a model
+  id — a bad one fails in the agent's own error.`,
 
-	"acp": `coop acp [agent|fusion] — serve as an ACP agent over stdio (for editors).
+	"acp": `coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp [claude|codex|gemini | fusion [agent]] [--credential <name>] [--model <model>] [--preset <name>] [--consult]
+  Usage: coop acp <agent>[:model][@account] [--preset <name>] [--consult <peer>…]
+         coop acp fusion <governor>[:model][@account] --peer <agent>…
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor. coop always
@@ -347,17 +348,15 @@ var commandHelp = map[string]string{
   the conversation is preserved (a shared, credential-independent session store). On a
   rate limit it auto-rotates to your next signed-in account over that same path.
 
-  --credential <name> pins the session to one stored account, so an
-  editor can run two entries on different ones, e.g. ["acp","claude","--credential","work"].
-
-  --model <m> pins the session's model (see 'coop models'), e.g.
-  ["acp","claude","--model","opus"].
+  The target pins the session's agent, model, and account — an editor can run two
+  entries on different ones, e.g. ["acp","claude:opus-4.8@work"].
 
   --preset <name> runs the session under an orchestration preset (its lead is the
   default agent when none is named; see 'coop help presets').
 
-  --consult lets the session ask the other signed-in agents for a read-only second
-  opinion (their credentials are mounted) — the orchestrator pattern, from your editor.
+  --consult <peer>… lets the session ask NAMED peers for a read-only second opinion
+  (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
+  from your editor.
 
   Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
   create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
@@ -368,22 +367,23 @@ var commandHelp = map[string]string{
   (--supervise is accepted as a no-op — the proxy is always on now, but older editor
   (Zed) agent_servers entries still send it, and coop can't rewrite your editor config.)`,
 
-	"fusion": `coop fusion [agent] — one agent leads, the other two advise, it synthesizes.
+	"fusion": `coop fusion <governor> --peer <agent>… — one agent leads, named peers advise, it synthesizes.
 
-  Usage: coop fusion [claude|codex|gemini] [--credential <name>] [--model <model>] [--preset <name>] [args...]
+  Usage: coop fusion <governor>[:model][@account] --peer <agent>… [--preset <name>] [args...]
 
-  Defaults to COOP_FUSION_GOVERNOR. Peers advise read-only; only the leader
-  writes. Lighter, opt-in variant: coop <agent> --consult
+  The governor is a target (defaults to COOP_FUSION_GOVERNOR); its :model and @account
+  fold into this run, the peers keep their own defaults. Peers advise read-only; only
+  the governor writes. Lighter, opt-in variant: coop <agent> --consult <peer>…
 
-  --credential <name> pins the governor's stored account; each peer keeps its own.
-
-  --model picks the governor's model; each peer keeps its own default (its
-  profile's mark or COOP_<AGENT>_MODEL — see 'coop models').
+  --peer <agent> names a council member (repeatable, at least one required — or a
+  preset that supplies consult roles): coop fusion claude --peer codex:gpt-5.5 --peer gemini.
+  Each <peer> is a target; only the named peers' credentials mount. There is no implicit
+  "consult everyone signed in".
 
   --preset <name> loads an orchestration preset: its lead is the default governor,
   and its role routing rides along with the council directive ('coop help presets').
 
-  Like coop <agent>, it forwards extra args to the governor — a leading agent name
+  Like coop <agent>, it forwards extra args to the governor — a leading target
   picks the governor; anything else (or anything after a --) passes through.`,
 
 	"presets": `coop presets — YAML orchestration recipes under .agent/presets/<name>/.
@@ -400,8 +400,7 @@ var commandHelp = map[string]string{
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
-  An explicitly named agent wins over the preset's lead; explicit --model/
-  --credential win over the ladder.
+  An explicit target (claude:opus-4.8@work) wins over the preset's lead + ladder.
 
   .agent/presets/frontier/preset.yaml:
 
@@ -548,7 +547,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then review.
 
-  Usage: coop loop [claude|codex|gemini] [--tasks <path>]... [--model <m[@account]>] [--credential <name>] [--preset <name>] [--consult] [--preflight] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][@account,…]] [--tasks <path>]... [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   review pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -584,17 +583,18 @@ var commandHelp = map[string]string{
   preset's role routing + wrappers ('coop help presets'). With no preset, the loop
   rotates the agent's default model across all signed-in accounts.
 
-  --model <m[@account]> / --credential <name> are a one-off ladder for this run
-  (no preset needed): a bare --model fans across all accounts, --model opus@work
-  or --credential pins one. COOP_LOOP_MODEL is the standing model below a ladder
-  entry's own, then the account's marked default ('coop models'), then
-  COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
+  The target is a one-off ladder for this run (no preset needed): a bare provider
+  (claude) fans the agent's default model across all signed-in accounts, claude:opus
+  pins the model, claude@work,personal is an explicit account ladder — the loop rotates
+  the rungs on a rate limit. COOP_LOOP_MODEL is the standing model below a rung's own,
+  then the account's marked default ('coop models'), then COOP_<AGENT>_MODEL — so
+  overnight runs can grind on a cheaper model.
 
-  --consult lets each iteration ask the other signed-in agents for a read-only
-  second opinion (coop-consult on PATH, peers' credentials mounted) — the
+  --consult <peer>… lets each iteration ask NAMED peers for a read-only second opinion
+  (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
   orchestrator pattern running unattended. Off by default: it widens each box's
-  credential scope to the authed peers. Also on fork loops:
-  coop fork <name> <agent> --loop --consult.
+  credential scope to exactly the named peers. Also on fork loops:
+  coop fork <name> <target> --loop --consult codex --consult gemini.
 
   On macOS, coop holds a caffeinate assertion for the run so the machine doesn't
   idle-sleep mid-drain and stall an overnight loop (COOP_CAFFEINATE=0 to disable).

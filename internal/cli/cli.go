@@ -298,7 +298,7 @@ func removedCommandNote(cmd string) (string, bool) {
 			"<default|rm> (e.g. coop credentials claude work default)", true
 	case "credentials model":
 		return "setting a model on a credential was retired in v3 — a credential is just an account. " +
-			"Set the model with --model (per run) or a preset's models: ladder (see coop help presets)", true
+			"Set the model inline in the target (claude:opus-4.8) or in a preset's models: ladder (see coop help presets)", true
 	}
 	return "", false
 }

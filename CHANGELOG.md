@@ -4,6 +4,25 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One way to name a run: the target grammar `provider[:model][@account]`, and peers that
+  participate only when named.** Every launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
+  `fork <name> [acp]`, `login` — now takes a single **target** for WHO runs: `claude`,
+  `claude:opus-4.8`, `claude@work`, `claude:opus-4.8@work`. **The provider is required** (no more
+  implicit `claude` default — a bare `coop`/`loop`/`acp`/`fusion` names the fix), while the model
+  stays optional (it falls to the agent CLI's default). **`--model` and `--credential` retire**
+  everywhere — they were just target segments (`claude:opus-4.8@work`); each tombstones with the
+  rewrite. `coop login claude@work` replaces `coop login claude --credential work`. An account
+  **ladder** rides the target too (`claude@work,personal`, rotated by `coop loop` on a rate limit).
+  Peers are now **explicit**: repeatable `--consult <peer>` on `coop <agent>`/`loop`/`acp`/`fork
+  --loop` and repeatable `--peer <peer>` on `coop fusion` (≥1 required — a bare fusion errors); the
+  old boolean `--consult` and the implicit "every signed-in agent is a peer" policy are gone. The
+  **security dividend**: a run mounts the credentials of exactly its lead + named peers + a preset's
+  role agents — an agent the run never named never enters the box, and the in-box `coop-consult`
+  refuses (via `COOP_PEERS`) any target not in this run's council, so a compromised or confused
+  lead can't consult (and thereby drive) an unlisted agent. `--preset` is unchanged (a preset is an
+  orthogonal axis — role wiring — not another spelling of the target); a per-fork `consult: true` in
+  `.agent/fleet.yaml` now refuses at `coop fleet up`. See MIGRATING.md.
+
 - **`coop loop`'s end-of-loop pass is now a customizable, DEMANDING review that loops until it
   accepts.** Commit `.agent/loop/review.md` to FULLY override the review prompt (committed config,
   like a preset — the scaffold `.gitignore` allowlists `.agent/loop/`), while `.agent/loop/audit.md`

@@ -1,5 +1,37 @@
 # Migrating
 
+## Unreleased: the target grammar — one way to name a run
+
+Every launch names WHO runs with a single **target**: `provider[:model][@account]`
+(`claude`, `claude:opus-4.8`, `claude@work`, `claude:opus-4.8@work`). The provider is
+**required** — there is no implicit `claude` default — while the model stays optional (it
+falls to the agent CLI's default). `--model`, `--credential`, and the boolean `--consult`
+retire; peers are named explicitly.
+
+| Retired | Use |
+| --- | --- |
+| `coop <agent> --model <m>` | `coop <agent>:<m>` — e.g. `coop claude:opus-4.8` |
+| `coop <agent> --credential <acct>` | `coop <agent>@<acct>` — e.g. `coop claude@work` |
+| `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
+| `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
+| bare `coop` / `loop` / `acp` / `fusion` (defaulted to claude) | name the agent — `coop claude`, `coop loop claude`, … (or a `--preset` whose lead supplies it) |
+| `coop <agent> --consult` (boolean) | `coop <agent> --consult <peer>…` — name each peer (repeatable): `--consult codex:gpt-5.5 --consult gemini` |
+| `coop fusion <gov>` (consulted everyone signed in) | `coop fusion <gov> --peer <agent>…` — a council needs ≥1 named peer (repeatable) |
+
+These apply on **every** launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
+`fork <name> [acp]`, and `login`. A Zed `agent_servers` entry names the agent as one token:
+`["acp","claude:opus-4.8@work"]` (a bare `["acp"]` now errors instead of defaulting).
+
+Peers participate **only when named** — the old "every signed-in agent is a peer" policy is
+gone. A named peer's credentials are the only ones mounted for consultation (the box's
+`coop-consult` refuses any other), so an overnight run can't quietly hand your Codex login to a
+Claude lead you never asked to consult it.
+
+`--preset <name>` is unchanged (a preset is an orthogonal axis — role wiring — not another
+spelling of the target). A per-fork `consult: true` in `.agent/fleet.yaml` now refuses at `coop
+fleet up`; name peers explicitly (the fleet grammar for that lands with the preset/fleet
+unification).
+
 ## v3: retired command aliases
 
 v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/tombstoned; rewrite:
@@ -8,10 +40,10 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | --- | --- |
 | `coop clone <name>` | `coop fork <name>` |
 | `coop profiles …` | `coop credentials …` — a credential is a stored account/login; orchestration recipes are presets (`coop help presets`) |
-| `--profile <name>` (login/launch flags) | `--credential <name>` — same value, new name. `--profile` is no longer a coop flag at all: on an agent launch it forwards to the agent like any other arg (codex has its own `--profile`); elsewhere it's an unknown argument |
+| `--profile <name>` (login/launch flags) | put the account in the target — `<agent>@<name>` (see the target-grammar section above). `--profile` is no longer a coop flag at all: on an agent launch it forwards to the agent like any other arg (codex has its own `--profile`); elsewhere it's an unknown argument |
 | `coop pool <add\|rm\|clear>` | Retired — there is no persistent pool. A loop rotates the model-first `models:` ladder of its preset's lead (`coop help presets`); a bare model in that ladder fans out across every signed-in account, which is what the pool used to do. A stray `pools.json` is ignored. |
 | `coop profiles <default\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|rm>` (a path) |
-| `coop profiles <name> model <m>` / a credential's model mark | Retired — a credential is just an account; the model is a separate axis. Set it with `--model` (per run) or a preset's `models:` ladder (`coop help presets`). Both spellings of `coop credentials <cred> model` tombstone. |
+| `coop profiles <name> model <m>` / a credential's model mark | Retired — a credential is just an account; the model is a separate axis. Set it inline in the target (`<agent>:<m>`) or in a preset's `models:` ladder (`coop help presets`). Both spellings of `coop credentials <cred> model` tombstone. |
 | `coop status` | `coop tasks watch` (the queue + any active forks) / `coop fleet watch` (the per-fork board) |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |

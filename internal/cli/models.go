@@ -38,7 +38,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 		}
 		names = []string{rest[0]}
 		if len(rest) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [<agent>] [--refresh]; pick a model with --model or a preset)", rest[1])
+			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [<agent>] [--refresh]; pick a model inline like claude:opus-4.8, or in a preset)", rest[1])
 		}
 	}
 	p := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
@@ -63,7 +63,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 	ex, _ := agents.Get(names[0])
 	model := ex.Models()[0] // the static list is always non-empty — a stable example id
 	rows := []struct{ label, cmd, note string }{
-		{"one run", "coop " + names[0] + " --model " + model, "fusion, fork, loop, acp take it too"},
+		{"one run", "coop " + names[0] + ":" + model, "fusion, fork, loop, acp take it too"},
 		{"standing", "a preset's models: ladder", "coop help presets"},
 		{"everywhere", "COOP_" + strings.ToUpper(names[0]) + "_MODEL=" + model, "loop runs only: COOP_LOOP_MODEL"},
 	}

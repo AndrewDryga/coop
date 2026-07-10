@@ -71,7 +71,7 @@ func accountsFor(cfg *config.Config, agent string) []string {
 func expandLadder(cfg *config.Config, agent string, ladder []preset.ModelTarget) ([]runTarget, error) {
 	accounts := accountsFor(cfg, agent)
 	if len(accounts) == 0 {
-		return nil, fmt.Errorf("%s has no signed-in account — run: coop login %s [--credential <name>]", agent, agent)
+		return nil, fmt.Errorf("%s has no signed-in account — run: coop login %s[@account]", agent, agent)
 	}
 	if len(ladder) == 0 {
 		ladder = []preset.ModelTarget{{}} // default model, all accounts

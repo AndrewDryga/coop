@@ -31,8 +31,8 @@ func TestCredentialsModelRetired(t *testing.T) {
 		{"model", "claude", "work", "opus"}, // verb-first form
 	} {
 		code, err := a.cmdCredentials(args)
-		if code != 2 || err == nil || !strings.Contains(err.Error(), "--model") {
-			t.Errorf("cmdCredentials(%v) = (%d, %v), want a retired-with-rewrite error naming --model", args, code, err)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "retired") || !strings.Contains(err.Error(), "target") {
+			t.Errorf("cmdCredentials(%v) = (%d, %v), want a retired-with-rewrite error pointing at the target", args, code, err)
 		}
 	}
 }
@@ -85,7 +85,7 @@ func TestModelsIsAMenuNotAProfileDump(t *testing.T) {
 			t.Errorf("cmdModels = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"fable", "gpt-5", "gemini-2.5-pro", "--model", "preset"} {
+	for _, want := range []string{"fable", "gpt-5", "gemini-2.5-pro", "one run", "preset"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q:\n%s", want, out)
 		}
