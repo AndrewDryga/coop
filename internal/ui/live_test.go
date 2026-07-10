@@ -87,6 +87,33 @@ func TestProgressBarStates(t *testing.T) {
 	}
 }
 
+func TestProgressBarStatesBlockedNeverHidden(t *testing.T) {
+	// Colors are off under `go test`, so done (cyan) and blocked (red) both render as plain █ — a
+	// rounded-away blocker would be invisible in the string. Force sentinels so the two segments are
+	// distinct, then prove a non-zero blocked count always keeps at least one red cell.
+	saved := [3]string{cCyan, cRed, cReset}
+	cCyan, cRed, cReset = "<c>", "<r>", "</>"
+	defer func() { cCyan, cRed, cReset = saved[0], saved[1], saved[2] }()
+
+	seg := func(cyan, red, empty int) string {
+		return "[" + Cyan(strings.Repeat("█", cyan)) + Red(strings.Repeat("█", red)) + strings.Repeat("░", empty) + "]"
+	}
+	for _, c := range []struct {
+		done, blocked, total, w int
+		want                    string
+	}{
+		// 57/58 done, 1 blocked, w14 — the real board line: done alone rounds up to a full bar, but
+		// the blocker steals one cell from done (13 cyan + 1 red, no empty) instead of vanishing.
+		{57, 1, 58, 14, seg(13, 1, 0)},
+		// A blocker that rounds to zero far from full still surfaces one red cell, out of the empties.
+		{40, 1, 100, 14, seg(6, 1, 7)},
+	} {
+		if got := ProgressBarStates(c.done, c.blocked, c.total, c.w); got != c.want {
+			t.Errorf("ProgressBarStates(d=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.blocked, c.total, c.w, got, c.want)
+		}
+	}
+}
+
 func TestRegion(t *testing.T) {
 	var buf strings.Builder
 	r := NewRegion(&buf, func() int { return 40 })

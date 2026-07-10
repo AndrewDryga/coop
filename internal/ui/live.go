@@ -151,7 +151,9 @@ func ProgressBar(frac float64, width int) string {
 
 // ProgressBarStates is ProgressBar with a blocked segment: `done` cells filled (cyan), then `blocked`
 // cells in red, then the rest (todo + in-progress) empty — all out of total. A glance shows both how
-// far along AND how much is parked on a decision.
+// far along AND how much is parked on a decision. A non-zero blocked count always claims at least one
+// cell, stolen from done if need be: a lone blocker must never round away and let a near-complete bar
+// read as all-done — that would hide the very issue a human still has to clear.
 func ProgressBarStates(done, blocked, total, width int) string {
 	if width < 0 {
 		width = 0
@@ -165,13 +167,16 @@ func ProgressBarStates(done, blocked, total, width int) string {
 		}
 		return int(float64(n)/float64(total)*float64(width) + 0.5)
 	}
-	d := cells(done)
-	if d > width {
-		d = width
-	}
 	b := cells(blocked)
+	if blocked > 0 && b == 0 {
+		b = 1 // floor a real blocker at one visible cell, never round it away
+	}
+	if b > width {
+		b = width
+	}
+	d := cells(done)
 	if d+b > width {
-		b = width - d
+		d = width - b // done yields the overflow to the blocker, not the reverse
 	}
 	return "[" + Cyan(strings.Repeat("█", d)) + Red(strings.Repeat("█", b)) + strings.Repeat("░", width-d-b) + "]"
 }
