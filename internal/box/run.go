@@ -140,6 +140,12 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// after the ShadowCount message above so it doesn't count as a "secret path"; unconditional
 	// because the threat is the agent CREATING an absent file. See ComposeDecoyMounts.
 	mounts = append(mounts, ComposeDecoyMounts(workdir)...)
+	// Docker materializes a missing bind-mount target, and the compose decoys sit inside the
+	// read-write repo bind — so shadowing an absent compose path lands an empty file in the repo
+	// on the host that outlives the container. Snapshot which are absent now and delete the empty
+	// ones once the box exits, so a launch leaves no stray compose.agent.yml behind.
+	composeStrays := composeDecoyStrays(spec.Repo)
+	defer removeComposeStrays(spec.Repo, composeStrays)
 	if !spec.Batch && !spec.Quiet {
 		for _, nudge := range StalenessNudges(cfg, spec.Repo, spec.Image) {
 			ui.Info("%s", nudge)
