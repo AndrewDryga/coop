@@ -566,7 +566,7 @@ the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AG
 model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
 **Reasoning effort** is a sibling axis on the same target — `/effort` after the model:
-`coop codex:gpt-5.5/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
+`coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
 `low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
 (Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
 fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up
