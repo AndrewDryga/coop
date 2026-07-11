@@ -164,7 +164,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop version", "print the version")
 
 	fmt.Fprint(&b, "\nRun 'coop help <command>' or 'coop <command> --help' for a command's details —\n"+
-		"for an agent (claude/codex/gemini), --help is the agent's own.\n")
+		"for an agent (claude/codex/gemini/grok), --help is the agent's own.\n")
 	if ref { // machine-independent footer for the reference/manual (no host-specific paths)
 		fmt.Fprint(&b, "\nConfig  coop.conf (COOP_CONF), or COOP_* env vars\nAuth    the config dir (COOP_CONFIG_DIR)\nDocs    https://coop.dryga.com\n")
 	} else {
@@ -443,7 +443,7 @@ var commandHelp = map[string]string{
   your repo; set subagent: <name> to reference an existing .claude/agents/ subagent
   instead. A consult role runs its agent on the role's model, and the role's prompt (if
   any) is the persona the peer adopts. Native roles run inside the lead's session, so
-  under a codex/gemini lead they degrade to exactly such a consult (same model + persona),
+  under a codex/gemini/grok lead they degrade to exactly such a consult (same model + persona),
   coop-consult <role> instead of @coop-<role>.
   A delegate may edit the worktree but must not commit — coop-delegate fails loud if HEAD
   moved — and the lead owns the diff review, the gate, and the commit. Model ids: coop models.
