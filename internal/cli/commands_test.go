@@ -572,6 +572,35 @@ func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	}
 }
 
+// A bare `coop acp` (no provider) defaults to the first signed-in provider — the toolbar's provider
+// dropdown switches it live — and only errors when nothing is signed in.
+func TestDefaultACPProvider(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	if got := defaultACPProvider(cfg); got != "" {
+		t.Errorf("no signed-in agent should default to \"\", got %q", got)
+	}
+	// Sign codex in (its credential file), the way box.AuthedAgents detects it.
+	os.MkdirAll(filepath.Join(dir, "codex", "profiles", "default"), 0o755)
+	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
+	if got := defaultACPProvider(cfg); got != "codex" {
+		t.Errorf("defaultACPProvider = %q, want codex (the only signed-in agent)", got)
+	}
+}
+
+// `coop acp` with no provider AND nothing signed in fails fast (exit 2) rather than hanging or
+// spawning — the fallback when the default has nothing to resolve to.
+func TestACPNoProviderNoneSignedIn(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	code, err := a.cmdACP([]string{})
+	if code != 2 || err == nil {
+		t.Fatalf("bare cmdACP with nothing signed in = (%d, %v), want (2, error)", code, err)
+	}
+	if !strings.Contains(err.Error(), "coop login") {
+		t.Errorf("error should point at signing in, got: %v", err)
+	}
+}
+
 func TestParseServices(t *testing.T) {
 	cases := []struct {
 		in   string

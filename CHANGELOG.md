@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A bare `coop acp` (no provider) now starts on your first signed-in provider instead of
+  erroring.** v4.0.0 made the provider required everywhere, so an editor `agent_servers` entry of
+  just `["acp"]` failed fast with a usage error. The ACP surface is special — it has a live PROVIDER
+  dropdown — so a bare `coop acp` now defaults to the first signed-in agent and the dropdown
+  switches it from there (a wrong guess is one click to fix, unlike `coop claude`/`coop loop`, which
+  stay strict since they have no such correction). Nothing signed in still errors, now pointing at
+  `coop login`. Naming a provider (`coop acp claude`) or a `--preset` still pins it.
+
 - **Sibling `compose.agent.yml` files are now VALIDATED on the host instead of shadowed in the
   box — no more phantom compose files, and agents can scaffold services.** coop auto-runs a repo's
   compose file on the host daemon, which is host-root-equivalent (`privileged`, `/:/host`,

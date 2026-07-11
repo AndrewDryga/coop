@@ -453,6 +453,17 @@ func acpCommand(cfg *config.Config, tool string) ([]string, bool) {
 // agent (so Zed drives it like any other) but wired for fusion: it consults its
 // peers read-only and synthesizes (see cmdFusion). Add one Zed agent_servers
 // entry per governor to switch which model leads.
+// defaultACPProvider picks the provider for a bare `coop acp` (no positional target, no preset
+// lead): the first signed-in agent, or "" when none is signed in. ACP-only — the editor toolbar's
+// provider dropdown can switch it live, so an implicit default is safe here where `coop claude`/
+// `coop loop` are deliberately strict (no dropdown to correct a wrong guess).
+func defaultACPProvider(cfg *config.Config) string {
+	if authed := box.AuthedAgents(cfg); len(authed) > 0 {
+		return authed[0]
+	}
+	return ""
+}
+
 func (a *app) cmdACP(args []string) (int, error) {
 	// The ACP proxy is ALWAYS in the path (not only under --supervise): it's coop's control point for
 	// the editor session — restart resilience, plus rewriting the session so coop owns the toolbar
@@ -563,9 +574,16 @@ func (a *app) cmdACP(args []string) (int, error) {
 		tool = governor
 	} else {
 		tool = presetLeadAgent(p, tool, toolSet)
+		// A bare `coop acp` (no provider, no preset lead) defaults to the first signed-in provider
+		// instead of erroring: the editor toolbar's provider dropdown can switch it live, so an
+		// implicit default is safe HERE — unlike `coop claude`/`coop loop`, which stay strict since
+		// there's no dropdown to correct a wrong guess. Nothing signed in falls through to the error.
+		if tool == "" {
+			tool = defaultACPProvider(a.cfg)
+		}
 	}
 	if !agents.Valid(tool) {
-		return 2, errors.New("usage: coop acp [claude|codex|gemini|grok|fusion [governor]]")
+		return 2, errors.New("coop acp: no provider named and none signed in — run 'coop login <agent>' (claude|codex|gemini|grok), or name one: coop acp claude")
 	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).

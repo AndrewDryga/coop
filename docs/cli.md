@@ -264,7 +264,9 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
          coop acp fusion <governor>[:model][/effort][@account] [--consult <peer>…]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
-  command at e.g. ["acp","claude"] — one entry per agent or governor. coop always
+  command at e.g. ["acp","claude"] — one entry per agent or governor. A bare
+  ["acp"] (no agent) works too: it starts on your first signed-in provider and the
+  PROVIDER dropdown below switches it live; name one to pin it. coop always
   proxies the session, so the editor stays connected across a box restart (a
   rebuild/OOM) — it reconnects and replays the handshake, no lost session.
 
