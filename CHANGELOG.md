@@ -4,6 +4,21 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One `.agent/loop.yaml` replaces the `.agent/loop/*.md` files — with a per-step model ladder and
+  prompt for each of work / review / preflight / between.** The three markdown knobs
+  (`review.md`/`audit.md`/`between.md`) collapse into one committed YAML with a section per step:
+  each takes an `agent:` ladder (`provider[:model][/effort][@account]` targets **or** a preset name
+  — a preset rung runs that step under the preset's roles + lead ladder, rotated on a rate limit),
+  and a prompt. Prompts never OVERRIDE a coop built-in — `review.prompt` and `preflight.prompt`
+  **append** to theirs; `between.prompt` **sets** the per-task audit (between has no built-in).
+  Settings live here too: `review.rounds` (was `COOP_MAX_REVIEW_ROUNDS`), `preflight.enabled` (was
+  `--preflight`/`COOP_PREFLIGHT`, still overridable), `work.command` (was `COOP_LOOP_CMD`). A missing
+  file or field = today's built-in defaults, so an absent `loop.yaml` changes nothing. The retired
+  `.agent/loop/*.md` (and legacy `.agent/audit.md`) tombstone once if left behind. `coop init` now
+  scaffolds a fully-commented `.agent/loop.yaml`, a committed `.agent/project.yaml`, and an empty
+  `.agent/presets/`. (The `COOP_LOOP_MODEL`/`COOP_REVIEW_MODEL`/`COOP_PREFLIGHT` env vars still work
+  as fallbacks under the file for now.)
+
 - **A bare `coop acp` (no provider) now starts on your first signed-in provider instead of
   erroring.** v4.0.0 made the provider required everywhere, so an editor `agent_servers` entry of
   just `["acp"]` failed fast with a usage error. The ACP surface is special — it has a live PROVIDER

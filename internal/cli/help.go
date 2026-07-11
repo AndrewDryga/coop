@@ -581,22 +581,19 @@ var commandHelp = map[string]string{
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.
 
-  Fully override the review prompt by committing .agent/loop/review.md (Markdown): its
-  text replaces the built-in review instructions (coop still appends the queue paths and
-  reopen mechanics). Or just ADD checks in .agent/loop/audit.md — its text is appended to
-  whichever review prompt is in effect, reopening any shipped task that fails one (e.g.
-  changelog updated, docs regenerated, no stray TODOs). (The old .agent/audit.md moved
-  here — git mv it into .agent/loop/; coop warns once if the old path lingers.)
+  One committed .agent/loop.yaml configures every step (work/review/preflight/between), each
+  with its own agent: model ladder and prompt. Prompts never REPLACE a coop built-in:
+  review.prompt and preflight.prompt APPEND extra checks/instructions to theirs; between.prompt
+  SETS the per-task audit (between has no built-in — it's off unless enabled + set). review.rounds
+  is the round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration
+  override. A missing file or field = the built-in default. (The retired .agent/loop/*.md and
+  legacy .agent/audit.md tombstone once if left behind; coop init scaffolds a commented loop.yaml.)
 
-  Commit .agent/loop/between.md to run a per-task audit AFTER each completed task (opt-in;
-  its text is the prompt, like review.md): it reviews the just-finished task against its
-  goal + the repo's rules and may reopen it, so the loop reworks it before moving on.
-  Absent → no between-task step (an extra box iteration per task is the cost).
-
-  COOP_REVIEW_MODEL runs the review pass (and the between-tasks audit) on its own,
-  typically STRONGER model — the cheap loop model does the work, a more capable model
-  reviews it. Unset → the review runs on the loop's model. It takes model[/effort], so the
-  same var can also raise the review effort (e.g. review at xhigh while the loop grinds at low).
+  Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
+  rungs: review.agent runs the review on its own, typically STRONGER model (the cheap work loop
+  does the work, a capable model reviews it), between.agent the per-task audit, and work.agent the
+  work rotation when the launch names no target and no --preset. (COOP_REVIEW_MODEL / COOP_LOOP_MODEL
+  still apply as fallbacks under the file for now.)
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its lead agent: ladder is the rotation, and each iteration gets the
@@ -631,8 +628,8 @@ var commandHelp = map[string]string{
   mounted either way.
 
   --preflight       run one cleanup pass before working: unblock blocked/ tasks whose
-                    decision now has an answer (opt-in; COOP_PREFLIGHT=1 to default it
-                    on, --no-preflight to override). Makes no code changes or commits.
+                    decision now has an answer (default it on with loop.yaml preflight.enabled;
+                    --no-preflight overrides). Makes no code changes or commits.
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 
@@ -641,7 +638,7 @@ var commandHelp = map[string]string{
   — resolve with 'coop tasks decisions', then re-run. So cron/CI can branch without parsing
   output.
 
-  COOP_LOOP_CMD overrides the per-iteration command.`,
+  loop.yaml work.command (or COOP_LOOP_CMD) overrides the per-iteration command.`,
 
 	"up": `coop up — start the repo's sibling services so the box can reach them by name.
 

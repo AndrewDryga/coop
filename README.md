@@ -920,21 +920,22 @@ task the review keeps reopening is blocked for a human rather than reported as d
 `[3, COOP_MAX_REVIEW_ROUNDS]` (default `5`) — a small batch still gets a few tries, a big
 overnight batch can't ping-pong one stuck task forever.
 
-Tune the review. To **replace** it wholesale, commit `.agent/loop/review.md` (Markdown):
-its text becomes the review prompt (coop still appends the queue paths and the reopen
-mechanics). To just **add** checks, drop them in `.agent/loop/audit.md` — its text is
-appended to whichever review prompt is in effect, so the pass also reopens a shipped task
-that fails one (e.g. the CHANGELOG gained an entry, the docs were regenerated, no stray
-`TODO`s). To review **after each task** rather than only at the end, commit
-`.agent/loop/between.md` — when present, the loop runs a per-task audit (its text is the
-prompt) right after each completed task and may reopen it before moving on (an extra box
-iteration per task; off unless the file exists). Set `COOP_REVIEW_MODEL` to run the review
-pass and the between-tasks audit on a stronger model than the cheaper work loop. All are
-committed with the repo (shared, like a preset) and opt-in — no file is scaffolded for you.
+Tune the loop in one committed **`.agent/loop.yaml`** — a section per step (`work` / `review` /
+`preflight` / `between`), each with its own `agent:` model ladder and a prompt. Prompts never
+*replace* a coop built-in: **`review.prompt`** and **`preflight.prompt`** *append* extra
+checks/instructions to theirs (so the review still reopens a shipped task that fails one — e.g. the
+CHANGELOG gained an entry, the docs were regenerated), while **`between.prompt`** *sets* an opt-in
+per-task audit that runs after each completed task and may reopen it (between has no built-in, so
+it's off unless enabled + set). Each step's `agent:` is a ladder of targets
+(`provider[:model][/effort][@account]`) or preset names — so **`review.agent`** can review on a
+stronger model than the cheaper `work.agent` loop. Settings live here too: `review.rounds`,
+`preflight.enabled`, `work.command`. Every field is optional (a missing file = the built-in
+defaults), and `coop init` scaffolds a fully-commented starter.
 
-> The review checks moved from `.agent/audit.md` to `.agent/loop/audit.md` (beside
-> `review.md`/`between.md`). `git mv .agent/audit.md .agent/loop/audit.md`; coop warns once
-> if the old path lingers and no longer reads it.
+> The old `.agent/loop/*.md` files (`review.md`/`audit.md`/`between.md`) and the legacy
+> `.agent/audit.md` are retired — fold them into `.agent/loop.yaml` (`review.prompt` gains
+> `review.md` + `audit.md`; `between.prompt` gains `between.md`). coop warns once if one lingers and
+> no longer reads it.
 
 **Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
 queue is verified done; `1` a failure; `2` a usage error; `3` the loop stopped with a task blocked
