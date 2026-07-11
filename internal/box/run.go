@@ -133,7 +133,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if p, err := project.Load(spec.Repo); err == nil {
 		cfg = applyProjectPolicy(cfg, p, &spec)
 	} else if !spec.Quiet {
-		ui.Info("project.yaml: %v — ignoring its box policy", err)
+		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
 	}
 	workdir := resolveWorkdir(spec, cfg)
 
