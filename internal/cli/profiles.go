@@ -71,7 +71,7 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		fmt.Println(pal.Bold(agent))
 		profiles := a.cfg.Profiles(agent)
 		if len(profiles) == 0 {
-			fmt.Printf("  no credentials — run: coop login %s [--credential <name>]\n", agent)
+			fmt.Printf("  no credentials — run: coop login %s[@<account>]\n", agent)
 			continue
 		}
 		def := a.cfg.DefaultProfileOf(agent)
@@ -100,7 +100,7 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			fmt.Printf("  %s  %s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), tag)
 		}
 		for _, p := range relogin {
-			fmt.Printf("  %s\n", pal.Dim("↻ re-login: coop login "+agent+" --credential "+p))
+			fmt.Printf("  %s\n", pal.Dim("↻ re-login: coop login "+agent+"@"+p))
 		}
 		// Surface a dangling default: the marked (or built-in) default points at a profile that
 		// doesn't exist, so an interactive run would land on nothing. Don't leave it silent.
@@ -175,7 +175,7 @@ func (a *app) requireProfile(agent, profile string) error {
 		return nil
 	}
 	if len(have) == 0 {
-		return fmt.Errorf("%s has no credentials yet — run: coop login %s --credential %s", agent, agent, profile)
+		return fmt.Errorf("%s has no credentials yet — run: coop login %s@%s", agent, agent, profile)
 	}
 	return fmt.Errorf("%s has no credential %q — have: %s", agent, profile, strings.Join(have, ", "))
 }
@@ -196,7 +196,7 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	fmt.Printf("  default    %s\n", def)
 	fmt.Printf("  dir        %s\n", a.cfg.AgentProfileDir(agent, profile))
 	if expired {
-		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+" --credential "+profile))
+		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+"@"+profile))
 	}
 	return 0, nil
 }
@@ -218,7 +218,7 @@ func (a *app) setProfileDefault(args []string) (int, error) {
 		return -1, err
 	}
 	if !box.ProfileAuthed(a.cfg, agent, name) {
-		ui.Warn("%s credential %q isn't signed in yet — run: coop login %s --credential %s", agent, name, agent, name)
+		ui.Warn("%s account %q isn't signed in yet — run: coop login %s@%s", agent, name, agent, name)
 	}
 	ui.OK("%s default credential → %s", agent, name)
 	return a.cmdCredentials([]string{agent})

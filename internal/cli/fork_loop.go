@@ -201,7 +201,7 @@ func seedForkQueues(repo, ws, tasks string, onKept func()) ([]string, error) {
 // detached=true means this process IS the background worker (its stdio is already the
 // log, and it owns the pidfile). tasks is an absolute path resolved by the caller
 // (empty = the monorepo-aware default);
-// credential/model are the fork's --credential/--model one-off (model@account allowed);
+// credential/model are the fork target's decomposed one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
 func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effort string, peers []agents.Target, detached bool) (int, error) {
@@ -236,14 +236,15 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 	}
 	a.applyLoopModel(agent)          // COOP_LOOP_MODEL (model[/effort]) → the fallback tier
 	a.selectRunEffort(agent, effort) // the fork target's /effort (top tier, persists across rotations)
-	// The fork's rotation ladder: a one-off --model/--credential wins; else its preset's models
-	// (a.preset, loaded by forkCreate); else the default (agent model across all accounts).
+	// The fork's rotation ladder: the fork target's one-off model/account wins; else its
+	// preset's ladder (a.preset, loaded by forkCreate); else the default (agent model across
+	// all accounts).
 	ladder, err := oneOffLadder(model, credential)
 	if err != nil {
 		return -1, err
 	}
 	if ladder == nil && a.preset != nil && agent == a.preset.LeadAgent {
-		ladder = a.preset.LeadModels
+		ladder = a.preset.LeadLadder
 	}
 	rot, err := a.buildRotation(agent, ladder)
 	if err != nil {

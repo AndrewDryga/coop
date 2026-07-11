@@ -4,6 +4,31 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One `Target` type end to end.** The three parallel spellings of "who runs on what" —
+  `preset.ModelTarget`, the loop's internal `runTarget`, and the raw strings between them — are
+  gone; presets, the loop's rotation, ACP failover, and fleet entries all carry the ONE
+  `agents.Target` that `ParseTarget` produces (`Target.Account()` is the single-account rung
+  view). A preset's `LeadLadder` keeps whole targets (accounts fan out at run time against
+  what's signed in), `coop presets <name>` prints the ladder in full target form
+  (`ladder claude:fable-5, claude:opus@work`), and a malformed target now reads IDENTICALLY on
+  every surface — CLI positional, preset `lead.agent`, role `agent:`, fleet entry — including
+  `coop loop gpt4`, which now says `unknown provider "gpt4" — use claude, codex, gemini, grok`
+  instead of a generic "unexpected argument" (one tested cross-surface error suite pins this).
+
+- **Cross-provider lead ladders are bounded to the surfaces that can honor them.** The loop
+  embraces them (rotation swaps the agent per rung). `coop fusion` now REFUSES a preset whose
+  lead ladder spans providers — fusion runs one governor for the whole council, so a foreign
+  rung could never apply and silently ignoring it would fake a fallback. An ACP session filters
+  to the lead's own rungs (its respawn env carries no provider), so failover keeps working
+  across the lead's models/accounts. A preset ROLE's `agent:` list now gets a purposeful
+  rejection ("a role runs ONE target; fallback ladders belong to the lead") instead of a raw
+  YAML type error — nothing rotates a role today, and dead config that looks like failover is
+  worse than an honest no.
+
+- **Sign-in guidance speaks the target grammar.** The `coop credentials` re-login/default hints
+  still recommended the retired `--credential` flag (`coop login claude --credential work`);
+  every one now says `coop login claude@work`.
+
 - **The loop review must execute each reopen the moment it decides it — batched verdicts were
   silently lost.** A real review run fanned its per-area reviews out to background subagents,
   collected REOPEN verdicts as prose, and deferred every folder move until "after the final

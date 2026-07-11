@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
@@ -13,7 +14,7 @@ import (
 func cliFrontier() *preset.Preset {
 	return &preset.Preset{
 		Name: "frontier", LeadAgent: "claude",
-		LeadModels: []preset.ModelTarget{{Model: "claude-fable-5", Credential: "work"}},
+		LeadLadder: []agents.Target{{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"work"}}},
 		Roles: []preset.Role{
 			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5"},
 			{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Model: "gemini-3.5-flash"},
@@ -33,6 +34,49 @@ func TestPresetLeadAgent(t *testing.T) {
 	}
 	if got := presetLeadAgent(nil, "codex", false); got != "codex" {
 		t.Errorf("no preset = %q, want the given default codex", got)
+	}
+}
+
+// fusionLadderGuard: a cross-provider lead ladder is rejected only when it would drive this
+// run's governor — fusion runs one governor for the whole council. Inert ladders (another
+// governor, no preset) and single-provider ladders pass.
+func TestFusionLadderGuard(t *testing.T) {
+	cross := &preset.Preset{
+		Name: "x", LeadAgent: "claude",
+		LeadLadder: []agents.Target{{Provider: "claude", Model: "opus"}, {Provider: "codex", Model: "gpt-5.5"}},
+	}
+	if err := fusionLadderGuard(cross, "claude"); err == nil || !strings.Contains(err.Error(), "cross-provider") {
+		t.Errorf("cross-provider ladder driving the governor: err = %v, want the cross-provider rejection", err)
+	}
+	if err := fusionLadderGuard(cross, "gemini"); err != nil {
+		t.Errorf("another governor (ladder inert): err = %v, want nil", err)
+	}
+	if err := fusionLadderGuard(cliFrontier(), "claude"); err != nil {
+		t.Errorf("single-provider ladder: err = %v, want nil", err)
+	}
+	if err := fusionLadderGuard(nil, "claude"); err != nil {
+		t.Errorf("no preset: err = %v, want nil", err)
+	}
+}
+
+// acpLadder filters a cross-provider ladder to the LEAD's own rungs (ACP's respawn env can't
+// swap providers); a same-provider ladder passes through whole.
+func TestACPLadder(t *testing.T) {
+	cross := &preset.Preset{
+		Name: "x", LeadAgent: "claude",
+		LeadLadder: []agents.Target{
+			{Provider: "claude", Model: "fable"},
+			{Provider: "codex", Model: "gpt-5.5"},
+			{Provider: "claude", Model: "opus", Accounts: []string{"work"}},
+		},
+	}
+	got := acpLadder(cross)
+	if len(got) != 2 || got[0].String() != "claude:fable" || got[1].String() != "claude:opus@work" {
+		t.Errorf("acpLadder(cross) = %v, want the two claude rungs only", got)
+	}
+	same := cliFrontier()
+	if got := acpLadder(same); len(got) != len(same.LeadLadder) {
+		t.Errorf("acpLadder(same-provider) = %v, want the whole ladder", got)
 	}
 }
 

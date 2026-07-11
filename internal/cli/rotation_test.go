@@ -9,15 +9,14 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/preset"
 )
 
 // rts builds a claude rotation from bare account names (model empty), for the engine tests.
 // String() renders each as "claude@<acct>".
 func rts(creds ...string) *rotation {
-	ts := make([]runTarget, len(creds))
+	ts := make([]agents.Target, len(creds))
 	for i, c := range creds {
-		ts[i] = runTarget{provider: "claude", credential: c}
+		ts[i] = agents.Target{Provider: "claude", Accounts: []string{c}}
 	}
 	return newRotation(ts)
 }
@@ -88,10 +87,10 @@ func TestRotationUnknownResetBacksOff(t *testing.T) {
 // fable@work cooling never blocks opus@work.
 func TestRotationSameModelFallback(t *testing.T) {
 	now := time.Unix(1000, 0)
-	r := newRotation([]runTarget{
-		{provider: "claude", model: "fable", credential: "work"},
-		{provider: "claude", model: "fable", credential: "personal"},
-		{provider: "claude", model: "opus", credential: "work"},
+	r := newRotation([]agents.Target{
+		{Provider: "claude", Model: "fable", Accounts: []string{"work"}},
+		{Provider: "claude", Model: "fable", Accounts: []string{"personal"}},
+		{Provider: "claude", Model: "opus", Accounts: []string{"work"}},
 	})
 	if r.active().String() != "claude:fable@work" {
 		t.Fatalf("start = %q", r.active())
@@ -118,7 +117,7 @@ func TestExpandLadder(t *testing.T) {
 	}
 
 	// Bare model fans out, marked-default (personal) first.
-	got, err := expandLadder(cfg, "claude", []preset.ModelTarget{{Model: "opus"}})
+	got, err := expandLadder(cfg, "claude", []agents.Target{{Model: "opus"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +125,7 @@ func TestExpandLadder(t *testing.T) {
 		t.Errorf("bare model fan-out = %v, want %v (default first)", members(got), want)
 	}
 	// Ladder: bare then pinned; dedup, order preserved.
-	got, _ = expandLadder(cfg, "claude", []preset.ModelTarget{{Model: "fable"}, {Model: "opus", Credential: "work"}})
+	got, _ = expandLadder(cfg, "claude", []agents.Target{{Model: "fable"}, {Model: "opus", Accounts: []string{"work"}}})
 	if want := []string{"claude:fable@personal", "claude:fable@work", "claude:opus@work"}; !slices.Equal(members(got), want) {
 		t.Errorf("ladder = %v, want %v", members(got), want)
 	}
@@ -136,7 +135,7 @@ func TestExpandLadder(t *testing.T) {
 		t.Errorf("empty ladder = %v, want the accounts on the default model", members(got))
 	}
 	// A pinned account that isn't signed in is skipped, not an error, as long as something remains.
-	got, _ = expandLadder(cfg, "claude", []preset.ModelTarget{{Model: "opus", Credential: "ghost"}, {Model: "fable"}})
+	got, _ = expandLadder(cfg, "claude", []agents.Target{{Model: "opus", Accounts: []string{"ghost"}}, {Model: "fable"}})
 	if slices.Contains(members(got), "claude:opus@ghost") {
 		t.Errorf("unsigned pinned account should be skipped: %v", members(got))
 	}
@@ -153,8 +152,8 @@ func TestEffortThreadsToConfig(t *testing.T) {
 	signInCred(t, cfg, "codex", "work")
 	a := &app{cfg: cfg}
 
-	// Loop path: targetLadder → runTarget carries /high; applyTarget sets the rotation-target tier.
-	ladder := targetLadder(agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "high", Accounts: []string{"work"}})
+	// Loop path: the positional target IS the ladder; applyTarget sets the rotation-target tier.
+	ladder := []agents.Target{{Provider: "codex", Model: "gpt-5.6-sol", Effort: "high", Accounts: []string{"work"}}}
 	rot, err := a.buildRotation("codex", ladder)
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +189,7 @@ func TestExpandLadderCrossProvider(t *testing.T) {
 	signInCred(t, cfg, "claude", "work")
 	signInCred(t, cfg, "codex", "work")
 
-	got, err := expandLadder(cfg, "claude", []preset.ModelTarget{{Model: "opus"}, {Provider: "codex", Model: "gpt-5"}})
+	got, err := expandLadder(cfg, "claude", []agents.Target{{Model: "opus"}, {Provider: "codex", Model: "gpt-5"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,13 +199,13 @@ func TestExpandLadderCrossProvider(t *testing.T) {
 	// codex signed out → its rung is skipped, claude's remains (not a fatal "nothing signed in").
 	noCodex := &config.Config{ConfigDir: t.TempDir()}
 	signInCred(t, noCodex, "claude", "work")
-	got, err = expandLadder(noCodex, "claude", []preset.ModelTarget{{Model: "opus"}, {Provider: "codex", Model: "gpt-5"}})
+	got, err = expandLadder(noCodex, "claude", []agents.Target{{Model: "opus"}, {Provider: "codex", Model: "gpt-5"}})
 	if err != nil || !slices.Equal(members(got), []string{"claude:opus@work"}) {
 		t.Errorf("unsigned provider rung should be skipped: got %v (%v)", members(got), err)
 	}
 }
 
-func members(ts []runTarget) []string {
+func members(ts []agents.Target) []string {
 	out := make([]string, len(ts))
 	for i, t := range ts {
 		out[i] = t.String()
@@ -217,7 +216,7 @@ func members(ts []runTarget) []string {
 // applyTarget points cfg at the target's account and model; a bare target clears the model tier.
 func TestApplyTarget(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	r := newRotation([]runTarget{{provider: "claude", model: "sonnet", credential: "work"}, {provider: "claude", credential: "other"}})
+	r := newRotation([]agents.Target{{Provider: "claude", Model: "sonnet", Accounts: []string{"work"}}, {Provider: "claude", Accounts: []string{"other"}}})
 	a.applyTarget(r)
 	if a.cfg.ActiveProfile("claude") != "work" || a.cfg.ModelFor("claude") != "sonnet" {
 		t.Errorf("first target: account=%q model=%q, want work/sonnet", a.cfg.ActiveProfile("claude"), a.cfg.ModelFor("claude"))
@@ -229,22 +228,22 @@ func TestApplyTarget(t *testing.T) {
 	}
 }
 
-// oneOffLadder parses --model/--credential into a single ladder entry, model-first with the
-// @account shortcut; conflicting accounts error.
+// oneOffLadder parses a decomposed one-off (model, account) into a single ladder entry,
+// model-first with the model@account shortcut; conflicting accounts error.
 func TestOneOffLadder(t *testing.T) {
 	if l, _ := oneOffLadder("", ""); l != nil {
-		t.Errorf("no flags → nil ladder, got %v", l)
+		t.Errorf("no one-off → nil ladder, got %v", l)
 	}
 	l, err := oneOffLadder("opus@work", "")
-	if err != nil || len(l) != 1 || l[0].Model != "opus" || l[0].Credential != "work" {
-		t.Errorf("--model opus@work = %+v (%v)", l, err)
+	if err != nil || len(l) != 1 || l[0].Model != "opus" || l[0].Account() != "work" {
+		t.Errorf("model opus@work = %+v (%v)", l, err)
 	}
 	l, _ = oneOffLadder("opus", "work")
-	if l[0].Model != "opus" || l[0].Credential != "work" {
-		t.Errorf("--model opus --credential work = %+v", l)
+	if l[0].Model != "opus" || l[0].Account() != "work" {
+		t.Errorf("model opus + account work = %+v", l)
 	}
 	if _, err := oneOffLadder("opus@work", "personal"); err == nil {
-		t.Error("account given twice (--model @work + --credential personal) should error")
+		t.Error("account given twice (model @work + account personal) should error")
 	}
 	if _, err := oneOffLadder("opus@", ""); err == nil {
 		t.Error("empty account after @ should error")

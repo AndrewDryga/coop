@@ -167,6 +167,8 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
   rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
   local logins (see coop credentials) — presets name models, not secrets.
+  Cross-provider rungs are the loop's capability: fusion refuses such a ladder (one governor
+  per council), and an ACP session fails over across the lead's own rungs only.
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).

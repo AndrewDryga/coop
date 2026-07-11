@@ -326,7 +326,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		// a.preset); credentials/model aren't merged into fa here.
 		a.applyPreset(p, fa.agent)
 	}
-	// Validate a pinned --credential before any image/clone work, so a typo'd account fails
+	// Validate a pinned @account before any image/clone work, so a typo'd account fails
 	// fast and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
 	if fa.credential != "" && !slices.Contains(a.cfg.Profiles(fa.agent), fa.credential) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)

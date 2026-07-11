@@ -24,7 +24,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
-	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -187,11 +186,11 @@ func (a *app) selectRunEffort(tool, effort string) {
 	}
 }
 
-// applyOneOff applies a single run's --model/--credential to tool: --model may carry a
-// model@account shortcut (the only pair spelling, matching a preset ladder entry), and
-// --credential pins the account. Both empty is a no-op — the preset/default stands. It's
-// the single-run analog of the loop's oneOffLadder; a bad shape (e.g. an account given in
-// both --model's @ and --credential) errors.
+// applyOneOff applies a single run's decomposed one-off (model, account) to tool: model may
+// carry a model@account shortcut (matching a preset ladder entry), and credential pins the
+// account. Both empty is a no-op — the preset/default stands. It's the single-run analog of
+// the loop's oneOffLadder; a bad shape (e.g. an account given in both the model's @ and
+// credential) errors.
 func (a *app) applyOneOff(tool, model, credential, effort string) error {
 	a.selectRunEffort(tool, effort) // effort rides with the model but can be set even when model/account aren't
 	ladder, err := oneOffLadder(model, credential)
@@ -202,7 +201,7 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 		return nil
 	}
 	t := ladder[0]
-	if err := a.selectRunProfile(tool, t.Credential); err != nil {
+	if err := a.selectRunProfile(tool, t.Account()); err != nil {
 		return err
 	}
 	a.selectRunModel(tool, t.Model)
@@ -397,7 +396,7 @@ func validProfileName(name string) bool {
 }
 
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
-// config dir for the chosen credential. Shared by `coop login [agent] [--credential <name>]` and
+// config dir for the chosen credential. Shared by `coop login <provider>[@account]` and
 // `coop <agent> login [--credential <name>]`.
 func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
@@ -557,6 +556,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
+		}
+		if err := fusionLadderGuard(p, governor); err != nil {
+			return 2, err
 		}
 		tool = governor
 	} else {
@@ -822,6 +824,9 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	}
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
+	}
+	if err := fusionLadderGuard(p, governor); err != nil {
+		return 2, err
 	}
 	a.applyPreset(p, governor)
 	if err := a.applyOneOff(governor, model, profile, effort); err != nil {
@@ -1363,13 +1368,13 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// The rotation ladder: the positional target (its model + account ladder) wins; else the
-	// preset lead's models; else the default (agent model across all signed-in accounts).
-	// expandLadder turns it into the concrete (model, account) targets the loop cycles on limits.
-	var ladder []preset.ModelTarget
+	// preset lead's ladder; else the default (agent model across all signed-in accounts).
+	// expandLadder turns it into the concrete one-account rungs the loop cycles on limits.
+	var ladder []agents.Target
 	if hasTarget {
-		ladder = targetLadder(t)
+		ladder = []agents.Target{t}
 	} else if p != nil && agent == p.LeadAgent {
-		ladder = p.LeadModels
+		ladder = p.LeadLadder
 	}
 	rot, err := a.buildRotation(agent, ladder)
 	if err != nil {

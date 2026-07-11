@@ -31,7 +31,7 @@ const (
 )
 
 // Role is one named role in a preset. A role has no credentials — it runs on its agent's
-// default (marked) account and never rotates; only the LEAD rotates (see LeadModels).
+// default (marked) account and never rotates; only the LEAD rotates (see LeadLadder).
 type Role struct {
 	Name       string
 	Mode       string   // native | consult | delegate
@@ -49,11 +49,12 @@ type Preset struct {
 	Dir  string // the preset folder on the host (for docs/errors)
 
 	LeadAgent string
-	// LeadModels is the lead's fallback ladder (model-first). Each entry is a model with an
-	// optional account; a bare model fans out across all signed-in accounts at loop start, a
-	// pinned one runs that account only. The loop rotates the expansion on rate limits; a
-	// single non-loop run uses the first entry. Empty = the agent's default model, all accounts.
-	LeadModels     []ModelTarget
+	// LeadLadder is the lead's fallback ladder: whole targets, in order. A rung with no
+	// accounts fans out across all signed-in accounts at loop start; a pinned one runs those
+	// accounts only. The ladder MAY be cross-provider — the loop rotates across agents. The
+	// loop rotates the expansion (expandLadder) on rate limits; a single non-loop run uses the
+	// first entry. Empty = the agent's default model, all accounts.
+	LeadLadder     []agents.Target
 	LeadPromptText string // lead.md content, appended after the generated block
 
 	Roles []Role // sorted by name for deterministic contracts
@@ -63,30 +64,29 @@ type Preset struct {
 // no models are declared (the agent's default resolves). Used by the generated contract and
 // `coop presets`.
 func (p *Preset) LeadModel() string {
-	if len(p.LeadModels) == 0 {
+	if len(p.LeadLadder) == 0 {
 		return ""
 	}
-	return p.LeadModels[0].Model
+	return p.LeadLadder[0].Model
 }
 
 // LeadEffort returns the lead's primary reasoning effort — the first ladder entry's effort, or
 // "" when none is declared. Used by the generated contract and applyPreset.
 func (p *Preset) LeadEffort() string {
-	if len(p.LeadModels) == 0 {
+	if len(p.LeadLadder) == 0 {
 		return ""
 	}
-	return p.LeadModels[0].Effort
+	return p.LeadLadder[0].Effort
 }
 
 // leadLadder parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a target
 // LADDER (sequence [claude:fable, claude:opus@work]) — into the lead provider (the first rung's)
-// and its model-first rotation ladder. Each entry is provider[:model][@account,…]: an account
-// list fans to one rung per account; a bare provider (no model, no account) uses the agent's
-// default. The ladder MAY be cross-provider ([claude:opus, codex:gpt-5]) — the loop rotates
-// across agents; a rung's Provider is recorded only when it differs from the lead (the first),
-// so a same-provider ladder stays terse. A single bare-lead entry collapses to the empty ladder
-// (the agent's default model, all accounts).
-func leadLadder(node *yaml.Node) (provider string, ladder []ModelTarget, err error) {
+// and the ladder itself, entries kept whole (expandLadder fans a rung's account list out at run
+// time, against what's actually signed in). The ladder MAY be cross-provider
+// ([claude:opus, codex:gpt-5]) — the loop rotates across agents. A single bare-lead entry (no
+// model, no effort, no account) collapses to the empty ladder (the agent's default model, all
+// accounts).
+func leadLadder(node *yaml.Node) (provider string, ladder []agents.Target, err error) {
 	var raw []string
 	switch node.Kind {
 	case yaml.ScalarNode:
@@ -111,22 +111,11 @@ func leadLadder(node *yaml.Node) (provider string, ladder []ModelTarget, err err
 		if provider == "" {
 			provider = t.Provider // the lead = the first rung's provider
 		}
-		// A rung on the lead's own provider records Provider "" (implicit); a cross-provider rung
-		// records its provider so the loop swaps the agent on that rung.
-		rp := ""
-		if t.Provider != provider {
-			rp = t.Provider
-		}
-		if len(t.Accounts) == 0 {
-			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model, Effort: t.Effort})
-		}
-		for _, acct := range t.Accounts {
-			ladder = append(ladder, ModelTarget{Provider: rp, Model: t.Model, Effort: t.Effort, Credential: acct})
-		}
+		ladder = append(ladder, t)
 	}
-	// A single bare-lead entry (no model, no account) is "default model, all accounts" — the
-	// empty ladder, identical to the pre-unification absent models:.
-	if len(ladder) == 1 && ladder[0] == (ModelTarget{}) {
+	// A single bare-lead entry (no model, no effort, no account) is "default model, all
+	// accounts" — the empty ladder, identical to the pre-unification absent models:.
+	if len(ladder) == 1 && ladder[0].Model == "" && ladder[0].Effort == "" && len(ladder[0].Accounts) == 0 {
 		ladder = nil
 	}
 	return provider, ladder, nil
@@ -144,7 +133,7 @@ type yamlPreset struct {
 }
 
 type yamlLead struct {
-	Agent  yaml.Node `yaml:"agent"` // a TARGET or a same-provider target-LADDER (folds in models:)
+	Agent  yaml.Node `yaml:"agent"` // a TARGET or a target-LADDER, cross-provider ok (folds in models:)
 	Prompt string    `yaml:"prompt"`
 	// Retired shapes — rejected with the agent:-target rewrite so a pre-unification preset fails
 	// loud, not silently. models: folded into agent: (each entry a provider:model@account target).
@@ -155,14 +144,16 @@ type yamlLead struct {
 }
 
 type yamlRole struct {
-	Mode       string   `yaml:"mode"`
-	Agent      string   `yaml:"agent"` // a TARGET: provider[:model] (the model rides here; no @account)
-	Model      any      `yaml:"model"` // retired — the model rides agent: (e.g. agent: codex:gpt-5.5)
-	When       []string `yaml:"when"`
-	Prompt     string   `yaml:"prompt"`
-	Subagent   string   `yaml:"subagent"`
-	Commit     string   `yaml:"commit"`
-	Concurrent string   `yaml:"concurrent"`
+	Mode string `yaml:"mode"`
+	// Agent is a TARGET: provider[:model] (the model rides here; no @account). Decoded as a
+	// node so a LIST gets a purposeful "one target per role" error, not a raw yaml type error.
+	Agent      yaml.Node `yaml:"agent"`
+	Model      any       `yaml:"model"` // retired — the model rides agent: (e.g. agent: codex:gpt-5.5)
+	When       []string  `yaml:"when"`
+	Prompt     string    `yaml:"prompt"`
+	Subagent   string    `yaml:"subagent"`
+	Commit     string    `yaml:"commit"`
+	Concurrent string    `yaml:"concurrent"`
 	// Roles run on their agent's default account — only the lead rotates. Credentials here are
 	// rejected with that pointer (not a cryptic unknown-field error).
 	Credentials any `yaml:"credentials"`
@@ -272,16 +263,16 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 		return fmt.Errorf("preset %s: %s", name, fmt.Sprintf(format, a...))
 	}
 
-	// Lead. agent: is a TARGET or a same-provider target-ladder; its model+account fold in
-	// (models:/model:/credentials: are retired). LeadAgent is the provider; LeadModels the ladder.
+	// Lead. agent: is a TARGET or a target ladder; its model+account fold in
+	// (models:/model:/credentials: are retired). LeadAgent is the provider; LeadLadder the ladder.
 	if y.Lead.Models != nil || y.Lead.Model != nil || y.Lead.Credentials != nil || y.Lead.Credential != nil {
 		return nil, bad("lead.models/model/credentials are retired — fold them into agent: as a target ladder (e.g. agent: [claude:claude-fable-5, claude:claude-opus-4-8@work])")
 	}
-	leadAgent, leadModels, err := leadLadder(&y.Lead.Agent)
+	leadAgent, ladder, err := leadLadder(&y.Lead.Agent)
 	if err != nil {
 		return nil, bad("lead.agent: %v", err)
 	}
-	p.LeadAgent, p.LeadModels = leadAgent, leadModels
+	p.LeadAgent, p.LeadLadder = leadAgent, ladder
 	if p.LeadPromptText, err = promptText(p.Dir, y.Lead.Prompt); err != nil {
 		return nil, bad("lead.prompt: %v", err)
 	}
@@ -318,17 +309,29 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	default:
 		return r, bad("mode %q is not one of native, consult, delegate", y.Mode)
 	}
-	if y.Agent == "" {
+	switch y.Agent.Kind {
+	case yaml.ScalarNode:
+	case 0:
+		return r, bad("agent is required — a target: provider[:model] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
+	case yaml.SequenceNode:
+		// Not a parse gap — a deliberate boundary: nothing rotates a role (a consult/delegate is
+		// one wrapper call; only the lead's loop rotates), so accepting a ladder here would be
+		// dead config that looks like failover.
+		return r, bad("agent: is a list — a role runs ONE target; fallback ladders belong to the lead (lead.agent)")
+	default:
+		return r, bad("agent: must be a target (provider[:model]), not a map")
+	}
+	if y.Agent.Value == "" {
 		return r, bad("agent is required — a target: provider[:model] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
 	}
 	// agent: is a TARGET — provider[:model]. The model rides here (model: is retired); a role
 	// runs its agent's DEFAULT account, so an @account is rejected (only the lead rotates accounts).
-	t, terr := agents.ParseTarget(y.Agent)
+	t, terr := agents.ParseTarget(y.Agent.Value)
 	if terr != nil {
-		return r, bad("agent %q: %v", y.Agent, terr)
+		return r, bad("agent %q: %v", y.Agent.Value, terr)
 	}
 	if len(t.Accounts) > 0 {
-		return r, bad("agent %q pins an account — a role runs its agent's default account (only the lead rotates); drop the @account", y.Agent)
+		return r, bad("agent %q pins an account — a role runs its agent's default account (only the lead rotates); drop the @account", y.Agent.Value)
 	}
 	r.Agent, r.Model, r.Effort = t.Provider, t.Model, t.Effort
 	if y.Credentials != nil || y.Credential != nil {
@@ -391,6 +394,19 @@ func promptText(dir, rel string) (string, error) {
 		return "", fmt.Errorf("declared prompt file %q does not exist in the preset folder", rel)
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+// CrossProvider reports whether the lead ladder spans providers — a rung on a different
+// provider than the lead (the first rung). The loop EMBRACES this (rotation swaps the agent
+// per rung); single-lead surfaces don't: fusion errors (one governor for the whole council)
+// and ACP filters to the lead's own rungs (its failover env carries no provider).
+func (p *Preset) CrossProvider() bool {
+	for _, t := range p.LeadLadder {
+		if t.Provider != p.LeadAgent {
+			return true
+		}
+	}
+	return false
 }
 
 // HasConsult reports whether any role is a read-only consult peer (mount coop-consult).

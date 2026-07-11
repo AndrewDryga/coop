@@ -71,8 +71,8 @@ func TestLoadFrontier(t *testing.T) {
 	if p.LeadAgent != "claude" || p.LeadModel() != "claude-fable-5" {
 		t.Errorf("lead = %s/%s", p.LeadAgent, p.LeadModel())
 	}
-	if len(p.LeadModels) != 2 || p.LeadModels[0].String() != "claude-fable-5" || p.LeadModels[1].String() != "claude-opus-4-8@work" {
-		t.Errorf("lead models = %v", p.LeadModels)
+	if len(p.LeadLadder) != 2 || p.LeadLadder[0].String() != "claude:claude-fable-5" || p.LeadLadder[1].String() != "claude:claude-opus-4-8@work" {
+		t.Errorf("lead ladder = %v", p.LeadLadder)
 	}
 	if p.LeadPromptText != "LEAD EXTRA" {
 		t.Errorf("lead prompt = %q", p.LeadPromptText)
@@ -120,6 +120,8 @@ func TestLoadValidation(t *testing.T) {
 		{"bad account in lead target", "lead: {agent: \"claude:opus@../x\"}", nil, "invalid account"},
 		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, "empty account"},
 		{"role model retired", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "retired"},
+		{"role ladder is lead-only", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: [codex, gemini]}}", nil, "a role runs ONE target"},
+		{"role agent map rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: {p: codex}}}", nil, "not a map"},
 		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
 		{"role credentials rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "only apply to the lead"},
 		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "agent must be claude"},
@@ -147,8 +149,8 @@ func TestLoadValidation(t *testing.T) {
 }
 
 // A lead agent: ladder MAY be cross-provider — the loop rotates across agents. The lead is the
-// first rung's provider; a rung on a different provider records it (Provider set) so rotation
-// swaps the agent, while a same-provider rung leaves Provider "" (implicit lead).
+// first rung's provider; every rung is the whole parsed target (one type, one grammar), so a
+// cross-provider rung simply carries its own Provider and rotation swaps the agent on it.
 func TestLoadCrossProviderLead(t *testing.T) {
 	repo := writePreset(t, "x", "lead: {agent: [claude:opus, codex:gpt-5.5@work]}\n", nil)
 	p, err := Load(repo, "", "x")
@@ -158,14 +160,34 @@ func TestLoadCrossProviderLead(t *testing.T) {
 	if p.LeadAgent != "claude" {
 		t.Errorf("LeadAgent = %q, want claude (the first rung)", p.LeadAgent)
 	}
-	if len(p.LeadModels) != 2 {
-		t.Fatalf("LeadModels = %+v, want 2 rungs", p.LeadModels)
+	if len(p.LeadLadder) != 2 {
+		t.Fatalf("LeadLadder = %+v, want 2 rungs", p.LeadLadder)
 	}
-	if p.LeadModels[0] != (ModelTarget{Model: "opus"}) { // lead's own provider → Provider ""
-		t.Errorf("rung 0 = %+v, want {Model: opus} (implicit lead provider)", p.LeadModels[0])
+	if got := p.LeadLadder[0].String(); got != "claude:opus" {
+		t.Errorf("rung 0 = %q, want claude:opus", got)
 	}
-	if p.LeadModels[1] != (ModelTarget{Provider: "codex", Model: "gpt-5.5", Credential: "work"}) {
-		t.Errorf("rung 1 = %+v, want the codex rung with Provider set", p.LeadModels[1])
+	if got := p.LeadLadder[1].String(); got != "codex:gpt-5.5@work" {
+		t.Errorf("rung 1 = %q, want codex:gpt-5.5@work", got)
+	}
+	if !p.CrossProvider() {
+		t.Error("CrossProvider() = false for a claude+codex ladder, want true")
+	}
+}
+
+// CrossProvider is false for a same-provider ladder (and the empty one) — the single-lead
+// surfaces (fusion, ACP) key their guard/filter off it.
+func TestCrossProviderSameProvider(t *testing.T) {
+	repo := writePreset(t, "same", "lead: {agent: [claude:fable, claude:opus@work]}\n", nil)
+	p, err := Load(repo, "", "same")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.CrossProvider() {
+		t.Error("CrossProvider() = true for an all-claude ladder, want false")
+	}
+	bare := writePreset(t, "bare", "lead: {agent: claude}\n", nil)
+	if p, err = Load(bare, "", "bare"); err != nil || p.CrossProvider() {
+		t.Errorf("bare lead: CrossProvider() = %v (%v), want false", p.CrossProvider(), err)
 	}
 }
 

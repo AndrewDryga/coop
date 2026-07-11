@@ -666,9 +666,9 @@ func presetControl(t *testing.T) *acpControl {
 	c := newTestControl(t)
 	c.sel = "preset:frontier"
 	c.rotPreset = "frontier"
-	c.rot = newRotation([]runTarget{
-		{model: "claude-fable-5", credential: "personal"},
-		{model: "claude-opus-4-8", credential: "personal"},
+	c.rot = newRotation([]agents.Target{
+		{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}},
+		{Provider: "claude", Model: "claude-opus-4-8", Accounts: []string{"personal"}},
 	})
 	// Drive a real session/prompt so promptSession (keyed by the raw id) + lastPrompt are captured the
 	// way the wire does — the error below correlates back to it for the transparent re-send.
@@ -691,7 +691,7 @@ func TestACPControlPresetLadderFailover(t *testing.T) {
 	if !restart {
 		t.Fatal("a preset rate limit should trigger a restart (rotate + resend)")
 	}
-	if got := c.rot.active(); got.model != "claude-opus-4-8" {
+	if got := c.rot.active(); got.Model != "claude-opus-4-8" {
 		t.Errorf("rung after the fable limit = %q, want claude-opus-4-8@personal", got)
 	}
 	if !c.resend["sess1"] {
@@ -711,7 +711,7 @@ func TestACPControlPresetLadderFailover(t *testing.T) {
 // than forwarding the error — same shape as the credential all-limited path.
 func TestACPControlPresetLadderAllLimited(t *testing.T) {
 	c := presetControl(t)
-	c.rot.limited[c.rot.targets[1]] = time.Now().Add(30 * time.Minute) // opus already cooling
+	c.rot.limited[c.rot.targets[1].String()] = time.Now().Add(30 * time.Minute) // opus already cooling
 	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"message":"reached your Fable 5 limit","data":{"errorKind":"rate_limit"}}}` + "\n")
 	out, restart := c.toEditor(errLine)
 
@@ -843,9 +843,9 @@ func presetControlFor(t *testing.T, lead string) *acpControl {
 	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", "", dir, []string{"frontier"}, nil)
 	c.sel = "preset:frontier"
 	c.rotPreset = "frontier"
-	c.rot = newRotation([]runTarget{
-		{model: "m1", credential: "personal"},
-		{model: "m2", credential: "personal"},
+	c.rot = newRotation([]agents.Target{
+		{Provider: lead, Model: "m1", Accounts: []string{"personal"}},
+		{Provider: lead, Model: "m2", Accounts: []string{"personal"}},
 	})
 	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
 	c.fromEditor(prompt)

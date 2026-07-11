@@ -101,12 +101,12 @@ func (a *app) showPreset(repo, name string) (int, error) {
 	pal := ui.For(os.Stdout)
 	fmt.Println(pal.Bold(name) + pal.Dim("  ("+preset.Path(repo, globalDir, name)+")"))
 	lead := fmt.Sprintf("  %s  %s", pal.Bold(padRight("lead", 10)), p.LeadAgent)
-	if len(p.LeadModels) > 0 {
-		models := make([]string, len(p.LeadModels))
-		for i, t := range p.LeadModels {
-			models[i] = t.String()
+	if len(p.LeadLadder) > 0 {
+		rungs := make([]string, len(p.LeadLadder))
+		for i, t := range p.LeadLadder {
+			rungs[i] = t.String()
 		}
-		lead += pal.Dim("  models ") + strings.Join(models, ", ")
+		lead += pal.Dim("  ladder ") + strings.Join(rungs, ", ")
 	}
 	if p.LeadPromptText != "" {
 		lead += pal.Dim("  +roles/lead.md")

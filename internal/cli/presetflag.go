@@ -7,6 +7,8 @@ package cli
 // role contracts + wrappers from the RunSpec's Preset.
 
 import (
+	"fmt"
+
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
@@ -39,6 +41,18 @@ func presetLeadAgent(p *preset.Preset, agent string, explicit bool) string {
 	return agent
 }
 
+// fusionLadderGuard rejects a cross-provider lead ladder on a fusion run: fusion runs ONE
+// governor for the whole council session, so a rung on another provider could never apply —
+// erroring beats silently ignoring the preset's declared fallback. (The loop embraces the same
+// ladder — rotation swaps the agent per rung.) Guarded only when the effective governor IS the
+// preset's lead; otherwise the ladder is inert for this run anyway.
+func fusionLadderGuard(p *preset.Preset, governor string) error {
+	if p != nil && governor == p.LeadAgent && p.CrossProvider() {
+		return fmt.Errorf("preset %s: lead.agent is a cross-provider ladder — fusion runs one governor for the whole council, so its fallback ladder must stay on %s; cross-provider fallback is a `coop loop` capability (make the ladder single-provider, or run the preset under the loop)", p.Name, p.LeadAgent)
+	}
+	return nil
+}
+
 // applyPreset seeds the run's model/credential selections from the preset, around the
 // resolved lead: consult/delegate roles pin their agent's model/credentials (a native
 // role runs inside the lead's session, so it pins nothing), and the lead's own
@@ -61,13 +75,14 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 			a.cfg.SetActiveEffort(r.Agent, r.Effort)
 		}
 	}
-	if lead == p.LeadAgent && len(p.LeadModels) > 0 {
+	if lead == p.LeadAgent && len(p.LeadLadder) > 0 {
 		// A run that doesn't rotate (single, or the loop before its first applyTarget) uses the
-		// ladder's FIRST entry: its account if pinned (else the marked default), and its model in
-		// the target tier — below an explicit --model, above the account mark / COOP_LOOP_MODEL.
-		first := p.LeadModels[0]
-		if first.Credential != "" {
-			a.cfg.SetActiveProfile(lead, first.Credential)
+		// ladder's FIRST entry: its first account if pinned (else the marked default), and its
+		// model in the target tier — below an explicit target model, above the account mark /
+		// COOP_LOOP_MODEL.
+		first := p.LeadLadder[0]
+		if acct := first.Account(); acct != "" {
+			a.cfg.SetActiveProfile(lead, acct)
 		}
 		a.cfg.SetTargetModel(lead, first.Model)
 		a.cfg.SetTargetEffort(lead, first.Effort)

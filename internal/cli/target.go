@@ -24,24 +24,15 @@ func noProviderErr(cmd string) error {
 
 // takeHeadTarget pulls a leading positional target off args (provider REQUIRED — a bare
 // provider, or provider:model@account,…). Returns ok=false, leaving args untouched, when
-// the first token is a flag or absent; a token whose head is a registered provider parses
-// as a target (a malformed one errors); a non-provider, non-flag token is left for the
-// caller to try as a preset name.
+// the first token is a flag or absent; anything else parses as a target, so a typo'd
+// provider gets ParseTarget's own diagnostic ("unknown provider … — use claude, codex, …"),
+// the same message every other surface gives it. (Its one caller, the loop, takes no other
+// positional — a bare non-provider token was never going to mean anything else.)
 func takeHeadTarget(args []string) (t agents.Target, ok bool, rest []string, err error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return agents.Target{}, false, args, nil
 	}
-	head := args[0]
-	beforeAt, _, _ := strings.Cut(head, "@")
-	provider, _, _ := strings.Cut(beforeAt, ":")
-	if !agents.Valid(provider) {
-		if strings.ContainsAny(head, ":@") { // meant as a target, so surface the parse error
-			_, perr := agents.ParseTarget(head)
-			return agents.Target{}, false, args, perr
-		}
-		return agents.Target{}, false, args, nil // not a target head — caller may try it as a preset
-	}
-	t, err = agents.ParseTarget(head)
+	t, err = agents.ParseTarget(args[0])
 	if err != nil {
 		return agents.Target{}, false, args, err
 	}

@@ -107,6 +107,16 @@ func isEffortLevel(s string) bool {
 	return true
 }
 
+// Account returns the target's single account — the first listed, or "" when none. It is the
+// rung view: a rotation ladder expands a multi-account target into concrete one-account rungs
+// (expandLadder), so rung consumers (the loop, ACP, applyPreset) read this instead of Accounts.
+func (t Target) Account() string {
+	if len(t.Accounts) == 0 {
+		return ""
+	}
+	return t.Accounts[0]
+}
+
 // String renders a target back to its wire form (provider[:model][/effort][@a,b]) — for
 // messages, config round-trips, and tests. A Target with only a provider is just the provider.
 func (t Target) String() string {

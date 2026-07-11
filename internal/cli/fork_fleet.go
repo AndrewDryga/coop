@@ -33,7 +33,7 @@ type fleetEntry struct {
 func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet") }
 
 // fleetYAMLFile is the declarative fleet: .agent/fleet.yaml, a `forks:` map of fork
-// name → {tasks, agent, preset, credential, model, consult}.
+// name → {tasks, agent, preset, consult}.
 func fleetYAMLFile(repo string) string { return filepath.Join(repo, ".agent", "fleet.yaml") }
 
 // fleetForkYAML is one fork's YAML shape. Tasks is required; agent is a target

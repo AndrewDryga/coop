@@ -195,12 +195,30 @@ func (c *acpControl) presetRotation() *rotation {
 	if err != nil {
 		return nil
 	}
-	targets, err := expandLadder(c.cfg, p.LeadAgent, p.LeadModels)
+	targets, err := expandLadder(c.cfg, p.LeadAgent, acpLadder(p))
 	if err != nil || len(targets) == 0 {
 		return nil
 	}
 	c.rot = newRotation(targets)
 	return c.rot
+}
+
+// acpLadder is the preset lead ladder as ACP can honor it: the LEAD's own rungs only. The
+// respawn env (COOP_ACP_LEAD_MODEL/_CRED) carries no provider and the inner always spawns the
+// lead agent, so a cross-provider rung is unreachable on this surface — that fallback is the
+// loop's (fusion errors on it outright). Filtering beats erroring here: rung 0 is always the
+// lead's, so failover keeps working across the lead's own models/accounts.
+func acpLadder(p *preset.Preset) []agents.Target {
+	if !p.CrossProvider() {
+		return p.LeadLadder
+	}
+	var ladder []agents.Target
+	for _, t := range p.LeadLadder {
+		if t.Provider == p.LeadAgent {
+			ladder = append(ladder, t)
+		}
+	}
+	return ladder
 }
 
 // presetTarget returns the active ladder rung's (model, credential) for the current preset — what the
@@ -214,7 +232,7 @@ func (c *acpControl) presetTarget() (model, cred string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	t := rot.active()
-	return t.model, t.credential
+	return t.Model, t.Account()
 }
 
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
@@ -236,7 +254,7 @@ func (c *acpControl) waitForPresetRung(ctx context.Context) {
 	label := "preset rung"
 	if c.rot != nil {
 		t := c.rot.active()
-		until, label = c.rot.limited[t], "preset rung "+t.String()
+		until, label = c.rot.limited[t.String()], "preset rung "+t.String()
 	}
 	c.mu.Unlock()
 	sleepUntilReset(ctx, until, label)
@@ -547,7 +565,7 @@ func (c *acpControl) rotatePreset(session string, canResend bool, until, now tim
 	c.resend[session] = true
 	c.mu.Unlock()
 	acpproxy.Trace("preset: all rungs rate limited — waiting for %s until %s + auto-resending", next, resetAt.Format(time.RFC3339))
-	return append(c.configOptionUpdate(session), c.waitStatus(session, next.credential, resetAt, now)...), true
+	return append(c.configOptionUpdate(session), c.waitStatus(session, next.Account(), resetAt, now)...), true
 }
 
 // configOptionUpdate builds an ACP config_option_update notification (session/update carrying the full

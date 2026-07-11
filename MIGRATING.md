@@ -33,8 +33,8 @@ spelling of the target). A per-fork `consult: true` in `.agent/fleet.yaml` now r
 fleet up`; name peers explicitly (the fleet grammar for that lands with the preset/fleet
 unification).
 
-**Presets follow the same grammar** — `agent:` holds a target (or, for the lead, a same-provider
-target ladder); the separate `model:`/`models:` keys retire:
+**Presets follow the same grammar** — `agent:` holds a target (or, for the lead, a target
+ladder); the separate `model:`/`models:` keys retire:
 
 | Retired preset shape | Use |
 | --- | --- |
@@ -43,7 +43,10 @@ target ladder); the separate `model:`/`models:` keys retire:
 
 A lead ladder MAY be cross-provider (`agent: [claude:opus, codex:gpt-5.5]`) — the loop rotates
 across vendors on a rate limit, running each rung's agent. The lead (the default agent, and what a
-single run uses) is the first rung's provider.
+single run uses) is the first rung's provider. Cross-provider rungs are the loop's capability:
+`coop fusion` refuses such a ladder (one governor for the whole council), and an ACP session fails
+over across the lead's own rungs only. A ROLE's `agent:` is exactly one target — fallback ladders
+belong to the lead.
 
 ## v3: retired command aliases
 
