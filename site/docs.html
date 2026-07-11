@@ -1027,10 +1027,28 @@ roles:
     <span class="s">"coop"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]   <span class="t">// or codex / gemini / grok / fusion</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]                      <span class="t">// one agent; pin the target: "claude:opus/xhigh@work"</span>
+    },
+    <span class="s">"coop · fusion"</span>: {
+      <span class="s">"type"</span>: <span class="s">"custom"</span>,
+      <span class="s">"command"</span>: <span class="s">"coop"</span>,
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"fusion"</span>, <span class="s">"claude:opus/xhigh"</span>] <span class="t">// a council; governor's model/effort ride the target</span>
     }
   }
 }</pre>
+                    <p>
+                        Pin the model, reasoning effort, and account in coop's
+                        target inside <code>args</code> —
+                        <code>provider[:model][/effort][@account]</code> — not
+                        the editor's per-option defaults; the toolbar dropdowns
+                        come up reflecting it and stay switchable, and coop always
+                        runs yolo whatever the editor's permission-mode setting.
+                        One caveat: a <strong>codex</strong> governor takes its
+                        model from codex's own <code>config.toml</code> (coop
+                        can't set it over ACP), so pick a <code>claude</code> or
+                        <code>gemini</code> governor when you want coop to choose
+                        the model.
+                    </p>
                     <p>
                         Because the repo mounts at its real path, sessions line
                         up across tools — a thread you started with

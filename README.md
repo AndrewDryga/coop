@@ -813,13 +813,26 @@ coop login claude    # or codex / gemini
   "agent_servers": {
     "coop": {
       "type": "custom",
-      "command": "coop",           // absolute path if Zed's PATH lacks ~/.local/bin
-      "args": ["acp", "claude"],   // or "codex" / "gemini"; pin with "claude:opus@work" (fusion: see above)
-      "env": {}
+      "command": "coop",                                // absolute path if Zed's PATH lacks ~/.local/bin
+      "args": ["acp", "claude"]                         // one agent; pin the target: "claude:opus/xhigh@work"
+    },
+    "coop · fusion": {
+      "type": "custom",
+      "command": "coop",
+      "args": ["acp", "fusion", "claude:opus/xhigh"]    // a council; the governor's model/effort ride the target
     }
   }
 }
 ```
+
+**Pin the model, reasoning effort, and account in coop's target inside `args`** —
+`provider[:model][/effort][@account]` — *not* the editor's own per-option defaults. So a
+council led by Opus at extra-high reasoning effort is `["acp","fusion","claude:opus/xhigh"]`,
+and a solo run is `["acp","claude:opus/xhigh@work"]`. The toolbar dropdowns come up reflecting the
+target and stay switchable mid-thread, and coop ignores any editor permission-`mode` setting —
+every session runs yolo (the box is the boundary). **One caveat:** a **codex** governor (or lead)
+takes its model from codex's own `config.toml` — coop can't set it over ACP — so choose a
+`claude` or `gemini` governor when you want coop to pick the model.
 
 > GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`, use the
 > absolute path from step 1 as `command`.
