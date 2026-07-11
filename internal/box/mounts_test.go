@@ -217,27 +217,10 @@ func TestRenderMounts(t *testing.T) {
 	}
 }
 
-// TestComposeDecoyMounts is the compose auto-up gate: both recognized compose paths must be
-// shadowed by a read-only file decoy, unconditionally (no repo tree, no existing file), so an
-// in-box agent can never author one for the host to auto-run.
-func TestComposeDecoyMounts(t *testing.T) {
-	mounts := ComposeDecoyMounts("/workspace")
-	if len(mounts) != len(composeFileRels) {
-		t.Fatalf("got %d compose decoys, want %d (one per composeFileRels)", len(mounts), len(composeFileRels))
-	}
-	for _, rel := range composeFileRels {
-		target := "/workspace/" + rel
-		m := find(mounts, target)
-		if m == nil {
-			t.Errorf("%s not shadowed", target)
-			continue
-		}
-		if m.Kind != Decoy || !m.RO || m.Source != "" {
-			t.Errorf("%s not a read-only file decoy: %+v", target, m)
-		}
-	}
-	// The gate must cover exactly the paths coop actually auto-runs — otherwise an
-	// unshadowed path is a hole. Guard the two lists against drifting apart.
+// TestComposeFileRecognizesAllPaths guards that ComposeFile finds a real file at EVERY
+// composeFileRels path — so a compose file at either location is picked up and (via
+// EnsureServices) validated before it auto-runs on the host.
+func TestComposeFileRecognizesAllPaths(t *testing.T) {
 	dir := t.TempDir()
 	for _, rel := range composeFileRels {
 		p := filepath.Join(dir, filepath.FromSlash(rel))
@@ -248,7 +231,7 @@ func TestComposeDecoyMounts(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := ComposeFile(dir); got != p {
-			t.Errorf("ComposeFile recognizes %q but ComposeDecoyMounts does not shadow it (got %q)", p, got)
+			t.Errorf("ComposeFile does not recognize %q (got %q)", p, got)
 		}
 		os.Remove(p)
 	}

@@ -740,10 +740,6 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	// swap — is cleaned up here by this supervisor's id. (Doing this per-generation would kill the
 	// just-spawned next box, which shares the id, fork-bombing the supervisor on the first resume.)
 	a.rt.KillByLabel(box.LabelSupervisor, superID)
-	// Every generation above dies by SIGKILL (stop kills the inner coop's process group), so the
-	// inner box.Run's deferred compose-stray cleanup never fires — sweep its debris here, where
-	// the supervisor survives, or an empty compose.agent.yml outlives the session in the repo.
-	box.CleanComposeStrays(ctrl.repo)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return 1, err
 	}

@@ -4,6 +4,23 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Sibling `compose.agent.yml` files are now VALIDATED on the host instead of shadowed in the
+  box — no more phantom compose files, and agents can scaffold services.** coop auto-runs a repo's
+  compose file on the host daemon, which is host-root-equivalent (`privileged`, `/:/host`,
+  `/var/run/docker.sock`, `network_mode: host`, `env_file: ~/.ssh/…`), so v4.0.0 shadowed the two
+  compose paths read-only in the box to stop an in-box agent authoring one. But Docker materialized
+  each read-only mount target inside the repo, stranding an empty `compose.agent.yml` (and
+  `.agent/`) on the host at every launch — debris a long-lived ACP session pinned for its whole
+  life. The shadow is gone. Instead, `box.EnsureServices` validates the file before every
+  `compose up` (auto-up and `coop up`): it parses against a strict allowlist of safe
+  sibling-service directives (`KnownFields(true)` deny-unknown, so `privileged`/`build`/`env_file`/
+  `driver_opts`/`network_mode`/… are rejected for not existing in the schema — including compose
+  features not invented yet), plus bind sources must resolve within the repo (symlinks and
+  `${interp}` included) and published ports must bind loopback only. A refused file names the exact
+  offending key/path; `coop up` prints it, auto-up warns and starts the box without services. Net:
+  the compose path is writable from the box (an agent can add a Postgres sidecar), the file is safe
+  to auto-run whoever wrote it, and no empty compose files ever appear in the repo.
+
 - **ACP sessions can switch PROVIDER — manually or on a rate limit — with the thread carried
   best-effort.** The editor toolbar now leads with THREE coop dropdowns mirroring the target
   grammar — **Provider** (who runs), **Account** (the lead's login), **Preset** (the recipe) —

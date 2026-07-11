@@ -1162,6 +1162,17 @@ The agent never installs or hosts a database, so it can't corrupt one, and `coop
 resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
 from re-downloading the world.
 
+`compose.agent.yml` runs on your **host** daemon (that's how a service becomes a real
+container), so coop **validates it before every run** — `coop up` and each networked launch
+alike. Only plain sibling-service directives pass: an `image`, inline `environment`, named
+volumes or repo-relative binds, `healthcheck`, `depends_on`, and **loopback-only** published
+ports. Anything that would reach past a repo-scoped container is refused with the exact reason —
+`privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:
+host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. So the file is safe to
+auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
+one still can't turn `compose.agent.yml` into host root. (Need something outside that subset?
+Run it yourself — coop only auto-runs the safe subset.)
+
 ### See the dev server in your browser
 
 The agent built a website in the box — now open it. List the port(s) the dev server

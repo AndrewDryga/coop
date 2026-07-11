@@ -135,17 +135,10 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
 	}
-	// Shadow the sibling-services compose paths read-only so an in-box agent can't author one
-	// for coop to auto-run on the host (a privileged/host-bind compose = host compromise). Added
-	// after the ShadowCount message above so it doesn't count as a "secret path"; unconditional
-	// because the threat is the agent CREATING an absent file. See ComposeDecoyMounts.
-	mounts = append(mounts, ComposeDecoyMounts(workdir)...)
-	// Docker materializes a missing bind-mount target, and the compose decoys sit inside the
-	// read-write repo bind — so shadowing an absent compose path lands an empty file in the repo
-	// on the host that outlives the container. Snapshot which are absent now and delete the empty
-	// ones once the box exits, so a launch leaves no stray compose.agent.yml behind.
-	composeStrays := composeDecoyStrays(spec.Repo)
-	defer removeComposeStrays(spec.Repo, composeStrays)
+	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
+	// validates it host-side before auto-running it (box.ValidateComposeFile in EnsureServices), so
+	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
+	// removes the read-only decoy that used to strand an empty compose.agent.yml in the repo.
 	if !spec.Batch && !spec.Quiet {
 		for _, nudge := range StalenessNudges(cfg, spec.Repo, spec.Image) {
 			ui.Info("%s", nudge)
@@ -366,20 +359,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if autoUpServices(cfg, spec, rt.Name) {
 		if cf := ComposeFile(spec.Repo); cf != "" {
 			if !spec.Quiet {
-				// compose interpolates host paths/${VARS} and coop runs it on the HOST, automatically,
-				// every launch. An in-box agent can no longer author one (ComposeDecoyMounts shadows the
-				// compose paths read-only), but a human-authored untracked file still auto-runs unreviewed
-				// — surface it like Dockerfile.agent so a planted one is noticed.
-				if fileUntracked(spec.Repo, filepath.Base(cf)) {
-					ui.Info("note: %s is untracked in git — coop auto-starts it on your host; review it", filepath.Base(cf))
-				}
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))
 			}
 			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
 			// the loop's live bar. coop's status line says what happened; `coop up` shows the live
-			// output (and the real error) when you need to diagnose a failure.
+			// output (and the real error) when you need to diagnose a failure. EnsureServices validates
+			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here and the
+			// session continues WITHOUT services rather than running anything host-dangerous.
 			if err := EnsureServices(rt, spec.Repo, io.Discard, io.Discard); err != nil {
-				ui.Info("services: auto-start failed (%v) — continuing without them (run 'coop up' to see why)", err)
+				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
 			}
 		}
 	}
