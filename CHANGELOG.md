@@ -57,6 +57,13 @@
   the compose path is writable from the box (an agent can add a Postgres sidecar), the file is safe
   to auto-run whoever wrote it, and no empty compose files ever appear in the repo.
 
+- **The sibling-services compose file is now ONLY `.agent/compose.yml`, and it's committed.** coop
+  read two paths (root `compose.agent.yml` and `.agent/compose.yml`); the root one is retired, so
+  there's a single home for it, tucked in `.agent/` beside `loop.yaml`/`project.yaml` rather than
+  cluttering the repo root. `coop init`'s `.gitignore` block un-ignores it (`!**/.agent/compose.yml`)
+  so a repo's services config is tracked like its other committed knowledge; a pre-existing block is
+  upgraded in place. A root `compose.agent.yml` is no longer picked up — move it to `.agent/`.
+
 - **ACP sessions can switch PROVIDER — manually or on a rate limit — with the thread carried
   best-effort.** The editor toolbar now leads with THREE coop dropdowns mirroring the target
   grammar — **Provider** (who runs), **Account** (the lead's login), **Preset** (the recipe) —

@@ -1,6 +1,6 @@
 // Package scaffold writes the Coop working set into a repo: AGENTS.md, the
 // .agent/ queue, .claude/ settings + hooks, the workflow skills, and optionally
-// a per-project Dockerfile.agent + compose.agent.yml. Every template is embedded
+// a per-project Dockerfile.agent + .agent/compose.yml. Every template is embedded
 // in the binary, so one `coop` binary can scaffold any repo with no extra files.
 package scaffold
 
@@ -287,7 +287,7 @@ func (s *scaffolder) updateGitignore() error {
 	// config — is un-ignored at any depth as well, since a large monorepo member may carry its own;
 	// only project.yaml is TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays
 	// root-anchored.
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop.yaml\n!.agent/project.yaml\n" +
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop.yaml\n!**/.agent/compose.yml\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place; likewise
@@ -310,6 +310,11 @@ func (s *scaffolder) updateGitignore() error {
 	content = strings.ReplaceAll(content, "!**/.agent/loop/\n", "!**/.agent/loop.yaml\n")
 	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/loop.yaml") {
 		content = strings.Replace(content, "!**/.agent/audit.md\n", "!**/.agent/audit.md\n!**/.agent/loop.yaml\n", 1)
+	}
+	// .agent/compose.yml (the committed sibling-services file, retiring the root compose.agent.yml)
+	// un-ignores beside loop.yaml in an existing block that predates it.
+	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/compose.yml") {
+		content = strings.Replace(content, "!**/.agent/loop.yaml\n", "!**/.agent/loop.yaml\n!**/.agent/compose.yml\n", 1)
 	}
 	if content == orig {
 		return nil // already up to date

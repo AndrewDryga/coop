@@ -332,7 +332,7 @@ func buildErr(code int, err error) error {
 
 // fileUntracked reports whether repo is a git repo in which name (a repo-relative path) is NOT
 // tracked (committed or staged) — the agent-authored case worth surfacing for files coop then
-// builds or auto-runs (Dockerfile.agent, compose.agent.yml). It uses read-only `ls-files`
+// builds or auto-runs (Dockerfile.agent, .agent/compose.yml). It uses read-only `ls-files`
 // (hardened: no fsmonitor/hooks fire on the agent-writable repo) and returns false for a non-git
 // repo, where "untracked" isn't a meaningful signal.
 func fileUntracked(repo, name string) bool {

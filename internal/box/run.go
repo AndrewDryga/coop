@@ -147,7 +147,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (box.ValidateComposeFile in EnsureServices), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
-	// removes the read-only decoy that used to strand an empty compose.agent.yml in the repo.
+	// removes the read-only decoy that used to strand an empty .agent/compose.yml in the repo.
 	if !spec.Batch && !spec.Quiet {
 		for _, nudge := range StalenessNudges(cfg, spec.Repo, spec.Image) {
 			ui.Info("%s", nudge)

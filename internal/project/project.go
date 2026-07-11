@@ -58,7 +58,7 @@ type Serve struct {
 // absent must stay distinguishable from false (their defaults are true).
 type Box struct {
 	Egress  string `yaml:"egress"`  // "" (unset) | "open" | "none" — anything else fails Load
-	AutoUp  *bool  `yaml:"auto_up"` // auto-start compose.agent.yml services (default true)
+	AutoUp  *bool  `yaml:"auto_up"` // auto-start .agent/compose.yml services (default true)
 	Network *bool  `yaml:"network"` // join the sibling-services network (default true)
 	Memory  string `yaml:"memory"`  // docker --memory syntax, passed through (e.g. 4g)
 	CPUs    string `yaml:"cpus"`    // docker --cpus value

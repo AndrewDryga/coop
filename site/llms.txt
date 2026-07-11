@@ -43,9 +43,9 @@ TASKS — a folder-per-task queue in .agent/tasks/
   coop tasks decisions              what's blocked on a decision (-i to answer)
   coop backlog                      park unscheduled ideas; promote when ready
 
-SERVICES — the box's compose.agent.yml sidecars
-  coop up                           start the compose.agent.yml services
-  coop down                         stop the compose.agent.yml services
+SERVICES — the box's .agent/compose.yml sidecars
+  coop up                           start the .agent/compose.yml services
+  coop down                         stop the .agent/compose.yml services
 
 SAFETY — prove the box holds, catch committed secrets
   coop doctor                       attack the box, prove isolation holds
@@ -479,7 +479,7 @@ coop up — start the repo's sibling services so the box can reach them by name.
 
   Usage: coop up
 
-  Brings up the services in compose.agent.yml on coop's network; an agent in
+  Brings up the services in .agent/compose.yml on coop's network; an agent in
   the box reaches db/redis/... by hostname. Stop them with: coop down
 
 coop down [-v] — stop the repo's sibling services.
@@ -503,7 +503,7 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   neutral (it imposes no checks); at a terminal it asks which gate to add. A
   .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent.
   Sibling services (db/redis) are opt-in: at a terminal it asks which to add as a
-  compose.agent.yml — none by default, or pass --services. If the repo already has
+  .agent/compose.yml — none by default, or pass --services. If the repo already has
   its own Docker and no Dockerfile.agent yet, it suggests how to build the box on it.
   Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
   inert until you add a server) so there's an obvious place to declare MCP servers.

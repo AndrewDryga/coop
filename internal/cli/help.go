@@ -68,7 +68,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 		fmt.Fprintf(&b, "  %s%s%s\n", cmd, strings.Repeat(" ", gap), desc)
 	}
 	// dimRow is row for a command not available in this repo right now (e.g. `coop up` with no
-	// compose.agent.yml) — the whole line recedes (gap computed on plain text, then dimmed, so the
+	// .agent/compose.yml) — the whole line recedes (gap computed on plain text, then dimmed, so the
 	// command column still aligns). Dim is a no-op when color is off, so a pipe keeps the text.
 	dimRow := func(cmd, desc string) {
 		gap := 34 - utf8.RuneCountInString(cmd)
@@ -132,22 +132,22 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
 	row("coop backlog", "park unscheduled ideas; promote when ready")
 
-	group("SERVICES — the box's compose.agent.yml sidecars")
-	// `coop up`/`down` act on this repo's compose.agent.yml — always NAME the file (it's what makes
+	group("SERVICES — the box's .agent/compose.yml sidecars")
+	// `coop up`/`down` act on this repo's .agent/compose.yml — always NAME the file (it's what makes
 	// the rows obvious), listing its real services when present, and dim the pair when there's none to
 	// act on. Repo resolution is best-effort (help runs anywhere; outside a repo, or with no compose).
 	repo, _ := box.ResolveRepo(cfg.RepoOverride)
 	switch {
 	case ref: // the reference form is machine-independent: no per-repo service list
-		row("coop up", "start the compose.agent.yml services")
-		row("coop down", "stop the compose.agent.yml services")
+		row("coop up", "start the .agent/compose.yml services")
+		row("coop down", "stop the .agent/compose.yml services")
 	case len(scaffold.ComposeServiceNames(box.ComposeFile(repo))) > 0:
 		services := scaffold.ComposeServiceNames(box.ComposeFile(repo))
-		row("coop up", "start the compose.agent.yml services ("+strings.Join(services, ", ")+")")
-		row("coop down", "stop the compose.agent.yml services")
+		row("coop up", "start the .agent/compose.yml services ("+strings.Join(services, ", ")+")")
+		row("coop down", "stop the .agent/compose.yml services")
 	default:
-		dimRow("coop up", "none in compose.agent.yml yet")
-		dimRow("coop down", "stop the compose.agent.yml services")
+		dimRow("coop up", "none in .agent/compose.yml yet")
+		dimRow("coop down", "stop the .agent/compose.yml services")
 	}
 
 	group("SAFETY — prove the box holds, catch committed secrets")
@@ -643,7 +643,7 @@ var commandHelp = map[string]string{
 
   Usage: coop up
 
-  Brings up the services in compose.agent.yml on coop's network; an agent in
+  Brings up the services in .agent/compose.yml on coop's network; an agent in
   the box reaches db/redis/... by hostname. Stop them with: coop down`,
 
 	"down": `coop down [-v] — stop the repo's sibling services.
@@ -667,7 +667,7 @@ var commandHelp = map[string]string{
   neutral (it imposes no checks); at a terminal it asks which gate to add. A
   .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent.
   Sibling services (db/redis) are opt-in: at a terminal it asks which to add as a
-  compose.agent.yml — none by default, or pass --services. If the repo already has
+  .agent/compose.yml — none by default, or pass --services. If the repo already has
   its own Docker and no Dockerfile.agent yet, it suggests how to build the box on it.
   Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
   inert until you add a server) so there's an obvious place to declare MCP servers.

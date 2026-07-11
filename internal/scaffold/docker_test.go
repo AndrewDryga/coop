@@ -24,9 +24,10 @@ func TestDetectDocker(t *testing.T) {
 	write("Dockerfile", "FROM alpine\n")
 	write("docker/Dockerfile.prod", "FROM debian\n")
 	write("docker-compose.yml", "services:\n  db:\n    image: postgres\n  redis:\n    image: redis\nvolumes:\n  pgdata:\n")
-	// coop's own files are excluded.
+	// coop's own files are excluded: Dockerfile.agent by name, and the sibling-services compose
+	// inside the hidden .agent/ dir (detectDocker never descends dotdirs).
 	write("Dockerfile.agent", "FROM debian\n")
-	write("compose.agent.yml", "services:\n  x:\n    image: y\n")
+	write(".agent/compose.yml", "services:\n  x:\n    image: y\n")
 	// a skipped dir is not descended.
 	write("node_modules/foo/Dockerfile", "FROM node\n")
 
@@ -71,7 +72,7 @@ func TestSuggestDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := capture(repo)
-	for _, want := range []string{"base the agent box", "@anthropic-ai/claude-code", "db", "compose.agent.yml"} {
+	for _, want := range []string{"base the agent box", "@anthropic-ai/claude-code", "db", ".agent/compose.yml"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("suggestion missing %q:\n%s", want, out)
 		}

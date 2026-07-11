@@ -1064,7 +1064,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	}
 	file := box.ComposeFile(repo)
 	if file == "" {
-		return -1, errors.New("no compose.agent.yml — run 'coop init --services postgres,redis' to scaffold one")
+		return -1, errors.New("no .agent/compose.yml — run 'coop init --services postgres,redis' to scaffold one")
 	}
 	proj := box.ServicesProject(repo)
 	rel, _ := filepath.Rel(repo, file)
@@ -1078,7 +1078,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 
 func (a *app) cmdDown(args []string) (int, error) {
 	// Validate flags before any runtime/compose work, so a typo fails clearly here instead of
-	// later as an unrelated "no compose.agent.yml" — `coop down` takes only -v/--volumes.
+	// later as an unrelated "no .agent/compose.yml" — `coop down` takes only -v/--volumes.
 	volumes := false
 	for _, x := range args {
 		if x != "-v" && x != "--volumes" {
@@ -1095,7 +1095,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	}
 	file := box.ComposeFile(repo)
 	if file == "" {
-		return -1, errors.New("no compose.agent.yml here — nothing to bring down")
+		return -1, errors.New("no .agent/compose.yml here — nothing to bring down")
 	}
 	proj := box.ServicesProject(repo)
 	cargs := []string{"compose", "-p", proj, "-f", file, "down"}
@@ -1258,7 +1258,7 @@ func parseServices(s string) []string {
 	return out
 }
 
-// promptServices asks (on a tty) which sibling services to scaffold into compose.agent.yml.
+// promptServices asks (on a tty) which sibling services to scaffold into .agent/compose.yml.
 // Blank → none (coop adds no db/redis you didn't ask for); unknown tokens are ignored.
 func promptServices(in io.Reader) []string {
 	fmt.Fprintf(os.Stderr, "add sibling services for the box? [%s] (space-separated, blank for none): ",

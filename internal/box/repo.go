@@ -33,22 +33,18 @@ func ServicesProject(repo string) string {
 	return "coop-" + b.String()
 }
 
-// composeFileRels are the repo-relative (slash-form) paths coop recognizes as a
-// sibling-services compose file, in priority order. ComposeFile picks the first that exists to
-// auto-run on the HOST daemon (validated first by box.ValidateComposeFile).
-var composeFileRels = []string{
-	"compose.agent.yml",
-	".agent/compose.yml",
-}
+// ComposeFileRel is the repo-relative (slash-form) path of the sibling-services compose file:
+// one committed location under .agent/, beside loop.yaml/project.yaml (the old root
+// compose.agent.yml is retired). ComposeFile returns it when it exists to auto-run on the HOST
+// daemon (validated first by box.ValidateComposeFile).
+const ComposeFileRel = ".agent/compose.yml"
 
-// ComposeFile returns the repo's sibling-services compose file, or "" if none. A zero-byte file
-// counts as none: it declares no services, so auto-running `compose up` on it would only error.
+// ComposeFile returns the repo's sibling-services compose file (.agent/compose.yml), or "" if it's
+// absent or empty — a zero-byte file declares no services, so auto-running `compose up` would error.
 func ComposeFile(repo string) string {
-	for _, rel := range composeFileRels {
-		f := filepath.Join(repo, filepath.FromSlash(rel))
-		if fi, err := os.Stat(f); err == nil && !fi.IsDir() && fi.Size() > 0 {
-			return f
-		}
+	f := filepath.Join(repo, filepath.FromSlash(ComposeFileRel))
+	if fi, err := os.Stat(f); err == nil && !fi.IsDir() && fi.Size() > 0 {
+		return f
 	}
 	return ""
 }

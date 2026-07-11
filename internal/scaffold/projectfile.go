@@ -88,7 +88,7 @@ func projectYAML(subprojects []string) string {
 # loosest — "open" — so a repo can pin none but never widen your explicit none).
 # box:
 #   egress: none        # outbound network: "open" (npm + model API) or "none" (offline)
-#   auto_up: false      # auto-start compose.agent.yml sibling services (default true)
+#   auto_up: false      # auto-start .agent/compose.yml sibling services (default true)
 #   network: false      # join the sibling-services network (default true)
 #   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
 #   cpus: "4"

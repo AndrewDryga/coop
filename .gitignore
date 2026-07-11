@@ -19,6 +19,7 @@ __pycache__/
 !**/.agent/skills/
 !**/.agent/presets/
 !**/.agent/loop.yaml
+!**/.agent/compose.yml
 !.agent/project.yaml
 
 # preset native subagents coop generates in the box (coop-<role>) — never committed

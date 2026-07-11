@@ -1,13 +1,16 @@
 package scaffold
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/AndrewDryga/coop/internal/box"
 )
 
 // ComposeServices is the menu of sibling services `coop init` can scaffold into
-// compose.agent.yml — what the interactive prompt offers and what --services accepts.
+// .agent/compose.yml — what the interactive prompt offers and what --services accepts.
 var ComposeServices = []string{"postgres", "redis"}
 
 // composeUnit is one service's compose block plus the named volume it declares.
@@ -49,7 +52,7 @@ var composeCatalog = map[string]composeUnit{
 	},
 }
 
-// composeFor renders a compose.agent.yml holding just the chosen services (in ComposeServices
+// composeFor renders a .agent/compose.yml holding just the chosen services (in ComposeServices
 // order, unknowns ignored). Returns "" when none are chosen.
 func composeFor(services []string) string {
 	var blocks, vols, notes []string
@@ -88,7 +91,7 @@ func composeFor(services []string) string {
 	return b.String()
 }
 
-// WriteCompose scaffolds compose.agent.yml for the chosen sibling services (a subset of
+// WriteCompose scaffolds .agent/compose.yml for the chosen sibling services (a subset of
 // ComposeServices), never clobbering an existing file. It is a no-op when no service is chosen
 // — coop never adds a db/redis a project didn't ask for.
 func WriteCompose(repo string, services []string) error {
@@ -96,6 +99,10 @@ func WriteCompose(repo string, services []string) error {
 	if content == "" {
 		return nil
 	}
+	dest := filepath.Join(repo, filepath.FromSlash(box.ComposeFileRel))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
 	s := &scaffolder{repo: repo}
-	return s.writeContentIfAbsent(filepath.Join(repo, "compose.agent.yml"), content, 0o644)
+	return s.writeContentIfAbsent(dest, content, 0o644)
 }

@@ -4,30 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/AndrewDryga/coop/internal/scaffold"
 )
 
-// writeCompose writes body to compose.agent.yml in a fresh temp repo and returns the repo + path.
+// writeCompose writes body to a compose file in a fresh temp repo and returns the repo + path.
+// (The path is passed to ValidateComposeFile explicitly, so its name doesn't matter here.)
 func writeCompose(t *testing.T, body string) (repo, path string) {
 	t.Helper()
 	repo = t.TempDir()
-	path = filepath.Join(repo, "compose.agent.yml")
+	path = filepath.Join(repo, filepath.FromSlash(ComposeFileRel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return repo, path
-}
-
-// The real scaffolded postgres+redis file — coop's own output — must validate.
-func TestValidateComposeScaffolded(t *testing.T) {
-	repo := t.TempDir()
-	if err := scaffold.WriteCompose(repo, []string{"postgres", "redis"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateComposeFile(filepath.Join(repo, "compose.agent.yml"), repo); err != nil {
-		t.Fatalf("coop's own scaffolded compose file must pass validation: %v", err)
-	}
 }
 
 func TestValidateComposeAccepts(t *testing.T) {
@@ -139,11 +130,13 @@ func TestValidateComposeRejects(t *testing.T) {
 func TestValidateComposeSymlinkEscape(t *testing.T) {
 	repo := t.TempDir()
 	outside := t.TempDir() // a sibling temp dir, not under repo
-	link := filepath.Join(repo, "escape")
+	path := filepath.Join(repo, filepath.FromSlash(ComposeFileRel))
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	// The symlink sits beside the compose file (relative binds resolve against the compose dir).
+	link := filepath.Join(filepath.Dir(path), "escape")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	path := filepath.Join(repo, "compose.agent.yml")
 	os.WriteFile(path, []byte("services:\n  x:\n    image: a\n    volumes: [\"./escape/secrets:/x\"]\n"), 0o644)
 	if err := ValidateComposeFile(path, repo); err == nil {
 		t.Fatal("a bind through a symlink that escapes the repo must be rejected")

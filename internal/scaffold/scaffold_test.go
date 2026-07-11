@@ -465,8 +465,8 @@ func TestInitStack(t *testing.T) {
 	if err != nil || !strings.Contains(string(df), "asdf install") {
 		t.Errorf("asdf stack Dockerfile.agent missing or wrong:\n%s", df)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "compose.agent.yml")); err == nil {
-		t.Error("Init must not scaffold compose.agent.yml — sibling services are opt-in")
+	if _, err := os.Stat(filepath.Join(repo, ".agent", "compose.yml")); err == nil {
+		t.Error("Init must not scaffold .agent/compose.yml — sibling services are opt-in")
 	}
 
 	// A removed per-language stack is now an error pointing at .tool-versions.

@@ -13,7 +13,7 @@ import (
 )
 
 // dockerFinds is what detectDocker turned up: the repo's own Dockerfiles and compose files
-// (coop's own Dockerfile.agent / compose.agent.yml excluded), plus the service names from
+// (coop's own Dockerfile.agent / .agent/compose.yml excluded), plus the service names from
 // the first compose file.
 type dockerFinds struct {
 	dockerfiles []string // repo-relative paths
@@ -72,12 +72,10 @@ func isDockerfile(name string) bool {
 	return name == "Dockerfile" || strings.HasPrefix(name, "Dockerfile.")
 }
 
-// isComposeFile matches docker-compose / compose .yml/.yaml (incl. .<x>.yml overlays), but
-// not coop's own compose.agent.yml.
+// isComposeFile matches docker-compose / compose .yml/.yaml (incl. .<x>.yml overlays). coop's own
+// sibling-services file lives at .agent/compose.yml — inside the hidden .agent/ that detectDocker
+// never scans — so it needs no exclusion here.
 func isComposeFile(name string) bool {
-	if name == "compose.agent.yml" {
-		return false
-	}
 	for _, pre := range []string{"docker-compose", "compose"} {
 		if name == pre+".yml" || name == pre+".yaml" {
 			return true
@@ -172,7 +170,7 @@ func SuggestDocker(repo string) {
 		fmt.Fprintf(&b, dockerfileSuggestion, strings.Join(agents.Packages(), " "))
 	}
 	if len(f.composes) > 0 {
-		fmt.Fprintf(&b, "\n  Sibling services — coop starts deps for the box from compose.agent.yml (reached\n"+
+		fmt.Fprintf(&b, "\n  Sibling services — coop starts deps for the box from .agent/compose.yml (reached\n"+
 			"  by name). Copy the services your code needs from %s into it, then 'coop up'.\n", f.composes[0])
 	}
 	fmt.Fprint(os.Stderr, b.String())

@@ -214,7 +214,7 @@ spelled out here (there's room to render them).
 | `coop tasks decisions [-i]` · `lint` · `split <n>` | what's blocked on a decision (`-i` to answer) · check the tree · carve todo tasks into per-fork slices |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 
-**Services** — the box's `compose.agent.yml` sidecars ([details](#services))
+**Services** — the box's `.agent/compose.yml` sidecars ([details](#services))
 
 | Command | What it does |
 |---|---|
@@ -874,7 +874,7 @@ To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your w
 point the adapter at it: `coop fork <name> acp [agent]` — same ACP, but the agent works the
 throwaway clone (nothing to push, secrets never came along), and you still review and land it.
 
-> **Services** work too — if the repo has a `compose.agent.yml`, run `coop up` first and
+> **Services** work too — if the repo has a `.agent/compose.yml`, run `coop up` first and
 > the ACP box joins the same network.
 > **Custom images** must carry the ACP adapters: `coop init` scaffolds them in; for an
 > older/hand-written `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp@latest`
@@ -1162,10 +1162,10 @@ shadowing and the box are what Coop adds on top.
 ### Services
 
 Sibling services are opt-in: `coop init` asks which to add (or pass
-`--services postgres,redis`), scaffolding a `compose.agent.yml` — none by default.
+`--services postgres,redis`), scaffolding a `.agent/compose.yml` — none by default.
 
 ```bash
-coop up        # starts Postgres + Redis from compose.agent.yml, waits until healthy
+coop up        # starts Postgres + Redis from .agent/compose.yml, waits until healthy
 coop claude    # the box reaches them by name (db, redis)
 coop down -v   # stop services and wipe their throwaway data
 ```
@@ -1176,7 +1176,7 @@ The agent never installs or hosts a database, so it can't corrupt one, and `coop
 resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
 from re-downloading the world.
 
-`compose.agent.yml` runs on your **host** daemon (that's how a service becomes a real
+`.agent/compose.yml` runs on your **host** daemon (that's how a service becomes a real
 container), so coop **validates it before every run** — `coop up` and each networked launch
 alike. Only plain sibling-service directives pass: an `image`, inline `environment`, named
 volumes or repo-relative binds, `healthcheck`, `depends_on`, and **loopback-only** published
@@ -1184,7 +1184,7 @@ ports. Anything that would reach past a repo-scoped container is refused with th
 `privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:
 host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. So the file is safe to
 auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
-one still can't turn `compose.agent.yml` into host root. (Need something outside that subset?
+one still can't turn `.agent/compose.yml` into host root. (Need something outside that subset?
 Run it yourself — coop only auto-runs the safe subset.)
 
 ### See the dev server in your browser
@@ -1270,7 +1270,7 @@ turn them off.
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read **in the box** — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
-| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `compose.agent.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
+| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `.agent/compose.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
@@ -1342,12 +1342,12 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
 | **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
 | **"box image is stale … run 'coop build'"** | You changed `Dockerfile.agent` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
-| **A scaffolded `db` (postgres:18) exits 1 on `coop up`** | Scaffolds from before this fix mounted `pgdata` at `/var/lib/postgresql/data`, which postgres 18+ refuses (it wants a single mount at `/var/lib/postgresql`). Edit `compose.agent.yml` and move the mount up one level. New scaffolds are already fixed. |
+| **A scaffolded `db` (postgres:18) exits 1 on `coop up`** | Scaffolds from before this fix mounted `pgdata` at `/var/lib/postgresql/data`, which postgres 18+ refuses (it wants a single mount at `/var/lib/postgresql`). Edit `.agent/compose.yml` and move the mount up one level. New scaffolds are already fixed. |
 
 ## Layout & development
 
 A single static Go binary plus a config folder. A repo you work on optionally carries a
-`Dockerfile.agent` (its toolchain) and `compose.agent.yml` (its services):
+`Dockerfile.agent` (its toolchain) and `.agent/compose.yml` (its services):
 
 ```
 main.go             entrypoint

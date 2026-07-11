@@ -1,12 +1,16 @@
 package scaffold
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/box"
 )
 
 func TestComposeFor(t *testing.T) {
-	// Nothing chosen → empty (so no compose.agent.yml is written).
+	// Nothing chosen → empty (so no .agent/compose.yml is written).
 	if got := composeFor(nil); got != "" {
 		t.Errorf("composeFor(nil) = %q, want empty", got)
 	}
@@ -35,5 +39,21 @@ func TestComposeFor(t *testing.T) {
 	// Unknown service is ignored.
 	if got := composeFor([]string{"mongo"}); got != "" {
 		t.Errorf("unknown service should yield empty: %q", got)
+	}
+}
+
+// The real scaffolded postgres+redis file — coop's own output — must pass box.ValidateComposeFile,
+// and it must land at .agent/compose.yml (the committed location).
+func TestScaffoldedComposeValidates(t *testing.T) {
+	repo := t.TempDir()
+	if err := WriteCompose(repo, []string{"postgres", "redis"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, filepath.FromSlash(box.ComposeFileRel))
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("WriteCompose must write %s: %v", box.ComposeFileRel, err)
+	}
+	if err := box.ValidateComposeFile(path, repo); err != nil {
+		t.Fatalf("coop's own scaffolded compose file must pass validation: %v", err)
 	}
 }

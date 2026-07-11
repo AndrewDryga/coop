@@ -217,26 +217,6 @@ func TestRenderMounts(t *testing.T) {
 	}
 }
 
-// TestComposeFileRecognizesAllPaths guards that ComposeFile finds a real file at EVERY
-// composeFileRels path — so a compose file at either location is picked up and (via
-// EnsureServices) validated before it auto-runs on the host.
-func TestComposeFileRecognizesAllPaths(t *testing.T) {
-	dir := t.TempDir()
-	for _, rel := range composeFileRels {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("services: {}"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if got := ComposeFile(dir); got != p {
-			t.Errorf("ComposeFile does not recognize %q (got %q)", p, got)
-		}
-		os.Remove(p)
-	}
-}
-
 func TestMatchesAny(t *testing.T) {
 	cases := []struct {
 		name string

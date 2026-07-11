@@ -12,7 +12,7 @@
 - Flags, examples, and sub-verbs live in the command's own `coop <cmd> --help`, not
   crammed into the top-level index.
 - Name the concrete file/artifact a command acts on, not a vague category. `coop up`/`down`
-  say **`compose.agent.yml`** (its real services when present), never "sibling services" — a
+  say **`.agent/compose.yml`** (its real services when present), never "sibling services" — a
   glanceable row has no body to explain an abstraction, so the concrete name IS the
   explanation. Same for any row/error one-liner: prefer the real path/file/flag.
 - A row's command cell stays **≤ 32 runes** so every description starts at the same column
