@@ -1355,8 +1355,9 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	// preflight defaults to loop.yaml preflight.enabled (else COOP_PREFLIGHT); --preflight/--no-preflight override.
-	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled || a.cfg.Preflight)
+	warnRetiredLoopEnv() // the loop config moved to .agent/loop.yaml; nudge a lingering COOP_* export
+	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
+	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled)
 	if err != nil {
 		return 2, err
 	}
@@ -1386,7 +1387,6 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, noProviderErr("loop")
 	}
 	a.applyPreset(p, agent)
-	a.applyLoopModel(agent) // COOP_LOOP_MODEL → the fallback tier (below a ladder target's model)
 	queues, err := taskQueues(a.cfg, repo, flags)
 	if err != nil {
 		return 2, err
@@ -1411,17 +1411,20 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight) // local loop: no fork label
 }
 
-// applyLoopModel puts COOP_LOOP_MODEL in the fallback tier — the loop's standing default
-// model, used when a rotation entry carries no model of its own (a bare `models: [work]`
-// or the no-preset default). It sits below a ladder target's model and below an explicit
-// --model, and above the account's mark. Shared by `coop loop` and the fork loops.
-func (a *app) applyLoopModel(agent string) {
-	model, effort := a.cfg.LoopModelEffort() // COOP_LOOP_MODEL is model[/effort] — one var, both axes
-	if model != "" {
-		a.cfg.SetFallbackModel(agent, model)
-	}
-	if effort != "" {
-		a.cfg.SetFallbackEffort(agent, effort)
+// warnRetiredLoopEnv warns once for each retired loop env var still set in the environment — the
+// loop config moved to .agent/loop.yaml, and coop no longer reads these, so a lingering export
+// would otherwise silently do nothing. Named the loop.yaml replacement so a human can migrate.
+func warnRetiredLoopEnv() {
+	for _, r := range []struct{ env, repl string }{
+		{"COOP_LOOP_MODEL", "work.agent"},
+		{"COOP_REVIEW_MODEL", "review.agent"},
+		{"COOP_MAX_REVIEW_ROUNDS", "review.rounds"},
+		{"COOP_LOOP_CMD", "work.command"},
+		{"COOP_PREFLIGHT", "preflight.enabled"},
+	} {
+		if os.Getenv(r.env) != "" {
+			ui.Warn("%s is retired and NO LONGER read — set %s in .agent/loop.yaml instead", r.env, r.repl)
+		}
 	}
 }
 
@@ -1482,10 +1485,10 @@ func (a *app) withStepModel(agent, model, effort string, fn func()) {
 }
 
 // stepModel resolves a single-model step's (review, between) model+effort from its .agent/loop.yaml
-// agent: ladder — the first TARGET rung carrying a model/effort — else the given fallback. A preset
-// rung is skipped here: these steps run once (or once per task), so they take a target's model, not
-// a rotation. (fallback is COOP_REVIEW_MODEL for now; retired next.)
-func stepModel(rungs []string, fbModel, fbEffort string) (model, effort string) {
+// agent: ladder — the first TARGET rung carrying a model/effort, else "" (the work model runs it).
+// A preset rung is skipped here: these steps run once (or once per task), so they take a target's
+// model, not a rotation.
+func stepModel(rungs []string) (model, effort string) {
 	if rs, err := loopcfg.Rungs(rungs); err == nil {
 		for _, r := range rs {
 			if r.Target != nil && (r.Target.Model != "" || r.Target.Effort != "") {
@@ -1493,7 +1496,7 @@ func stepModel(rungs []string, fbModel, fbEffort string) (model, effort string) 
 			}
 		}
 	}
-	return fbModel, fbEffort
+	return "", ""
 }
 
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
@@ -1574,14 +1577,17 @@ func loopBetweenPrompt(repo string, queues []string, setPrompt string) string {
 	return strings.TrimSpace(setPrompt) + "\n\n" + reviewContextFooter(repo, queues)
 }
 
+// defaultReviewRounds is the built-in work→review round ceiling when .agent/loop.yaml review.rounds
+// is unset (was the COOP_MAX_REVIEW_ROUNDS default).
+const defaultReviewRounds = 5
+
 // reviewRounds is the work→review round ceiling: .agent/loop.yaml review.rounds when set (>0),
-// else the built-in default (config.MaxReviewRounds, which defaults to 5). reviewRoundCap scales
-// it by the batch.
-func reviewRounds(lc *loopcfg.Config, cfg *config.Config) int {
+// else the built-in default of 5. reviewRoundCap scales it by the batch.
+func reviewRounds(lc *loopcfg.Config) int {
 	if lc.Review.Rounds > 0 {
 		return lc.Review.Rounds
 	}
-	return cfg.MaxReviewRounds
+	return defaultReviewRounds
 }
 
 // blockReopenedTasks parks every task still reopened after the review round cap (anything left in
@@ -1726,9 +1732,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		return 1, err
 	}
 	custom := lc.Work.Command
-	if len(custom) == 0 {
-		custom = a.cfg.LoopCmd // TODO(loop.yaml): COOP_LOOP_CMD is retired next increment; loop.yaml work.command wins
-	}
 	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
 	// custom work.command, or a non-terminal (pipe/CI/fork log) keep plain text output. Decided
 	// per iteration in iterCmd (a cross-provider rotation can swap the active agent), keyed off the
@@ -1753,9 +1756,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	}
 	// Per-step review/between models from .agent/loop.yaml (COOP_REVIEW_MODEL is the fallback for
 	// review; between falls back to the review model). Swapped in only for those iterations.
-	fbM, fbE := a.cfg.ReviewModelEffort()
-	reviewModel, reviewEffort := stepModel(lc.Review.Agent, fbM, fbE)
-	betweenModel, betweenEffort := stepModel(lc.Between.Agent, reviewModel, reviewEffort)
+	reviewModel, reviewEffort := stepModel(lc.Review.Agent)
+	betweenModel, betweenEffort := stepModel(lc.Between.Agent)
+	if betweenModel == "" && betweenEffort == "" { // between falls back to the review model
+		betweenModel, betweenEffort = reviewModel, reviewEffort
+	}
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/review prompt.
 	iterCmd := func(prompt string) []string {
@@ -1933,7 +1938,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			break
 		}
 		// Scale the cap to this run's batch (completed tasks), clamped to [3, COOP_MAX_REVIEW_ROUNDS].
-		maxReviewRounds := reviewRoundCap(completed, reviewRounds(lc, a.cfg))
+		maxReviewRounds := reviewRoundCap(completed, reviewRounds(lc))
 		ui.Info("queue empty — running review pass (round %d/%d)", reviewRound, maxReviewRounds)
 		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
 		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.

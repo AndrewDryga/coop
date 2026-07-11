@@ -234,7 +234,6 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 			}
 		}
 	}
-	a.applyLoopModel(agent)          // COOP_LOOP_MODEL (model[/effort]) → the fallback tier
 	a.selectRunEffort(agent, effort) // the fork target's /effort (top tier, persists across rotations)
 	// The fork's rotation ladder: the fork target's one-off model/account wins; else its
 	// preset's ladder (a.preset, loaded by forkCreate); else the default (agent model across

@@ -77,9 +77,6 @@ func (a *app) cmdModels(args []string) (int, error) {
 		// Pad plain, then style — ANSI bytes inside a padded cell would break the columns.
 		fmt.Printf("  %s  %s  %s\n", p.Dim(padRight(r.label, lw)), p.Cyan(padRight(r.cmd, cw)), p.Dim("("+r.note+")"))
 	}
-	if lm := a.cfg.LoopModel; lm != "" {
-		fmt.Println(p.Dim("  loop model pinned: " + lm + " (COOP_LOOP_MODEL)"))
-	}
 	return 0, nil
 }
 

@@ -36,19 +36,14 @@ type Config struct {
 	Network       bool // COOP_NETWORK — join the sibling-services network
 	AutoUp        bool // COOP_AUTO_UP — auto-start sibling services (compose up) before a box when a compose file is present
 	Cache         bool // COOP_CACHE — mount the shared dependency cache volume
-	Preflight     bool // COOP_PREFLIGHT — run a one-shot cleanup pass (log/tasks/decisions) before `coop loop`
 	Caffeinate    bool // COOP_CAFFEINATE — hold a system sleep inhibitor (caffeinate on macOS) while a loop runs
 	NoUpdateCheck bool // COOP_NO_UPDATE_CHECK — opt out of the once-a-day update-available check
 
-	ServicesNet     string   // COOP_SERVICES_NET — override the services network name
-	LoopModel       string   // COOP_LOOP_MODEL — model[/effort] for loop iterations (falls back to the per-agent default)
-	ReviewModel     string   // COOP_REVIEW_MODEL — model[/effort] for the loop's review + between-tasks audit iterations (empty = the loop's)
-	LoopCmd         []string // COOP_LOOP_CMD — override the loop's per-iteration command
-	MaxReviewRounds int      // COOP_MAX_REVIEW_ROUNDS — the ceiling for the (batch-scaled) work→review rounds before a task the review keeps reopening is blocked (default 5)
-	ACPCarryTokens  int      // COOP_ACP_CARRY_TOKENS — per-session budget (≈tokens, ~4 bytes each) for the conversation carried across an ACP provider switch (default 200000)
-	TasksFiles      []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
-	Gate            []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
-	ExtraRunArgs    []string // COOP_RUN_ARGS — extra args passed to the container runtime
+	ServicesNet    string   // COOP_SERVICES_NET — override the services network name
+	ACPCarryTokens int      // COOP_ACP_CARRY_TOKENS — per-session budget (≈tokens, ~4 bytes each) for the conversation carried across an ACP provider switch (default 200000)
+	TasksFiles     []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
+	Gate           []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
+	ExtraRunArgs   []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
 	// Box resource/privilege caps (docker & podman; skipped on Apple `container`).
 	Memory          string // COOP_MEMORY — memory cap, e.g. "4g" (empty = unset)
@@ -76,11 +71,11 @@ type Config struct {
 
 	activeModels   map[string]string // per-run EXPLICIT model (--model / fleet model=) — the top tier
 	targetModels   map[string]string // the active pool target's model (credential@model), below explicit
-	fallbackModels map[string]string // standing default (preset lead model / COOP_LOOP_MODEL), below a target
+	fallbackModels map[string]string // standing default (a preset lead's model), below a target
 
 	activeEfforts   map[string]string // per-run EXPLICIT reasoning effort (target /effort) — the top tier
 	targetEfforts   map[string]string // the active rotation target's effort, below explicit
-	fallbackEfforts map[string]string // standing default (preset lead effort / COOP_LOOP_MODEL's /effort), below a target
+	fallbackEfforts map[string]string // standing default (a preset lead's effort), below a target
 }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
@@ -156,19 +151,14 @@ func Load() *Config {
 		Network:       flag("COOP_NETWORK"),
 		AutoUp:        flag("COOP_AUTO_UP"),
 		Cache:         flag("COOP_CACHE"),
-		Preflight:     flagOff("COOP_PREFLIGHT"),
 		Caffeinate:    flag("COOP_CAFFEINATE"),
 		NoUpdateCheck: flagOff("COOP_NO_UPDATE_CHECK"),
 
-		ServicesNet:     get("COOP_SERVICES_NET", ""),
-		LoopModel:       get("COOP_LOOP_MODEL", ""),
-		ReviewModel:     get("COOP_REVIEW_MODEL", ""),
-		LoopCmd:         shellSplit(get("COOP_LOOP_CMD", "")),
-		MaxReviewRounds: getInt("COOP_MAX_REVIEW_ROUNDS", 5),
-		ACPCarryTokens:  getInt("COOP_ACP_CARRY_TOKENS", 200_000),
-		TasksFiles:      shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
-		Gate:            shellSplit(get("COOP_GATE", "")),
-		ExtraRunArgs:    shellSplit(get("COOP_RUN_ARGS", "")),
+		ServicesNet:    get("COOP_SERVICES_NET", ""),
+		ACPCarryTokens: getInt("COOP_ACP_CARRY_TOKENS", 200_000),
+		TasksFiles:     shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
+		Gate:           shellSplit(get("COOP_GATE", "")),
+		ExtraRunArgs:   shellSplit(get("COOP_RUN_ARGS", "")),
 
 		Memory:          get("COOP_MEMORY", ""),
 		CPUs:            get("COOP_CPUS", ""),
@@ -496,12 +486,6 @@ func (c *Config) AgentEffortDefault(agent string) string {
 	_, e := splitModelEffort(c.agentModelSpec(agent))
 	return e
 }
-
-// LoopModelEffort / ReviewModelEffort split COOP_LOOP_MODEL / COOP_REVIEW_MODEL (each shaped
-// model[/effort]) into their parts, so one env var sets both the model and the effort for the
-// loop's work / review iterations.
-func (c *Config) LoopModelEffort() (model, effort string)   { return splitModelEffort(c.LoopModel) }
-func (c *Config) ReviewModelEffort() (model, effort string) { return splitModelEffort(c.ReviewModel) }
 
 // EffortFor resolves the reasoning effort a run of agent should use, most specific first:
 //  1. the explicit per-run choice (target /effort),

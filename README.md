@@ -556,23 +556,22 @@ coop claude:opus/xhigh             # …at maximum reasoning effort (low·medium
 coop claude --preset frontier      # a standing lead model + roles, from the preset
 ```
 
-Two env knobs round it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`) is the
-agent-wide default, and `COOP_LOOP_MODEL` applies to loop iterations only — so unattended
-runs can grind on a cheaper model than your interactive sessions (and `COOP_REVIEW_MODEL`
-flips that for the loop's [review pass](#run-it-unattended): a stronger model reviews the
-cheaper loop's work). In a fleet, give a fork
-its own with `agent:` (a target — `provider[:model][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the target's `:model` ›
-the preset ladder's active entry › `COOP_LOOP_MODEL` (loop runs) › `COOP_<AGENT>_MODEL` › a
-model baked into `COOP_<AGENT>_CMD` › the agent CLI's own default.
+One env knob rounds it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`) is the
+agent-wide default. For the loop, put the per-step model in
+[`.agent/loop.yaml`](#run-it-unattended) — `work.agent` for the iterations, `review.agent` for a
+stronger reviewer over the cheaper work loop. In a fleet, give a fork its own with `agent:` (a
+target — `provider[:model][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the
+target's `:model` › the preset ladder's active entry › `COOP_<AGENT>_MODEL` › a model baked into
+`COOP_<AGENT>_CMD` › the agent CLI's own default.
 
 **Reasoning effort** is a sibling axis on the same target — `/effort` after the model:
 `coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
 `low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
 (Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
 fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up
-front. It mirrors the model's tiers, and one env var carries both axes — `COOP_<AGENT>_MODEL`,
-`COOP_LOOP_MODEL`, and `COOP_REVIEW_MODEL` take `model[/effort]` (e.g. `opus/high`), so there's no
-separate effort var (`COOP_REVIEW_MODEL=opus/xhigh` reviews at xhigh while the loop grinds low).
+front. It mirrors the model's tiers, and one axis carries both — a target's `:model/effort`,
+`COOP_<AGENT>_MODEL`, and a loop.yaml step's `agent:` all take `model[/effort]` (e.g.
+`review.agent: [claude:opus/xhigh]` reviews at xhigh while the work loop grinds low).
 
 The chosen model reaches consult peers and fusion advisors too (each peer resolves its
 own default), and `coop loop`'s live view prints the model each iteration actually ran —

@@ -43,9 +43,6 @@ func TestDefaults(t *testing.T) {
 	if !c.Homes || !c.Network || !c.Cache || !c.Caffeinate {
 		t.Errorf("toggles default on: Homes=%v Network=%v Cache=%v Caffeinate=%v", c.Homes, c.Network, c.Cache, c.Caffeinate)
 	}
-	if c.Preflight {
-		t.Error("Preflight is opt-in — must default off")
-	}
 	if c.NoUpdateCheck {
 		t.Error("NoUpdateCheck is opt-in — must default off (the daily check runs by default)")
 	}
@@ -54,9 +51,6 @@ func TestDefaults(t *testing.T) {
 	}
 	if c.MCPInBox != "/home/node/.mcp.json" {
 		t.Errorf("MCPInBox = %q", c.MCPInBox)
-	}
-	if c.MaxReviewRounds != 5 {
-		t.Errorf("MaxReviewRounds = %d, want 5 (default)", c.MaxReviewRounds)
 	}
 }
 
@@ -68,23 +62,15 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("COOP_CLAUDE_CMD", "claude --foo bar")
 	t.Setenv("COOP_CACHE", "0")
 	t.Setenv("COOP_NETWORK", "false")
-	t.Setenv("COOP_PREFLIGHT", "1")
 	t.Setenv("COOP_CAFFEINATE", "off")
 	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
-	t.Setenv("COOP_MAX_REVIEW_ROUNDS", "7")
 
 	c := Load()
-	if c.MaxReviewRounds != 7 {
-		t.Errorf("COOP_MAX_REVIEW_ROUNDS=7 should override the default: got %d", c.MaxReviewRounds)
-	}
 	if c.BaseImage != "custom-box" || c.Workdir != "/code" {
 		t.Errorf("env overrides not applied: %q %q", c.BaseImage, c.Workdir)
 	}
 	if c.Cache || c.Network || c.Caffeinate {
 		t.Errorf("toggles should be off: Cache=%v Network=%v Caffeinate=%v", c.Cache, c.Network, c.Caffeinate)
-	}
-	if !c.Preflight {
-		t.Error("COOP_PREFLIGHT=1 should turn Preflight on")
 	}
 	if !c.NoUpdateCheck {
 		t.Error("COOP_NO_UPDATE_CHECK=1 should opt out of the update check")

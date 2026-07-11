@@ -241,7 +241,7 @@ coop models [agent] — the model menu per agent.
   'coop fork risky claude:opus --loop', 'coop acp claude:sonnet'.
 
   Precedence: the target's :model > the active rotation entry's model (a loop stepping
-  through a preset's lead agent: ladder) > COOP_LOOP_MODEL (loop runs) > COOP_<AGENT>_MODEL
+  through a preset's lead agent: ladder, or loop.yaml work.agent) > COOP_<AGENT>_MODEL
   (agent-wide) > a model baked into COOP_<AGENT>_CMD > the agent CLI's own default.
   An account rides the SAME target (claude:opus@work). coop never validates a model
   id — a bad one fails in the agent's own error.
@@ -249,8 +249,8 @@ coop models [agent] — the model menu per agent.
   Reasoning effort is a sibling axis, set with /effort in the same target
   (claude:opus/xhigh, codex/high): low · medium · high · xhigh · max — coop passes the
   level through and the agent's CLI validates it (claude, codex, and grok have it; gemini
-  has none, so a /effort on gemini errors). One env var carries both axes — COOP_LOOP_MODEL
-  and COOP_<AGENT>_MODEL take model[/effort] (e.g. opus/high), so there is no separate effort
+  has none, so a /effort on gemini errors). One axis carries both — a target and
+  COOP_<AGENT>_MODEL take model[/effort] (e.g. opus/high), so there is no separate effort
   var. Precedence mirrors the model: the target's /effort > a rotation rung's effort > those.
 
 coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
@@ -413,7 +413,7 @@ coop loop [agent] — work the task queue until done, then review.
   reviews AGAIN, repeating until a review reopens nothing (verified done) or the round cap
   is hit — then the task the review keeps reopening is blocked for a human (exit 3), not
   reported as done. The cap SCALES with the batch: half the tasks worked this run, clamped
-  to [3, COOP_MAX_REVIEW_ROUNDS] (default 5) — a small batch still gets a few tries, a big
+  to [3, loop.yaml review.rounds] (default 5) — a small batch still gets a few tries, a big
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.
 
@@ -428,8 +428,9 @@ coop loop [agent] — work the task queue until done, then review.
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
   rungs: review.agent runs the review on its own, typically STRONGER model (the cheap work loop
   does the work, a capable model reviews it), between.agent the per-task audit, and work.agent the
-  work rotation when the launch names no target and no --preset. (COOP_REVIEW_MODEL / COOP_LOOP_MODEL
-  still apply as fallbacks under the file for now.)
+  work rotation when the launch names no target and no --preset. (The COOP_LOOP_MODEL /
+  COOP_REVIEW_MODEL / COOP_MAX_REVIEW_ROUNDS / COOP_LOOP_CMD / COOP_PREFLIGHT env vars are RETIRED —
+  their config lives in loop.yaml; coop warns if one is still set.)
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its lead agent: ladder is the rotation, and each iteration gets the
@@ -439,10 +440,8 @@ coop loop [agent] — work the task queue until done, then review.
   The target is a one-off ladder for this run (no preset needed): a bare provider
   (claude) fans the agent's default model across all signed-in accounts, claude:opus
   pins the model, claude@work,personal is an explicit account ladder — the loop rotates
-  the rungs on a rate limit. COOP_LOOP_MODEL is the standing model below a rung's own,
-  then the account's marked default ('coop models'), then COOP_<AGENT>_MODEL — so
-  overnight runs can grind on a cheaper model. Both take model[/effort] (e.g. opus/low), so
-  one var sets the standing effort too; a target's /effort still pins it per run.
+  the rungs on a rate limit. Below a rung's own model sits the account's marked default
+  ('coop models'), then COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
 
   --consult <peer>… lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
@@ -474,7 +473,7 @@ coop loop [agent] — work the task queue until done, then review.
   — resolve with 'coop tasks decisions', then re-run. So cron/CI can branch without parsing
   output.
 
-  loop.yaml work.command (or COOP_LOOP_CMD) overrides the per-iteration command.
+  loop.yaml work.command overrides the per-iteration command.
 
 coop up — start the repo's sibling services so the box can reach them by name.
 
@@ -515,7 +514,7 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
   root's for changes spanning members. A single repo gets a project.yaml template with
   commented serve/subprojects examples. The .gitignore ignores .agent/ state at any
-  depth (**/.agent/*) and commits knowledge — rules/skills/presets/audit/loop — at any depth
+  depth (**/.agent/*) and commits knowledge — rules/skills/presets/loop.yaml — at any depth
   too (a large member MAY add its own), keeping only project.yaml top-level. Never
   clobbers existing files.
 

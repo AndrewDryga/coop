@@ -108,12 +108,9 @@ func expandLadder(cfg *config.Config, defaultAgent string, ladder []agents.Targe
 }
 
 // buildRotation resolves a loop's rotation for agent: the run's one-off ladder when the
-// positional target carried a model/account, else the preset lead's ladder, else the default. A
-// custom COOP_LOOP_CMD isn't an agent, so it never rotates — just its marked default account.
+// positional target carried a model/account, else the preset lead's ladder, else the default. (A
+// custom work.command ignores the rotation — loop() runs the raw command — so it isn't special-cased.)
 func (a *app) buildRotation(agent string, ladder []agents.Target) (*rotation, error) {
-	if len(a.cfg.LoopCmd) > 0 {
-		return newRotation([]agents.Target{{Provider: agent, Accounts: []string{a.cfg.DefaultProfileOf(agent)}}}), nil
-	}
 	targets, err := expandLadder(a.cfg, agent, ladder)
 	if err != nil {
 		return nil, err

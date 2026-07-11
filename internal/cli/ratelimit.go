@@ -330,7 +330,7 @@ const (
 	maxStalls = 5
 )
 
-// The work↔review round cap is config.MaxReviewRounds (COOP_MAX_REVIEW_ROUNDS, default 3):
+// The work↔review round cap is .agent/loop.yaml review.rounds (default 5):
 // after each review pass the loop re-drains anything the review reopened, so this bounds the
 // ping-pong for a task that can't self-heal (reviewRoundOutcome below decides accept / continue /
 // cap→block).
@@ -345,10 +345,10 @@ const (
 )
 
 // reviewRoundCap scales the work↔review round cap with the batch: half the tasks worked this run,
-// floored at 3 (a tiny batch still gets a few tries) and ceilinged at max (COOP_MAX_REVIEW_ROUNDS),
+// floored at 3 (a tiny batch still gets a few tries) and ceilinged at max (loop.yaml review.rounds),
 // so a 100-task overnight batch caps at max instead of ping-ponging one stuck task forever. The
-// floor is applied before the ceiling, so a max set BELOW 3 (e.g. COOP_MAX_REVIEW_ROUNDS=1, a
-// one-shot review) still wins. Pure, so the clamp is unit-tested.
+// floor is applied before the ceiling, so a max set BELOW 3 (review.rounds: 1, a one-shot review)
+// still wins. Pure, so the clamp is unit-tested.
 func reviewRoundCap(tasks, max int) int {
 	cap := tasks / 2
 	if cap < 3 {

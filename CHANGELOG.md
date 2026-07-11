@@ -16,8 +16,9 @@
   file or field = today's built-in defaults, so an absent `loop.yaml` changes nothing. The retired
   `.agent/loop/*.md` (and legacy `.agent/audit.md`) tombstone once if left behind. `coop init` now
   scaffolds a fully-commented `.agent/loop.yaml`, a committed `.agent/project.yaml`, and an empty
-  `.agent/presets/`. (The `COOP_LOOP_MODEL`/`COOP_REVIEW_MODEL`/`COOP_PREFLIGHT` env vars still work
-  as fallbacks under the file for now.)
+  `.agent/presets/`. The five loop env vars are RETIRED — `COOP_LOOP_MODEL` → `work.agent`,
+  `COOP_REVIEW_MODEL` → `review.agent`, `COOP_MAX_REVIEW_ROUNDS` → `review.rounds`, `COOP_LOOP_CMD` →
+  `work.command`, `COOP_PREFLIGHT` → `preflight.enabled` — and coop warns once if one is still set.
 
 - **A bare `coop acp` (no provider) now starts on your first signed-in provider instead of
   erroring.** v4.0.0 made the provider required everywhere, so an editor `agent_servers` entry of

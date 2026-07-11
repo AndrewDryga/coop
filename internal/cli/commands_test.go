@@ -231,18 +231,17 @@ func TestWithStepModel(t *testing.T) {
 	}
 }
 
-// stepModel resolves a review/between agent: ladder to the first target rung's model+effort, else
-// the fallback.
+// stepModel resolves a review/between agent: ladder to the first target rung's model+effort, else "".
 func TestStepModel(t *testing.T) {
-	if m, e := stepModel([]string{"codex:gpt-5.6-sol/xhigh", "claude:fable"}, "fb", ""); m != "gpt-5.6-sol" || e != "xhigh" {
+	if m, e := stepModel([]string{"codex:gpt-5.6-sol/xhigh", "claude:fable"}); m != "gpt-5.6-sol" || e != "xhigh" {
 		t.Errorf("stepModel = %q/%q, want gpt-5.6-sol/xhigh", m, e)
 	}
-	if m, e := stepModel(nil, "fbmodel", "fbeffort"); m != "fbmodel" || e != "fbeffort" {
-		t.Errorf("empty ladder should use the fallback, got %q/%q", m, e)
+	if m, e := stepModel(nil); m != "" || e != "" {
+		t.Errorf("empty ladder → \"\"/\"\", got %q/%q", m, e)
 	}
-	// A bare provider (no model) falls through to the fallback.
-	if m, _ := stepModel([]string{"claude"}, "fb", ""); m != "fb" {
-		t.Errorf("a model-less rung should use the fallback, got %q", m)
+	// A bare provider (no model) yields "" — the work model runs the step.
+	if m, _ := stepModel([]string{"claude"}); m != "" {
+		t.Errorf("a model-less rung should yield \"\", got %q", m)
 	}
 }
 
