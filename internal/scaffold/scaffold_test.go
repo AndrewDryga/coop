@@ -127,7 +127,8 @@ func TestUpdateGitignoreUpgrade(t *testing.T) {
 }
 
 // TestUpdateGitignoreAddsLoop: a block that already has the monorepo pattern + audit.md but predates
-// loop/ (the review.md override home) gets the loop un-ignore inserted after audit.md, once.
+// loop.yaml (the committed loop config) gets its un-ignore inserted after audit.md, once; an older
+// gitignore carrying the retired `!**/.agent/loop/` dir un-ignore is upgraded to loop.yaml in place.
 func TestUpdateGitignoreAddsLoop(t *testing.T) {
 	repo := t.TempDir()
 	old := "node_modules/\n\n# coop working state\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/audit.md\n!.agent/project.yaml\n"
@@ -138,14 +139,23 @@ func TestUpdateGitignoreAddsLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi := string(mustRead(t, filepath.Join(repo, ".gitignore")))
-	if !strings.Contains(gi, "!**/.agent/audit.md\n!**/.agent/loop/\n") {
-		t.Errorf("loop/ un-ignore not inserted after audit.md:\n%s", gi)
+	if !strings.Contains(gi, "!**/.agent/audit.md\n!**/.agent/loop.yaml\n") {
+		t.Errorf("loop.yaml un-ignore not inserted after audit.md:\n%s", gi)
 	}
 	// Idempotent: a second run doesn't add it again.
 	_ = (&scaffolder{repo: repo}).updateGitignore()
 	gi2 := string(mustRead(t, filepath.Join(repo, ".gitignore")))
-	if n := strings.Count(gi2, "!**/.agent/loop/"); n != 1 {
-		t.Errorf("loop/ un-ignore appears %d times, want 1:\n%s", n, gi2)
+	if n := strings.Count(gi2, "!**/.agent/loop.yaml"); n != 1 {
+		t.Errorf("loop.yaml un-ignore appears %d times, want 1:\n%s", n, gi2)
+	}
+	// An older gitignore with the retired loop/ dir un-ignore upgrades in place (no duplicate).
+	repo2 := t.TempDir()
+	legacy := "**/.agent/*\n!**/.agent/rules/\n!**/.agent/loop/\n!.agent/project.yaml\n"
+	os.WriteFile(filepath.Join(repo2, ".gitignore"), []byte(legacy), 0o644)
+	_ = (&scaffolder{repo: repo2}).updateGitignore()
+	gi3 := string(mustRead(t, filepath.Join(repo2, ".gitignore")))
+	if strings.Contains(gi3, "!**/.agent/loop/\n") || !strings.Contains(gi3, "!**/.agent/loop.yaml") {
+		t.Errorf("legacy loop/ un-ignore not upgraded to loop.yaml:\n%s", gi3)
 	}
 }
 
@@ -310,12 +320,18 @@ func TestInit(t *testing.T) {
 	}
 
 	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets and
-	// loop/ — the review.md/audit.md/between.md loop config) at any depth; only project.yaml is
-	// top-level. audit.md now lives under loop/, so the block no longer allowlists it separately.
+	// the loop.yaml config) at any depth; only project.yaml is top-level.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/loop/", "!.agent/project.yaml", "!.gemini/skills"} {
+	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/loop.yaml", "!.agent/project.yaml", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
+		}
+	}
+
+	// The scaffold writes one committed loop.yaml, a project.yaml, and an (empty) presets/ dir.
+	for _, p := range []string{".agent/loop.yaml", ".agent/project.yaml", ".agent/presets"} {
+		if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(p))); err != nil {
+			t.Errorf("scaffold missing %s: %v", p, err)
 		}
 	}
 }

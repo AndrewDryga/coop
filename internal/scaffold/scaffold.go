@@ -31,6 +31,7 @@ func Init(repo, stack string, gateLangs []string) error {
 	dirs := []string{
 		filepath.Join(repo, ".agent", "rules"),
 		filepath.Join(repo, ".agent", "skills"),
+		filepath.Join(repo, ".agent", "presets"), // orchestration recipes live here (coop presets init writes one)
 		filepath.Join(repo, ".claude", "hooks"),
 		filepath.Join(repo, ".codex"),
 		filepath.Join(repo, ".gemini"),
@@ -50,6 +51,8 @@ func Init(repo, stack string, gateLangs []string) error {
 	}{
 		{filepath.Join(repo, "AGENTS.md"), "templates/AGENTS.md", 0o644},
 		{filepath.Join(repo, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644},
+		// One committed loop config (fully commented → no behavior change until you uncomment a key).
+		{filepath.Join(repo, ".agent", "loop.yaml"), "templates/agent/loop.yaml", 0o644},
 		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
 		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
 		// Starter subagents for the orchestrator pattern: the lead delegates reasoning-heavy
@@ -83,6 +86,10 @@ func Init(repo, stack string, gateLangs []string) error {
 	}
 
 	if err := s.copySkills(); err != nil {
+		return err
+	}
+	// The committed per-project config (serve ports, monorepo members). Never clobbers an existing one.
+	if _, err := WriteProject(repo, DetectSubprojects(repo)); err != nil {
 		return err
 	}
 	if err := s.updateGitignore(); err != nil {
@@ -276,11 +283,11 @@ func (s *scaffolder) updateGitignore() error {
 	content := string(data)
 	orig := content
 	// **/.agent/* ignores .agent/ state at any depth, so a monorepo member's working state (its
-	// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets and the loop/ config
-	// (review.md/audit.md/between.md) — is un-ignored at any depth as well, since a large monorepo
-	// member may carry its own; only project.yaml is TOP-LEVEL (the single subprojects+serve config),
-	// so its un-ignore stays root-anchored.
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop/\n!.agent/project.yaml\n" +
+	// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets and the loop.yaml
+	// config — is un-ignored at any depth as well, since a large monorepo member may carry its own;
+	// only project.yaml is TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays
+	// root-anchored.
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop.yaml\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place; likewise
@@ -297,12 +304,12 @@ func (s *scaffolder) updateGitignore() error {
 		// Block present but predates project.yaml — un-ignore the top-level config so it's committed.
 		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!.agent/project.yaml\n", 1)
 	}
-	// loop/ (the committed loop config — review.md/audit.md/between.md) postdates the block; un-ignore
-	// it in an older gitignore that already carries the block but not the loop line. Every pre-loop
-	// block un-ignored .agent/audit.md, so that line is a reliable anchor to insert after (and current
-	// blocks fold audit.md under loop/, so they already contain the loop line and skip this).
-	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/loop/") {
-		content = strings.Replace(content, "!**/.agent/audit.md\n", "!**/.agent/audit.md\n!**/.agent/loop/\n", 1)
+	// loop.yaml (the committed loop config) supersedes the old loop/ dir of .md files: upgrade an
+	// existing `!**/.agent/loop/` un-ignore in place, and un-ignore it in an older gitignore that
+	// carries the block but neither line (anchoring after the audit.md un-ignore every pre-loop block had).
+	content = strings.ReplaceAll(content, "!**/.agent/loop/\n", "!**/.agent/loop.yaml\n")
+	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/loop.yaml") {
+		content = strings.Replace(content, "!**/.agent/audit.md\n", "!**/.agent/audit.md\n!**/.agent/loop.yaml\n", 1)
 	}
 	if content == orig {
 		return nil // already up to date
