@@ -1,0 +1,24 @@
+# coop project config — committed with the repo (unlike the rest of .agent/).
+
+# A monorepo? List member dirs (each its own coop project with a .agent/):
+# subprojects: [runner, packs]
+
+# Ports a dev server in the box listens on — coop publishes each to a stable host
+# port so you can open it in your browser (bind the server to 0.0.0.0 in the box):
+# serve:
+#   ports: [5173]
+
+# box: the posture every run in this repo inherits. An explicit COOP_* env/conf setting still
+# wins for a one-off, so a committed value can only TIGHTEN the default (egress's default is the
+# loosest — "open" — so a repo can pin none but never widen your explicit none).
+# box:
+#   egress: none        # outbound network: "open" (npm + model API) or "none" (offline)
+#   auto_up: false      # auto-start compose.agent.yml sibling services (default true)
+#   network: false      # join the sibling-services network (default true)
+#   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
+#   cpus: "4"
+#   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
+
+# gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
+# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins.
+gate: make check
