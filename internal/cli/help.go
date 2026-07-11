@@ -352,9 +352,13 @@ var commandHelp = map[string]string{
   coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
   sandbox, so no permission prompts), defaults the model dropdown to coop's model,
   drops the permission-mode and subagent pickers, and adds a first "coop" dropdown to
-  switch the CREDENTIAL (account) or PRESET mid-session — the switch is transparent,
-  the conversation is preserved (a shared, credential-independent session store). On a
-  rate limit it auto-rotates to your next signed-in account over that same path.
+  switch the CREDENTIAL (account), PRESET, or PROVIDER mid-session. A credential or
+  same-provider switch is transparent — the conversation is preserved (a shared,
+  credential-independent session store). A PROVIDER switch (picking another signed-in
+  agent, or a cross-provider preset rung rotating in on a rate limit) re-creates the
+  session on the new agent and carries the conversation BEST-EFFORT: coop prepends the
+  thread so far as plain text (labeled approximate; tool results aren't included). On a
+  rate limit it auto-rotates across the ladder's rungs — accounts, models, providers.
 
   The target pins the session's agent, model, and account — an editor can run two
   entries on different ones, e.g. ["acp","claude:opus@work"].
@@ -407,8 +411,9 @@ var commandHelp = map[string]string{
   provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
   rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
   local logins (see coop credentials) — presets name models, not secrets.
-  Cross-provider rungs are the loop's capability: fusion refuses such a ladder (one governor
-  per council), and an ACP session fails over across the lead's own rungs only.
+  Cross-provider rungs rotate on the loop AND on ACP sessions (ACP re-creates the session on
+  the new provider and carries the thread best-effort as text); fusion refuses such a ladder
+  (one governor per council).
 
   Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
   fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).

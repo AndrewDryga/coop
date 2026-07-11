@@ -525,24 +525,24 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if leftover := args[consumed:]; len(leftover) > 0 {
 		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|grok|fusion [governor]][:model][@account] [--preset <name>])", leftover[0])
 	}
-	// A running ACP session can switch its credential/preset via coop's selector; the supervisor
-	// re-execs the inner box with the choice in the env (COOP_ACP_CREDENTIAL/COOP_ACP_PRESET), which
-	// overrides the launch target so the switched identity drives loadRunPreset + the lead below.
+	// A running ACP session can switch its credential/preset/provider via coop's selector; the
+	// supervisor re-execs the inner box with the resolved spawn target in the env
+	// (COOP_ACP_TARGET, wire grammar) plus the preset whose roles mount (COOP_ACP_PRESET). The
+	// target is the COMPLETE spawn intent — provider, model, account are taken from it verbatim
+	// (empty slots mean the provider's defaults), so a provider switch or a cross-provider preset
+	// rung fully replaces the launch identity instead of leaking the old lead's model/account.
 	if os.Getenv("COOP_ACP_INNER") != "" {
-		if cr := os.Getenv("COOP_ACP_CREDENTIAL"); cr != "" {
-			profile, presetName = cr, ""
-		}
 		if ps := os.Getenv("COOP_ACP_PRESET"); ps != "" {
-			presetName, profile = ps, ""
-			// A preset ladder rotation (rate-limit failover) pins the lead to one rung: its model +
-			// account override the preset's first entry via applyOneOff below, WITHOUT dropping the preset
-			// (its roles/prompt still mount). Empty on the first spawn — the preset's own first entry is used.
-			if m := os.Getenv("COOP_ACP_LEAD_MODEL"); m != "" {
-				model = m
+			presetName = ps
+		}
+		if tv := os.Getenv("COOP_ACP_TARGET"); tv != "" {
+			t, terr := agents.ParseTarget(tv)
+			if terr != nil {
+				return 2, fmt.Errorf("COOP_ACP_TARGET: %v", terr)
 			}
-			if cr := os.Getenv("COOP_ACP_LEAD_CRED"); cr != "" {
-				profile = cr
-			}
+			tool, toolSet = t.Provider, true
+			governor = t.Provider // under fusion the same switch retargets the governor
+			model, effort, profile = t.Model, t.Effort, t.Account()
 		}
 	}
 	p, err := a.loadRunPreset(presetName)
@@ -592,7 +592,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 				}
 			}
 		}
-		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, repo, a.acpPresetNames(repo, tool), serveURLs)
+		ctrl := newACPControl(a.cfg, tool, ctrlModel, profile, repo, a.acpPresetNames(repo), serveURLs, isFusion)
 		return a.cmdACPSupervise(inner, ctrl)
 	}
 	a.applyPreset(p, tool)
@@ -669,33 +669,20 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		// "name already in use" hazard across swaps, and `--cidfile` requires the path not to exist.
 		cidDir, cidPath := "", ""
 		env := append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
-		// The current selection (a credential OR a preset) drives which identity the inner box runs
-		// on; each respawn reads it, so a switch via coop's selector lands on the new one.
-		if cred, preset := ctrl.selection(); cred != "" {
-			// If this respawn is pointed at a still-cooling account (the wait-for-reset path when every
-			// account is rate limited), block until it resets before spawning — sits before replay, so
-			// the replay startup grace is unaffected.
-			ctrl.waitForReset(ctx, cred)
-			env = append(env, "COOP_ACP_CREDENTIAL="+cred)
-			acpproxy.Trace("spawn box on credential=%s", cred)
-		} else if preset != "" {
-			env = append(env, "COOP_ACP_PRESET="+preset)
-			// The preset's model ladder fails over on a rate limit: spawn the lead on the active rung
-			// (model+account), keeping the preset's roles. Empty when the ladder can't rotate (no accounts,
-			// preset won't load) — the inner then uses the preset's own first entry. Block first if that
-			// rung is still cooling (the all-rungs-limited wait path), same as the credential branch.
-			if model, cred := ctrl.presetTarget(); model != "" || cred != "" {
+		// The current selection (a credential, a preset, or a provider) resolves to ONE spawn
+		// target — provider, model, account in the wire grammar — each respawn re-reads it, so a
+		// switch via coop's selector (or a preset-ladder rotation, cross-provider included) lands
+		// on the new identity. Block first if the target is still rate-limit cooling (the
+		// wait-for-reset paths) — sits before replay, so the replay startup grace is unaffected.
+		if t, psName, ok := ctrl.spawnTarget(); ok {
+			if psName != "" {
+				env = append(env, "COOP_ACP_PRESET="+psName)
 				ctrl.waitForPresetRung(ctx)
-				if model != "" {
-					env = append(env, "COOP_ACP_LEAD_MODEL="+model)
-				}
-				if cred != "" {
-					env = append(env, "COOP_ACP_LEAD_CRED="+cred)
-				}
-				acpproxy.Trace("spawn box on preset=%s rung=%s@%s", preset, model, cred)
-			} else {
-				acpproxy.Trace("spawn box on preset=%s", preset)
+			} else if acct := t.Account(); acct != "" {
+				ctrl.waitForReset(ctx, acct)
 			}
+			env = append(env, "COOP_ACP_TARGET="+t.String())
+			acpproxy.Trace("spawn box on target=%s preset=%s", t.String(), psName)
 		}
 		if a.rt.SupportsCIDFile() {
 			if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {

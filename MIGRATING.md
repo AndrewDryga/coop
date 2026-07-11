@@ -42,11 +42,11 @@ ladder); the separate `model:`/`models:` keys retire:
 | a role's `agent: codex` + `model: gpt-5.5` | `agent: codex:gpt-5.5` — the model rides `agent:` (a role runs its default account; no `@account`) |
 
 A lead ladder MAY be cross-provider (`agent: [claude:opus, codex:gpt-5.5]`) — the loop rotates
-across vendors on a rate limit, running each rung's agent. The lead (the default agent, and what a
-single run uses) is the first rung's provider. Cross-provider rungs are the loop's capability:
-`coop fusion` refuses such a ladder (one governor for the whole council), and an ACP session fails
-over across the lead's own rungs only. A ROLE's `agent:` is exactly one target — fallback ladders
-belong to the lead.
+across vendors on a rate limit, running each rung's agent, and an ACP session does too (it
+re-creates the session on the new provider and carries the conversation best-effort as a labeled
+plain-text preamble). The lead (the default agent, and what a single run uses) is the first rung's
+provider. `coop fusion` refuses a cross-provider ladder (one governor for the whole council). A
+ROLE's `agent:` is exactly one target — fallback ladders belong to the lead.
 
 ## v3: retired command aliases
 

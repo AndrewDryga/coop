@@ -24,7 +24,7 @@ func newTestControl(t *testing.T) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", dir, []string{"frontier"}, nil)
+	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", dir, []string{"frontier"}, nil, false)
 }
 
 func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMessage) {
@@ -183,7 +183,7 @@ func newGeminiControl(t *testing.T, model string) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	return newACPControl(&config.Config{ConfigDir: dir}, "gemini", model, "", dir, []string{"frontier"}, nil)
+	return newACPControl(&config.Config{ConfigDir: dir}, "gemini", model, "", dir, []string{"frontier"}, nil, false)
 }
 
 // modelOption is the subset of a synthesized `model` configOption the tests assert on.
@@ -442,7 +442,7 @@ func TestACPControlPresetOwnsModel(t *testing.T) {
 // TestACPControlSessionReadyNonClaude: mode=bypassPermissions is a claude option, so a non-claude lead
 // must NOT get it (yolo comes from autoReply instead); coop's model set still goes out.
 func TestACPControlSessionReadyNonClaude(t *testing.T) {
-	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), nil, nil)
+	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), nil, nil, false)
 	var joined string
 	for _, m := range c.sessionReady("s1") {
 		joined += string(m)
@@ -840,7 +840,7 @@ func presetControlFor(t *testing.T, lead string) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", "", dir, []string{"frontier"}, nil)
+	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", "", dir, []string{"frontier"}, nil, false)
 	c.sel = "preset:frontier"
 	c.rotPreset = "frontier"
 	c.rot = newRotation([]agents.Target{
@@ -1094,5 +1094,248 @@ func TestACPControlOpportunisticGeminiCache(t *testing.T) {
 	got, ok := loadModelsCache(c.cfg, "gemini")
 	if !ok || len(got.Models) != 2 || got.Models[0].ID != "gemini-2.5-pro" || got.Models[1].ID != "gemini-2.5-flash" {
 		t.Fatalf("gemini session/new should cache the availableModels ids, got (%v, %v)", got, ok)
+	}
+}
+
+// spawnTarget resolves each selection kind to ONE full target and re-derives the per-lead
+// state on a provider change — the cross-provider switch's foundation.
+func TestACPSpawnTarget(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "claude", "work")
+	signInCred(t, c.cfg, "codex", "work")
+
+	// A credential selection: current lead + coop's model + the picked account.
+	c.sel = "cred:work"
+	tt, ps, ok := c.spawnTarget()
+	if !ok || ps != "" || tt.String() != "claude:opus[1m]@work" {
+		t.Fatalf("cred selection = (%q, %q, %v), want claude:opus[1m]@work", tt, ps, ok)
+	}
+	if c.lead != "claude" {
+		t.Fatalf("cred selection must not retarget the lead, got %q", c.lead)
+	}
+
+	// A provider selection: that provider bare (default model + account), and the control
+	// retargets — creds/accounts belong to the new lead, the old model pick dies.
+	c.sel = "agent:codex"
+	tt, ps, ok = c.spawnTarget()
+	if !ok || ps != "" || tt.String() != "codex" {
+		t.Fatalf("agent selection = (%q, %q, %v), want bare codex", tt, ps, ok)
+	}
+	if c.lead != "codex" || c.model != "" || c.leadUsesSetModel {
+		t.Errorf("retarget: lead=%q model=%q setModel=%v, want codex/\"\"/false", c.lead, c.model, c.leadUsesSetModel)
+	}
+	if len(c.accounts) != 1 || c.accounts[0] != "work" {
+		t.Errorf("retarget accounts = %v, want codex's signed-in [work]", c.accounts)
+	}
+}
+
+// A preset selection spawns the ACTIVE rung as the full target — a cross-provider rung swaps
+// the lead. The rotation is pre-built (bypassing disk) exactly like presetControl does.
+func TestACPSpawnTargetCrossProviderRung(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "gemini", "personal")
+	c.sel = "preset:frontier"
+	c.rotPreset = "frontier"
+	c.rot = newRotation([]agents.Target{
+		{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}},
+		{Provider: "gemini", Model: "gemini-3.5-pro", Accounts: []string{"personal"}},
+	})
+	c.rot.idx = 1 // the ladder rotated onto the gemini rung
+
+	tt, ps, ok := c.spawnTarget()
+	if !ok || ps != "frontier" || tt.String() != "gemini:gemini-3.5-pro@personal" {
+		t.Fatalf("cross-provider rung = (%q, %q, %v), want gemini:gemini-3.5-pro@personal + preset frontier", tt, ps, ok)
+	}
+	if c.lead != "gemini" || !slices.Equal(c.accounts, []string{"personal"}) {
+		t.Errorf("retarget onto the rung's provider: lead=%q accounts=%v", c.lead, c.accounts)
+	}
+}
+
+// The coop_setup selector offers other SIGNED-IN providers (never the current lead, never
+// unsigned ones, never under fusion), and fromEditor refuses a bogus agent: value instead of
+// sending the respawn loop chasing a spawn that can never come up.
+func TestACPProviderSelector(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "claude", "work")
+	signInCred(t, c.cfg, "codex", "work")
+
+	var opt struct {
+		Options []acpOption `json:"options"`
+	}
+	if err := json.Unmarshal(c.setupOption(), &opt); err != nil {
+		t.Fatal(err)
+	}
+	var vals []string
+	for _, o := range opt.Options {
+		vals = append(vals, o.Value)
+	}
+	if !slices.Contains(vals, "agent:codex") {
+		t.Errorf("selector %v missing agent:codex (signed in)", vals)
+	}
+	if slices.Contains(vals, "agent:claude") || slices.Contains(vals, "agent:gemini") || slices.Contains(vals, "agent:grok") {
+		t.Errorf("selector %v must not offer the current lead or unsigned providers", vals)
+	}
+
+	// A fusion governor offers no provider switch.
+	c.fusion = true
+	if err := json.Unmarshal(c.setupOption(), &opt); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range opt.Options {
+		if strings.HasPrefix(o.Value, "agent:") {
+			t.Errorf("fusion selector offers %q, want no provider entries", o.Value)
+		}
+	}
+	c.fusion = false
+
+	// A bogus agent: set is refused — acked, no restart, selection unchanged.
+	set := []byte(`{"jsonrpc":"2.0","id":"s1","method":"session/set_config_option","params":{"sessionId":"sess1","configId":"coop_setup","value":"agent:bogus"}}` + "\n")
+	handled, _, _, restart := c.fromEditor(set)
+	if !handled || restart {
+		t.Errorf("bogus agent set: handled=%v restart=%v, want handled + no restart", handled, restart)
+	}
+	if c.sel == "agent:bogus" {
+		t.Error("bogus agent value must not become the selection")
+	}
+	// A real signed-in provider IS accepted and restarts.
+	set = []byte(`{"jsonrpc":"2.0","id":"s2","method":"session/set_config_option","params":{"sessionId":"sess1","configId":"coop_setup","value":"agent:codex"}}` + "\n")
+	if _, _, _, restart := c.fromEditor(set); !restart || c.sel != "agent:codex" {
+		t.Errorf("valid provider set: restart=%v sel=%q, want a restart onto agent:codex", restart, c.sel)
+	}
+}
+
+// The carried history records (user, assistant) pairs: fromEditor captures the prompt text,
+// toEditor accumulates the turn's chunks and flushes on the prompt's terminal response —
+// bounded per entry and per session.
+func TestACPHistoryCapture(t *testing.T) {
+	c := newTestControl(t)
+	prompt := []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"what is two plus two?"}]}}` + "\n")
+	c.fromEditor(prompt)
+	for _, chunk := range []string{"it is ", "four."} {
+		line := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` + chunk + `"}}}}` + "\n")
+		c.captureTurn(line)
+	}
+	c.captureTurn([]byte(`{"jsonrpc":"2.0","id":"r1","result":{"stopReason":"end_turn"}}` + "\n"))
+
+	c.mu.Lock()
+	h := c.history["s1"]
+	c.mu.Unlock()
+	if h == nil || len(h.entries) != 2 {
+		t.Fatalf("history = %+v, want the (user, assistant) pair", h)
+	}
+	if h.entries[0].role != "user" || h.entries[0].text != "what is two plus two?" {
+		t.Errorf("user entry = %+v", h.entries[0])
+	}
+	if h.entries[1].role != "assistant" || h.entries[1].text != "it is four." {
+		t.Errorf("assistant entry = %+v", h.entries[1])
+	}
+	if h.lead != "claude" {
+		t.Errorf("history origin = %q, want the lead it ran on", h.lead)
+	}
+}
+
+// History is byte-bounded: a long assistant turn keeps its TAIL, and a session over the cap
+// evicts oldest-first instead of growing without bound.
+func TestACPHistoryBounds(t *testing.T) {
+	c := newTestControl(t)
+	c.mu.Lock()
+	long := strings.Repeat("x", historyEntryBytes) + "THE-END"
+	c.turnText["s1"] = nil
+	c.mu.Unlock()
+	// Feed one oversized turn through the chunk path.
+	line := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` + long + `"}}}}` + "\n")
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"go"}]}}` + "\n"))
+	c.captureTurn(line)
+	c.captureTurn([]byte(`{"jsonrpc":"2.0","id":"r1","result":{}}` + "\n"))
+	c.mu.Lock()
+	got := c.history["s1"].entries[1].text
+	c.mu.Unlock()
+	if len(got) != historyEntryBytes || !strings.HasSuffix(got, "THE-END") {
+		t.Errorf("assistant entry len=%d suffix=%q — want the %d-byte TAIL kept", len(got), got[max(0, len(got)-7):], historyEntryBytes)
+	}
+	// Session cap: many entries evict the oldest, never exceeding the budget (+1 entry slack).
+	c.mu.Lock()
+	for i := 0; i < 40; i++ {
+		c.appendHistoryLocked("s2", "user", strings.Repeat("y", 2048)+itoa(i))
+	}
+	h := c.history["s2"]
+	c.mu.Unlock()
+	if h.size > historyMaxBytes+historyEntryBytes {
+		t.Errorf("history size %d blew the cap %d", h.size, historyMaxBytes)
+	}
+	if strings.HasSuffix(h.entries[0].text, "0") {
+		t.Error("oldest entry survived eviction")
+	}
+}
+
+// After SessionRecreated, the editor's NEXT prompt is rewritten with the labeled preamble —
+// once. A session that reloaded fine never gets one.
+func TestACPPreambleOnNextPrompt(t *testing.T) {
+	c := newTestControl(t)
+	// Prior conversation, recorded while the session ran on claude.
+	c.mu.Lock()
+	c.appendHistoryLocked("s1", "user", "explain the bug")
+	c.appendHistoryLocked("s1", "assistant", "it is a race in the loop")
+	c.mu.Unlock()
+	c.sessionRecreated("s1")
+
+	prompt := []byte(`{"jsonrpc":"2.0","id":"r9","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"now fix it"}]}}` + "\n")
+	handled, _, toAdapter, restart := c.fromEditor(prompt)
+	if handled || restart {
+		t.Fatalf("a prompt rewrite must not be handled/restart (got %v/%v)", handled, restart)
+	}
+	s := string(toAdapter)
+	if s == "" {
+		t.Fatal("expected a rewritten prompt carrying the preamble")
+	}
+	for _, want := range []string{"carried over from claude", "explain the bug", "it is a race in the loop", "now fix it", `"id":"r9"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("rewritten prompt missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "now fix it") != 1 {
+		t.Errorf("the outgoing prompt must not be duplicated into its own preamble:\n%s", s)
+	}
+	// One-shot: the following prompt goes through untouched.
+	prompt2 := []byte(`{"jsonrpc":"2.0","id":"r10","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"thanks"}]}}` + "\n")
+	if _, _, toAdapter2, _ := c.fromEditor(prompt2); toAdapter2 != nil {
+		t.Errorf("second prompt after the re-create must pass through, got rewrite: %s", toAdapter2)
+	}
+	// A session that never re-created is never wrapped.
+	other := []byte(`{"jsonrpc":"2.0","id":"r11","method":"session/prompt","params":{"sessionId":"s2","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	if _, _, toAdapter3, _ := c.fromEditor(other); toAdapter3 != nil {
+		t.Errorf("an intact session must not be wrapped, got: %s", toAdapter3)
+	}
+}
+
+// A transparent resend after a re-create carries the preamble too — the rate-limit rotation
+// landed on another provider mid-turn, and the in-flight prompt is the fresh thread's first.
+func TestACPPreambleOnResend(t *testing.T) {
+	c := newTestControl(t)
+	prompt := []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"summarize the incident"}]}}` + "\n")
+	c.fromEditor(prompt) // records lastPrompt + the user history entry
+	c.mu.Lock()
+	c.appendHistoryLocked("s1", "assistant", "half an answer before the limit")
+	c.resend["s1"] = true
+	c.mu.Unlock()
+	c.sessionRecreated("s1")
+
+	out := string(c.resumePrompt("s1"))
+	for _, want := range []string{"carried over from claude", "half an answer before the limit", "summarize the incident", `"id":"r1"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resent prompt missing %q:\n%s", want, out)
+		}
+	}
+	if c.resumePrompt("s1") != nil {
+		t.Error("resend is one-shot")
+	}
+	// Without a re-create, a resend stays byte-identical to the original prompt.
+	c2 := newTestControl(t)
+	c2.fromEditor(prompt)
+	c2.mu.Lock()
+	c2.resend["s1"] = true
+	c2.mu.Unlock()
+	if got := string(c2.resumePrompt("s1")); strings.Contains(got, "carried over") {
+		t.Errorf("same-store resend must not grow a preamble: %s", got)
 	}
 }

@@ -59,27 +59,6 @@ func TestFusionLadderGuard(t *testing.T) {
 	}
 }
 
-// acpLadder filters a cross-provider ladder to the LEAD's own rungs (ACP's respawn env can't
-// swap providers); a same-provider ladder passes through whole.
-func TestACPLadder(t *testing.T) {
-	cross := &preset.Preset{
-		Name: "x", LeadAgent: "claude",
-		LeadLadder: []agents.Target{
-			{Provider: "claude", Model: "fable"},
-			{Provider: "codex", Model: "gpt-5.5"},
-			{Provider: "claude", Model: "opus", Accounts: []string{"work"}},
-		},
-	}
-	got := acpLadder(cross)
-	if len(got) != 2 || got[0].String() != "claude:fable" || got[1].String() != "claude:opus@work" {
-		t.Errorf("acpLadder(cross) = %v, want the two claude rungs only", got)
-	}
-	same := cliFrontier()
-	if got := acpLadder(same); len(got) != len(same.LeadLadder) {
-		t.Errorf("acpLadder(same-provider) = %v, want the whole ladder", got)
-	}
-}
-
 // applyPreset seeds role + lead selections; explicit CLI flags applied after still win;
 // and a native role must never clobber the lead's own model.
 func TestApplyPresetPrecedence(t *testing.T) {

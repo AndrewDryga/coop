@@ -453,33 +453,96 @@ func TestProxyToEditorRestart(t *testing.T) {
 // TestProxyReplayWarnsOnFailedLoad: if a restored session's session/load comes back an error on the
 // restarted box (e.g. its transcript wasn't on the shared store for the new credential), the loss is
 // surfaced on warnOut instead of vanishing silently.
-func TestProxyReplayWarnsOnFailedLoad(t *testing.T) {
+// A turned session whose session/load FAILS after a restart (a provider switch, or a lost
+// transcript) is re-created fresh in a second replay round: the editor's id is remapped to the
+// new box id, SessionRecreated fires (coop's cue to carry the conversation best-effort), and
+// the loss is named on stderr — not a silent dead session.
+func TestProxyReplayRecreatesFailedLoad(t *testing.T) {
 	var buf bytes.Buffer
 	old := warnOut
 	warnOut = &buf
 	defer func() { warnOut = old }()
 
+	var recreated []string
 	p := &proxy{
 		out:       io.Discard,
 		sessions:  map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
 		byAdapter: map[string]string{},
 		newReqs:   map[string]json.RawMessage{},
 		pending:   map[string]bool{},
+		hooks:     &Hooks{SessionRecreated: func(sid string) { recreated = append(recreated, sid) }},
 	}
 	fc := newFakeChild()
 	br := bufio.NewReader(fc.outR)
-	// Read the synthetic session/load coop writes, answer it with an error.
+	// Round 1: fail the synthetic session/load. Round 2: answer the re-create session/new with a
+	// fresh box id, and confirm it reused the ORIGINAL params (cwd survives the provider switch).
 	go func() {
 		r := bufio.NewReader(fc.inR)
 		line, _ := r.ReadBytes('\n')
 		h := parse(line)
 		writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"error":{"code":-1,"message":"no such session"}}`)
+		line, _ = r.ReadBytes('\n')
+		h = parse(line)
+		if m := parse(line).Method; m != "session/new" {
+			t.Errorf("round 2 sent %q, want session/new", m)
+		}
+		if !strings.Contains(string(line), `"cwd":"/w"`) {
+			t.Errorf("re-create must reuse the original params, sent: %s", line)
+		}
+		writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"result":{"sessionId":"S1b"}}`)
 	}()
 	if err := p.replay(fc.child(), br); err != nil {
 		t.Fatalf("replay returned %v", err)
 	}
-	if !strings.Contains(buf.String(), "did not reload") || !strings.Contains(buf.String(), "S1") {
-		t.Errorf("expected a lost-session warning naming S1, got: %q", buf.String())
+	if s := p.sessions["S1"]; s == nil || s.adapterID != "S1b" {
+		t.Fatalf("editor session S1 must remap to the re-created box id S1b, got %+v", p.sessions["S1"])
+	}
+	if len(recreated) != 1 || recreated[0] != "S1" {
+		t.Errorf("SessionRecreated fired %v, want exactly [S1]", recreated)
+	}
+	if !strings.Contains(buf.String(), "re-creating it fresh") || !strings.Contains(buf.String(), "S1") {
+		t.Errorf("expected a re-create warning naming S1, got: %q", buf.String())
+	}
+}
+
+// If even the second-round session/new fails, the session is genuinely gone — loud warn, no
+// remap, no SessionRecreated (there is nothing to carry the conversation INTO).
+func TestProxyReplayRecreateFails(t *testing.T) {
+	var buf bytes.Buffer
+	old := warnOut
+	warnOut = &buf
+	defer func() { warnOut = old }()
+
+	var recreated []string
+	p := &proxy{
+		out:       io.Discard,
+		sessions:  map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{},
+		pending:   map[string]bool{},
+		hooks:     &Hooks{SessionRecreated: func(sid string) { recreated = append(recreated, sid) }},
+	}
+	fc := newFakeChild()
+	br := bufio.NewReader(fc.outR)
+	go func() {
+		r := bufio.NewReader(fc.inR)
+		for i := 0; i < 2; i++ { // fail the load, then fail the re-create too
+			line, _ := r.ReadBytes('\n')
+			h := parse(line)
+			writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"error":{"code":-1,"message":"broken box"}}`)
+		}
+	}()
+	if err := p.replay(fc.child(), br); err != nil {
+		t.Fatalf("replay returned %v", err)
+	}
+	if s := p.sessions["S1"]; s == nil || s.adapterID != "S1" {
+		t.Fatalf("a failed re-create must not remap, got %+v", p.sessions["S1"])
+	}
+	if len(recreated) != 0 {
+		t.Errorf("SessionRecreated fired %v for a failed re-create, want none", recreated)
+	}
+	if !strings.Contains(buf.String(), "could not be re-created") {
+		t.Errorf("expected the re-create failure warning, got: %q", buf.String())
 	}
 }
 
@@ -756,5 +819,36 @@ func TestProxyDisconnectDuringReplayReturnsCleanly(t *testing.T) {
 	case <-h.done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return after a mid-replay disconnect (the new box was orphaned)")
+	}
+}
+
+// A FromEditor REWRITE (handled=false, toAdapter set) forwards the rewritten line through the
+// normal path: the child sees the new body under the editor's request id, and the response
+// routes back to the editor — pending tracking intact (unlike handled-mode injections, whose
+// responses are swallowed).
+func TestProxyFromEditorRewriteKeepsRequestPath(t *testing.T) {
+	hooks := &Hooks{FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
+		if parse(line).Method != "session/prompt" {
+			return false, nil, nil, false
+		}
+		rew := []byte(`{"jsonrpc":"2.0","id":7,"method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"PREAMBLE + original"}]}}` + "\n")
+		return false, nil, rew, false
+	}}
+	h := newProxyHarness(t, 1, hooks)
+	c1, childIn1 := h.children[0], h.childIn[0]
+	h.initialize(0)
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":7,"method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"original"}]}}`)
+	got := readLine(t, childIn1)
+	if !strings.Contains(string(got), "PREAMBLE + original") {
+		t.Fatalf("child received %s, want the rewritten prompt", got)
+	}
+	if id := idStr(t, got); id != "7" {
+		t.Fatalf("rewrite must keep the editor's request id, got %q", id)
+	}
+	// The child's answer to that id reaches the editor — the request stayed a normal pending one.
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":7,"result":{"stopReason":"end_turn"}}`)
+	if id := idStr(t, readLine(t, h.clientOut)); id != "7" {
+		t.Fatalf("editor got response id %q, want 7", id)
 	}
 }

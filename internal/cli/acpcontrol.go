@@ -28,14 +28,14 @@ const defaultLimitCooldown = 5 * time.Minute
 // turn breaks the chain.
 const maxACPLimitWaits = 12
 
-// acpPresetNames lists the repo's presets whose lead is the current ACP agent — the SAME-provider
-// presets safe to switch into transparently (a different-provider preset would be a provider switch,
-// which coop can't do without losing the conversation; see the backlog).
-func (a *app) acpPresetNames(repo, lead string) []string {
+// acpPresetNames lists the repo's loadable presets for the ACP selector — ANY lead: switching to
+// a different-provider preset is a provider switch, which the proxy now survives (the session is
+// re-created and the conversation carried best-effort as a text preamble; see spawnTarget).
+func (a *app) acpPresetNames(repo string) []string {
 	globalDir := a.cfg.GlobalPresetsDir()
 	var out []string
 	for _, name := range preset.List(repo, globalDir) {
-		if p, err := preset.Load(repo, globalDir, name); err == nil && p.LeadAgent == lead {
+		if _, err := preset.Load(repo, globalDir, name); err == nil {
 			out = append(out, name)
 		}
 	}
@@ -60,10 +60,11 @@ var stripConfigIDs = map[string]bool{"mode": true, "agent": true}
 type acpControl struct {
 	cfg     *config.Config // for expanding a selected preset's model ladder into rotation targets
 	repo    string         // repo root, to load a preset by name on a coop_setup switch
-	lead    string         // lead agent (claude/codex/gemini)
+	lead    string         // the CURRENT lead agent — re-derived on a provider switch (see retarget)
 	model   string         // coop's resolved model for the lead ("" → leave the adapter's default)
 	creds   []string       // the lead's credentials (accounts), in order
 	presets []string       // the repo's presets, in order
+	fusion  bool           // a fusion governor session — the selector offers no provider switch
 
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
@@ -96,15 +97,42 @@ type acpControl struct {
 
 	serveURLs []string        // published-port lines to show the editor (e.g. "box :5173 → http://localhost:24187")
 	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
+
+	// Best-effort conversation carry across a session re-create (a provider switch, or a lost
+	// transcript): coop retains a bounded plain-text history per session — it already sees both
+	// directions — and when the proxy re-creates a session (SessionRecreated), the next outgoing
+	// prompt is wrapped with a labeled preamble. Approximate by design: text only, no tool calls.
+	history      map[string]*sessHistory // editor sessionId -> its bounded conversation history
+	turnText     map[string][]byte       // editor sessionId -> the in-progress assistant turn's text (tail-bounded)
+	needPreamble map[string]bool         // editor sessionId -> wrap the next outgoing prompt with the history
 }
 
-func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, serveURLs []string) *acpControl {
+// sessHistory is one session's carried conversation: (user, assistant) texts in order, plus the
+// provider it ran on (for the preamble's "carried from X" label — last writer wins across a
+// switch chain). size tracks the entries' total bytes for the eviction cap.
+type sessHistory struct {
+	lead    string
+	entries []histEntry
+	size    int
+}
+
+type histEntry struct{ role, text string }
+
+// History bounds: a per-session byte cap (oldest entries evicted) and per-entry text caps. A
+// user prompt keeps its HEAD (the ask leads); an assistant turn keeps its TAIL (conclusions
+// land last). Plain bytes, not tokens — close enough for a best-effort carry.
+const (
+	historyMaxBytes   = 32 << 10
+	historyEntryBytes = 4 << 10
+)
+
+func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, serveURLs []string, fusion bool) *acpControl {
 	sel := "cred:" + cfg.ActiveProfile(lead)
 	if cred != "" {
 		sel = "cred:" + cred
 	}
 	return &acpControl{
-		cfg: cfg, repo: repo,
+		cfg: cfg, repo: repo, fusion: fusion,
 		lead: lead, model: model, creds: cfg.Profiles(lead), presets: presets,
 		accounts:      accountsFor(cfg, lead),
 		sel:           sel,
@@ -117,18 +145,31 @@ func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, 
 		waits:         map[string]int{},
 		serveURLs:     serveURLs,
 		reported:      map[string]bool{},
+		history:       map[string]*sessHistory{},
+		turnText:      map[string][]byte{},
+		needPreamble:  map[string]bool{},
 	}
 }
 
 // hooks wires the controller into the acpproxy.
 func (c *acpControl) hooks() *acpproxy.Hooks {
 	return &acpproxy.Hooks{
-		ToEditor:     c.toEditor,
-		SessionReady: c.sessionReady,
-		FromEditor:   c.fromEditor,
-		AutoReply:    c.autoReply,
-		ResumePrompt: c.resumePrompt,
+		ToEditor:         c.toEditor,
+		SessionReady:     c.sessionReady,
+		FromEditor:       c.fromEditor,
+		AutoReply:        c.autoReply,
+		ResumePrompt:     c.resumePrompt,
+		SessionRecreated: c.sessionRecreated,
 	}
+}
+
+// sessionRecreated marks a session whose conversation did not carry across a restart (the proxy
+// re-created it fresh — a provider switch, or a lost transcript): the next outgoing prompt gets
+// the best-effort history preamble, whether that's a transparent resend or the editor's next message.
+func (c *acpControl) sessionRecreated(session string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.needPreamble[session] = true
 }
 
 // resumePrompt returns the prompt to transparently re-send for a session once its box is back after a
@@ -148,7 +189,18 @@ func (c *acpControl) resumePrompt(session string) []byte {
 		return nil
 	}
 	delete(c.resend, session)
-	return c.lastPrompt[session]
+	prompt := c.lastPrompt[session]
+	// The restart that triggered this resend may have re-created the session (a cross-provider
+	// rotation): the resent prompt is then the first into a fresh thread, so it carries the
+	// history preamble — same one-shot flag the editor's-next-prompt path consumes.
+	if c.needPreamble[session] && len(prompt) > 0 {
+		delete(c.needPreamble, session)
+		if pre := c.preambleLocked(session); pre != "" {
+			prompt = wrapPromptLine(prompt, pre)
+			c.lastPrompt[session] = prompt
+		}
+	}
+	return prompt
 }
 
 // selection returns the current credential and preset (one is "", the other set) the factory reads
@@ -195,7 +247,10 @@ func (c *acpControl) presetRotation() *rotation {
 	if err != nil {
 		return nil
 	}
-	targets, err := expandLadder(c.cfg, p.LeadAgent, acpLadder(p))
+	// The whole ladder, cross-provider rungs included: the respawn env carries a full target,
+	// so a rung on another provider swaps the lead (the proxy re-creates the session there and
+	// the conversation is carried best-effort as a text preamble).
+	targets, err := expandLadder(c.cfg, p.LeadAgent, p.LeadLadder)
 	if err != nil || len(targets) == 0 {
 		return nil
 	}
@@ -203,36 +258,73 @@ func (c *acpControl) presetRotation() *rotation {
 	return c.rot
 }
 
-// acpLadder is the preset lead ladder as ACP can honor it: the LEAD's own rungs only. The
-// respawn env (COOP_ACP_LEAD_MODEL/_CRED) carries no provider and the inner always spawns the
-// lead agent, so a cross-provider rung is unreachable on this surface — that fallback is the
-// loop's (fusion errors on it outright). Filtering beats erroring here: rung 0 is always the
-// lead's, so failover keeps working across the lead's own models/accounts.
-func acpLadder(p *preset.Preset) []agents.Target {
-	if !p.CrossProvider() {
-		return p.LeadLadder
-	}
-	var ladder []agents.Target
-	for _, t := range p.LeadLadder {
-		if t.Provider == p.LeadAgent {
-			ladder = append(ladder, t)
+// spawnTarget resolves what the NEXT box spawn runs — the full target (provider, model,
+// account) the factory exports as COOP_ACP_TARGET, plus the preset whose roles mount — and
+// re-derives the control's per-lead state when the provider changes hands (a manual provider
+// switch, a different-lead preset, or a cross-provider preset rung). ok=false only when the
+// selection is unrecognizable (the factory then spawns on the launch args alone).
+func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool) {
+	_, psName := c.selection()
+	var rung *agents.Target
+	if psName != "" {
+		if rot := c.presetRotation(); rot != nil { // locks internally — resolve before taking c.mu
+			r := rot.active()
+			rung = &r
 		}
-	}
-	return ladder
-}
-
-// presetTarget returns the active ladder rung's (model, credential) for the current preset — what the
-// factory spawns the lead on. ("","") when there's no rotation, so the inner falls back to the preset's
-// own first entry.
-func (c *acpControl) presetTarget() (model, cred string) {
-	rot := c.presetRotation()
-	if rot == nil {
-		return "", ""
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	t := rot.active()
-	return t.Model, t.Account()
+	switch {
+	case strings.HasPrefix(c.sel, "cred:"):
+		// A credential switch stays on the current lead and carries coop's model pick, so the
+		// respawned adapter keeps it even where the model rides the spawn command (gemini).
+		t = agents.Target{Provider: c.lead, Model: c.model}
+		if v := strings.TrimPrefix(c.sel, "cred:"); v != "" {
+			t.Accounts = []string{v}
+		}
+	case strings.HasPrefix(c.sel, "agent:"):
+		// A provider switch: that provider's marked default account and default model — the old
+		// lead's model id means nothing to it.
+		t = agents.Target{Provider: strings.TrimPrefix(c.sel, "agent:")}
+	case psName != "":
+		if rung != nil {
+			t = *rung // the active ladder rung — provider included (a cross-provider rung swaps the lead)
+		} else {
+			// No rotation (no signed-in rungs / unloadable): spawn the preset's lead bare; the
+			// inner's applyPreset then uses the preset's own first entry.
+			t = agents.Target{Provider: c.presetLeadLocked(psName)}
+		}
+	default:
+		return agents.Target{}, "", false
+	}
+	c.retargetLocked(t.Provider)
+	return t, psName, true
+}
+
+// presetLeadLocked resolves a preset's lead provider for the no-rotation spawn fallback,
+// falling back to the current lead when the preset won't load (the inner will surface the
+// real load error). Called with c.mu held; preset.Load is pure file reads.
+func (c *acpControl) presetLeadLocked(name string) string {
+	if p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name); err == nil {
+		return p.LeadAgent
+	}
+	return c.lead
+}
+
+// retargetLocked re-derives the per-lead state when the next spawn's provider differs from the
+// current lead: the selector's credential list, the auto-rotation accounts, and the set-model
+// latch all belong to the NEW lead, and coop's remembered model pick dies (its id is the old
+// provider's). Rate-limit cooldowns keyed by account name are left alone — stale entries for the
+// old lead expire on their own. Called with c.mu held.
+func (c *acpControl) retargetLocked(provider string) {
+	if provider == "" || provider == c.lead {
+		return
+	}
+	c.lead = provider
+	c.creds = c.cfg.Profiles(provider)
+	c.accounts = accountsFor(c.cfg, provider)
+	c.model = ""
+	c.leadUsesSetModel = false
 }
 
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
@@ -290,6 +382,10 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 	if rewritten, rotated := c.maybeRotate(line); rotated {
 		return rewritten, true
 	}
+	// The carried-history capture: assistant chunks accumulate, a prompt's terminal response
+	// flushes the turn. After maybeRotate (a rate-limited turn resends — don't flush its partial),
+	// before chunkGate (which forgets the terminal's prompt→session mapping).
+	c.captureTurn(line)
 	// Buffer a rate-limit notice chunk until the turn's outcome is known — suppressed if the turn then
 	// rate-limits (a seamless resend), flushed otherwise. This never drops a legit chunk that merely
 	// mentions "rate limit"/"quota"/429, because a chunk is only dropped when a rate-limit error follows.
@@ -653,16 +749,21 @@ func formatWait(d time.Duration) string {
 // on it leaked the notice before maybeRotate could drop it (the reported "message wasn't suppressed").
 // A single-rung preset (no failover to hide the notice behind) is skipped, so its limit message shows.
 func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
-	cred, preset := c.selection()
-	if cred == "" && preset == "" {
-		return false, nil
-	}
-	if preset != "" {
-		if rot := c.presetRotation(); rot == nil || !rot.rotates() {
-			return false, nil
+	// Holding applies only when a rotation could seamlessly resend (a credential session, or a
+	// preset with a rotating ladder). The TERMINAL bookkeeping below runs for every selection kind
+	// — an agent: (provider) session must still forget completed prompts, or the map leaks.
+	gated := false
+	if cred, preset := c.selection(); cred != "" {
+		gated = true
+	} else if preset != "" {
+		if rot := c.presetRotation(); rot != nil && rot.rotates() {
+			gated = true
 		}
 	}
 	if s, text, ok := agentChunk(line); ok {
+		if !gated {
+			return false, nil
+		}
 		if hint := detectLimit(text, time.Now()); hint.limited && !hint.outputLimited {
 			c.mu.Lock()
 			c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
@@ -736,6 +837,142 @@ func agentChunk(line []byte) (session, text string, ok bool) {
 		return "", "", false
 	}
 	return m.Params.SessionID, m.Params.Update.Content.Text, true
+}
+
+// captureTurn accumulates the assistant side of the carried history: message chunks build the
+// in-progress turn (tail-bounded), and a prompt's terminal response flushes it as one history
+// entry. Runs AFTER maybeRotate, so a rate-limited turn doesn't flush — its partial text stays
+// buffered and completes when the transparent resend re-runs the turn.
+func (c *acpControl) captureTurn(line []byte) {
+	if s, text, ok := agentChunk(line); ok {
+		c.mu.Lock()
+		buf := append(c.turnText[s], text...)
+		if len(buf) > historyEntryBytes {
+			buf = buf[len(buf)-historyEntryBytes:] // keep the TAIL — conclusions land last
+		}
+		c.turnText[s] = buf
+		c.mu.Unlock()
+		return
+	}
+	if id := terminalResponseID(line); id != "" {
+		c.mu.Lock()
+		if s := c.promptSession[id]; s != "" {
+			if len(c.turnText[s]) > 0 {
+				c.appendHistoryLocked(s, "assistant", string(c.turnText[s]))
+			}
+			delete(c.turnText, s)
+		}
+		c.mu.Unlock()
+	}
+}
+
+// appendHistoryLocked adds one carried-history entry (text already bounded by the caller for
+// assistant turns; user prompts are head-bounded here), stamps the session's current lead as the
+// history's origin, and evicts the oldest entries past the session cap. Called with c.mu held.
+func (c *acpControl) appendHistoryLocked(session, role, text string) {
+	if len(text) > historyEntryBytes {
+		text = text[:historyEntryBytes] // the HEAD — a long user prompt leads with the ask
+	}
+	h := c.history[session]
+	if h == nil {
+		h = &sessHistory{}
+		c.history[session] = h
+	}
+	h.lead = c.lead
+	h.entries = append(h.entries, histEntry{role: role, text: text})
+	h.size += len(text)
+	for h.size > historyMaxBytes && len(h.entries) > 1 {
+		h.size -= len(h.entries[0].text)
+		h.entries = h.entries[1:]
+	}
+}
+
+// preambleLocked renders a session's carried history as the plain-text context block prepended
+// to the first prompt after a re-create — labeled and honest about its fidelity. A trailing USER
+// entry is dropped: it is the very message being (re)sent, so it must not appear twice. Returns
+// "" when there's nothing worth carrying. Called with c.mu held.
+func (c *acpControl) preambleLocked(session string) string {
+	h := c.history[session]
+	if h == nil {
+		return ""
+	}
+	entries := h.entries
+	if n := len(entries); n > 0 && entries[n-1].role == "user" {
+		entries = entries[:n-1]
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	origin := h.lead
+	if origin == "" {
+		origin = "the previous session"
+	}
+	fmt.Fprintf(&b, "[coop] This thread continues a conversation carried over from %s — the session was re-created (provider switch or lost transcript). The context below is best-effort: plain text only, tool calls and their results are not included. Continue the conversation naturally.\n\n--- conversation so far ---\n", origin)
+	for _, e := range entries {
+		fmt.Fprintf(&b, "[%s] %s\n\n", e.role, e.text)
+	}
+	b.WriteString("--- end of carried context ---")
+	return b.String()
+}
+
+// promptText extracts the concatenated text blocks of a session/prompt line ("" when none).
+func promptText(line []byte) string {
+	var m struct {
+		Params struct {
+			Prompt []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"prompt"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &m) != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range m.Params.Prompt {
+		if p.Type == "text" && p.Text != "" {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
+}
+
+// wrapPromptLine prepends a text content block carrying the preamble to a session/prompt line,
+// preserving everything else (the request id above all — the response must still answer the
+// editor's request). Returns the original line untouched if it doesn't parse as expected.
+func wrapPromptLine(line []byte, preamble string) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil || len(top["params"]) == 0 {
+		return line
+	}
+	var params map[string]json.RawMessage
+	if json.Unmarshal(top["params"], &params) != nil {
+		return line
+	}
+	var prompt []json.RawMessage
+	if json.Unmarshal(params["prompt"], &prompt) != nil {
+		return line
+	}
+	block, err := json.Marshal(map[string]string{"type": "text", "text": preamble})
+	if err != nil {
+		return line
+	}
+	newPrompt, err := json.Marshal(append([]json.RawMessage{block}, prompt...))
+	if err != nil {
+		return line
+	}
+	params["prompt"] = newPrompt
+	rawParams, err := json.Marshal(params)
+	if err != nil {
+		return line
+	}
+	top["params"] = rawParams
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return append(out, '\n')
 }
 
 // terminalResponseID returns the request id of a TERMINAL response — one carrying a result
@@ -957,21 +1194,43 @@ func (c *acpControl) cacheModels(models []modelInfo) {
 // setupOption builds coop's first dropdown (the lead's credentials + the repo's presets) as JSON.
 func (c *acpControl) setupOption() json.RawMessage {
 	c.mu.Lock()
-	cur := c.sel
+	cur, lead, creds := c.sel, c.lead, c.creds
 	c.mu.Unlock()
-	opts := make([]acpOption, 0, len(c.creds)+len(c.presets))
-	for _, cr := range c.creds {
+	opts := make([]acpOption, 0, len(creds)+len(c.presets))
+	for _, cr := range creds {
 		opts = append(opts, acpOption{Value: "cred:" + cr, Name: "Credential: " + cr, Description: "Switch to credential: " + cr})
 	}
 	for _, ps := range c.presets {
 		opts = append(opts, acpOption{Value: "preset:" + ps, Name: "Preset: " + ps, Description: "Switch to preset: " + ps})
 	}
+	// Other SIGNED-IN providers — a provider switch re-creates the session on that agent and
+	// carries the conversation best-effort (text preamble), so the label says so. A fusion
+	// governor can't switch provider mid-council (see fusionLadderGuard), so fusion offers none.
+	if !c.fusion {
+		for _, p := range c.spawnableProviders(lead) {
+			opts = append(opts, acpOption{Value: "agent:" + p, Name: "Provider: " + p,
+				Description: "Switch to " + p + " — new thread, context carried best-effort"})
+		}
+	}
 	co := map[string]any{
-		"id": coopSetupID, "name": "coop", "description": "Run on a credential (account) or a preset (recipe)",
+		"id": coopSetupID, "name": "coop", "description": "Run on a credential (account), a preset (recipe), or another provider",
 		"category": "coop", "type": "select", "currentValue": cur, "options": opts,
 	}
 	b, _ := json.Marshal(co)
 	return b
+}
+
+// spawnableProviders lists the OTHER registered providers with at least one signed-in account —
+// the ones a provider switch could actually spawn. The current lead is excluded (its accounts
+// are the cred: entries).
+func (c *acpControl) spawnableProviders(lead string) []string {
+	var out []string
+	for _, p := range agents.Names() {
+		if p != lead && len(accountsFor(c.cfg, p)) > 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // synthModelOption builds a coop-owned `model` select from an adapter's session/new `models` field
@@ -1162,15 +1421,29 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	if json.Unmarshal(line, &h) != nil {
 		return false, nil, nil, false
 	}
-	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it. Pass it
-	// through unchanged — coop only observes it here.
+	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it, and
+	// record its text in the carried history. If the session was just re-created (a provider
+	// switch), this prompt is the first into the fresh thread — rewrite it with the history
+	// preamble (the proxy forwards the rewrite through the normal path, editor id intact).
 	if h.Method == "session/prompt" && h.Params.SessionID != "" && len(h.ID) > 0 {
+		sid := h.Params.SessionID
 		clone := append([]byte(nil), line...)
+		var wrapped []byte
 		c.mu.Lock()
-		c.promptSession[string(h.ID)] = h.Params.SessionID
-		c.lastPrompt[h.Params.SessionID] = clone
+		c.promptSession[string(h.ID)] = sid
+		if text := promptText(line); text != "" {
+			c.appendHistoryLocked(sid, "user", text)
+		}
+		if c.needPreamble[sid] {
+			delete(c.needPreamble, sid)
+			if pre := c.preambleLocked(sid); pre != "" {
+				wrapped = wrapPromptLine(clone, pre)
+				clone = wrapped // a resend of THIS turn must carry the context too
+			}
+		}
+		c.lastPrompt[sid] = clone
 		c.mu.Unlock()
-		return false, nil, nil, false
+		return false, nil, wrapped, false
 	}
 	// coop's synthesized model select (gemini): the adapter has no `model` config option, so translate
 	// the set into its session/set_model and ack the editor ourselves. leadUsesSetModel proves this lead
@@ -1193,6 +1466,13 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// session has any transcript, so the replayed session/load fails "Resource not found" and the
 	// conversation is lost before it begins. A no-op just re-acks.
 	changed := h.Params.Value != "" && h.Params.Value != c.sel
+	// An agent: value must name a registered, signed-in provider — a bogus one would send the
+	// respawn loop chasing a spawn that can never come up. Refuse the change, ack the current state.
+	if v, isAgent := strings.CutPrefix(h.Params.Value, "agent:"); isAgent && changed {
+		if !agents.Valid(v) || len(accountsFor(c.cfg, v)) == 0 || c.fusion {
+			changed = false
+		}
+	}
 	if changed {
 		c.sel = h.Params.Value
 	}

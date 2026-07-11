@@ -66,6 +66,9 @@ type Hooks struct {
 	// like any injected request, so toAdapter must carry an InjectPrefix id. restart=true → the proxy
 	// tears down and respawns the box (a coop-driven switch, e.g. a new credential), NOT counted as a
 	// failure, then replays the session so the editor never disconnects.
+	// handled=false with a non-nil toAdapter is a REWRITE: the proxy forwards toAdapter through the
+	// normal path — same bookkeeping, pending tracking, and response routing as the original line —
+	// so it must keep the editor's request id (e.g. a history preamble prepended to a prompt).
 	FromEditor func(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool)
 	// AutoReply lets coop answer an agent→editor REQUEST itself instead of bothering the editor — the
 	// yolo mechanism: coop approves every session/request_permission (the box is the sandbox) so no
@@ -80,6 +83,11 @@ type Hooks struct {
 	// editor still shows as running completes on the new box. Return nil for a session with nothing to
 	// resume. The returned line MUST carry the editor's session id (like a real editor prompt).
 	ResumePrompt func(sessionID string) []byte
+	// SessionRecreated is called (before ResumePrompt) when a session that HAD a conversation could
+	// not be reloaded after a restart and was re-created fresh instead — a provider switch (the new
+	// agent can't read the old one's transcript), or a genuinely lost store. coop uses it to carry
+	// the conversation best-effort: the next prompt into that session gets a history preamble.
+	SessionRecreated func(sessionID string)
 }
 
 // InjectPrefix namespaces coop's SessionReady-injected request IDs so the proxy swallows their
@@ -261,7 +269,8 @@ func (p *proxy) fromClient(line []byte) {
 	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
 	// to the editor directly, and optionally restarting the box on a new credential/preset.
 	if p.hooks != nil && p.hooks.FromEditor != nil {
-		if handled, resp, toAdapter, restart := p.hooks.FromEditor(line); handled {
+		handled, resp, toAdapter, restart := p.hooks.FromEditor(line)
+		if handled {
 			Trace("coop handled the editor line itself (restart=%v)", restart)
 			if len(resp) > 0 {
 				traceLine("box→editor(coop)", resp)
@@ -283,6 +292,13 @@ func (p *proxy) fromClient(line []byte) {
 				p.triggerRestart()
 			}
 			return
+		}
+		if len(toAdapter) > 0 {
+			// A rewrite (same request, new body — e.g. a history preamble prepended to a prompt):
+			// forward it through the normal path below, so bookkeeping, pending tracking, and the
+			// response route exactly as the original would have.
+			traceLine("editor→box(coop-rewrite)", toAdapter)
+			line = toAdapter
 		}
 	}
 	h := parse(line)
@@ -535,45 +551,83 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 	// Bounded read: allow a generous wait for the FIRST response (the box may still be starting),
 	// then a tighter idle bound once the agent has answered and is provably up. A child EOF here
 	// means it died during replay — break and let Run respawn it; a timeout means it hung — abort.
+	snapByEditor := make(map[string]snap, len(snaps))
+	for _, s := range snaps {
+		snapByEditor[s.editorID] = s
+	}
+	var recreate []string // turned sessions whose transcript didn't reload — re-created in a second round
 	timeout := replayStartupGrace
-	for len(expect) > 0 {
-		line, err := readLineCtx(br, timeout)
-		if len(line) > 0 {
-			if h := parse(line); h.isResponse() {
-				id := string(trimQuotes(h.ID))
-				if eid, ok := strings.CutPrefix(id, replayPrefix+"new-"); ok {
-					// A re-created turn-less session: bind the editor's id to the fresh box id so both
-					// directions translate from here on. If even session/new failed, the box is broken.
-					if newID := sessionID(h.Result); newID != "" {
-						p.remapSession(eid, newID)
-						configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
-					} else if len(h.Error) > 0 {
-						fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, h.Error)
-						Trace("replay: session %s re-create failed: %s", eid, h.Error)
+	childEOF := false
+	process := func(expect map[string]bool) error {
+		for len(expect) > 0 {
+			line, err := readLineCtx(br, timeout)
+			if len(line) > 0 {
+				if h := parse(line); h.isResponse() {
+					id := string(trimQuotes(h.ID))
+					if eid, ok := strings.CutPrefix(id, replayPrefix+"new-"); ok {
+						// A re-created session — turn-less in round one, or a turned one whose reload
+						// failed in round two: bind the editor's id to the fresh box id so both directions
+						// translate from here on. If even session/new failed, the box is broken.
+						if newID := sessionID(h.Result); newID != "" {
+							p.remapSession(eid, newID)
+							configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
+							// A TURNED session landed here only because its conversation didn't carry —
+							// tell coop, so it can inject its best-effort history preamble.
+							if snapByEditor[eid].turned && p.hooks != nil && p.hooks.SessionRecreated != nil {
+								p.hooks.SessionRecreated(eid)
+							}
+						} else if len(h.Error) > 0 {
+							fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, h.Error)
+							Trace("replay: session %s re-create failed: %s", eid, h.Error)
+						}
+					} else if eid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
+						// A session that DID have a transcript failed to reload — a provider switch (the
+						// new agent can't read the old one's store), or a genuinely lost transcript.
+						// Re-create it fresh in a second round; coop carries the conversation best-effort.
+						if len(h.Error) > 0 {
+							fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; re-creating it fresh (context carried best-effort): %s\n", eid, h.Error)
+							Trace("replay: session %s did NOT reload — re-creating: %s", eid, h.Error)
+							recreate = append(recreate, eid)
+						} else {
+							configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
+						}
 					}
-				} else if eid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
-					// A session that DID have a transcript failed to reload (e.g. it wasn't on the shared
-					// store on this credential) — its history is genuinely gone. We can't recover it, but
-					// say so on stderr (the editor's ACP server log) so the loss isn't invisible.
-					if len(h.Error) > 0 {
-						fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; its history may be lost: %s\n", eid, h.Error)
-						Trace("replay: session %s did NOT reload: %s", eid, h.Error)
-					} else {
-						configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
-					}
+					delete(expect, id)
 				}
-				delete(expect, id)
 			}
+			if errors.Is(err, errReplayTimeout) {
+				return err
+			}
+			if err != nil {
+				childEOF = true
+				return nil // child EOF: it died mid-replay; fall through, Run's loop respawns it
+			}
+			timeout = replayIdleTimeout
 		}
-		if errors.Is(err, errReplayTimeout) {
-			return err
-		}
-		if err != nil {
-			break // child EOF: it died mid-replay; fall through, Run's loop respawns it
-		}
-		timeout = replayIdleTimeout
+		return nil
+	}
+	if err := process(expect); err != nil {
+		return err
 	}
 	<-sent // replay writer done: no concurrent write to c.In
+	// Second round: re-create the turned sessions whose reload failed, reusing their original
+	// session/new params (cwd, mcpServers). Serialized after the first writer, so no concurrent
+	// c.In writes; the shared processor remaps them and fires SessionRecreated.
+	if len(recreate) > 0 && !childEOF {
+		expect2 := map[string]bool{}
+		for _, eid := range recreate {
+			id := replayPrefix + "new-" + eid
+			if msg := newRequest(id, snapByEditor[eid].params); msg != nil {
+				if _, err := c.In.Write(msg); err != nil {
+					break
+				}
+				expect2[id] = true
+			}
+		}
+		if err := process(expect2); err != nil {
+			return err
+		}
+	}
 	// Re-force coop's per-session state (yolo, model) on the restarted box for each restored session,
 	// keyed by its CURRENT box id (a re-created session now lives under a new one). The fresh adapter
 	// reset it; responses are swallowed in pumpChild (InjectPrefix).
