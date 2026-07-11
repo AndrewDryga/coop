@@ -78,8 +78,7 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 	if lead == p.LeadAgent && len(p.LeadLadder) > 0 {
 		// A run that doesn't rotate (single, or the loop before its first applyTarget) uses the
 		// ladder's FIRST entry: its first account if pinned (else the marked default), and its
-		// model in the target tier — below an explicit target model, above the account mark /
-		// COOP_LOOP_MODEL.
+		// model in the target tier — below an explicit target model, above the account mark.
 		first := p.LeadLadder[0]
 		if acct := first.Account(); acct != "" {
 			a.cfg.SetActiveProfile(lead, acct)

@@ -82,5 +82,21 @@ func projectYAML(subprojects []string) string {
 	b.WriteString("# port so you can open it in your browser (bind the server to 0.0.0.0 in the box):\n")
 	b.WriteString("# serve:\n")
 	b.WriteString("#   ports: [5173]\n")
+	b.WriteString(`
+# box: the posture every run in this repo inherits. An explicit COOP_* env/conf setting still
+# wins for a one-off, so a committed value can only TIGHTEN the default (egress's default is the
+# loosest — "open" — so a repo can pin none but never widen your explicit none).
+# box:
+#   egress: none        # outbound network: "open" (npm + model API) or "none" (offline)
+#   auto_up: false      # auto-start compose.agent.yml sibling services (default true)
+#   network: false      # join the sibling-services network (default true)
+#   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
+#   cpus: "4"
+#   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
+
+# gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
+# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins.
+# gate: make check
+`)
 	return b.String()
 }

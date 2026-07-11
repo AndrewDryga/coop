@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -111,10 +113,25 @@ func pkgScripts(content string) map[string]string {
 	return p.Scripts
 }
 
-// mergeGate resolves the box image when COOP_GATE is set (so a merge can be
-// revalidated in the box), or returns "" when no gate is configured.
+// gateFor resolves the fork-merge revalidation gate for repo: an explicit COOP_GATE (env/conf)
+// wins; otherwise the repo's committed .agent/project.yaml gate:. The gate runs IN THE BOX (see
+// runGate), so a repo-authored command executes sandboxed — same trust class as the code it merges.
+func (a *app) gateFor(repo string) []string {
+	if a.cfg.Explicit("COOP_GATE") {
+		return a.cfg.Gate
+	}
+	if p, err := project.Load(repo); err == nil {
+		if g := strings.TrimSpace(p.Gate); g != "" {
+			return config.ShellSplit(g)
+		}
+	}
+	return a.cfg.Gate
+}
+
+// mergeGate resolves the box image when a merge gate is configured (so a merge can be revalidated
+// in the box), or returns "" when none is.
 func (a *app) mergeGate(repo string) (string, error) {
-	if len(a.cfg.Gate) == 0 {
+	if len(a.gateFor(repo)) == 0 {
 		return "", nil // no gate configured → the merge is pure-local, no runtime needed
 	}
 	if err := a.ensureRuntime(); err != nil {
@@ -122,16 +139,17 @@ func (a *app) mergeGate(repo string) (string, error) {
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	if !box.ImageExists(a.rt, img) {
-		return "", fmt.Errorf("COOP_GATE is set but image %q isn't built — run 'coop build'", img)
+		return "", fmt.Errorf("a merge gate is set but image %q isn't built — run 'coop build'", img)
 	}
 	return img, nil
 }
 
-// runGate runs COOP_GATE in the box against repo, reporting whether it passed.
+// runGate runs the merge gate in the box against repo, reporting whether it passed.
 func (a *app) runGate(repo, img string) bool {
-	ui.Info("revalidating: %s", strings.Join(a.cfg.Gate, " "))
+	gate := a.gateFor(repo)
+	ui.Info("revalidating: %s", strings.Join(gate, " "))
 	code, _ := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: a.cfg.Gate, Batch: true,
+		Image: img, Repo: repo, Cmd: gate, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	return code == 0

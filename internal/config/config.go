@@ -64,7 +64,8 @@ type Config struct {
 	// that failed closed); the CLI entry point surfaces them once per invocation.
 	Warnings []string
 
-	conf map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
+	conf     map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
+	explicit map[string]bool   // keys the user explicitly set (env or conf) — vs built-in defaults
 
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
 	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
@@ -77,6 +78,12 @@ type Config struct {
 	targetEfforts   map[string]string // the active rotation target's effort, below explicit
 	fallbackEfforts map[string]string // standing default (a preset lead's effort), below a target
 }
+
+// Explicit reports whether the user explicitly set key (env var or conf file) — false when the
+// loaded value is just the built-in default. The .agent/project.yaml box: overlay (box.Run) uses
+// it so a committed repo policy fills only the slots the user left unset: an explicit setting
+// always wins, and — since the built-in egress default is the loosest — a repo can only tighten.
+func (c *Config) Explicit(key string) bool { return c.explicit[key] }
 
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
 // other: environment variable, then conf file, then the built-in default — then splits
@@ -97,11 +104,17 @@ func Load() *Config {
 	boxHome := filepath.Join(xdgConfigHome(), "coop")
 	conf := loadConfFile(envOr("COOP_CONF", filepath.Join(boxHome, "coop.conf")))
 
+	// explicit records every key the user actually SET (env or conf file), as opposed to one that
+	// fell to its built-in default — so a committed .agent/project.yaml box: policy can fill the
+	// unset ones without ever overriding the user's own choice (Config.Explicit; box.Run overlays).
+	explicit := map[string]bool{}
 	get := func(key, def string) string {
 		if v, ok := os.LookupEnv(key); ok {
+			explicit[key] = true
 			return v
 		}
 		if v, ok := conf[key]; ok {
+			explicit[key] = true
 			return v
 		}
 		return def
@@ -171,8 +184,9 @@ func Load() *Config {
 		Editor:    get("COOP_EDITOR", ""),
 		ReviewCmd: get("COOP_REVIEW_CMD", ""),
 
-		BoxHome: boxHome,
-		conf:    conf,
+		BoxHome:  boxHome,
+		conf:     conf,
+		explicit: explicit,
 	}
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
@@ -367,7 +381,7 @@ func (c *Config) SetActiveModel(agent, model string) {
 }
 
 // ActiveModel returns the run's EXPLICIT top-tier model for agent ("" when none), so a caller
-// that temporarily overrides it (the loop swapping in COOP_REVIEW_MODEL for the review pass) can
+// that temporarily overrides it (the loop swapping in a step's loop.yaml model for the review pass) can
 // snapshot and restore the prior value.
 func (c *Config) ActiveModel(agent string) string { return c.activeModels[agent] }
 
@@ -382,9 +396,8 @@ func (c *Config) SetTargetModel(agent, model string) {
 	c.targetModels[agent] = model
 }
 
-// SetFallbackModel sets the run's standing default model — a preset lead's model, or the
-// loop applying COOP_LOOP_MODEL — ranking below an explicit --model and any rotation target's
-// model, but above COOP_<AGENT>_MODEL.
+// SetFallbackModel sets the run's standing default model — a preset lead's model — ranking
+// below an explicit --model and any rotation target's model, but above COOP_<AGENT>_MODEL.
 func (c *Config) SetFallbackModel(agent, model string) {
 	if c.fallbackModels == nil {
 		c.fallbackModels = map[string]string{}
@@ -424,7 +437,7 @@ func (c *Config) AgentModelDefault(agent string) string {
 // ModelFor resolves the model a run of agent should use, most specific first:
 //  1. the explicit per-run choice (--model / fleet model:),
 //  2. the active rotation target's model (a loop's `opus@work` — re-set on each rotation),
-//  3. the run's standing default (a preset lead's model, else the loop's COOP_LOOP_MODEL),
+//  3. the run's standing default (a preset lead's model),
 //  4. the agent-wide COOP_<AGENT>_MODEL.
 //
 // The model is its own axis — never a property of a credential (a credential is just an
@@ -467,8 +480,8 @@ func (c *Config) SetTargetEffort(agent, effort string) {
 	c.targetEfforts[agent] = effort
 }
 
-// SetFallbackEffort sets the run's standing default effort — a preset lead's effort, or the
-// loop applying COOP_LOOP_MODEL's /effort — below a target's effort but above COOP_<AGENT>_MODEL's.
+// SetFallbackEffort sets the run's standing default effort — a preset lead's effort —
+// below a target's effort but above COOP_<AGENT>_MODEL's.
 func (c *Config) SetFallbackEffort(agent, effort string) {
 	if c.fallbackEfforts == nil {
 		c.fallbackEfforts = map[string]string{}
@@ -490,7 +503,7 @@ func (c *Config) AgentEffortDefault(agent string) string {
 // EffortFor resolves the reasoning effort a run of agent should use, most specific first:
 //  1. the explicit per-run choice (target /effort),
 //  2. the active rotation target's effort,
-//  3. the run's standing default (a preset lead's effort, else COOP_LOOP_MODEL's /effort),
+//  3. the run's standing default (a preset lead's effort),
 //  4. the agent-wide COOP_<AGENT>_MODEL's /effort.
 //
 // Like the model, effort is its own axis — never a property of a credential. "" means no
@@ -571,6 +584,10 @@ func envOr(key, def string) string {
 	}
 	return def
 }
+
+// ShellSplit exposes shellSplit so other packages can split a committed command setting (e.g. the
+// .agent/project.yaml gate:) into argv exactly as Load splits COOP_GATE — one splitter, one rule.
+func ShellSplit(s string) []string { return shellSplit(s) }
 
 // shellSplit splits a command string into argv the way a shell word-splits it:
 // whitespace separates words, single and double quotes group, and a backslash

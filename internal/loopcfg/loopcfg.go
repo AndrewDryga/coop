@@ -10,7 +10,9 @@ package loopcfg
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -81,8 +83,8 @@ func Load(repo string) (*Config, error) {
 	}
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true) // an unknown key is a typo, not silently ignored
-	if err := dec.Decode(&c); err != nil {
+	dec.KnownFields(true)                                             // an unknown key is a typo, not silently ignored
+	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
 		return nil, fmt.Errorf("%s: %w", File, err)
 	}
 	for _, s := range []struct {

@@ -1355,7 +1355,6 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	warnRetiredLoopEnv() // the loop config moved to .agent/loop.yaml; nudge a lingering COOP_* export
 	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
 	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled)
 	if err != nil {
@@ -1409,23 +1408,6 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight) // local loop: no fork label
-}
-
-// warnRetiredLoopEnv warns once for each retired loop env var still set in the environment — the
-// loop config moved to .agent/loop.yaml, and coop no longer reads these, so a lingering export
-// would otherwise silently do nothing. Named the loop.yaml replacement so a human can migrate.
-func warnRetiredLoopEnv() {
-	for _, r := range []struct{ env, repl string }{
-		{"COOP_LOOP_MODEL", "work.agent"},
-		{"COOP_REVIEW_MODEL", "review.agent"},
-		{"COOP_MAX_REVIEW_ROUNDS", "review.rounds"},
-		{"COOP_LOOP_CMD", "work.command"},
-		{"COOP_PREFLIGHT", "preflight.enabled"},
-	} {
-		if os.Getenv(r.env) != "" {
-			ui.Warn("%s is retired and NO LONGER read — set %s in .agent/loop.yaml instead", r.env, r.repl)
-		}
-	}
 }
 
 // resolveWorkAgent turns a .agent/loop.yaml work.agent ladder into the lead agent, an optional

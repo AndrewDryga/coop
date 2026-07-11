@@ -126,7 +126,7 @@ func TestForkBriefDossier(t *testing.T) {
 		"policy:", ".envrc", "possible secret in conf.yaml",
 		"block 'coop fork merge' without --force",
 		dossierConfig + ":", dossierCode + ":", dossierTests + ":",
-		"AGENTS.md", "gate:", "none configured (COOP_GATE)", "diff:",
+		"AGENTS.md", "gate:", "none configured (COOP_GATE or .agent/project.yaml gate:)", "diff:",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dossier missing %q:\n%s", want, out)

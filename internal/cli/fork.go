@@ -957,8 +957,8 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 				fmt.Println(indent(indent(f.render())))
 			}
 		}
-		if len(a.cfg.Gate) == 0 {
-			fmt.Printf("%s none configured (COOP_GATE)\n", ui.Bold("gate:"))
+		if len(a.gateFor(repo)) == 0 {
+			fmt.Printf("%s none configured (COOP_GATE or .agent/project.yaml gate:)\n", ui.Bold("gate:"))
 		} else {
 			fmt.Printf("%s runs at merge — rolled back on failure\n", ui.Bold("gate:"))
 		}

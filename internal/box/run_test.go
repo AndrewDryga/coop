@@ -11,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 func TestDecideTTY(t *testing.T) {
@@ -663,5 +664,46 @@ func TestPresetRoleMountsNativeTargetsUserAgents(t *testing.T) {
 	}
 	if target != "/home/node/.claude/agents" {
 		t.Fatalf("native agents mount target = %q, want /home/node/.claude/agents (user-level, not the repo's)", target)
+	}
+}
+
+// bp returns a pointer to b — for project.Box's *bool toggles in tests.
+func bp(b bool) *bool { return &b }
+
+// TestApplyProjectPolicy: the committed .agent/project.yaml box: policy overlays cfg ONLY where the
+// user didn't explicitly set the matching COOP_* — an explicit setting always wins, egress can only
+// tighten, and the shared Config is never mutated.
+func TestApplyProjectPolicy(t *testing.T) {
+	// No box: section → cfg returned unchanged (same pointer).
+	base := &config.Config{Egress: "open", AutoUp: true, Pids: "4096"}
+	if got := applyProjectPolicy(base, &project.Project{}, &RunSpec{}); got != base {
+		t.Error("an empty box: policy must return cfg untouched")
+	}
+
+	// Policy fills UNSET knobs: egress tightens to none, caps + auto_up apply, network toggles spec.
+	cfg := &config.Config{Egress: "open", AutoUp: true, Pids: "4096", Memory: ""}
+	spec := RunSpec{Network: true}
+	pol := &project.Project{Box: project.Box{Egress: "none", AutoUp: bp(false), Network: bp(false), Memory: "2g", Pids: "1024"}}
+	got := applyProjectPolicy(cfg, pol, &spec)
+	if got.Egress != "none" || got.AutoUp || got.Memory != "2g" || got.Pids != "1024" {
+		t.Errorf("policy not applied to unset knobs: %+v", got)
+	}
+	if spec.Network {
+		t.Error("box.network:false must turn off spec.Network")
+	}
+	if cfg.Egress != "open" || !cfg.AutoUp || cfg.Pids != "4096" {
+		t.Errorf("the shared Config must NOT be mutated, got %+v", cfg)
+	}
+
+	// An EXPLICIT env setting beats the file — the repo can't override the user's own choice.
+	t.Setenv("COOP_EGRESS", "open")
+	t.Setenv("COOP_MEMORY", "8g")
+	expl := config.Load() // Egress=open, Memory=8g, both explicit
+	got2 := applyProjectPolicy(expl, &project.Project{Box: project.Box{Egress: "none", Memory: "2g"}}, &RunSpec{})
+	if got2.Egress != "open" {
+		t.Errorf("explicit COOP_EGRESS=open must beat box.egress:none, got %q", got2.Egress)
+	}
+	if got2.Memory != "8g" {
+		t.Errorf("explicit COOP_MEMORY must beat box.memory, got %q", got2.Memory)
 	}
 }

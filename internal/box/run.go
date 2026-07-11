@@ -126,6 +126,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
+	// The repo's committed box: policy (.agent/project.yaml) overlays the config for THIS run —
+	// each field only where the user didn't explicitly set its COOP_* (env/conf beats file beats
+	// default), on a copy so the shared Config is never mutated. A broken project.yaml warns and
+	// is skipped (same best-effort posture as appendPublish) rather than bricking every launch.
+	if p, err := project.Load(spec.Repo); err == nil {
+		cfg = applyProjectPolicy(cfg, p, &spec)
+	} else if !spec.Quiet {
+		ui.Info("project.yaml: %v — ignoring its box policy", err)
+	}
 	workdir := resolveWorkdir(spec, cfg)
 
 	mounts, err := ComputeMounts(spec.Repo, workdir)
@@ -676,6 +685,40 @@ func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
 	default:
 		return ttyNone
 	}
+}
+
+// applyProjectPolicy returns cfg overlaid with the repo's committed .agent/project.yaml box: policy,
+// and adjusts spec.Network to match. Each field applies ONLY where the user did not explicitly set
+// its COOP_* (env or conf) — an explicit setting always wins. Because egress's built-in default is
+// the loosest value ("open"), a committed policy can only ever TIGHTEN it (never widen an explicit
+// "none" back to "open"). Works on a COPY of cfg, so the caller's shared Config — including the
+// per-run model maps the loop mutates — is never touched (the maps are shared read-through; only the
+// scalar box knobs are overwritten on the copy).
+func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *config.Config {
+	b := p.Box
+	if b == (project.Box{}) {
+		return cfg // no box: section — nothing to overlay (gate: is resolved by fork_merge, not here)
+	}
+	c := *cfg
+	if b.Egress != "" && !cfg.Explicit("COOP_EGRESS") {
+		c.Egress = b.Egress // validated open|none by project.Load; open never loosens an explicit none
+	}
+	if b.AutoUp != nil && !cfg.Explicit("COOP_AUTO_UP") {
+		c.AutoUp = *b.AutoUp
+	}
+	if b.Network != nil && !cfg.Explicit("COOP_NETWORK") {
+		spec.Network = *b.Network // the network toggle rides spec, set from cfg.Network by the caller
+	}
+	if b.Memory != "" && !cfg.Explicit("COOP_MEMORY") {
+		c.Memory = b.Memory
+	}
+	if b.CPUs != "" && !cfg.Explicit("COOP_CPUS") {
+		c.CPUs = b.CPUs
+	}
+	if b.Pids != "" && !cfg.Explicit("COOP_PIDS") {
+		c.Pids = b.Pids
+	}
+	return &c
 }
 
 // boxLimits returns the resource + privilege caps that keep a runaway agent from
