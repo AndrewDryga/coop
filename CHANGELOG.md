@@ -5,7 +5,7 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **One `.agent/loop.yaml` replaces the `.agent/loop/*.md` files — with a per-step model ladder and
-  prompt for each of work / review / preflight / between.** The three markdown knobs
+  prompt for each of preflight / work / between / review.** The three markdown knobs
   (`review.md`/`audit.md`/`between.md`) collapse into one committed YAML with a section per step:
   each takes an `agent:` ladder (`provider[:model][/effort][@account]` targets **or** a preset name
   — a preset rung runs that step under the preset's roles + lead ladder, rotated on a rate limit),

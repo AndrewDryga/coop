@@ -581,7 +581,7 @@ var commandHelp = map[string]string{
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.
 
-  One committed .agent/loop.yaml configures every step (work/review/preflight/between), each
+  One committed .agent/loop.yaml configures every step (preflight/work/between/review), each
   with its own agent: model ladder and prompt. Prompts never REPLACE a coop built-in:
   review.prompt and preflight.prompt APPEND extra checks/instructions to theirs; between.prompt
   SETS the per-task audit (between has no built-in — it's off unless enabled + set). review.rounds

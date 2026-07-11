@@ -1,6 +1,16 @@
 # .agent/loop.yaml — configuration for `coop loop` (committed; edit to taste).
 # Every key is optional — omit it (or a whole section) to use coop's built-in default, noted below.
 # Models use coop's target grammar: provider[:model][/effort][@account].
+# Sections are in loop order: preflight (before) → work → between (after each task) → review (at the end).
+
+preflight:
+  # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
+  # works no task, changes no code). Default: false.
+  #enabled: true
+
+  # Extra instructions APPENDED to the built-in cleanup prompt. Default: nothing appended.
+  #prompt: |
+  #  Also drop stale screenshots under .agent/tasks/*/screenshots/.
 
 work:
   # Model ladder for work iterations. Each rung is a TARGET (claude:opus, codex:gpt-5.6-luna) or a
@@ -13,6 +23,18 @@ work:
   # Advanced: a raw command run each iteration instead of coop's agent form (disables the review,
   # preflight, and between passes). Default: coop's built-in agent form.
   #command: []
+
+between:
+  # Opt-in audit run after EACH completed task (may reopen it before the loop moves on). Default: off.
+  #enabled: true
+
+  # Audit model ladder. Default: the review model.
+  #agent: [claude:sonnet]
+
+  # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
+  #prompt: |
+  #  Audit the task just moved to 99_done/: confirm every acceptance criterion is demonstrably met
+  #  and its failure path is tested; reopen it (move the folder back to 10_in_progress/) if not.
 
 review:
   # Work→review rounds before a task the review keeps reopening is blocked for a human.
@@ -29,24 +51,3 @@ review:
   #prompt: |
   #  - The changelog has an entry for any user-visible change.
   #  - The formatter/linter passes (reopen the task if it doesn't).
-
-preflight:
-  # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
-  # works no task, changes no code). Default: false.
-  #enabled: true
-
-  # Extra instructions APPENDED to the built-in cleanup prompt. Default: nothing appended.
-  #prompt: |
-  #  Also drop stale screenshots under .agent/tasks/*/screenshots/.
-
-between:
-  # Opt-in audit run after EACH completed task (may reopen it before the loop moves on). Default: off.
-  #enabled: true
-
-  # Audit model ladder. Default: the review model.
-  #agent: [claude:sonnet]
-
-  # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
-  #prompt: |
-  #  Audit the task just moved to 99_done/: confirm every acceptance criterion is demonstrably met
-  #  and its failure path is tested; reopen it (move the folder back to 10_in_progress/) if not.

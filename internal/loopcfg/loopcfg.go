@@ -25,24 +25,12 @@ const File = ".agent/loop.yaml"
 
 // Config is a parsed .agent/loop.yaml. Every field is optional; a zero Config means "all
 // built-in defaults" (an absent file decodes to this).
+// Fields are in loop order: preflight (before) → work → between (after each task) → review (end).
 type Config struct {
-	Work      Work      `yaml:"work"`
-	Review    Review    `yaml:"review"`
 	Preflight Preflight `yaml:"preflight"`
+	Work      Work      `yaml:"work"`
 	Between   Between   `yaml:"between"`
-}
-
-// Work is the task-working iterations.
-type Work struct {
-	Agent   []string `yaml:"agent"`   // model ladder (target|preset rungs); empty = the CLI agent / --preset lead
-	Command []string `yaml:"command"` // raw per-iteration command (argv); empty = coop's built-in agent form
-}
-
-// Review is the end-of-loop review pass.
-type Review struct {
-	Rounds int      `yaml:"rounds"` // work→review round cap; 0 = the built-in default (5)
-	Agent  []string `yaml:"agent"`  // review model ladder; empty = the work model
-	Prompt string   `yaml:"prompt"` // APPENDED to the built-in review; "" = nothing appended
+	Review    Review    `yaml:"review"`
 }
 
 // Preflight is the one-shot pre-loop queue cleanup.
@@ -51,11 +39,24 @@ type Preflight struct {
 	Prompt  string `yaml:"prompt"`  // APPENDED to the built-in cleanup; "" = nothing appended
 }
 
+// Work is the task-working iterations.
+type Work struct {
+	Agent   []string `yaml:"agent"`   // model ladder (target|preset rungs); empty = the CLI agent / --preset lead
+	Command []string `yaml:"command"` // raw per-iteration command (argv); empty = coop's built-in agent form
+}
+
 // Between is the opt-in per-task audit after each completed task.
 type Between struct {
 	Enabled bool     `yaml:"enabled"` // run the audit; false = off
 	Agent   []string `yaml:"agent"`   // audit model ladder; empty = the review model
 	Prompt  string   `yaml:"prompt"`  // SETS the audit prompt (between has no built-in); required when enabled
+}
+
+// Review is the end-of-loop review pass.
+type Review struct {
+	Rounds int      `yaml:"rounds"` // work→review round cap; 0 = the built-in default (5)
+	Agent  []string `yaml:"agent"`  // review model ladder; empty = the work model
+	Prompt string   `yaml:"prompt"` // APPENDED to the built-in review; "" = nothing appended
 }
 
 // Rung is one entry of an `agent:` ladder: EXACTLY one of Target or Preset is set.
