@@ -204,30 +204,45 @@ func TestLoopBetweenPrompt(t *testing.T) {
 	}
 }
 
-// TestWithReviewModel: COOP_REVIEW_MODEL is applied to the review/audit iteration ONLY, then the
-// prior model is restored — so the work loop keeps its own model; unset → no swap at all.
-func TestWithReviewModel(t *testing.T) {
-	// Set: the model is the review model DURING fn, restored to the prior explicit model after.
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), ReviewModel: "opus-review"}}
+// TestWithStepModel: a step's model (review/between) is applied to that iteration ONLY, then the
+// prior model is restored — so the work loop keeps its own model; empty → no swap at all.
+func TestWithStepModel(t *testing.T) {
+	// Set: the model is the step model DURING fn, restored to the prior explicit model after.
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	a.cfg.SetActiveModel("claude", "sonnet-work") // the work loop's active model
 	var during string
-	a.withReviewModel("claude", func() { during = a.cfg.ModelFor("claude") })
+	a.withStepModel("claude", "opus-review", "xhigh", func() { during = a.cfg.ModelFor("claude") })
 	if during != "opus-review" {
 		t.Errorf("review iteration model = %q, want opus-review", during)
 	}
 	if got := a.cfg.ModelFor("claude"); got != "sonnet-work" {
-		t.Errorf("after the review pass the work model must be restored: got %q, want sonnet-work", got)
+		t.Errorf("after the step the work model must be restored: got %q, want sonnet-work", got)
 	}
-	// Unset: no swap — fn runs on whatever the loop model is, and nothing changes.
+	// Empty: no swap — fn runs on whatever the loop model is, and nothing changes.
 	b := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	b.cfg.SetActiveModel("claude", "sonnet-work")
-	b.withReviewModel("claude", func() {
+	b.withStepModel("claude", "", "", func() {
 		if got := b.cfg.ModelFor("claude"); got != "sonnet-work" {
-			t.Errorf("unset COOP_REVIEW_MODEL → loop model reviews, got %q", got)
+			t.Errorf("empty step model → loop model runs, got %q", got)
 		}
 	})
 	if got := b.cfg.ModelFor("claude"); got != "sonnet-work" {
-		t.Errorf("unset COOP_REVIEW_MODEL → model unchanged, got %q", got)
+		t.Errorf("empty step model → model unchanged, got %q", got)
+	}
+}
+
+// stepModel resolves a review/between agent: ladder to the first target rung's model+effort, else
+// the fallback.
+func TestStepModel(t *testing.T) {
+	if m, e := stepModel([]string{"codex:gpt-5.6-sol/xhigh", "claude:fable"}, "fb", ""); m != "gpt-5.6-sol" || e != "xhigh" {
+		t.Errorf("stepModel = %q/%q, want gpt-5.6-sol/xhigh", m, e)
+	}
+	if m, e := stepModel(nil, "fbmodel", "fbeffort"); m != "fbmodel" || e != "fbeffort" {
+		t.Errorf("empty ladder should use the fallback, got %q/%q", m, e)
+	}
+	// A bare provider (no model) falls through to the fallback.
+	if m, _ := stepModel([]string{"claude"}, "fb", ""); m != "fb" {
+		t.Errorf("a model-less rung should use the fallback, got %q", m)
 	}
 }
 

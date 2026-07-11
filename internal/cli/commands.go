@@ -25,6 +25,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1345,13 +1346,19 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, a.cfg.Preflight)
-	if err != nil {
-		return 2, err
-	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
+	}
+	// .agent/loop.yaml is the committed loop config; a bad file fails fast, before any box work.
+	lc, err := loopcfg.Load(repo)
+	if err != nil {
+		return 2, err
+	}
+	// preflight defaults to loop.yaml preflight.enabled (else COOP_PREFLIGHT); --preflight/--no-preflight override.
+	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled || a.cfg.Preflight)
+	if err != nil {
+		return 2, err
 	}
 	// --preset: its lead agent is the default (a positional target still wins), its roles seed
 	// the run, and its models ladder becomes the rotation (below the positional target).
@@ -1359,8 +1366,23 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// .agent/loop.yaml work.agent is the committed default work ladder — used ONLY when the launch
+	// names no positional target and no --preset. Its rungs are targets or preset names (a preset
+	// rung runs the loop under that preset: its roles + lead ladder, exhausted before the next rung);
+	// the first rung sets the lead agent.
+	var workLadder []agents.Target
+	workAgent := ""
+	if !hasTarget && p == nil && len(lc.Work.Agent) > 0 {
+		workAgent, p, workLadder, err = a.resolveWorkAgent(lc.Work.Agent)
+		if err != nil {
+			return 2, err
+		}
+	}
 	agent := presetLeadAgent(p, t.Provider, hasTarget)
-	if agent == "" { // provider required — no positional target, and no preset supplied a lead
+	if agent == "" {
+		agent = workAgent // loop.yaml work.agent's first rung supplied the lead
+	}
+	if agent == "" { // provider required — no positional target, no --preset, no loop.yaml work.agent
 		return 2, noProviderErr("loop")
 	}
 	a.applyPreset(p, agent)
@@ -1370,12 +1392,15 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// The rotation ladder: the positional target (its model + account ladder) wins; else the
-	// preset lead's ladder; else the default (agent model across all signed-in accounts).
-	// expandLadder turns it into the concrete one-account rungs the loop cycles on limits.
+	// loop.yaml work.agent ladder; else the preset lead's ladder; else the default (agent model
+	// across all signed-in accounts). expandLadder turns it into concrete one-account rungs.
 	var ladder []agents.Target
-	if hasTarget {
+	switch {
+	case hasTarget:
 		ladder = []agents.Target{t}
-	} else if p != nil && agent == p.LeadAgent {
+	case len(workLadder) > 0:
+		ladder = workLadder
+	case p != nil && agent == p.LeadAgent:
 		ladder = p.LeadLadder
 	}
 	rot, err := a.buildRotation(agent, ladder)
@@ -1400,14 +1425,44 @@ func (a *app) applyLoopModel(agent string) {
 	}
 }
 
-// withReviewModel runs fn with agent's model swapped to COOP_REVIEW_MODEL — so the review pass (and
-// the between-tasks audit) can run on a stronger model than the cheaper work loop — then restores
-// the prior top-tier model so the next work round rotates as before. It uses the top model tier so
-// the review model wins for these iterations regardless of the work loop's rotation target; unset →
-// no swap (the loop's model reviews). fn builds AND runs the iteration, so the model is in effect
-// when the box command is assembled (the adapters read cfg.ModelFor at build time).
-func (a *app) withReviewModel(agent string, fn func()) {
-	model, effort := a.cfg.ReviewModelEffort() // COOP_REVIEW_MODEL is model[/effort]
+// resolveWorkAgent turns a .agent/loop.yaml work.agent ladder into the lead agent, an optional
+// preset to apply (the FIRST preset rung — its roles wire the run), and the concrete target ladder
+// to rotate: each preset rung expands to its lead ladder (nested — exhausted before the next rung),
+// each target rung is itself. The first rung sets the lead agent. A bad preset name errors.
+func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, ladder []agents.Target, err error) {
+	rs, err := loopcfg.Rungs(rungs)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	for _, r := range rs {
+		if r.Preset != "" {
+			pr, perr := a.loadRunPreset(r.Preset)
+			if perr != nil {
+				return "", nil, nil, fmt.Errorf("work.agent: %w", perr)
+			}
+			if agent == "" {
+				agent = pr.LeadAgent
+			}
+			if p == nil {
+				p = pr // apply the first preset rung's roles for the run
+			}
+			ladder = append(ladder, pr.LeadLadder...)
+			continue
+		}
+		if agent == "" {
+			agent = r.Target.Provider
+		}
+		ladder = append(ladder, *r.Target)
+	}
+	return agent, p, ladder, nil
+}
+
+// withStepModel runs fn with agent's model/effort swapped to a step's own (the review or between
+// model from .agent/loop.yaml), then restores the prior ones — so the work loop keeps its own
+// model. It uses the top model tier so the step model wins regardless of the work rotation target;
+// empty model AND effort → no swap (the work model reviews). fn builds AND runs the iteration, so
+// the model is in effect when the box command is assembled (the adapters read cfg.ModelFor).
+func (a *app) withStepModel(agent, model, effort string, fn func()) {
 	if model == "" && effort == "" {
 		fn()
 		return
@@ -1416,7 +1471,7 @@ func (a *app) withReviewModel(agent string, fn func()) {
 	if model != "" {
 		a.cfg.SetActiveModel(agent, model)
 	}
-	if effort != "" { // COOP_REVIEW_MODEL's /effort lets the review pass run at a different effort
+	if effort != "" {
 		a.cfg.SetActiveEffort(agent, effort)
 	}
 	defer func() {
@@ -1424,6 +1479,21 @@ func (a *app) withReviewModel(agent string, fn func()) {
 		a.cfg.SetActiveEffort(agent, prevE)
 	}()
 	fn()
+}
+
+// stepModel resolves a single-model step's (review, between) model+effort from its .agent/loop.yaml
+// agent: ladder — the first TARGET rung carrying a model/effort — else the given fallback. A preset
+// rung is skipped here: these steps run once (or once per task), so they take a target's model, not
+// a rotation. (fallback is COOP_REVIEW_MODEL for now; retired next.)
+func stepModel(rungs []string, fbModel, fbEffort string) (model, effort string) {
+	if rs, err := loopcfg.Rungs(rungs); err == nil {
+		for _, r := range rs {
+			if r.Target != nil && (r.Target.Model != "" || r.Target.Effort != "") {
+				return r.Target.Model, r.Target.Effort
+			}
+		}
+	}
+	return fbModel, fbEffort
 }
 
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
@@ -1681,6 +1751,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Warn("%s", note)
 		}
 	}
+	// Per-step review/between models from .agent/loop.yaml (COOP_REVIEW_MODEL is the fallback for
+	// review; between falls back to the review model). Swapped in only for those iterations.
+	fbM, fbE := a.cfg.ReviewModelEffort()
+	reviewModel, reviewEffort := stepModel(lc.Review.Agent, fbM, fbE)
+	betweenModel, betweenEffort := stepModel(lc.Between.Agent, reviewModel, reviewEffort)
 	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
 	// otherwise the chosen agent's headless form carrying the work/review prompt.
 	iterCmd := func(prompt string) []string {
@@ -1814,7 +1889,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				if betweenEnabled {
 					if cNow, _ := queueProgress(hosts); cNow.Done > c.Done {
 						ui.Info("between-tasks audit — reviewing the task just completed")
-						a.withReviewModel(agent, func() {
+						a.withStepModel(agent, betweenModel, betweenEffort, func() {
 							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), hosts, sink, peers)
 						})
 					}
@@ -1862,7 +1937,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		ui.Info("queue empty — running review pass (round %d/%d)", reviewRound, maxReviewRounds)
 		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
 		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
-		a.withReviewModel(agent, func() {
+		a.withStepModel(agent, reviewModel, reviewEffort, func() {
 			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, peers)
 		})
 		// A stop that landed during the review pass is honored before the next round is decided.
