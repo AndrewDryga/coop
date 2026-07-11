@@ -46,6 +46,14 @@ func TestRegistry(t *testing.T) {
 	if _, ok := Get("nope"); ok {
 		t.Error("Get(nope) should be absent")
 	}
+	// Every agent carries a human product name for the UX surfaces (the ACP dropdowns) —
+	// distinct from its grammar token, never empty.
+	for _, n := range Names() {
+		a, _ := Get(n)
+		if d := a.DisplayName(); d == "" || d == n {
+			t.Errorf("%s: DisplayName() = %q, want a human product name (e.g. Codex)", n, d)
+		}
+	}
 	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
 	// binary, not npm, so it adds none).
 	if got := Packages(); len(got) != 5 ||

@@ -27,7 +27,8 @@ const (
 
 func init() { register(codexAgent{}) }
 
-func (codexAgent) Name() string { return "codex" }
+func (codexAgent) Name() string        { return "codex" }
+func (codexAgent) DisplayName() string { return "Codex" }
 
 // base guards against an empty COOP_CODEX_CMD override, since the exec/resume forms
 // index base[0]. The resolved model rides in base as a trailing --model, which codex

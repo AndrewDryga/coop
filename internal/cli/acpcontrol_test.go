@@ -1176,6 +1176,10 @@ func TestACPProviderSelector(t *testing.T) {
 	if !slices.Contains(provider, "claude") || !slices.Contains(provider, "codex") {
 		t.Errorf("Provider dropdown %v must offer the lead and the signed-in codex", provider)
 	}
+	// Values are grammar tokens; the LABELS are the product names.
+	if raw := string(coop[0]); !strings.Contains(raw, `"name":"Claude Code"`) || !strings.Contains(raw, `"name":"Codex"`) {
+		t.Errorf("Provider dropdown labels must be product names:\n%s", raw)
+	}
 	if slices.Contains(provider, "gemini") || slices.Contains(provider, "grok") {
 		t.Errorf("Provider dropdown %v must not offer unsigned providers", provider)
 	}

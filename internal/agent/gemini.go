@@ -14,7 +14,8 @@ type geminiAgent struct{}
 
 func init() { register(geminiAgent{}) }
 
-func (geminiAgent) Name() string { return "gemini" }
+func (geminiAgent) Name() string        { return "gemini" }
+func (geminiAgent) DisplayName() string { return "Gemini CLI" }
 
 func (geminiAgent) base(cfg *config.Config) []string {
 	b := cfg.Cmd("COOP_GEMINI_CMD", "gemini --yolo")

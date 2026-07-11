@@ -1299,10 +1299,10 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	if !fusion {
 		others := c.spawnableProviders(lead)
 		opts := make([]acpOption, 0, len(others)+1)
-		opts = append(opts, acpOption{Value: lead, Name: lead, Description: "The current provider"})
+		opts = append(opts, acpOption{Value: lead, Name: displayName(lead), Description: "The current provider"})
 		for _, p := range others {
-			opts = append(opts, acpOption{Value: p, Name: p,
-				Description: "Switch to " + p + " — new thread, context carried best-effort"})
+			opts = append(opts, acpOption{Value: p, Name: displayName(p),
+				Description: "Switch to " + displayName(p) + " — new thread, context carried best-effort"})
 		}
 		out = append(out, marshalSelect(coopProviderID, "Provider",
 			"Who runs the session — switching re-creates the thread and carries the context best-effort", lead, opts))
@@ -1330,6 +1330,15 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	out = append(out, marshalSelect(coopPresetID, "Preset",
 		"Orchestration recipe — its lead + ladder drive the session, its roles mount", ps, popts))
 	return out
+}
+
+// displayName is a provider's human product name for the dropdowns ("Codex"), falling back to
+// the grammar token for anything unregistered. Values stay tokens — only labels dress up.
+func displayName(provider string) string {
+	if a, ok := agents.Get(provider); ok {
+		return a.DisplayName()
+	}
+	return provider
 }
 
 // marshalSelect renders one select configOption as raw JSON.

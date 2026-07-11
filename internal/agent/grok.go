@@ -14,7 +14,8 @@ type grokAgent struct{}
 
 func init() { register(grokAgent{}) }
 
-func (grokAgent) Name() string { return "grok" }
+func (grokAgent) Name() string        { return "grok" }
+func (grokAgent) DisplayName() string { return "Grok" }
 
 // grokReadOnlyTools locks a consult to file-read + search only. grok's --permission-mode
 // plan is a NO-OP in headless (only bypassPermissions takes effect via that flag —

@@ -15,6 +15,9 @@ import (
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
 	Name() string
+	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
+	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.
+	DisplayName() string
 	// Interactive is the autonomous default command — what `coop <agent>` runs.
 	Interactive(cfg *config.Config) []string
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).
