@@ -13,7 +13,9 @@ lead:
   # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (a fallback
   # ladder, even cross-provider). A bare provider:model runs on EVERY signed-in account
   # (rotating on a rate limit); @account pins one. A loop rotates the list top-to-bottom.
-  agent: claude:claude-fable-5
+  # Fable 5 leads (the long-horizon agentic frontier), falling back to Opus 4.8 — the lead
+  # stays claude so the native thinker subagent below always works.
+  agent: [claude:claude-fable-5, claude:opus]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
@@ -41,8 +43,10 @@ roles:
     # mode: consult — a READ-ONLY peer via coop-consult for a second opinion
     # (often another vendor); it cannot edit files.
     mode: consult
-    # agent — a target: provider[:model] (omit the model for the agent's default).
-    agent: codex:gpt-5.6-sol
+    # agent — a target: provider[:model][/effort] (omit the model for the agent's default).
+    # Sol at xhigh: the strongest coding reviewer available — a consult is one shot, so
+    # spend effort where a wrong answer is expensive.
+    agent: codex:gpt-5.6-sol/xhigh
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
 
@@ -50,8 +54,9 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — a target: provider[:model].
-    agent: codex:gpt-5.6-luna
+    # agent — a target: provider[:model]. Flash: mechanical work wants the fastest
+    # competent hands, and a third vendor spreads the quota load.
+    agent: gemini:gemini-3.5-flash
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     # commit — delegate-only; only "never" (the delegate never commits).

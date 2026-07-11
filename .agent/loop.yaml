@@ -2,15 +2,22 @@
 # Every key is optional — omit it (or a whole section) to use coop's built-in default, noted below.
 # Models use coop's target grammar: provider[:model][/effort][@account].
 # Sections are in loop order: preflight (before) → work → between (after each task) → review (at the end).
+#
+# This copy is coop dogfooding coop, tuned to the July 2026 frontier: the frontier preset
+# (Fable 5 + roles) does the work, GPT-5.6 Terra and Grok 4.5 keep it moving on rate limits,
+# Luna audits every finished task, and Sol at xhigh reviews the lot.
 
 preflight:
   # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
   # works no task, changes no code). Default: false.
-  #enabled: true
+  enabled: true
 
   # Extra instructions APPENDED to the built-in cleanup prompt. Default: nothing appended.
-  #prompt: |
-  #  Also drop stale screenshots under .agent/tasks/*/screenshots/.
+  prompt: |
+    Also hold every 00_todo task to the self-containment contract (AGENTS.md): a fresh agent
+    must be able to work it from task.md + the BOOT files alone. One that can't stand on its
+    own is not ready — move it to 50_blocked with a decision.md naming exactly what's missing
+    (problem? acceptance criteria? approach?). Better one blocked task than one burned iteration.
 
 work:
   # Model ladder for work iterations. Each rung is a TARGET (claude:opus, codex:gpt-5.6-luna) or a
@@ -18,7 +25,13 @@ work:
   # rotates to the next rung on a rate limit (a preset rung's own ladder first). A bare provider
   # word (claude/codex/gemini/grok) is a target; any other bare word must name a preset.
   # Default: the agent on the command line (`coop loop claude`) or a --preset's lead.
-  #agent: [frontier, claude:opus, codex:gpt-5.6-luna]
+  #
+  # Rung 1: the frontier preset — Fable 5 leads (the long-horizon agentic frontier), with the
+  #         thinker/critic/fast roles and an Opus 4.8 fallback inside the preset's own ladder.
+  # Rung 2: GPT-5.6 Terra — Fable-class quality on a fresh vendor quota, at a fraction of the cost.
+  # Rung 3: Grok 4.5 — near-frontier and token-efficient; a third vendor so the queue keeps
+  #         draining even when both of the first two are limited.
+  agent: [frontier, codex:gpt-5.6-terra, grok:grok-4.5]
 
   # Advanced: a raw command run each iteration instead of coop's agent form (disables the review,
   # preflight, and between passes). Default: coop's built-in agent form.
@@ -26,15 +39,25 @@ work:
 
 between:
   # Opt-in audit run after EACH completed task (may reopen it before the loop moves on). Default: off.
-  #enabled: true
+  enabled: true
 
   # Audit model ladder. Default: the review model.
-  #agent: [claude:sonnet]
+  # Luna outclasses Opus 4.8 at a fraction of the cost — exactly the tier a focused per-task
+  # audit wants; Gemini 3.5 Flash is the third-vendor fallback.
+  agent: [codex:gpt-5.6-luna, gemini:gemini-3.5-flash]
 
   # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
-  #prompt: |
-  #  Audit the task just moved to 99_done/: confirm every acceptance criterion is demonstrably met
-  #  and its failure path is tested; reopen it (move the folder back to 10_in_progress/) if not.
+  prompt: |
+    Audit ONLY the task most recently moved to .agent/tasks/99_done/ — nothing else. Hold it
+    against its own task.md, trusting evidence over prose:
+    - Every acceptance criterion is demonstrably met — point at the commit, diff, or test that
+      proves it, not at a claim in log.md.
+    - The failure path is tested, not just the happy path.
+    - The gate is green on the committed tree (`make check`), and `make align` leaves no diff.
+    - The commit says WHY, and state.md was refreshed as the final step.
+    Verdict: pass → append one line to the task's log.md ("audit: pass — <evidence>"). Fail →
+    move the folder back to 10_in_progress/ and append the concrete gap (what to fix, where)
+    to log.md. Never widen scope beyond the audited task.
 
 review:
   # Work→review rounds before a task the review keeps reopening is blocked for a human.
@@ -42,8 +65,10 @@ review:
   #rounds: 5
 
   # Model ladder for the review pass. A stronger model here reviews the cheaper work loop.
-  # Default: the work model.
-  #agent: [codex:gpt-5.6-sol/xhigh, claude:fable]
+  # Sol at xhigh is the strongest code reviewer available right now — and a different vendor
+  # than the (claude-led) work rung, so the lead's blind spots aren't the reviewer's. Fable 5
+  # picks the review up when codex is limited.
+  agent: [codex:gpt-5.6-sol/xhigh, claude:claude-fable-5]
 
   # Extra review instructions/checks, APPENDED to coop's built-in senior review (which always
   # runs — it checks goal, standards, failure-path tests, polish, and the gate). The reviewer
@@ -54,3 +79,7 @@ review:
     - If internal/cli/help.go changed, the generated docs were regenerated (`make docs`) and committed.
     - A user-visible CLI change updated the site casts/docs and added a CHANGELOG Unreleased entry.
     - No new Go dependency without a one-line justification in the commit message.
+    - A correction from the human during the task became a rule in .agent/rules/ — flag any that
+      were applied once and not recorded.
+    - No stray working files left behind: the tree is clean after the commit (git status) and
+      nothing untracked was smuggled in beside the change.

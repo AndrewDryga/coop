@@ -24,10 +24,10 @@ When you lead a session here, you orchestrate: plan, decompose, synthesize, make
 calls, and keep your own context lean by delegating. This repo's roles live in the
 **frontier preset** (`.agent/presets/frontier/preset.yaml`) — under it, route by the nature
 of the work:
-- **thinker** (the `coop-thinker` subagent, Opus) — reasoning-heavy phases: architecture
+- **thinker** (the `coop-thinker` subagent, Opus 4.8) — reasoning-heavy phases: architecture
   calls, complex or intermittent bugs, code review, a pre-commit check. It returns a
   conclusion; you act on it.
-- **critic** (codex/gpt-5.5, read-only) — a peer engineer from another vendor, not a
+- **critic** (codex/gpt-5.6-sol, read-only) — a peer engineer from another vendor, not a
   reviewer-of-record: plan review, security, tradeoffs. Ask with a self-contained prompt:
   `coop-consult critic --fresh "…"`.
 - **fast** (gemini flash, write-capable) — mechanical, fully-specified work: boilerplate,

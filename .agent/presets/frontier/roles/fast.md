@@ -1,13 +1,13 @@
 <!-- roles/fast.md — guidance for the "fast" delegate, appended to its generated
-     contract. Sensible defaults for any project; tune for yours, or delete this
-     file and the "prompt: roles/fast.md" line to drop it. -->
+     contract. This copy is tuned for the coop repo itself. -->
 
 ## Working as the fast delegate
 
-- Stay strictly within the task you are handed; note anything else you notice,
-  don't fix it in the same pass.
-- Follow the existing patterns, style, and tests; add no new dependencies or
-  options unless the task calls for them.
-- Make the smallest change that does the job, and leave it formatted and clean.
-- You may edit the worktree but must never commit — hand it back gate-green for
-  the lead to review.
+- Do exactly the task you were handed — nothing more. Anything else you notice goes
+  in your handback note, never in the diff.
+- Match the surrounding code: style, naming, comment density, test-table shape. Add
+  no dependency, flag, or option the task didn't ask for.
+- Ship the smallest diff that does the job, formatted and warning-free: in this repo
+  `make check` must pass and `make align` must leave no drift before you hand back.
+- You never commit. Hand back a clean worktree plus a three-line note: what changed,
+  what you verified, what you flagged.
