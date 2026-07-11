@@ -21,8 +21,8 @@ adapter-interface change and no `RunSpec` change. The loop rotates by calling
 **Why it's safe and sealed:** only the active profile's dir is mounted at `~/.<agent>`, so
 a running agent can read just the one account it's using — never the rest of the vault.
 There is no per-repo pool file anymore: the rotation is expanded at loop start from the
-lead's `models:` ladder (a preset in the repo, or a one-off `--model`/`--credential`) against
-the signed-in accounts. A ladder names *accounts* (`model@account`), never their logins —
+`agent:` ladder in play (a loop.yaml step, a preset's lead, or the command-line target)
+against the signed-in accounts. A ladder names *accounts* (`provider:model@account`), never their logins —
 the credentials themselves stay in the vault outside the repo, so nothing lands where it
 could be committed (this is the tool whose job is catching exactly that).
 
@@ -38,5 +38,5 @@ could be committed (this is the tool whose job is catching exactly that).
   failure, not a limit, so it surfaces instead of rotating — intended for v1.
 - A free rotation resets the wait counter; only consecutive *all-profiles-limited* waits
   count toward the stop cap. Otherwise a healthy multi-account run would trip the cap.
-- Never put a credential in a repo. A preset's `models:` ladder may name accounts
+- Never put a credential in a repo. A preset's `agent:` ladder may name accounts
   (`model@account`), but the logins themselves stay in the vault, never committed.

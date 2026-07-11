@@ -1,12 +1,12 @@
 # One frozen lexicon for usage placeholders
 
 Every `Usage:`/`usage:` string and error hint spells a value the SAME way, in `<angle>` brackets,
-using this fixed lexicon — so `--model` never reads `m` here and `<m>` there:
+using this fixed lexicon — so a value never reads `m` here and `<m>` there:
 
 | Value | Placeholder |
 | --- | --- |
-| a coding agent | `<agent>` (or the literal `claude\|codex\|gemini`) |
-| a credential profile name | `<name>` (a bare arg) or `<profile>` (the profile slot in the path grammar) |
+| a coding agent | `<agent>` (or the literal `claude\|codex\|gemini\|grok`) |
+| a credential name | `<name>` (a bare arg) or `<credential>` (the slot in `coop credentials <agent> <credential> …`) |
 | a model | `<model>` |
 | a filesystem path (dir or file) | `<path>` |
 | a task id | `<id>` |
