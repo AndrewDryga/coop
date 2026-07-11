@@ -45,6 +45,7 @@ type Config struct {
 	ReviewModel     string   // COOP_REVIEW_MODEL — model[/effort] for the loop's review + between-tasks audit iterations (empty = the loop's)
 	LoopCmd         []string // COOP_LOOP_CMD — override the loop's per-iteration command
 	MaxReviewRounds int      // COOP_MAX_REVIEW_ROUNDS — the ceiling for the (batch-scaled) work→review rounds before a task the review keeps reopening is blocked (default 5)
+	ACPCarryTokens  int      // COOP_ACP_CARRY_TOKENS — per-session budget (≈tokens, ~4 bytes each) for the conversation carried across an ACP provider switch (default 200000)
 	TasksFiles      []string // COOP_TASKS — explicit task queue(s) override; empty = derive from .agent/project.yaml (subprojects) else .agent/tasks
 	Gate            []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs    []string // COOP_RUN_ARGS — extra args passed to the container runtime
@@ -164,6 +165,7 @@ func Load() *Config {
 		ReviewModel:     get("COOP_REVIEW_MODEL", ""),
 		LoopCmd:         shellSplit(get("COOP_LOOP_CMD", "")),
 		MaxReviewRounds: getInt("COOP_MAX_REVIEW_ROUNDS", 5),
+		ACPCarryTokens:  getInt("COOP_ACP_CARRY_TOKENS", 200_000),
 		TasksFiles:      shellSplit(get("COOP_TASKS", "")), // empty → taskQueues derives from .agent/project.yaml
 		Gate:            shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs:    shellSplit(get("COOP_RUN_ARGS", "")),
@@ -223,6 +225,16 @@ func (c *Config) GlobalPresetsDir() string {
 		return v
 	}
 	return filepath.Join(c.BoxHome, "presets")
+}
+
+// ACPCarryBytes is the per-session budget, in bytes, for the conversation carried across an
+// ACP provider switch — COOP_ACP_CARRY_TOKENS at ~4 bytes per token, defaulting here too so a
+// Config built directly (tests) doesn't silently zero the budget.
+func (c *Config) ACPCarryBytes() int {
+	if c.ACPCarryTokens <= 0 {
+		return 200_000 * 4
+	}
+	return c.ACPCarryTokens * 4
 }
 
 // EnvFile is the optional file of KEY=VALUE pairs passed into every box.

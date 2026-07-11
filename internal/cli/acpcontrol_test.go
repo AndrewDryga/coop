@@ -50,7 +50,7 @@ func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMes
 func toEd(c *acpControl, line []byte) []byte { out, _ := c.toEditor(line); return out }
 
 // TestACPControlRewrite: coop's toolbar rewrite on a session/new result — drop mode+agent+modes,
-// keep model/effort/fast (with the model defaulted to coop's), prepend coop_setup, keep sessionId.
+// keep model/effort/fast (with the model defaulted to coop's), prepend coop's dropdowns, keep sessionId.
 func TestACPControlRewrite(t *testing.T) {
 	c := newTestControl(t)
 	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","modes":{"currentModeId":"default"},"configOptions":[` +
@@ -66,10 +66,10 @@ func TestACPControlRewrite(t *testing.T) {
 	if string(res["sessionId"]) != `"s1"` {
 		t.Errorf("sessionId lost in rewrite: %s", res["sessionId"])
 	}
-	if len(ids) == 0 || ids[0] != "coop_setup" {
-		t.Errorf("coop_setup must be first, got %v", ids)
+	if len(ids) < 3 || ids[0] != "coop_provider" || ids[1] != "coop_account" || ids[2] != "coop_preset" {
+		t.Errorf("coop's dropdowns must lead (provider, account, preset), got %v", ids)
 	}
-	for _, bad := range []string{"mode", "agent"} {
+	for _, bad := range []string{"mode", "agent", "coop_setup"} {
 		if slices.Contains(ids, bad) {
 			t.Errorf("%s dropdown not stripped: %v", bad, ids)
 		}
@@ -83,17 +83,12 @@ func TestACPControlRewrite(t *testing.T) {
 	if !strings.Contains(string(toEd(c, []byte(in))), `"currentValue":"opus[1m]"`) {
 		t.Error("model currentValue not defaulted to coop's model")
 	}
-	// coop_setup lists the credentials + presets: intercept values are cred:/preset:-prefixed, while
-	// the display rows read "Credential: <name>" / "Preset: <name>".
+	// The Account dropdown lists the lead's credentials, the Preset dropdown the repo's presets —
+	// bare values plus the auto/none placeholders.
 	rewritten := string(toEd(c, []byte(in)))
-	for _, val := range []string{`"cred:personal"`, `"cred:work"`, `"preset:frontier"`} {
+	for _, val := range []string{`"value":"personal"`, `"value":"work"`, `"value":"auto"`, `"value":"frontier"`, `"value":"none"`} {
 		if !strings.Contains(rewritten, val) {
-			t.Errorf("coop_setup must carry the intercept value %s: %s", val, rewritten)
-		}
-	}
-	for _, label := range []string{`Credential: personal`, `Preset: frontier`} {
-		if !strings.Contains(rewritten, label) {
-			t.Errorf("coop_setup rows should be friendly-labeled %q: %s", label, rewritten)
+			t.Errorf("coop dropdowns must carry %s: %s", val, rewritten)
 		}
 	}
 }
@@ -132,8 +127,8 @@ func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
 		json.Unmarshal(o["id"], &id)
 		ids = append(ids, id)
 	}
-	if len(ids) == 0 || ids[0] != "coop_setup" {
-		t.Errorf("coop_setup must be first in a config_option_update too, got %v", ids)
+	if len(ids) < 3 || ids[0] != "coop_provider" {
+		t.Errorf("coop's dropdowns must lead in a config_option_update too, got %v", ids)
 	}
 	for _, bad := range []string{"mode", "agent"} {
 		if slices.Contains(ids, bad) {
@@ -141,8 +136,8 @@ func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
 		}
 	}
 	s := string(out)
-	if !strings.Contains(s, `"currentValue":"cred:work"`) {
-		t.Errorf("coop_setup should reflect the active selection cred:work:\n%s", s)
+	if !strings.Contains(s, `"currentValue":"work"`) {
+		t.Errorf("the Account dropdown should reflect the active selection work:\n%s", s)
 	}
 	if !strings.Contains(s, `"currentValue":"opus[1m]"`) {
 		t.Errorf("model not retargeted to coop's in a config_option_update:\n%s", s)
@@ -162,14 +157,14 @@ func TestACPControlInjectsSetupWhenAdapterHasNoConfigOptions(t *testing.T) {
 	if string(res["sessionId"]) != `"g1"` {
 		t.Errorf("sessionId lost: %s", res["sessionId"])
 	}
-	if len(ids) == 0 || ids[0] != "coop_setup" {
-		t.Errorf("coop_setup must be injected even when the adapter sends no configOptions, got %v", ids)
+	if len(ids) < 3 || ids[0] != "coop_provider" {
+		t.Errorf("coop's dropdowns must be injected even when the adapter sends no configOptions, got %v", ids)
 	}
 	if _, ok := res["models"]; !ok {
 		t.Error("the adapter's own models field should be preserved, not dropped")
 	}
-	if !strings.Contains(string(out), `"preset:frontier"`) {
-		t.Errorf("the injected coop_setup should list the presets:\n%s", out)
+	if !strings.Contains(string(out), `"value":"frontier"`) {
+		t.Errorf("the injected Preset dropdown should list the presets:\n%s", out)
 	}
 }
 
@@ -222,13 +217,13 @@ const geminiSessionNew = `{"jsonrpc":"2.0","id":"2","result":{"sessionId":"g1","
 
 // TestACPControlSynthesizesGeminiModelDropdown: gemini's session/new carries model choices in a
 // `models` field with no `model` configOption, so coop synthesizes a coop-owned model select (after
-// coop_setup) listing availableModels, defaulting to currentModelId.
+// coop dropdowns) listing availableModels, defaulting to currentModelId.
 func TestACPControlSynthesizesGeminiModelDropdown(t *testing.T) {
 	c := newGeminiControl(t, "") // no coop launch-model → currentValue tracks the box's currentModelId
 	out := toEd(c, []byte(geminiSessionNew))
 	ids, res := configOptionIDs(t, out)
-	if len(ids) < 2 || ids[0] != "coop_setup" || !slices.Contains(ids, "model") {
-		t.Fatalf("want coop_setup first + a synthesized model option, got %v", ids)
+	if len(ids) < 4 || ids[0] != "coop_provider" || !slices.Contains(ids, "model") {
+		t.Fatalf("want coop dropdowns first + a synthesized model option, got %v", ids)
 	}
 	model := findModelOption(t, res)
 	if model.Type != "select" || model.CurrentValue != "gemini-2.5-pro" {
@@ -381,8 +376,8 @@ func TestACPControlFromEditor(t *testing.T) {
 	if !h || !restart {
 		t.Errorf("coop_setup change = (handled=%v restart=%v), want both true", h, restart)
 	}
-	if !strings.Contains(string(resp), `"currentValue":"cred:work"`) {
-		t.Errorf("ack must show the new currentValue cred:work (not the stale cache), got: %s", resp)
+	if !strings.Contains(string(resp), `"currentValue":"work"`) {
+		t.Errorf("ack's Account dropdown must show the new currentValue work (not the stale cache), got: %s", resp)
 	}
 	if cred, preset := c.selection(); cred != "work" || preset != "" {
 		t.Errorf("after cred:work, selection = (%q,%q), want (work, \"\")", cred, preset)
@@ -559,9 +554,9 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 		t.Fatal("a rate-limit error must restart")
 	}
 	// The error is swallowed; the only thing the editor sees is a config_option_update moving the
-	// coop_setup dropdown to the new credential (no chat message).
-	if !strings.Contains(string(out), "config_option_update") || !strings.Contains(string(out), `"cred:work"`) {
-		t.Errorf("rotate should push a dropdown update to cred:work, got: %s", out)
+	// Account dropdown to the new credential (no chat message).
+	if !strings.Contains(string(out), "config_option_update") || !strings.Contains(string(out), `"currentValue":"work"`) {
+		t.Errorf("rotate should push a dropdown update onto account work, got: %s", out)
 	}
 	if strings.Contains(string(out), `"error"`) || strings.Contains(string(out), "session limit") {
 		t.Errorf("the rate-limit error must not reach the editor, got: %s", out)
@@ -701,8 +696,8 @@ func TestACPControlPresetLadderFailover(t *testing.T) {
 	if strings.Contains(s, `"error"`) {
 		t.Errorf("the raw rate-limit error must not reach the editor:\n%s", s)
 	}
-	if !strings.Contains(s, "config_option_update") || !strings.Contains(s, `"preset:frontier"`) {
-		t.Errorf("expected a config_option_update keeping coop_setup on the preset:\n%s", s)
+	if !strings.Contains(s, "config_option_update") || !strings.Contains(s, `"currentValue":"frontier"`) {
+		t.Errorf("expected a config_option_update keeping the Preset dropdown on the preset:\n%s", s)
 	}
 }
 
@@ -1151,56 +1146,90 @@ func TestACPSpawnTargetCrossProviderRung(t *testing.T) {
 	}
 }
 
-// The coop_setup selector offers other SIGNED-IN providers (never the current lead, never
-// unsigned ones, never under fusion), and fromEditor refuses a bogus agent: value instead of
-// sending the respawn loop chasing a spawn that can never come up.
+// The Provider dropdown offers the current lead plus other SIGNED-IN providers (never
+// unsigned ones, absent under fusion); each dropdown's set maps onto the one selection, and a
+// value that could never spawn is refused instead of sending the respawn loop chasing it.
 func TestACPProviderSelector(t *testing.T) {
 	c := newTestControl(t)
 	signInCred(t, c.cfg, "claude", "work")
 	signInCred(t, c.cfg, "codex", "work")
 
-	var opt struct {
-		Options []acpOption `json:"options"`
+	optValues := func(raw json.RawMessage) []string {
+		var opt struct {
+			ID      string      `json:"id"`
+			Options []acpOption `json:"options"`
+		}
+		if err := json.Unmarshal(raw, &opt); err != nil {
+			t.Fatal(err)
+		}
+		var vals []string
+		for _, o := range opt.Options {
+			vals = append(vals, o.Value)
+		}
+		return vals
 	}
-	if err := json.Unmarshal(c.setupOption(), &opt); err != nil {
-		t.Fatal(err)
+	coop := c.coopOptions()
+	if len(coop) != 3 {
+		t.Fatalf("want provider+account+preset dropdowns, got %d", len(coop))
 	}
-	var vals []string
-	for _, o := range opt.Options {
-		vals = append(vals, o.Value)
+	provider := optValues(coop[0])
+	if !slices.Contains(provider, "claude") || !slices.Contains(provider, "codex") {
+		t.Errorf("Provider dropdown %v must offer the lead and the signed-in codex", provider)
 	}
-	if !slices.Contains(vals, "agent:codex") {
-		t.Errorf("selector %v missing agent:codex (signed in)", vals)
+	if slices.Contains(provider, "gemini") || slices.Contains(provider, "grok") {
+		t.Errorf("Provider dropdown %v must not offer unsigned providers", provider)
 	}
-	if slices.Contains(vals, "agent:claude") || slices.Contains(vals, "agent:gemini") || slices.Contains(vals, "agent:grok") {
-		t.Errorf("selector %v must not offer the current lead or unsigned providers", vals)
+	if account := optValues(coop[1]); !slices.Contains(account, "auto") || !slices.Contains(account, "work") {
+		t.Errorf("Account dropdown %v must offer auto + the lead's accounts", account)
+	}
+	if preset := optValues(coop[2]); !slices.Contains(preset, "none") || !slices.Contains(preset, "frontier") {
+		t.Errorf("Preset dropdown %v must offer none + the presets", preset)
 	}
 
-	// A fusion governor offers no provider switch.
+	// A fusion governor gets no Provider dropdown at all.
 	c.fusion = true
-	if err := json.Unmarshal(c.setupOption(), &opt); err != nil {
-		t.Fatal(err)
-	}
-	for _, o := range opt.Options {
-		if strings.HasPrefix(o.Value, "agent:") {
-			t.Errorf("fusion selector offers %q, want no provider entries", o.Value)
-		}
+	if fus := c.coopOptions(); len(fus) != 2 {
+		t.Errorf("fusion must drop the Provider dropdown, got %d options", len(fus))
 	}
 	c.fusion = false
 
-	// A bogus agent: set is refused — acked, no restart, selection unchanged.
-	set := []byte(`{"jsonrpc":"2.0","id":"s1","method":"session/set_config_option","params":{"sessionId":"sess1","configId":"coop_setup","value":"agent:bogus"}}` + "\n")
-	handled, _, _, restart := c.fromEditor(set)
-	if !handled || restart {
-		t.Errorf("bogus agent set: handled=%v restart=%v, want handled + no restart", handled, restart)
+	set := func(configID, value string) (bool, bool) {
+		line := []byte(`{"jsonrpc":"2.0","id":"sx","method":"session/set_config_option","params":{"sessionId":"sess1","configId":"` + configID + `","value":"` + value + `"}}` + "\n")
+		handled, _, _, restart := c.fromEditor(line)
+		return handled, restart
 	}
-	if c.sel == "agent:bogus" {
-		t.Error("bogus agent value must not become the selection")
+	// A bogus provider is refused — acked, no restart, selection unchanged.
+	if handled, restart := set("coop_provider", "bogus"); !handled || restart || c.sel == "agent:bogus" {
+		t.Errorf("bogus provider: handled=%v restart=%v sel=%q, want a refused ack", handled, restart, c.sel)
 	}
-	// A real signed-in provider IS accepted and restarts.
-	set = []byte(`{"jsonrpc":"2.0","id":"s2","method":"session/set_config_option","params":{"sessionId":"sess1","configId":"coop_setup","value":"agent:codex"}}` + "\n")
-	if _, _, _, restart := c.fromEditor(set); !restart || c.sel != "agent:codex" {
-		t.Errorf("valid provider set: restart=%v sel=%q, want a restart onto agent:codex", restart, c.sel)
+	// A real signed-in provider restarts onto it.
+	if _, restart := set("coop_provider", "codex"); !restart || c.sel != "agent:codex" {
+		t.Errorf("provider set: restart=%v sel=%q, want agent:codex", restart, c.sel)
+	}
+	// The Account dropdown switches to one of the (current) lead's credentials.
+	if _, restart := set("coop_account", "work"); !restart || c.sel != "cred:work" {
+		t.Errorf("account set: restart=%v sel=%q, want cred:work", restart, c.sel)
+	}
+	// "auto" and unknown accounts are no-ops.
+	if _, restart := set("coop_account", "auto"); restart {
+		t.Error("auto must not restart")
+	}
+	if _, restart := set("coop_account", "ghost"); restart || c.sel != "cred:work" {
+		t.Errorf("unknown account: restart=%v sel=%q, want a refused ack", restart, c.sel)
+	}
+	// Preset on, then off — "none" lands on the lead's default account.
+	if _, restart := set("coop_preset", "frontier"); !restart || c.sel != "preset:frontier" {
+		t.Errorf("preset set: restart=%v sel=%q, want preset:frontier", restart, c.sel)
+	}
+	if _, restart := set("coop_preset", "none"); !restart || !strings.HasPrefix(c.sel, "cred:") {
+		t.Errorf("preset none: restart=%v sel=%q, want back to a credential", restart, c.sel)
+	}
+	// The RETIRED coop_setup id still drives the selection (an editor's persisted defaults).
+	if _, restart := set("coop_setup", "preset:frontier"); !restart || c.sel != "preset:frontier" {
+		t.Errorf("legacy coop_setup: restart=%v sel=%q, want preset:frontier", restart, c.sel)
+	}
+	if handled, restart := set("coop_setup", "agent:bogus"); !handled || restart {
+		t.Errorf("legacy bogus agent: handled=%v restart=%v, want a refused ack", handled, restart)
 	}
 }
 
@@ -1253,18 +1282,28 @@ func TestACPHistoryBounds(t *testing.T) {
 	if len(got) != historyEntryBytes || !strings.HasSuffix(got, "THE-END") {
 		t.Errorf("assistant entry len=%d suffix=%q — want the %d-byte TAIL kept", len(got), got[max(0, len(got)-7):], historyEntryBytes)
 	}
-	// Session cap: many entries evict the oldest, never exceeding the budget (+1 entry slack).
+	// Session budget (COOP_ACP_CARRY_TOKENS × 4 bytes): the oldest entries evict, the eviction
+	// is remembered, and the preamble says so instead of implying completeness.
 	c.mu.Lock()
+	c.carryBytes = 8 << 10 // shrink the budget so the test doesn't shovel megabytes
 	for i := 0; i < 40; i++ {
-		c.appendHistoryLocked("s2", "user", strings.Repeat("y", 2048)+itoa(i))
+		c.appendHistoryLocked("s2", "user", strings.Repeat("y", 1024)+itoa(i))
 	}
 	h := c.history["s2"]
-	c.mu.Unlock()
-	if h.size > historyMaxBytes+historyEntryBytes {
-		t.Errorf("history size %d blew the cap %d", h.size, historyMaxBytes)
+	if h.size > c.carryBytes+historyEntryBytes {
+		t.Errorf("history size %d blew the budget %d", h.size, c.carryBytes)
 	}
 	if strings.HasSuffix(h.entries[0].text, "0") {
 		t.Error("oldest entry survived eviction")
+	}
+	if !h.evicted {
+		t.Error("eviction must be remembered for the preamble's omission marker")
+	}
+	c.appendHistoryLocked("s2", "assistant", "latest answer") // trailing user entry would be dropped from the preamble
+	pre := c.preambleLocked("s2")
+	c.mu.Unlock()
+	if !strings.Contains(pre, "earlier context omitted") {
+		t.Errorf("preamble must name the omission after eviction:\n%s", pre[:200])
 	}
 }
 
@@ -1337,5 +1376,38 @@ func TestACPPreambleOnResend(t *testing.T) {
 	c2.mu.Unlock()
 	if got := string(c2.resumePrompt("s1")); strings.Contains(got, "carried over") {
 		t.Errorf("same-store resend must not grow a preamble: %s", got)
+	}
+}
+
+// Tool calls ride the carried history as one-line narration — title remembered from the
+// initial tool_call, the line emitted on its terminal update, payloads never included.
+func TestACPHistoryToolNarration(t *testing.T) {
+	c := newTestControl(t)
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"fix the bug"}]}}` + "\n"))
+	feed := func(l string) { c.captureTurn([]byte(l + "\n")) }
+	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read main.go","kind":"read","status":"pending"}}}`)
+	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"looking…"}}}}`)
+	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed"}}}`)
+	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"t2","title":"Run tests","kind":"execute","status":"pending"}}}`)
+	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t2","status":"failed"}}}`)
+	feed(`{"jsonrpc":"2.0","id":"r1","result":{"stopReason":"end_turn"}}`)
+
+	c.mu.Lock()
+	h := c.history["s1"]
+	c.mu.Unlock()
+	if h == nil || len(h.entries) != 2 {
+		t.Fatalf("history = %+v, want (user, assistant)", h)
+	}
+	turn := h.entries[1].text
+	for _, want := range []string{"looking…", "[tool] Read main.go — completed", "[tool] Run tests — failed"} {
+		if !strings.Contains(turn, want) {
+			t.Errorf("turn narrative missing %q:\n%s", want, turn)
+		}
+	}
+	c.mu.Lock()
+	stale := len(c.toolTitle["s1"])
+	c.mu.Unlock()
+	if stale != 0 {
+		t.Errorf("tool title tracking must clear with the turn, %d left", stale)
 	}
 }

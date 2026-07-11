@@ -5,15 +5,21 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **ACP sessions can switch PROVIDER — manually or on a rate limit — with the thread carried
-  best-effort.** The editor toolbar's "coop" dropdown now offers every other signed-in provider
-  (`Provider: codex`), and a preset's cross-provider ladder rungs rotate on ACP like they do on
-  the loop. The switch re-creates the session on the new agent (the old provider's transcript
-  is unreadable to it — see the 2026-07-04 investigation) and carries the conversation as a
-  labeled plain-text preamble on the first prompt: coop retains a bounded per-session history
-  of (user, assistant) texts from the wire it already proxies — 32KiB per session, user asks
-  keep their head, assistant turns their tail, tool calls not included, "approximate" said out
-  loud. Same-provider switches stay fully transparent (the shared session store, as before).
-  Under the hood: one respawn env `COOP_ACP_TARGET` in the target grammar replaces
+  best-effort.** The editor toolbar now leads with THREE coop dropdowns mirroring the target
+  grammar — **Provider** (who runs), **Account** (the lead's login), **Preset** (the recipe) —
+  one selection underneath, so changing one refreshes the others (the old mixed `coop_setup`
+  dropdown is gone; its persisted editor defaults are still accepted on set). A preset's
+  cross-provider ladder rungs rotate on ACP like they do on the loop. A provider switch
+  re-creates the session on the new agent (the old provider's transcript is unreadable to it —
+  see the 2026-07-04 investigation) and carries the conversation as a labeled plain-text
+  preamble on the first prompt: coop retains a per-session history of (user, assistant) texts
+  plus one-line tool NARRATION (`[tool] Read main.go — completed`; payloads excluded — they
+  dominate transcripts and go stale) from the wire it already proxies, budgeted by
+  **`COOP_ACP_CARRY_TOKENS`** (default 200000 ≈ 800KiB; the preamble says when earlier context
+  was evicted — trim the budget below the smallest window you switch into). User asks keep
+  their head, assistant turns their tail, "approximate" said out loud. Same-provider switches
+  stay fully transparent (the shared session store, as before). Under the hood: one respawn
+  env `COOP_ACP_TARGET` in the target grammar replaces
   `COOP_ACP_CREDENTIAL`/`COOP_ACP_LEAD_MODEL`/`_CRED`; the control re-derives its per-lead
   state (accounts, models dropdown, limit signals) at every spawn; and the proxy now
   RE-CREATES a session whose `session/load` fails after a restart (new id, remapped, loss

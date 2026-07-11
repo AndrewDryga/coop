@@ -265,14 +265,17 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
 
   coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
   sandbox, so no permission prompts), defaults the model dropdown to coop's model,
-  drops the permission-mode and subagent pickers, and adds a first "coop" dropdown to
-  switch the CREDENTIAL (account), PRESET, or PROVIDER mid-session. A credential or
-  same-provider switch is transparent — the conversation is preserved (a shared,
-  credential-independent session store). A PROVIDER switch (picking another signed-in
-  agent, or a cross-provider preset rung rotating in on a rate limit) re-creates the
-  session on the new agent and carries the conversation BEST-EFFORT: coop prepends the
-  thread so far as plain text (labeled approximate; tool results aren't included). On a
-  rate limit it auto-rotates across the ladder's rungs — accounts, models, providers.
+  drops the permission-mode and subagent pickers, and leads with three dropdowns
+  mirroring the target grammar — PROVIDER (who runs), ACCOUNT (the lead's login), and
+  PRESET (the recipe); one selection underneath, so changing one refreshes the others.
+  An account or same-provider switch is transparent — the conversation is preserved (a
+  shared, credential-independent session store). A PROVIDER switch (picking another
+  signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
+  re-creates the session on the new agent and carries the conversation BEST-EFFORT:
+  coop prepends the thread so far — message text plus one-line tool narration, no tool
+  payloads, labeled approximate — budgeted by COOP_ACP_CARRY_TOKENS (default 200000;
+  trim it below the smallest window you switch into). On a rate limit it auto-rotates
+  across the ladder's rungs — accounts, models, providers.
 
   The target pins the session's agent, model, and account — an editor can run two
   entries on different ones, e.g. ["acp","claude:opus@work"].

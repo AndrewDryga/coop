@@ -42,11 +42,26 @@ func (a *app) acpPresetNames(repo string) []string {
 	return out
 }
 
-// coopSetupID is coop's own configOption — the FIRST dropdown in the editor toolbar. Its value is
-// "cred:<name>" (run on a stored account) or "preset:<name>" (run an orchestration recipe). It's not
-// a native adapter option, so the proxy intercepts its session/set_config_option and restarts the
-// box on the chosen identity instead of forwarding it to the adapter.
-const coopSetupID = "coop_setup"
+// coop's own configOptions — the FIRST dropdowns in the editor toolbar, mirroring the target
+// grammar: Provider (who runs — switching re-creates the thread, context carried best-effort),
+// Account (the lead's login — a transparent switch), and Preset (the orchestration recipe).
+// They render three ways but share ONE selection underneath (c.sel): the last-changed dropdown
+// wins and the others refresh to the effective state. None is a native adapter option, so the
+// proxy intercepts their session/set_config_option and restarts the box on the chosen identity.
+const (
+	coopProviderID = "coop_provider"
+	coopAccountID  = "coop_account"
+	coopPresetID   = "coop_preset"
+	// coopSetupID is the RETIRED single mixed dropdown ("cred:<name>" / "preset:<name>" /
+	// "agent:<name>" values). Still ACCEPTED on set: an editor's persisted
+	// default_config_options may replay it at startup, and breaking that would strand a
+	// running config. Never rendered anymore.
+	coopSetupID = "coop_setup"
+)
+
+// coopOwnedIDs are the selector ids coop rebuilds on every refresh (the retired one included,
+// so a stale cached array can't keep rendering it).
+var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, coopPresetID: true, coopSetupID: true}
 
 // stripConfigIDs are the native claude-agent-acp toolbar dropdowns coop removes: the permission-mode
 // picker (coop always runs yolo — the box is the sandbox) and the subagent picker (subagents still
@@ -99,32 +114,35 @@ type acpControl struct {
 	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
 
 	// Best-effort conversation carry across a session re-create (a provider switch, or a lost
-	// transcript): coop retains a bounded plain-text history per session — it already sees both
+	// transcript): coop retains a budgeted plain-text history per session — it already sees both
 	// directions — and when the proxy re-creates a session (SessionRecreated), the next outgoing
-	// prompt is wrapped with a labeled preamble. Approximate by design: text only, no tool calls.
-	history      map[string]*sessHistory // editor sessionId -> its bounded conversation history
-	turnText     map[string][]byte       // editor sessionId -> the in-progress assistant turn's text (tail-bounded)
-	needPreamble map[string]bool         // editor sessionId -> wrap the next outgoing prompt with the history
+	// prompt is wrapped with a labeled preamble. Approximate by design: message text plus one-line
+	// tool NARRATION ("[tool] title — status"); tool payloads are excluded — results dominate
+	// transcripts and go stale, the narrative is what carries.
+	carryBytes   int                          // per-session history budget (COOP_ACP_CARRY_TOKENS × ~4 bytes/token)
+	history      map[string]*sessHistory      // editor sessionId -> its budgeted conversation history
+	turnText     map[string][]byte            // editor sessionId -> the in-progress assistant turn's narrative (tail-bounded)
+	toolTitle    map[string]map[string]string // editor sessionId -> toolCallId -> title (until its terminal update)
+	needPreamble map[string]bool              // editor sessionId -> wrap the next outgoing prompt with the history
 }
 
 // sessHistory is one session's carried conversation: (user, assistant) texts in order, plus the
 // provider it ran on (for the preamble's "carried from X" label — last writer wins across a
-// switch chain). size tracks the entries' total bytes for the eviction cap.
+// switch chain). size tracks the entries' total bytes for the eviction cap; evicted notes that
+// older context was dropped, so the preamble says so instead of implying completeness.
 type sessHistory struct {
 	lead    string
 	entries []histEntry
 	size    int
+	evicted bool
 }
 
 type histEntry struct{ role, text string }
 
-// History bounds: a per-session byte cap (oldest entries evicted) and per-entry text caps. A
-// user prompt keeps its HEAD (the ask leads); an assistant turn keeps its TAIL (conclusions
-// land last). Plain bytes, not tokens — close enough for a best-effort carry.
-const (
-	historyMaxBytes   = 32 << 10
-	historyEntryBytes = 4 << 10
-)
+// historyEntryBytes caps one entry's text. A user prompt keeps its HEAD (the ask leads); an
+// assistant turn keeps its TAIL (conclusions land last). Plain bytes, not tokens — close
+// enough for a best-effort carry. The per-session budget is cfg-owned (COOP_ACP_CARRY_TOKENS).
+const historyEntryBytes = 16 << 10
 
 func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, serveURLs []string, fusion bool) *acpControl {
 	sel := "cred:" + cfg.ActiveProfile(lead)
@@ -145,8 +163,10 @@ func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, 
 		waits:         map[string]int{},
 		serveURLs:     serveURLs,
 		reported:      map[string]bool{},
+		carryBytes:    cfg.ACPCarryBytes(),
 		history:       map[string]*sessHistory{},
 		turnText:      map[string][]byte{},
+		toolTitle:     map[string]map[string]string{},
 		needPreamble:  map[string]bool{},
 	}
 }
@@ -839,19 +859,20 @@ func agentChunk(line []byte) (session, text string, ok bool) {
 	return m.Params.SessionID, m.Params.Update.Content.Text, true
 }
 
-// captureTurn accumulates the assistant side of the carried history: message chunks build the
-// in-progress turn (tail-bounded), and a prompt's terminal response flushes it as one history
-// entry. Runs AFTER maybeRotate, so a rate-limited turn doesn't flush — its partial text stays
-// buffered and completes when the transparent resend re-runs the turn.
+// captureTurn accumulates the assistant side of the carried history: message chunks and
+// one-line tool narration build the in-progress turn's narrative (tail-bounded), and a
+// prompt's terminal response flushes it as one history entry. Runs AFTER maybeRotate, so a
+// rate-limited turn doesn't flush — its partial narrative stays buffered and completes when
+// the transparent resend re-runs the turn.
 func (c *acpControl) captureTurn(line []byte) {
 	if s, text, ok := agentChunk(line); ok {
-		c.mu.Lock()
-		buf := append(c.turnText[s], text...)
-		if len(buf) > historyEntryBytes {
-			buf = buf[len(buf)-historyEntryBytes:] // keep the TAIL — conclusions land last
+		c.appendTurn(s, text)
+		return
+	}
+	if s, narration, ok := c.toolNarration(line); ok {
+		if narration != "" {
+			c.appendTurn(s, narration)
 		}
-		c.turnText[s] = buf
-		c.mu.Unlock()
 		return
 	}
 	if id := terminalResponseID(line); id != "" {
@@ -861,14 +882,86 @@ func (c *acpControl) captureTurn(line []byte) {
 				c.appendHistoryLocked(s, "assistant", string(c.turnText[s]))
 			}
 			delete(c.turnText, s)
+			delete(c.toolTitle, s) // any tool call without a terminal update dies with its turn
 		}
 		c.mu.Unlock()
 	}
 }
 
+// appendTurn adds text to a session's in-progress turn narrative, keeping the TAIL when it
+// overflows the entry cap — conclusions land last.
+func (c *acpControl) appendTurn(session, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	buf := append(c.turnText[session], text...)
+	if len(buf) > historyEntryBytes {
+		buf = buf[len(buf)-historyEntryBytes:]
+	}
+	c.turnText[session] = buf
+}
+
+// toolNarration turns tool_call/tool_call_update session updates into one-line narrative for
+// the carried history — "[tool] title — status" on the call's TERMINAL update. Titles arrive on
+// the initial tool_call and are remembered per id (a terminal update may not repeat them). Tool
+// PAYLOADS are deliberately excluded: results dominate transcripts, go stale across a provider
+// switch, and the narrative ("read X, edited Y, tests green") is what actually carries.
+func (c *acpControl) toolNarration(line []byte) (session, narration string, ok bool) {
+	if !bytes.Contains(line, []byte("toolCallId")) {
+		return "", "", false
+	}
+	var m struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			Update    struct {
+				SessionUpdate string `json:"sessionUpdate"`
+				ToolCallID    string `json:"toolCallId"`
+				Title         string `json:"title"`
+				Kind          string `json:"kind"`
+				Status        string `json:"status"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &m) != nil || m.Method != "session/update" {
+		return "", "", false
+	}
+	u := m.Params.Update
+	if (u.SessionUpdate != "tool_call" && u.SessionUpdate != "tool_call_update") || u.ToolCallID == "" {
+		return "", "", false
+	}
+	s := m.Params.SessionID
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if u.Title != "" {
+		if c.toolTitle[s] == nil {
+			c.toolTitle[s] = map[string]string{}
+		}
+		c.toolTitle[s][u.ToolCallID] = u.Title
+	}
+	switch u.Status {
+	case "completed", "failed", "cancelled":
+	default:
+		return s, "", true // remembered the title; nothing to narrate until the terminal update
+	}
+	title := c.toolTitle[s][u.ToolCallID]
+	delete(c.toolTitle[s], u.ToolCallID)
+	if title == "" {
+		title = u.Kind
+	}
+	if title == "" {
+		title = u.ToolCallID
+	}
+	const toolTitleBytes = 200
+	if len(title) > toolTitleBytes {
+		title = title[:toolTitleBytes] + "…"
+	}
+	return s, "\n[tool] " + title + " — " + u.Status + "\n", true
+}
+
 // appendHistoryLocked adds one carried-history entry (text already bounded by the caller for
 // assistant turns; user prompts are head-bounded here), stamps the session's current lead as the
-// history's origin, and evicts the oldest entries past the session cap. Called with c.mu held.
+// history's origin, and evicts the oldest entries past the session budget — remembering that it
+// did, so the preamble can say "earlier context omitted". Called with c.mu held.
 func (c *acpControl) appendHistoryLocked(session, role, text string) {
 	if len(text) > historyEntryBytes {
 		text = text[:historyEntryBytes] // the HEAD — a long user prompt leads with the ask
@@ -881,9 +974,10 @@ func (c *acpControl) appendHistoryLocked(session, role, text string) {
 	h.lead = c.lead
 	h.entries = append(h.entries, histEntry{role: role, text: text})
 	h.size += len(text)
-	for h.size > historyMaxBytes && len(h.entries) > 1 {
+	for h.size > c.carryBytes && len(h.entries) > 1 {
 		h.size -= len(h.entries[0].text)
 		h.entries = h.entries[1:]
+		h.evicted = true
 	}
 }
 
@@ -908,7 +1002,10 @@ func (c *acpControl) preambleLocked(session string) string {
 	if origin == "" {
 		origin = "the previous session"
 	}
-	fmt.Fprintf(&b, "[coop] This thread continues a conversation carried over from %s — the session was re-created (provider switch or lost transcript). The context below is best-effort: plain text only, tool calls and their results are not included. Continue the conversation naturally.\n\n--- conversation so far ---\n", origin)
+	fmt.Fprintf(&b, "[coop] This thread continues a conversation carried over from %s — the session was re-created (provider switch or lost transcript). The context below is best-effort: message text plus one-line tool narration; tool payloads/results are not included, so re-read anything you need to rely on. Continue the conversation naturally.\n\n--- conversation so far ---\n", origin)
+	if h.evicted {
+		b.WriteString("(…earlier context omitted — the carried history hit its budget…)\n\n")
+	}
 	for _, e := range entries {
 		fmt.Fprintf(&b, "[%s] %s\n\n", e.role, e.text)
 	}
@@ -1140,7 +1237,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 	// launch-time model over it.
 	_, preset := c.selection()
 	model := c.currentModel() // snapshot: a synthesized-model switch mutates it from the editor goroutine
-	out := []json.RawMessage{c.setupOption()}
+	out := c.coopOptions()
 	hasModel := false
 	for _, item := range arr {
 		var head struct {
@@ -1148,7 +1245,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 			Options []acpOption `json:"options"`
 		}
 		_ = json.Unmarshal(item, &head)
-		if stripConfigIDs[head.ID] {
+		if stripConfigIDs[head.ID] || coopOwnedIDs[head.ID] {
 			continue
 		}
 		if head.ID == "model" {
@@ -1191,33 +1288,103 @@ func (c *acpControl) cacheModels(models []modelInfo) {
 	_ = writeModelsCache(c.cfg, c.lead, models)
 }
 
-// setupOption builds coop's first dropdown (the lead's credentials + the repo's presets) as JSON.
-func (c *acpControl) setupOption() json.RawMessage {
+// coopOptions builds coop's toolbar dropdowns in their fixed order: Provider (omitted for a
+// fusion governor — see fusionLadderGuard), Account, Preset. Each shows the EFFECTIVE state of
+// the one underlying selection, so after any switch the other two catch up on the next refresh.
+func (c *acpControl) coopOptions() []json.RawMessage {
 	c.mu.Lock()
-	cur, lead, creds := c.sel, c.lead, c.creds
+	sel, lead, creds, fusion := c.sel, c.lead, c.creds, c.fusion
 	c.mu.Unlock()
-	opts := make([]acpOption, 0, len(creds)+len(c.presets))
-	for _, cr := range creds {
-		opts = append(opts, acpOption{Value: "cred:" + cr, Name: "Credential: " + cr, Description: "Switch to credential: " + cr})
-	}
-	for _, ps := range c.presets {
-		opts = append(opts, acpOption{Value: "preset:" + ps, Name: "Preset: " + ps, Description: "Switch to preset: " + ps})
-	}
-	// Other SIGNED-IN providers — a provider switch re-creates the session on that agent and
-	// carries the conversation best-effort (text preamble), so the label says so. A fusion
-	// governor can't switch provider mid-council (see fusionLadderGuard), so fusion offers none.
-	if !c.fusion {
-		for _, p := range c.spawnableProviders(lead) {
-			opts = append(opts, acpOption{Value: "agent:" + p, Name: "Provider: " + p,
+	var out []json.RawMessage
+	if !fusion {
+		others := c.spawnableProviders(lead)
+		opts := make([]acpOption, 0, len(others)+1)
+		opts = append(opts, acpOption{Value: lead, Name: lead, Description: "The current provider"})
+		for _, p := range others {
+			opts = append(opts, acpOption{Value: p, Name: p,
 				Description: "Switch to " + p + " — new thread, context carried best-effort"})
 		}
+		out = append(out, marshalSelect(coopProviderID, "Provider",
+			"Who runs the session — switching re-creates the thread and carries the context best-effort", lead, opts))
 	}
+	acct := "auto"
+	if v, ok := strings.CutPrefix(sel, "cred:"); ok && v != "" {
+		acct = v
+	}
+	aopts := make([]acpOption, 0, len(creds)+1)
+	aopts = append(aopts, acpOption{Value: "auto", Name: "Auto", Description: "The marked default account, or the preset's ladder"})
+	for _, cr := range creds {
+		aopts = append(aopts, acpOption{Value: cr, Name: cr, Description: "Switch to account " + cr + " — the conversation is preserved"})
+	}
+	out = append(out, marshalSelect(coopAccountID, "Account",
+		"The lead's login — switching is transparent (shared session store)", acct, aopts))
+	ps := "none"
+	if v, ok := strings.CutPrefix(sel, "preset:"); ok && v != "" {
+		ps = v
+	}
+	popts := make([]acpOption, 0, len(c.presets)+1)
+	popts = append(popts, acpOption{Value: "none", Name: "None", Description: "No preset — the plain lead"})
+	for _, p := range c.presets {
+		popts = append(popts, acpOption{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"})
+	}
+	out = append(out, marshalSelect(coopPresetID, "Preset",
+		"Orchestration recipe — its lead + ladder drive the session, its roles mount", ps, popts))
+	return out
+}
+
+// marshalSelect renders one select configOption as raw JSON.
+func marshalSelect(id, name, desc, current string, opts []acpOption) json.RawMessage {
 	co := map[string]any{
-		"id": coopSetupID, "name": "coop", "description": "Run on a credential (account), a preset (recipe), or another provider",
-		"category": "coop", "type": "select", "currentValue": cur, "options": opts,
+		"id": id, "name": name, "description": desc,
+		"category": "coop", "type": "select", "currentValue": current, "options": opts,
 	}
 	b, _ := json.Marshal(co)
 	return b
+}
+
+// selectorSel maps a set of one of coop's selector dropdowns onto the ONE selection string.
+// recognized=false → not a coop dropdown (the line passes through to the adapter). newSel==""
+// → nothing to change (already current, an "auto"/"none" placeholder, or a value refused
+// because it could never spawn — a bogus provider/account would send the respawn loop chasing
+// a box that can never come up).
+func (c *acpControl) selectorSel(configID, value string) (newSel string, recognized bool) {
+	c.mu.Lock()
+	lead, creds, fusion := c.lead, c.creds, c.fusion
+	preset := strings.HasPrefix(c.sel, "preset:")
+	c.mu.Unlock()
+	switch configID {
+	case coopProviderID:
+		if value == lead || fusion || !agents.Valid(value) || len(accountsFor(c.cfg, value)) == 0 {
+			return "", true
+		}
+		return "agent:" + value, true
+	case coopAccountID:
+		if value == "auto" || !slices.Contains(creds, value) {
+			return "", true
+		}
+		return "cred:" + value, true
+	case coopPresetID:
+		if value == "none" {
+			if preset { // leaving the preset: back to the lead's marked default account
+				return "cred:" + c.cfg.DefaultProfileOf(lead), true
+			}
+			return "", true
+		}
+		if !slices.Contains(c.presets, value) {
+			return "", true
+		}
+		return "preset:" + value, true
+	case coopSetupID:
+		// The retired mixed dropdown's value grammar, still accepted for editors whose persisted
+		// default_config_options replay it at startup.
+		if v, ok := strings.CutPrefix(value, "agent:"); ok {
+			if !agents.Valid(v) || len(accountsFor(c.cfg, v)) == 0 || fusion {
+				return "", true
+			}
+		}
+		return value, true
+	}
+	return "", false
 }
 
 // spawnableProviders lists the OTHER registered providers with at least one signed-in account —
@@ -1457,24 +1624,18 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 			return c.setModelFromEditor(h.ID, h.Params.SessionID, h.Params.Value)
 		}
 	}
-	if h.Method != "session/set_config_option" || h.Params.ConfigID != coopSetupID {
+	newSel, recognized := c.selectorSel(h.Params.ConfigID, h.Params.Value)
+	if !recognized {
 		return false, nil, nil, false
 	}
 	c.mu.Lock()
 	// Only a REAL change restarts. Editors (Zed) apply default_config_options at startup by SETTING
-	// coop_setup to the value it's already on; restarting on that no-op would respawn the box before the
-	// session has any transcript, so the replayed session/load fails "Resource not found" and the
-	// conversation is lost before it begins. A no-op just re-acks.
-	changed := h.Params.Value != "" && h.Params.Value != c.sel
-	// An agent: value must name a registered, signed-in provider — a bogus one would send the
-	// respawn loop chasing a spawn that can never come up. Refuse the change, ack the current state.
-	if v, isAgent := strings.CutPrefix(h.Params.Value, "agent:"); isAgent && changed {
-		if !agents.Valid(v) || len(accountsFor(c.cfg, v)) == 0 || c.fusion {
-			changed = false
-		}
-	}
+	// a dropdown to the value it's already on; restarting on that no-op would respawn the box before
+	// the session has any transcript, so the replayed session/load fails "Resource not found" and the
+	// conversation is lost before it begins. A no-op (or a refused value) just re-acks.
+	changed := newSel != "" && newSel != c.sel
 	if changed {
-		c.sel = h.Params.Value
+		c.sel = newSel
 	}
 	cached := c.cached[h.Params.SessionID]
 	c.mu.Unlock()
@@ -1527,26 +1688,17 @@ func (c *acpControl) setModelFromEditor(id json.RawMessage, sid, value string) (
 	return true, append(b, '\n'), inject, false
 }
 
-// refreshModelAck rebuilds the cached option array with a fresh coop_setup (slot 0) and the model
-// option's currentValue set to value — the ack a synthesized-model set echoes so the editor's dropdown
-// keeps the pick. Falls back to just coop_setup when there's no cache yet.
+// refreshModelAck rebuilds the cached option array with fresh coop dropdowns and the model
+// option's currentValue set to value — the ack a synthesized-model set echoes so the editor's
+// dropdown keeps the pick.
 func (c *acpControl) refreshModelAck(cached json.RawMessage, value string) json.RawMessage {
-	setup := c.setupOption()
-	var arr []json.RawMessage
-	if len(cached) > 0 {
-		_ = json.Unmarshal(cached, &arr)
-	}
-	if len(arr) == 0 {
-		arr = []json.RawMessage{setup}
-	} else {
-		arr[0] = setup
-		for i, it := range arr {
-			var head struct {
-				ID string `json:"id"`
-			}
-			if json.Unmarshal(it, &head) == nil && head.ID == "model" {
-				arr[i] = withField(it, "currentValue", value)
-			}
+	arr := c.refreshCoopOptions(cached)
+	for i, it := range arr {
+		var head struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(it, &head) == nil && head.ID == "model" {
+			arr[i] = withField(it, "currentValue", value)
 		}
 	}
 	b, err := json.Marshal(arr)
@@ -1556,25 +1708,36 @@ func (c *acpControl) refreshModelAck(cached json.RawMessage, value string) json.
 	return b
 }
 
-// refreshSetup returns the cached configOptions array with a freshly-built coop_setup (currentValue =
-// the current selection) in the first slot, where rewriteConfigOptions always puts it. Falls back to
-// just coop_setup when there's no cache yet.
+// refreshSetup returns the cached configOptions array with coop's dropdowns rebuilt fresh
+// (currentValues = the effective selection). Falls back to just coop's dropdowns when there's
+// no cache yet.
 func (c *acpControl) refreshSetup(cached json.RawMessage) json.RawMessage {
-	setup := c.setupOption()
-	var arr []json.RawMessage
-	if len(cached) > 0 {
-		_ = json.Unmarshal(cached, &arr)
-	}
-	if len(arr) == 0 {
-		arr = []json.RawMessage{setup}
-	} else {
-		arr[0] = setup
-	}
-	b, err := json.Marshal(arr)
+	b, err := json.Marshal(c.refreshCoopOptions(cached))
 	if err != nil {
 		return cached
 	}
 	return b
+}
+
+// refreshCoopOptions strips every coop-owned dropdown from a cached configOptions array (the
+// retired coop_setup included) and prepends freshly-built ones — the single place the "coop
+// dropdowns lead, natives follow" order is enforced on a refresh.
+func (c *acpControl) refreshCoopOptions(cached json.RawMessage) []json.RawMessage {
+	var arr []json.RawMessage
+	if len(cached) > 0 {
+		_ = json.Unmarshal(cached, &arr)
+	}
+	out := c.coopOptions()
+	for _, it := range arr {
+		var head struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(it, &head) == nil && coopOwnedIDs[head.ID] {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
 }
 
 // chooseAllow picks the "approve" option from a request_permission request. ACP kinds are
