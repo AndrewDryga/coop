@@ -1,0 +1,11 @@
+# coop's own loop config (committed). See the scaffolded template (internal/scaffold/templates/
+# agent/loop.yaml) or `coop help loop` for every key; only review.prompt is set here.
+
+review:
+  # Appended to coop's built-in senior review — the repo-specific checks the default can't know.
+  prompt: |
+    - `make check` is the gate (gofmt + go vet + tests + docs-check); it must pass across the whole repo.
+    - `make align` passes (trailing-comment alignment) — reopen the task if it doesn't.
+    - If internal/cli/help.go changed, the generated docs were regenerated (`make docs`) and committed.
+    - A user-visible CLI change updated the site casts/docs and added a CHANGELOG Unreleased entry.
+    - No new Go dependency without a one-line justification in the commit message.

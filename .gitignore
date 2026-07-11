@@ -18,7 +18,7 @@ __pycache__/
 !**/.agent/rules/
 !**/.agent/skills/
 !**/.agent/presets/
-!**/.agent/audit.md
+!**/.agent/loop.yaml
 !.agent/project.yaml
 
 # preset native subagents coop generates in the box (coop-<role>) — never committed
