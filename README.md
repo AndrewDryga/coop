@@ -412,9 +412,10 @@ your key lives, so if you sign commits (`commit.gpgsign=true`) the landed commit
 signed with your key even though the box committed them unsigned. Then `git push` —
 the only step the agents can't do.
 
-Set `COOP_GATE` (e.g. `COOP_GATE="make check"`) and every merge re-runs that gate in
-the box on the *rebased* tree, rolling back if it goes red — the machine gate behind
-your human review. A policy check also flags secret-looking or oversized files and
+Set a merge gate — `gate: make check` in [`.agent/project.yaml`](#agents--config) (committed,
+shared with the team) or `COOP_GATE="make check"` (per-machine, and it wins) — and every merge
+re-runs that gate in the box on the *rebased* tree, rolling back if it goes red — the machine gate
+behind your human review. A policy check also flags secret-looking or oversized files and
 scans each changed file's content for real credentials (provider token shapes —
 AWS/OpenAI/Anthropic/GitHub/Slack/… — plus high-entropy values on secret-named keys), so
 a token committed inside an ordinary file is caught even though its filename is innocuous
@@ -978,7 +979,7 @@ committed.
 | `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
 | the backlog | unscheduled ideas, as task folders in the `tasks/xx_backlog/` drawer (`coop backlog`) — outside the lifecycle, so never auto-worked and never nagged by the Stop hook; `coop backlog promote <id>` moves one into `tasks/00_todo/` when it's ready |
 | `rules/` | the taste knowledge base — corrections graduate into rules here (committed) |
-| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos) and the [`serve:` ports](#see-the-dev-server-in-your-browser) |
+| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress, resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins to `none`, never widens; `no_new_privileges` isn't settable here) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
 by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the repo.
