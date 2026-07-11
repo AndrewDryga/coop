@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1455,29 +1456,15 @@ const defaultReviewPrompt = "Review pass — you are the SENIOR REVIEWER for wor
 	"Then ONCE across the WHOLE repo (not per task), run the repo's gate (per AGENTS.md). If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — with the failure.\n" +
 	"Reopen a task by MOVING its folder back to 10_in_progress/ and writing in its log.md exactly what's wrong and what \"done\" requires — and do it THE MOMENT you decide, before reviewing the next task: a review session can be cut at any turn boundary, and a verdict that exists only as prose is silently lost. Never batch reopens for the end, and never park verdicts behind background subagents you wait on — work still running when your turn ends dies with it. Change no task code; make no commits."
 
-// loopReviewPrompt is the end-of-loop review pass's prompt: a base (a full override from
-// .agent/loop/review.md when present, else defaultReviewPrompt), then the optional
-// .agent/loop/audit.md append ("extra project checks" knob), then a fixed context footer with the
-// concrete queue paths and reopen mechanics — so whatever the base says, the agent always has the
-// mechanics.
-func loopReviewPrompt(repo string, queues []string) string {
-	p := reviewPromptBase(repo)
-	if extra := loopReviewInstructions(repo); extra != "" {
-		p += "\n\nAlso apply these project-specific checks (from .agent/loop/audit.md), reopening any task that fails one:\n" + extra
+// loopReviewPrompt is the end-of-loop review pass's prompt: the built-in senior review, then the
+// optional .agent/loop.yaml review.prompt APPEND (extra project checks — never a replacement),
+// then a fixed context footer with the concrete queue paths and reopen mechanics.
+func loopReviewPrompt(repo string, queues []string, appendPrompt string) string {
+	p := defaultReviewPrompt
+	if s := strings.TrimSpace(appendPrompt); s != "" {
+		p += "\n\nAlso apply these project-specific checks, reopening any task that fails one:\n" + s
 	}
 	return p + "\n\n" + reviewContextFooter(repo, queues)
-}
-
-// reviewPromptBase is the review base: the trimmed contents of .agent/loop/review.md when present
-// (a FULL override — the dull option over a template with syntax to learn), else the built-in
-// default. review.md is committed config (the scaffold .gitignore allowlists .agent/loop/).
-func reviewPromptBase(repo string) string {
-	if data, err := os.ReadFile(filepath.Join(repo, ".agent", "loop", "review.md")); err == nil {
-		if s := strings.TrimSpace(string(data)); s != "" {
-			return s
-		}
-	}
-	return defaultReviewPrompt
 }
 
 // reviewContextFooter is appended to every review prompt (override or default) so the mechanics
@@ -1491,47 +1478,40 @@ func reviewContextFooter(repo string, queues []string) string {
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
 }
 
-// loopReviewInstructions reads optional, project-specific review criteria from
-// .agent/loop/audit.md, appended to the review prompt so the pass also checks whatever this repo
-// cares about (changelog updated, no stray TODOs, docs regenerated, …). It lives under
-// .agent/loop/ beside review.md and between.md — the loop-only knobs (its predecessor
-// .agent/audit.md is tombstoned; see legacyAuditTombstone). .agent/loop/review.md is the primary
-// knob (a full override); audit.md is the light "add a check" layer. Absent or empty → "". Read on
-// the host and inlined, so there is no in-box path to resolve and it behaves the same for every agent.
-func loopReviewInstructions(repo string) string {
-	data, err := os.ReadFile(filepath.Join(repo, ".agent", "loop", "audit.md"))
-	if err != nil {
+// loopFilesTombstone returns a one-time warning when any RETIRED loop config file still exists —
+// .agent/loop/{review,audit,between}.md or the legacy .agent/audit.md. Those knobs moved into one
+// .agent/loop.yaml (review.prompt / preflight.prompt APPEND, between.prompt SETS), and coop NO
+// LONGER reads the old files. Empty when none linger. loop() surfaces it once so an unmigrated repo
+// isn't silently ignored. Pure (returns the string), so it's unit-testable.
+func loopFilesTombstone(repo string) string {
+	var found []string
+	for _, rel := range []string{".agent/loop/review.md", ".agent/loop/audit.md", ".agent/loop/between.md", ".agent/audit.md"} {
+		if fileExists(filepath.Join(repo, filepath.FromSlash(rel))) {
+			found = append(found, rel)
+		}
+	}
+	if len(found) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return "found retired loop config file(s) " + strings.Join(found, ", ") + " — loop settings now live in one .agent/loop.yaml (review.prompt/preflight.prompt append the built-ins; between.prompt sets the audit) and the old files are NO LONGER read; fold them into .agent/loop.yaml, then delete them"
 }
 
-// legacyAuditTombstone returns a one-time warning when the OLD .agent/audit.md still exists — its
-// checks moved to .agent/loop/audit.md (loop-only, beside review.md/between.md), and coop does NOT
-// silently read the old path. Empty when the legacy file is absent. loop() surfaces it once at start
-// so an unmigrated repo isn't silently ignored. Pure (returns the string), so it's unit-testable.
-func legacyAuditTombstone(repo string) string {
-	if !fileExists(filepath.Join(repo, ".agent", "audit.md")) {
-		return ""
+// loopBetweenPrompt is the opt-in per-task audit run after each completed task. Its base is the
+// .agent/loop.yaml between.prompt (SET, not appended — between has no built-in; loopcfg.Load
+// requires it when between.enabled), then the same fixed context footer with the queue paths and
+// reopen mechanics. It reviews the just-completed task and may reopen it — the loop reworks it first.
+func loopBetweenPrompt(repo string, queues []string, setPrompt string) string {
+	return strings.TrimSpace(setPrompt) + "\n\n" + reviewContextFooter(repo, queues)
+}
+
+// reviewRounds is the work→review round ceiling: .agent/loop.yaml review.rounds when set (>0),
+// else the built-in default (config.MaxReviewRounds, which defaults to 5). reviewRoundCap scales
+// it by the batch.
+func reviewRounds(lc *loopcfg.Config, cfg *config.Config) int {
+	if lc.Review.Rounds > 0 {
+		return lc.Review.Rounds
 	}
-	return "found a legacy .agent/audit.md — its review checks now live in .agent/loop/audit.md and the old path is NO LONGER read; move it there (git mv .agent/audit.md .agent/loop/audit.md), then delete the old file"
-}
-
-// loopBetweenPrompt is the optional per-task audit run after each completed task when
-// .agent/loop/between.md is present: the file's (trimmed) contents ARE the prompt base (a full
-// override, like review.md — there is no built-in default; the feature is off unless the file
-// exists), then the same fixed context footer with the queue paths and reopen mechanics. It reviews
-// the just-completed task and may reopen it — the work loop reworks it before moving on.
-func loopBetweenPrompt(repo string, queues []string) string {
-	data, _ := os.ReadFile(filepath.Join(repo, ".agent", "loop", "between.md"))
-	return strings.TrimSpace(string(data)) + "\n\n" + reviewContextFooter(repo, queues)
-}
-
-// betweenAuditEnabled reports whether the opt-in per-task audit is on: a non-empty
-// .agent/loop/between.md exists. Absent or empty → off (today's behavior, zero cost).
-func betweenAuditEnabled(repo string) bool {
-	data, err := os.ReadFile(filepath.Join(repo, ".agent", "loop", "between.md"))
-	return err == nil && strings.TrimSpace(string(data)) != ""
+	return cfg.MaxReviewRounds
 }
 
 // blockReopenedTasks parks every task still reopened after the review round cap (anything left in
@@ -1578,12 +1558,16 @@ func writeReviewBlockDecision(path, id, title string, rounds int) {
 	}
 }
 
-// loopPreflightPrompt is the one-shot cleanup pass run before the work loop when
-// --preflight / COOP_PREFLIGHT is set: it resolves answered blockers, but works no task and
-// changes no code (these files are git-ignored, so nothing is committed).
-func loopPreflightPrompt(repo string, queues []string) string {
-	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and the queue(s) %s. `coop` is NOT installed in this box, so act by moving task folders yourself. Then, for each task in a 50_blocked/ dir, if its decision.md now has a filled-in Resolution, unblock it by moving its folder to 00_todo/. Leave every 00_todo/ and 10_in_progress/ task untouched; change no code and make no commits.",
+// loopPreflightPrompt is the one-shot cleanup pass run before the work loop when preflight is on:
+// it resolves answered blockers, but works no task and changes no code (these files are git-ignored,
+// so nothing is committed). The .agent/loop.yaml preflight.prompt APPENDS to this built-in.
+func loopPreflightPrompt(repo string, queues []string, appendPrompt string) string {
+	p := fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and the queue(s) %s. `coop` is NOT installed in this box, so act by moving task folders yourself. Then, for each task in a 50_blocked/ dir, if its decision.md now has a filled-in Resolution, unblock it by moving its folder to 00_todo/. Leave every 00_todo/ and 10_in_progress/ task untouched; change no code and make no commits.",
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
+	if s := strings.TrimSpace(appendPrompt); s != "" {
+		p += "\n\nAlso, as part of the cleanup: " + s
+	}
+	return p
 }
 
 // absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
@@ -1665,26 +1649,35 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
 	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.
 	defer armKeepAwake(a.cfg)()
-	custom := a.cfg.LoopCmd
+	// .agent/loop.yaml is the committed loop config (prompts, per-step models, settings). A bad file
+	// fails the run here, before any box work. Absent → an empty config (all built-in defaults).
+	lc, err := loopcfg.Load(repo)
+	if err != nil {
+		return 1, err
+	}
+	custom := lc.Work.Command
+	if len(custom) == 0 {
+		custom = a.cfg.LoopCmd // TODO(loop.yaml): COOP_LOOP_CMD is retired next increment; loop.yaml work.command wins
+	}
 	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
-	// custom COOP_LOOP_CMD, or a non-terminal (pipe/CI/fork log) keep plain text output. Decided
+	// custom work.command, or a non-terminal (pipe/CI/fork log) keep plain text output. Decided
 	// per iteration in iterCmd (a cross-provider rotation can swap the active agent), keyed off the
 	// stream-json marker runIteration finds in the command.
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
-	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues)
+	// review.prompt APPENDS to the built-in senior review (it never replaces it).
+	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues, lc.Review.Prompt)
 	// The review pass (end-of-loop) and the optional between-tasks audit both run only under the
-	// review-aware agent form, not a custom COOP_LOOP_CMD. between.md is opt-in — an extra box
-	// iteration per completed task — so it's off unless the file exists. Both can run on a stronger
-	// COOP_REVIEW_MODEL than the work loop (see withReviewModel).
-	betweenEnabled := len(custom) == 0 && betweenAuditEnabled(repo)
+	// review-aware agent form, not a custom work.command. The between audit is opt-in
+	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in).
+	betweenEnabled := len(custom) == 0 && lc.Between.Enabled
 	betweenPrompt := ""
 	if betweenEnabled {
-		betweenPrompt = loopBetweenPrompt(repo, queues)
+		betweenPrompt = loopBetweenPrompt(repo, queues, lc.Between.Prompt)
 	}
-	// Tombstone the legacy .agent/audit.md once: its checks moved to .agent/loop/audit.md, which
-	// coop reads instead — don't silently ignore an unmigrated repo (only the review-aware form reads it).
+	// Tombstone the retired .agent/loop/*.md (and legacy .agent/audit.md) once: those knobs moved
+	// into .agent/loop.yaml and coop no longer reads the old files — don't silently ignore them.
 	if len(custom) == 0 {
-		if note := legacyAuditTombstone(repo); note != "" {
+		if note := loopFilesTombstone(repo); note != "" {
 			ui.Warn("%s", note)
 		}
 	}
@@ -1735,7 +1728,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// (not the agent's headless form). Best-effort like the review pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues)), hosts, sink, peers)
+		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, lc.Preflight.Prompt)), hosts, sink, peers)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1865,7 +1858,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			break
 		}
 		// Scale the cap to this run's batch (completed tasks), clamped to [3, COOP_MAX_REVIEW_ROUNDS].
-		maxReviewRounds := reviewRoundCap(completed, a.cfg.MaxReviewRounds)
+		maxReviewRounds := reviewRoundCap(completed, reviewRounds(lc, a.cfg))
 		ui.Info("queue empty — running review pass (round %d/%d)", reviewRound, maxReviewRounds)
 		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
 		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
