@@ -1447,7 +1447,7 @@ const defaultReviewPrompt = "Review pass — you are the SENIOR REVIEWER for wor
 	"4. Polished — no debug prints, commented-out or dead code, leftover TODO/FIXME, or stray files; comments say why, not what; a user-visible change updated the docs/README/CHANGELOG. Reopen anything unpolished.\n" +
 	"5. Bookkeeping — a commit implementing it exists in git log, a final state.md is present, and the queue is internally consistent (no id in two state dirs, no half-moved folder).\n" +
 	"Then ONCE across the WHOLE repo (not per task), run the repo's gate (per AGENTS.md). If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — with the failure.\n" +
-	"Reopen a task by MOVING its folder back to 10_in_progress/ and writing in its log.md exactly what's wrong and what \"done\" requires. Change no task code; make no commits."
+	"Reopen a task by MOVING its folder back to 10_in_progress/ and writing in its log.md exactly what's wrong and what \"done\" requires — and do it THE MOMENT you decide, before reviewing the next task: a review session can be cut at any turn boundary, and a verdict that exists only as prose is silently lost. Never batch reopens for the end, and never park verdicts behind background subagents you wait on — work still running when your turn ends dies with it. Change no task code; make no commits."
 
 // loopReviewPrompt is the end-of-loop review pass's prompt: a base (a full override from
 // .agent/loop/review.md when present, else defaultReviewPrompt), then the optional
@@ -1477,9 +1477,11 @@ func reviewPromptBase(repo string) string {
 // reviewContextFooter is appended to every review prompt (override or default) so the mechanics
 // never depend on the base text: the absolute in-box queue path(s), the AGENTS.md path, and the
 // reminder that `coop` is NOT installed here — a task is reopened by MOVING its folder back to
-// 10_in_progress/, not by running coop.
+// 10_in_progress/, not by running coop. It also carries the execute-immediately rule: a limit
+// resume or failover restarts the agent process mid-review, killing background subagents and
+// dropping any reopen decided but not yet written to the queue as a folder move.
 func reviewContextFooter(repo string, queues []string) string {
-	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box — reopen a task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), and note what was missing in its log.md.",
+	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box — reopen a task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), and note what was missing in its log.md. Execute every reopen IMMEDIATELY as you decide it (move the folder, then write the note) — never batch reopens for the end and never leave them waiting on background work: an interrupted session loses any verdict not yet written to the queue.",
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md"))
 }
 

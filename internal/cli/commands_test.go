@@ -136,14 +136,16 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 		"docs/README/CHANGELOG",                     // 4. polished
 		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate
 		"MOVING its folder back to 10_in_progress/", // reopen by moving
+		"THE MOMENT you decide",                     // execute reopens immediately, never batched
 		"make no commits",
 	} {
 		if !strings.Contains(rev, want) {
 			t.Errorf("default review prompt missing %q:\n%s", want, rev)
 		}
 	}
-	// The fixed context footer: the absolute queue path, AGENTS.md, and the reopen mechanic.
-	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed"} {
+	// The fixed context footer: the absolute queue path, AGENTS.md, and the reopen mechanic —
+	// including execute-immediately, so it binds even under a custom review.md override.
+	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed", "Execute every reopen IMMEDIATELY"} {
 		if !strings.Contains(rev, want) {
 			t.Errorf("review prompt footer missing %q:\n%s", want, rev)
 		}

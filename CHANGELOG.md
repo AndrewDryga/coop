@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop review must execute each reopen the moment it decides it — batched verdicts were
+  silently lost.** A real review run fanned its per-area reviews out to background subagents,
+  collected REOPEN verdicts as prose, and deferred every folder move until "after the final
+  child reports" — then an output-limit resume (each resume restarts the agent process, killing
+  its background children) left it waiting on children that no longer existed; it eventually
+  stopped, the loop saw zero reopened folders, and accepted the batch — six recorded REOPENs
+  evaporated. The default review prompt and the fixed context footer (which also binds under a
+  custom `.agent/loop/review.md` override) now demand the move + log note IMMEDIATELY per
+  verdict, never batched for the end, and forbid parking verdicts behind background subagents —
+  work still running when the turn ends dies with it.
+
 - **GitHub release pages show the changelog again, not an empty body.** v4.0.0 published with an
   empty release body (only the compare-link footer): `.goreleaser.yaml` set `changelog.disable:
   "true"`, and GoReleaser's changelog pipe — the same one that reads the workflow's
