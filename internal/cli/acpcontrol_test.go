@@ -1513,3 +1513,38 @@ func TestACPHistoryToolNarration(t *testing.T) {
 		t.Errorf("tool title tracking must clear with the turn, %d left", stale)
 	}
 }
+
+// TestACPControlProviderSwitchAckShowsNewProvider: the ack to a coop_provider switch must render
+// the NEW lead (provider dropdown + its accounts), not echo the old one — retargeting used to
+// happen only at spawn time, so the ack showed the previous provider and the editor's dropdown
+// visibly flipped back until the respawn's config_option_update arrived.
+func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
+	c := newTestControl(t)
+	// A signed-in codex account, so the provider switch is spawnable (selectorSel refuses otherwise).
+	codexDir := filepath.Join(c.cfg.ConfigDir, "codex", "profiles", "personal")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handled, resp, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":11,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_provider","value":"codex"}}`))
+	if !handled || !restart {
+		t.Fatalf("a provider switch must be handled and restart the box (handled=%v restart=%v)", handled, restart)
+	}
+	_, res := configOptionIDs(t, resp)
+	var opts []struct {
+		ID      string `json:"id"`
+		Current string `json:"currentValue"`
+	}
+	json.Unmarshal(res["configOptions"], &opts)
+	for _, o := range opts {
+		if o.ID == "coop_provider" && o.Current != "codex" {
+			t.Errorf("ack renders provider %q, want codex (the switch already applied)", o.Current)
+		}
+	}
+	// The per-lead state followed: the next spawn resolves codex with its default account.
+	if tgt, _, ok := c.spawnTarget(); !ok || tgt.Provider != "codex" {
+		t.Errorf("spawnTarget after the switch = %+v ok=%v, want provider codex", tgt, ok)
+	}
+}

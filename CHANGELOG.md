@@ -4,6 +4,25 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Two codex boxes on one account no longer crash each other.** codex ≥0.144 keeps single-writer
+  sqlite state in `~/.codex`; a second box mounting the same account's home died at startup with a
+  cryptic `failed to initialize sqlite state runtime` (an ACP provider switch, a second Zed thread,
+  or a loop running beside a session). coop now serializes such boxes per account with a host-side
+  lock: the second spawn fails fast with an error naming the busy account and the way out (close
+  the other session, or run on a different `@account`). Declared per agent (`ExclusiveHome`) —
+  codex today, others unaffected.
+
+- **An ACP session that dies in a box restart now says so in the thread.** When the respawned box
+  couldn't re-establish a session (e.g. the codex crash above), the failure went only to stderr:
+  the toolbar silently kept coop-only dropdowns (no model/effort) and every later prompt or
+  provider switch failed against a dead session. The proxy now posts the actual error into the
+  thread with what to do next.
+
+- **A provider switch no longer flickers the old provider back in the toolbar.** The ack to a
+  `coop_provider` switch was built from spawn-time state, so the dropdown echoed the previous
+  provider until the respawn's config update landed. The switch now retargets coop's per-lead
+  state before acking — the ack renders the new provider and its accounts immediately.
+
 - **A credential/preset switch mid-turn no longer kills the turn.** Switching the coop toolbar
   dropdowns while a reply was streaming failed the in-flight prompt with `-32000 agent restarted,
   please retry` — the thread looked crashed and the answer was lost. The switch now arms the same

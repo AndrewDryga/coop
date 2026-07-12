@@ -1661,6 +1661,13 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	changed := newSel != "" && newSel != c.sel
 	if changed {
 		c.sel = newSel
+		// A provider switch re-derives the per-lead state NOW, not at spawn time: the ack below
+		// renders the coop dropdowns, and building them from the old lead would echo the previous
+		// provider back — the editor's dropdown visibly flips back until the respawn's
+		// config_option_update lands. spawnTarget's own retargetLocked becomes a no-op.
+		if p, ok := strings.CutPrefix(newSel, "agent:"); ok {
+			c.retargetLocked(p)
+		}
 		// The restart this switch triggers kills any in-flight turn mid-stream. Arm the same
 		// transparent resend a rate-limit rotation uses, so each turn completes on the new
 		// target instead of dying with "agent restarted, please retry". promptSession holds
