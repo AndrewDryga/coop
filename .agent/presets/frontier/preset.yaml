@@ -13,9 +13,9 @@ lead:
   # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (a fallback
   # ladder, even cross-provider). A bare provider:model runs on EVERY signed-in account
   # (rotating on a rate limit); @account pins one. A loop rotates the list top-to-bottom.
-  # Fable 5 leads (the long-horizon agentic frontier), falling back to Opus 4.8 — the lead
-  # stays claude so the native thinker subagent below always works.
-  agent: [claude:claude-fable-5, claude:opus]
+  # The two frontier models at max effort, failing over to each other on a rate limit:
+  # Fable 5 (the long-horizon agentic frontier) with GPT-5.6 Sol as the cross-vendor twin.
+  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
@@ -26,37 +26,38 @@ lead:
 # account; only the lead rotates accounts. Every field is documented below.
 roles:
   thinker:
-    # mode: native — a Claude subagent that runs inside the lead's session (no
-    # separate box; native is Claude-only). With no subagent: below, coop generates
-    # a coop-thinker subagent in the box from this role — its target's model, when, and prompt.
-    mode: native
-    # agent — a target: provider[:model]. The model (after ':') is what the generated
-    # subagent runs on; a bare provider uses the default. No @account (a role runs its default).
-    agent: claude:claude-opus-4-8
-    # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
-    when: [architecture, debugging, code-review, before-commit]
-    # prompt — the generated subagent's system prompt. To reference an existing
-    # .claude/agents/ subagent instead of generating one, set: subagent: <name>.
+    # mode: consult — a READ-ONLY peer via coop-consult (a consult is one wrapper
+    # call, so a role takes ONE target; fallback ladders belong to the lead above).
+    mode: consult
+    # agent — a target: provider[:model][/effort], ONE target (fallback ladders belong to
+    # the lead). Terra at xhigh: near-frontier deep thinking without burning the Sol/Fable
+    # quota the lead and the final review run on; its Opus 4.8 twin covers the same duty
+    # in .agent/loop.yaml ladders.
+    agent: codex:gpt-5.6-terra/xhigh
+    # when — OPTIONAL routing hints; the lead's cue for what to route here.
+    when: [architecture, debugging, security, code-review, before-commit]
+    # prompt — Markdown appended to the role's generated contract.
     prompt: roles/thinker.md
 
   critic:
-    # mode: consult — a READ-ONLY peer via coop-consult for a second opinion
-    # (often another vendor); it cannot edit files.
+    # mode: consult — a READ-ONLY peer via coop-consult for a second opinion;
+    # it cannot edit files.
     mode: consult
     # agent — a target: provider[:model][/effort] (omit the model for the agent's default).
-    # Sol at xhigh: the strongest coding reviewer available — a consult is one shot, so
-    # spend effort where a wrong answer is expensive.
-    agent: codex:gpt-5.6-sol/xhigh
+    # Grok 4.5: the second critical opinion from OUTSIDE the claude+codex pair doing the
+    # work — a third vendor's blind spots, for one-way doors and security calls.
+    agent: grok:grok-4.5/high
     # when — OPTIONAL routing hints.
-    when: [plan-review, security, tradeoffs]
+    when: [plan-review, tradeoffs]
 
   fast:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — a target: provider[:model]. Flash: mechanical work wants the fastest
-    # competent hands, and a third vendor spreads the quota load.
-    agent: gemini:gemini-3.5-flash
+    # agent — a target: provider[:model][/effort]. Luna at xhigh: the fast tier's
+    # lead hands (its Opus 4.8 twin backs the fast tier in .agent/loop.yaml, where
+    # ladders are legal — a role takes one target).
+    agent: codex:gpt-5.6-luna/xhigh
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     # commit — delegate-only; only "never" (the delegate never commits).

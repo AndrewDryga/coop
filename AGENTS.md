@@ -24,21 +24,22 @@ When you lead a session here, you orchestrate: plan, decompose, synthesize, make
 calls, and keep your own context lean by delegating. This repo's roles live in the
 **frontier preset** (`.agent/presets/frontier/preset.yaml`) — under it, route by the nature
 of the work:
-- **thinker** (the `coop-thinker` subagent, Opus 4.8) — reasoning-heavy phases: architecture
-  calls, complex or intermittent bugs, code review, a pre-commit check. It returns a
-  conclusion; you act on it.
-- **critic** (codex/gpt-5.6-sol, read-only) — a peer engineer from another vendor, not a
-  reviewer-of-record: plan review, security, tradeoffs. Ask with a self-contained prompt:
+- **thinker** (codex/gpt-5.6-terra at xhigh, read-only) — reasoning-heavy phases:
+  architecture calls, complex or intermittent bugs, security, code review, a pre-commit
+  check. Ask with a self-contained prompt: `coop-consult thinker --fresh "…"`; it returns
+  a conclusion, you act on it.
+- **critic** (grok/grok-4.5, read-only) — the second critical opinion from OUTSIDE the
+  claude+codex pair doing the work: plan review, tradeoffs, one-way doors. Same shape:
   `coop-consult critic --fresh "…"`.
-- **fast** (gemini flash, write-capable) — mechanical, fully-specified work: boilerplate,
-  bulk edits, test scaffolding, repo surveys. Run it via `coop-delegate fast`; it never
-  commits — you review its diff, gate, and commit.
+- **fast** (codex/gpt-5.6-luna at xhigh, write-capable) — mechanical, fully-specified work:
+  boilerplate, bulk edits, test scaffolding, repo surveys. Run it via `coop-delegate fast`;
+  it never commits — you review its diff, gate, and commit.
 - **High-stakes decisions:** task the thinker AND the critic on the same problem in
   parallel, without showing either the other's answer, then synthesize the best of both.
-Outside the preset (no `coop-thinker` type, no `coop-consult`/`coop-delegate` on PATH), don't
-improvise substitutes: use whatever subagent types your runtime actually offers for the same
-split — reasoning vs mechanical — and skip peers. The single-writer rule above still holds:
-advisors and peers think; you edit, gate, and commit.
+Outside the preset (no `coop-consult`/`coop-delegate` on PATH), don't improvise substitutes:
+use whatever subagent types your runtime actually offers for the same split — reasoning vs
+mechanical — and skip peers. The single-writer rule above still holds: advisors and peers
+think; you edit, gate, and commit.
 
 ## The gate (adapt to this repo)
 `<format-check> && <build --warnings-as-errors> && <tests>`

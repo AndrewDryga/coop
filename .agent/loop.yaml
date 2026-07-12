@@ -3,9 +3,10 @@
 # Models use coop's target grammar: provider[:model][/effort][@account].
 # Sections are in loop order: preflight (before) → work → between (after each task) → review (at the end).
 #
-# This copy is coop dogfooding coop, tuned to the July 2026 frontier: the frontier preset
-# (Fable 5 + roles) does the work, GPT-5.6 Terra and Grok 4.5 keep it moving on rate limits,
-# Luna audits every finished task, and Sol at xhigh reviews the lot.
+# This copy is coop dogfooding coop, on two cross-vendor tiers at max effort: the FRONTIER
+# pair (Fable 5 ⇄ GPT-5.6 Sol, failing over to each other) leads the work and the review; the
+# FAST pair (GPT-5.6 Luna ⇄ Opus 4.8) audits each finished task. Grok 4.5 sits outside both
+# as the preset's critic — the second critical opinion. No gemini for now.
 
 preflight:
   # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
@@ -26,12 +27,9 @@ work:
   # word (claude/codex/gemini/grok) is a target; any other bare word must name a preset.
   # Default: the agent on the command line (`coop loop claude`) or a --preset's lead.
   #
-  # Rung 1: the frontier preset — Fable 5 leads (the long-horizon agentic frontier), with the
-  #         thinker/critic/fast roles and an Opus 4.8 fallback inside the preset's own ladder.
-  # Rung 2: GPT-5.6 Terra — Fable-class quality on a fresh vendor quota, at a fraction of the cost.
-  # Rung 3: Grok 4.5 — near-frontier and token-efficient; a third vendor so the queue keeps
-  #         draining even when both of the first two are limited.
-  agent: [frontier, codex:gpt-5.6-terra, grok:grok-4.5]
+  # One rung: the frontier preset already carries the failover pair — Fable 5/xhigh leading
+  # with GPT-5.6 Sol/xhigh as the cross-vendor twin — plus the thinker/critic/fast roles.
+  agent: [frontier]
 
   # Advanced: a raw command run each iteration instead of coop's agent form (disables the review,
   # preflight, and between passes). Default: coop's built-in agent form.
@@ -42,9 +40,9 @@ between:
   enabled: true
 
   # Audit model ladder. Default: the review model.
-  # Luna outclasses Opus 4.8 at a fraction of the cost — exactly the tier a focused per-task
-  # audit wants; Gemini 3.5 Flash is the third-vendor fallback.
-  agent: [codex:gpt-5.6-luna, gemini:gemini-3.5-flash]
+  # The FAST pair: Luna and Opus 4.8 at xhigh, failing over to each other — exactly the
+  # tier a focused per-task audit wants.
+  agent: [codex:gpt-5.6-luna/xhigh, claude:claude-opus-4-8/xhigh]
 
   # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
   prompt: |
@@ -64,11 +62,10 @@ review:
   # Batch-scaled: the real cap is clamp(tasks_done / 2, 3, rounds). Default: 5.
   #rounds: 5
 
-  # Model ladder for the review pass. A stronger model here reviews the cheaper work loop.
-  # Sol at xhigh is the strongest code reviewer available right now — and a different vendor
-  # than the (claude-led) work rung, so the lead's blind spots aren't the reviewer's. Fable 5
-  # picks the review up when codex is limited.
-  agent: [codex:gpt-5.6-sol/xhigh, claude:claude-fable-5]
+  # Model ladder for the review pass. The FRONTIER pair reversed: Sol/xhigh reviews first —
+  # usually a different vendor than whoever led the work, so the lead's blind spots aren't
+  # the reviewer's — with Fable 5/xhigh picking it up when codex is limited.
+  agent: [codex:gpt-5.6-sol/xhigh, claude:claude-fable-5/xhigh]
 
   # Extra review instructions/checks, APPENDED to coop's built-in senior review (which always
   # runs — it checks goal, standards, failure-path tests, polish, and the gate). The reviewer

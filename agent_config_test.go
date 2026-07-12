@@ -73,8 +73,8 @@ func TestOwnFrontierPresetLoads(t *testing.T) {
 		}
 	}
 	for _, r := range p.Roles {
-		if r.Name == "critic" && r.Effort != "xhigh" {
-			t.Errorf("critic effort = %q, want xhigh (a consult is one shot — spend the effort)", r.Effort)
+		if r.Name == "thinker" && r.Effort != "xhigh" {
+			t.Errorf("thinker effort = %q, want xhigh (a consult is one shot — spend the effort)", r.Effort)
 		}
 	}
 }
