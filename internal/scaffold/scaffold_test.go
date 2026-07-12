@@ -336,24 +336,6 @@ func TestInit(t *testing.T) {
 	}
 }
 
-func TestGlobalInstructionsExampleTeachesAgentStack(t *testing.T) {
-	path := filepath.Join("..", "..", "agents", "INSTRUCTIONS.md.example")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"/goal", "/batch", "subagents", "native", "runtime does not have", "separate workspaces"} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("global INSTRUCTIONS example missing agent-stack guidance %q:\n%s", want, data)
-		}
-	}
-	for _, bad := range []string{"coop fork", "coop fleet", "coop-consult", "separate fork"} {
-		if strings.Contains(string(data), bad) {
-			t.Errorf("global INSTRUCTIONS example should not recommend host-side/non-native orchestration %q:\n%s", bad, data)
-		}
-	}
-}
-
 func TestInitGitHooks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

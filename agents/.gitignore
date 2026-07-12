@@ -1,9 +1,0 @@
-# Never commit credentials or local agent settings.
-# Ignore everything in this folder...
-*
-# ...except the templates and docs.
-!.gitignore
-!env.example
-!INSTRUCTIONS.md.example
-!mcp.json.example
-!README.md

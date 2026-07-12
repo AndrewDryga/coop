@@ -438,8 +438,12 @@ run, `coop tasks watch` shows the deduped truth across the parent and its forks.
 One box, four agents. Each reads its config and credentials from
 `~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`, `~/.codex`,
 `~/.gemini`, and `~/.grok`. That directory lives outside any repo, so credentials never land in git —
-edit those files on the host and they take effect in the box. Only the *active* credential
-is mounted, so a running agent sees just the account it's using, not the whole vault.
+edit those files on the host and they take effect in the box. The folders appear on
+first run, and each tool's normal user-level config works there as-is —
+`claude/settings.json`, `codex/config.toml`, `gemini/settings.json`,
+`grok/config.toml`. Only the *active*
+credential is mounted, so a running agent sees just the account it's using, not the
+whole vault.
 
 Each run mounts only the **launched agent's** credentials: `coop claude` mounts
 `~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
@@ -698,26 +702,53 @@ for everything that lands, while the cheap tokens do the typing.
 `CLAUDE.md` and `GEMINI.md` symlink to a canonical `AGENTS.md`, and Codex shares
 Claude's skills directory. A real (non-symlink) instruction file you already have is
 left untouched. A shared `~/.config/coop/agents/INSTRUCTIONS.md` is also wired into each
-agent's global instruction path.
+agent's global instruction path in the box (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+`~/.gemini/GEMINI.md`, `~/.grok/AGENTS.md`) — machine-level guidance that follows you
+across repos, while project rules stay in the repo's own `AGENTS.md`. A per-agent file
+wins over the shared one: drop a `CLAUDE.md` into `~/.config/coop/agents/claude/` (or
+`AGENTS.md` into `codex/`, …) and that agent uses it instead.
 
 ### MCP servers, defined once
 
 `coop init` seeds an empty `~/.config/coop/agents/mcp.json` (the standard
 `{ "mcpServers": { ... } }` shape). An empty one wires up nothing, so drop your servers
-in and all three agents pick them up:
+in and every agent picks them up:
 
-```bash
-$EDITOR ~/.config/coop/agents/mcp.json                      # the stub coop init wrote
-cp agents/mcp.json.example ~/.config/coop/agents/mcp.json   # …or start from the example
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--no-sandbox"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace_with_your_token" }
+    },
+    "sentry": {
+      "type": "http",
+      "url": "https://mcp.sentry.dev/mcp",
+      "bearer_token_env_var": "SENTRY_TOKEN"
+    }
+  }
+}
 ```
 
 `coop` wires that one file into each agent's native mechanism on launch: Claude via
-`--mcp-config`, Gemini merged into its `settings.json`, Codex converted to
-`[mcp_servers.*]` in its `config.toml`. The Gemini/Codex versions are generated
+`--mcp-config`, Gemini merged into its `settings.json`, Codex — and Grok, same schema —
+converted to `[mcp_servers.*]` in its `config.toml`. The generated versions are laid
 read-only on top of your existing config (pure Go, no extra tooling) — your own files
 are never touched, and servers from `mcp.json` win on a name clash.
 
-The example's **Playwright** server works in the box out of the box: Chromium's system
+An `env` block on a command server (`github` above) reaches that server under every
+agent, verbatim — values are literal strings, no `$VAR` substitution. To keep a token
+out of `mcp.json`, point `bearer_token_env_var` at a variable (`sentry` above) and put
+the value in the env file: `echo 'SENTRY_TOKEN=…' >> ~/.config/coop/agents/env`. An
+HTTP server's `headers` work for Claude and Gemini; Codex and Grok authenticate only
+via `bearer_token_env_var`.
+
+The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on
 first use, and the server runs `--headless --no-sandbox` (the box is already the sandbox).
 
@@ -1362,7 +1393,6 @@ internal/mcp/       one mcp.json → Claude / Gemini / Codex native configs (pur
 internal/scaffold/  `coop init` templates + the workflow skills (embedded in the binary)
 internal/cli/       command dispatch, grouped help, the fork lifecycle, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
-agents/             example config (env.example, mcp.json.example); copied to ~/.config/coop on install
 install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 

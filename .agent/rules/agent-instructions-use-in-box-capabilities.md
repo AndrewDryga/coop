@@ -10,8 +10,9 @@ it cannot execute. It also blurs the security boundary: Coop orchestration belon
 human/operator layer; the boxed agent should use only its runtime's native tools.
 
 **How to apply:**
-- Agent-facing files include repo `AGENTS.md`, scaffolded instruction templates, global
-  `agents/INSTRUCTIONS.md.example`, and any instruction text mounted into agent homes.
+- Agent-facing files include repo `AGENTS.md`, scaffolded instruction templates, a user's
+  global `~/.config/coop/agents/INSTRUCTIONS.md`, and any instruction text mounted into
+  agent homes.
 - Recommend native/runtime capabilities: subagents, task workers, goal trackers, batch or
   parallel read-only tool calls, and the repo task/log files.
 - Do not recommend `coop fork`, `coop fleet`, or other host-side lifecycle commands to

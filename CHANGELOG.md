@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The repo's `agents/` examples folder is retired.** Its README documented an `install.sh`
+  seeding into `~/.config/coop/agents/` that no longer exists (installs download a prebuilt
+  binary), and each file had become redundant: the box briefing already carries the example's
+  sandbox note and the scaffolded `AGENTS.md` its agent-stack habits, `coop init` seeds the
+  `mcp.json` stub, and the README shows the env-file one-liners. What was unique moved into the
+  README's "Agents & config" section: the per-agent instruction override (a `CLAUDE.md` in
+  `agents/claude/` beats the shared `INSTRUCTIONS.md`), a sample `mcp.json`, and the MCP
+  `env`/`bearer_token_env_var` mechanics. Runtime behavior is unchanged —
+  `~/.config/coop/agents/INSTRUCTIONS.md` and the `env` file work exactly as before.
+
 - **One `.agent/loop.yaml` replaces the `.agent/loop/*.md` files — with a per-step model ladder and
   prompt for each of preflight / work / between / signoff.** The three markdown knobs
   (`review.md`/`audit.md`/`between.md`) collapse into one committed YAML with a section per step:
