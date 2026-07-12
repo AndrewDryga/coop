@@ -552,6 +552,13 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		options  json.RawMessage
 	}
 	var configUpdates []configUpdate
+	// A session whose re-create FAILED is dead on the new box — collect it and tell the thread
+	// after the swap (sessionNoticeLine), so the failure is visible where the user is looking.
+	type replayFailure struct {
+		editorID string
+		msg      string
+	}
+	var failures []replayFailure
 
 	// Bounded read: allow a generous wait for the FIRST response (the box may still be starting),
 	// then a tighter idle bound once the agent has answered and is provably up. A child EOF here
@@ -584,6 +591,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 						} else if len(h.Error) > 0 {
 							fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, h.Error)
 							Trace("replay: session %s re-create failed: %s", eid, h.Error)
+							failures = append(failures, replayFailure{eid, errorMessage(h.Error)})
 						}
 					} else if eid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
 						// A session that DID have a transcript failed to reload — a provider switch (the
@@ -691,6 +699,16 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 			traceLine("box→editor(replay-config)", line)
 			_, _ = p.out.Write(line)
 		}
+	}
+	// A dead session gets a visible verdict in its thread — until now the failure lived only in
+	// stderr/trace, so the user saw a stripped toolbar and silently failing prompts (e.g. a codex
+	// box that can't start because the account's sqlite state is held by another box).
+	for _, f := range failures {
+		line := sessionNoticeLine(f.editorID,
+			"⚠ coop: this session could not be re-established after the box restarted: "+f.msg+
+				"\nSwitch the provider or account back (or close the conflicting session), then send a message to retry.")
+		traceLine("box→editor(replay-failed)", line)
+		_, _ = p.out.Write(line)
 	}
 	// Feed the resends through the normal client path AFTER the swap, so each is remapped, tracked
 	// as pending, and its response reaches the editor, completing the turn the editor still shows
@@ -837,6 +855,37 @@ func configOptionUpdateLine(sid string, options json.RawMessage) []byte {
 	}
 	b, _ := json.Marshal(upd)
 	return append(b, '\n')
+}
+
+// sessionNoticeLine is a synthetic agent_message_chunk to the editor — how a replay failure
+// becomes VISIBLE in the thread, instead of dying in stderr while the toolbar silently keeps
+// stale options and every next prompt errors against a session that no longer exists.
+func sessionNoticeLine(sid, text string) []byte {
+	upd := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": sid,
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]any{"type": "text", "text": text},
+			},
+		},
+	}
+	b, _ := json.Marshal(upd)
+	return append(b, '\n')
+}
+
+// errorMessage extracts the human message from a JSON-RPC error object, falling back to the
+// raw JSON so a malformed error still surfaces something actionable.
+func errorMessage(raw json.RawMessage) string {
+	var e struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &e) == nil && e.Message != "" {
+		return e.Message
+	}
+	return string(raw)
 }
 
 // withID re-stamps a request line with a new (string) id.

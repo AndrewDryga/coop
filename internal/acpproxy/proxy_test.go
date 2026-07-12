@@ -933,3 +933,48 @@ func TestProxyFromEditorRewriteKeepsRequestPath(t *testing.T) {
 		t.Fatalf("editor got response id %q, want 7", id)
 	}
 }
+
+// TestProxyReplayFailureIsVisibleInThread: when even the re-create session/new fails (a box that
+// can't start — e.g. codex refusing its account's sqlite state held by another box), the failure
+// must reach the THREAD as an agent_message_chunk naming the error — not just stderr — so the
+// user isn't left with a stripped toolbar and silently dead prompts.
+func TestProxyReplayFailureIsVisibleInThread(t *testing.T) {
+	var stderrBuf, editor bytes.Buffer
+	old := warnOut
+	warnOut = &stderrBuf
+	defer func() { warnOut = old }()
+
+	p := &proxy{
+		out:       &editor,
+		sessions:  map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{},
+		pending:   map[string]bool{},
+	}
+	fc := newFakeChild()
+	br := bufio.NewReader(fc.outR)
+	// Round 1: the session/load fails. Round 2: the re-create session/new fails too — the box
+	// is genuinely unable to host the session.
+	go func() {
+		r := bufio.NewReader(fc.inR)
+		line, _ := r.ReadBytes('\n')
+		h := parse(line)
+		writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"error":{"code":-1,"message":"no such session"}}`)
+		line, _ = r.ReadBytes('\n')
+		h = parse(line)
+		writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"error":{"code":1001,"message":"Codex process has exited with code 1"}}`)
+	}()
+	if err := p.replay(fc.child(), br); err != nil {
+		t.Fatalf("replay returned %v", err)
+	}
+	out := editor.String()
+	if !strings.Contains(out, "agent_message_chunk") || !strings.Contains(out, "could not be re-established") {
+		t.Errorf("the editor must get an in-thread notice for the dead session, got: %q", out)
+	}
+	if !strings.Contains(out, "Codex process has exited with code 1") {
+		t.Errorf("the notice must carry the box's actual error, got: %q", out)
+	}
+	if !strings.Contains(out, `"sessionId":"S1"`) {
+		t.Errorf("the notice must target the editor's session id, got: %q", out)
+	}
+}
