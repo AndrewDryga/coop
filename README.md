@@ -900,6 +900,12 @@ coop's proxy sits between the editor and the box and owns the session:
 - **Dev servers are reachable.** With `serve.ports` in
   [`.agent/project.yaml`](#see-the-dev-server-in-your-browser), the thread announces
   the stable `http://localhost:<port>` URLs the box's ports are published at.
+- **A misbehaving session can be traced.** `touch ~/.config/coop/acp-debug` (or set
+  `COOP_ACP_TRACE=1` in the agent server's env) and every `coop acp` server appends the
+  editor↔box ACP wire to `~/.config/coop/acp-trace-<pid>.log`. The sentinel works on an
+  already-running server, so you can switch tracing on after a session already went
+  weird. It carries prompts and file contents — treat it as sensitive; see
+  [Troubleshooting](#troubleshooting).
 
 To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your working tree,
 point the adapter at it: `coop fork <name> acp [agent]` — same ACP, but the agent works the
