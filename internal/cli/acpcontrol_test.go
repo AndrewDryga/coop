@@ -66,7 +66,7 @@ func TestACPControlRewrite(t *testing.T) {
 	if string(res["sessionId"]) != `"s1"` {
 		t.Errorf("sessionId lost in rewrite: %s", res["sessionId"])
 	}
-	if len(ids) < 3 || ids[0] != "coop_provider" || ids[1] != "coop_account" || ids[2] != "coop_preset" {
+	if len(ids) < 3 || ids[0] != "coop_preset" || ids[1] != "coop_provider" || ids[2] != "coop_account" {
 		t.Errorf("coop's dropdowns must lead (provider, account, preset), got %v", ids)
 	}
 	for _, bad := range []string{"mode", "agent", "coop_setup"} {
@@ -127,7 +127,7 @@ func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
 		json.Unmarshal(o["id"], &id)
 		ids = append(ids, id)
 	}
-	if len(ids) < 3 || ids[0] != "coop_provider" {
+	if len(ids) < 3 || ids[0] != "coop_preset" {
 		t.Errorf("coop's dropdowns must lead in a config_option_update too, got %v", ids)
 	}
 	for _, bad := range []string{"mode", "agent"} {
@@ -157,7 +157,7 @@ func TestACPControlInjectsSetupWhenAdapterHasNoConfigOptions(t *testing.T) {
 	if string(res["sessionId"]) != `"g1"` {
 		t.Errorf("sessionId lost: %s", res["sessionId"])
 	}
-	if len(ids) < 3 || ids[0] != "coop_provider" {
+	if len(ids) < 3 || ids[0] != "coop_preset" {
 		t.Errorf("coop's dropdowns must be injected even when the adapter sends no configOptions, got %v", ids)
 	}
 	if _, ok := res["models"]; !ok {
@@ -222,7 +222,7 @@ func TestACPControlSynthesizesGeminiModelDropdown(t *testing.T) {
 	c := newGeminiControl(t, "") // no coop launch-model → currentValue tracks the box's currentModelId
 	out := toEd(c, []byte(geminiSessionNew))
 	ids, res := configOptionIDs(t, out)
-	if len(ids) < 4 || ids[0] != "coop_provider" || !slices.Contains(ids, "model") {
+	if len(ids) < 4 || ids[0] != "coop_preset" || !slices.Contains(ids, "model") {
 		t.Fatalf("want coop dropdowns first + a synthesized model option, got %v", ids)
 	}
 	model := findModelOption(t, res)
@@ -1268,24 +1268,25 @@ func TestACPProviderSelector(t *testing.T) {
 	}
 	coop := c.coopOptions()
 	if len(coop) != 3 {
-		t.Fatalf("want provider+account+preset dropdowns, got %d", len(coop))
+		t.Fatalf("want preset+provider+account dropdowns, got %d", len(coop))
 	}
-	provider := optValues(coop[0])
+	// Preset leads: it's the top-level selector (it embeds provider, model, effort, roles).
+	if preset := optValues(coop[0]); !slices.Contains(preset, "none") || !slices.Contains(preset, "frontier") {
+		t.Errorf("Preset dropdown %v must offer none + the presets", preset)
+	}
+	provider := optValues(coop[1])
 	if !slices.Contains(provider, "claude") || !slices.Contains(provider, "codex") {
 		t.Errorf("Provider dropdown %v must offer the lead and the signed-in codex", provider)
 	}
 	// Values are grammar tokens; the LABELS are the product names.
-	if raw := string(coop[0]); !strings.Contains(raw, `"name":"Claude Code"`) || !strings.Contains(raw, `"name":"Codex"`) {
+	if raw := string(coop[1]); !strings.Contains(raw, `"name":"Claude Code"`) || !strings.Contains(raw, `"name":"Codex"`) {
 		t.Errorf("Provider dropdown labels must be product names:\n%s", raw)
 	}
 	if slices.Contains(provider, "gemini") || slices.Contains(provider, "grok") {
 		t.Errorf("Provider dropdown %v must not offer unsigned providers", provider)
 	}
-	if account := optValues(coop[1]); !slices.Contains(account, "auto") || !slices.Contains(account, "work") {
+	if account := optValues(coop[2]); !slices.Contains(account, "auto") || !slices.Contains(account, "work") {
 		t.Errorf("Account dropdown %v must offer auto + the lead's accounts", account)
-	}
-	if preset := optValues(coop[2]); !slices.Contains(preset, "none") || !slices.Contains(preset, "frontier") {
-		t.Errorf("Preset dropdown %v must offer none + the presets", preset)
 	}
 
 	// A fusion governor gets no Provider dropdown at all.
@@ -1528,11 +1529,13 @@ func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Prime the cache as a claude session/new would — its NATIVE model menu is claude's.
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"}]}]}}`))
 	handled, resp, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":11,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_provider","value":"codex"}}`))
 	if !handled || !restart {
 		t.Fatalf("a provider switch must be handled and restart the box (handled=%v restart=%v)", handled, restart)
 	}
-	_, res := configOptionIDs(t, resp)
+	ids, res := configOptionIDs(t, resp)
 	var opts []struct {
 		ID      string `json:"id"`
 		Current string `json:"currentValue"`
@@ -1543,8 +1546,18 @@ func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
 			t.Errorf("ack renders provider %q, want codex (the switch already applied)", o.Current)
 		}
 	}
+	// The old lead's NATIVE model menu must NOT survive into the ack — it would list claude
+	// models on what is now a codex session; the new box's truth brings the right one.
+	if slices.Contains(ids, "model") {
+		t.Errorf("ack still carries the previous provider's model dropdown: %v", ids)
+	}
 	// The per-lead state followed: the next spawn resolves codex with its default account.
 	if tgt, _, ok := c.spawnTarget(); !ok || tgt.Provider != "codex" {
 		t.Errorf("spawnTarget after the switch = %+v ok=%v, want provider codex", tgt, ok)
+	}
+	// The respawned box's session/new truth restores the native menu (the new lead's).
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"gpt-5.5","options":[{"value":"gpt-5.5","name":"gpt-5.5"}]}]}}`))
+	if ids2, _ := configOptionIDs(t, c.ackOptions(json.RawMessage("13"), "s")); !slices.Contains(ids2, "model") {
+		t.Errorf("after the new box's truth the model dropdown must be back: %v", ids2)
 	}
 }

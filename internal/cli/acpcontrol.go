@@ -88,6 +88,10 @@ type acpControl struct {
 	sel    string                     // current coop_setup value: "cred:<name>" or "preset:<name>"
 	cached map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
 
+	// nativesStale marks the cached NATIVE options (model/effort/fast) as belonging to a
+	// PREVIOUS lead after a provider switch: a refresh drops them instead of echoing the old
+	// provider's model menu. Cleared when the new box's real options land (rewriteConfigOptions).
+	nativesStale bool
 	// leadUsesSetModel latches true once a session/new result proves this lead exposes its models via a
 	// `models` field with no native `model` configOption (gemini), so coop synthesized the dropdown. It
 	// then routes an editor `model` set to session/set_model (fromEditor) and re-applies the chosen model
@@ -346,6 +350,10 @@ func (c *acpControl) retargetLocked(provider string) {
 	c.accounts = accountsFor(c.cfg, provider)
 	c.model = ""
 	c.leadUsesSetModel = false
+	// The cached NATIVE options (model/effort/fast) still describe the OLD lead — serving them
+	// would show the previous provider's model menu on the new one. Stale until the new box's
+	// session/new truth flows through rewriteConfigOptions.
+	c.nativesStale = true
 }
 
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
@@ -1279,11 +1287,12 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 	if err != nil {
 		return raw
 	}
+	c.mu.Lock()
+	c.nativesStale = false // real box truth: the natives in the cache describe the CURRENT lead again
 	if sid != "" {
-		c.mu.Lock()
 		c.cached[sid] = b
-		c.mu.Unlock()
 	}
+	c.mu.Unlock()
 	return b
 }
 
@@ -1295,14 +1304,28 @@ func (c *acpControl) cacheModels(models []modelInfo) {
 	_ = writeModelsCache(c.cfg, c.lead, models)
 }
 
-// coopOptions builds coop's toolbar dropdowns in their fixed order: Provider (omitted for a
-// fusion governor — see fusionLadderGuard), Account, Preset. Each shows the EFFECTIVE state of
-// the one underlying selection, so after any switch the other two catch up on the next refresh.
+// coopOptions builds coop's toolbar dropdowns in their fixed order: Preset (the top-level
+// selector — it embeds provider, model, effort, and roles), Provider (omitted for a fusion
+// governor — see fusionLadderGuard), Account. Each shows the EFFECTIVE state of the one
+// underlying selection, so after any switch the other two catch up on the next refresh.
 func (c *acpControl) coopOptions() []json.RawMessage {
 	c.mu.Lock()
 	sel, lead, creds, fusion := c.sel, c.lead, c.creds, c.fusion
 	c.mu.Unlock()
 	var out []json.RawMessage
+	// Preset FIRST: it's the top-level selector — a preset embeds the provider, model, effort,
+	// and roles, so everything to its right is derived while one is active.
+	ps := "none"
+	if v, ok := strings.CutPrefix(sel, "preset:"); ok && v != "" {
+		ps = v
+	}
+	popts := make([]acpOption, 0, len(c.presets)+1)
+	popts = append(popts, acpOption{Value: "none", Name: "None", Description: "No preset — the plain lead"})
+	for _, p := range c.presets {
+		popts = append(popts, acpOption{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"})
+	}
+	out = append(out, marshalSelect(coopPresetID, "Preset",
+		"Orchestration recipe — its lead + ladder drive the session, its roles mount", ps, popts))
 	if !fusion {
 		others := c.spawnableProviders(lead)
 		opts := make([]acpOption, 0, len(others)+1)
@@ -1325,17 +1348,6 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	}
 	out = append(out, marshalSelect(coopAccountID, "Account",
 		"The lead's login — switching is transparent (shared session store)", acct, aopts))
-	ps := "none"
-	if v, ok := strings.CutPrefix(sel, "preset:"); ok && v != "" {
-		ps = v
-	}
-	popts := make([]acpOption, 0, len(c.presets)+1)
-	popts = append(popts, acpOption{Value: "none", Name: "None", Description: "No preset — the plain lead"})
-	for _, p := range c.presets {
-		popts = append(popts, acpOption{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"})
-	}
-	out = append(out, marshalSelect(coopPresetID, "Preset",
-		"Orchestration recipe — its lead + ladder drive the session, its roles mount", ps, popts))
 	return out
 }
 
@@ -1775,21 +1787,25 @@ func (c *acpControl) refreshSetup(cached json.RawMessage) json.RawMessage {
 
 // refreshCoopOptions strips every coop-owned dropdown from a cached configOptions array (the
 // retired coop_setup included) and prepends freshly-built ones — the single place the "coop
-// dropdowns lead, natives follow" order is enforced on a refresh. On a preset the natives are
-// dropped too (the preset pins them), so the ack right after selecting a preset doesn't
-// resurrect them from the cache before the restart's box truth lands.
+// dropdowns lead, natives follow" order is enforced on a refresh. The natives are dropped too
+// on a preset (the preset pins them) and after a provider switch (they still describe the OLD
+// lead's model menu — nativesStale), so an ack never resurrects them from the cache before the
+// restart's box truth lands.
 func (c *acpControl) refreshCoopOptions(cached json.RawMessage) []json.RawMessage {
 	var arr []json.RawMessage
 	if len(cached) > 0 {
 		_ = json.Unmarshal(cached, &arr)
 	}
 	_, preset := c.selection()
+	c.mu.Lock()
+	stale := c.nativesStale
+	c.mu.Unlock()
 	out := c.coopOptions()
 	for _, it := range arr {
 		var head struct {
 			ID string `json:"id"`
 		}
-		if json.Unmarshal(it, &head) == nil && (coopOwnedIDs[head.ID] || preset != "") {
+		if json.Unmarshal(it, &head) == nil && (coopOwnedIDs[head.ID] || preset != "" || stale) {
 			continue
 		}
 		out = append(out, it)

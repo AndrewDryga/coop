@@ -23,6 +23,16 @@
   provider until the respawn's config update landed. The switch now retargets coop's per-lead
   state before acking — the ack renders the new provider and its accounts immediately.
 
+- **A provider switch no longer keeps the OLD provider's model menu.** The refreshed toolbar
+  echoed the cached native options — switch claude → grok and the model dropdown still listed
+  Opus/Fable/Sonnet. The stale menu is now dropped the moment the provider switches; the new
+  box's own options (grok: `grok-4.5` / `grok-composer-2.5-fast`) replace it when its truth
+  arrives.
+
+- **The Preset dropdown now leads the ACP toolbar.** A preset is the top-level selector — it
+  embeds the provider, model, effort, and roles — so it renders before Provider and Account
+  instead of after them, matching what it owns.
+
 - **A credential/preset switch mid-turn no longer kills the turn.** Switching the coop toolbar
   dropdowns while a reply was streaming failed the in-flight prompt with `-32000 agent restarted,
   please retry` — the thread looked crashed and the answer was lost. The switch now arms the same
