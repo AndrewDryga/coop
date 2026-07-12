@@ -427,7 +427,8 @@ coop loop [agent] — work the task queue until done, then review.
   One committed .agent/loop.yaml configures every step (preflight/work/between/review), each
   with its own agent: model ladder and prompt. Prompts never REPLACE a coop built-in:
   review.prompt and preflight.prompt APPEND extra checks/instructions to theirs; between.prompt
-  SETS the per-task audit (between has no built-in — it's off unless enabled + set). review.rounds
+  SETS the per-task audit (between has no built-in — it's off unless enabled + set; coop
+  prepends the just-finished task's id + folder, the audit's exact subject). review.rounds
   is the round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration
   override. A missing file or field = the built-in default. (The retired .agent/loop/*.md and
   legacy .agent/audit.md tombstone once if left behind; coop init scaffolds a commented loop.yaml.)

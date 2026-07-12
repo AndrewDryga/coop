@@ -192,15 +192,42 @@ func TestLoopFilesTombstone(t *testing.T) {
 	}
 }
 
-// TestLoopBetweenPrompt: between.prompt (SET, not read from a file) is the audit base; the fixed
-// footer trails.
+// TestLoopBetweenPrompt: a header names the just-finished task(s) — the audit's subject, so the
+// prompt never asks the agent to guess "the most recent" — then between.prompt (SET, not read
+// from a file), then the fixed footer.
 func TestLoopBetweenPrompt(t *testing.T) {
-	p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "\nAudit the task just moved to 99_done/.\n")
-	if !strings.HasPrefix(p, "Audit the task just moved to 99_done/.") {
-		t.Errorf("between.prompt text should be the prompt base:\n%s", p)
+	finished := []string{"2026-07-11-fix-timer — /repo/.agent/tasks/99_done/2026-07-11-fix-timer"}
+	p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "\nAudit the task named above.\n", finished)
+	if !strings.HasPrefix(p, "The task(s) the last iteration just completed") || !strings.Contains(p, "2026-07-11-fix-timer — ") {
+		t.Errorf("the header must name the finished task:\n%s", p)
+	}
+	if !strings.Contains(p, "Audit the task named above.") {
+		t.Errorf("between.prompt text should follow the header:\n%s", p)
 	}
 	if !strings.Contains(p, "its folder back to 10_in_progress/") {
 		t.Errorf("the fixed context footer must trail the between prompt:\n%s", p)
+	}
+	// No identified task (defensive) → no header, prompt leads.
+	if p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "Audit.", nil); !strings.HasPrefix(p, "Audit.") {
+		t.Errorf("without finished tasks the prompt should lead:\n%s", p)
+	}
+}
+
+// TestNewlyFinished: the before/after done-set diff names exactly what an iteration completed,
+// sorted; taskIDsOf strips the dirs for the banner.
+func TestNewlyFinished(t *testing.T) {
+	before := map[string]string{"a": "/q/99_done/a"}
+	now := map[string]string{"a": "/q/99_done/a", "c": "/q/99_done/c", "b": "/q/99_done/b"}
+	got := newlyFinished(before, now)
+	want := []string{"b — /q/99_done/b", "c — /q/99_done/c"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("newlyFinished = %v, want %v", got, want)
+	}
+	if ids := taskIDsOf(got); ids[0] != "b" || ids[1] != "c" {
+		t.Errorf("taskIDsOf = %v, want [b c]", ids)
+	}
+	if extra := newlyFinished(now, now); len(extra) != 0 {
+		t.Errorf("no change should mean no finished tasks, got %v", extra)
 	}
 }
 

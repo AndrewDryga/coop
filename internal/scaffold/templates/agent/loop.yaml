@@ -32,8 +32,9 @@ between:
   #agent: [claude:sonnet]
 
   # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
+  # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
   #prompt: |
-  #  Audit the task just moved to 99_done/: confirm every acceptance criterion is demonstrably met
+  #  Audit the task named above: confirm every acceptance criterion is demonstrably met
   #  and its failure path is tested; reopen it (move the folder back to 10_in_progress/) if not.
 
 review:

@@ -45,8 +45,9 @@ between:
   agent: [codex:gpt-5.6-luna/xhigh, claude:claude-opus-4-8/xhigh]
 
   # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
+  # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
   prompt: |
-    Audit ONLY the task most recently moved to .agent/tasks/99_done/ — nothing else. Hold it
+    Audit ONLY the task named above — nothing else. Hold it
     against its own task.md, trusting evidence over prose:
     - Every acceptance criterion is demonstrably met — point at the commit, diff, or test that
       proves it, not at a claim in log.md.

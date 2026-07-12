@@ -10,7 +10,9 @@
   each takes an `agent:` ladder (`provider[:model][/effort][@account]` targets **or** a preset name
   — a preset rung runs that step under the preset's roles + lead ladder, rotated on a rate limit),
   and a prompt. Prompts never OVERRIDE a coop built-in — `review.prompt` and `preflight.prompt`
-  **append** to theirs; `between.prompt` **sets** the per-task audit (between has no built-in).
+  **append** to theirs; `between.prompt` **sets** the per-task audit (between has no built-in;
+  coop prepends the just-finished task's id + folder — the audit's exact subject, so the prompt
+  never has to guess "the most recent" task).
   Settings live here too: `review.rounds` (was `COOP_MAX_REVIEW_ROUNDS`), `preflight.enabled` (was
   `--preflight`/`COOP_PREFLIGHT`, still overridable), `work.command` (was `COOP_LOOP_CMD`). A missing
   file or field = today's built-in defaults, so an absent `loop.yaml` changes nothing. The retired

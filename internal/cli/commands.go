@@ -1551,12 +1551,62 @@ func loopFilesTombstone(repo string) string {
 	return "found retired loop config file(s) " + strings.Join(found, ", ") + " — loop settings now live in one .agent/loop.yaml (review.prompt/preflight.prompt append the built-ins; between.prompt sets the audit) and the old files are NO LONGER read; fold them into .agent/loop.yaml, then delete them"
 }
 
-// loopBetweenPrompt is the opt-in per-task audit run after each completed task. Its base is the
-// .agent/loop.yaml between.prompt (SET, not appended — between has no built-in; loopcfg.Load
-// requires it when between.enabled), then the same fixed context footer with the queue paths and
-// reopen mechanics. It reviews the just-completed task and may reopen it — the loop reworks it first.
-func loopBetweenPrompt(repo string, queues []string, setPrompt string) string {
-	return strings.TrimSpace(setPrompt) + "\n\n" + reviewContextFooter(repo, queues)
+// loopBetweenPrompt is the opt-in per-task audit run after each completed task. A header names
+// the task(s) the last iteration moved to done — the audit's subject, computed at fire time so
+// the between.prompt never has to make the agent GUESS "the most recent" from folder mtimes.
+// Then the .agent/loop.yaml between.prompt (SET, not appended — between has no built-in;
+// loopcfg.Load requires it when between.enabled), then the same fixed context footer with the
+// queue paths and reopen mechanics. It reviews the just-completed task and may reopen it — the
+// loop reworks it first.
+func loopBetweenPrompt(repo string, queues []string, setPrompt string, finished []string) string {
+	var b strings.Builder
+	if len(finished) > 0 {
+		b.WriteString("The task(s) the last iteration just completed — the ONLY subject of this audit:\n")
+		for _, f := range finished {
+			b.WriteString("  - " + f + "\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(strings.TrimSpace(setPrompt))
+	b.WriteString("\n\n")
+	b.WriteString(reviewContextFooter(repo, queues))
+	return b.String()
+}
+
+// doneTaskDirs maps every done task's id → its folder across the queue(s). The between audit
+// diffs a before/after snapshot of it to name exactly which task(s) an iteration finished.
+func doneTaskDirs(hosts []string) map[string]string {
+	out := map[string]string{}
+	for _, h := range hosts {
+		for _, t := range readTaskTree(h) {
+			if t.State == stateDone {
+				out[t.ID] = t.Dir
+			}
+		}
+	}
+	return out
+}
+
+// newlyFinished returns "id — dir" lines (sorted by id) for tasks done now but not before —
+// what the last iteration completed, and so what the between audit is about.
+func newlyFinished(before, now map[string]string) []string {
+	var out []string
+	for id, dir := range now {
+		if _, ok := before[id]; !ok {
+			out = append(out, id+" — "+dir)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// taskIDsOf strips the " — dir" suffix off newlyFinished lines — the bare ids, for the banner.
+func taskIDsOf(finished []string) []string {
+	out := make([]string, len(finished))
+	for i, f := range finished {
+		out[i], _, _ = strings.Cut(f, " — ")
+	}
+	return out
 }
 
 // defaultReviewRounds is the built-in work→review round ceiling when .agent/loop.yaml review.rounds
@@ -1723,12 +1773,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues, lc.Review.Prompt)
 	// The review pass (end-of-loop) and the optional between-tasks audit both run only under the
 	// review-aware agent form, not a custom work.command. The between audit is opt-in
-	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in).
+	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in) and
+	// is built per-firing so it can name the task the iteration just finished.
 	betweenEnabled := len(custom) == 0 && lc.Between.Enabled
-	betweenPrompt := ""
-	if betweenEnabled {
-		betweenPrompt = loopBetweenPrompt(repo, queues, lc.Between.Prompt)
-	}
 	// Tombstone the retired .agent/loop/*.md (and legacy .agent/audit.md) once: those knobs moved
 	// into .agent/loop.yaml and coop no longer reads the old files — don't silently ignore them.
 	if len(custom) == 0 {
@@ -1736,14 +1783,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Warn("%s", note)
 		}
 	}
-	// Per-step review/between models from .agent/loop.yaml (COOP_REVIEW_MODEL is the fallback for
-	// review; between falls back to the review model). Swapped in only for those iterations.
+	// Per-step review/between models from .agent/loop.yaml (between falls back to the review
+	// model). Swapped in only for those iterations.
 	reviewModel, reviewEffort := stepModel(lc.Review.Agent)
 	betweenModel, betweenEffort := stepModel(lc.Between.Agent)
 	if betweenModel == "" && betweenEffort == "" { // between falls back to the review model
 		betweenModel, betweenEffort = reviewModel, reviewEffort
 	}
-	// iterCmd builds one iteration's command: a raw COOP_LOOP_CMD override if set,
+	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/review prompt.
 	iterCmd := func(prompt string) []string {
 		if len(custom) > 0 {
@@ -1836,6 +1883,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			// swaps the agent per rung), its credential (the mount + the agent command both resolve
 			// cfg.AgentDir), and its model. applyTarget returns the active provider for THIS iteration.
 			agent = a.applyTarget(rot)
+			// Snapshot which tasks are done BEFORE the iteration, so the between audit can name
+			// exactly what this iteration finished (the diff), not guess "the most recent".
+			var doneBefore map[string]string
+			if betweenEnabled {
+				doneBefore = doneTaskDirs(hosts)
+			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			ui.Info("%s", progressBanner(n, c, active))
 			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, peers)
@@ -1869,15 +1922,17 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				if stop != nil {
 					return code, stop
 				}
-				// Optional between-tasks audit: if this iteration moved a task to 99_done/ and
-				// .agent/loop/between.md is present, review that just-completed task now (on the review
-				// model). It may reopen it — the next inner iteration picks the reopened task back up and
-				// reworks it before the loop moves on. Off (no extra iteration) unless the file exists.
+				// Optional between-tasks audit (loop.yaml between.enabled): if this iteration moved a
+				// task to done/, review that just-completed task now, on the between model — the prompt
+				// names it explicitly (the before/after diff), so the audit never has to infer which
+				// task "was most recent". It may reopen it — the next inner iteration picks the
+				// reopened task back up and reworks it before the loop moves on.
 				if betweenEnabled {
-					if cNow, _ := queueProgress(hosts); cNow.Done > c.Done {
-						ui.Info("between-tasks audit — reviewing the task just completed")
+					if finished := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finished) > 0 {
+						ui.Info("between-tasks audit — reviewing %s", strings.Join(taskIDsOf(finished), ", "))
+						prompt := loopBetweenPrompt(repo, queues, lc.Between.Prompt, finished)
 						a.withStepModel(agent, betweenModel, betweenEffort, func() {
-							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(betweenPrompt), hosts, sink, peers)
+							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(prompt), hosts, sink, peers)
 						})
 					}
 				}
