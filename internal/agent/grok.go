@@ -133,6 +133,9 @@ func (grokAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (grokAgent) AuthMarker() (file, envKey string) { return "auth.json", "XAI_API_KEY" }
 
+// ExclusiveHome: no single-writer state observed in ~/.grok — concurrent boxes are fine.
+func (grokAgent) ExclusiveHome() bool { return false }
+
 // CredentialEnvKeys is grok's only token env var (the OIDC/auth-provider vars configure a
 // mechanism, not a token coop scopes).
 func (grokAgent) CredentialEnvKeys() []string { return []string{"XAI_API_KEY"} }

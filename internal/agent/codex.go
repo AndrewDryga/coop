@@ -114,6 +114,10 @@ func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 
+// ExclusiveHome: codex ≥0.144 keeps sqlite state (state_*.sqlite, logs_*.sqlite, …) in ~/.codex;
+// a second box on the same account fails "failed to initialize sqlite state runtime".
+func (codexAgent) ExclusiveHome() bool { return true }
+
 // CredentialEnvKeys is Codex's only token env var.
 func (codexAgent) CredentialEnvKeys() []string { return []string{"OPENAI_API_KEY"} }
 

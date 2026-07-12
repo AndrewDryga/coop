@@ -135,6 +135,13 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	} else if !spec.Quiet {
 		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
 	}
+	unlock, err := lockAgentHome(cfg, spec)
+	if err != nil {
+		return -1, err
+	}
+	if unlock != nil {
+		defer unlock()
+	}
 	workdir := resolveWorkdir(spec, cfg)
 
 	mounts, err := ComputeMounts(spec.Repo, workdir)

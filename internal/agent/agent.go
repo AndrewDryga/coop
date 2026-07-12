@@ -59,6 +59,11 @@ type Agent interface {
 	// login, and the env-file key it reads an API key from — either present means it's
 	// set up and worth offering as a consult peer.
 	AuthMarker() (file, envKey string)
+	// ExclusiveHome reports that this agent's CLI keeps single-writer state in its home
+	// dir (codex ≥0.144: sqlite databases under ~/.codex) — a second box mounting the
+	// same account's home crashes at startup or risks corrupting it, so box.Run
+	// serializes such boxes per account with a host-side lock.
+	ExclusiveHome() bool
 	// CredentialEnvKeys is every env-file key this agent reads a token from — the
 	// AuthMarker key plus any alternates it honors (e.g. claude also reads
 	// ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN). A scoped run strips all of an
