@@ -12,17 +12,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// The loop's closing banner must not claim "verified done" when the review reopened work — which it
+// The loop's closing banner must not claim "verified done" when the signoff reopened work — which it
 // does by moving done tasks back into 10_in_progress/, not 00_todo/. Regression: the check looked at
 // 00_todo/ only, so a reopened task in in_progress fell through to the green "verified done".
 func TestLoopClosingBanner(t *testing.T) {
 	// Reopened INTO in_progress (the bug): not done, and names the count.
-	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "review reopened") ||
+	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "signoff reopened") ||
 		!strings.Contains(b, "3 tasks") || strings.Contains(b, "verified done") {
 		t.Errorf("reopened-into-in_progress banner = %q", b)
 	}
 	// Reopened into todo: same outcome, singular count.
-	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "review reopened") ||
+	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "signoff reopened") ||
 		!strings.Contains(b, "1 task") || strings.Contains(b, "verified done") {
 		t.Errorf("reopened-into-todo banner = %q", b)
 	}
@@ -75,7 +75,7 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
 		}
 	}
-	if review := loopReviewPrompt(repo, []string{".agent/tasks"}, ""); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
+	if review := loopSignoffPrompt(repo, []string{".agent/tasks"}, ""); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
 		t.Errorf("review prompt should name the absolute queue:\n%s", review)
 	}
 }
@@ -124,7 +124,7 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
 	}
-	rev := loopReviewPrompt("/repo", []string{".agent/tasks"}, "")
+	rev := loopSignoffPrompt("/repo", []string{".agent/tasks"}, "")
 	// The demanding default prompt: a senior reviewer's bar — every acceptance criterion met, the
 	// repo's rules obeyed, the FAILURE path tested, the change polished (docs updated), a SINGLE
 	// whole-repo gate, reopen-by-moving, and no self-fix/commits.
@@ -152,21 +152,21 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	}
 }
 
-// The built-in senior review ALWAYS leads; .agent/loop.yaml review.prompt only APPENDS to it
+// The built-in senior review ALWAYS leads; .agent/loop.yaml signoff.prompt only APPENDS to it
 // (never replaces it). Either way the fixed context footer trails.
 func TestLoopReviewPromptAppend(t *testing.T) {
 	repo := t.TempDir()
 	// No append → the built-in default, no appendix.
-	if rev := loopReviewPrompt(repo, []string{".agent/tasks"}, ""); !strings.HasPrefix(rev, "Review pass") || strings.Contains(rev, "project-specific checks") {
+	if rev := loopSignoffPrompt(repo, []string{".agent/tasks"}, ""); !strings.HasPrefix(rev, "Review pass") || strings.Contains(rev, "project-specific checks") {
 		t.Errorf("empty append → built-in only, no appendix:\n%s", rev)
 	}
 	// With an append → the built-in leads, then the appended text, then the footer.
-	rev := loopReviewPrompt(repo, []string{".agent/tasks"}, "- Verify CHANGELOG.md gained an entry.")
+	rev := loopSignoffPrompt(repo, []string{".agent/tasks"}, "- Verify CHANGELOG.md gained an entry.")
 	if !strings.HasPrefix(rev, "Review pass") || !strings.Contains(rev, "SENIOR REVIEWER") {
 		t.Errorf("the built-in review must always lead (append never replaces):\n%s", rev)
 	}
 	if !strings.Contains(rev, "project-specific checks") || !strings.Contains(rev, "Verify CHANGELOG.md gained an entry.") {
-		t.Errorf("review.prompt text should be appended:\n%s", rev)
+		t.Errorf("signoff.prompt text should be appended:\n%s", rev)
 	}
 	if !strings.Contains(rev, "its folder back to 10_in_progress/") {
 		t.Errorf("the fixed context footer must trail:\n%s", rev)
@@ -305,7 +305,7 @@ func TestParseLoopArgs(t *testing.T) {
 	// it — it resolves the target + the boolean flags only.
 	cases := []struct {
 		args          []string
-		def           bool // COOP_PREFLIGHT default
+		def           bool // the loop.yaml preflight.enabled default
 		wantAgent     string
 		wantModel     string
 		wantDebug     bool
@@ -321,7 +321,7 @@ func TestParseLoopArgs(t *testing.T) {
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
 		{[]string{"--preflight"}, false, "", "", false, true, false},
 		{[]string{"codex", "--preflight"}, false, "codex", "", false, true, false},
-		{nil, true, "", "", false, true, false},                         // COOP_PREFLIGHT=1 default
+		{nil, true, "", "", false, true, false},                         // preflight.enabled default
 		{[]string{"--no-preflight"}, true, "", "", false, false, false}, // flag overrides default-on
 		// The model/account ride the target now; --model/--credential tombstone (error).
 		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", false, false, false},

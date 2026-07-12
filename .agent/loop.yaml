@@ -1,12 +1,12 @@
 # .agent/loop.yaml — configuration for `coop loop` (committed; edit to taste).
 # Every key is optional — omit it (or a whole section) to use coop's built-in default, noted below.
 # Models use coop's target grammar: provider[:model][/effort][@account].
-# Sections are in loop order: preflight (before) → work → between (after each task) → review (at the end).
+# Sections are in loop order: preflight (before) → work → between (after each task) → signoff (at the end).
 #
 # This copy is coop dogfooding coop, on two cross-vendor tiers at max effort: the FRONTIER
-# pair (Fable 5 ⇄ GPT-5.6 Sol, failing over to each other) leads the work and the review; the
-# FAST pair (GPT-5.6 Luna ⇄ Opus 4.8) audits each finished task. Grok 4.5 sits outside both
-# as the preset's critic — the second critical opinion. No gemini for now.
+# pair (Fable 5 ⇄ GPT-5.6 Sol, failing over to each other) leads the work and the signoff; the
+# FAST pair (GPT-5.6 Luna ⇄ Opus 4.8) audits each finished task between iterations. Grok 4.5
+# sits outside both as the preset's critic — the second critical opinion. No gemini for now.
 
 preflight:
   # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
@@ -31,15 +31,15 @@ work:
   # with GPT-5.6 Sol/xhigh as the cross-vendor twin — plus the thinker/critic/fast roles.
   agent: [frontier]
 
-  # Advanced: a raw command run each iteration instead of coop's agent form (disables the review,
-  # preflight, and between passes). Default: coop's built-in agent form.
+  # Advanced: a raw command run each iteration instead of coop's agent form (disables the
+  # signoff, preflight, and between passes). Default: coop's built-in agent form.
   #command: []
 
 between:
   # Opt-in audit run after EACH completed task (may reopen it before the loop moves on). Default: off.
   enabled: true
 
-  # Audit model ladder. Default: the review model.
+  # Audit model ladder. Default: the signoff model.
   # The FAST pair: Luna and Opus 4.8 at xhigh, failing over to each other — exactly the
   # tier a focused per-task audit wants.
   agent: [codex:gpt-5.6-luna/xhigh, claude:claude-opus-4-8/xhigh]
@@ -47,8 +47,8 @@ between:
   # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
   # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
   prompt: |
-    Audit ONLY the task named above — nothing else. Hold it
-    against its own task.md, trusting evidence over prose:
+    Audit ONLY the task named above — nothing else. Hold it against its own task.md,
+    trusting evidence over prose:
     - Every acceptance criterion is demonstrably met — point at the commit, diff, or test that
       proves it, not at a claim in log.md.
     - The failure path is tested, not just the happy path.
@@ -58,17 +58,17 @@ between:
     move the folder back to 10_in_progress/ and append the concrete gap (what to fix, where)
     to log.md. Never widen scope beyond the audited task.
 
-review:
-  # Work→review rounds before a task the review keeps reopening is blocked for a human.
+signoff:
+  # Work→signoff rounds before a task the signoff keeps reopening is blocked for a human.
   # Batch-scaled: the real cap is clamp(tasks_done / 2, 3, rounds). Default: 5.
   #rounds: 5
 
-  # Model ladder for the review pass. The FRONTIER pair reversed: Sol/xhigh reviews first —
+  # Model ladder for the final signoff pass. The FRONTIER pair reversed: Sol/xhigh reviews first —
   # usually a different vendor than whoever led the work, so the lead's blind spots aren't
   # the reviewer's — with Fable 5/xhigh picking it up when codex is limited.
   agent: [codex:gpt-5.6-sol/xhigh, claude:claude-fable-5/xhigh]
 
-  # Extra review instructions/checks, APPENDED to coop's built-in senior review (which always
+  # Extra signoff instructions/checks, APPENDED to coop's built-in senior review (which always
   # runs — it checks goal, standards, failure-path tests, polish, and the gate). The reviewer
   # applies these on top and reopens a task that fails one. Default: nothing appended.
   prompt: |

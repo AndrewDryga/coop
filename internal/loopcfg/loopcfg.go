@@ -1,10 +1,10 @@
 // Package loopcfg reads .agent/loop.yaml — coop's committed per-repo configuration for
-// `coop loop`: the work / review / preflight / between steps, each with its own model ladder and
-// prompt, plus the review round cap. It supersedes the retired .agent/loop/*.md files and the
+// `coop loop`: the preflight / work / between / signoff steps, each with its own model ladder and
+// prompt, plus the signoff round cap. It supersedes the retired .agent/loop/*.md files and the
 // COOP_LOOP_* / COOP_REVIEW_* env vars.
 //
 // A missing file — or any missing field — means "use coop's built-in default", so an absent
-// loop.yaml is exactly today's behavior. Prompts never OVERRIDE a built-in: review.prompt and
+// loop.yaml is exactly today's behavior. Prompts never OVERRIDE a built-in: signoff.prompt and
 // preflight.prompt APPEND to theirs; between has no built-in, so between.prompt SETS its audit.
 package loopcfg
 
@@ -27,12 +27,12 @@ const File = ".agent/loop.yaml"
 
 // Config is a parsed .agent/loop.yaml. Every field is optional; a zero Config means "all
 // built-in defaults" (an absent file decodes to this).
-// Fields are in loop order: preflight (before) → work → between (after each task) → review (end).
+// Fields are in loop order: preflight (before) → work → between (after each task) → signoff (end).
 type Config struct {
 	Preflight Preflight `yaml:"preflight"`
 	Work      Work      `yaml:"work"`
 	Between   Between   `yaml:"between"`
-	Review    Review    `yaml:"review"`
+	Signoff   Signoff   `yaml:"signoff"`
 }
 
 // Preflight is the one-shot pre-loop queue cleanup.
@@ -50,15 +50,15 @@ type Work struct {
 // Between is the opt-in per-task audit after each completed task.
 type Between struct {
 	Enabled bool     `yaml:"enabled"` // run the audit; false = off
-	Agent   []string `yaml:"agent"`   // audit model ladder; empty = the review model
+	Agent   []string `yaml:"agent"`   // audit model ladder; empty = the signoff model
 	Prompt  string   `yaml:"prompt"`  // SETS the audit prompt (between has no built-in); required when enabled
 }
 
-// Review is the end-of-loop review pass.
-type Review struct {
-	Rounds int      `yaml:"rounds"` // work→review round cap; 0 = the built-in default (5)
-	Agent  []string `yaml:"agent"`  // review model ladder; empty = the work model
-	Prompt string   `yaml:"prompt"` // APPENDED to the built-in review; "" = nothing appended
+// Signoff is the end-of-loop pass: the senior review that accepts the batch or reopens tasks.
+type Signoff struct {
+	Rounds int      `yaml:"rounds"` // work→signoff round cap; 0 = the built-in default (5)
+	Agent  []string `yaml:"agent"`  // signoff model ladder; empty = the work model
+	Prompt string   `yaml:"prompt"` // APPENDED to the built-in senior review; "" = nothing appended
 }
 
 // Rung is one entry of an `agent:` ladder: EXACTLY one of Target or Preset is set.
@@ -90,7 +90,7 @@ func Load(repo string) (*Config, error) {
 	for _, s := range []struct {
 		name  string
 		rungs []string
-	}{{"work.agent", c.Work.Agent}, {"review.agent", c.Review.Agent}, {"between.agent", c.Between.Agent}} {
+	}{{"work.agent", c.Work.Agent}, {"signoff.agent", c.Signoff.Agent}, {"between.agent", c.Between.Agent}} {
 		if _, err := Rungs(s.rungs); err != nil {
 			return nil, fmt.Errorf("%s %s: %w", File, s.name, err)
 		}

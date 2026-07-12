@@ -5,21 +5,22 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **One `.agent/loop.yaml` replaces the `.agent/loop/*.md` files — with a per-step model ladder and
-  prompt for each of preflight / work / between / review.** The three markdown knobs
+  prompt for each of preflight / work / between / signoff.** The three markdown knobs
   (`review.md`/`audit.md`/`between.md`) collapse into one committed YAML with a section per step:
   each takes an `agent:` ladder (`provider[:model][/effort][@account]` targets **or** a preset name
   — a preset rung runs that step under the preset's roles + lead ladder, rotated on a rate limit),
-  and a prompt. Prompts never OVERRIDE a coop built-in — `review.prompt` and `preflight.prompt`
-  **append** to theirs; `between.prompt` **sets** the per-task audit (between has no built-in;
-  coop prepends the just-finished task's id + folder — the audit's exact subject, so the prompt
-  never has to guess "the most recent" task).
-  Settings live here too: `review.rounds` (was `COOP_MAX_REVIEW_ROUNDS`), `preflight.enabled` (was
+  and a prompt. The end-of-loop pass is named **`signoff:`** — between is the per-task reviewer,
+  signoff the final one, so neither reads as "the" review. Prompts never OVERRIDE a coop built-in —
+  `signoff.prompt` and `preflight.prompt` **append** to theirs; `between.prompt` **sets** the
+  per-task audit (between has no built-in; coop prepends the just-finished task's id + folder —
+  the audit's exact subject, so the prompt never has to guess "the most recent" task).
+  Settings live here too: `signoff.rounds` (was `COOP_MAX_REVIEW_ROUNDS`), `preflight.enabled` (was
   `--preflight`/`COOP_PREFLIGHT`, still overridable), `work.command` (was `COOP_LOOP_CMD`). A missing
   file or field = today's built-in defaults, so an absent `loop.yaml` changes nothing. The retired
   `.agent/loop/*.md` (and legacy `.agent/audit.md`) tombstone once if left behind. `coop init` now
   scaffolds a fully-commented `.agent/loop.yaml`, a committed `.agent/project.yaml`, and an empty
   `.agent/presets/`. The five loop env vars are RETIRED (gone, not read) — `COOP_LOOP_MODEL` →
-  `work.agent`, `COOP_REVIEW_MODEL` → `review.agent`, `COOP_MAX_REVIEW_ROUNDS` → `review.rounds`,
+  `work.agent`, `COOP_REVIEW_MODEL` → `signoff.agent`, `COOP_MAX_REVIEW_ROUNDS` → `signoff.rounds`,
   `COOP_LOOP_CMD` → `work.command`, `COOP_PREFLIGHT` → `preflight.enabled`.
 
 - **A repo can commit its box policy + merge gate in `.agent/project.yaml`.** Alongside

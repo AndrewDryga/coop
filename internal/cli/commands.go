@@ -1483,8 +1483,8 @@ func stepModel(rungs []string) (model, effort string) {
 
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
 // --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
-// one agent name. preflight defaults to def (COOP_PREFLIGHT) and the flags override it.
-// loopWorkPrompt and loopReviewPrompt name the queue dir(s) the iteration works as ABSOLUTE
+// one agent name. preflight defaults to def (loop.yaml preflight.enabled) and the flags override it.
+// loopWorkPrompt and loopSignoffPrompt name the queue dir(s) the iteration works as ABSOLUTE
 // in-box paths (the box's working dir is repo, bind-mounted at its real path). A relative
 // ".agent/tasks" resolves fine for claude/codex (cwd-relative), but gemini's read_file rejects
 // a relative path — so the queues (and AGENTS.md) are named absolute for every agent. With
@@ -1494,14 +1494,14 @@ func loopWorkPrompt(repo string, queues []string) string {
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
 }
 
-// defaultReviewPrompt is the built-in review pass when .agent/loop/review.md is absent: a senior
+// defaultSignoffPrompt is the built-in signoff pass: a senior
 // reviewer's bar over work done unattended overnight — per done task it checks the goal is met, the
 // repo's standards are followed, the failure path is tested, and the change is polished, then runs
 // the repo's gate ONCE across the whole repo (not per task) — reopening anything short of "merge with
 // no changes" but never fixing task code itself (the work loop does that next round). The fixed
 // context footer (reviewContextFooter) supplies the queue paths + the "coop isn't installed, move
 // folders yourself" mechanics, so this text stays static and unit-testable.
-const defaultReviewPrompt = "Review pass — you are the SENIOR REVIEWER for work done unattended overnight. Make sure every shipped task is CORRECT, meets its stated goal, follows this repo's standards, and is genuinely polished — not merely \"the gate is green.\" You do NOT fix code or make commits: when something falls short you REOPEN the task with a SPECIFIC, actionable note, and the work loop fixes it next round. Be demanding — the bar is work you'd merge with no changes.\n" +
+const defaultSignoffPrompt = "Review pass — you are the SENIOR REVIEWER for work done unattended overnight. Make sure every shipped task is CORRECT, meets its stated goal, follows this repo's standards, and is genuinely polished — not merely \"the gate is green.\" You do NOT fix code or make commits: when something falls short you REOPEN the task with a SPECIFIC, actionable note, and the work loop fixes it next round. Be demanding — the bar is work you'd merge with no changes.\n" +
 	"For EVERY task folder in 99_done/:\n" +
 	"1. Meets its goal — read its task.md and the diff of its commit (git log/git show). Does the work satisfy EVERY acceptance criterion and cover every subtask? If any is unmet or a subtask was skipped, reopen it.\n" +
 	"2. Follows the standards — it obeys AGENTS.md and every rule in .agent/rules, matches the surrounding code's style, and adds NO scope creep: no unrequested features or knobs, no unrelated refactors, no churn. Reopen violations.\n" +
@@ -1511,11 +1511,11 @@ const defaultReviewPrompt = "Review pass — you are the SENIOR REVIEWER for wor
 	"Then ONCE across the WHOLE repo (not per task), run the repo's gate (per AGENTS.md). If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — with the failure.\n" +
 	"Reopen a task by MOVING its folder back to 10_in_progress/ and writing in its log.md exactly what's wrong and what \"done\" requires — and do it THE MOMENT you decide, before reviewing the next task: a review session can be cut at any turn boundary, and a verdict that exists only as prose is silently lost. Never batch reopens for the end, and never park verdicts behind background subagents you wait on — work still running when your turn ends dies with it. Change no task code; make no commits."
 
-// loopReviewPrompt is the end-of-loop review pass's prompt: the built-in senior review, then the
-// optional .agent/loop.yaml review.prompt APPEND (extra project checks — never a replacement),
+// loopSignoffPrompt is the end-of-loop signoff pass's prompt: the built-in senior review, then the
+// optional .agent/loop.yaml signoff.prompt APPEND (extra project checks — never a replacement),
 // then a fixed context footer with the concrete queue paths and reopen mechanics.
-func loopReviewPrompt(repo string, queues []string, appendPrompt string) string {
-	p := defaultReviewPrompt
+func loopSignoffPrompt(repo string, queues []string, appendPrompt string) string {
+	p := defaultSignoffPrompt
 	if s := strings.TrimSpace(appendPrompt); s != "" {
 		p += "\n\nAlso apply these project-specific checks, reopening any task that fails one:\n" + s
 	}
@@ -1535,7 +1535,7 @@ func reviewContextFooter(repo string, queues []string) string {
 
 // loopFilesTombstone returns a one-time warning when any RETIRED loop config file still exists —
 // .agent/loop/{review,audit,between}.md or the legacy .agent/audit.md. Those knobs moved into one
-// .agent/loop.yaml (review.prompt / preflight.prompt APPEND, between.prompt SETS), and coop NO
+// .agent/loop.yaml (signoff.prompt / preflight.prompt APPEND, between.prompt SETS), and coop NO
 // LONGER reads the old files. Empty when none linger. loop() surfaces it once so an unmigrated repo
 // isn't silently ignored. Pure (returns the string), so it's unit-testable.
 func loopFilesTombstone(repo string) string {
@@ -1548,7 +1548,7 @@ func loopFilesTombstone(repo string) string {
 	if len(found) == 0 {
 		return ""
 	}
-	return "found retired loop config file(s) " + strings.Join(found, ", ") + " — loop settings now live in one .agent/loop.yaml (review.prompt/preflight.prompt append the built-ins; between.prompt sets the audit) and the old files are NO LONGER read; fold them into .agent/loop.yaml, then delete them"
+	return "found retired loop config file(s) " + strings.Join(found, ", ") + " — loop settings now live in one .agent/loop.yaml (signoff.prompt/preflight.prompt append the built-ins; between.prompt sets the audit) and the old files are NO LONGER read; fold them into .agent/loop.yaml, then delete them"
 }
 
 // loopBetweenPrompt is the opt-in per-task audit run after each completed task. A header names
@@ -1609,20 +1609,20 @@ func taskIDsOf(finished []string) []string {
 	return out
 }
 
-// defaultReviewRounds is the built-in work→review round ceiling when .agent/loop.yaml review.rounds
-// is unset (was the COOP_MAX_REVIEW_ROUNDS default).
-const defaultReviewRounds = 5
+// defaultSignoffRounds is the built-in work→signoff round ceiling when .agent/loop.yaml
+// signoff.rounds is unset.
+const defaultSignoffRounds = 5
 
-// reviewRounds is the work→review round ceiling: .agent/loop.yaml review.rounds when set (>0),
-// else the built-in default of 5. reviewRoundCap scales it by the batch.
-func reviewRounds(lc *loopcfg.Config) int {
-	if lc.Review.Rounds > 0 {
-		return lc.Review.Rounds
+// signoffRounds is the work→signoff round ceiling: .agent/loop.yaml signoff.rounds when set (>0),
+// else the built-in default of 5. signoffRoundCap scales it by the batch.
+func signoffRounds(lc *loopcfg.Config) int {
+	if lc.Signoff.Rounds > 0 {
+		return lc.Signoff.Rounds
 	}
-	return defaultReviewRounds
+	return defaultSignoffRounds
 }
 
-// blockReopenedTasks parks every task still reopened after the review round cap (anything left in
+// blockReopenedTasks parks every task still reopened after the signoff round cap (anything left in
 // todo/ or in_progress/ once the work loop drained the queue) into 50_blocked/ with a decision.md,
 // so the capped loop exits 3 (blocked on a human) instead of spinning or claiming a false "done".
 // The loop runs on the host, where coop's own task helpers are available, so it moves the folders
@@ -1652,7 +1652,7 @@ func writeReviewBlockDecision(path, id, title string, rounds int) {
 	}
 	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %d rounds\n\n"+
 		"**Blocks:** this task (`%s`).\n\n"+
-		"**The decision:** The unattended loop drained the queue and the review pass reopened this "+
+		"**The decision:** The unattended loop drained the queue and the signoff pass reopened this "+
 		"task %d times without it converging — the work loop can't get it to a state the review "+
 		"accepts. A human needs to look at why (a gate it can't make green, a spec gap, a flaky test) "+
 		"before it goes back in the queue.\n\n"+
@@ -1688,7 +1688,7 @@ func absJoin(repo string, queues []string) string {
 }
 
 // loop works the .agent/tasks queue unattended until nothing actionable remains (todo/ and
-// in_progress/ both empty), then (unless a custom COOP_LOOP_CMD is set) runs a review pass over the
+// in_progress/ both empty), then (unless a custom work.command is set) runs a signoff pass over the
 // results; if the review reopens anything, the loop drains and reviews again until a review reopens
 // nothing (accepted) or the round cap (config.MaxReviewRounds) is hit, which blocks the stuck task
 // for a human. A model rate/usage limit is not a failure: the loop waits for the
@@ -1769,10 +1769,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// per iteration in iterCmd (a cross-provider rotation can swap the active agent), keyed off the
 	// stream-json marker runIteration finds in the command.
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
-	// review.prompt APPENDS to the built-in senior review (it never replaces it).
-	work, review := loopWorkPrompt(repo, queues), loopReviewPrompt(repo, queues, lc.Review.Prompt)
-	// The review pass (end-of-loop) and the optional between-tasks audit both run only under the
-	// review-aware agent form, not a custom work.command. The between audit is opt-in
+	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
+	work, signoff := loopWorkPrompt(repo, queues), loopSignoffPrompt(repo, queues, lc.Signoff.Prompt)
+	// The signoff pass (end-of-loop) and the optional between-tasks audit both run only under the
+	// signoff-aware agent form, not a custom work.command. The between audit is opt-in
 	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in) and
 	// is built per-firing so it can name the task the iteration just finished.
 	betweenEnabled := len(custom) == 0 && lc.Between.Enabled
@@ -1783,15 +1783,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Warn("%s", note)
 		}
 	}
-	// Per-step review/between models from .agent/loop.yaml (between falls back to the review
+	// Per-step signoff/between models from .agent/loop.yaml (between falls back to the signoff
 	// model). Swapped in only for those iterations.
-	reviewModel, reviewEffort := stepModel(lc.Review.Agent)
+	signoffModel, signoffEffort := stepModel(lc.Signoff.Agent)
 	betweenModel, betweenEffort := stepModel(lc.Between.Agent)
-	if betweenModel == "" && betweenEffort == "" { // between falls back to the review model
-		betweenModel, betweenEffort = reviewModel, reviewEffort
+	if betweenModel == "" && betweenEffort == "" { // between falls back to the signoff model
+		betweenModel, betweenEffort = signoffModel, signoffEffort
 	}
 	// iterCmd builds one iteration's command: a raw work.command override if set,
-	// otherwise the chosen agent's headless form carrying the work/review prompt.
+	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
 	iterCmd := func(prompt string) []string {
 		if len(custom) > 0 {
 			return custom
@@ -1833,8 +1833,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// Pre-flight: one best-effort housekeeping pass before working the queue — unblock any
 	// task whose decision.md now has a filled-in Resolution. It works no task and deletes
 	// nothing: done tasks are pruned only by a human (`coop tasks rm --all-done`), never
-	// by an agent. Opt-in (--preflight / COOP_PREFLIGHT); skipped under a custom COOP_LOOP_CMD
-	// (not the agent's headless form). Best-effort like the review pass — a failure never blocks work.
+	// by an agent. Opt-in (preflight.enabled / --preflight); skipped under a custom work.command
+	// (not the agent's headless form). Best-effort like the signoff pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
 		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, lc.Preflight.Prompt)), hosts, sink, peers)
@@ -1856,13 +1856,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	fails, waits, retries, completed, stalls := 0, 0, 0, 0, 0
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
-	// Loop-until-accepted: drain the work queue, run the review pass, and if the review reopened
-	// anything, drain and review AGAIN — repeating until a review reopens nothing (accepted) or the
-	// round cap is hit (block the stuck task for a human). The cap scales with the batch —
-	// clamp(tasks worked/2, 3, COOP_MAX_REVIEW_ROUNDS) — so a big overnight batch can't ping-pong one
+	// Loop-until-accepted: drain the work queue, run the signoff pass, and if it reopened
+	// anything, drain and sign off AGAIN — repeating until a signoff reopens nothing (accepted) or
+	// the round cap is hit (block the stuck task for a human). The cap scales with the batch —
+	// clamp(tasks worked/2, 3, signoff.rounds) — so a big overnight batch can't ping-pong one
 	// stuck task forever while a tiny batch still gets a few tries (computed per round from the run's
-	// completed count; the hard ceiling bounds it). A custom COOP_LOOP_CMD has no review pass.
-	for reviewRound := 1; ; reviewRound++ {
+	// completed count; the hard ceiling bounds it). A custom work.command has no signoff pass.
+	for signoffRound := 1; ; signoffRound++ {
 		for n := 1; ; {
 			// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
 			// below — stops here, before the next task is claimed; a second (hard) Ctrl-C that
@@ -1963,46 +1963,46 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 		}
 		// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
-		// review pass and the drain summary — the queue isn't done, the user asked to stop.
+		// signoff pass and the drain summary — the queue isn't done, the user asked to stop.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 			cf, _ := queueProgress(hosts)
 			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
 			return 0, nil
 		}
-		// A custom COOP_LOOP_CMD isn't the review-aware agent form, so it gets no review pass —
+		// A custom work.command isn't the signoff-aware agent form, so it gets no signoff pass —
 		// today's behavior: drain the queue, then report.
 		if len(custom) > 0 {
 			break
 		}
-		// Scale the cap to this run's batch (completed tasks), clamped to [3, COOP_MAX_REVIEW_ROUNDS].
-		maxReviewRounds := reviewRoundCap(completed, reviewRounds(lc))
-		ui.Info("queue empty — running review pass (round %d/%d)", reviewRound, maxReviewRounds)
-		// The review pass runs on COOP_REVIEW_MODEL when set — a stronger model reviews the cheaper
-		// work loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
-		a.withStepModel(agent, reviewModel, reviewEffort, func() {
-			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(review), hosts, sink, peers)
+		// Scale the cap to this run's batch (completed tasks), clamped to [3, signoff.rounds].
+		maxSignoffRounds := signoffRoundCap(completed, signoffRounds(lc))
+		ui.Info("queue empty — running signoff (round %d/%d)", signoffRound, maxSignoffRounds)
+		// The signoff runs on signoff.agent when set — a stronger model reviews the cheaper work
+		// loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
+		a.withStepModel(agent, signoffModel, signoffEffort, func() {
+			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(signoff), hosts, sink, peers)
 		})
-		// A stop that landed during the review pass is honored before the next round is decided.
+		// A stop that landed during the signoff pass is honored before the next round is decided.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 			cf, _ := queueProgress(hosts)
 			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
 			return 0, nil
 		}
-		// Re-read the queue AFTER the review: it may have reopened done tasks into 10_in_progress/.
-		// The review runs only once the work loop drained the queue, so anything now actionable was
+		// Re-read the queue AFTER the signoff: it may have reopened done tasks into 10_in_progress/.
+		// The signoff runs only once the work loop drained the queue, so anything now actionable was
 		// reopened just now — drain it again (loop-until-accepted), unless the round cap is hit.
 		cf, _ := queueProgress(hosts)
-		switch reviewRoundOutcome(reviewRound, maxReviewRounds, cf.Todo+cf.Doing > 0) {
-		case reviewContinue:
-			ui.Info("review reopened %s — draining again", ui.Count(cf.Todo+cf.Doing, "task"))
+		switch signoffRoundOutcome(signoffRound, maxSignoffRounds, cf.Todo+cf.Doing > 0) {
+		case signoffContinue:
+			ui.Info("signoff reopened %s — draining again", ui.Count(cf.Todo+cf.Doing, "task"))
 			continue
-		case reviewCapReached:
-			// The work loop couldn't get these tasks to a state the review accepts within the cap —
+		case signoffCapReached:
+			// The work loop couldn't get these tasks to a state the signoff accepts within the cap —
 			// park them for a human rather than spin or claim a false "done" (exit 3 via loopExitCode).
-			ui.Info("review still reopening after %d rounds — blocking %s for a human", maxReviewRounds, ui.Count(cf.Todo+cf.Doing, "task"))
-			blockReopenedTasks(hosts, maxReviewRounds)
+			ui.Info("signoff still reopening after %d rounds — blocking %s for a human", maxSignoffRounds, ui.Count(cf.Todo+cf.Doing, "task"))
+			blockReopenedTasks(hosts, maxSignoffRounds)
 		}
-		// reviewAccepted (nothing reopened) or reviewCapReached (just blocked) → the loop is done.
+		// signoffAccepted (nothing reopened) or signoffCapReached (just blocked) → the loop is done.
 		break
 	}
 	cf, _ := queueProgress(hosts)
@@ -2108,13 +2108,13 @@ func loopExitCode(cf taskCounts) int {
 // (todo, or reopened into in_progress) and tasks blocked on a human decision are NOT "done", so only
 // a truly drained queue earns the green "verified done". With loop-until-accepted the loop normally
 // exits either accepted (nothing reopened) or with the stuck task blocked, but the reopened branch
-// stays as a defensive fallback (e.g. a custom COOP_LOOP_CMD run). Pure, so the outcomes are
+// stays as a defensive fallback (e.g. a custom work.command run). Pure, so the outcomes are
 // unit-tested without running the loop.
 func loopClosingBanner(cf taskCounts, completed int) string {
 	switch {
 	case cf.Todo+cf.Doing > 0:
 		return ui.Bold(ui.Yellow(fmt.Sprintf(
-			"⚠ review reopened %s — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
+			"⚠ signoff reopened %s — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
 	case cf.Blocked > 0:
 		// Tasks parked in 50_blocked/ on a human decision are NOT done — don't report success.
 		return ui.Bold(ui.Yellow(fmt.Sprintf(

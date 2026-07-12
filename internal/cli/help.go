@@ -118,7 +118,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fork path <name>", "print the fork's filesystem path")
 
 	group("UNATTENDED")
-	row("coop loop [agent]", "work the queue(s) until done, then review")
+	row("coop loop [agent]", "work the queue(s) until done, then sign off")
 	row("coop fleet init", "write the .agent/fleet.yaml template")
 	row("coop fleet up", "start every fork's loop, detached")
 	row("coop fleet down", "stop the fleet's running loops")
@@ -564,38 +564,39 @@ var commandHelp = map[string]string{
   --include-ignored to scan the full visible tree too (deps/build dirs and
   shadowed files are still skipped).`,
 
-	"loop": `coop loop [agent] — work the task queue until done, then review.
+	"loop": `coop loop [agent] — work the task queue until done, then sign off.
 
   Usage: coop loop [<agent>[:model][/effort][@account,…]] [--tasks <path>]... [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
-  review pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
+  signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
   acceptance criterion + subtask), standards followed (AGENTS.md + .agent/rules, no scope
   creep), the FAILURE path tested, the change polished (docs/CHANGELOG updated), plus
   bookkeeping — then runs the repo's gate ONCE across the whole repo, reopening anything
-  short of "merge with no changes". If the review reopened work, the loop drains and
-  reviews AGAIN, repeating until a review reopens nothing (verified done) or the round cap
-  is hit — then the task the review keeps reopening is blocked for a human (exit 3), not
+  short of "merge with no changes". If the signoff reopened work, the loop drains and
+  signs off AGAIN, repeating until a signoff reopens nothing (verified done) or the round
+  cap is hit — then the task it keeps reopening is blocked for a human (exit 3), not
   reported as done. The cap SCALES with the batch: half the tasks worked this run, clamped
-  to [3, loop.yaml review.rounds] (default 5) — a small batch still gets a few tries, a big
+  to [3, loop.yaml signoff.rounds] (default 5) — a small batch still gets a few tries, a big
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.
 
-  One committed .agent/loop.yaml configures every step (preflight/work/between/review), each
-  with its own agent: model ladder and prompt. Prompts never REPLACE a coop built-in:
-  review.prompt and preflight.prompt APPEND extra checks/instructions to theirs; between.prompt
-  SETS the per-task audit (between has no built-in — it's off unless enabled + set; coop
-  prepends the just-finished task's id + folder, the audit's exact subject). review.rounds
-  is the round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration
-  override. A missing file or field = the built-in default. (The retired .agent/loop/*.md and
-  legacy .agent/audit.md tombstone once if left behind; coop init scaffolds a commented loop.yaml.)
+  One committed .agent/loop.yaml configures every step (preflight/work/between/signoff), each
+  with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
+  final one. Prompts never REPLACE a coop built-in: signoff.prompt and preflight.prompt APPEND
+  extra checks/instructions to theirs; between.prompt SETS the per-task audit (between has no
+  built-in — it's off unless enabled + set; coop prepends the just-finished task's id + folder,
+  the audit's exact subject). signoff.rounds is the round cap, preflight.enabled the pre-loop
+  cleanup, work.command a raw per-iteration override. A missing file or field = the built-in
+  default. (The retired .agent/loop/*.md and legacy .agent/audit.md tombstone once if left
+  behind; coop init scaffolds a commented loop.yaml.)
 
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
-  rungs: review.agent runs the review on its own, typically STRONGER model (the cheap work loop
-  does the work, a capable model reviews it), between.agent the per-task audit, and work.agent the
-  work rotation when the launch names no target and no --preset. (The COOP_LOOP_MODEL /
-  COOP_REVIEW_MODEL / COOP_MAX_REVIEW_ROUNDS / COOP_LOOP_CMD / COOP_PREFLIGHT env vars are RETIRED —
-  their config lives in loop.yaml; coop warns if one is still set.)
+  rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap
+  work loop does the work, a capable model signs it off), between.agent the per-task audit, and
+  work.agent the work rotation when the launch names no target and no --preset. (The
+  COOP_LOOP_MODEL / COOP_REVIEW_MODEL / COOP_MAX_REVIEW_ROUNDS / COOP_LOOP_CMD / COOP_PREFLIGHT
+  env vars are RETIRED — their config lives in loop.yaml.)
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its lead agent: ladder is the rotation, and each iteration gets the

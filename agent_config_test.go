@@ -25,12 +25,12 @@ func TestOwnLoopYAMLLoads(t *testing.T) {
 	if !c.Between.Enabled || c.Between.Prompt == "" {
 		t.Error("between should be enabled with its audit prompt set")
 	}
-	if len(c.Work.Agent) == 0 || len(c.Review.Agent) == 0 {
-		t.Error("work and review should carry model ladders")
+	if len(c.Work.Agent) == 0 || len(c.Signoff.Agent) == 0 {
+		t.Error("work and signoff should carry model ladders")
 	}
 	// Every preset rung in every ladder must name a preset that actually exists in-repo.
 	for name, ladder := range map[string][]string{
-		"work.agent": c.Work.Agent, "between.agent": c.Between.Agent, "review.agent": c.Review.Agent,
+		"work.agent": c.Work.Agent, "between.agent": c.Between.Agent, "signoff.agent": c.Signoff.Agent,
 	} {
 		rungs, err := loopcfg.Rungs(ladder)
 		if err != nil {

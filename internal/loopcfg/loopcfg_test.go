@@ -24,7 +24,7 @@ func TestLoadAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absent loop.yaml should be nil error, got %v", err)
 	}
-	if c == nil || len(c.Work.Agent) != 0 || c.Review.Rounds != 0 || c.Preflight.Enabled || c.Between.Enabled {
+	if c == nil || len(c.Work.Agent) != 0 || c.Signoff.Rounds != 0 || c.Preflight.Enabled || c.Between.Enabled {
 		t.Errorf("absent file should decode to a zero Config, got %+v", c)
 	}
 }
@@ -34,7 +34,7 @@ func TestLoadFull(t *testing.T) {
 work:
   agent: [frontier, claude:opus, codex:gpt-5.6-luna]
   command: [make, loop-iter]
-review:
+signoff:
   rounds: 7
   agent: [codex:gpt-5.6-sol/xhigh, claude:fable]
   prompt: |
@@ -56,8 +56,8 @@ between:
 	if len(c.Work.Agent) != 3 || c.Work.Agent[0] != "frontier" {
 		t.Errorf("work.agent = %v", c.Work.Agent)
 	}
-	if c.Review.Rounds != 7 || len(c.Review.Agent) != 2 {
-		t.Errorf("review = %+v", c.Review)
+	if c.Signoff.Rounds != 7 || len(c.Signoff.Agent) != 2 {
+		t.Errorf("signoff = %+v", c.Signoff)
 	}
 	if !c.Preflight.Enabled || c.Preflight.Prompt == "" {
 		t.Errorf("preflight = %+v", c.Preflight)
@@ -69,8 +69,8 @@ between:
 
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]string{
-		"unknown top-level key":     "reviews:\n  rounds: 5\n",
-		"unknown nested key":        "review:\n  round: 5\n",
+		"unknown top-level key":     "signoffs:\n  rounds: 5\n",
+		"unknown nested key":        "signoff:\n  round: 5\n",
 		"malformed target rung":     "work:\n  agent: [\"claude:opus:extra\"]\n",
 		"preset rung with model":    "work:\n  agent: [frontier:opus]\n", // unknown provider 'frontier'
 		"bad preset name":           "work:\n  agent: [\"has space\"]\n",

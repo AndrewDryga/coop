@@ -330,26 +330,26 @@ const (
 	maxStalls = 5
 )
 
-// The work↔review round cap is .agent/loop.yaml review.rounds (default 5):
-// after each review pass the loop re-drains anything the review reopened, so this bounds the
-// ping-pong for a task that can't self-heal (reviewRoundOutcome below decides accept / continue /
+// The work↔signoff round cap is .agent/loop.yaml signoff.rounds (default 5):
+// after each signoff pass the loop re-drains anything it reopened, so this bounds the
+// ping-pong for a task that can't self-heal (signoffRoundOutcome below decides accept / continue /
 // cap→block).
 
-// reviewDecision is what the loop does after a review pass (see reviewRoundOutcome).
-type reviewDecision int
+// signoffDecision is what the loop does after a signoff pass (see signoffRoundOutcome).
+type signoffDecision int
 
 const (
-	reviewAccepted   reviewDecision = iota // the review reopened nothing — the queue is verified done (exit 0)
-	reviewContinue                         // the review reopened work and rounds remain — drain again, then review again
-	reviewCapReached                       // the review still reopens at the round cap — block the stuck task for a human (exit 3)
+	signoffAccepted   signoffDecision = iota // the signoff reopened nothing — the queue is verified done (exit 0)
+	signoffContinue                          // the signoff reopened work and rounds remain — drain again, then sign off again
+	signoffCapReached                        // the signoff still reopens at the round cap — block the stuck task for a human (exit 3)
 )
 
-// reviewRoundCap scales the work↔review round cap with the batch: half the tasks worked this run,
-// floored at 3 (a tiny batch still gets a few tries) and ceilinged at max (loop.yaml review.rounds),
+// signoffRoundCap scales the work↔signoff round cap with the batch: half the tasks worked this run,
+// floored at 3 (a tiny batch still gets a few tries) and ceilinged at max (loop.yaml signoff.rounds),
 // so a 100-task overnight batch caps at max instead of ping-ponging one stuck task forever. The
-// floor is applied before the ceiling, so a max set BELOW 3 (review.rounds: 1, a one-shot review)
+// floor is applied before the ceiling, so a max set BELOW 3 (signoff.rounds: 1, a one-shot signoff)
 // still wins. Pure, so the clamp is unit-tested.
-func reviewRoundCap(tasks, max int) int {
+func signoffRoundCap(tasks, max int) int {
 	cap := tasks / 2
 	if cap < 3 {
 		cap = 3
@@ -360,19 +360,19 @@ func reviewRoundCap(tasks, max int) int {
 	return cap
 }
 
-// reviewRoundOutcome decides what loop() does after a review pass, given the just-finished round
-// number (1-based), the cap, and whether the review reopened any actionable work (todo+in_progress
+// signoffRoundOutcome decides what loop() does after a signoff pass, given the just-finished round
+// number (1-based), the cap, and whether the signoff reopened any actionable work (todo+in_progress
 // > 0). Nothing reopened → accepted (done). Otherwise continue while rounds remain, else give up and
 // block the persistently-reopened task. Pure, so the three convergence paths — accept-immediately,
 // reopen-then-accept, never-converge → cap → block — are unit-tested without driving a box.
-func reviewRoundOutcome(round, cap int, reopened bool) reviewDecision {
+func signoffRoundOutcome(round, cap int, reopened bool) signoffDecision {
 	if !reopened {
-		return reviewAccepted
+		return signoffAccepted
 	}
 	if round < cap {
-		return reviewContinue
+		return signoffContinue
 	}
-	return reviewCapReached
+	return signoffCapReached
 }
 
 // outputRetryBackoff spaces out consecutive output-limit resumes: the first is immediate

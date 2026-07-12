@@ -121,7 +121,7 @@ coop tasks add "Add a /health endpoint"
 coop tasks add "Backfill tests for the parser"
 coop tasks add "Document the config file"
 
-coop loop claude           # 6. disposable agents work the queue until done, then review
+coop loop claude           # 6. disposable agents work the queue until done, then sign off
 ```
 
 Prefer to steer an agent yourself? Skip the queue and go interactive:
@@ -201,7 +201,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop loop [<agent>[:model][@account]] [--tasks <path>] [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then review (name the agent — `claude`/`codex`/`gemini` — or let a `--preset`'s lead supply it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / `--preset` set the [rotation](#picking-models); name each peer with `--consult <agent>` (repeatable) so iterations may ask them read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+| `coop loop [<agent>[:model][@account]] [--tasks <path>] [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini` — or let a `--preset`'s lead supply it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / `--preset` set the [rotation](#picking-models); name each peer with `--consult <agent>` (repeatable) so iterations may ask them read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 | `coop fleet init` · `up` · `down` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks; `coop tasks split <n>` bootstraps the file) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
@@ -559,8 +559,8 @@ coop claude --preset frontier      # a standing lead model + roles, from the pre
 
 One env knob rounds it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`) is the
 agent-wide default. For the loop, put the per-step model in
-[`.agent/loop.yaml`](#run-it-unattended) — `work.agent` for the iterations, `review.agent` for a
-stronger reviewer over the cheaper work loop. In a fleet, give a fork its own with `agent:` (a
+[`.agent/loop.yaml`](#run-it-unattended) — `work.agent` for the iterations, `signoff.agent` for a
+stronger final reviewer over the cheaper work loop. In a fleet, give a fork its own with `agent:` (a
 target — `provider[:model][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the
 target's `:model` › the preset ladder's active entry › `COOP_<AGENT>_MODEL` › a model baked into
 `COOP_<AGENT>_CMD` › the agent CLI's own default.
@@ -572,7 +572,7 @@ target's `:model` › the preset ladder's active entry › `COOP_<AGENT>_MODEL` 
 fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up
 front. It mirrors the model's tiers, and one axis carries both — a target's `:model/effort`,
 `COOP_<AGENT>_MODEL`, and a loop.yaml step's `agent:` all take `model[/effort]` (e.g.
-`review.agent: [claude:opus/xhigh]` reviews at xhigh while the work loop grinds low).
+`signoff.agent: [claude:opus/xhigh]` signs off at xhigh while the work loop grinds low).
 
 The chosen model reaches consult peers and fusion advisors too (each peer resolves its
 own default), and `coop loop`'s live view prints the model each iteration actually ran —
@@ -897,7 +897,7 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 ```bash
 coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 coop tasks add "..."      # add a task (a folder under .agent/tasks/00_todo/)
-coop loop claude          # disposable agents work the queue until it's done, then review
+coop loop claude          # disposable agents work the queue until it's done, then sign off
 coop loop codex           # …or name the agent: claude, codex, or gemini (or a --preset's lead)
 ```
 
@@ -906,34 +906,35 @@ in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric 
 `ls` in lifecycle order; `coop tasks` shows the clean names). `loop` starts a fresh agent
 per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
 in `10_in_progress/`), and won't quit while either has work. Name the agent
-(`claude`/`codex`/`gemini`, or let a `--preset`'s lead supply it); `COOP_LOOP_CMD` still overrides the whole iteration
-command if you need something custom. When the queue empties, a fresh, **demanding review**
-pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
+(`claude`/`codex`/`gemini`, or let a `--preset`'s lead supply it); loop.yaml `work.command` still overrides the whole
+iteration command if you need something custom. When the queue empties, a fresh, **demanding
+signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
 the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping
 (every `99_done/` task has an implementing commit and a final `state.md`) — then it runs the
 repo's gate **once** across the whole repo and reopens anything short of "merge with no
-changes". If the review reopened work, the loop drains and reviews **again** — repeating
-until a review reopens nothing (verified done) or it hits the round cap, at which point the
-task the review keeps reopening is blocked for a human rather than reported as done. The cap
+changes". If the signoff reopened work, the loop drains and signs off **again** — repeating
+until a signoff reopens nothing (verified done) or it hits the round cap, at which point the
+task it keeps reopening is blocked for a human rather than reported as done. The cap
 **scales with the batch**: half the tasks worked this run, clamped to
-`[3, COOP_MAX_REVIEW_ROUNDS]` (default `5`) — a small batch still gets a few tries, a big
+`[3, signoff.rounds]` (default `5`) — a small batch still gets a few tries, a big
 overnight batch can't ping-pong one stuck task forever.
 
-Tune the loop in one committed **`.agent/loop.yaml`** — a section per step (`work` / `review` /
-`preflight` / `between`), each with its own `agent:` model ladder and a prompt. Prompts never
-*replace* a coop built-in: **`review.prompt`** and **`preflight.prompt`** *append* extra
-checks/instructions to theirs (so the review still reopens a shipped task that fails one — e.g. the
-CHANGELOG gained an entry, the docs were regenerated), while **`between.prompt`** *sets* an opt-in
-per-task audit that runs after each completed task and may reopen it (between has no built-in, so
-it's off unless enabled + set). Each step's `agent:` is a ladder of targets
-(`provider[:model][/effort][@account]`) or preset names — so **`review.agent`** can review on a
-stronger model than the cheaper `work.agent` loop. Settings live here too: `review.rounds`,
+Tune the loop in one committed **`.agent/loop.yaml`** — a section per step (`preflight` /
+`work` / `between` / `signoff`), each with its own `agent:` model ladder and a prompt: between
+is the per-task reviewer, signoff the final one. Prompts never *replace* a coop built-in:
+**`signoff.prompt`** and **`preflight.prompt`** *append* extra checks/instructions to theirs (so
+the signoff still reopens a shipped task that fails one — e.g. the CHANGELOG gained an entry, the
+docs were regenerated), while **`between.prompt`** *sets* an opt-in per-task audit that runs after
+each completed task and may reopen it (between has no built-in, so it's off unless enabled + set;
+coop names the just-finished task in the prompt). Each step's `agent:` is a ladder of targets
+(`provider[:model][/effort][@account]`) or preset names — so **`signoff.agent`** can review on a
+stronger model than the cheaper `work.agent` loop. Settings live here too: `signoff.rounds`,
 `preflight.enabled`, `work.command`. Every field is optional (a missing file = the built-in
 defaults), and `coop init` scaffolds a fully-commented starter.
 
 > The old `.agent/loop/*.md` files (`review.md`/`audit.md`/`between.md`) and the legacy
-> `.agent/audit.md` are retired — fold them into `.agent/loop.yaml` (`review.prompt` gains
+> `.agent/audit.md` are retired — fold them into `.agent/loop.yaml` (`signoff.prompt` gains
 > `review.md` + `audit.md`; `between.prompt` gains `between.md`). coop warns once if one lingers and
 > no longer reads it.
 

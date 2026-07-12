@@ -310,13 +310,13 @@ func TestReviewRoundCap(t *testing.T) {
 		{100, 5}, // huge batch → still the ceiling
 	}
 	for _, c := range cases {
-		if got := reviewRoundCap(c.tasks, max); got != c.want {
-			t.Errorf("reviewRoundCap(%d, %d) = %d, want %d", c.tasks, max, got, c.want)
+		if got := signoffRoundCap(c.tasks, max); got != c.want {
+			t.Errorf("signoffRoundCap(%d, %d) = %d, want %d", c.tasks, max, got, c.want)
 		}
 	}
 	// A ceiling below the floor (COOP_MAX_REVIEW_ROUNDS=1, a one-shot review) still wins.
-	if got := reviewRoundCap(100, 1); got != 1 {
-		t.Errorf("reviewRoundCap(100, 1) = %d, want 1 (a sub-floor ceiling wins)", got)
+	if got := signoffRoundCap(100, 1); got != 1 {
+		t.Errorf("signoffRoundCap(100, 1) = %d, want 1 (a sub-floor ceiling wins)", got)
 	}
 }
 
@@ -326,26 +326,26 @@ func TestReviewRoundCap(t *testing.T) {
 func TestReviewRoundOutcome(t *testing.T) {
 	const cap = 3
 	// Accept immediately: round 1, nothing reopened → done in one review pass.
-	if got := reviewRoundOutcome(1, cap, false); got != reviewAccepted {
-		t.Errorf("round 1, nothing reopened: got %v, want reviewAccepted", got)
+	if got := signoffRoundOutcome(1, cap, false); got != signoffAccepted {
+		t.Errorf("round 1, nothing reopened: got %v, want signoffAccepted", got)
 	}
 	// A clean review accepts at ANY round (e.g. after a reopen-then-fix), not just the first.
-	if got := reviewRoundOutcome(cap, cap, false); got != reviewAccepted {
-		t.Errorf("clean review at the last round: got %v, want reviewAccepted", got)
+	if got := signoffRoundOutcome(cap, cap, false); got != signoffAccepted {
+		t.Errorf("clean review at the last round: got %v, want signoffAccepted", got)
 	}
 	// Reopen with rounds remaining → drain again.
 	for r := 1; r < cap; r++ {
-		if got := reviewRoundOutcome(r, cap, true); got != reviewContinue {
-			t.Errorf("round %d/%d reopened: got %v, want reviewContinue", r, cap, got)
+		if got := signoffRoundOutcome(r, cap, true); got != signoffContinue {
+			t.Errorf("round %d/%d reopened: got %v, want signoffContinue", r, cap, got)
 		}
 	}
 	// Never converges: still reopening AT the cap → block the stuck task.
-	if got := reviewRoundOutcome(cap, cap, true); got != reviewCapReached {
-		t.Errorf("round %d/%d still reopening: got %v, want reviewCapReached", cap, cap, got)
+	if got := signoffRoundOutcome(cap, cap, true); got != signoffCapReached {
+		t.Errorf("round %d/%d still reopening: got %v, want signoffCapReached", cap, cap, got)
 	}
 	// A cap of 1 (COOP_MAX_REVIEW_ROUNDS=1) is a one-shot review: reopen on round 1 → block now.
-	if got := reviewRoundOutcome(1, 1, true); got != reviewCapReached {
-		t.Errorf("cap 1, reopened: got %v, want reviewCapReached", got)
+	if got := signoffRoundOutcome(1, 1, true); got != signoffCapReached {
+		t.Errorf("cap 1, reopened: got %v, want signoffCapReached", got)
 	}
 }
 
