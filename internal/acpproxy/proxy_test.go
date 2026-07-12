@@ -282,6 +282,62 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	h.shutdown()
 }
 
+// TestProxyResumeSparesInFlightPrompt: a prompt still awaiting its response when a manual
+// credential/preset switch restarts the box is NOT failed with "agent restarted" — the resume
+// re-sends the ORIGINAL line, so the keep-set spares its id at the swap and the new box's answer
+// completes the editor's original request. A pending request with no resend still fails fast.
+func TestProxyResumeSparesInFlightPrompt(t *testing.T) {
+	prompt := `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`
+	resumed := false
+	hooks := &Hooks{ResumePrompt: func(sid string) []byte {
+		if sid == "S1" && !resumed {
+			resumed = true
+			return []byte(prompt + "\n")
+		}
+		return nil
+	}}
+	h := newProxyHarness(t, 2, hooks)
+	c2 := h.children[1]
+	h.initialize(0)
+	h.newSession(0, "S1")
+
+	// The turn in flight at the switch, plus an unrelated request that nothing re-sends.
+	writeLine(t, h.clientIn, prompt)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/set_config_option","params":{"sessionId":"S1"}}`)
+	readLine(t, h.childIn[0])
+
+	// child1 dies → replay initialize + session/load(S1) on child2.
+	h.children[0].outW.Close()
+	for {
+		fr := parse(readLine(t, h.childIn[1]))
+		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(fr.ID)))
+		if fr.Method == "session/load" {
+			break
+		}
+	}
+
+	// Only the non-resumed id 4 is failed at the swap; the in-flight prompt id 3 is spared.
+	if id := idStr(t, readLine(t, h.clientOut)); id != "4" {
+		t.Fatalf("expected only the non-resumed id 4 failed on swap, got %q", id)
+	}
+
+	// The resend reaches the new box under the editor's original id.
+	fr := parse(readLine(t, h.childIn[1]))
+	if fr.Method != "session/prompt" || string(fr.ID) != "3" {
+		t.Fatalf("resume frame = %s %q, want session/prompt id 3", fr.ID, fr.Method)
+	}
+
+	// Its response completes the editor's original request — no -32000 ever sent for id 3.
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	line := readLine(t, h.clientOut)
+	if idStr(t, line) != "3" || !strings.Contains(string(line), "end_turn") {
+		t.Fatalf("in-flight prompt must complete with the resend's result, got %s", line)
+	}
+
+	h.shutdown()
+}
+
 // TestProxyReplayDropsHistoryRestream: an adapter answering a replayed session/load may first
 // re-stream the stored conversation as session/update notifications. Those must NEVER reach the
 // editor — it already shows the conversation, so forwarding would duplicate its view (and any
@@ -503,6 +559,31 @@ func TestProxyReplayRecreatesFailedLoad(t *testing.T) {
 	if !strings.Contains(buf.String(), "re-creating it fresh") || !strings.Contains(buf.String(), "S1") {
 		t.Errorf("expected a re-create warning naming S1, got: %q", buf.String())
 	}
+
+	// A SECOND restart before any prompt ran on S1b: the re-created session has no transcript on
+	// the new box, so replay must go straight to session/new — no doomed session/load of an id
+	// that was never persisted, and no repeat "did NOT reload" warning.
+	buf.Reset()
+	fc2 := newFakeChild()
+	br2 := bufio.NewReader(fc2.outR)
+	go func() {
+		r := bufio.NewReader(fc2.inR)
+		line, _ := r.ReadBytes('\n')
+		h := parse(line)
+		if m := h.Method; m != "session/new" {
+			t.Errorf("second restart sent %q, want session/new in round one", m)
+		}
+		writeLine(t, fc2.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"result":{"sessionId":"S1c"}}`)
+	}()
+	if err := p.replay(fc2.child(), br2); err != nil {
+		t.Fatalf("second replay returned %v", err)
+	}
+	if s := p.sessions["S1"]; s == nil || s.adapterID != "S1c" {
+		t.Fatalf("second restart must remap S1 to S1c, got %+v", p.sessions["S1"])
+	}
+	if strings.Contains(buf.String(), "did not reload") {
+		t.Errorf("second restart must not attempt (and fail) a load, got: %q", buf.String())
+	}
 }
 
 // If even the second-round session/new fails, the session is genuinely gone — loud warn, no
@@ -626,7 +707,7 @@ func TestSwapChildPublishesAndFailsAtomically(t *testing.T) {
 	}
 	fc := newFakeChild()
 	c := fc.child()
-	p.swapChild(c)
+	p.swapChild(c, nil)
 
 	if p.child != c {
 		t.Error("swapChild did not publish the new child as live")

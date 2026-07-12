@@ -275,14 +275,18 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
   drops the permission-mode and subagent pickers, and leads with three dropdowns
   mirroring the target grammar — PROVIDER (who runs), ACCOUNT (the lead's login), and
   PRESET (the recipe); one selection underneath, so changing one refreshes the others.
+  On a preset the native model/effort knobs are hidden — the preset's ladder and roles
+  pin them.
   An account or same-provider switch is transparent — the conversation is preserved (a
   shared, credential-independent session store). A PROVIDER switch (picking another
   signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
   re-creates the session on the new agent and carries the conversation BEST-EFFORT:
   coop prepends the thread so far — message text plus one-line tool narration, no tool
   payloads, labeled approximate — budgeted by COOP_ACP_CARRY_TOKENS (default 200000;
-  trim it below the smallest window you switch into). On a rate limit it auto-rotates
-  across the ladder's rungs — accounts, models, providers.
+  trim it below the smallest window you switch into). A switch made MID-TURN re-sends
+  the in-flight prompt once the new box is up, so the turn completes on the new target
+  instead of erroring. On a rate limit it auto-rotates across the ladder's rungs —
+  accounts, models, providers.
 
   The target pins the session's agent, model, and account — an editor can run two
   entries on different ones, e.g. ["acp","claude:opus@work"].

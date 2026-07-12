@@ -296,15 +296,20 @@ func TestACPControlGeminiModelSurvivesSwap(t *testing.T) {
 // TestACPControlGeminiPresetModelWins: on a preset the ladder owns the model — the synthesized dropdown
 // shows the box's current model (never coop's), a live pick is NOT remembered as coop's model, and
 // sessionReady forces nothing (so a respawn returns to the preset's rung).
-func TestACPControlGeminiPresetModelWins(t *testing.T) {
+func TestACPControlGeminiPresetHidesModel(t *testing.T) {
 	c := newGeminiControl(t, "gemini-2.5-pro")
 	c.sel = "preset:frontier"
 	out := toEd(c, []byte(geminiSessionNew))
-	_, res := configOptionIDs(t, out)
-	if m := findModelOption(t, res); m.CurrentValue != "gemini-2.5-pro" {
-		t.Errorf("on a preset the dropdown shows the box's currentModelId, got %q", m.CurrentValue)
+	ids, _ := configOptionIDs(t, out)
+	if slices.Contains(ids, "model") {
+		t.Errorf("on a preset no model dropdown is synthesized — the ladder owns it, got %v", ids)
 	}
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	// Zed may still replay a persisted model pick: swallowed, never a set_model to the adapter,
+	// never recorded as coop's model.
+	h, _, inject, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}` + "\n"))
+	if !h || inject != nil || restart {
+		t.Errorf("a model set on a preset must be swallowed (handled, no inject, no restart), got h=%v inject=%s restart=%v", h, inject, restart)
+	}
 	if c.model == "gemini-2.5-flash" {
 		t.Error("a preset session must not overwrite coop's model with a live pick — the ladder owns it")
 	}
@@ -419,18 +424,65 @@ func TestACPControlPresetOwnsModel(t *testing.T) {
 		t.Errorf("sessionReady must not force coop's model on a preset session:\n%s", joined)
 	}
 
+	// On a preset the native dropdowns are hidden outright — the ladder and roles pin them.
 	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[` +
-		`{"id":"model","type":"select","currentValue":"claude-fable-5","options":[{"value":"opus[1m]","name":"Opus"},{"value":"claude-fable-5","name":"Fable"}]}]}}` + "\n"
-	out := toEd(c, []byte(in))
-	if !strings.Contains(string(out), `"currentValue":"claude-fable-5"`) || strings.Contains(string(out), `"currentValue":"opus[1m]"`) {
-		t.Errorf("preset session must show the box's model, not coop's launch model:\n%s", out)
+		`{"id":"model","type":"select","currentValue":"claude-fable-5","options":[{"value":"opus[1m]","name":"Opus"},{"value":"claude-fable-5","name":"Fable"}]},` +
+		`{"id":"effort","type":"select","currentValue":"high","options":[]},` +
+		`{"id":"fast","type":"select","currentValue":"off","options":[]}]}}` + "\n"
+	ids, _ := configOptionIDs(t, toEd(c, []byte(in)))
+	for _, id := range ids {
+		if id == "model" || id == "effort" || id == "fast" {
+			t.Errorf("preset session must hide the native %q dropdown, got %v", id, ids)
+		}
+	}
+	if !slices.Contains(ids, "coop_preset") {
+		t.Errorf("coop's own dropdowns must survive the preset filter, got %v", ids)
 	}
 
-	// Back on a credential, the retarget applies again.
+	// Back on a credential, the natives return and the retarget applies again.
 	c.sel = "cred:personal"
-	out = toEd(c, []byte(in))
+	out := toEd(c, []byte(in))
 	if !strings.Contains(string(out), `"currentValue":"opus[1m]"`) {
 		t.Errorf("credential session should default the model to coop's:\n%s", out)
+	}
+}
+
+// TestACPControlPresetSwallowsNativeSet: on a preset a native set_config_option (Zed replaying its
+// persisted defaults) is answered by coop and never reaches the adapter; on a credential it passes
+// through untouched. Selecting the preset itself acks with the natives already gone — the cache
+// can't resurrect them ahead of the restart's box truth.
+func TestACPControlPresetSwallowsNativeSet(t *testing.T) {
+	c := newTestControl(t)
+	c.sel = "cred:personal"
+
+	// Cache a full native option set, as a session/new rewrite would.
+	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[` +
+		`{"id":"model","type":"select","currentValue":"opus[1m]","options":[{"value":"opus[1m]","name":"Opus"}]},` +
+		`{"id":"effort","type":"select","currentValue":"high","options":[]}]}}` + "\n"
+	toEd(c, []byte(in))
+
+	// On a credential a native set passes through to the adapter.
+	set := []byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"effort","value":"max"}}` + "\n")
+	if h, _, _, _ := c.fromEditor(set); h {
+		t.Fatal("a native set on a credential session must pass through (handled=false)")
+	}
+
+	// Selecting a preset acks with coop-only options.
+	sw := []byte(`{"jsonrpc":"2.0","id":10,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"coop_preset","value":"frontier"}}` + "\n")
+	h, ack, _, restart := c.fromEditor(sw)
+	if !h || !restart {
+		t.Fatalf("selecting a preset must be handled + restart, got h=%v restart=%v", h, restart)
+	}
+	ids, _ := configOptionIDs(t, ack)
+	for _, id := range ids {
+		if !strings.HasPrefix(id, "coop_") {
+			t.Errorf("the preset-select ack must not resurrect native option %q, got %v", id, ids)
+		}
+	}
+
+	// Under the preset the same native set is swallowed: handled, nothing to the adapter, no restart.
+	if h, _, inject, restart := c.fromEditor(set); !h || inject != nil || restart {
+		t.Errorf("a native set on a preset must be swallowed, got h=%v inject=%s restart=%v", h, inject, restart)
 	}
 }
 
@@ -572,6 +624,52 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	}
 	if got := c.resumePrompt("S"); got != nil {
 		t.Errorf("resumePrompt must be one-shot, second call got: %s", got)
+	}
+}
+
+// TestACPControlResendOnManualSwitch: a credential/preset switch made while a turn is in flight
+// arms the same transparent resend a rate-limit rotation does — the turn completes on the new
+// target instead of dying with "agent restarted, please retry".
+func TestACPControlResendOnManualSwitch(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.sel = "cred:personal"
+
+	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	c.fromEditor(prompt)
+
+	sw := []byte(`{"jsonrpc":"2.0","id":"s1","method":"session/set_config_option","params":{"sessionId":"S","configId":"coop_account","value":"work"}}` + "\n")
+	handled, _, _, restart := c.fromEditor(sw)
+	if !handled || !restart {
+		t.Fatalf("an account switch must be handled + restart, got handled=%v restart=%v", handled, restart)
+	}
+	if !c.resend["S"] {
+		t.Fatal("the in-flight session must be flagged for resend on a manual switch")
+	}
+	if got := c.resumePrompt("S"); string(got) != string(prompt) {
+		t.Errorf("resumePrompt should return the in-flight prompt, got: %s", got)
+	}
+}
+
+// TestACPControlNoResendForCompletedTurn: a switch AFTER the turn finished must not re-send the
+// last prompt — the terminal response already dropped it from the in-flight tracking.
+func TestACPControlNoResendForCompletedTurn(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.sel = "cred:personal"
+
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n"))
+	c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","result":{"stopReason":"end_turn"}}` + "\n"))
+
+	sw := []byte(`{"jsonrpc":"2.0","id":"s1","method":"session/set_config_option","params":{"sessionId":"S","configId":"coop_account","value":"work"}}` + "\n")
+	if _, _, _, restart := c.fromEditor(sw); !restart {
+		t.Fatal("the switch itself must still restart")
+	}
+	if c.resend["S"] {
+		t.Fatal("a completed turn must not be flagged for resend")
+	}
+	if got := c.resumePrompt("S"); got != nil {
+		t.Errorf("resumePrompt must return nil after a completed turn, got: %s", got)
 	}
 }
 

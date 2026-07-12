@@ -65,7 +65,8 @@ var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, co
 
 // stripConfigIDs are the native claude-agent-acp toolbar dropdowns coop removes: the permission-mode
 // picker (coop always runs yolo — the box is the sandbox) and the subagent picker (subagents still
-// auto-delegate; coop just drops the manual selector). model/effort/fast stay.
+// auto-delegate; coop just drops the manual selector). model/effort/fast stay on a credential
+// session; a preset hides them too (rewriteConfigOptions — the preset pins them).
 var stripConfigIDs = map[string]bool{"mode": true, "agent": true}
 
 // acpControl is coop's control layer over one ACP editor session. It rewrites the toolbar the editor
@@ -1255,11 +1256,17 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 				item = withField(item, "currentValue", model) // default to coop's model; still switchable
 			}
 		}
+		// On a preset every native knob (model, effort, fast, …) is inert — the preset's ladder
+		// and roles pin them — so only coop's selectors render. Leaving the preset brings them
+		// back on the next box truth (the restart's config_option_update).
+		if preset != "" {
+			continue
+		}
 		out = append(out, item)
 	}
 	// gemini-shape: no native model option, but a models field carrying the choices. Synthesize coop's
 	// own `model` select and latch the lead so fromEditor/sessionReady route via session/set_model.
-	if !hasModel {
+	if !hasModel && preset == "" {
 		if synth := c.synthModelOption(models, preset, model); synth != nil {
 			out = append(out, synth)
 			c.cacheModels(parseGeminiModels(models)) // free refresh of `coop models` for gemini
@@ -1621,6 +1628,15 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 		c.mu.Unlock()
 		return false, nil, wrapped, false
 	}
+	// On a preset the native knobs are hidden (rewriteConfigOptions drops them — the preset pins
+	// them), but an editor may still SET one: Zed re-applies its persisted default_config_options
+	// to every new session. Forwarding would silently override the preset's pick in the box, so
+	// swallow it and ack with the real (coop-only) option set.
+	if h.Method == "session/set_config_option" && !coopOwnedIDs[h.Params.ConfigID] {
+		if _, preset := c.selection(); preset != "" {
+			return true, c.ackOptions(h.ID, h.Params.SessionID), nil, false
+		}
+	}
 	// coop's synthesized model select (gemini): the adapter has no `model` config option, so translate
 	// the set into its session/set_model and ack the editor ourselves. leadUsesSetModel proves this lead
 	// is the synthesized-dropdown case; adapters with a native model option (claude, codex) fall through
@@ -1645,25 +1661,47 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	changed := newSel != "" && newSel != c.sel
 	if changed {
 		c.sel = newSel
+		// The restart this switch triggers kills any in-flight turn mid-stream. Arm the same
+		// transparent resend a rate-limit rotation uses, so each turn completes on the new
+		// target instead of dying with "agent restarted, please retry". promptSession holds
+		// exactly the in-flight prompts — chunkGate forgets completed ones.
+		for id, sid := range c.promptSession {
+			if c.lastPrompt[sid] == nil {
+				continue
+			}
+			c.resend[sid] = true
+			delete(c.heldChunk, sid) // a buffered limit notice dies with the old box
+			delete(c.waits, sid)     // a manual switch breaks the consecutive-wait chain
+			acpproxy.Trace("switch to %s: re-sending the in-flight prompt %s for session %s after the swap", newSel, id, sid)
+		}
 	}
-	cached := c.cached[h.Params.SessionID]
 	c.mu.Unlock()
-	// Ack with the full option set, coop_setup showing the CURRENT value. The cache was captured at
-	// session/new with the old currentValue, so echoing it verbatim would revert the editor's dropdown;
-	// rebuild coop_setup fresh.
+	// Ack with the full option set, the coop dropdowns showing the CURRENT value. The cache was
+	// captured at session/new with the old currentValue, so echoing it verbatim would revert the
+	// editor's dropdown; rebuild them fresh.
+	return true, c.ackOptions(h.ID, h.Params.SessionID), nil, changed
+}
+
+// ackOptions builds the reply to an editor set_config_option coop answers itself — the full
+// refreshed option set (fresh coop dropdowns, natives per the current selection), re-cached so
+// the next refresh starts from what the editor now shows.
+func (c *acpControl) ackOptions(id json.RawMessage, sid string) []byte {
+	c.mu.Lock()
+	cached := c.cached[sid]
+	c.mu.Unlock()
 	refreshed := c.refreshSetup(cached)
-	if len(refreshed) > 0 && h.Params.SessionID != "" {
+	if len(refreshed) > 0 && sid != "" {
 		c.mu.Lock()
-		c.cached[h.Params.SessionID] = refreshed
+		c.cached[sid] = refreshed
 		c.mu.Unlock()
 	}
 	result := map[string]json.RawMessage{}
 	if len(refreshed) > 0 {
 		result["configOptions"] = refreshed
 	}
-	out := map[string]any{"jsonrpc": "2.0", "id": h.ID, "result": result}
+	out := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
 	b, _ := json.Marshal(out)
-	return true, append(b, '\n'), nil, changed
+	return append(b, '\n')
 }
 
 // setModelFromEditor handles a set of coop's synthesized model dropdown: it records the pick as coop's
@@ -1730,18 +1768,21 @@ func (c *acpControl) refreshSetup(cached json.RawMessage) json.RawMessage {
 
 // refreshCoopOptions strips every coop-owned dropdown from a cached configOptions array (the
 // retired coop_setup included) and prepends freshly-built ones — the single place the "coop
-// dropdowns lead, natives follow" order is enforced on a refresh.
+// dropdowns lead, natives follow" order is enforced on a refresh. On a preset the natives are
+// dropped too (the preset pins them), so the ack right after selecting a preset doesn't
+// resurrect them from the cache before the restart's box truth lands.
 func (c *acpControl) refreshCoopOptions(cached json.RawMessage) []json.RawMessage {
 	var arr []json.RawMessage
 	if len(cached) > 0 {
 		_ = json.Unmarshal(cached, &arr)
 	}
+	_, preset := c.selection()
 	out := c.coopOptions()
 	for _, it := range arr {
 		var head struct {
 			ID string `json:"id"`
 		}
-		if json.Unmarshal(it, &head) == nil && coopOwnedIDs[head.ID] {
+		if json.Unmarshal(it, &head) == nil && (coopOwnedIDs[head.ID] || preset != "") {
 			continue
 		}
 		out = append(out, it)

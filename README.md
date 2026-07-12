@@ -885,9 +885,12 @@ coop's proxy sits between the editor and the box and owns the session:
 - **A `coop` dropdown in the toolbar** lists your credentials and the repo's
   same-provider [presets](#presets-the-whole-arrangement-in-one-yaml-file). Switching
   restarts the box on the new identity and replays the session — the conversation
-  survives, because ACP transcripts live on a shared, credential-independent store. The
-  model dropdown defaults to the target's `:model`/config (still switchable in-editor); the
-  permission-mode dropdown is gone (always yolo).
+  survives, because ACP transcripts live on a shared, credential-independent store; a
+  switch made mid-turn re-sends the in-flight prompt, so the turn completes on the new
+  target instead of erroring. The model dropdown defaults to the target's `:model`/config
+  (still switchable in-editor); under a preset the native model/effort dropdowns are
+  hidden — the preset's ladder and roles pin them; the permission-mode dropdown is gone
+  (always yolo).
 - **Rate limits are handled for you.** When a turn hits the provider's limit, coop
   swallows the error, rotates to your next signed-in account, re-sends your prompt, and
   moves the dropdown — the turn just completes on the backup credential. With nothing

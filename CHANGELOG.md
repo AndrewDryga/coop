@@ -4,6 +4,26 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A credential/preset switch mid-turn no longer kills the turn.** Switching the coop toolbar
+  dropdowns while a reply was streaming failed the in-flight prompt with `-32000 agent restarted,
+  please retry` — the thread looked crashed and the answer was lost. The switch now arms the same
+  transparent resend a rate-limit rotation uses: the prompt is re-sent once the new box is up
+  (with the carried-history preamble when the session was re-created), and its answer completes
+  the editor's original request.
+
+- **No more doomed reloads after a session re-create.** A re-created session (a provider switch)
+  kept its "has a transcript" flag, so every following switch first tried a `session/load` of a
+  box id that was never persisted, failed, and warned "did NOT reload — re-creating" — even
+  same-provider. The flag now resets on re-create: the next switch re-creates in round one,
+  no false warning, one less replay round-trip.
+
+- **A selected preset hides the native model/effort dropdowns.** The preset's ladder and roles pin
+  the model — the box-native knobs were inert at best and misleading at worst, and an editor
+  replaying its persisted defaults (Zed does, on every new session) could silently override the
+  preset's pick in the box. Under a preset only coop's Provider/Account/Preset selectors render,
+  and a native set from the editor is answered by coop instead of reaching the adapter. Leaving
+  the preset brings the native dropdowns back.
+
 - **The repo's `agents/` examples folder is retired.** Its README documented an `install.sh`
   seeding into `~/.config/coop/agents/` that no longer exists (installs download a prebuilt
   binary), and each file had become redundant: the box briefing already carries the example's
