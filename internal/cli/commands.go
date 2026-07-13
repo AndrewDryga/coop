@@ -1391,11 +1391,11 @@ func promptGateLangs(in io.Reader) []string {
 // and its boolean flags. Model + account come from the target (`--model`/`--credential` are retired);
 // `--peer`/`--tasks` are pre-extracted by cmdLoop. hasTarget is false and presetName "" when no
 // positional was given (a loop.yaml work.agent then supplies the lead).
-func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight bool, err error) {
+func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight, noMCP bool, err error) {
 	preflight = def
 	t, hasTarget, presetName, rest, err := takeHeadWho(args)
 	if err != nil {
-		return agents.Target{}, false, "", false, preflight, err
+		return agents.Target{}, false, "", false, preflight, false, err
 	}
 	for _, x := range rest {
 		switch x {
@@ -1405,11 +1405,13 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			preflight = true
 		case "--no-preflight":
 			preflight = false
+		case "--no-mcp":
+			noMCP = true
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--preflight|--no-preflight] [--debug-on-fail])", x)
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
 		}
 	}
-	return t, hasTarget, presetName, debugOnFail, preflight, nil
+	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1435,9 +1437,16 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
-	t, hasTarget, presetName, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled)
+	t, hasTarget, presetName, debugOnFail, preflight, noMCP, err := parseLoopArgs(rest, lc.Preflight.Enabled)
 	if err != nil {
 		return 2, err
+	}
+	// --no-mcp: this one run mounts no MCP anywhere (the committed form is loop.yaml `mcp: false`,
+	// honored inside loop() so fork loops get it too). Blanking MCPFile is the single switch every
+	// downstream check keys off (Config.MCPActive) — claude's --mcp-config and the generated
+	// codex/gemini configs all stay out of the boxes.
+	if noMCP {
+		a.cfg.MCPFile = ""
 	}
 	// A positional preset name: its lead agent leads, its roles seed the run, and its models
 	// ladder becomes the rotation. A positional target instead pins the one-off ladder.
@@ -1914,6 +1923,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	lc, err := loopcfg.Load(repo)
 	if err != nil {
 		return 1, err
+	}
+	// loop.yaml `mcp: false` runs EVERY stage's box without the shared MCP config — the schemas
+	// ride at the front of each model request, so a drain that doesn't need those tools shouldn't
+	// pay for them each iteration. Sitting here (not cmdLoop) it covers fork loops too. Blanking
+	// MCPFile is the one switch everything downstream keys off (Config.MCPActive); the loop owns
+	// this process, so nothing else reads the config after it. Caveat: a verify: pass whose e2e
+	// depends on MCP tooling needs mcp left on — repo-local e2e via bash is unaffected.
+	if lc.MCPDisabled() {
+		a.cfg.MCPFile = ""
 	}
 	custom := lc.Work.Command
 	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a

@@ -27,6 +27,27 @@ func TestLoadAbsent(t *testing.T) {
 	if c == nil || len(c.Work.Agent) != 0 || c.Signoff.Rounds != 0 || c.Preflight.Enabled || c.Between.Enabled {
 		t.Errorf("absent file should decode to a zero Config, got %+v", c)
 	}
+	if c.MCPDisabled() {
+		t.Error("absent file must not disable MCP (mcp is tri-state; nil = today's behavior)")
+	}
+}
+
+// mcp: is tri-state — only an explicit false disables; absent and explicit true keep today's
+// behavior (MCP mounts whenever mcp.json has servers).
+func TestLoadMCP(t *testing.T) {
+	for body, wantDisabled := range map[string]bool{
+		"mcp: false\n":            true,
+		"mcp: true\n":             false,
+		"work:\n  agent: [codex]": false, // key absent
+	} {
+		c, err := Load(write(t, body))
+		if err != nil {
+			t.Fatalf("Load(%q): %v", body, err)
+		}
+		if c.MCPDisabled() != wantDisabled {
+			t.Errorf("MCPDisabled() with %q = %v, want %v", body, c.MCPDisabled(), wantDisabled)
+		}
+	}
 }
 
 func TestLoadFull(t *testing.T) {

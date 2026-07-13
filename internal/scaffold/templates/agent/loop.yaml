@@ -7,6 +7,13 @@
 # Sections run in loop order:
 #   preflight (before) → work → between (after each task) → signoff (at the end) → verify (after signoff accepts)
 
+# Run every stage's box WITHOUT the shared MCP config (~/.coop/mcp.json): the servers' tool schemas
+# ride at the front of every model request, so an unattended drain that never uses those tools pays
+# for them each iteration. One caveat: a verify: pass whose e2e depends on MCP tooling needs mcp
+# left on (repo-local e2e via bash is unaffected). One-off form: coop loop --no-mcp.
+# Default: true (MCP mounts whenever mcp.json has servers).
+#mcp: false
+
 preflight:
   # Run the one-shot pre-loop queue tidy: coop itself returns blocked tasks whose decision.md now
   # has a Resolution to todo — host-side, no box, no model. Works no task, changes no code.

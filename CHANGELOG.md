@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`loop.yaml mcp: false` / `coop loop --no-mcp` — run a loop without the shared MCP config.** MCP
+  tool schemas ride at the front of every model request, so an unattended drain that never touches
+  those tools pays for them each iteration, every stage, all run long. `mcp: false` (committed) or
+  `--no-mcp` (one-off) keeps `~/.coop/mcp.json` out of every loop box: no `--mcp-config` for
+  claude, no generated codex/gemini configs. Leave it on if a `verify:` pass depends on MCP tooling
+  (repo-local e2e via bash is unaffected).
+
 - **The loop's built-in preflight runs host-side — no box, no model, no tokens.** Unblocking a task
   whose decision.md gained a `**Resolution:**` is mechanical, so coop now does it directly (the
   same bar as `coop tasks unblock`; a decision format it can't read stays parked). An agent box

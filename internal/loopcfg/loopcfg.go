@@ -31,12 +31,20 @@ const File = ".agent/loop.yaml"
 // built-in defaults" (an absent file decodes to this).
 // Fields are in loop order: preflight (before) → work → between (after each task) → signoff (end).
 type Config struct {
+	// MCP is loop-wide, not a stage: false runs EVERY stage's box without the shared MCP config —
+	// MCP tool schemas ride at the front of each model request, so a drain that doesn't need those
+	// tools shouldn't pay for them each iteration. Tri-state so an absent key stays today's
+	// behavior (mounted whenever mcp.json has servers).
+	MCP       *bool     `yaml:"mcp"`
 	Preflight Preflight `yaml:"preflight"`
 	Work      Work      `yaml:"work"`
 	Between   Between   `yaml:"between"`
 	Signoff   Signoff   `yaml:"signoff"`
 	Verify    Verify    `yaml:"verify"`
 }
+
+// MCPDisabled reports an explicit `mcp: false` — the loop then runs every stage without MCP.
+func (c *Config) MCPDisabled() bool { return c.MCP != nil && !*c.MCP }
 
 // Preflight is the one-shot pre-loop queue cleanup. The built-in tidy (unblock tasks whose
 // decision.md gained a Resolution) runs host-side in coop; Prompt is the optional agent pass.

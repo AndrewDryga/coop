@@ -418,7 +418,7 @@ coop backlog — park unscheduled ideas as task folders (.agent/tasks/xx_backlog
 
 coop loop [agent] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--preflight] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--preflight] [--no-mcp] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -443,8 +443,11 @@ coop loop [agent] — work the task queue until done, then sign off.
   passes are handed the run's CHANGE CONTEXT — every task completed this loop, by its Coop-Task
   trailer, with the files it touched — so "e2e the affected features" resolves against a concrete
   list; place it inline with {loop.changes} / {loop.tasks} / {loop.affected}. signoff.rounds is the
-  round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration override. A
-  missing file or field = the built-in default. (coop init scaffolds a commented loop.yaml.)
+  round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration override, and
+  mcp: false runs every stage's box without the shared MCP config — the servers' tool schemas ride
+  at the front of every model request, so a drain that never uses those tools shouldn't pay for
+  them each iteration (leave it on if a verify: pass depends on MCP tooling). A missing file or
+  field = the built-in default. (coop init scaffolds a commented loop.yaml.)
 
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
   rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap
@@ -485,6 +488,8 @@ coop loop [agent] — work the task queue until done, then sign off.
                     now has an answer to todo — host-side, no box; an agent runs only for a
                     loop.yaml preflight.prompt cleanup (default it on with preflight.enabled;
                     --no-preflight overrides). Makes no code changes or commits.
+  --no-mcp          run this loop's boxes without the shared MCP config (the committed form
+                    is loop.yaml mcp: false)
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 
