@@ -1591,3 +1591,18 @@ func coopIDs(opts []json.RawMessage) []string {
 	}
 	return ids
 }
+
+// TestACPControlSnapshotRestore: the selection state survives a supervisor re-exec — snapshot a
+// non-default lead/model/set-model, restore into a fresh controller, assert it comes back.
+func TestACPControlSnapshotRestore(t *testing.T) {
+	dir := t.TempDir()
+	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, nil, nil, false)
+	c.sel, c.lead, c.model, c.leadUsesSetModel = "agent:codex", "codex", "gpt-5.6-sol", true
+	snap := c.snapshot()
+
+	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, nil, nil, false)
+	c2.restore(snap)
+	if c2.sel != "agent:codex" || c2.lead != "codex" || c2.model != "gpt-5.6-sol" || !c2.leadUsesSetModel {
+		t.Errorf("restore mismatch: sel=%q lead=%q model=%q setModel=%v", c2.sel, c2.lead, c2.model, c2.leadUsesSetModel)
+	}
+}

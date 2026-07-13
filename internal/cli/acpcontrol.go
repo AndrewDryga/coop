@@ -1427,6 +1427,33 @@ func (c *acpControl) selectorSel(configID, value string) (newSel string, recogni
 // spawnableProviders lists the OTHER registered providers with at least one signed-in account —
 // the ones a provider switch could actually spawn. The current lead is excluded (its accounts
 // are the cred: entries).
+// ctrlSnapshot captures the selection state a fresh controller can't re-derive across a supervisor
+// re-exec (creds/presets/accounts re-derive from cfg/repo at construction; retargetLocked recomputes
+// per-lead state). Carried through a SIGHUP reload so the toolbar/lead/model survive the binary swap.
+type ctrlSnapshot struct {
+	Sel              string `json:"sel"`
+	Lead             string `json:"lead"`
+	Model            string `json:"model"`
+	LeadUsesSetModel bool   `json:"lead_uses_set_model"`
+}
+
+// snapshot captures the selection state under the lock.
+func (c *acpControl) snapshot() ctrlSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ctrlSnapshot{Sel: c.sel, Lead: c.lead, Model: c.model, LeadUsesSetModel: c.leadUsesSetModel}
+}
+
+// restore re-applies a snapshot into a fresh controller: retargetLocked re-derives the per-lead
+// state for the restored lead (and clears the model/set-model latch), then the snapshot's own
+// sel/model/leadUsesSetModel are set on top.
+func (c *acpControl) restore(s ctrlSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.retargetLocked(s.Lead)
+	c.lead, c.sel, c.model, c.leadUsesSetModel = s.Lead, s.Sel, s.Model, s.LeadUsesSetModel
+}
+
 // leadProvider is the current lead's provider (the one the active box runs), read under the lock —
 // the warm pool warms the OTHER signed-in providers around it.
 func (c *acpControl) leadProvider() string {

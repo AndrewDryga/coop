@@ -244,6 +244,50 @@ type proxy struct {
 	intentional atomic.Bool // set before a coop-driven restart so the loop doesn't count it as a failure
 }
 
+// Snapshot is the proxy's re-establishable session state, carried across a supervisor re-exec (a
+// SIGHUP reload) so the editor's live threads survive the binary swap. adapterID is intentionally
+// dropped: on resume the box is fresh, so every session starts with adapterID == editor id and the
+// replay re-derives any divergence exactly as it does after a box restart.
+type Snapshot struct {
+	Setup    [][]byte      `json:"setup"`    // the editor's initialize/authenticate lines, in order
+	Sessions []SessionSnap `json:"sessions"` // one per live editor session
+}
+
+// SessionSnap is one session flattened for serialization.
+type SessionSnap struct {
+	EditorID string          `json:"editor_id"`
+	Params   json.RawMessage `json:"params"`
+	Turned   bool            `json:"turned"`
+}
+
+// snapshot copies the proxy's setup + sessions into a serializable Snapshot, under the lock.
+func (p *proxy) snapshot() Snapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	snap := Snapshot{Setup: make([][]byte, len(p.setup))}
+	for i, l := range p.setup {
+		snap.Setup[i] = append([]byte(nil), l...)
+	}
+	for id, s := range p.sessions {
+		snap.Sessions = append(snap.Sessions, SessionSnap{EditorID: id, Params: s.params, Turned: s.turned})
+	}
+	return snap
+}
+
+// restore seeds a fresh proxy's setup + sessions from a Snapshot: adapterID = editorID (the fresh
+// box knows nothing yet), so replay's turned-branch decides session/load vs session/new per session.
+func (p *proxy) restore(snap Snapshot) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.setup = make([][]byte, len(snap.Setup))
+	for i, l := range snap.Setup {
+		p.setup[i] = append([]byte(nil), l...)
+	}
+	for _, s := range snap.Sessions {
+		p.sessions[s.EditorID] = &sess{params: s.Params, adapterID: s.EditorID, turned: s.Turned}
+	}
+}
+
 func (p *proxy) setChild(c *Child) {
 	p.mu.Lock()
 	p.child = c

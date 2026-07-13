@@ -978,3 +978,33 @@ func TestProxyReplayFailureIsVisibleInThread(t *testing.T) {
 		t.Errorf("the notice must target the editor's session id, got: %q", out)
 	}
 }
+
+// TestProxySnapshotRestore: the session state survives a supervisor re-exec — snapshot flattens
+// setup + sessions, restore into a fresh proxy re-seeds them with adapterID == editor id (so replay
+// re-derives divergence), and turned survives per session.
+func TestProxySnapshotRestore(t *testing.T) {
+	src := &proxy{
+		out:       io.Discard,
+		setup:     [][]byte{[]byte(`{"method":"initialize"}`), []byte(`{"method":"authenticate"}`)},
+		sessions:  map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/a"}`), adapterID: "adapterX", turned: true}, "S2": {params: json.RawMessage(`{"cwd":"/b"}`), adapterID: "S2", turned: false}},
+		byAdapter: map[string]string{},
+		newReqs:   map[string]json.RawMessage{},
+		pending:   map[string]bool{},
+	}
+	snap := src.snapshot()
+	if len(snap.Setup) != 2 || string(snap.Setup[0]) != `{"method":"initialize"}` {
+		t.Errorf("setup not snapshotted: %v", snap.Setup)
+	}
+	dst := &proxy{out: io.Discard, sessions: map[string]*sess{}, byAdapter: map[string]string{}, newReqs: map[string]json.RawMessage{}, pending: map[string]bool{}}
+	dst.restore(snap)
+	if len(dst.setup) != 2 || string(dst.setup[1]) != `{"method":"authenticate"}` {
+		t.Errorf("setup not restored: %v", dst.setup)
+	}
+	s1 := dst.sessions["S1"]
+	if s1 == nil || !s1.turned || string(s1.params) != `{"cwd":"/a"}` || s1.adapterID != "S1" {
+		t.Errorf("S1 not restored (adapterID must reset to editor id): %+v", s1)
+	}
+	if s2 := dst.sessions["S2"]; s2 == nil || s2.turned {
+		t.Errorf("S2's turned=false must survive: %+v", s2)
+	}
+}
