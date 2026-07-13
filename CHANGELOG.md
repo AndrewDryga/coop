@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 4.1.0
 
 - **`coop acp` picks up a rebuilt coop on SIGHUP without dropping the editor.** Zed owns the
