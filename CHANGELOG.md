@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop` now records one telemetry row per stage.** Each preflight, work, between-audit, and
+  signoff stage appends a JSON-Lines record to `.agent/runs/<run>.jsonl` (gitignored): the
+  **effective** target that actually ran (provider/model/effort/account, post rate-limit rotation —
+  not the configured ladder), coop version, start/end, exit, retries, HEAD before/after, the queue
+  counts, and — for a signoff — how many tasks it reopened. It's the raw material for measuring the
+  harness itself (audit catch-rate, reopen rate per model, retry cost). Best-effort: a telemetry
+  write failure warns once and never touches the run. (Phase 1 — a replay/canary set over the
+  archive is a separate follow-on.)
+
 - **Box commits now carry one coop co-author trailer, replacing the agent CLI's own.** Every commit
   made inside a box gets `Co-authored-by: coop (<provider>:<model>@<account>) <noreply@coop.dev>`
   attributing coop and the exact target that ran — via a `prepare-commit-msg` hook mounted into the

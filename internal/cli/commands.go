@@ -1875,6 +1875,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if err != nil {
 		return 2, fmt.Errorf("between agent: %w", err)
 	}
+	// A per-run id keys this run's telemetry file (.agent/runs/<runid>.jsonl) — one JSON-Lines
+	// record per stage, so the harness's own behavior (which target ran, reopen/retry counts) is
+	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.
+	ridb := make([]byte, 8)
+	_, _ = rand.Read(ridb)
+	runid := hex.EncodeToString(ridb)
 	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
 	iterCmd := func(prompt string) []string {
@@ -1922,7 +1928,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// (not the agent's headless form). Best-effort like the signoff pass — a failure never blocks work.
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, lc.Preflight.Prompt)), hosts, sink, peers)
+		pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+		pfCode, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, lc.Preflight.Prompt)), hosts, sink, peers)
+		a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1976,6 +1984,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			ui.Info("%s", progressBanner(n, c, active))
+			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
@@ -1987,6 +1996,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				break
 			}
 			action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
+			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts)
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
@@ -2018,9 +2028,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						prompt := loopBetweenPrompt(repo, queues, lc.Between.Prompt, finished)
 						// Runs on between.agent's own target and fails closed — but a per-task audit that
 						// can't run warns loudly (the task went unaudited) rather than halting the run.
+						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+						btExit := 0
 						if _, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, iterCmd(prompt), hosts, sink, peers, wake); rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
+							btExit = 1
 						}
+						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts)
 					}
 				}
 			case actWait:
@@ -2067,6 +2081,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
 		// rather than let "nothing reopened" read as an accepting signoff.
+		soStart, soHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		signoffOut, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
@@ -2082,6 +2097,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// reopened just now.
 		cf, _ := queueProgress(hosts)
 		reopened := cf.Todo + cf.Doing
+		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
