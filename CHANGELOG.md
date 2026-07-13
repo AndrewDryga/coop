@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Box commits now carry one coop co-author trailer, replacing the agent CLI's own.** Every commit
+  made inside a box gets `Co-authored-by: coop (<provider>:<model>@<account>) <noreply@coop.dev>`
+  attributing coop and the exact target that ran — via a `prepare-commit-msg` hook mounted into the
+  box (so it works for every agent, and even under `git commit --no-verify`). The agent CLIs' own
+  machine co-author lines (Claude, Codex/ChatGPT, Gemini, Grok) are stripped; a human `Co-authored-by`
+  line survives, `--amend` stays idempotent, and merge/squash messages are left untouched. The host
+  repo's git config is not touched, so host-side operations (including a fork-merge rebase) are
+  unaffected.
+
 - **`coop fork merge` can no longer erase a commit that lands on the parent while the gate runs.**
   The merge used to fast-forward the fork into the *live* parent, then run the gate there, then
   `git reset --hard` on failure — so a commit you (or another fork) made to the parent during that

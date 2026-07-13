@@ -326,7 +326,19 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// it the agent would commit with no author and ignore none of your global patterns.
 	var gitMounts []extraMount
 	if spec.Homes {
-		if p, err := writeTempFile(gitConfigForBox()); err == nil {
+		// coop's own co-author trailer, applied by a prepare-commit-msg hook mounted into the box —
+		// so a box commit is attributed to coop and its target, replacing whatever the agent CLI
+		// stamps. Empty for a raw run (no agent), which then gets no hook and no trailer.
+		coAuthor := boxCommitTrailer(cfg, spec)
+		hooksPath := ""
+		if coAuthor != "" {
+			if dir, err := gitHookDir(); err == nil {
+				tmpDirs = append(tmpDirs, dir)
+				hooksPath = cfg.HomeInBox + "/.config/coop/git-hooks"
+				gitMounts = append(gitMounts, extraMount{dir, hooksPath})
+			}
+		}
+		if p, err := writeTempFile(gitConfigForBox(coAuthor, hooksPath)); err == nil {
 			tmpFiles = append(tmpFiles, p)
 			gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
 		}
