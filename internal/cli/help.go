@@ -395,6 +395,11 @@ var commandHelp = map[string]string{
   (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
   from your editor.
 
+  To make provider switching near-instant, coop keeps a box warm per OTHER signed-in
+  provider (spawned in the background at session start), so a switch pays only the ACP
+  replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable it (one
+  fewer idle box per signed-in provider) on a low-RAM machine.
+
   Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
   create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
   ~/.config/coop/acp-trace-<pid>.log (the sentinel works on an already-running server).

@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **ACP provider switches are near-instant — coop keeps a box warm per signed-in provider.** A
+  switch was ~5s: a warm container is ~0.9s, but the rest was the node adapter cold-start +
+  initialize/session-load replay. coop now pre-spawns a box for each OTHER signed-in provider in the
+  background at session start (the active one starts as fast as before), so a switch swaps to a
+  hot adapter and pays only the replay. It lives behind the existing supervisor factory — a miss
+  cold-spawns exactly as before, so correctness is unaffected — and boxes are reaped on session end.
+  `COOP_ACP_WARM=0` opts out (one fewer idle box per provider on a low-RAM machine).
+
 - **`coop init` scaffolds per-agent dirs only for the agents you use.** It now creates
   `.claude/`/`.codex/`/`.gemini/` only for the agents you're signed in to — or the `--agents
   claude,codex` (or `all`) you name — instead of all of them. `.agent/` is always scaffolded; the

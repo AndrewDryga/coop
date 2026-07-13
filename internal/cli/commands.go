@@ -677,89 +677,42 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	}
 	superID := hex.EncodeToString(idbuf)
 
+	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
+	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,
+	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
+	warm := os.Getenv("COOP_ACP_WARM") != "0"
+	pool := newWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
+		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true)
+	})
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
-		inR, inW, err := os.Pipe()
-		if err != nil {
-			return nil, err
-		}
-		outR, outW, err := os.Pipe()
-		if err != nil {
-			inR.Close()
-			inW.Close()
-			return nil, err
-		}
-		// A deterministic container identity (a per-generation --cidfile) so teardown can remove
-		// the box even before its labels are queryable — closing the startup race where Stop fires
-		// after `docker run` begins but before the container is labelled. docker writes the id to
-		// this file the moment the container is created. A fresh dir per generation avoids the
-		// "name already in use" hazard across swaps, and `--cidfile` requires the path not to exist.
-		cidDir, cidPath := "", ""
-		env := append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
-		// The current selection (a credential, a preset, or a provider) resolves to ONE spawn
-		// target — provider, model, account in the wire grammar — each respawn re-reads it, so a
-		// switch via coop's selector (or a preset-ladder rotation, cross-provider included) lands
-		// on the new identity. Block first if the target is still rate-limit cooling (the
-		// wait-for-reset paths) — sits before replay, so the replay startup grace is unaffected.
-		if t, psName, ok := ctrl.spawnTarget(); ok {
-			if psName != "" {
-				env = append(env, "COOP_ACP_PRESET="+psName)
-				ctrl.waitForPresetRung(ctx)
-			} else if acct := t.Account(); acct != "" {
-				ctrl.waitForReset(ctx, acct)
-			}
-			env = append(env, "COOP_ACP_TARGET="+t.String())
-			acpproxy.Trace("spawn box on target=%s preset=%s", t.String(), psName)
-		}
-		if a.rt.SupportsCIDFile() {
-			if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {
-				cidDir = d
-				cidPath = filepath.Join(d, "cid")
-				env = append(env, "COOP_ACP_CIDFILE="+cidPath)
+		t, psName, ok := ctrl.spawnTarget()
+		if bareProviderSwitch(t, psName, ok) {
+			if c := pool.checkout(t.Provider); c != nil {
+				go pool.refill(t.Provider) // keep it hot for a repeat switch
+				return c, nil
 			}
 		}
-		cmd := exec.Command(self, inner...)
-		cmd.Env = env
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
-		// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
-		// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := cmd.Start(); err != nil {
-			inR.Close()
-			inW.Close()
-			outR.Close()
-			outW.Close()
-			if cidDir != "" {
-				os.RemoveAll(cidDir)
-			}
-			return nil, err
+		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok)
+		if bareProviderSwitch(t, psName, ok) && cerr == nil {
+			go pool.refill(t.Provider)
 		}
-		inR.Close()  // the child holds the read end now
-		outW.Close() // ...and the write end; outR sees EOF when the child exits
-		pid := cmd.Process.Pid
-		go func() { _ = cmd.Wait() }()
-		stop := func() {
-			// Remove ONLY this generation's box, by its deterministic cidfile id — works even
-			// mid-startup, before labels exist; `rm -f` stops it too. Then kill the whole process
-			// group (inner coop + its run client) and the pipes. Deliberately NO label sweep here:
-			// every generation shares this supervisor's id, so a swap that Stops the dead child would
-			// also kill the just-spawned next box — see the final sweep after acpproxy.Run.
-			if cidPath != "" {
-				if cid, rerr := os.ReadFile(cidPath); rerr == nil {
-					a.rt.RemoveContainer(strings.TrimSpace(string(cid)))
-				}
+		return child, cerr
+	}
+	// Fan the other providers' boxes out in the background — the active one is spawned by Run's first
+	// factory call, so startup latency is unchanged.
+	if warm {
+		go func() {
+			others := ctrl.spawnableProviders(ctrl.leadProvider())
+			for _, prov := range others {
+				pool.refill(prov)
 			}
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-			inW.Close()
-			outR.Close()
-			if cidDir != "" {
-				os.RemoveAll(cidDir)
-			}
-		}
-		return &acpproxy.Child{In: inW, Out: outR, Stop: stop}, nil
+			acpproxy.Trace("warmed %d provider(s)", len(others))
+		}()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	defer pool.reap() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
 	err = acpproxy.Run(ctx, os.Stdin, os.Stdout, factory, ctrl.hooks())
 	// Final teardown sweep, once, when the whole supervised session ends: a per-generation Stop
 	// removes only its own box (by cidfile), so the last live generation — or a box orphaned by a
@@ -770,6 +723,86 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		return 1, err
 	}
 	return 0, nil
+}
+
+// bareProviderSwitch reports whether a spawn target is a plain provider switch at default
+// account/model — a bare Target{Provider} — the slow, common case the warm pool covers. An
+// account/model-pinned target or a preset spawns cold (rare; correctness is unaffected).
+func bareProviderSwitch(t agents.Target, psName string, ok bool) bool {
+	return ok && psName == "" && t.Model == "" && len(t.Accounts) == 0
+}
+
+// spawnBox execs a `coop acp` inner box for the given spawn target and wraps it as an acpproxy.Child
+// — the ONE spawn path for both the live factory (ctrl.spawnTarget) and a warm-pool prewarm (a bare
+// provider default), so a warm box is born exactly like a cold one. Extracted verbatim from the
+// original factory closure; only the target resolution moved out to the caller.
+func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID string, ctrl *acpControl, t agents.Target, psName string, hasTarget bool) (*acpproxy.Child, error) {
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		inR.Close()
+		inW.Close()
+		return nil, err
+	}
+	cidDir, cidPath := "", ""
+	env := append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
+	if hasTarget {
+		if psName != "" {
+			env = append(env, "COOP_ACP_PRESET="+psName)
+			ctrl.waitForPresetRung(ctx)
+		} else if acct := t.Account(); acct != "" {
+			ctrl.waitForReset(ctx, acct)
+		}
+		env = append(env, "COOP_ACP_TARGET="+t.String())
+		acpproxy.Trace("spawn box on target=%s preset=%s", t.String(), psName)
+	}
+	if a.rt.SupportsCIDFile() {
+		if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {
+			cidDir = d
+			cidPath = filepath.Join(d, "cid")
+			env = append(env, "COOP_ACP_CIDFILE="+cidPath)
+		}
+	}
+	cmd := exec.Command(self, inner...)
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
+	// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
+	// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		inR.Close()
+		inW.Close()
+		outR.Close()
+		outW.Close()
+		if cidDir != "" {
+			os.RemoveAll(cidDir)
+		}
+		return nil, err
+	}
+	inR.Close()  // the child holds the read end now
+	outW.Close() // ...and the write end; outR sees EOF when the child exits
+	pid := cmd.Process.Pid
+	go func() { _ = cmd.Wait() }()
+	stop := func() {
+		// Remove ONLY this generation's box, by its deterministic cidfile id — works even mid-startup,
+		// before labels exist. Then kill the whole process group (inner coop + its run client) and the
+		// pipes. Deliberately NO label sweep here: every generation shares this supervisor's id.
+		if cidPath != "" {
+			if cid, rerr := os.ReadFile(cidPath); rerr == nil {
+				a.rt.RemoveContainer(strings.TrimSpace(string(cid)))
+			}
+		}
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		inW.Close()
+		outR.Close()
+		if cidDir != "" {
+			os.RemoveAll(cidDir)
+		}
+	}
+	return &acpproxy.Child{In: inW, Out: outR, Stop: stop}, nil
 }
 
 // agentChoices lists the registered agents for a "use one of …" error, from the registry so a

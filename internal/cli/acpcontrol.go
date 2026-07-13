@@ -1427,6 +1427,14 @@ func (c *acpControl) selectorSel(configID, value string) (newSel string, recogni
 // spawnableProviders lists the OTHER registered providers with at least one signed-in account —
 // the ones a provider switch could actually spawn. The current lead is excluded (its accounts
 // are the cred: entries).
+// leadProvider is the current lead's provider (the one the active box runs), read under the lock —
+// the warm pool warms the OTHER signed-in providers around it.
+func (c *acpControl) leadProvider() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lead
+}
+
 func (c *acpControl) spawnableProviders(lead string) []string {
 	var out []string
 	for _, p := range agents.Names() {
