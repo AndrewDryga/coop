@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The signoff reviews what the run completed — not all of `99_done/`.** Each signoff round now
+  gets an explicit subject list: the tasks that entered `99_done/` since the last accepted round
+  (for round 1, since the run started). Prior runs' history — `99_done/` persists until you prune
+  it — and tasks an earlier round already accepted are no longer re-reviewed every round, which was
+  the loop's single biggest token burner; a reopened task's rework still re-enters the next round's
+  subjects. A run that completed nothing skips the signoff pass entirely.
+
 - **The loop hands its review stages what changed — plus a new `verify:` stage and a closing digest.**
   Every review pass (`between`/`signoff`, and a new opt-in `verify:` pass that runs after signoff
   accepts the batch) now receives the run's CHANGE CONTEXT: each task the loop completed, grouped by

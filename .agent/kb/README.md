@@ -46,4 +46,5 @@ updated: <YYYY-MM-DD>                # last edit
 ## Index
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — claude "token expired" still works in-box via the refresh token
+- [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue

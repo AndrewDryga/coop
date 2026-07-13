@@ -75,7 +75,7 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
 		}
 	}
-	if review := loopSignoffPrompt(repo, []string{".agent/tasks"}, ""); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
+	if review := loopSignoffPrompt(repo, []string{".agent/tasks"}, "", []string{"t1 — /home/node/proj/.agent/tasks/99_done/t1"}); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
 		t.Errorf("review prompt should name the absolute queue:\n%s", review)
 	}
 }
@@ -126,11 +126,14 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
 	}
-	rev := loopSignoffPrompt("/repo", []string{".agent/tasks"}, "")
-	// The demanding default prompt: a senior reviewer's bar — every acceptance criterion met, the
-	// repo's rules obeyed, the FAILURE path tested, the change polished (docs updated), a SINGLE
-	// whole-repo gate, reopen-by-moving, and no self-fix/commits.
+	rev := loopSignoffPrompt("/repo", []string{".agent/tasks"}, "", []string{"t1 — /repo/.agent/tasks/99_done/t1"})
+	// The demanding default prompt: a header scoping the review to what THIS RUN completed (never
+	// all of 99_done/, which holds prior runs' history), then a senior reviewer's bar — every
+	// acceptance criterion met, the repo's rules obeyed, the FAILURE path tested, the change
+	// polished (docs updated), a SINGLE whole-repo gate, reopen-by-moving, and no self-fix/commits.
 	for _, want := range []string{
+		"the ONLY tasks to review this pass", "t1 — /repo/.agent/tasks/99_done/t1", // scoped subjects lead
+		"For EVERY task listed above", // the directive binds to the header, not the done/ dir
 		"SENIOR REVIEWER", "99_done/",
 		"acceptance criterion",                      // 1. meets its goal
 		".agent/rules",                              // 2. follows the standards
@@ -154,18 +157,19 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	}
 }
 
-// The built-in senior review ALWAYS leads; .agent/loop.yaml signoff.prompt only APPENDS to it
-// (never replaces it). Either way the fixed context footer trails.
+// The subject header leads, then the built-in senior review ALWAYS runs; .agent/loop.yaml
+// signoff.prompt only APPENDS to it (never replaces it). Either way the fixed context footer trails.
 func TestLoopReviewPromptAppend(t *testing.T) {
 	repo := t.TempDir()
-	// No append → the built-in default, no appendix.
-	if rev := loopSignoffPrompt(repo, []string{".agent/tasks"}, ""); !strings.HasPrefix(rev, "Review pass") || strings.Contains(rev, "project-specific checks") {
-		t.Errorf("empty append → built-in only, no appendix:\n%s", rev)
+	subjects := []string{"t1 — /repo/.agent/tasks/99_done/t1"}
+	// No append → the subject header + the built-in default, no appendix.
+	if rev := loopSignoffPrompt(repo, []string{".agent/tasks"}, "", subjects); !strings.HasPrefix(rev, "The task(s) this run completed") || strings.Contains(rev, "project-specific checks") {
+		t.Errorf("empty append → header + built-in only, no appendix:\n%s", rev)
 	}
-	// With an append → the built-in leads, then the appended text, then the footer.
-	rev := loopSignoffPrompt(repo, []string{".agent/tasks"}, "- Verify CHANGELOG.md gained an entry.")
-	if !strings.HasPrefix(rev, "Review pass") || !strings.Contains(rev, "SENIOR REVIEWER") {
-		t.Errorf("the built-in review must always lead (append never replaces):\n%s", rev)
+	// With an append → the header + built-in lead, then the appended text, then the footer.
+	rev := loopSignoffPrompt(repo, []string{".agent/tasks"}, "- Verify CHANGELOG.md gained an entry.", subjects)
+	if !strings.HasPrefix(rev, "The task(s) this run completed") || !strings.Contains(rev, "SENIOR REVIEWER") {
+		t.Errorf("the built-in review must always follow the header (append never replaces):\n%s", rev)
 	}
 	if !strings.Contains(rev, "project-specific checks") || !strings.Contains(rev, "Verify CHANGELOG.md gained an entry.") {
 		t.Errorf("signoff.prompt text should be appended:\n%s", rev)

@@ -1650,14 +1650,16 @@ func loopWorkPrompt(repo string, queues []string) string {
 }
 
 // defaultSignoffPrompt is the built-in signoff pass: a senior
-// reviewer's bar over work done unattended overnight — per done task it checks the goal is met, the
-// repo's standards are followed, the failure path is tested, and the change is polished, then runs
-// the repo's gate ONCE across the whole repo (not per task) — reopening anything short of "merge with
-// no changes" but never fixing task code itself (the work loop does that next round). The fixed
-// context footer (reviewContextFooter) supplies the queue paths + the "coop isn't installed, move
-// folders yourself" mechanics, so this text stays static and unit-testable.
+// reviewer's bar over work done unattended overnight — per task under review it checks the goal is
+// met, the repo's standards are followed, the failure path is tested, and the change is polished,
+// then runs the repo's gate ONCE across the whole repo (not per task) — reopening anything short of
+// "merge with no changes" but never fixing task code itself (the work loop does that next round).
+// The tasks under review are the header loopSignoffPrompt prepends (what this run completed — NOT
+// all of 99_done/, which persists until a human prunes it); the fixed context footer
+// (reviewContextFooter) supplies the queue paths + the "coop isn't installed, move folders
+// yourself" mechanics, so this text stays static and unit-testable.
 const defaultSignoffPrompt = "Review pass — you are the SENIOR REVIEWER for work done unattended overnight. Make sure every shipped task is CORRECT, meets its stated goal, follows this repo's standards, and is genuinely polished — not merely \"the gate is green.\" You do NOT fix code or make commits: when something falls short you REOPEN the task with a SPECIFIC, actionable note, and the work loop fixes it next round. Be demanding — the bar is work you'd merge with no changes.\n" +
-	"For EVERY task folder in 99_done/:\n" +
+	"For EVERY task listed above (its folder is in 99_done/):\n" +
 	"1. Meets its goal — read its task.md and the diff of its commit (git log/git show). Does the work satisfy EVERY acceptance criterion and cover every subtask? If any is unmet or a subtask was skipped, reopen it.\n" +
 	"2. Follows the standards — it obeys AGENTS.md and every rule in .agent/rules, matches the surrounding code's style, and adds NO scope creep: no unrequested features or knobs, no unrelated refactors, no churn. Reopen violations.\n" +
 	"3. Tested for real — it has tests that exercise the FAILURE/edge path, not just the happy path, and they actually cover the new behavior. Reopen thin or missing tests.\n" +
@@ -1666,15 +1668,26 @@ const defaultSignoffPrompt = "Review pass — you are the SENIOR REVIEWER for wo
 	"Then ONCE across the WHOLE repo (not per task), run the repo's gate (per AGENTS.md). If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — with the failure.\n" +
 	"Reopen a task by MOVING its folder back to 10_in_progress/ and writing in its log.md exactly what's wrong and what \"done\" requires — and do it THE MOMENT you decide, before reviewing the next task: a review session can be cut at any turn boundary, and a verdict that exists only as prose is silently lost. Never batch reopens for the end, and never park verdicts behind background subagents you wait on — work still running when your turn ends dies with it. Change no task code; make no commits."
 
-// loopSignoffPrompt is the end-of-loop signoff pass's prompt: the built-in senior review, then the
-// optional .agent/loop.yaml signoff.prompt APPEND (extra project checks — never a replacement),
-// then a fixed context footer with the concrete queue paths and reopen mechanics.
-func loopSignoffPrompt(repo string, queues []string, appendPrompt string) string {
-	p := defaultSignoffPrompt
-	if s := strings.TrimSpace(appendPrompt); s != "" {
-		p += "\n\nAlso apply these project-specific checks, reopening any task that fails one:\n" + s
+// loopSignoffPrompt is the end-of-loop signoff pass's prompt: a header naming the tasks under
+// review (what this run completed since the last accepted round — the loop computes it as a folder
+// diff, so the reviewer never re-derives its subjects from 99_done/, which persists until a human
+// prunes it), then the built-in senior review, then the optional .agent/loop.yaml signoff.prompt
+// APPEND (extra project checks — never a replacement), then a fixed context footer with the
+// concrete queue paths and reopen mechanics.
+func loopSignoffPrompt(repo string, queues []string, appendPrompt string, finished []string) string {
+	var b strings.Builder
+	b.WriteString("The task(s) this run completed since the last accepted review — the ONLY tasks to review this pass:\n")
+	for _, f := range finished {
+		b.WriteString("  - " + f + "\n")
 	}
-	return p + "\n\n" + reviewContextFooter(repo, queues)
+	b.WriteString("\n")
+	b.WriteString(defaultSignoffPrompt)
+	if s := strings.TrimSpace(appendPrompt); s != "" {
+		b.WriteString("\n\nAlso apply these project-specific checks, reopening any task that fails one:\n" + s)
+	}
+	b.WriteString("\n\n")
+	b.WriteString(reviewContextFooter(repo, queues))
+	return b.String()
 }
 
 // reviewContextFooter is appended to every review prompt (override or default) so the mechanics
@@ -2006,6 +2019,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	loopStartHead := prevHead                     // for the end-of-run signing sweep (catches any straggler cycle)
+	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
+	// 99_done/'s history (pruned only by a human) out of every round's subject list.
+	reviewBaseline := doneTaskDirs(hosts)
 	// Loop-until-accepted: drain the work queue, run the signoff pass, and if it reopened
 	// anything, drain and sign off AGAIN — repeating until a signoff reopens nothing (accepted) or
 	// the round cap is hit (block the stuck task for a human). The cap scales with the batch —
@@ -2171,6 +2187,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		}
 		// Scale the cap to this run's batch (completed tasks), clamped to [3, signoff.rounds].
 		maxSignoffRounds := signoffRoundCap(completed, signoffRounds(lc))
+		// The round's subjects: what entered done/ since the last accepted round (for round 1, since
+		// the run started) — a folder diff, so it also catches a completion with no commit. Nothing
+		// new means nothing to review: skip the pass instead of burning a box on 99_done/'s history.
+		subjects := newlyFinished(reviewBaseline, doneTaskDirs(hosts))
+		if len(subjects) == 0 {
+			ui.Info("signoff — nothing newly completed to review, skipping")
+			break
+		}
 		ui.Info("queue empty — running signoff (round %d/%d)", signoffRound, maxSignoffRounds)
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
@@ -2181,7 +2205,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
-		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health)) + cs.reviewBlock(health)
+		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + cs.reviewBlock(health)
 		signoffOut, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
@@ -2213,6 +2237,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Warn("signoff review inconsistent (reported %s, %d folder(s) moved) — re-running the round", receiptClaim(claimed, ok), reopened)
 			continue
 		}
+		// This round's verdict is consistent — re-anchor the baseline to the post-review done set, so
+		// the next round reviews only what re-enters done/ (reworked reopens, new completions), never
+		// a task this round just accepted. The lost-verdict path above deliberately keeps the old
+		// baseline: an untrusted round's whole subject set is reviewed again.
+		reviewBaseline = doneTaskDirs(hosts)
 		switch signoffRoundOutcome(signoffRound, maxSignoffRounds, reopened > 0) {
 		case signoffContinue:
 			ui.Info("signoff reopened %s — draining again", ui.Count(cf.Todo+cf.Doing, "task"))
