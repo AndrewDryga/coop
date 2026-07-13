@@ -28,6 +28,10 @@ var secretPatterns = []struct {
 	{"Slack token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}`)},
 	{"Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
 	{"Stripe key", regexp.MustCompile(`\b[sr]k_live_[0-9a-zA-Z]{24,}\b`)},
+	// A 3-part JWT: two dot-joined base64url segments each starting with eyJ ({" encoded)
+	// plus a signature. Matched precisely here because the entropy path can never catch one —
+	// a JWT's dotted shape parses as a code reference (codeRefRe) and gets skipped.
+	{"JWT", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*`)},
 }
 
 // secretAssignRe matches an assignment whose KEY name ENDS in a credential word —
@@ -43,6 +47,15 @@ var secretAssignRe = regexp.MustCompile(`(?i)([\w-]*(?:password|passwd|secret[_-
 // entropyThreshold flags a value as likely-random above this many bits/char (Shannon).
 // Real base64/hex tokens sit ~3.5–6; English/placeholder text sits lower.
 const entropyThreshold = 3.5
+
+// maxEntropyLineSlack caps how much of a line may sit OUTSIDE the matched assignment before
+// the entropy heuristic trusts it. Minified/generated output puts a whole program on one line,
+// so a high-entropy `token:"…"` there is a build artifact drowning in kilobytes of surrounding
+// code — while a hand-written line is essentially just the assignment. Keying on the slack, not
+// the line length, means a multi-KB base64 credential blob (its line is all value) still fires;
+// a secret pasted next to minified code sits on its own short line, so it fires too; and the
+// precise provider patterns scan every line regardless.
+const maxEntropyLineSlack = 2048
 
 // codeRefRe matches a dotted identifier path — var.x, data.y.z, process.env.API_KEY,
 // google_storage_hmac_key.s3.access_id — i.e. a code reference, not a literal secret.
@@ -132,10 +145,12 @@ func ScanSecrets(content string) []SecretFinding {
 			}
 		}
 		// The fuzzy entropy heuristic only fires on a plausible literal credential: not a
-		// line a pattern already flagged, not a comment, and a value that isn't a code
-		// reference, URL, or filesystem path.
+		// line a pattern already flagged, not a comment, not a match drowning in a
+		// minified/generated line, and a value that isn't a code reference, URL, or
+		// filesystem path.
 		if !matched && !commentRe.MatchString(line) {
 			if m := secretAssignRe.FindStringSubmatch(line); m != nil &&
+				len(line)-len(m[0]) <= maxEntropyLineSlack &&
 				!looksLikeCodeRef(m[2]) && !looksLikeURLOrPath(m[2]) && !placeholderRe.MatchString(m[2]) &&
 				shannonEntropy(m[2]) >= entropyThreshold {
 				out = append(out, SecretFinding{n, "high-entropy value assigned to '" + m[1] + "'"})

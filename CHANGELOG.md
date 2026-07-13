@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`coop check-secrets` precision: minified bundles stop entropy-firing, JWTs get caught.** The
+  entropy heuristic now skips a match drowning in a minified/generated line — one with over 2 KB
+  of code *around* the assignment (a bundle puts a whole program on one line, where a high-entropy
+  `token:"…"` literal is a build artifact). Keying on the surrounding slack rather than line
+  length keeps the real cases firing: a secret pasted next to minified code sits on its own line,
+  a multi-KB base64 credential blob is all value, and the precise provider patterns scan every
+  line regardless. A committed 3-part JWT (`eyJ….eyJ….sig`) is now reported by its own provider
+  pattern — its dotted shape used to parse as a code reference and get suppressed. UUID-shaped
+  values deliberately keep firing: real credentials are canonical UUIDs (Heroku API keys), so
+  exempting that shape would blank a live credential class.
+
 - **Simple discovered work goes to the queue, not the backlog.** The backlog is now scoped to the
   BIG or not-yet-ready — work that needs a spec, a decision, or real scoping first. A simple, ready
   task an agent spots while working goes straight to `00_todo/` (`coop tasks add`) so the loop

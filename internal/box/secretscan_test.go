@@ -1,6 +1,9 @@
 package box
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScanSecretsPatterns(t *testing.T) {
 	hits := map[string]string{
@@ -144,5 +147,75 @@ func TestScanSecretsEntropy(t *testing.T) {
 		if f := ScanSecrets(clean); len(f) != 0 {
 			t.Errorf("false positive on %q: %v", clean, f)
 		}
+	}
+}
+
+// A minified/generated bundle puts a whole program on one huge line, where a high-entropy
+// token:"…" literal is a build artifact — the entropy heuristic skips a match drowning in
+// more than maxEntropyLineSlack of surrounding code. The skip is per-match, not per-file
+// or per-length: a secret pasted next to the blob still fires, a huge all-value line still
+// fires, and the precise provider patterns scan the long line regardless.
+func TestScanSecretsMinifiedLines(t *testing.T) {
+	blob := strings.Repeat(`var e=function(t){return t.replace(/x/g,"")};`, 60)
+	minified := `!function(){` + blob + `var s={token:"aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sG2eU4iO7p"}}();`
+	if len(minified) <= maxEntropyLineSlack+300 {
+		t.Fatalf("fixture line is only %d bytes — too short to exercise the guard", len(minified))
+	}
+	if f := ScanSecrets(minified); len(f) != 0 {
+		t.Errorf("entropy heuristic fired on a minified bundle line: %v", f)
+	}
+	// A secret hand-pasted next to minified code sits on its own short line — still caught.
+	pasted := minified + "\n" + `api_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sG2eU4iO7p"`
+	if f := ScanSecrets(pasted); len(f) != 1 || f[0].Line != 2 {
+		t.Errorf("expected exactly one finding on line 2 (the pasted secret), got %v", f)
+	}
+	// A multi-KB credential blob makes a long line too, but it's all VALUE, no slack —
+	// a base64-encoded service-account key must keep firing however long it is.
+	b64 := strings.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 48)
+	if f := ScanSecrets(`credentials_b64 = "` + b64 + `"`); len(f) != 1 {
+		t.Errorf("a %d-byte all-value credential line must keep firing, got %v", len(b64), f)
+	}
+	// The provider patterns have no slack cap: a real token INSIDE the minified line is
+	// still reported.
+	withTok := `!function(){var g="ghp_abcdefghijklmnopqrstuvwxyz0123456789";` + blob + `}();`
+	if f := ScanSecrets(withTok); len(f) != 1 || f[0].Kind != "GitHub token" {
+		t.Errorf("provider patterns must still scan a minified line, got %v", f)
+	}
+}
+
+// A committed 3-part JWT used to be suppressed — its dotted shape parses as a code
+// reference (codeRefRe) on the entropy path — so it has its own provider pattern now.
+func TestScanSecretsJWT(t *testing.T) {
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+	for _, line := range []string{
+		`token = "` + jwt + `"`,        // assigned — the shape the code-ref guard would skip
+		"Authorization: Bearer " + jwt, // bare — no assignment for the entropy path at all
+	} {
+		found := false
+		for _, x := range ScanSecrets(line) {
+			if x.Kind == "JWT" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a JWT finding for %q", line)
+		}
+	}
+	// A single eyJ… base64 segment is NOT a JWT: an inline-sourcemap data URI must stay
+	// clean (provider patterns scan comment lines too, so this would be a loud FP).
+	clean := `//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYXBwLmpzIn0=`
+	if f := ScanSecrets(clean); len(f) != 0 {
+		t.Errorf("single-segment base64 must not match the JWT pattern: %v", f)
+	}
+}
+
+// A UUID-shaped value on a credential key KEEPS firing — evaluated and deliberately NOT
+// exempted: real credentials ARE canonical UUIDs (Heroku API keys are lowercase v4), so
+// blanking the 8-4-4-4-12 shape would hide a live credential class. Value-shape guards
+// must be structural tells a random token never has, and hex+dash is a credential
+// alphabet (.agent/rules/secret-scan-literals-not-refs.md).
+func TestScanSecretsUUIDValueStillFlagged(t *testing.T) {
+	if f := ScanSecrets(`heroku_api_key = "f47ac10b-58cc-4372-a567-0e02b2c3d479"`); len(f) == 0 {
+		t.Error("a UUID-shaped credential value must keep firing (Heroku API keys are UUIDs)")
 	}
 }

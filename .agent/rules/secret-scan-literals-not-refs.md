@@ -19,18 +19,20 @@ Two independent gates, both required before the entropy check runs:
    must be skipped — variable/config refs (`var.x`, `process.env.X`, dotted paths), `${…}` /
    `{{…}}` interpolations, function calls `f(…)`, brackets `[…]`, Rust generics `T<U>` /
    namespaces `a::b`, Elixir module attributes `@attr`, `SCREAMING_SNAKE` and `snake_case`
-   bare identifiers, comment lines, URLs and filesystem paths, and placeholder/example/
-   fixture vocabulary (`…EXAMPLE`, `your-…`, `changeme`, `"very-long-password-1234"`,
-   `"fake-payment-method-token"`).
+   bare identifiers, comment lines, a match drowning in a minified/generated line (>2 KB of
+   line content *around* the assignment — key on the slack, not the line length, so a huge
+   all-value line like a base64-encoded service-account blob still fires), URLs and
+   filesystem paths, and placeholder/example/fixture vocabulary (`…EXAMPLE`, `your-…`,
+   `changeme`, `"very-long-password-1234"`, `"fake-payment-method-token"`).
 
 **Why:** the cost is asymmetric and the asymmetry is the whole point. A scanner that cries
 wolf on every `api_key = var.x` gets ~1,900 hits on one app and is turned off — at which
 point it catches *zero* real secrets. A scanner that surfaces 1–15 genuine literal shapes
 per repo gets read. Precision is what makes it useful; recall on obfuscated edge cases
-(a JWT that parses as a dotted ref, a token a dev prefixed with "secret") is worth trading
-away. The discriminator is reliable because the alphabets don't overlap: base64/hex tokens
-contain no `.`, `::`, `<`, `@`, `{`, `/`, space, or dictionary word, so excluding values
-that *do* can't hide a random token.
+(a token a dev prefixed with "secret") is worth trading away. The discriminator is
+reliable because the alphabets don't overlap: base64/hex tokens contain no `.`, `::`, `<`,
+`@`, `{`, `/`, space, or dictionary word, so excluding values that *do* can't hide a
+random token.
 
 **How to apply:**
 - New language/idiom throwing a false positive? Find the *structural* tell that no random
@@ -40,6 +42,14 @@ that *do* can't hide a random token.
 - The provider-pattern half (`secretPatterns`) is precise by construction and scans every
   line, comments included — but still gate its matches through `placeholderRe` so canonical
   example tokens (`AKIA…EXAMPLE`) don't fire.
+- A credential *format* a structural guard suppresses gets its own provider pattern, never a
+  guard exception: a JWT parses as a dotted code ref, so `eyJ….eyJ….sig` is matched precisely
+  before the entropy path ever sees it.
+- A shape that overlaps the credential alphabet is NOT a valid skip, however common the
+  fixture: a canonical UUID is hex+dash and real credentials ARE UUIDs (Heroku API keys are
+  lowercase v4), so a UUID value on a credential key keeps firing
+  (`TestScanSecretsUUIDValueStillFlagged` pins this). If UUID fixture noise ever dominates,
+  the fix is a non-secret tell (fixture vocabulary, known doc UUIDs) — not "UUID is safe".
 - Every change ships with both a true-positive that must still flag (a random value on that
   key shape) and the false-positive it kills, in `secretscan_test.go`. Real reductions are
   measured against actual repos, not invented strings.
