@@ -144,15 +144,26 @@ func (a *app) mergeGate(repo string) (string, error) {
 	return img, nil
 }
 
-// runGate runs the merge gate in the box against repo, reporting whether it passed.
-func (a *app) runGate(repo, img string) bool {
-	gate := a.gateFor(repo)
+// runGate runs the merge gate in the box against treeDir, reporting whether it passed. The gate
+// POLICY is resolved from gateRepo (the trusted parent), never treeDir — a fork can't weaken its own
+// checker — but it RUNS against treeDir (the rebased candidate), so a red gate never touches the
+// parent. gatePasses routes through the a.gateOK test seam when set.
+func (a *app) runGate(gateRepo, treeDir, img string) bool {
+	gate := a.gateFor(gateRepo)
 	ui.Info("revalidating: %s", strings.Join(gate, " "))
 	code, _ := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: gate, Batch: true,
+		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	return code == 0
+}
+
+// gatePasses runs the merge gate (or the test seam, when set).
+func (a *app) gatePasses(gateRepo, treeDir, img string) bool {
+	if a.gateOK != nil {
+		return a.gateOK(gateRepo, treeDir, img)
+	}
+	return a.runGate(gateRepo, treeDir, img)
 }
 
 // mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a
@@ -185,19 +196,21 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 		target = "the current commit (detached HEAD)"
 	}
 	ui.Info("landing %s onto %s", name, target)
-	pre := gitOut(repo, "rev-parse", "HEAD")
-	if err := a.landFork(repo, ws, name); err != nil {
+	// Rebase the fork onto the parent's HEAD inside the fork's OWN clone — an isolated candidate.
+	// The parent tree is NOT touched here, so a red gate below has nothing to roll back.
+	if err := a.rebaseForkOntoParent(repo, ws, name); err != nil {
 		return false, err
 	}
-	if img != "" { // COOP_GATE configured
-		if !a.runGate(repo, img) {
-			if e := gitRun(repo, "reset", "--hard", pre); e != nil {
-				// The rollback itself failed — the parent is left at the un-gated merge; say so loudly
-				// rather than reporting a clean "rolled back".
-				return false, fmt.Errorf("%s: gate failed AND rollback failed — parent left at the bad merge; reset it by hand (git -C %q reset --hard %s): %w", name, repo, pre, e)
-			}
-			return false, fmt.Errorf("%s: gate failed after rebase — rolled back", name)
-		}
+	// Gate the CANDIDATE (the rebased fork), never the live parent — with the parent's own gate
+	// policy. A red gate leaves the parent exactly as it was: no reset --hard of a shared tree.
+	if img != "" && !a.gatePasses(repo, ws, img) {
+		return false, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; fix it in the fork (%s), then re-run", name, ws)
+	}
+	// Advance the parent by a fast-forward-ONLY merge — an atomic compare-and-swap: it refuses if a
+	// concurrent commit moved the parent since the rebase, so a divergence lands nothing (re-run to
+	// rebase onto the new HEAD) instead of being erased by a rollback.
+	if err := a.fastForwardParent(repo, ws, name); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -243,7 +256,12 @@ func trustedSignArgs() []string {
 // where that branch is checked out — then fast-forwards the parent onto the result.
 // Forks therefore land as a linear replay, never a merge commit. A rebase conflict
 // leaves the fork untouched and points at where to resolve.
-func (a *app) landFork(repo, ws, name string) error {
+// rebaseForkOntoParent rebases the fork's branch onto the parent's current HEAD inside the fork's
+// OWN clone (ws), producing the landing candidate WITHOUT touching the parent. Box commits are
+// unsigned (the box holds no key); when you sign, the rebase re-signs the rewritten commits with
+// your host key (-f forces the rewrite so even a fast-forward land gets signed), the signing config
+// coming from the parent via trustedSignArgs, never the fork.
+func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
 	head := gitOut(repo, "rev-parse", "HEAD")
 	if head == "" {
 		// A parent with no commits yet → `git rebase ""` fails with a cryptic "invalid upstream";
@@ -256,11 +274,6 @@ func (a *app) landFork(repo, ws, name string) error {
 	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
 		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
 	}
-	// Box commits are unsigned (the box holds no key). If you sign your commits, sign
-	// them here with your host key as the rebase rewrites them — -f forces the rewrite
-	// so even a fast-forward land gets signed. The signing config comes from the parent
-	// via trustedSignArgs, not the fork. Run with real stdio so a passphrase pinentry
-	// can prompt.
 	// Blank any filter/merge/diff driver the fork's .git/config defines before the rebase checks
 	// the tree out — an in-tree .gitattributes + a fork-local driver would otherwise run host code
 	// on checkout/merge/diff (the residual gitHardening can't close, since the names are arbitrary).
@@ -268,7 +281,7 @@ func (a *app) landFork(repo, ws, name string) error {
 	withNeut := func(args ...string) []string { return append(append([]string{}, neut...), args...) }
 	// Rebase the fork's branch by NAME, not whatever the agent left checked out — `git rebase
 	// <upstream> <branch>` checks out and rebases exactly `name`, so the branch we sign and rebase
-	// is provably the same one we fetch and fast-forward below (an agent that `git checkout`ed a
+	// is provably the same one the parent fast-forwards to (an agent that `git checkout`ed a
 	// different branch in the ws can't make us land un-rebased, unsigned commits).
 	var rebaseErr error
 	if wantsSigning() {
@@ -280,11 +293,19 @@ func (a *app) landFork(repo, ws, name string) error {
 		_ = gitRun(ws, withNeut("rebase", "--abort")...)
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
 	}
+	return nil
+}
+
+// fastForwardParent fetches the rebased candidate back into the parent and advances the parent
+// branch by a fast-forward-ONLY merge. --ff-only IS the compare-and-swap: it succeeds only while the
+// parent is still the commit the fork was rebased onto, so a concurrent commit during the gate makes
+// it refuse — nothing lands, the divergence is preserved — instead of a reset --hard erasing it.
+func (a *app) fastForwardParent(repo, ws, name string) error {
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)
 	}
 	if err := gitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
-		return fmt.Errorf("%s: fast-forward after rebase failed unexpectedly", name)
+		return fmt.Errorf("%s: the parent advanced during the merge — nothing landed; re-run to rebase onto the new HEAD", name)
 	}
 	return nil
 }

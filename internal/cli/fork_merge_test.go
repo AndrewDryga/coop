@@ -160,6 +160,107 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 	}
 }
 
+// TestMergeOneAbortsWhenParentMovesDuringGate is the core of the CAS fix: if a commit lands on the
+// parent WHILE the gate runs, the fast-forward-only merge must refuse — landing nothing and leaving
+// the concurrent commit intact — instead of a reset --hard erasing it. The gate seam injects the
+// concurrent commit to open that window deterministically.
+func TestMergeOneAbortsWhenParentMovesDuringGate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("fork work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "fork work")
+	// The gate "passes", but a concurrent commit lands on the parent while it runs.
+	a.gateOK = func(_, _, _ string) bool {
+		if err := os.WriteFile(filepath.Join(repo, "hotfix.txt"), []byte("urgent\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, repo, "add", "-A")
+		git(t, repo, "commit", "-qm", "concurrent hotfix")
+		return true
+	}
+	landed, err := a.mergeOne(repo, "gate-img", "perf", false)
+	if landed || err == nil {
+		t.Fatalf("mergeOne = (%v, %v), want abort — the parent moved during the gate", landed, err)
+	}
+	// The concurrent commit survives (not erased), and the fork did NOT land.
+	if !pathExists(filepath.Join(repo, "hotfix.txt")) {
+		t.Error("the concurrent commit was erased — reset --hard regression")
+	}
+	if pathExists(filepath.Join(repo, "feature.txt")) {
+		t.Error("the fork landed onto a moved parent — the CAS did not refuse")
+	}
+}
+
+// TestMergeOneGateFailLeavesParentUntouched: a red gate never mutates the parent — nothing to roll
+// back — because the gate runs on the candidate (the fork clone), not the live parent.
+func TestMergeOneGateFailLeavesParentUntouched(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	pre := gitOut(repo, "rev-parse", "HEAD")
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("fork work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "fork work")
+	a.gateOK = func(_, _, _ string) bool { return false } // red gate
+	landed, err := a.mergeOne(repo, "gate-img", "perf", false)
+	if landed || err == nil {
+		t.Fatalf("mergeOne = (%v, %v), want a gate failure", landed, err)
+	}
+	if pathExists(filepath.Join(repo, "feature.txt")) {
+		t.Error("the fork landed despite a red gate")
+	}
+	if head := gitOut(repo, "rev-parse", "HEAD"); head != pre {
+		t.Errorf("parent HEAD moved on a red gate: %s → %s", pre, head)
+	}
+	if gitDirty(repo) {
+		t.Error("parent tree left dirty after a red gate")
+	}
+}
+
+// TestMergeOneGatePassLands: a green gate advances the parent (the seam lets this run without a box).
+func TestMergeOneGatePassLands(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("fork work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "fork work")
+	a.gateOK = func(_, _, _ string) bool { return true } // green gate
+	landed, err := a.mergeOne(repo, "gate-img", "perf", false)
+	if !landed || err != nil {
+		t.Fatalf("mergeOne = (%v, %v), want (true, nil)", landed, err)
+	}
+	if !pathExists(filepath.Join(repo, "feature.txt")) {
+		t.Error("a green gate should have landed the fork")
+	}
+}
+
 func TestMergeOnePolicyForce(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -386,7 +487,7 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 		}
 	})
 
-	// (b) a planted post-merge hook must not fire through the merge helper (landFork ff's the parent).
+	// (b) a planted post-merge hook must not fire through the merge helper (fastForwardParent ff's the parent).
 	t.Run("post-merge hook on merge", func(t *testing.T) {
 		repo := initRepo(t)
 		marker := filepath.Join(t.TempDir(), "PWNED")

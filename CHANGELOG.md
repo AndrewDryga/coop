@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop fork merge` can no longer erase a commit that lands on the parent while the gate runs.**
+  The merge used to fast-forward the fork into the *live* parent, then run the gate there, then
+  `git reset --hard` on failure — so a commit you (or another fork) made to the parent during that
+  minutes-long gate was discarded by the rollback. Now the rebase and the gate happen entirely in
+  the fork's own clone (the candidate), the parent is advanced only by a fast-forward-**only** merge
+  once the gate is green, and that ff-only IS the compare-and-swap: if the parent moved, it refuses
+  and nothing lands (re-run to rebase onto the new HEAD) rather than rolling a shared tree back over
+  the concurrent work. A red gate now leaves the parent completely untouched — there is nothing to
+  reset. The gate policy is still read from the parent, so a fork can't weaken its own checker.
+
 - **A signoff that decides reopens but moves no folders is no longer silently accepted.** After the
   2026-07-10 incident — an end-of-loop review collected six REOPEN verdicts as prose, its
   background subagents were killed by an output-limit restart before the folders moved, and the

@@ -38,8 +38,9 @@ func resolveVersion() string {
 type app struct {
 	cfg    *config.Config
 	rt     runtime.Runtime
-	rtSet  bool           // whether rt has been detected yet (ensureRuntime is lazy — see below)
-	preset *preset.Preset // the run's loaded --preset, carried into each RunSpec (see applyPreset)
+	rtSet  bool                                     // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	preset *preset.Preset                           // the run's loaded --preset, carried into each RunSpec (see applyPreset)
+	gateOK func(gateRepo, treeDir, img string) bool // test seam for the merge gate; nil → the real box gate
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command
