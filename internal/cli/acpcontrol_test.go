@@ -1561,3 +1561,33 @@ func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
 		t.Errorf("after the new box's truth the model dropdown must be back: %v", ids2)
 	}
 }
+
+// TestACPPresetHidesProviderAndAccount: a preset GOVERNS the run (its ladder pins provider/model/
+// effort and rotates the account), so while one is active only the Preset dropdown renders —
+// Provider and Account (and the natives, dropped elsewhere) would be inert knobs fighting it.
+func TestACPPresetHidesProviderAndAccount(t *testing.T) {
+	c := newTestControl(t)
+	// No preset: the full trio.
+	ids := coopIDs(c.coopOptions())
+	if len(ids) != 3 || ids[0] != "coop_preset" || ids[1] != "coop_provider" || ids[2] != "coop_account" {
+		t.Fatalf("plain lead wants preset+provider+account, got %v", ids)
+	}
+	// Under a preset: Preset alone.
+	c.sel = "preset:frontier"
+	if ids := coopIDs(c.coopOptions()); len(ids) != 1 || ids[0] != "coop_preset" {
+		t.Errorf("under a preset only the Preset dropdown should render, got %v", ids)
+	}
+}
+
+// coopIDs pulls the ordered ids out of a coopOptions() slice.
+func coopIDs(opts []json.RawMessage) []string {
+	var ids []string
+	for _, o := range opts {
+		var h struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(o, &h)
+		ids = append(ids, h.ID)
+	}
+	return ids
+}

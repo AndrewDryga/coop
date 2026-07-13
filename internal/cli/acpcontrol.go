@@ -1304,10 +1304,11 @@ func (c *acpControl) cacheModels(models []modelInfo) {
 	_ = writeModelsCache(c.cfg, c.lead, models)
 }
 
-// coopOptions builds coop's toolbar dropdowns in their fixed order: Preset (the top-level
-// selector — it embeds provider, model, effort, and roles), Provider (omitted for a fusion
-// governor — see fusionLadderGuard), Account. Each shows the EFFECTIVE state of the one
-// underlying selection, so after any switch the other two catch up on the next refresh.
+// coopOptions builds coop's toolbar dropdowns. With NO preset: Preset, Provider (omitted for a
+// fusion governor — see fusionLadderGuard), Account — each showing the EFFECTIVE state of the one
+// underlying selection, so after any switch the others catch up on the next refresh. With a preset
+// ACTIVE: only Preset (the preset governs provider/model/effort/account, so the rest would be inert
+// knobs fighting it).
 func (c *acpControl) coopOptions() []json.RawMessage {
 	c.mu.Lock()
 	sel, lead, creds, fusion := c.sel, c.lead, c.creds, c.fusion
@@ -1326,6 +1327,14 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	}
 	out = append(out, marshalSelect(coopPresetID, "Preset",
 		"Orchestration recipe — its lead + ladder drive the session, its roles mount", ps, popts))
+	// A preset GOVERNS the run — its lead ladder pins the provider, model, effort, and rotates
+	// the account. So while one is active only the Preset dropdown renders: Provider and Account
+	// (like the native model/effort, dropped in rewriteConfigOptions) would be inert knobs that
+	// fight the preset. Leaving the preset (None) restarts the box and its config_option_update
+	// brings them all back.
+	if ps != "none" {
+		return out
+	}
 	if !fusion {
 		others := c.spawnableProviders(lead)
 		opts := make([]acpOption, 0, len(others)+1)

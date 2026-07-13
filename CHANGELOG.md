@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A preset now owns the whole ACP toolbar.** With a preset active, its lead ladder pins the
+  provider, model, and effort and rotates the account — so the toolbar renders only the Preset
+  dropdown, not Provider and Account beside it (the native model/effort were already hidden). They
+  were inert knobs that fought the preset; switching back to None restarts the box and its
+  config-update brings Provider, Account, and the native model/effort back.
+
 - **Parallel codex boxes on one account no longer crash each other.** codex ≥0.144 keeps
   single-writer sqlite state (`state_*.sqlite`, logs, memories, goals) in `$CODEX_HOME`, so a
   second box mounting the same account's home died at startup with a cryptic `failed to initialize
