@@ -38,6 +38,18 @@ func TestLoopClosingBanner(t *testing.T) {
 	}
 }
 
+// The prune nudge fires only once done/ has piled up past the threshold, names the exact command,
+// and stays quiet below it — pruning destroys state, so the loop only ever SUGGESTS it.
+func TestPruneNudge(t *testing.T) {
+	if n := pruneNudge(doneNudgeThreshold - 1); n != "" {
+		t.Errorf("below the threshold there should be no nudge, got %q", n)
+	}
+	n := pruneNudge(23)
+	if !strings.Contains(n, "23 done task folders") || !strings.Contains(n, "coop tasks rm --all-done") {
+		t.Errorf("nudge should name the count and the exact command, got %q", n)
+	}
+}
+
 // The loop's exit code lets cron/fleet/CI branch without parsing stderr: 3 iff it stopped with work
 // blocked on a human decision and nothing else actionable; 0 for verified-done and review-reopened.
 func TestLoopExitCode(t *testing.T) {

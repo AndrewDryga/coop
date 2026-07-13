@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The loop's closing digest nudges you to prune a piled-up `99_done/`.** Done tasks are removed
+  only by a human, so once ten or more have accumulated the loop closes with a one-line reminder to
+  run `coop tasks rm --all-done` after you review and push — it never prunes anything itself.
+
 - **`loop.yaml mcp: false` / `coop loop --no-mcp` — run a loop without the shared MCP config.** MCP
   tool schemas ride at the front of every model request, so an unattended drain that never touches
   those tools pays for them each iteration, every stage, all run long. `mcp: false` (committed) or
