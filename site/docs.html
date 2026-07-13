@@ -832,11 +832,11 @@ roles:
                         short. If a pass reopened work, the loop drains and
                         reviews again, repeating until a pass reopens nothing — so
                         "done" ends up meaning <em>verified</em>, not just
-                        claimed. Fully replace the bar in
-                        <code>.agent/loop/review.md</code>, or just add checks in
-                        <code>.agent/loop/audit.md</code> — reopening a task that
-                        fails one (changelog updated, docs regenerated, no stray
-                        TODOs).
+                        claimed. Tighten the bar with your own checks under
+                        <code>signoff.prompt</code> in
+                        <code>.agent/loop.yaml</code> — a task that fails one
+                        (changelog updated, docs regenerated, no stray TODOs)
+                        gets reopened.
                     </p>
                     <p>
                         <strong>It survives the daily cap.</strong> Long runs
@@ -903,14 +903,16 @@ roles:
                     <h3>The <code>.agent/</code> folder</h3>
                     <p>
                         <code>coop init</code> creates a small, tool-neutral
-                        working folder the agent reads back on every start (and
-                        after each compaction). It's all local working state and
-                        git-ignored — except <code>rules/</code>, a shared
-                        knowledge base, which is committed.
+                        folder the agent reads back on every start (and after
+                        each compaction). The work queue —
+                        <code>tasks/</code> and the backlog — is local,
+                        git-ignored working state; the knowledge and config
+                        beside it are committed with the repo, so they travel
+                        with the project.
                     </p>
                     <table class="ref">
                         <tr>
-                            <th>File</th>
+                            <th>Path</th>
                             <th>What it's for</th>
                         </tr>
                         <tr>
@@ -922,7 +924,8 @@ roles:
                                 <code>50_blocked/</code>, <code>99_done/</code>;
                                 its state is its directory (the numeric prefix
                                 sorts <code>ls</code> in lifecycle order;
-                                <code>coop tasks</code> shows the clean names)
+                                <code>coop tasks</code> shows the clean names).
+                                Local working state
                             </td>
                         </tr>
                         <tr>
@@ -939,8 +942,59 @@ roles:
                         <tr>
                             <td><code>rules/</code></td>
                             <td>
-                                the taste knowledge base — corrections graduate
-                                into rules here
+                                the taste knowledge base (normative) — a
+                                correction becomes a "do X, not Y" rule here
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>kb/</code></td>
+                            <td>
+                                the descriptive knowledge base — subsystem maps,
+                                cross-cutting traps, and gotchas the code doesn't
+                                carry; a self-improving wiki the agents keep
+                                current as they work
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>skills/</code></td>
+                            <td>
+                                the workflow skills (<code>spec</code>,
+                                <code>work</code>, <code>sweep</code>,
+                                <code>investigate</code>,
+                                <code>review-board</code>,
+                                <code>verify-api</code>, <code>release</code>);
+                                each agent's dir symlinks to them
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>presets/</code></td>
+                            <td>
+                                orchestration recipes — a lead plus roles
+                                (thinker, critic, fast); see
+                                <a href="#presets">Presets</a>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>project.yaml</code></td>
+                            <td>
+                                per-project config: a monorepo's members, the
+                                dev-server ports coop publishes, the box posture,
+                                and the fork-merge gate
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>loop.yaml</code></td>
+                            <td>
+                                configures <code>coop loop</code>'s stages —
+                                preflight, work, between, signoff — each with its
+                                own model ladder and prompt
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>fleet.yaml</code></td>
+                            <td>
+                                declares a fleet of fork loops for
+                                <code>coop fleet</code> — one entry per fork
                             </td>
                         </tr>
                     </table>

@@ -1,7 +1,11 @@
 # .agent/loop.yaml — configuration for `coop loop` (committed; edit to taste).
-# Every key is optional — omit it (or a whole section) to use coop's built-in default, noted below.
-# Models use coop's target grammar: provider[:model][/effort][@account].
-# Sections are in loop order: preflight (before) → work → between (after each task) → signoff (at the end).
+#
+# Every key is optional — omit it (or a whole section) to use coop's built-in
+# default, noted below. Models use coop's target grammar,
+# provider[:model][/effort][@account].
+#
+# Sections run in loop order:
+#   preflight (before) → work → between (after each task) → signoff (at the end)
 
 preflight:
   # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
