@@ -77,7 +77,12 @@ local (git-ignored) so it never creates commit noise or merge churn.
   moves an item into `tasks/00_todo/` (a folder move, not a rewrite) once it's ready. Shipped or
   cancelled? `coop backlog rm <id>` — a shipped idea's record is its commits. The loop reads the
   lifecycle states only; per-task reasoning lives in each task's own `log.md`.
-- `rules/` — the taste knowledge base (committed).
+- `rules/` — the taste knowledge base, NORMATIVE ("do X, not Y") (committed).
+- `kb/` — the DESCRIPTIVE knowledge base (committed): subsystem maps, cross-cutting traps, and
+  gotchas the code doesn't obviously carry. Read `kb/README.md`'s index at boot; open a card only
+  when your task touches its subsystem (never bulk-load). An unattended agent drops a DRAFT card in
+  `kb/inbox/` (committed, never prompt-loaded); a human promotes it into `kb/` with a `verified:`
+  stamp. A card that drifts from the source is worse than none — re-check it when you pass through.
 - `project.yaml` — the committed per-project config: a monorepo's `subprojects:` (each
   member keeps its own `tasks/`, backlog drawer included; every coop task command aggregates them,
   and the root queue holds work that spans members) and the `serve:` ports coop

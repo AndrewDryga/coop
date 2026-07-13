@@ -16,6 +16,7 @@ __pycache__/
 # coop working state (commit knowledge, ignore state)
 **/.agent/*
 !**/.agent/rules/
+!**/.agent/kb/
 !**/.agent/skills/
 !**/.agent/presets/
 !**/.agent/loop.yaml

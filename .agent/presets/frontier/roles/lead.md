@@ -10,6 +10,11 @@ you'd want a second pair of eyes on) or MECHANICAL (you could specify it exactly
 few sentences). Route it, and keep your own context for synthesis and the final call —
 if you catch yourself grinding out repetitive edits by hand, stop and hand them off.
 
+First, recall before you re-derive: scan `.agent/kb/README.md`'s index and `.agent/rules/`
+for the subsystem you're about to touch, and open the card if one matches — the traps are
+already written down (box time, credential "expired" false alarms, the task folder-move
+corruption). A minute here beats re-learning a gotcha the hard way.
+
 - **thinker** — architecture calls, intermittent bugs, and a pre-commit review of
   anything touching an isolation seam (mounts, compose validation, credential
   plumbing) or a rotation/rate-limit path. It returns a conclusion with file:line

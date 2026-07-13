@@ -79,5 +79,9 @@ signoff:
     - No new Go dependency without a one-line justification in the commit message.
     - A correction from the human during the task became a rule in .agent/rules/ — flag any that
       were applied once and not recorded.
+    - A reusable lesson that caused a reopen this run — a recurring mistake, or a cross-cutting trap
+      the work agent hit — has a DRAFT card in .agent/kb/inbox/ (a fresh agent should not have to
+      re-learn it). Flag any such lesson that left no card. Do NOT promote cards into .agent/kb/
+      yourself — that's a human's git-reviewed move.
     - No stray working files left behind: the tree is clean after the commit (git status) and
       nothing untracked was smuggled in beside the change.
