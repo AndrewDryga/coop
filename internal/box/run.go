@@ -313,13 +313,21 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
 	// — so it never burns a turn rediscovering the box. The lead (fusion governor / consult
 	// lead) is handled above, with its augmented file.
+	plan := instructionPlan(cfg, spec)
 	var instructionMounts []extraMount
-	for _, it := range instructionPlan(cfg, spec) {
+	for _, it := range plan {
 		if p, err := writeTempFile(it.content); err == nil {
 			tmpFiles = append(tmpFiles, p)
 			instructionMounts = append(instructionMounts, extraMount{p, cfg.HomeInBox + "/." + it.agent + "/" + it.file})
 		}
 	}
+	// .agent is the cornerstone: synthesize an agent's workflow skills from the shared .agent/skills
+	// when the repo has NO per-agent skills dir of its own — so a repo that keeps only .agent/ (no
+	// committed .claude/.codex/.gemini) still gives the agent its skills, mounted USER-level at
+	// ~/.<agent>/skills (read-only, dies with the box). When the repo HAS the agent's own skills dir,
+	// that project mount wins and we synthesize nothing (project beats user, like the subagents mount).
+	synthMounts, synthDirs := synthSkillsMounts(spec.Repo, cfg.HomeInBox, skillsAgentSet(spec))
+	tmpDirs = append(tmpDirs, synthDirs...)
 
 	// Git environment: a curated ~/.gitconfig (your identity + signing off, since the
 	// box holds no key) and your global gitignore, mounted into every box run. Without
@@ -407,7 +415,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	limits := boxLimits(cfg, rt.Name)
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, envFile, limits...)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
 	if spec.Ctx != nil {
 		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 	}
@@ -596,6 +604,71 @@ func agentBaseInstructions(cfg *config.Config, agent, file string) string {
 
 // instructionItem is one agent's global instruction file and the content it should hold.
 type instructionItem struct{ agent, file, content string }
+
+// skillsCapableAgents are the agents coop synthesizes user-level skills for — the set the scaffolder
+// symlinks a skills dir into (.claude/.codex/.gemini). grok reads AGENTS.md, not a skills dir, so
+// it's omitted (a mount there would be inert anyway).
+var skillsCapableAgents = map[string]bool{"claude": true, "codex": true, "gemini": true}
+
+// skillsAgentSet is the agents whose home a run mounts — the launched agent, a fusion governor, a
+// consult lead, and the peers — INCLUDING the lead (which instructionPlan deliberately omits, but
+// which still needs its skills). De-duplicated, order-preserving.
+func skillsAgentSet(spec RunSpec) []string {
+	var out []string
+	add := func(a string) {
+		if a == "" {
+			return
+		}
+		for _, x := range out {
+			if x == a {
+				return
+			}
+		}
+		out = append(out, a)
+	}
+	add(spec.Agent)
+	add(spec.FusionGovernor)
+	add(spec.ConsultLead)
+	for _, p := range spec.Peers {
+		add(p.Provider)
+	}
+	return out
+}
+
+// synthSkillsMounts returns the user-level ~/.<agent>/skills mounts to synthesize from the repo's
+// shared .agent/skills — one per skills-capable agent whose repo has NO per-agent skills dir of its
+// own — plus the temp dirs to clean up. Empty when the repo has no .agent/skills. This is ".agent is
+// the cornerstone": a repo can drop its committed .claude/.codex/.gemini and the box still gives the
+// agent its workflow skills. Each mount is a WRITABLE COPY, not a read-only bind of the host dir:
+// some CLIs (codex) install their own system skills INTO the skills dir, which a :ro mount breaks —
+// and the copy keeps the host's .agent/skills pristine. The copies die with the box.
+func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string) {
+	src := filepath.Join(repo, ".agent", "skills")
+	if !dirExists(src) {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for _, ag := range agentNames {
+		if ag == "" || seen[ag] || !skillsCapableAgents[ag] {
+			continue
+		}
+		seen[ag] = true
+		if dirExists(filepath.Join(repo, "."+ag, "skills")) {
+			continue // the repo's own skills dir wins — synthesize nothing
+		}
+		dst, err := os.MkdirTemp("", "coop-skills-"+ag+"-")
+		if err != nil {
+			continue
+		}
+		if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
+			os.RemoveAll(dst)
+			continue
+		}
+		tmpdirs = append(tmpdirs, dst)
+		mounts = append(mounts, extraMount{dst, homeInBox + "/." + ag + "/skills"})
+	}
+	return mounts, tmpdirs
+}
 
 // instructionPlan is the global instruction each non-lead agent should receive: the box env
 // note plus the user's instructions (per agentBaseInstructions). The lead (fusion governor /
@@ -896,7 +969,7 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName, envFile string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", LabelKey + "=" + LabelBox}
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
@@ -935,6 +1008,11 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		scope := credentialScope(cfg, spec)
 		for _, agent := range scope {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
+		}
+		// Synthesized skills: mounted READ-WRITE (a copy, so the host stays clean) so a CLI that
+		// installs system skills into its skills dir isn't broken by a :ro mount.
+		for _, m := range synthMounts {
+			args = append(args, "-v", m.host+":"+m.box)
 		}
 		// An ACP box (always supervised) shares the LEAD's session transcripts across credentials, so
 		// switching account/preset mid-session doesn't lose the conversation — session/load still finds

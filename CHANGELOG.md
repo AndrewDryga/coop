@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`.agent/` is now enough — a box synthesizes an agent's skills from `.agent/skills` when the repo
+  has no per-agent dir.** A repo that keeps only vendor-neutral `.agent/` (no committed
+  `.claude/`/`.codex/`/`.gemini/`) still gives the agent its workflow skills: coop mounts
+  `.agent/skills` at the box's user-level `~/.<agent>/skills`. When the repo HAS the agent's own
+  skills dir, that project copy wins (nothing synthesized). It's a writable ephemeral copy, not a
+  read-only bind — a CLI that installs its own system skills into that dir (codex) isn't broken, and
+  the host's `.agent/skills` stays pristine. Verified end-to-end in a real box. (Skills first; the
+  settings/hooks equivalents and the `coop init` scaffolding change are filed follow-ups.)
+
 - **The loop now flags when a task edits its own verifier.** In an unattended loop a candidate can
   weaken the checker to pass itself — edit `*_test.go`, the `Makefile`/gate, `.agent/project.yaml`,
   `.agent/loop.yaml`, `.claude/hooks/`, or CI — and cross-vendor review is no defense when every
