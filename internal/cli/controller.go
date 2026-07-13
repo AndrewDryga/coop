@@ -101,6 +101,32 @@ func finishedTasks(before, after map[string]string) []string {
 	return ids
 }
 
+// blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a
+// human decision, for the closing digest. Sorted.
+func blockedTaskIDs(hosts []string) []string {
+	var ids []string
+	for id, st := range queueSnapshot(hosts) {
+		if st == stateBlocked {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// reopenedBySignoff returns the ids the signoff bounced OUT of done/ (back to todo or in_progress)
+// between two snapshots — what the review reopened this round, for the health digest. Sorted.
+func reopenedBySignoff(before, after map[string]string) []string {
+	var ids []string
+	for id, st := range after {
+		if before[id] == stateDone && st != stateDone {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // untrailered returns the finished ids with NO Coop-Task commit in the iteration's range — a
 // completion the agent didn't tag, so the host can't bind it to a commit. An empty range (no HEAD
 // movement, e.g. a folder move with no commit) leaves every finished id untrailered.

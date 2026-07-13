@@ -33,6 +33,7 @@ type Config struct {
 	Work      Work      `yaml:"work"`
 	Between   Between   `yaml:"between"`
 	Signoff   Signoff   `yaml:"signoff"`
+	Verify    Verify    `yaml:"verify"`
 }
 
 // Preflight is the one-shot pre-loop queue cleanup.
@@ -59,6 +60,15 @@ type Signoff struct {
 	Rounds int      `yaml:"rounds"` // work→signoff round cap; 0 = the built-in default (5)
 	Agent  []string `yaml:"agent"`  // signoff model ladder; empty = the work model
 	Prompt string   `yaml:"prompt"` // APPENDED to the built-in senior review; "" = nothing appended
+}
+
+// Verify is an optional FINAL pass, after the signoff accepts the batch: it receives the run's change
+// context (per task, by Coop-Task trailer) and does whatever the prompt says — typically e2e/integration
+// tests for the affected features. No built-in prompt; it runs only when enabled and a prompt is set.
+type Verify struct {
+	Enabled bool     `yaml:"enabled"` // run the post-signoff verify pass; false = off
+	Agent   []string `yaml:"agent"`   // verify model ladder; empty = the signoff model
+	Prompt  string   `yaml:"prompt"`  // SETS the verify prompt (no built-in); required when enabled
 }
 
 // Rung is one entry of an `agent:` ladder: EXACTLY one of Target or Preset is set.
@@ -97,6 +107,9 @@ func Load(repo string) (*Config, error) {
 	}
 	if c.Between.Enabled && strings.TrimSpace(c.Between.Prompt) == "" {
 		return nil, fmt.Errorf("%s: between.enabled is true but between.prompt is empty — between has no built-in, so set its prompt", File)
+	}
+	if c.Verify.Enabled && strings.TrimSpace(c.Verify.Prompt) == "" {
+		return nil, fmt.Errorf("%s: verify.enabled is true but verify.prompt is empty — verify has no built-in, so set its prompt (e.g. \"e2e-test the affected features\")", File)
 	}
 	return &c, nil
 }

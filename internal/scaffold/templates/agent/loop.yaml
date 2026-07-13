@@ -56,3 +56,24 @@ signoff:
   #prompt: |
   #  - The changelog has an entry for any user-visible change.
   #  - The formatter/linter passes (reopen the task if it doesn't).
+
+verify:
+  # Opt-in FINAL pass, after signoff accepts the batch: it gets the run's change context (every task
+  # this loop completed, by its Coop-Task trailer, with the files it touched) and does whatever the
+  # prompt says — typically e2e/integration tests for the AFFECTED features. Default: off.
+  #enabled: true
+
+  # Verify model ladder. Default: the signoff model.
+  #agent: [codex:gpt-5.6-sol/xhigh]
+
+  # The verify prompt — SET it here (verify has no built-in; required when enabled). "Affected
+  # features" resolves against the injected per-task change list, so you can just say:
+  #prompt: |
+  #  e2e-test every feature this loop affected. Reopen the task whose e2e fails, with the failure.
+
+# In any review prompt above (between / signoff / verify) you can PLACE the run's context inline with
+# template variables — coop substitutes them before the pass runs:
+#   {loop.changes}   the full per-task change block (commits + files, grouped by task)
+#   {loop.tasks}     the completed task ids, comma-separated
+#   {loop.affected}  the affected areas (e.g. internal/box, internal/cli)
+# e.g.  prompt: |  e2e {loop.affected}; the features are the tasks: {loop.tasks}

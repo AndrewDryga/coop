@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **The loop hands its review stages what changed — plus a new `verify:` stage and a closing digest.**
+  Every review pass (`between`/`signoff`, and a new opt-in `verify:` pass that runs after signoff
+  accepts the batch) now receives the run's CHANGE CONTEXT: each task the loop completed, grouped by
+  its `Coop-Task` trailer, with the files it touched and any risk the run flagged (a reopened task, a
+  gate-file edit). So a prompt like "e2e-test the affected features" resolves against a concrete
+  per-task list instead of guessing — place the context inline with `{loop.changes}` / `{loop.tasks}`
+  / `{loop.affected}`, or let `verify.prompt` say it. The loop also closes with a human digest — what
+  shipped (per task + areas), what's blocked on a decision, and which tasks to look at.
 
 ## 5.0.0
 

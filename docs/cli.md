@@ -433,14 +433,16 @@ coop loop [agent] — work the task queue until done, then sign off.
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.
 
-  One committed .agent/loop.yaml configures every step (preflight/work/between/signoff), each
-  with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
-  final one. Prompts never REPLACE a coop built-in: signoff.prompt and preflight.prompt APPEND
-  extra checks/instructions to theirs; between.prompt SETS the per-task audit (between has no
-  built-in — it's off unless enabled + set; coop prepends the just-finished task's id + folder,
-  the audit's exact subject). signoff.rounds is the round cap, preflight.enabled the pre-loop
-  cleanup, work.command a raw per-iteration override. A missing file or field = the built-in
-  default. (coop init scaffolds a commented loop.yaml.)
+  One committed .agent/loop.yaml configures every step (preflight/work/between/signoff/verify),
+  each with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
+  final review, verify an optional post-signoff pass that e2e-tests the affected features. Prompts
+  never REPLACE a coop built-in: signoff.prompt and preflight.prompt APPEND to theirs; between.prompt
+  and verify.prompt SET their pass (neither has a built-in — off unless enabled + set). The review
+  passes are handed the run's CHANGE CONTEXT — every task completed this loop, by its Coop-Task
+  trailer, with the files it touched — so "e2e the affected features" resolves against a concrete
+  list; place it inline with {loop.changes} / {loop.tasks} / {loop.affected}. signoff.rounds is the
+  round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration override. A
+  missing file or field = the built-in default. (coop init scaffolds a commented loop.yaml.)
 
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
   rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap

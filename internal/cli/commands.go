@@ -1908,7 +1908,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// stream-json marker runIteration finds in the command.
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
-	work, signoff := loopWorkPrompt(repo, queues), loopSignoffPrompt(repo, queues, lc.Signoff.Prompt)
+	work := loopWorkPrompt(repo, queues) // the signoff/verify prompts are built per round with the run's change context
+	health := newLoopHealth()            // per-task risk signals (reopens, gate edits, untagged) accumulated across the run
 	// The signoff pass (end-of-loop) and the optional between-tasks audit both run only under the
 	// signoff-aware agent form, not a custom work.command. The between audit is opt-in
 	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in) and
@@ -1924,6 +1925,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	betweenRot, err := a.reviewRotation(lc.Between.Agent, agent, signoffRot)
 	if err != nil {
 		return 2, fmt.Errorf("between agent: %w", err)
+	}
+	verifyEnabled := len(custom) == 0 && lc.Verify.Enabled
+	verifyRot, err := a.reviewRotation(lc.Verify.Agent, agent, signoffRot) // unset → the signoff model
+	if err != nil {
+		return 2, fmt.Errorf("verify agent: %w", err)
 	}
 	// A per-run id keys this run's telemetry file (.agent/runs/<runid>.jsonl) — one JSON-Lines
 	// record per stage, so the harness's own behavior (which target ran, reopen/retry counts) is
@@ -2070,6 +2076,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if len(gateHits) > 0 {
 				ui.Warn("this iteration edited gate-defining file(s) %s — the review must confirm the gate wasn't weakened to pass", strings.Join(gateHits, ", "))
 			}
+			health.noteIteration(finished, gateHits, missing) // for the signoff/verify context + the closing digest
 			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing)
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
@@ -2111,7 +2118,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				if betweenEnabled {
 					if finished := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finished) > 0 {
 						ui.Info("between-tasks audit — reviewing %s", strings.Join(taskIDsOf(finished), ", "))
-						prompt := loopBetweenPrompt(repo, queues, lc.Between.Prompt, finished, gateHits)
+						stepChanges := loopChanges(repo, iterHead, headAfter) // this step's diff, by task
+						prompt := loopBetweenPrompt(repo, queues, substituteLoopVars(lc.Between.Prompt, stepChanges, health), finished, gateHits) + stepChanges.reviewBlock(health)
 						// Runs on between.agent's own target and fails closed — but a per-task audit that
 						// can't run warns loudly (the task went unaudited) rather than halting the run.
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
@@ -2168,6 +2176,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
 		// rather than let "nothing reopened" read as an accepting signoff.
 		soStart, soHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+		// Hand the signoff the run's change context (per task, bound by the Coop-Task trailer) + health,
+		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
+		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
+		soSnap := queueSnapshot(hosts)
+		cs := loopChanges(repo, loopStartHead, soHead)
+		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health)) + cs.reviewBlock(health)
 		signoffOut, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
@@ -2183,6 +2197,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// reopened just now.
 		cf, _ := queueProgress(hosts)
 		reopened := cf.Todo + cf.Doing
+		health.noteReopen(reopenedBySignoff(soSnap, queueSnapshot(hosts))) // which tasks the signoff bounced, for the digest + next round's context
 		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
@@ -2211,6 +2226,27 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// signoffAccepted (nothing reopened) or signoffCapReached (just blocked) → the loop is done.
 		break
 	}
+	// Verify: an optional FINAL pass over the whole run's changes — its prompt (verify.prompt) says
+	// what, typically "e2e-test the affected features". It runs after the signoff accepted the batch,
+	// on its own model, with the run's change context injected; best-effort, and it may reopen a task
+	// whose e2e it can't get to pass (surfaced in the closing digest + exit). Skipped on a custom
+	// work.command or a requested stop.
+	if verifyEnabled && !softStop.Load() && (iterCtx == nil || iterCtx.Err() == nil) {
+		cs := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD"))
+		if cs.empty() {
+			ui.Info("verify pass — nothing changed this run, skipping")
+		} else {
+			ui.Info("verify pass — e2e the affected features (%s)", strings.Join(cs.subsystems, ", "))
+			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) + "\n\n" + reviewContextFooter(repo, queues)
+			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+			vExit := 0
+			if _, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, iterCmd(vPrompt), hosts, sink, peers, wake); verr != nil {
+				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
+				vExit = 1
+			}
+			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil)
+		}
+	}
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
 	// but it catches any straggler — a commit from a previously interrupted run, or a preflight
 	// commit — so the whole run's range is signed before you push. Best-effort.
@@ -2222,6 +2258,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		}
 	}
 	cf, _ := queueProgress(hosts)
+	// A human-facing digest above the verdict banner: what shipped (per task + areas), what's blocked,
+	// and any task the run flagged — so you see what to review/e2e at a glance.
+	if len(custom) == 0 {
+		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, blockedTaskIDs(hosts)); digest != "" {
+			fmt.Fprintln(os.Stderr, digest)
+		}
+	}
 	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
 	return loopExitCode(cf), nil
 }
