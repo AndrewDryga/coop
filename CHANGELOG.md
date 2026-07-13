@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 5.0.0
 
 - **One grammar names who runs — and `--preset`/`--consult` are gone.** Everywhere coop names who
