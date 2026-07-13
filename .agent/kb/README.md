@@ -1,4 +1,4 @@
-# .agent/kb — the committed knowledge base
+# .agent/kb — the self-improving knowledge base
 
 Descriptive operational knowledge an agent needs but the code doesn't obviously carry: subsystem
 maps, cross-cutting traps, hard-won gotchas. Sibling of `rules/` — but `rules/` is NORMATIVE
@@ -7,28 +7,41 @@ rule may link to a card for background.
 
 ## Reading protocol
 Read this INDEX at boot; open a card ONLY when your task touches its subsystem. Never bulk-load the
-kb into a prompt — the index is the routing table, the cards are pulled on demand (like skills).
+kb into a prompt — the index is the routing table, cards are pulled on demand (like skills). That
+scoping is also the safety rail: a card only ever reaches the prompts of tasks in its own subsystem,
+so a wrong card can't poison work it doesn't touch.
+
+## You maintain this KB — directly
+This is a self-improving wiki: no inbox, no human gate. When a task teaches you something non-obvious
+about a subsystem — a map, a trap, a gotcha the code doesn't carry — CREATE or UPDATE its card here,
+in the same commit as the work. Keep it TIDY as it grows: once a flat list gets long, group cards
+into per-subsystem subfolders (`box/`, `acp/`, `loop/`…) and keep this index current. The structure
+is yours to evolve — organize it however keeps it usable.
+
+The discipline that replaces the human gate is the metadata: every card states when it was last
+`updated`, which `subsystem` it maps, and the `sources` (the code) it describes — so staleness is
+obvious at a glance. When you pass through a subsystem, check its cards against their `sources`; if
+one has drifted, re-verify and bump it (with a changelog line) or DELETE it — a card that
+contradicts the code is worse than no card.
 
 ## Card format
-One fact per file: frontmatter plus a short body (keep it under a screen).
+One fact per file: frontmatter, a short body (under a screen), and a small changelog so an outdated
+card is obvious.
 
 ```
 ---
-name: <kebab-case-slug>
-description: <one line — used to judge relevance straight from the index>
-verified: <YYYY-MM-DD — when this was last checked against the source>
-retire-when: <the condition that makes this card wrong or obsolete>
+name: <kebab-case-slug>              # = the filename
+description: <one line — judged for relevance straight from this index>
+subsystem: <box | acp | loop | …>    # groups the index; decides when the card loads
+sources: [internal/box/run.go, …]    # the code this describes — check drift against it
+updated: <YYYY-MM-DD>                # last edit
 ---
+
 <the fact; cite file:line for load-bearing claims; link related cards with [[name]]>
-```
 
-## The inbox — how the kb grows without rotting
-An unattended agent must NOT edit the live kb — that's a self-modifying prompt. Instead it drops a
-DRAFT card into `inbox/`. Inbox cards are committed but NEVER loaded into a prompt. A human (or an
-explicitly-invoked review) promotes one by moving it up into `kb/`, stamping `verified:`, and adding
-its line to the index below — a git-reviewed folder move, the same shape as the task backlog. A card
-that has drifted from the source is worse than none: re-check `verified:` when you touch its
-subsystem, and delete a card whose `retire-when` has come true.
+## Changelog
+- <YYYY-MM-DD> — created / what changed (and what you verified it against)
+```
 
 ## Index
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local

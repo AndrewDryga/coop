@@ -80,10 +80,14 @@ local (git-ignored) so it never creates commit noise or merge churn.
   lifecycle states only; per-task reasoning lives in each task's own `log.md`.
 - `rules/` — the taste knowledge base, NORMATIVE ("do X, not Y") (committed).
 - `kb/` — the DESCRIPTIVE knowledge base (committed): subsystem maps, cross-cutting traps, and
-  gotchas the code doesn't obviously carry. Read `kb/README.md`'s index at boot; open a card only
-  when your task touches its subsystem (never bulk-load). An unattended agent drops a DRAFT card in
-  `kb/inbox/` (committed, never prompt-loaded); a human promotes it into `kb/` with a `verified:`
-  stamp. A card that drifts from the source is worse than none — re-check it when you pass through.
+  gotchas the code doesn't obviously carry. A SELF-IMPROVING wiki you maintain directly — no inbox,
+  no human gate. Read `kb/README.md`'s index at boot; open a card only when your task touches its
+  subsystem (never bulk-load — that scoping is also the safety rail). When a task teaches you
+  something non-obvious about a subsystem, add or update its card in the SAME commit; keep it tidy
+  as it grows (group into per-subsystem subfolders, keep the index current). Every card carries an
+  `updated` date, its `subsystem`, the `sources` it maps, and a small changelog, so staleness shows;
+  on pass-through, re-verify a card against its `sources` and bump it — or delete it if it's drifted
+  (a card that contradicts the code is worse than none). See `kb/README.md` for the card format.
 - `project.yaml` — the committed per-project config: a monorepo's `subprojects:` (each
   member keeps its own `tasks/`, backlog drawer included; every coop task command aggregates them,
   and the root queue holds work that spans members) and the `serve:` ports coop

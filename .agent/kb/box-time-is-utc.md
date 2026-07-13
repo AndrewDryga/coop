@@ -1,8 +1,9 @@
 ---
 name: box-time-is-utc
 description: boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
-verified: 2026-07-12
-retire-when: coop stops forwarding TZ into boxes (internal/box/run.go), or reset-time parsing moves off time.Local
+subsystem: box
+sources: [internal/box/run.go, internal/cli/ratelimit.go]
+updated: 2026-07-12
 ---
 The box image's clock is UTC. coop forwards the HOST's timezone into every box as `-e TZ=...`
 (`internal/box/run.go`, via `hostTimezone()`), so agents render clock times on your wall clock.
@@ -14,3 +15,6 @@ instead of the host zone, the parsed wait would land HOURS off. So the box TZ an
 `time.Local` must agree — if you touch either the TZ forwarding or the reset-time parser, keep them
 on the same clock. See [[credentials-expired-is-a-false-alarm]] for the OAuth `expiresAt` clock that
 rides the same wall time.
+
+## Changelog
+- 2026-07-12 — created: box clock is UTC, host TZ forwarded as `-e TZ`; must stay on the same clock as ratelimit.go's `time.Local` reset-time parser.
