@@ -1442,43 +1442,75 @@ func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, 
 	return agent, p, ladder, nil
 }
 
-// withStepModel runs fn with agent's model/effort swapped to a step's own (the review or between
-// model from .agent/loop.yaml), then restores the prior ones — so the work loop keeps its own
-// model. It uses the top model tier so the step model wins regardless of the work rotation target;
-// empty model AND effort → no swap (the work model reviews). fn builds AND runs the iteration, so
-// the model is in effect when the box command is assembled (the adapters read cfg.ModelFor).
-func (a *app) withStepModel(agent, model, effort string, fn func()) {
-	if model == "" && effort == "" {
-		fn()
-		return
+// reviewLadder parses a review stage's raw .agent/loop.yaml agent: rungs into targets, PRESERVING
+// provider, model, effort, and account (and every fallback rung) — dropping only preset rungs, since
+// a once-per-stage review takes targets, not a rotation of presets. It replaces the old stepModel,
+// which kept only (model, effort) off the first rung and discarded the provider — so a claude-led
+// run's `codex:…` signoff resolved to `claude --model <a-codex-model>`, an invalid combination, and
+// the cross-vendor reviewer the config promised was never actually run.
+func reviewLadder(rungs []string) ([]agents.Target, error) {
+	rs, err := loopcfg.Rungs(rungs)
+	if err != nil {
+		return nil, err
 	}
-	prevM, prevE := a.cfg.ActiveModel(agent), a.cfg.ActiveEffort(agent)
-	if model != "" {
-		a.cfg.SetActiveModel(agent, model)
-	}
-	if effort != "" {
-		a.cfg.SetActiveEffort(agent, effort)
-	}
-	defer func() {
-		a.cfg.SetActiveModel(agent, prevM)
-		a.cfg.SetActiveEffort(agent, prevE)
-	}()
-	fn()
-}
-
-// stepModel resolves a single-model step's (review, between) model+effort from its .agent/loop.yaml
-// agent: ladder — the first TARGET rung carrying a model/effort, else "" (the work model runs it).
-// A preset rung is skipped here: these steps run once (or once per task), so they take a target's
-// model, not a rotation.
-func stepModel(rungs []string) (model, effort string) {
-	if rs, err := loopcfg.Rungs(rungs); err == nil {
-		for _, r := range rs {
-			if r.Target != nil && (r.Target.Model != "" || r.Target.Effort != "") {
-				return r.Target.Model, r.Target.Effort
-			}
+	var ladder []agents.Target
+	for _, r := range rs {
+		if r.Target != nil {
+			ladder = append(ladder, *r.Target)
 		}
 	}
-	return "", ""
+	return ladder, nil
+}
+
+// reviewRotation builds a review stage's own rotation from its ladder, so the stage runs on the
+// configured provider/model/effort/account and rotates its OWN fallback rungs on a rate limit —
+// exactly like the work loop. An empty (or preset-only) ladder falls back to def: between → signoff
+// → the work rotation, so an unconfigured stage still reviews on the work target.
+func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*rotation, error) {
+	ladder, err := reviewLadder(rungs)
+	if err != nil {
+		return nil, err
+	}
+	if len(ladder) == 0 {
+		return def, nil
+	}
+	return a.buildRotation(workAgent, ladder)
+}
+
+// runReview runs one review stage (signoff or between) on its OWN rotation — the configured
+// provider, model, effort, and account — and fails CLOSED. A rate limit rotates the stage's ladder
+// (or waits) and retries; a launch error or a nonzero, non-limit exit is retried within a small
+// budget, and if the stage still can't run it returns an error so the caller can't mistake "nothing
+// reopened" for "reviewed and accepted". A user interrupt (ctx canceled) returns nil — not a review
+// failure. Local counters keep review trouble out of the work loop's stop accounting.
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}) error {
+	var fails, waits, retries int
+	for {
+		agent := a.applyTarget(rev)
+		code, out, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, hosts, sink, peers)
+		if ctx != nil && ctx.Err() != nil {
+			return nil // user interrupt — the caller handles stopping, not a review failure
+		}
+		switch action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries); action {
+		case actContinue:
+			return nil
+		case actWait:
+			if rev.rotates() {
+				a.rotateOnLimit(rev, resetAt, &waits, wake)
+			} else {
+				sleepForLimit(wait, resetAt, wake)
+			}
+		case actRetryNow:
+			sleepOrWake(wait, wake)
+		case actRetry:
+			if fails > maxLoopFailures {
+				return fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
+			}
+			sleepOrWake(10*time.Second, wake)
+		case actStop:
+			return fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
+		}
+	}
 }
 
 // parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
@@ -1783,12 +1815,16 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Warn("%s", note)
 		}
 	}
-	// Per-step signoff/between models from .agent/loop.yaml (between falls back to the signoff
-	// model). Swapped in only for those iterations.
-	signoffModel, signoffEffort := stepModel(lc.Signoff.Agent)
-	betweenModel, betweenEffort := stepModel(lc.Between.Agent)
-	if betweenModel == "" && betweenEffort == "" { // between falls back to the signoff model
-		betweenModel, betweenEffort = signoffModel, signoffEffort
+	// Per-stage signoff/between rotations from .agent/loop.yaml — each runs on its OWN configured
+	// provider/model/effort/account and rotates its own fallback ladder on a limit (NOT a model name
+	// pasted onto the work provider). An unset stage falls back: between → signoff → the work loop.
+	signoffRot, err := a.reviewRotation(lc.Signoff.Agent, agent, rot)
+	if err != nil {
+		return 2, fmt.Errorf("signoff agent: %w", err)
+	}
+	betweenRot, err := a.reviewRotation(lc.Between.Agent, agent, signoffRot)
+	if err != nil {
+		return 2, fmt.Errorf("between agent: %w", err)
 	}
 	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
@@ -1931,9 +1967,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 					if finished := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finished) > 0 {
 						ui.Info("between-tasks audit — reviewing %s", strings.Join(taskIDsOf(finished), ", "))
 						prompt := loopBetweenPrompt(repo, queues, lc.Between.Prompt, finished)
-						a.withStepModel(agent, betweenModel, betweenEffort, func() {
-							_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(prompt), hosts, sink, peers)
-						})
+						// Runs on between.agent's own target and fails closed — but a per-task audit that
+						// can't run warns loudly (the task went unaudited) rather than halting the run.
+						if rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, iterCmd(prompt), hosts, sink, peers, wake); rerr != nil {
+							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
+						}
 					}
 				}
 			case actWait:
@@ -1977,11 +2015,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// Scale the cap to this run's batch (completed tasks), clamped to [3, signoff.rounds].
 		maxSignoffRounds := signoffRoundCap(completed, signoffRounds(lc))
 		ui.Info("queue empty — running signoff (round %d/%d)", signoffRound, maxSignoffRounds)
-		// The signoff runs on signoff.agent when set — a stronger model reviews the cheaper work
-		// loop's output; unset → the loop's model. Restored after, so the next work round rotates as before.
-		a.withStepModel(agent, signoffModel, signoffEffort, func() {
-			_, _, _ = a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(signoff), hosts, sink, peers)
-		})
+		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
+		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
+		// rather than let "nothing reopened" read as an accepting signoff.
+		if serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake); serr != nil {
+			return 1, serr
+		}
 		// A stop that landed during the signoff pass is honored before the next round is decided.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 			cf, _ := queueProgress(hosts)

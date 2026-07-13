@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop's between/signoff reviews now actually run on their configured target — and fail
+  closed.** `stepModel` kept only `(model, effort)` off a review stage's `agent:` ladder and pasted
+  it onto the *work* provider, discarding the provider, account, and fallback rungs — so a
+  claude-led run's `codex:gpt-5.6-sol` signoff resolved to `claude --model gpt-5.6-sol` (an invalid
+  pairing), and the cross-vendor reviewer the config promised was never actually launched. Reviews
+  now build their own rotation from the ladder — the real provider, model, effort, account, and
+  fallback rungs, rotating them on a rate limit like the work loop. And a review that can't run (a
+  launch error or a nonzero, non-limit exit) is retried, then stops the loop loudly for signoff or
+  warns "left unaudited" for a between audit — never mistaken for "nothing reopened, accepted".
+
 - **`coop credentials` now shows how stale each token is.** Every signed-in credential renders a
   `rotated <age>` field — the mtime of its token material (claude's `.credentials.json`, codex/grok's
   `auth.json`), which any login or OAuth refresh bumps. It answers "how long could a leaked token

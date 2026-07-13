@@ -231,44 +231,29 @@ func TestNewlyFinished(t *testing.T) {
 	}
 }
 
-// TestWithStepModel: a step's model (review/between) is applied to that iteration ONLY, then the
-// prior model is restored — so the work loop keeps its own model; empty → no swap at all.
-func TestWithStepModel(t *testing.T) {
-	// Set: the model is the step model DURING fn, restored to the prior explicit model after.
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	a.cfg.SetActiveModel("claude", "sonnet-work") // the work loop's active model
-	var during string
-	a.withStepModel("claude", "opus-review", "xhigh", func() { during = a.cfg.ModelFor("claude") })
-	if during != "opus-review" {
-		t.Errorf("review iteration model = %q, want opus-review", during)
+// TestReviewLadder: a review stage's ladder keeps each rung's PROVIDER, model, effort, and the
+// fallback rungs — the fix for stepModel, which kept only (model, effort) off the first rung and
+// dropped the provider, so a claude-led run's `codex:…` signoff resolved to `claude --model
+// <a-codex-model>` and the cross-vendor reviewer was never actually run.
+func TestReviewLadder(t *testing.T) {
+	ladder, err := reviewLadder([]string{"codex:gpt-5.6-sol/xhigh", "claude:claude-fable-5/xhigh"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := a.cfg.ModelFor("claude"); got != "sonnet-work" {
-		t.Errorf("after the step the work model must be restored: got %q, want sonnet-work", got)
+	if len(ladder) != 2 {
+		t.Fatalf("both rungs must survive (the fallback too), got %d", len(ladder))
 	}
-	// Empty: no swap — fn runs on whatever the loop model is, and nothing changes.
-	b := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	b.cfg.SetActiveModel("claude", "sonnet-work")
-	b.withStepModel("claude", "", "", func() {
-		if got := b.cfg.ModelFor("claude"); got != "sonnet-work" {
-			t.Errorf("empty step model → loop model runs, got %q", got)
-		}
-	})
-	if got := b.cfg.ModelFor("claude"); got != "sonnet-work" {
-		t.Errorf("empty step model → model unchanged, got %q", got)
+	// Rung 0 keeps its provider — NOT discarded onto the work provider.
+	if ladder[0].Provider != "codex" || ladder[0].Model != "gpt-5.6-sol" || ladder[0].Effort != "xhigh" {
+		t.Errorf("rung 0 = %+v, want codex / gpt-5.6-sol / xhigh", ladder[0])
 	}
-}
-
-// stepModel resolves a review/between agent: ladder to the first target rung's model+effort, else "".
-func TestStepModel(t *testing.T) {
-	if m, e := stepModel([]string{"codex:gpt-5.6-sol/xhigh", "claude:fable"}); m != "gpt-5.6-sol" || e != "xhigh" {
-		t.Errorf("stepModel = %q/%q, want gpt-5.6-sol/xhigh", m, e)
+	// Rung 1 (the fallback) survives with its own provider — stepModel dropped it entirely.
+	if ladder[1].Provider != "claude" || ladder[1].Model != "claude-fable-5" {
+		t.Errorf("rung 1 = %+v, want claude / claude-fable-5", ladder[1])
 	}
-	if m, e := stepModel(nil); m != "" || e != "" {
-		t.Errorf("empty ladder → \"\"/\"\", got %q/%q", m, e)
-	}
-	// A bare provider (no model) yields "" — the work model runs the step.
-	if m, _ := stepModel([]string{"claude"}); m != "" {
-		t.Errorf("a model-less rung should yield \"\", got %q", m)
+	// An empty ladder yields no rungs — the caller falls back to the work rotation.
+	if got, _ := reviewLadder(nil); len(got) != 0 {
+		t.Errorf("empty ladder → no rungs, got %v", got)
 	}
 }
 
