@@ -910,16 +910,42 @@ func TestMigrateFlatVaults(t *testing.T) {
 // TestPromptLine: coop prompt's line shows non-zero segments only, "·"-separated, in a fixed
 // order (todo, doing, blocked, looping, forks); "" when idle so an embedding prompt stays clean.
 func TestPromptLine(t *testing.T) {
-	if got := promptLine(taskCounts{}, 0, 0); got != "" {
+	if got := promptLine(taskCounts{}, 0, 0, false); got != "" {
 		t.Errorf("idle should be empty, got %q", got)
 	}
-	if got := promptLine(taskCounts{Done: 9}, 0, 0); got != "" {
+	if got := promptLine(taskCounts{Done: 9}, 0, 0, false); got != "" {
 		t.Errorf("done-only isn't actionable state — should be empty, got %q", got)
 	}
-	if got := promptLine(taskCounts{Todo: 3, Blocked: 1}, 2, 1); got != "3 todo · 1 blocked · 1 looping · 2 forks" {
+	if got := promptLine(taskCounts{Todo: 3, Blocked: 1}, 2, 1, false); got != "3 todo · 1 blocked · 1 looping · 2 forks" {
 		t.Errorf("got %q", got)
 	}
-	if got := promptLine(taskCounts{Doing: 2}, 1, 0); got != "2 doing · 1 fork" { // singular fork
+	if got := promptLine(taskCounts{Doing: 2}, 1, 0, false); got != "2 doing · 1 fork" { // singular fork
 		t.Errorf("got %q", got)
+	}
+	// The unsigned nudge appends when set; alone (no other state) it's the whole line.
+	if got := promptLine(taskCounts{Todo: 1}, 0, 0, true); got != "1 todo · unsigned" {
+		t.Errorf("got %q", got)
+	}
+	if got := promptLine(taskCounts{}, 0, 0, true); got != "unsigned" {
+		t.Errorf("unsigned alone should be the whole line, got %q", got)
+	}
+}
+
+func TestSignOnExitAndPromptWarn(t *testing.T) {
+	// shouldSignOnExit: only when you sign, not a fork, clean tree.
+	cases := []struct{ fork, signs, dirty, want bool }{
+		{false, true, false, true},   // sign a clean interactive session
+		{true, true, false, false},   // fork → land-time re-sign owns it
+		{false, false, false, false}, // you don't sign by default
+		{false, true, true, false},   // dirty tree → never touch it
+	}
+	for _, c := range cases {
+		if got := shouldSignOnExit(c.fork, c.signs, c.dirty); got != c.want {
+			t.Errorf("shouldSignOnExit(fork=%v,signs=%v,dirty=%v) = %v, want %v", c.fork, c.signs, c.dirty, got, c.want)
+		}
+	}
+	// promptSignWarn: only when you sign AND HEAD is unsigned.
+	if !promptSignWarn(true, true) || promptSignWarn(true, false) || promptSignWarn(false, true) {
+		t.Error("promptSignWarn should fire only when signs && headUnsigned")
 	}
 }

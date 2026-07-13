@@ -62,6 +62,18 @@ func TestSignBase(t *testing.T) {
 	}
 }
 
+func TestHeadUnsigned(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "plain")
+	if !headUnsigned(repo) {
+		t.Error("a plain commit has no gpgsig header — should read as unsigned")
+	}
+	// (The signed→false path shares the exact gpgsig-header check that TestSignUnpushed asserts.)
+}
+
 func TestSignUnpushed(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

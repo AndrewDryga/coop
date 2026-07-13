@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -57,6 +58,48 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	}
 	return n, nil
 }
+
+// shouldSignOnExit decides whether an interactive/run box's exit should trigger a host-side re-sign
+// of the commits it made: only when you sign by default, it's NOT a fork (fork-merge re-signs at
+// land), and the tree is clean — an interactive session may exit mid-edit, and a re-sign must never
+// touch an in-progress tree (the caller hints `coop sign` instead). Pure.
+func shouldSignOnExit(isFork, wantsSigning, dirty bool) bool {
+	return wantsSigning && !isFork && !dirty
+}
+
+// signOnBoxExit re-signs the commits a box made this session (preHead..HEAD) with your host key,
+// after the box has exited. Scoped to the SESSION range — not @{upstream}..HEAD — so it signs
+// exactly what this box produced and needs no upstream; a session that made no commits is a no-op.
+// Best-effort: it never blocks teardown. Forks/dirty-tree are skipped (shouldSignOnExit), with a
+// `coop sign` hint when the session committed but the tree is now dirty.
+func (a *app) signOnBoxExit(repo, preHead string, isFork bool) {
+	if repo == "" || preHead == "" || preHead == gitOut(repo, "rev-parse", "HEAD") {
+		return // no repo, or the session made no commit → nothing to sign
+	}
+	if !shouldSignOnExit(isFork, wantsSigning(), gitDirty(repo)) {
+		if wantsSigning() && !isFork {
+			ui.Info("this session's commits are unsigned and your tree is dirty — run `coop sign` after you commit or stash")
+		}
+		return
+	}
+	if n, err := a.signUnpushed(repo, preHead); err != nil {
+		ui.Warn("could not sign this session's commits: %v — run `coop sign`", err)
+	} else if n > 0 {
+		ui.Info("signed %s with your host key", ui.Count(n, "commit"))
+	}
+}
+
+// headUnsigned reports whether HEAD carries NO signature — its raw object has no gpgsig header. This
+// is the robust check: git's %G?/%GK report N/empty for an SSH commit that IS signed but can't be
+// verified (no allowedSignersFile), so they'd flag signed commits as unsigned. One bounded git call.
+func headUnsigned(repo string) bool {
+	obj := gitOut(repo, "cat-file", "commit", "HEAD")
+	return obj != "" && !strings.Contains(obj, "\ngpgsig ")
+}
+
+// promptSignWarn reports whether `coop prompt` should show an unsigned nudge: you sign by default
+// but HEAD is unsigned (a box commit not yet signed). Pure — the caller supplies the two facts.
+func promptSignWarn(signs, headUnsigned bool) bool { return signs && headUnsigned }
 
 // cmdSign re-signs the current branch's unpushed commits with your host signing key — for a remote
 // (a protected main) that requires signatures, since box commits are unsigned. Never pushes, never

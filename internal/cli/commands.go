@@ -63,10 +63,15 @@ func (a *app) runInBox(cmd []string, agent string, peers []agents.Target) (int, 
 	if len(peers) > 0 || (a.preset != nil && agent != "") {
 		lead = agent // a preset makes the agent a lead too: its routing contract mounts via ConsultLead
 	}
-	return box.Run(a.cfg, a.rt, box.RunSpec{
+	pre := gitOut(repo, "rev-parse", "HEAD")
+	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 	})
+	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
+	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
+	a.signOnBoxExit(repo, pre, false)
+	return code, err
 }
 
 func (a *app) cmdRun(args []string) (int, error) {
@@ -851,10 +856,13 @@ func (a *app) cmdFusion(args []string) (int, error) {
 		desc = "the preset's roles"
 	}
 	ui.Info("fusion: %s governs; peers %s consulted read-only", governor, desc)
-	return box.Run(a.cfg, a.rt, box.RunSpec{
+	pre := gitOut(repo, "rev-parse", "HEAD")
+	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
+	a.signOnBoxExit(repo, pre, false)
+	return code, err
 }
 
 // parseGovernor takes a leading target (provider[:model][@account]) as the governor (else
@@ -2199,7 +2207,13 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 			looping++
 		}
 	}
-	if line := promptLine(c, len(names), looping); line != "" {
+	// One extra bounded git call, and only when you sign by default: is HEAD unsigned (a box commit
+	// not yet signed)? A nudge to run `coop sign` before a protected remote rejects the push.
+	signWarn := false
+	if wantsSigning() {
+		signWarn = headUnsigned(repo)
+	}
+	if line := promptLine(c, len(names), looping, signWarn); line != "" {
 		fmt.Println(line)
 	}
 	return 0, nil
@@ -2207,7 +2221,7 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 
 // promptLine builds coop prompt's compact status line from the counts: non-zero segments only,
 // "·"-separated, returning "" when everything is idle so an embedding prompt shows nothing.
-func promptLine(c taskCounts, forks, looping int) string {
+func promptLine(c taskCounts, forks, looping int, signWarn bool) string {
 	var seg []string
 	if c.Todo > 0 {
 		seg = append(seg, fmt.Sprintf("%d todo", c.Todo))
@@ -2227,6 +2241,9 @@ func promptLine(c taskCounts, forks, looping int) string {
 			word = "fork"
 		}
 		seg = append(seg, fmt.Sprintf("%d %s", forks, word))
+	}
+	if signWarn {
+		seg = append(seg, "unsigned")
 	}
 	return strings.Join(seg, " · ")
 }

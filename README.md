@@ -274,6 +274,14 @@ signing key, so without that a global `gpgsign=true` would fail every commit. Yo
 never enters the box; commits made inside it are unsigned. (Forks can still land
 signed — see [Landing](#land-it-rebase-gate-sign).)
 
+Since box commits are unsigned, a remote that requires signed commits (a protected `main`)
+would reject them. If you sign by default (`commit.gpgsign=true`), coop re-signs on the HOST,
+where your key lives: `coop loop` signs each cycle's commits, an interactive/run/fusion box
+signs its session's commits on exit (a dirty tree is skipped — commit or stash, then
+`coop sign`), and `coop sign` re-signs the unpushed range (`@{upstream}..HEAD`, or `--from
+<ref>`) anytime. For editor (ACP) sessions, `coop prompt` shows an `unsigned` nudge when HEAD
+is unsigned — run `coop sign` before pushing. It never pushes or rewrites pushed history.
+
 ### Prove it: `coop doctor`
 
 ```bash
