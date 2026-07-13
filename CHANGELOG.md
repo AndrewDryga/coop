@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Simple discovered work goes to the queue, not the backlog.** The backlog is now scoped to the
+  BIG or not-yet-ready — work that needs a spec, a decision, or real scoping first. A simple, ready
+  task an agent spots while working goes straight to `00_todo/` (`coop tasks add`) so the loop
+  drains it, rather than into a drawer nothing auto-touches (the reason it had bloated to 21 items
+  the human then hand-triaged back). The scaffolded contract, the loop work prompt, and `coop
+  backlog` help all say so, keeping the backlog a short list of things that genuinely need planning.
+
 - **The loop's closing digest nudges you to prune a piled-up `99_done/`.** Done tasks are removed
   only by a human, so once ten or more have accumulated the loop closes with a one-line reminder to
   run `coop tasks rm --all-done` after you review and push — it never prunes anything itself.

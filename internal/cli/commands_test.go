@@ -120,6 +120,8 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 		"Work exactly ONE task per run", "the loop's job, not yours",
 		// Reference the commit by its stable trailer, not its volatile SHA (coop re-signs on the host).
 		"Coop-Task: <task-id>` trailer", "NOT its SHA", "re-signs your commit",
+		// Discovered separate work: simple → 00_todo/, big → xx_backlog/ (never in this commit).
+		"SPOT a SEPARATE task", "create its folder in 00_todo/", "xx_backlog/",
 		// The contract is auto-loaded as the agent's instruction file — the prompt must not force a
 		// re-read of ~2K tokens already in context, only offer the path as a fallback.
 		"already loaded in your context", "only if its content is not",
