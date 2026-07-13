@@ -108,6 +108,9 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 		"Work exactly ONE task per run", "the loop's job, not yours",
 		// Reference the commit by its stable trailer, not its volatile SHA (coop re-signs on the host).
 		"Coop-Task: <task-id>` trailer", "NOT its SHA", "re-signs your commit",
+		// The contract is auto-loaded as the agent's instruction file — the prompt must not force a
+		// re-read of ~2K tokens already in context, only offer the path as a fallback.
+		"already loaded in your context", "only if its content is not",
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("folder work prompt missing %q:\n%s", want, work)

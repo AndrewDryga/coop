@@ -8,6 +8,12 @@
   spins up only for a custom `preflight.prompt`, which now SETS that extra cleanup pass instead of
   appending to a built-in prompt.
 
+- **Loop prompts stop re-reading the contract.** Every agent auto-loads its instruction file (the
+  `CLAUDE.md`→`AGENTS.md` symlink / `AGENTS.md` / `GEMINI.md`), yet the work and preflight prompts
+  opened with an unconditional "Read AGENTS.md" — a duplicate ~2K tokens plus a wasted tool turn,
+  every iteration and every review pass. The prompts now reference the contract and offer the
+  absolute path only as a fallback when it isn't in context.
+
 - **The signoff reviews what the run completed — not all of `99_done/`.** Each signoff round now
   gets an explicit subject list: the tasks that entered `99_done/` since the last accepted round
   (for round 1, since the run started). Prior runs' history — `99_done/` persists until you prune
