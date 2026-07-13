@@ -87,7 +87,7 @@ func projectYAML(subprojects []string) string {
 # wins for a one-off, so a committed value can only TIGHTEN the default (egress's default is the
 # loosest — "open" — so a repo can pin none but never widen your explicit none).
 # box:
-#   egress: none        # outbound network: "open" (npm + model API) or "none" (offline)
+#   egress: none        # "open" = npm + model API (default); "none" cuts ALL network — forensics only, agents can't work
 #   auto_up: false      # auto-start .agent/compose.yml sibling services (default true)
 #   network: false      # join the sibling-services network (default true)
 #   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset

@@ -236,9 +236,10 @@
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> fork feature claude     <span class="t"># agent works in a throwaway clone…</span>
-<span class="k">coop</span> fork review feature     <span class="t"># …you read the diff…</span>
-<span class="k">coop</span> fork merge feature      <span class="t"># …and land it on your branch</span></pre>
+                    ><span class="k">coop</span> tasks add "wire up --json" <span class="t"># 1. queue the work as a task</span>
+<span class="k">coop</span> fork feature claude --loop <span class="t"># 2. a fork works the queue in its own clone…</span>
+<span class="k">coop</span> fork review feature        <span class="t"># 3. …you read the diff like a PR…</span>
+<span class="k">coop</span> fork merge feature         <span class="t"># 4. …and land it on your branch</span></pre>
                     <p>
                         Anything you type after the agent's name is passed
                         straight through to it, so
@@ -270,10 +271,23 @@
                         own, so coop mounts a curated one: your name and email
                         (commits are authored as <em>you</em>), your global
                         gitignore, and <code>commit.gpgsign=false</code>. Your
-                        signing key never enters the box, so commits made inside
-                        it are unsigned — but work landed through a fork can
-                        still be signed on the host, where your key lives.
-                        <a href="#forks">More on that below.</a>
+                        signing key never enters the box — so commits made inside
+                        it are <em>authored</em> as you but left <em>unsigned</em>.
+                    </p>
+                    <p>
+                        If you sign your commits
+                        (<code>commit.gpgsign=true</code> in your global git
+                        config), coop closes that gap on the host, where your key
+                        lives: it re-signs the box's commits with your key on
+                        every path that produces them — when an interactive or
+                        editor box exits, after each <code>coop loop</code> cycle,
+                        and as a fork lands through <code>coop fork merge</code>.
+                        You can also re-sign the current branch's unpushed range
+                        yourself with <code>coop sign</code>. Your history ends up
+                        signed by <em>you</em>, exactly as if you'd typed the
+                        commits — so a protected <code>main</code> that requires
+                        signatures accepts work an agent did in a box.
+                        <a href="#forks">More on forks below.</a>
                     </p>
                 </section>
 
@@ -1150,7 +1164,11 @@ roles:
                             <td><code>COOP_EGRESS</code></td>
                             <td>
                                 <code>none</code> cuts the box off the network
-                                entirely — no outbound, nothing to exfiltrate
+                                entirely (loopback only). An agent can't reach
+                                its model API this way, so it isn't a working
+                                mode — it's for forensics: quarantine a box you
+                                think is compromised, then exec in to see what it
+                                did. The default is <code>open</code>.
                             </td>
                         </tr>
                         <tr>
