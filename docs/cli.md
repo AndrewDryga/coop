@@ -143,8 +143,8 @@ coop credentials — list stored credentials; a path grammar edits one.
   A CREDENTIAL is one stored account/login — a rate-limit slot. (Orchestration
   recipes are PRESETS; see coop help presets. 'coop profiles' was the pre-v3 name.)
   Each token narrows: no args lists every agent, an agent lists its credentials
-  (signed in? default?), a credential shows its detail, and a trailing attribute
-  reads or writes one property of it. A credential is one subscription; add more
+  (signed in? default? how long since its token last rotated?), a credential shows
+  its detail, and a trailing attribute reads or writes one property of it. A credential is one subscription; add more
   with 'coop login <agent>@<name>', then an unattended loop rotates across them on
   a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate
   axis — set it inline (claude:opus) or in a preset, never on a credential.

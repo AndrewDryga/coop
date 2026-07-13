@@ -73,6 +73,27 @@ func ProfileRenewable(cfg *config.Config, agent, profile string) bool {
 	return json.Unmarshal(data, &c) == nil && c.ClaudeAiOauth.RefreshToken != ""
 }
 
+// ProfileTokenMtime returns when agent's named-profile token material last changed on disk — the
+// mtime of its AuthMarker file (claude's .credentials.json, codex/grok's auth.json). ANY rewrite
+// bumps it: a fresh login OR an OAuth refresh, both of which mint new material and retire the old
+// copy — so this answers "how stale is the token a leak could still use", the signal behind
+// rotating a credential to contain a blast radius. It stats ONLY the marker file, not the whole
+// profile dir, so unrelated session-transcript writes don't masquerade as a rotation. ok=false
+// when the login is an env-key one (no file) or the marker is missing/unreadable — the caller
+// renders that as a graceful "—", never an error.
+func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bool) {
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return time.Time{}, false
+	}
+	file, _ := ag.AuthMarker()
+	fi, err := os.Stat(filepath.Join(cfg.AgentProfileDir(agent, profile), file))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
 // EnsureProfilesDir prepares agent's credential vault for the named-profile layout, run
 // before a profile other than the default is created. The first time it runs (no
 // profiles/ dir yet) it creates profiles/ (0700) and, if a legacy flat login already

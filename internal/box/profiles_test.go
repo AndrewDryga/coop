@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -117,6 +118,48 @@ func TestProfileAuthed(t *testing.T) {
 	}
 	if !ProfileAuthed(cfg, "claude", "personal") {
 		t.Error("env API key should authenticate any profile")
+	}
+}
+
+func TestProfileTokenMtime(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+
+	// Missing marker → not knowable (rendered as "—" by the caller), never an error.
+	if _, ok := ProfileTokenMtime(cfg, "claude", "ghost"); ok {
+		t.Error("a missing credential file should report ok=false")
+	}
+	// Unknown agent → not knowable.
+	if _, ok := ProfileTokenMtime(cfg, "nope", "default"); ok {
+		t.Error("an unknown agent should report ok=false")
+	}
+	// A marker file present → its mtime is the rotation clock. Set it to a known past instant.
+	work := cfg.AgentProfileDir("claude", "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(work, ".credentials.json")
+	if err := os.WriteFile(marker, []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(marker, old, old); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ProfileTokenMtime(cfg, "claude", "work")
+	if !ok {
+		t.Fatal("a present marker should report ok=true")
+	}
+	if got.Unix() != old.Unix() {
+		t.Errorf("mtime = %v, want %v", got, old)
+	}
+	// It stats the AuthMarker specifically, NOT the newest file in the dir — a later session
+	// write must not masquerade as a rotation.
+	if err := os.WriteFile(filepath.Join(work, "session.jsonl"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ProfileTokenMtime(cfg, "claude", "work"); got.Unix() != old.Unix() {
+		t.Errorf("mtime moved to %v after an unrelated write; must track only the marker", got)
 	}
 }
 

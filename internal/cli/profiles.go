@@ -96,8 +96,15 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			if p == def {
 				tag = pal.Dim("  (default)")
 			}
+			// How stale the token material is — the rotation clock behind a blast-radius fix. Only
+			// for a signed-in credential (a "not signed in" one has nothing to rotate). Dim, after the
+			// padded status so the column lines up across profiles.
+			rot := ""
+			if label != "not signed in" {
+				rot = pal.Dim("  rotated " + a.credentialAge(agent, p))
+			}
 			// Pad the plain strings (rune-aware), then style — never color inside a width.
-			fmt.Printf("  %s  %s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), tag)
+			fmt.Printf("  %s  %s%s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), rot, tag)
 		}
 		for _, p := range relogin {
 			fmt.Printf("  %s\n", pal.Dim("↻ re-login: coop login "+agent+"@"+p))
@@ -124,6 +131,17 @@ func (a *app) profileState(agent, p string) (label string, expired bool) {
 		return "token expired", true
 	}
 	return "signed in", false
+}
+
+// credentialAge renders how long ago agent's profile token material last changed ("3d ago"), or
+// "—" when that's unknowable — an env-key login with no marker file, or a missing/unreadable one.
+// mtime is the honest proxy: a refresh or a fresh login rewrites the material and retires the old
+// token, which is exactly what the rotation clock should read. See box.ProfileTokenMtime.
+func (a *app) credentialAge(agent, profile string) string {
+	if t, ok := box.ProfileTokenMtime(a.cfg, agent, profile); ok {
+		return agoStr(t)
+	}
+	return "—"
 }
 
 // paintStatus colors a profileState label (possibly padded): green signed in, yellow
@@ -189,6 +207,9 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	fmt.Println(pal.Bold(agent + " / " + profile))
 	label, expired := a.profileState(agent, profile)
 	fmt.Printf("  status     %s\n", paintStatus(pal, label))
+	if label != "not signed in" {
+		fmt.Printf("  rotated    %s\n", a.credentialAge(agent, profile))
+	}
 	def := "no"
 	if profile == a.cfg.DefaultProfileOf(agent) {
 		def = "yes"

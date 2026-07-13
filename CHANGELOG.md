@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop credentials` now shows how stale each token is.** Every signed-in credential renders a
+  `rotated <age>` field — the mtime of its token material (claude's `.credentials.json`, codex/grok's
+  `auth.json`), which any login or OAuth refresh bumps. It answers "how long could a leaked token
+  still be used" at a glance, so rotating one to contain a blast radius is an informed call; an
+  env-key login with no marker file shows `—`.
+
 - **A preset now owns the whole ACP toolbar.** With a preset active, its lead ladder pins the
   provider, model, and effort and rotates the account — so the toolbar renders only the Preset
   dropdown, not Provider and Account beside it (the native model/effort were already hidden). They
