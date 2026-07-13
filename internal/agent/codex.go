@@ -114,9 +114,14 @@ func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 
-// ExclusiveHome: codex ≥0.144 keeps sqlite state (state_*.sqlite, logs_*.sqlite, …) in ~/.codex;
-// a second box on the same account fails "failed to initialize sqlite state runtime".
-func (codexAgent) ExclusiveHome() bool { return true }
+// SharedHomePaths: codex ≥0.144 keeps single-writer sqlite state (state_*.sqlite, logs_*, …)
+// directly in ~/.codex, so each box gets a private home; what stays shared from the profile:
+// auth.json (codex rewrites it IN PLACE — storage.rs truncate+write — so one bound inode serves
+// every box, and its single-use refresh-token rotation lands where all of them see it), the
+// session rollouts (per-file, resume needs them), and installed user content.
+func (codexAgent) SharedHomePaths() []string {
+	return []string{"auth.json", "sessions/", "plugins/", "skills/", "rules/"}
+}
 
 // CredentialEnvKeys is Codex's only token env var.
 func (codexAgent) CredentialEnvKeys() []string { return []string{"OPENAI_API_KEY"} }

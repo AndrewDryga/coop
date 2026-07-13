@@ -21,6 +21,20 @@ if you catch yourself grinding out repetitive edits by hand, stop and hand them 
   docs sweeps, repo surveys. Hand it an exact spec and review its diff like a
   stranger's PR; it never commits — you gate and you commit.
 
+## Consult like a research lead
+
+- **Don't anchor your advisors.** On an open or high-stakes question, hand thinker
+  and critic the neutral problem statement and constraints — not your favored answer.
+  Two advisors anchored to your leaning are one opinion; share your own candidate only
+  in a second round, after each has committed to its own.
+- **Reviews carry a trap list.** "Review this" finds what's easy; a named trap finds
+  what's expensive. When routing a review, enumerate the specific failure modes to
+  hunt — e.g. a mount that survives rotation, validation skipped on the retry path,
+  a lock released on the error branch — not just the files to read.
+- **One wave is not a consult.** When answers come back conflicting or with a gap,
+  that's the input to round two — re-ask with the contradiction or counterexample the
+  first round exposed — not a coin flip between them.
+
 Verify what comes back. A role's answer is an input, not a verdict: reproduce the
 bug it diagnosed, run the test it claims passes, spot-check the sweep it says is
 complete. You own the result; "the subagent said so" is never a reason in a commit.

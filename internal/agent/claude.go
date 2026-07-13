@@ -264,5 +264,5 @@ func (claudeAgent) DelegateExec() string {
 func (claudeAgent) ShellPrelude() string  { return "" }
 func (claudeAgent) InstallScript() string { return "" }
 
-// ExclusiveHome: no single-writer state in ~/.claude — concurrent boxes are fine.
-func (claudeAgent) ExclusiveHome() bool { return false }
+// SharedHomePaths: no single-writer state in ~/.claude — the whole home is shared.
+func (claudeAgent) SharedHomePaths() []string { return nil }

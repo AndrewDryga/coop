@@ -192,5 +192,5 @@ func (geminiAgent) DelegateExec() string {
 func (geminiAgent) ShellPrelude() string  { return "" }
 func (geminiAgent) InstallScript() string { return "" }
 
-// ExclusiveHome: no single-writer state in ~/.gemini — concurrent boxes are fine.
-func (geminiAgent) ExclusiveHome() bool { return false }
+// SharedHomePaths: no single-writer state in ~/.gemini — the whole home is shared.
+func (geminiAgent) SharedHomePaths() []string { return nil }

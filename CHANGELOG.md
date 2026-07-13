@@ -4,16 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **Two codex boxes on one account no longer crash each other.** codex ≥0.144 keeps single-writer
-  sqlite state in `~/.codex`; a second box mounting the same account's home died at startup with a
-  cryptic `failed to initialize sqlite state runtime` (an ACP provider switch, a second Zed thread,
-  or a loop running beside a session). coop now serializes such boxes per account with a host-side
-  lock: the second spawn fails fast with an error naming the busy account and the way out (close
-  the other session, or run on a different `@account`). Declared per agent (`ExclusiveHome`) —
-  codex today, others unaffected.
+- **Parallel codex boxes on one account no longer crash each other.** codex ≥0.144 keeps
+  single-writer sqlite state (`state_*.sqlite`, logs, memories, goals) directly in `~/.codex`, so a
+  second box mounting the same account's home died at startup with a cryptic `failed to initialize
+  sqlite state runtime` (a second Zed thread, an ACP provider switch, a loop beside a session).
+  Each codex box now gets a PRIVATE home — seeded with the profile's config/identity files, its
+  sqlite state per-box — while the durable pieces stay shared from the account: `auth.json` is
+  bound through as one file (codex rewrites it in place, so a token refresh — whose refresh token
+  is single-use — lands where every box and the host see it), plus `sessions/`, `plugins/`,
+  `skills/`, and `rules/`. Run as many codex sessions on one account as you like; resume and login
+  keep working. Declared per agent (`SharedHomePaths`) — codex today, others share as before.
 
 - **An ACP session that dies in a box restart now says so in the thread.** When the respawned box
-  couldn't re-establish a session (e.g. the codex crash above), the failure went only to stderr:
+  couldn't re-establish a session (e.g. a box that fails to start), the failure went only to stderr:
   the toolbar silently kept coop-only dropdowns (no model/effort) and every later prompt or
   provider switch failed against a dead session. The proxy now posts the actual error into the
   thread with what to do next.

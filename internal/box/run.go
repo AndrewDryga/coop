@@ -135,13 +135,6 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	} else if !spec.Quiet {
 		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
 	}
-	unlock, err := lockAgentHome(cfg, spec)
-	if err != nil {
-		return -1, err
-	}
-	if unlock != nil {
-		defer unlock()
-	}
 	workdir := resolveWorkdir(spec, cfg)
 
 	mounts, err := ComputeMounts(spec.Repo, workdir)
@@ -217,6 +210,10 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 			os.RemoveAll(d)
 		}
 	}()
+	// Agents with single-writer home state (codex's sqlite) get a per-box PRIVATE home so
+	// parallel boxes on one account never contend; the scratch dirs live for exactly this run.
+	privHomes, privDirs := privateHomes(cfg, spec)
+	tmpDirs = append(tmpDirs, privDirs...)
 	var mcpMounts []extraMount
 	mcpPresent := spec.Homes && cfg.MCPActive()
 	if mcpPresent {
@@ -402,7 +399,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 
 	limits := boxLimits(cfg, rt.Name)
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, envFile, limits...)
+	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, networkName, envFile, privHomes, limits...)
 	if spec.Ctx != nil {
 		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 	}
@@ -891,7 +888,7 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName, envFile string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts []extraMount, networkName, envFile string, privHomes map[string]string, limits ...string) []string {
 	args := []string{"run", "--rm", "--label", LabelKey + "=" + LabelBox}
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
@@ -927,8 +924,25 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 	if spec.Homes {
 		// Only the launched agent's credential home (plus authenticated peers for
 		// fusion/consult) — never every agent's, so a plain run can't read the others'.
+		// An agent with single-writer home state (codex's sqlite) mounts a per-box PRIVATE
+		// home instead, with only its durable paths bound from the profile — parallel boxes
+		// on one account then never contend (see privateHomes).
 		scope := credentialScope(cfg, spec)
 		for _, agent := range scope {
+			if scratch := privHomes[agent]; scratch != "" {
+				ag, _ := agents.Get(agent)
+				skip := map[string]bool{}
+				// The ACP lead's sessions are overlay-mounted from the shared, credential-
+				// independent store just below — binding the profile's too would duplicate
+				// the -v target (a docker error, not a shadow).
+				if spec.SupervisorID != "" && agent == acpPrimary(spec) {
+					for _, d := range ag.ACPSessionDirs() {
+						skip[d] = true
+					}
+				}
+				args = append(args, privateHomeMountArgs(cfg.AgentDir(agent), scratch, cfg.HomeInBox, agent, ag.SharedHomePaths(), skip)...)
+				continue
+			}
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
 		}
 		// An ACP box (always supervised) shares the LEAD's session transcripts across credentials, so

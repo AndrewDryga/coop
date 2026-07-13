@@ -59,11 +59,16 @@ type Agent interface {
 	// login, and the env-file key it reads an API key from — either present means it's
 	// set up and worth offering as a consult peer.
 	AuthMarker() (file, envKey string)
-	// ExclusiveHome reports that this agent's CLI keeps single-writer state in its home
-	// dir (codex ≥0.144: sqlite databases under ~/.codex) — a second box mounting the
-	// same account's home crashes at startup or risks corrupting it, so box.Run
-	// serializes such boxes per account with a host-side lock.
-	ExclusiveHome() bool
+	// SharedHomePaths returns the home-relative paths that stay SHARED (bound from the
+	// account's profile) when this agent's home must otherwise be PRIVATE per box.
+	// Non-empty means the CLI keeps single-writer state in its home (codex ≥0.144:
+	// sqlite databases in ~/.codex) that two boxes on one account cannot share — so
+	// box.Run mounts a per-box scratch home seeded with the profile's small files and
+	// binds only these durable paths through: the credential, session rollouts, and
+	// installed user content. A trailing slash marks a dir (created if missing); a bare
+	// name is a file (skipped if missing). Empty = the whole home is shared as-is (no
+	// single-writer state; claude/gemini/grok today).
+	SharedHomePaths() []string
 	// CredentialEnvKeys is every env-file key this agent reads a token from — the
 	// AuthMarker key plus any alternates it honors (e.g. claude also reads
 	// ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN). A scoped run strips all of an

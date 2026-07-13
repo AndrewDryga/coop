@@ -8,7 +8,9 @@ Think the problem through before concluding: enumerate the plausible causes or d
 what each one predicts, and what evidence in the repo confirms or kills it. Read the
 actual source before asserting anything about it — cite `file:line` for every
 load-bearing claim, and mark anything you couldn't check as unverified rather than
-letting it pass as fact.
+letting it pass as fact. If you can't close the question, return the strongest
+conclusion you did verify plus the exact remaining gap — never vague optimism, and
+never "the rest is routine."
 
 Prefer the boring shape. The design that survives is usually the one with fewer moving
 parts; clever must earn its place in one sentence. When two options are close, pick by
