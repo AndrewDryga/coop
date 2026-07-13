@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop commits are now bound to their task, and the queue self-repairs.** Every loop commit ends
+  with a `Coop-Task: <id>` trailer (the work prompt and AGENTS.md instruct it), so the host can
+  finally map a commit to the task it completed — previously nothing did (`git log --grep <id>` was
+  empty repo-wide). Three repairs ride on it: **informed resume** — an in_progress task that already
+  has a landed commit (a crash after commit, before the folder-move) tells the next agent to
+  verify-and-finish or, if the review reopened it, rework — instead of blindly redoing it;
+  **post-fork-merge reconciliation** — when a fork lands, a parent-queue task whose trailer is now in
+  history moves to done automatically (a blocked one is flagged, never moved), so the parent loop
+  doesn't redo landed work; and **attempt evidence** — each work telemetry row records the tasks the
+  iteration finished and any it finished with no Coop-Task commit (unbindable), which also warns
+  loudly. The LLM still moves the folders; the controller supplies the evidence and repairs the drift.
+
 - **`coop loop` now records one telemetry row per stage.** Each preflight, work, between-audit, and
   signoff stage appends a JSON-Lines record to `.agent/runs/<run>.jsonl` (gitignored): the
   **effective** target that actually ran (provider/model/effort/account, post rate-limit rotation —

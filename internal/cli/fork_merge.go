@@ -212,6 +212,9 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if err := a.fastForwardParent(repo, ws, name); err != nil {
 		return false, err
 	}
+	// Reconcile the parent queue: a task whose Coop-Task trailer just landed moves to done/, so the
+	// parent loop doesn't redo work this fork already completed. Best-effort — the land already stuck.
+	a.reconcileQueueAfterMerge(repo, name)
 	return true, nil
 }
 

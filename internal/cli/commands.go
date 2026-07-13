@@ -1570,7 +1570,7 @@ func receiptClaim(n int, ok bool) string {
 // a relative path — so the queues (and AGENTS.md) are named absolute for every agent. With
 // several queues (a monorepo's per-component trees) they're all listed so the agent works the union.
 func loopWorkPrompt(repo string, queues []string) string {
-	return fmt.Sprintf("Read %s and the task queue(s) %s, then work the queue per the protocol. A task is a folder under a queue dir and its state is its directory (named with a sort prefix): 00_todo/ · 10_in_progress/ · 50_blocked/ · 99_done/. `coop` is NOT installed in this box, so you change a task's state by MOVING its folder between those dirs yourself — that move IS the state change; do not try to run `coop`. First, if a task is already in 10_in_progress/, a previous attempt was interrupted before it committed: read that task's state.md (its resume note — where it stopped, the next action, traps), then run `git status` and `git diff` to see its uncommitted work, and continue it (or discard the partial work with `git restore`/`git checkout` and redo it if off-track) until done. Otherwise pick the next task in 00_todo/ and claim it by moving its folder into 10_in_progress/. As you work, keep that task's state.md current — a small, overwritten snapshot of the status, what is done, the next action, and any traps — refreshed before each commit and before you pause; append your reasoning to its log.md. Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit). Do the work, run the gate, commit your work, then move its folder into 99_done/. If you hit a one-way-door decision, move its folder into 50_blocked/ and fill in its decision.md. Always update state.md as your final step, leaving it reflecting the finished state (do not blank it). Work exactly ONE task per run: take the task you claimed to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",
+	return fmt.Sprintf("Read %s and the task queue(s) %s, then work the queue per the protocol. A task is a folder under a queue dir and its state is its directory (named with a sort prefix): 00_todo/ · 10_in_progress/ · 50_blocked/ · 99_done/. `coop` is NOT installed in this box, so you change a task's state by MOVING its folder between those dirs yourself — that move IS the state change; do not try to run `coop`. First, if a task is already in 10_in_progress/, a previous attempt was interrupted before it committed: read that task's state.md (its resume note — where it stopped, the next action, traps), then run `git status` and `git diff` to see its uncommitted work, and continue it (or discard the partial work with `git restore`/`git checkout` and redo it if off-track) until done. Otherwise pick the next task in 00_todo/ and claim it by moving its folder into 10_in_progress/. As you work, keep that task's state.md current — a small, overwritten snapshot of the status, what is done, the next action, and any traps — refreshed before each commit and before you pause; append your reasoning to its log.md. Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit). Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge. Then move its folder into 99_done/. If you hit a one-way-door decision, move its folder into 50_blocked/ and fill in its decision.md. Always update state.md as your final step, leaving it reflecting the finished state (do not blank it). Work exactly ONE task per run: take the task you claimed to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
 }
 
@@ -1930,7 +1930,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		ui.Info("pre-flight: resolving answered blockers")
 		pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		pfCode, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, lc.Preflight.Prompt)), hosts, sink, peers)
-		a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts)
+		a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil)
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
@@ -1984,8 +1984,16 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			ui.Info("%s", progressBanner(n, c, active))
+			// Informed resume: if an in_progress task already carries a landed Coop-Task commit (a crash
+			// after commit before the folder-move, or a review reopen), prepend a line telling the agent
+			// to disambiguate and act — instead of blindly redoing it. Empty prefix → prompt unchanged.
+			iterWork := work
+			if pre := a.resumePrefixFor(repo, hosts); pre != "" {
+				iterWork = pre + "\n\n" + work
+			}
+			snapBefore := queueSnapshot(hosts)
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(work), hosts, sink, peers)
+			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(iterWork), hosts, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
 				break
@@ -1996,7 +2004,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				break
 			}
 			action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
-			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts)
+			// Attempt evidence: the tasks this iteration moved to done, and any it finished with NO
+			// Coop-Task commit in its HEAD range — unbindable, so warn (never silent) and record it.
+			finished := finishedTasks(snapBefore, queueSnapshot(hosts))
+			missing := untrailered(repo, iterHead, gitOut(repo, "rev-parse", "HEAD"), finished)
+			if len(missing) > 0 {
+				ui.Warn("task(s) %s finished with no Coop-Task commit this iteration — the harness can't bind them to a commit (the commit needs a `Coop-Task: <id>` trailer)", strings.Join(missing, ", "))
+			}
+			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing)
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
@@ -2034,7 +2049,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
 							btExit = 1
 						}
-						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts)
+						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts, nil, nil)
 					}
 				}
 			case actWait:
@@ -2097,7 +2112,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// reopened just now.
 		cf, _ := queueProgress(hosts)
 		reopened := cf.Todo + cf.Doing
-		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts)
+		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
