@@ -191,6 +191,3 @@ func (geminiAgent) DelegateExec() string {
 
 func (geminiAgent) ShellPrelude() string  { return "" }
 func (geminiAgent) InstallScript() string { return "" }
-
-// SharedHomePaths: no single-writer state in ~/.gemini — the whole home is shared.
-func (geminiAgent) SharedHomePaths() []string { return nil }

@@ -518,6 +518,12 @@ func TestACPSessionConfigAndBoxEnv(t *testing.T) {
 	if got := claude.BoxEnv("/home/node"); len(got) != 2 || got[0] != wantEnv[0] || got[1] != wantEnv[1] {
 		t.Errorf("claude BoxEnv = %v, want %v", got, wantEnv)
 	}
+	// codex redirects its single-writer sqlite state OFF the shared home to a container-local
+	// path, so parallel codex boxes on one account don't collide on the state runtime.
+	codex, _ := Get("codex")
+	if got := codex.BoxEnv("/home/node"); len(got) != 1 || got[0] != "CODEX_SQLITE_HOME=/home/node/.codex-state" {
+		t.Errorf("codex BoxEnv = %v, want [CODEX_SQLITE_HOME=/home/node/.codex-state]", got)
+	}
 	for _, n := range Names() {
 		a, _ := Get(n)
 		_ = a.ACPSessionConfig()
@@ -526,6 +532,8 @@ func TestACPSessionConfigAndBoxEnv(t *testing.T) {
 			if cfg := a.ACPSessionConfig(); len(cfg) != 0 {
 				t.Errorf("%s should force no session config, got %v", n, cfg)
 			}
+		}
+		if n != "claude" && n != "codex" {
 			if env := a.BoxEnv("/home/node"); len(env) != 0 {
 				t.Errorf("%s should need no box env, got %v", n, env)
 			}

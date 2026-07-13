@@ -67,7 +67,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	t.Setenv("TZ", "America/Merida") // pin hostTimezone so the exact-args check is machine-independent
 
 	// A plain `coop claude` mounts only its own credential home — never the Codex/Gemini ones.
-	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	want := []string{
 		"run", "--rm", "--label", "coop=box",
 		"-e", "TZ=America/Merida",
@@ -75,6 +75,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
 		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
 		"-w", "/workspace", "coop-box", "claude",
 	}
 	if !slices.Equal(got, want) {
@@ -92,7 +93,7 @@ func TestAssembleArgsHostTimezone(t *testing.T) {
 	}
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	if !containsSeq(got, []string{"-e", "TZ=Europe/Kyiv"}) {
 		t.Errorf("box args must carry the host timezone: %v", got)
 	}
@@ -101,7 +102,7 @@ func TestAssembleArgsHostTimezone(t *testing.T) {
 func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyInteractive, false, nil, nil, nil, nil, "", "", nil)
+		"/d", "/dd", "/workspace", ttyInteractive, false, nil, nil, nil, nil, "", "")
 	if !slices.Contains(got, "-it") {
 		t.Errorf("interactive run should pass -it: %v", got)
 	}
@@ -128,7 +129,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	instructionMounts := []extraMount{{filepath.Join(dir, "INSTRUCTIONS.md"), "/home/node/.claude/CLAUDE.md"}}
 
 	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-		"/d", "/dd", "/workspace", ttyNone, true, mcpMounts, nil, gitMounts, instructionMounts, "coop-r_default", filepath.Join(dir, "env"), nil)
+		"/d", "/dd", "/workspace", ttyNone, true, mcpMounts, nil, gitMounts, instructionMounts, "coop-r_default", filepath.Join(dir, "env"))
 	joined := slices.Clone(got)
 
 	mustContain := func(seq ...string) {
@@ -156,7 +157,7 @@ func TestAssembleArgsEgressFailsClosed(t *testing.T) {
 		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
 		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true}
 		return assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, servicesNet, "", nil)
+			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, servicesNet, "")
 	}
 	// "open" joins a services net; "open" with no services leaves the default bridge (no --network).
 	if !containsSeq(netArgs("open", "coop-r_default"), []string{"--network", "coop-r_default"}) {
@@ -181,7 +182,7 @@ func TestAssembleArgsConsultTimeout(t *testing.T) {
 		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), ConsultTimeout: timeout}
 		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true}
 		return assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
-			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	}
 	if !containsSeq(mk("3600"), []string{"-e", "COOP_CONSULT_TIMEOUT=3600"}) {
 		t.Error("valid timeout should be forwarded as -e COOP_CONSULT_TIMEOUT")
@@ -240,7 +241,7 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 		{"/tmp/gemini-ins", "/home/node/.gemini/GEMINI.md"},
 	}
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}, mounts,
-		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, "", "", nil)
+		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, "", "")
 	for _, want := range [][]string{
 		{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"},
 		{"-v", "/tmp/coop-consult:" + fusion.ConsultWrapperPath + ":ro"},
@@ -442,12 +443,12 @@ func TestAssembleArgsForkLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: "open"}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	with := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, ForkName: "perf"},
-		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	if !containsSeq(with, []string{"--label", "coop.fork=perf"}) {
 		t.Errorf("a fork-loop box must be labeled coop.fork=perf: %v", with)
 	}
 	without := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true},
-		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	if slices.Contains(without, "coop.fork=") || containsSeq(without, []string{"--label", "coop.fork=perf"}) {
 		t.Errorf("a non-fork box must not carry a coop.fork label: %v", without)
 	}
@@ -461,13 +462,13 @@ func TestAssembleArgsAsdfVolume(t *testing.T) {
 	asdf := []string{"-v", "coop-asdf:/home/node/.asdf"}
 
 	base := assembleArgs(cfg, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	if !containsSeq(base, asdf) {
 		t.Errorf("base image should mount the asdf volume:\n%v", base)
 	}
 
 	custom := assembleArgs(cfg, RunSpec{Image: "coop-myrepo", Repo: "/r", Homes: true}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	if containsSeq(custom, asdf) {
 		t.Errorf("a per-project image should not mount the asdf volume:\n%v", custom)
 	}
@@ -478,7 +479,7 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 
 	sup := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", SupervisorID: "abc123"}, mounts,
-		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, "", "", nil)
+		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, "", "")
 	if !containsSeq(sup, []string{"--label", "coop.supervised=1"}) {
 		t.Errorf("supervised run should be tagged coop.supervised=1 so build/update restart it: %v", sup)
 	}
@@ -487,7 +488,7 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	}
 
 	plain := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "", nil)
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, "", "")
 	if slices.Contains(plain, "coop.supervised=1") {
 		t.Errorf("non-supervised run must not carry the supervised label: %v", plain)
 	}
@@ -497,7 +498,7 @@ func TestAssembleArgsEgress(t *testing.T) {
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	args := func(egress, networkName string) []string {
 		c := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
-		return assembleArgs(c, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, networkName, "", nil)
+		return assembleArgs(c, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, networkName, "")
 	}
 	// COOP_EGRESS=none → --network none, overriding any services-net join.
 	if got := args("none", "coop-x_default"); !containsSeq(got, []string{"--network", "none"}) {

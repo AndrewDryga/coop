@@ -114,15 +114,6 @@ func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 
-// SharedHomePaths: codex ≥0.144 keeps single-writer sqlite state (state_*.sqlite, logs_*, …)
-// directly in ~/.codex, so each box gets a private home; what stays shared from the profile:
-// auth.json (codex rewrites it IN PLACE — storage.rs truncate+write — so one bound inode serves
-// every box, and its single-use refresh-token rotation lands where all of them see it), the
-// session rollouts (per-file, resume needs them), and installed user content.
-func (codexAgent) SharedHomePaths() []string {
-	return []string{"auth.json", "sessions/", "plugins/", "skills/", "rules/"}
-}
-
 // CredentialEnvKeys is Codex's only token env var.
 func (codexAgent) CredentialEnvKeys() []string { return []string{"OPENAI_API_KEY"} }
 
@@ -225,8 +216,19 @@ func (codexAgent) ACPRateLimitSignals() []ACPSignal {
 // enforced protocol-side by the controller's autoReply).
 func (codexAgent) ACPSessionConfig() map[string]string { return nil }
 
-// BoxEnv: codex stores everything under its mounted ~/.codex — nothing extra needed.
-func (codexAgent) BoxEnv(string) []string { return nil }
+// BoxEnv points codex's single-writer sqlite state (state_*.sqlite, logs_*, memories_*,
+// goals_* — the "state runtime") at a CONTAINER-LOCAL path off the shared ~/.codex bind
+// mount, via CODEX_SQLITE_HOME (honored by codex and codex-acp). codex ≥0.144 keeps that
+// state in $CODEX_HOME, and two boxes sharing one account's home make the second crash
+// ("failed to initialize sqlite state runtime") — sqlite's single-writer lock can't span the
+// mount. Redirecting only the sqlite keeps the WHOLE home shared as before (auth + its
+// in-place refresh, sessions, config), so any number of codex boxes run in parallel on one
+// account, each with its own state on its own writable layer. Ephemeral by design: the
+// session INDEX is rebuilt from the shared sessions/ rollouts (codex backfills), so resume
+// still works; per-box goals/memories don't persist, which is inherent to parallel sessions.
+func (codexAgent) BoxEnv(homeInBox string) []string {
+	return []string{"CODEX_SQLITE_HOME=" + homeInBox + "/.codex-state"}
+}
 
 // codexText is the jq filter that pulls the agent's reply text out of codex's --json
 // stream; the wrapper emits it once (ShellPrelude) since fresh and resume both use it.

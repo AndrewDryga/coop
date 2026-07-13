@@ -133,9 +133,6 @@ func (grokAgent) InstructionFile() string { return "AGENTS.md" }
 
 func (grokAgent) AuthMarker() (file, envKey string) { return "auth.json", "XAI_API_KEY" }
 
-// SharedHomePaths: no single-writer state observed in ~/.grok — the whole home is shared.
-func (grokAgent) SharedHomePaths() []string { return nil }
-
 // CredentialEnvKeys is grok's only token env var (the OIDC/auth-provider vars configure a
 // mechanism, not a token coop scopes).
 func (grokAgent) CredentialEnvKeys() []string { return []string{"XAI_API_KEY"} }

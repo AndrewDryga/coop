@@ -5,15 +5,15 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **Parallel codex boxes on one account no longer crash each other.** codex ≥0.144 keeps
-  single-writer sqlite state (`state_*.sqlite`, logs, memories, goals) directly in `~/.codex`, so a
+  single-writer sqlite state (`state_*.sqlite`, logs, memories, goals) in `$CODEX_HOME`, so a
   second box mounting the same account's home died at startup with a cryptic `failed to initialize
-  sqlite state runtime` (a second Zed thread, an ACP provider switch, a loop beside a session).
-  Each codex box now gets a PRIVATE home — seeded with the profile's config/identity files, its
-  sqlite state per-box — while the durable pieces stay shared from the account: `auth.json` is
-  bound through as one file (codex rewrites it in place, so a token refresh — whose refresh token
-  is single-use — lands where every box and the host see it), plus `sessions/`, `plugins/`,
-  `skills/`, and `rules/`. Run as many codex sessions on one account as you like; resume and login
-  keep working. Declared per agent (`SharedHomePaths`) — codex today, others share as before.
+  sqlite state runtime` (a second Zed thread, an ACP provider switch, a loop beside a session) —
+  sqlite's writer lock can't span the shared bind mount. coop now points that state at a
+  container-local path via codex's own `CODEX_SQLITE_HOME` (honored by codex and codex-acp), so
+  each box keeps its sqlite on its own writable layer and the shared home — auth and its in-place
+  refresh, `sessions/`, config — stays mounted exactly as before. Run as many codex sessions on
+  one account as you like; login and resume (rebuilt from the shared session rollouts) keep
+  working. Per-box goals/memories don't persist, which is inherent to parallel sessions.
 
 - **An ACP session that dies in a box restart now says so in the thread.** When the respawned box
   couldn't re-establish a session (e.g. a box that fails to start), the failure went only to stderr:
