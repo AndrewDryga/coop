@@ -67,7 +67,7 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	// The npm install and the FROM image are driven by build args so a build can pin
 	// them; the packages live in the AGENT_PACKAGES default.
 	for _, want := range []string{
-		"ARG NODE_IMAGE=node:24", "FROM ${NODE_IMAGE}",
+		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
 		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
 		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
 		"chown node:node /home/node/.asdf /home/node/.cache",

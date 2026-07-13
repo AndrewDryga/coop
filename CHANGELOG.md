@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The box image is ~470MB smaller (3.16GB → 2.69GB) on a `node:24-slim` base.** The full `node:24`
+  base shipped build-essential/git/python/mercurial/openssh that the box's own apt layer already
+  re-installs — so those installs were near-no-ops on a fat base. On slim the box installs exactly
+  what it uses, and the base's unused cruft is gone. mercurial and openssh-client drop for free
+  (they came only from the full base; openssh is unusable in the box anyway — coop shadows `~/.ssh`
+  and holds no key). Verified: every agent tool still present (git, curl, python, gcc/make, ripgrep,
+  fd, jq, tree, psql, asdf, the four agent CLIs) and git-over-HTTPS works; glibc kept (Debian slim,
+  not alpine) so asdf toolchains and prebuilt binaries are unaffected.
+
 - **`coop sign` re-signs your unpushed commits with your host key — and the loop does it per cycle.**
   Box commits are made unsigned (no key ever enters a box), so a remote that requires signed commits
   (a protected `main`, like many projects) rejects them. `coop sign` re-signs the unpushed range —

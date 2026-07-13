@@ -43,14 +43,14 @@ func installLayer() string {
 // fetches the newest. Bump pinnedNodeImage when you intentionally move the stable
 // base (e.g. after a `coop update` proves a newer node works).
 const (
-	pinnedNodeImage   = "node:24@sha256:40ad9f3064e67d6860b4bc3fe1880b2953934fd6320ada990e45fe0efa6badd7" // node v24.16.0
-	floatingNodeImage = "node:24"
+	pinnedNodeImage   = "node:24-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5" // node 24 (slim)
+	floatingNodeImage = "node:24-slim"
 )
 
 // baseDockerfileTemplate is BaseDockerfile with %s for the npm package list. The
 // FROM image (NODE_IMAGE) and the agent npm specs (AGENT_PACKAGES) are build args so
 // a build can pin them; the defaults preserve the floating behavior for a raw build.
-const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24
+const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
 FROM ${NODE_IMAGE}
 
 ARG ASDF_VERSION=0.19.0
