@@ -210,3 +210,46 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 		t.Errorf("reconcile note missing from todo1 log.md: %q", data)
 	}
 }
+
+// TestUnblockResolved: the host-side preflight returns a blocked task to todo only when its
+// decision.md carries a filled-in Resolution by the SAME bar `coop tasks unblock` applies
+// (decisionResolved) — the untouched stub, a missing decision.md, and a free-form file with no
+// **Resolution:** marker all stay parked (parse-or-park: never act on a format we can't read).
+func TestUnblockResolved(t *testing.T) {
+	root := t.TempDir()
+	mk := func(id, decision string) {
+		dir := filepath.Join(root, stateBlocked, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# "+id+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if decision != "" {
+			if err := os.WriteFile(filepath.Join(dir, "decision.md"), []byte(decision), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk("answered", "# Decision\n\n**Resolution:** ship it as designed.\n")
+	mk("stub", "# Decision\n\n**Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock stub -->\n")
+	mk("no-decision", "")
+	mk("freeform", "we talked and agreed to do X\n") // no **Resolution:** marker
+
+	ids := unblockResolved([]string{root})
+	if len(ids) != 1 || ids[0] != "answered" {
+		t.Fatalf("unblockResolved = %v, want [answered]", ids)
+	}
+	// The answered task moved to todo and its log records why; the rest stayed parked.
+	if !pathExists(filepath.Join(root, stateTodo, "answered")) {
+		t.Error("answered task should have moved to todo")
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, stateTodo, "answered", "log.md")); !strings.Contains(string(data), "unblocked") {
+		t.Errorf("unblock note missing from log.md: %q", data)
+	}
+	for _, id := range []string{"stub", "no-decision", "freeform"} {
+		if !pathExists(filepath.Join(root, stateBlocked, id)) {
+			t.Errorf("%s should have stayed blocked", id)
+		}
+	}
+}

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The loop's built-in preflight runs host-side — no box, no model, no tokens.** Unblocking a task
+  whose decision.md gained a `**Resolution:**` is mechanical, so coop now does it directly (the
+  same bar as `coop tasks unblock`; a decision format it can't read stays parked). An agent box
+  spins up only for a custom `preflight.prompt`, which now SETS that extra cleanup pass instead of
+  appending to a built-in prompt.
+
 - **The signoff reviews what the run completed — not all of `99_done/`.** Each signoff round now
   gets an explicit subject list: the tasks that entered `99_done/` since the last accepted round
   (for round 1, since the run started). Prior runs' history — `99_done/` persists until you prune

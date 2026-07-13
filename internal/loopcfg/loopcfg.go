@@ -1,11 +1,13 @@
 // Package loopcfg reads .agent/loop.yaml — coop's committed per-repo configuration for
-// `coop loop`: the preflight / work / between / signoff steps, each with its own model ladder and
-// prompt, plus the signoff round cap. It supersedes the retired .agent/loop/*.md files and the
-// COOP_LOOP_* / COOP_REVIEW_* env vars.
+// `coop loop`: the preflight / work / between / signoff / verify steps, each with its own model
+// ladder and prompt, plus the signoff round cap. It supersedes the retired .agent/loop/*.md files
+// and the COOP_LOOP_* / COOP_REVIEW_* env vars.
 //
 // A missing file — or any missing field — means "use coop's built-in default", so an absent
-// loop.yaml is exactly today's behavior. Prompts never OVERRIDE a built-in: signoff.prompt and
-// preflight.prompt APPEND to theirs; between has no built-in, so between.prompt SETS its audit.
+// loop.yaml is exactly today's behavior. Prompts never OVERRIDE a built-in: signoff.prompt
+// APPENDS to its senior review; between.prompt and verify.prompt SET their pass (no built-ins);
+// preflight's built-in tidy runs host-side in coop, so preflight.prompt SETS the optional agent
+// cleanup on top.
 package loopcfg
 
 import (
@@ -36,10 +38,11 @@ type Config struct {
 	Verify    Verify    `yaml:"verify"`
 }
 
-// Preflight is the one-shot pre-loop queue cleanup.
+// Preflight is the one-shot pre-loop queue cleanup. The built-in tidy (unblock tasks whose
+// decision.md gained a Resolution) runs host-side in coop; Prompt is the optional agent pass.
 type Preflight struct {
 	Enabled bool   `yaml:"enabled"` // run the cleanup; false = off
-	Prompt  string `yaml:"prompt"`  // APPENDED to the built-in cleanup; "" = nothing appended
+	Prompt  string `yaml:"prompt"`  // SETS an extra agent cleanup (a box runs only for this); "" = host-side tidy only
 }
 
 // Work is the task-working iterations.

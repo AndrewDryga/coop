@@ -612,8 +612,10 @@ var commandHelp = map[string]string{
   One committed .agent/loop.yaml configures every step (preflight/work/between/signoff/verify),
   each with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
   final review, verify an optional post-signoff pass that e2e-tests the affected features. Prompts
-  never REPLACE a coop built-in: signoff.prompt and preflight.prompt APPEND to theirs; between.prompt
-  and verify.prompt SET their pass (neither has a built-in — off unless enabled + set). The review
+  never REPLACE a coop built-in: signoff.prompt APPENDS to its senior review; between.prompt,
+  verify.prompt, and preflight.prompt SET their pass (none has a built-in prompt — preflight's
+  built-in tidy is coop itself, run host-side, so its prompt is the optional agent cleanup on
+  top). The review
   passes are handed the run's CHANGE CONTEXT — every task completed this loop, by its Coop-Task
   trailer, with the files it touched — so "e2e the affected features" resolves against a concrete
   list; place it inline with {loop.changes} / {loop.tasks} / {loop.affected}. signoff.rounds is the
@@ -655,8 +657,9 @@ var commandHelp = map[string]string{
   set; the loop keeps going while any queue has unfinished work. The whole repo is
   mounted either way.
 
-  --preflight       run one cleanup pass before working: unblock blocked/ tasks whose
-                    decision now has an answer (default it on with loop.yaml preflight.enabled;
+  --preflight       run the pre-loop tidy: coop itself returns blocked/ tasks whose decision
+                    now has an answer to todo — host-side, no box; an agent runs only for a
+                    loop.yaml preflight.prompt cleanup (default it on with preflight.enabled;
                     --no-preflight overrides). Makes no code changes or commits.
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)

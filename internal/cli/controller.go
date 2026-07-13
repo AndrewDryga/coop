@@ -252,6 +252,30 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName string) {
 	}
 }
 
+// unblockResolved is the loop's built-in preflight, run host-side (no box, no model): every
+// blocked task whose decision.md now carries a filled-in Resolution — the same bar
+// `coop tasks unblock` applies (decisionResolved) — moves back to 00_todo/ with a log note.
+// A task with no decision.md, or one whose format decisionResolved can't read, stays parked:
+// never act on a file we can't parse confidently. Best-effort; a move failure warns and skips.
+// Returns the unblocked ids in readTaskTree order.
+func unblockResolved(hosts []string) []string {
+	var ids []string
+	for _, host := range hosts {
+		for _, t := range readTaskTree(host) {
+			if t.State != stateBlocked || !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
+				continue
+			}
+			if err := moveTaskDir(host, t, stateTodo); err != nil {
+				ui.Warn("pre-flight: could not unblock %s: %v", t.ID, err)
+				continue
+			}
+			appendTaskLog(filepath.Join(host, stateTodo, t.ID), "preflight: resolution filled in — unblocked")
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
+}
+
 // appendTaskLog appends a one-line note to a task folder's log.md, best-effort.
 func appendTaskLog(taskDir, note string) {
 	f, err := os.OpenFile(filepath.Join(taskDir, "log.md"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

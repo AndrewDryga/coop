@@ -5,14 +5,16 @@
 # provider[:model][/effort][@account].
 #
 # Sections run in loop order:
-#   preflight (before) → work → between (after each task) → signoff (at the end)
+#   preflight (before) → work → between (after each task) → signoff (at the end) → verify (after signoff accepts)
 
 preflight:
-  # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
-  # works no task, changes no code). Default: false.
+  # Run the one-shot pre-loop queue tidy: coop itself returns blocked tasks whose decision.md now
+  # has a Resolution to todo — host-side, no box, no model. Works no task, changes no code.
+  # Default: false.
   #enabled: true
 
-  # Extra instructions APPENDED to the built-in cleanup prompt. Default: nothing appended.
+  # Extra cleanup instructions — the only part that runs an agent (a box spins up just for these).
+  # Default: none (the tidy stays host-side).
   #prompt: |
   #  Also drop stale screenshots under .agent/tasks/*/screenshots/.
 

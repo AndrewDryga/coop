@@ -1822,16 +1822,13 @@ func writeReviewBlockDecision(path, id, title string, rounds int) {
 	}
 }
 
-// loopPreflightPrompt is the one-shot cleanup pass run before the work loop when preflight is on:
-// it resolves answered blockers, but works no task and changes no code (these files are git-ignored,
-// so nothing is committed). The .agent/loop.yaml preflight.prompt APPENDS to this built-in.
-func loopPreflightPrompt(repo string, queues []string, appendPrompt string) string {
-	p := fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and the queue(s) %s. `coop` is NOT installed in this box, so act by moving task folders yourself. Then, for each task in a 50_blocked/ dir, if its decision.md now has a filled-in Resolution, unblock it by moving its folder to 00_todo/. Leave every 00_todo/ and 10_in_progress/ task untouched; change no code and make no commits.",
-		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
-	if s := strings.TrimSpace(appendPrompt); s != "" {
-		p += "\n\nAlso, as part of the cleanup: " + s
-	}
-	return p
+// loopPreflightPrompt frames the CUSTOM pre-loop cleanup (loop.yaml preflight.prompt) — the
+// built-in job, unblocking answered decisions, runs host-side in unblockResolved, so a box (and
+// its tokens) spins up only for these extra instructions. The guardrails still bound them:
+// cleanup only, no task work, no code, no commits (the queue files are git-ignored anyway).
+func loopPreflightPrompt(repo string, queues []string, customPrompt string) string {
+	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. Read %s and the queue(s) %s. `coop` is NOT installed in this box, so act by moving task folders yourself. Leave every 00_todo/ and 10_in_progress/ task untouched; change no code and make no commits.\n\nThe cleanup to do: %s",
+		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues), strings.TrimSpace(customPrompt))
 }
 
 // absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
@@ -1990,16 +1987,25 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			})
 	}
 
-	// Pre-flight: one best-effort housekeeping pass before working the queue — unblock any
-	// task whose decision.md now has a filled-in Resolution. It works no task and deletes
-	// nothing: done tasks are pruned only by a human (`coop tasks rm --all-done`), never
-	// by an agent. Opt-in (preflight.enabled / --preflight); skipped under a custom work.command
-	// (not the agent's headless form). Best-effort like the signoff pass — a failure never blocks work.
+	// Pre-flight: one best-effort housekeeping pass before working the queue. The built-in job —
+	// return every blocked task whose decision.md now has a filled-in Resolution to todo — is
+	// mechanical, so the HOST does it directly: no box, no model, no tokens, and the same bar as
+	// `coop tasks unblock` (decisionResolved), so preflight and the CLI never disagree. It works
+	// no task and deletes nothing: done tasks are pruned only by a human (`coop tasks rm
+	// --all-done`), never by an agent. Opt-in (preflight.enabled / --preflight); skipped under a
+	// custom work.command (not the agent's headless form).
 	if preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		pfCode, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, lc.Preflight.Prompt)), hosts, sink, peers)
-		a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil)
+		if ids := unblockResolved(hosts); len(ids) > 0 {
+			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
+		}
+		// An agent runs only for a CUSTOM cleanup (loop.yaml preflight.prompt) — extra instructions
+		// that need judgment. Best-effort like the signoff pass — a failure never blocks work.
+		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
+			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+			pfCode, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, s)), hosts, sink, peers)
+			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil)
+		}
 	}
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)

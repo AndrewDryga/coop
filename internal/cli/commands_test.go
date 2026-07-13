@@ -115,13 +115,14 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	}
 }
 
-// TestLoopPreflightAndReviewFolder: preflight only unblocks blocked/ tasks with an answered
-// decision (no code, no commits); the default review does bookkeeping + ONE whole-repo gate and
-// reopens by moving the folder (coop isn't in the box), and the fixed context footer carries the
-// queue paths + reopen mechanics.
+// TestLoopPreflightAndReviewFolder: the preflight prompt frames only the CUSTOM cleanup — the
+// built-in unblock runs host-side (unblockResolved), never in a box — bounded by the guardrails
+// (no task work, no code, no commits); the default review does bookkeeping + ONE whole-repo gate
+// and reopens by moving the folder (coop isn't in the box), and the fixed context footer carries
+// the queue paths + reopen mechanics.
 func TestLoopPreflightAndReviewFolder(t *testing.T) {
-	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"}, "")
-	for _, want := range []string{"do NOT work any task", "no commits", "moving its folder to 00_todo/", "50_blocked/"} {
+	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"}, "Drop stale screenshots.\n")
+	for _, want := range []string{"do NOT work any task", "no commits", "The cleanup to do: Drop stale screenshots.", "/repo/.agent/tasks"} {
 		if !strings.Contains(pre, want) {
 			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
