@@ -257,6 +257,60 @@ func TestReviewLadder(t *testing.T) {
 	}
 }
 
+// TestReviewReopenReceipt: the "REVIEW COMPLETE — reopened <N>" tally is parsed off a review's
+// output, tolerant of the dash and trailing punctuation, and a review that merely MENTIONS
+// reopening in prose without the receipt line reads as missing (ok=false) — not as N>0.
+func TestReviewReopenReceipt(t *testing.T) {
+	cases := []struct {
+		name   string
+		out    string
+		wantN  int
+		wantOk bool
+	}{
+		{"present", "did the review\nREVIEW COMPLETE — reopened 3", 3, true},
+		{"zero", "everything passes\nREVIEW COMPLETE — reopened 0", 0, true},
+		{"hyphen dash", "REVIEW COMPLETE - reopened 2", 2, true},
+		{"trailing period", "REVIEW COMPLETE — reopened 4.", 4, true},
+		{"missing entirely", "I reopened two tasks (in prose) but wrote no receipt", 0, false},
+		{"mentions reopen, receipt 0", "I considered reopening auth-fix but it holds.\nREVIEW COMPLETE — reopened 0", 0, true},
+		{"repeated line, last wins", "REVIEW COMPLETE — reopened 9\nwait, more\nREVIEW COMPLETE — reopened 1", 1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			n, ok := reviewReopenReceipt(c.out)
+			if n != c.wantN || ok != c.wantOk {
+				t.Errorf("reviewReopenReceipt = %d/%v, want %d/%v", n, ok, c.wantN, c.wantOk)
+			}
+		})
+	}
+}
+
+// TestReopenVerdictLost: the guard fires on the 2026-07-10 incident (claimed reopens, none moved)
+// and on a missing receipt, but NOT on a consistent PASS or a consistent reopen — so a genuine
+// review is never falsely re-run.
+func TestReopenVerdictLost(t *testing.T) {
+	cases := []struct {
+		name     string
+		claimed  int
+		haveRcpt bool
+		actual   int
+		wantLost bool
+	}{
+		{"incident: claimed 6, moved 0", 6, true, 0, true},
+		{"missing receipt", 0, false, 0, true},
+		{"consistent pass", 0, true, 0, false},
+		{"consistent reopen", 2, true, 2, false},
+		{"undercount", 1, true, 3, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := reopenVerdictLost(c.claimed, c.haveRcpt, c.actual); got != c.wantLost {
+				t.Errorf("reopenVerdictLost(%d,%v,%d) = %v, want %v", c.claimed, c.haveRcpt, c.actual, got, c.wantLost)
+			}
+		})
+	}
+}
+
 // The loop's leading positional is a target (provider[:model][@account]); no positional →
 // no target (hasTarget=false) and the provider is required (caller errors or a preset lead
 // supplies it). A malformed/unknown token errors; --model/--credential tombstone.

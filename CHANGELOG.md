@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A signoff that decides reopens but moves no folders is no longer silently accepted.** After the
+  2026-07-10 incident — an end-of-loop review collected six REOPEN verdicts as prose, its
+  background subagents were killed by an output-limit restart before the folders moved, and the
+  loop saw an empty queue and accepted the batch — the review now must end with a
+  `REVIEW COMPLETE — reopened <N>` receipt. The loop compares N against the task folders that
+  actually moved back to `10_in_progress/`; a mismatch or a missing receipt means a verdict may
+  have been lost, so the round is re-run within the cap, or (at the cap) the loop exits loudly for
+  a human instead of claiming a false "done". A PASS that merely mentions reopening in prose still
+  passes — only the receipt's count is load-bearing.
+
 - **The loop's between/signoff reviews now actually run on their configured target — and fail
   closed.** `stepModel` kept only `(model, effort)` off a review stage's `agent:` ladder and pasted
   it onto the *work* provider, discarding the provider, account, and fallback rungs — so a
