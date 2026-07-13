@@ -60,7 +60,7 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 			scope = append(scope, agent)
 		}
 	}
-	// The EXPLICIT peers named by --peer/--consult mount as peers (they were validated authed at
+	// The EXPLICIT peers named by --peer mount as peers (they were validated authed at
 	// the CLI; scope them unconditionally — the run asked for them by name).
 	for _, p := range spec.Peers {
 		add(p.Provider, true)

@@ -22,29 +22,32 @@ func noProviderErr(cmd string) error {
 		strings.TrimSpace(usage), strings.Join(agents.Names(), "|"))
 }
 
-// takeHeadTarget pulls a leading positional target off args (provider REQUIRED — a bare
-// provider, or provider:model@account,…). Returns ok=false, leaving args untouched, when
-// the first token is a flag or absent; anything else parses as a target, so a typo'd
-// provider gets ParseTarget's own diagnostic ("unknown provider … — use claude, codex, …"),
-// the same message every other surface gives it. (Its one caller, the loop, takes no other
-// positional — a bare non-provider token was never going to mean anything else.)
-func takeHeadTarget(args []string) (t agents.Target, ok bool, rest []string, err error) {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return agents.Target{}, false, args, nil
-	}
-	t, err = agents.ParseTarget(args[0])
-	if err != nil {
-		return agents.Target{}, false, args, err
-	}
-	return t, true, args[1:], nil
-}
-
 // isTargetHead reports whether s begins with a registered provider (so `coop <s>` names an
 // agent run, not a command/preset). Used by the top-level dispatch.
 func isTargetHead(s string) bool {
 	beforeAt, _, _ := strings.Cut(s, "@")
 	provider, _, _ := strings.Cut(beforeAt, ":")
 	return agents.Valid(provider)
+}
+
+// takeHeadWho pulls the leading "who runs" positional off args — the unified grammar shared by
+// loop/fork/fusion/acp: a TARGET (provider[:model][/effort][@account], detected by isTargetHead)
+// OR a PRESET NAME (any other bare word — its existence is validated by the caller's loadRunPreset).
+// A run picks ONE, so exactly one of hasTarget / presetName!="" is set. ok=false with both empty
+// leaves args untouched when the first token is a flag or absent. A malformed target head still
+// errors (ParseTarget's own diagnostic), so a typo'd provider isn't silently taken as a preset.
+func takeHeadWho(args []string) (t agents.Target, hasTarget bool, presetName string, rest []string, err error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return agents.Target{}, false, "", args, nil
+	}
+	if !isTargetHead(args[0]) {
+		return agents.Target{}, false, args[0], args[1:], nil // a preset name
+	}
+	t, err = agents.ParseTarget(args[0])
+	if err != nil {
+		return agents.Target{}, false, "", args, err
+	}
+	return t, true, "", args[1:], nil
 }
 
 // singleAccount returns the one account of a target for a NON-loop run (interactive, acp, a
@@ -80,9 +83,9 @@ func foldTarget(t agents.Target, model, profile *string) error {
 	return nil
 }
 
-// resolvePeers parses each --peer/--consult value into a peer target and validates it: a known,
-// authed provider with an optional :model and NO account — a peer runs on its default account
-// (only the lead rotates accounts). kind names the flag for the error ("--consult"/"--peer").
+// resolvePeers parses each --peer value into a peer target and validates it: a known, authed
+// provider with an optional :model and NO account — a peer runs on its default account (only the
+// lead rotates accounts). kind names the flag for the error message (always "--peer" now).
 // Unknown or unauthed → a usage error naming the peer + the fix; never a silent skip.
 func (a *app) resolvePeers(kind string, vals []string) ([]agents.Target, error) {
 	var peers []agents.Target

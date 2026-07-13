@@ -303,7 +303,7 @@ func TestScaffold(t *testing.T) {
 	}
 	// The header names the chosen preset so the run hints are copy-pasteable.
 	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "--preset frontier") {
+	if !strings.Contains(string(data), "coop loop frontier") {
 		t.Errorf("template header should name the preset:\n%s", data)
 	}
 	// Never clobbers; validates the name.

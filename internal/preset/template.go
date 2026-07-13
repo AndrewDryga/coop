@@ -13,8 +13,8 @@ import (
 // (TestScaffold loads it), so any referenced file MUST be in templateFiles.
 const Template = `# coop preset — an orchestration recipe: which agent LEADS a session, and which
 # ROLES it can route work to. Edit this file, then run or inspect it:
-#   Run:      coop claude --preset %[1]s
-#             coop loop --preset %[1]s
+#   Run:      coop %[1]s
+#             coop loop %[1]s
 #   Inspect:  coop presets %[1]s
 #   Format:   coop help presets
 # An explicit target on the command line (claude:opus@work) overrides the lead +

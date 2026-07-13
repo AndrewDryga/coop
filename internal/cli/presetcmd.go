@@ -49,7 +49,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		}
 		p, err := preset.Load(repo, globalDir, name)
 		if err != nil {
-			// A broken preset must be visible in the listing — it would fail every --preset run.
+			// A broken preset must be visible in the listing — it would fail every run under it.
 			fmt.Printf("  %s  %s\n", label, pal.Red("broken: "+err.Error()))
 			continue
 		}
@@ -68,7 +68,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		fmt.Printf("  %s  lead %s  %s\n", label, lead, summary)
 	}
 	fmt.Println()
-	fmt.Println(ui.Dim("  run one: coop <agent>|loop|fusion|acp --preset <name>   ·   format: coop help presets"))
+	fmt.Println(ui.Dim("  run one by naming it: coop <name> · coop loop <name> · coop fusion <name> · coop acp <name>   ·   format: coop help presets"))
 	return 0, nil
 }
 
@@ -87,7 +87,7 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	ui.OK("wrote %s (with starter prompts in roles/) — edit it, then run: coop claude --preset %s", path, name)
+	ui.OK("wrote %s (with starter prompts in roles/) — edit it, then run: coop %s", path, name)
 	return 0, nil
 }
 
@@ -129,6 +129,6 @@ func (a *app) showPreset(repo, name string) (int, error) {
 		fmt.Println(line)
 	}
 	fmt.Println()
-	fmt.Println(ui.Dim("  run it: coop " + p.LeadAgent + " --preset " + name + "   ·   coop loop --preset " + name))
+	fmt.Println(ui.Dim("  run it: coop " + name + "   ·   coop loop " + name))
 	return 0, nil
 }

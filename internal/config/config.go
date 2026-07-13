@@ -218,7 +218,7 @@ func normalizeEgress(v string) (egress string, ok bool) {
 }
 
 // GlobalPresetsDir is the per-user presets root (~/.config/coop/presets): a second
-// location `--preset <name>` and `coop presets` load from when the repo doesn't define
+// location `coop <preset>` and `coop presets` load from when the repo doesn't define
 // the name (a repo preset wins a collision). COOP_PRESETS_DIR overrides the path — free
 // testability, and it lets a user relocate the folder.
 func (c *Config) GlobalPresetsDir() string {

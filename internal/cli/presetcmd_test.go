@@ -56,7 +56,7 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult codex", "delegate gemini", "for: boilerplate", "coop loop --preset frontier"} {
+	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult codex", "delegate gemini", "for: boilerplate", "coop loop frontier"} {
 		if !strings.Contains(show, want) {
 			t.Errorf("show missing %q:\n%s", want, show)
 		}

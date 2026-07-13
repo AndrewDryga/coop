@@ -110,29 +110,26 @@ func TestApplyPresetPrecedence(t *testing.T) {
 	}
 }
 
-// --preset parses on the run surfaces (`--`-aware) and a fork accepts it plus the
-// --credential alias; the detached re-exec carries the preset forward.
-func TestPresetFlagParsing(t *testing.T) {
-	name, rest, err := extractRunPreset([]string{"--preset", "frontier", "-p", "hi"})
-	if err != nil || name != "frontier" || strings.Join(rest, " ") != "-p hi" {
-		t.Errorf("extractRunPreset = (%q, %v, %v)", name, rest, err)
+// The who-runs positional names a target OR a preset: a fork takes a bare preset NAME in that
+// slot (the retired --preset flag is now just an unknown arg), a target stays a target, and a
+// run picks ONE — a target plus a preset in the same fork errors.
+func TestForkPositionalPreset(t *testing.T) {
+	fa, err := parseForkCreate([]string{"api", "frontier", "--loop"})
+	if err != nil || fa.preset != "frontier" || fa.agent != "" || fa.agentSet {
+		t.Errorf("fork positional preset = {agent:%q agentSet:%v preset:%q, %v}, want preset=frontier with no agent", fa.agent, fa.agentSet, fa.preset, err)
 	}
-	if name, rest, _ := extractRunPreset([]string{"--", "--preset", "x"}); name != "" || len(rest) != 3 {
-		t.Errorf("--preset after -- must pass through: (%q, %v)", name, rest)
+	// A target in the who slot stays a target (no preset), model+account fold in.
+	fa, err = parseForkCreate([]string{"api", "claude:opus-4.8@work", "--loop"})
+	if err != nil || fa.preset != "" || fa.agent != "claude" || fa.model != "opus-4.8" || fa.credential != "work" {
+		t.Errorf("fork positional target = {agent:%q model:%q cred:%q preset:%q, %v}", fa.agent, fa.model, fa.credential, fa.preset, err)
 	}
-	if _, _, err := extractRunPreset([]string{"--preset"}); err == nil {
-		t.Error("a bare --preset must error")
+	// A run picks ONE: a target AND a preset in the same fork (two who-runs) errors.
+	if _, err := parseForkCreate([]string{"api", "claude", "frontier", "--loop"}); err == nil || !strings.Contains(err.Error(), "already set") {
+		t.Errorf("fork: a target plus a preset must error, got %v", err)
 	}
-
-	fa, err := parseForkCreate([]string{"api", "claude@work", "--loop", "--preset", "frontier"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fa.preset != "frontier" || fa.credential != "work" || fa.agent != "claude" {
-		t.Errorf("fork parse: agent=%q preset=%q credential=%q", fa.agent, fa.preset, fa.credential)
-	}
-	if _, err := parseForkCreate([]string{"api", "--loop", "--preset"}); err == nil {
-		t.Error("fork: a bare --preset must error")
+	// --preset is retired — now just an unknown flag.
+	if _, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("fork: --preset should be an unknown flag now, got %v", err)
 	}
 }
 
@@ -157,5 +154,42 @@ func TestLoadRunPreset(t *testing.T) {
 	}
 	if _, err := a.loadRunPreset("ghost"); err == nil || !strings.Contains(err.Error(), "no preset") {
 		t.Errorf("missing preset should fail loud: %v", err)
+	}
+}
+
+// presetNamed is the top-level `coop <preset>` existence check: ok=true (with the loaded preset,
+// or its load error for a broken one) ONLY when the folder exists; ok=false for a non-preset word,
+// so the dispatch falls through to the unknown-command error instead of erroring on a miss (that's
+// what distinguishes it from loadRunPreset, which the launch surfaces use and which errors on a miss).
+func TestPresetNamed(t *testing.T) {
+	repo := t.TempDir()
+	write := func(name, body string) {
+		dir := filepath.Join(repo, ".agent", "presets", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("frontier", "lead: {agent: claude}\n")
+	write("broken", "lead: {agent: nonprovider}\n") // a folder that exists but won't load
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+
+	if p, ok, err := a.presetNamed("frontier"); !ok || err != nil || p == nil || p.LeadAgent != "claude" {
+		t.Fatalf("presetNamed(frontier) = (%+v, ok=%v, %v), want the loaded preset", p, ok, err)
+	}
+	// A word that names no preset → ok=false, no error (the dispatch then shows unknown-command).
+	if p, ok, err := a.presetNamed("ghost"); ok || p != nil || err != nil {
+		t.Errorf("presetNamed(ghost) = (%+v, ok=%v, %v), want (nil, false, nil)", p, ok, err)
+	}
+	// A preset folder that EXISTS but won't load → ok=true WITH the load error (the dispatch
+	// surfaces it rather than a misleading "unknown command").
+	if _, ok, err := a.presetNamed("broken"); !ok || err == nil {
+		t.Errorf("presetNamed(broken) = (ok=%v, %v), want ok=true with a load error", ok, err)
+	}
+	// An invalid preset-name shape is never a preset.
+	if _, ok, _ := a.presetNamed("../etc"); ok {
+		t.Error("presetNamed(../etc): a traversal name must not resolve as a preset")
 	}
 }

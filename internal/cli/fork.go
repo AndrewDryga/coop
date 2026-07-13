@@ -84,8 +84,8 @@ func forkHelp() (int, error) {
 // byte-stable reference render that `coop help --all` and gendocs concatenate into the manual.
 func forkHelpText(p ui.Palette) string {
 	rows := []struct{ cmd, desc string }{
-		{"coop fork <name> [target]", "open or re-enter a fork and run an agent (target: claude:opus@work)"},
-		{"coop fork <name> <target> --loop", "loop the fork on a tasks folder (-d detaches)"},
+		{"coop fork <name> [target|preset]", "open or re-enter a fork; run an agent (claude:opus@work) or a preset"},
+		{"coop fork <name> <target|preset> --loop", "loop the fork on a tasks folder (-d detaches)"},
 		{"coop fork ls", "list this repo's forks"},
 		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
 		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open)"},
@@ -102,8 +102,7 @@ func forkHelpText(p ui.Palette) string {
 		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
-		{"    --preset", "orchestration preset for this fork (see 'coop help presets')"},
-		{"    --consult <agent>", "with --loop, a peer iterations may consult read-only (repeatable)"},
+		{"    --peer <agent>", "with --loop, a peer iterations may consult read-only (repeatable)"},
 		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
 		{"-y, --yes", "merge/rm: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
@@ -207,8 +206,8 @@ type forkArgs struct {
 	credential string   // the fork's account, from the positional target's @account (else the ladder default)
 	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
 	effort     string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
-	consult    []string // --consult <target> (repeatable): the peers a loop iteration may ask read-only
-	preset     string   // --preset <name>: the orchestration preset this fork's loop runs under
+	peers      []string // --peer <target> (repeatable): the peers a loop iteration may ask read-only
+	preset     string   // the orchestration preset this fork runs under (named in the who-runs positional)
 	worker     bool     // internal: this process IS the detached loop worker (--_detached)
 }
 
@@ -222,9 +221,17 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	for i := 0; i < len(rest); i++ {
 		x := rest[i]
 		switch {
-		case isTargetHead(x):
-			// The agent is a target: provider[:model][@account]. Its model + single account fold
-			// into the fork's one-off selection (applyOneOff) — --model/--credential are retired.
+		case !strings.HasPrefix(x, "-"):
+			// The fork's who-runs positional: a TARGET (provider[:model][/effort][@account], its
+			// model + single account fold into the one-off selection) OR a PRESET NAME (loaded by
+			// forkCreate). A run picks ONE, so a second bare word errors.
+			if fa.agentSet || fa.preset != "" {
+				return fa, fmt.Errorf("coop fork: unexpected argument %q (the fork's agent/preset is already set — a run picks one)", x)
+			}
+			if !isTargetHead(x) {
+				fa.preset = x
+				break
+			}
 			t, terr := agents.ParseTarget(x)
 			if terr != nil {
 				return fa, terr
@@ -257,27 +264,17 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
 				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
 			}
-		case x == "--preset":
+		case x == "--peer":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --preset needs a preset name")
+				return fa, errors.New("coop fork --peer needs a peer: --peer <agent> (repeatable)")
 			}
 			i++
-			fa.preset = rest[i]
-		case strings.HasPrefix(x, "--preset="):
-			if fa.preset = strings.TrimPrefix(x, "--preset="); fa.preset == "" {
-				return fa, errors.New("coop fork --preset needs a preset name")
-			}
-		case x == "--consult":
-			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --consult needs a peer: --consult <agent> (repeatable)")
-			}
-			i++
-			fa.consult = append(fa.consult, rest[i])
-		case strings.HasPrefix(x, "--consult="):
-			if v := strings.TrimPrefix(x, "--consult="); v == "" {
-				return fa, errors.New("coop fork --consult needs a peer: --consult <agent> (repeatable)")
+			fa.peers = append(fa.peers, rest[i])
+		case strings.HasPrefix(x, "--peer="):
+			if v := strings.TrimPrefix(x, "--peer="); v == "" {
+				return fa, errors.New("coop fork --peer needs a peer: --peer <agent> (repeatable)")
 			} else {
-				fa.consult = append(fa.consult, v)
+				fa.peers = append(fa.peers, v)
 			}
 		case x == "--_detached": // hidden: re-exec target for a detached loop
 			fa.worker = true
@@ -292,9 +289,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
 	}
-	// --consult names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
-	if len(fa.consult) > 0 && !fa.loop {
-		return fa, errors.New("coop fork --consult only applies with --loop (name each peer: --consult <agent>)")
+	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
+	if len(fa.peers) > 0 && !fa.loop {
+		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <agent>)")
 	}
 	return fa, nil
 }
@@ -306,9 +303,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	// --preset: load + fail fast (pure local reads), then default the fork's agent,
-	// credentials, and model from the preset's lead — explicit flags still win, and the
-	// lead's model/credentials only apply when the fork actually runs the lead agent.
+	// The fork's preset (named in the positional who slot): load + fail fast (pure local reads),
+	// then default the fork's agent, credentials, and model from the preset's lead — a positional
+	// target instead pins them, and the lead's model/credentials only apply when the fork runs the lead.
 	if fa.preset != "" {
 		p, err := a.loadRunPreset(fa.preset)
 		if err != nil {
@@ -403,10 +400,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}
 	saveForkAgent(ws, fa.agent)
 	if fa.loop {
-		// The worker/foreground paths run the loop here, so resolve --consult to peer targets
-		// (validate authed, reject an @account). The detach path re-execs `coop fork … --consult
+		// The worker/foreground paths run the loop here, so resolve --peer to peer targets
+		// (validate authed, reject an @account). The detach path re-execs `coop fork … --peer
 		// <t>` and the worker re-resolves, so it forwards the raw values instead.
-		peers, err := a.resolvePeers("--consult", fa.consult)
+		peers, err := a.resolvePeers("--peer", fa.peers)
 		if err != nil {
 			return 2, err
 		}
@@ -414,7 +411,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, true)
 		case fa.detach:
-			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.consult)
+			return a.detachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers)
 		default:
 			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, false)
 		}
@@ -821,7 +818,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !validForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
-	consultVals, rest, err := extractConsult(rest)
+	peerVals, rest, err := extractPeer(rest)
 	if err != nil {
 		return 2, err
 	}
@@ -864,7 +861,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
-	peers, err := a.resolvePeers("--consult", consultVals)
+	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
 		return 2, err
 	}

@@ -15,9 +15,14 @@ import (
 // positional, a preset's lead.agent, a preset role's agent:, and a fleet entry — because they
 // all funnel through agents.ParseTarget. Each surface's error must carry the parser's own
 // message verbatim, so a typo diagnoses identically wherever it was written.
+//
+// The cases are all TARGET-SHAPED (a known provider with a bad :model/@account) so they classify
+// as targets on every surface. A bare UNKNOWN word (e.g. "gpt4") is deliberately excluded: under
+// the unified who-runs grammar it's a PRESET NAME on the loop positional and the fleet agent:
+// (validated later by loadRunPreset), so it does NOT surface a ParseTarget error there — only on
+// lead.agent / role agent:, which take a target and never a preset name.
 func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 	cases := []struct{ name, target string }{
-		{"unknown provider", "gpt4"},
 		{"empty model", "claude:"},
 		{"traversal account", "claude:opus@../x"},
 		{"double at", "claude:opus@work@x"},
@@ -31,7 +36,7 @@ func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 			want := perr.Error()
 
 			// CLI surface: the loop's positional target.
-			if _, _, _, _, err := parseLoopArgs([]string{c.target}, false); err == nil || !strings.Contains(err.Error(), want) {
+			if _, _, _, _, _, err := parseLoopArgs([]string{c.target}, false); err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("loop positional: err = %v, want it to carry %q", err, want)
 			}
 

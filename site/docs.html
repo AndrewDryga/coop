@@ -549,7 +549,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     <pre
                         class="code"
                     ><span class="k">coop</span> fusion claude --peer codex --peer gemini  <span class="t"># a council: claude governs, peers weigh in</span>
-<span class="k">coop</span> claude --consult codex                    <span class="t"># lighter, opt-in: one peer on hard calls only</span></pre>
+<span class="k">coop</span> claude --peer codex                       <span class="t"># lighter, opt-in: one peer on hard calls only</span></pre>
                     <figure class="cast-figure">
                         <div class="term">
                             <div class="term-bar">
@@ -625,7 +625,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     ><span class="k">coop</span> claude:opus            <span class="t"># one run on the big model</span>
 <span class="k">coop</span> claude:opus/xhigh      <span class="t"># …at max reasoning effort (low·medium·high·xhigh·max)</span>
 <span class="k">coop</span> claude:opus@work       <span class="t"># …pinned to a specific account</span>
-<span class="k">coop</span> loop --preset frontier <span class="t"># a standing lead model + roles, from a preset</span>
+<span class="k">coop</span> frontier               <span class="t"># a standing lead model + roles, from a preset</span>
 <span class="k">coop</span> models                 <span class="t"># the model menu per agent</span></pre>
                     <p>
                         Precedence is most-specific-first: the model in the
@@ -667,7 +667,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         work). A lead on a bigger model spends its tokens on
                         planning and synthesis while each delegated turn bills
                         at the subagent's cheaper model. Add
-                        <code>--consult codex --consult gemini</code> — naming
+                        <code>--peer codex --peer gemini</code> — naming
                         each peer — and the lead can also ask them
                         read-only — peer engineers with different blind spots,
                         no plugins required. Wrap the whole arrangement in a
@@ -685,20 +685,19 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     <p>
                         The <a href="#fusion">fusion</a> and orchestrator
                         patterns above are wired up by hand — a model here, a
-                        <code>--consult codex</code> there. A <strong>preset</strong>
+                        <code>--peer codex</code> there. A <strong>preset</strong>
                         captures the whole recipe in
                         <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
                         who leads, on which models, and the named roles it can
-                        hand work to. Run it with
-                        <code>--preset &lt;name&gt;</code> on any surface —
-                        <code>coop &lt;agent&gt;</code>, <code>loop</code>,
+                        hand work to. Run it by naming it in the who-runs slot —
+                        <code>coop &lt;name&gt;</code>, <code>coop loop &lt;name&gt;</code>,
                         <code>fusion</code>, <code>acp</code>, or a fork.
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> presets init           <span class="t"># scaffold the documented "frontier" recipe</span>
-<span class="k">coop</span> presets                <span class="t"># list every preset (a broken one shows its error)</span>
-<span class="k">coop</span> loop --preset frontier <span class="t"># run the loop under it</span></pre>
+                    ><span class="k">coop</span> presets init  <span class="t"># scaffold the documented "frontier" recipe</span>
+<span class="k">coop</span> presets       <span class="t"># list every preset (a broken one shows its error)</span>
+<span class="k">coop</span> loop frontier <span class="t"># run the loop under it</span></pre>
                     <p>
                         The lead's <code>agent:</code> holds one target or a
                         fallback ladder of them — the same ladder a loop rotates
@@ -820,10 +819,10 @@ roles:
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> init                       <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
-<span class="k">coop</span> tasks add <span class="s">"…"</span>              <span class="t"># a folder per task under .agent/tasks/</span>
-<span class="k">coop</span> loop claude                <span class="t"># disposable agents drain the queue, then review</span>
-<span class="k">coop</span> loop claude:claude-fable-5 --consult codex  <span class="t"># pin its model; let it ask a peer</span></pre>
+                    ><span class="k">coop</span> init                                    <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
+<span class="k">coop</span> tasks add <span class="s">"…"</span>                           <span class="t"># a folder per task under .agent/tasks/</span>
+<span class="k">coop</span> loop claude                             <span class="t"># disposable agents drain the queue, then review</span>
+<span class="k">coop</span> loop claude:claude-fable-5 --peer codex <span class="t"># pin its model; let it ask a peer</span></pre>
                     <p>
                         <strong>It reviews its own work.</strong> When the list
                         is empty, coop runs a review pass — a senior reviewer's
@@ -1025,15 +1024,14 @@ roles:
 <span class="k">coop</span> fleet watch      <span class="t"># the live dashboard</span>
 <span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>
                     <p>
-                        Each fork in <code>.agent/fleet.yaml</code> takes
-                        per-fork keys: <code>agent:</code> is its
+                        Each fork in <code>.agent/fleet.yaml</code> takes two
+                        keys: <code>tasks:</code> points at its slice, and
+                        <code>agent:</code> is the who-runs — either a
                         <a href="#models">target</a>
-                        (<code>provider:model@account</code>) — give each fork a
-                        different account so they don't contend —
-                        <code>tasks:</code> points at its slice, and
-                        <code>preset:</code> runs it under an
-                        <a href="#presets">orchestration preset</a> whose lead
-                        ladder the fork's loop rotates.
+                        (<code>provider:model@account</code>; give each fork a
+                        different account so they don't contend) or a
+                        <a href="#presets">preset</a> name, whose lead ladder the
+                        fork's loop rotates.
                     </p>
                     <div class="why">
                         <span class="why-label">Why run a fleet</span>

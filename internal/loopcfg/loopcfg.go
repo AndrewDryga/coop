@@ -43,7 +43,7 @@ type Preflight struct {
 
 // Work is the task-working iterations.
 type Work struct {
-	Agent   []string `yaml:"agent"`   // model ladder (target|preset rungs); empty = the CLI agent / --preset lead
+	Agent   []string `yaml:"agent"`   // model ladder (target|preset rungs); empty = the CLI agent / preset lead
 	Command []string `yaml:"command"` // raw per-iteration command (argv); empty = coop's built-in agent form
 }
 

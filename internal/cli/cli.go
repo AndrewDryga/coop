@@ -39,7 +39,7 @@ type app struct {
 	cfg    *config.Config
 	rt     runtime.Runtime
 	rtSet  bool                                     // whether rt has been detected yet (ensureRuntime is lazy — see below)
-	preset *preset.Preset                           // the run's loaded --preset, carried into each RunSpec (see applyPreset)
+	preset *preset.Preset                           // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	gateOK func(gateRepo, treeDir, img string) bool // test seam for the merge gate; nil → the real box gate
 }
 
@@ -203,6 +203,15 @@ func (a *app) dispatch(argv []string) (int, error) {
 	default:
 		if isTargetHead(sub) { // coop claude|claude:opus|… — run the agent target
 			return a.launchAgent(sub, rest)
+		}
+		// coop <preset> — a bare word that names a preset runs it interactively (its lead is
+		// the agent). The command switch above runs FIRST, so a command name is never shadowed
+		// by a same-named preset.
+		if p, ok, perr := a.presetNamed(sub); ok {
+			if perr != nil {
+				return 2, perr // the preset exists but is broken — surface the load error
+			}
+			return a.launchPreset(p, rest)
 		}
 		// Don't ship an unrecognized command to the box to exec and fail with a cryptic
 		// "not found" after a slow toolchain spin-up — a typo'd subcommand should fail

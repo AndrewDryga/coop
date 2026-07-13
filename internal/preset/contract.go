@@ -11,8 +11,9 @@ import (
 // Markdown files append to it (lead.md after the block, each roles/<name>.md after
 // its role's contract) — they refine, never replace, the routing/safety text.
 //
-// lead is the EFFECTIVE lead agent (an explicit `coop codex --preset …` overrides the
-// preset's lead). A native role is a Claude subagent that runs inside the lead's own
+// lead is the EFFECTIVE lead agent (a loop work.agent ladder or an ACP cross-provider rung
+// may run a preset under a different provider than the preset's own lead). A native role is a
+// Claude subagent that runs inside the lead's own
 // session; under a non-Claude lead it can't, so it degrades to a read-only consult to its
 // agent (same model + persona), invoked as `coop-consult <role>` (see roleContract).
 func LeadContract(p *Preset, lead string) string {

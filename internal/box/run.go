@@ -80,7 +80,7 @@ type RunSpec struct {
 	ConsultLead string
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
-	// --peer (fusion) / --consult (a normal or loop run), each provider[:model] (no
+	// --peer (fusion, a normal run, or a loop run), each provider[:model] (no
 	// account: a peer runs on its default). It REPLACES the old implicit "every authed
 	// agent is a peer" policy: only these providers' credentials mount as peers, only
 	// they are named in the consult directive, and the in-box coop-consult refuses any

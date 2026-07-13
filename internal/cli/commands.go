@@ -92,11 +92,12 @@ func (a *app) cmdRun(args []string) (int, error) {
 	return a.runInBox(args, "", nil) // raw command runner — not an agent session
 }
 
-// launchAgent runs a named agent: its autonomous default command, with any extra CLI
+// launchAgent runs a named agent target: its autonomous default command, with any extra CLI
 // args you pass appended — so `coop claude --continue` keeps coop's autonomy + MCP
 // flags and just adds yours. The agents' autonomous flags are global, so this is safe
-// even before subcommands (e.g. `coop codex resume --last`). coop's own --consult and
-// --credential are stripped first so they aren't forwarded to the agent.
+// even before subcommands (e.g. `coop codex resume --last`). coop's own --peer and
+// -- separator are stripped first so they aren't forwarded to the agent. A preset lead runs
+// via launchPreset instead (the who-runs positional names a target OR a preset, never both).
 func (a *app) launchAgent(target string, args []string) (int, error) {
 	// The head is a target: provider[:model][@account]. The model/account ride it —
 	// --model/--credential are retired.
@@ -105,7 +106,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		return 2, err
 	}
 	tool := t.Provider
-	consultVals, args, err := extractConsult(args)
+	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err
 	}
@@ -121,23 +122,31 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		}
 		return a.loginTo(tool, acct)
 	}
-	// `coop claude --preset frontier` loads the orchestration preset: its roles seed the run
-	// (routing contract, role models/credentials, wrappers); `coop <agent>` names the lead
-	// explicitly, so the preset's lead.agent never overrides the command's own.
-	presetName, args, err := extractRunPreset(args)
-	if err != nil {
-		return 2, err
-	}
-	p, err := a.loadRunPreset(presetName)
-	if err != nil {
-		return 2, err
-	}
-	a.applyPreset(p, tool)
 	if err := a.applyRunTarget(t); err != nil {
 		return 2, err
 	}
 	a.nudgeIfUnauthed(tool)
-	peers, err := a.resolvePeers("--consult", consultVals)
+	peers, err := a.resolvePeers("--peer", peerVals)
+	if err != nil {
+		return 2, err
+	}
+	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, peers)
+}
+
+// launchPreset runs an orchestration preset interactively (`coop <preset>`): its lead agent
+// leads the session, its roles seed the run (routing contract, role models/credentials,
+// wrappers). The who-runs positional named the preset, so there's no target to fold in — the
+// lead ladder's first entry supplies the lead's model/account (applyPreset). --peer still adds
+// ad-hoc read-only peers on top of the preset's own consult roles.
+func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
+	tool := p.LeadAgent
+	peerVals, args, err := extractPeer(args)
+	if err != nil {
+		return 2, err
+	}
+	a.applyPreset(p, tool)
+	a.nudgeIfUnauthed(tool)
+	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
 		return 2, err
 	}
@@ -214,16 +223,11 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 	return nil
 }
 
-// extractConsult pulls every --consult <target> (repeatable) out of a normal/loop/fork-loop
-// run's args — each value is one peer the lead may consult read-only on hard calls (see
-// box.RunSpec.Peers). The OLD boolean --consult (no value) is retired (v3-clean): a valueless
-// occurrence returns the rewrite. `--`-aware.
-func extractConsult(args []string) (consult, rest []string, err error) {
-	return extractRepeatable(args, "--consult", "name each peer: --consult <agent> [--consult <agent> …]")
-}
-
-// extractPeer pulls every --peer <target> (repeatable) out of fusion's args; each value is one
-// council peer. Fusion requires ≥1 (checked by the caller). `--`-aware.
+// extractPeer pulls every --peer <target> (repeatable) out of a run's args — each value is one
+// peer the lead may consult read-only on hard calls (fusion's whole council; the opt-in second
+// opinion on every other surface — see box.RunSpec.Peers). A valueless occurrence errors with
+// the repeatable form. `--`-aware. The one --peer parser for every command (the retired --consult
+// spelling is now just an unknown flag).
 func extractPeer(args []string) (peers, rest []string, err error) {
 	return extractRepeatable(args, "--peer", "name each peer: --peer <agent> [--peer <agent> …]")
 }
@@ -231,7 +235,7 @@ func extractPeer(args []string) (peers, rest []string, err error) {
 // extractRepeatable collects every `--flag <value>` occurrence (repeatable) out of args, in
 // order, returning the values and the remaining args. A valueless occurrence (a typo, or a bare
 // flag) errors, pointing at the repeatable form. Stops at `--` — everything after is the agent's
-// own, forwarded verbatim (so an agent's OWN --consult/--peer still reaches it).
+// own, forwarded verbatim (so an agent's OWN --peer still reaches it).
 func extractRepeatable(args []string, flag, hint string) (vals, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
@@ -323,34 +327,6 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 	return "", 0, false, nil
 }
 
-// extractRunValue is the shared extractor behind extractRunProfile/extractRunModel: it pulls
-// one of coop's own value-bearing flags (any of the given spellings) out of run args,
-// stopping at "--" (everything after is the agent's, forwarded verbatim).
-func extractRunValue(args []string, flags ...string) (val string, rest []string, err error) {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--" {
-			return val, append(rest, args[i:]...), nil
-		}
-		matched := false
-		for _, flag := range flags {
-			if v, n, ok, e := flagValue(args, i, flag); ok {
-				if e != nil {
-					return "", nil, e
-				}
-				val = v
-				i += n - 1
-				matched = true
-				break
-			}
-		}
-		if matched {
-			continue
-		}
-		rest = append(rest, args[i])
-	}
-	return val, rest, nil
-}
-
 // validProfileName keeps a credential profile name to a single safe path segment, so a name passed
 // to --credential can't traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
 // '.', empty, or leading '-'). Login is the path that CREATES the dir from the name, so it's the
@@ -437,66 +413,68 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// the credential/preset selector). The OUTER process validates the args (fail fast), then
 	// supervises; the INNER (COOP_ACP_INNER=1) runs the box.
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
-	consultVals, args, err := extractConsult(args)
+	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err
 	}
-	// Resolve the --consult peers HERE, before the outer/inner split — so an editor's
+	// Resolve the --peer peers HERE, before the outer/inner split — so an editor's
 	// agent_servers entry with a bad peer (unknown/unauthed, or an @account) fails fast in the
 	// OUTER process, not silently later inside the box.
-	peers, err := a.resolvePeers("--consult", consultVals)
+	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
 		return 2, err
 	}
-	// --model/--credential are retired on this surface too — pin the session in the positional
-	// target instead, so an editor's agent_servers entry runs ["acp","claude:opus@work"].
-	// --preset: routing + role wiring for the editor session; the preset's lead is the
-	// default agent (or governor, under fusion) when none is named.
-	presetName, args, err := extractRunPreset(args)
-	if err != nil {
-		return 2, err
-	}
-	// The positional target pins the session's agent, model, and account. Parsed BEFORE the
-	// inner env-override block so a preset-rotation rung (COOP_ACP_LEAD_MODEL/_CRED) still wins
-	// over the launch-time model/account. fusion is a keyword (a governor target follows), not
-	// itself a provider, so it isn't parsed as a target.
+	// The positional who-runs slot pins the session: a TARGET (provider[:model][/effort][@account],
+	// so an editor's agent_servers entry runs ["acp","claude:opus@work"]) OR a PRESET NAME (routing +
+	// role wiring; its lead is the agent — or governor, under fusion). Parsed BEFORE the inner
+	// env-override block so a preset-rotation rung (COOP_ACP_TARGET) still wins over the launch-time
+	// model/account. fusion is a keyword (a governor slot follows), not itself a provider/preset.
 	model, profile, effort := "", "", ""
 	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
 	governor := ""
+	presetName := ""
 	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
 	isFusion := len(args) > 0 && args[0] == "fusion"
+	// takeWho classifies a positional who slot: a target folds its model/effort/account in and sets
+	// the provider; a preset name is captured for loadRunPreset below. Shared by the agent and the
+	// fusion-governor slot so both accept a preset.
+	takeWho := func(who string, provider *string) error {
+		if !isTargetHead(who) {
+			presetName = who
+			return nil
+		}
+		t, terr := agents.ParseTarget(who)
+		if terr != nil {
+			return terr
+		}
+		*provider = t.Provider
+		toolSet = true
+		if terr := foldTarget(t, &model, &profile); terr != nil {
+			return terr
+		}
+		effort = t.Effort
+		return nil
+	}
 	switch {
 	case isFusion:
 		consumed = 1
-		governor, toolSet = "", false // named explicitly (or via a --preset lead) — no implicit default
+		governor, toolSet = "", false // named explicitly (or via a preset lead) — no implicit default
 		if len(args) > 1 {
-			t, terr := agents.ParseTarget(args[1])
-			if terr != nil {
+			if terr := takeWho(args[1], &governor); terr != nil {
 				return 2, terr
 			}
-			governor, toolSet = t.Provider, true
-			if terr := foldTarget(t, &model, &profile); terr != nil {
-				return 2, terr
-			}
-			effort = t.Effort
 			consumed = 2
 		}
 	case len(args) > 0:
-		t, terr := agents.ParseTarget(args[0])
-		if terr != nil {
+		if terr := takeWho(args[0], &tool); terr != nil {
 			return 2, terr
 		}
-		tool, toolSet = t.Provider, true
-		if terr := foldTarget(t, &model, &profile); terr != nil {
-			return 2, terr
-		}
-		effort = t.Effort
 		consumed = 1
 	}
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|grok|fusion [governor]][:model][@account] [--preset <name>])", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|grok|fusion [governor]][:model][@account] | <preset>)", leftover[0])
 	}
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the
 	// supervisor re-execs the inner box with the resolved spawn target in the env
@@ -525,7 +503,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if isFusion {
 		governor = presetLeadAgent(p, governor, toolSet)
 		if governor == "" {
-			return 2, errors.New("coop acp fusion: name the governor — coop acp fusion <agent> (or --preset <name>, whose lead governs)")
+			return 2, errors.New("coop acp fusion: name the governor — coop acp fusion <agent> (or a preset name, whose lead governs)")
 		}
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
@@ -860,16 +838,7 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	// --model/--credential are retired — pin the governor in its target (coop fusion
 	// claude:opus@work); the peers keep their own defaults. `--`-aware, so the
 	// governor's OWN flags (codex's --profile) still pass through after a `--`.
-	// The council is named EXPLICITLY with --peer (repeatable). --consult is the normal-run
-	// spelling; on fusion it's a mistake worth naming rather than leaking to the governor's CLI.
-	for _, x := range args {
-		if x == "--" {
-			break
-		}
-		if x == "--consult" || strings.HasPrefix(x, "--consult=") {
-			return 2, errors.New("coop fusion names its council with --peer, not --consult (e.g. coop fusion claude --peer codex --peer gemini)")
-		}
-	}
+	// The council is named EXPLICITLY with --peer (repeatable).
 	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err
@@ -878,9 +847,11 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	// --preset: the preset's lead is the default governor (an explicit one still wins), and
-	// its role routing rides along with the council directive.
-	presetName, args, err := extractRunPreset(args)
+	// The governor slot is a target OR a preset name (parseGovernor classifies the leading
+	// positional). Its model + account fold into this run's one-off selection (the peers keep
+	// their own); a preset's lead governs when no target is named, and its role routing rides
+	// along with the council directive.
+	governor, model, profile, effort, presetName, rest, govSet, err := a.parseGovernor(args)
 	if err != nil {
 		return 2, err
 	}
@@ -893,15 +864,9 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if len(peers) == 0 && (p == nil || !p.HasConsult()) {
 		return 2, errors.New("fusion needs its council — name each peer: coop fusion <governor> --peer <agent> [--peer <agent> …]")
 	}
-	// The governor target names the agent; its model + account fold into this run's one-off
-	// selection (the peers keep their own).
-	governor, model, profile, effort, rest, govSet, err := a.parseGovernor(args)
-	if err != nil {
-		return 2, err
-	}
 	governor = presetLeadAgent(p, governor, govSet)
 	if governor == "" {
-		return 2, errors.New("coop fusion: name the governor — coop fusion <agent> --peer <agent>… (or --preset <name>, whose lead governs)")
+		return 2, errors.New("coop fusion: name the governor — coop fusion <agent> --peer <agent>… (or a preset name, whose lead governs)")
 	}
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
@@ -937,34 +902,41 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	return code, err
 }
 
-// parseGovernor takes a leading target (provider[:model][@account]) as the governor (else
-// COOP_FUSION_GOVERNOR); everything else passes through to the governor. explicit reports
-// whether the command named one (so a --preset's lead only fills the default); model/profile
-// carry the governor target's model + single account for the one-off selection.
-func (a *app) parseGovernor(args []string) (governor, model, profile, effort string, rest []string, explicit bool, err error) {
-	tookGov := false // no implicit default — the governor is named explicitly (or via a --preset lead)
+// parseGovernor classifies the leading who-runs positional: a TARGET
+// (provider[:model][/effort][@account]) is the governor, a non-target bare word is a PRESET NAME
+// (its lead governs — resolved by the caller's loadRunPreset). Only the FIRST leading positional
+// is the who; everything else passes through to the governor. explicit reports whether a governor
+// TARGET was named (so a preset's lead only fills the default); model/profile carry the governor
+// target's model + single account for the one-off selection.
+func (a *app) parseGovernor(args []string) (governor, model, profile, effort, presetName string, rest []string, explicit bool, err error) {
+	tookGov := false // no implicit default — the governor is named explicitly (or via a preset lead)
+	took := func() bool { return tookGov || presetName != "" || len(rest) > 0 }
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--":
-			return governor, model, profile, effort, append(rest, args[i+1:]...), tookGov, nil // everything after passes through
-		case !tookGov && len(rest) == 0 && isTargetHead(args[i]):
+			return governor, model, profile, effort, presetName, append(rest, args[i+1:]...), tookGov, nil // everything after passes through
+		case !took() && isTargetHead(args[i]):
 			// Only the FIRST leading target is the governor: `coop fusion claude:opus/high@work`
-			// (matches `coop acp fusion …`); otherwise the default / COOP_FUSION_GOVERNOR. A second
-			// agent token passes through to the governor (not silently swallowed as the governor).
+			// (matches `coop acp fusion …`). A second agent token passes through to the governor
+			// (not silently swallowed as the governor).
 			t, terr := agents.ParseTarget(args[i])
 			if terr != nil {
-				return governor, model, profile, effort, rest, tookGov, terr
+				return governor, model, profile, effort, presetName, rest, tookGov, terr
 			}
 			governor, tookGov = t.Provider, true
 			if terr := foldTarget(t, &model, &profile); terr != nil {
-				return governor, model, profile, effort, rest, tookGov, terr
+				return governor, model, profile, effort, presetName, rest, tookGov, terr
 			}
 			effort = t.Effort
+		case !took() && !strings.HasPrefix(args[i], "-"):
+			// The FIRST leading non-target bare word is a preset name (the who slot). Its lead
+			// governs; loadRunPreset (the caller) validates it exists.
+			presetName = args[i]
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return governor, model, profile, effort, rest, tookGov, nil
+	return governor, model, profile, effort, presetName, rest, tookGov, nil
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {
@@ -1414,15 +1386,16 @@ func promptGateLangs(in io.Reader) []string {
 	return chosen
 }
 
-// parseLoopArgs resolves `coop loop`'s leading target (provider[:model][@account,…]) and its
-// boolean flags. Model + account come from the target — `--model`/`--credential` are retired;
-// `--consult`/`--tasks`/`--preset` are pre-extracted by cmdLoop. hasTarget is false when no
-// positional was given (a preset then supplies the lead).
-func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, debugOnFail, preflight bool, err error) {
+// parseLoopArgs resolves `coop loop`'s leading who-runs positional — a TARGET
+// (provider[:model][/effort][@account,…]) OR a PRESET NAME (validated by cmdLoop's loadRunPreset) —
+// and its boolean flags. Model + account come from the target (`--model`/`--credential` are retired);
+// `--peer`/`--tasks` are pre-extracted by cmdLoop. hasTarget is false and presetName "" when no
+// positional was given (a loop.yaml work.agent then supplies the lead).
+func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight bool, err error) {
 	preflight = def
-	t, hasTarget, rest, err := takeHeadTarget(args)
+	t, hasTarget, presetName, rest, err := takeHeadWho(args)
 	if err != nil {
-		return agents.Target{}, false, false, preflight, err
+		return agents.Target{}, false, "", false, preflight, err
 	}
 	for _, x := range rest {
 		switch x {
@@ -1433,10 +1406,10 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, debugOn
 		case "--no-preflight":
 			preflight = false
 		default:
-			return t, hasTarget, debugOnFail, preflight, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [%s][:model][@account] [--tasks <path>] [--preset <name>] [--consult <agent>]… [--preflight|--no-preflight] [--debug-on-fail])", x, strings.Join(agents.Names(), "|"))
+			return t, hasTarget, presetName, debugOnFail, preflight, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--preflight|--no-preflight] [--debug-on-fail])", x)
 		}
 	}
-	return t, hasTarget, debugOnFail, preflight, nil
+	return t, hasTarget, presetName, debugOnFail, preflight, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1444,15 +1417,11 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	presetName, rest, err := extractRunPreset(rest)
+	peerVals, rest, err := extractPeer(rest)
 	if err != nil {
 		return 2, err
 	}
-	consultVals, rest, err := extractConsult(rest)
-	if err != nil {
-		return 2, err
-	}
-	peers, err := a.resolvePeers("--consult", consultVals)
+	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
 		return 2, err
 	}
@@ -1466,18 +1435,18 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
-	t, hasTarget, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled)
+	t, hasTarget, presetName, debugOnFail, preflight, err := parseLoopArgs(rest, lc.Preflight.Enabled)
 	if err != nil {
 		return 2, err
 	}
-	// --preset: its lead agent is the default (a positional target still wins), its roles seed
-	// the run, and its models ladder becomes the rotation (below the positional target).
+	// A positional preset name: its lead agent leads, its roles seed the run, and its models
+	// ladder becomes the rotation. A positional target instead pins the one-off ladder.
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
 		return 2, err
 	}
 	// .agent/loop.yaml work.agent is the committed default work ladder — used ONLY when the launch
-	// names no positional target and no --preset. Its rungs are targets or preset names (a preset
+	// names no positional who (no target and no preset). Its rungs are targets or preset names (a preset
 	// rung runs the loop under that preset: its roles + lead ladder, exhausted before the next rung);
 	// the first rung sets the lead agent.
 	var workLadder []agents.Target
@@ -1492,7 +1461,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if agent == "" {
 		agent = workAgent // loop.yaml work.agent's first rung supplied the lead
 	}
-	if agent == "" { // provider required — no positional target, no --preset, no loop.yaml work.agent
+	if agent == "" { // provider required — no positional who (target/preset), no loop.yaml work.agent
 		return 2, noProviderErr("loop")
 	}
 	a.applyPreset(p, agent)
@@ -1670,9 +1639,6 @@ func receiptClaim(n int, ok bool) string {
 	return fmt.Sprintf("reopened %d", n)
 }
 
-// parseLoopArgs pulls the --model <m>, --consult, --debug-on-fail, and
-// --preflight/--no-preflight flags out of `coop loop` args; what remains must be at most
-// one agent name. preflight defaults to def (loop.yaml preflight.enabled) and the flags override it.
 // loopWorkPrompt and loopSignoffPrompt name the queue dir(s) the iteration works as ABSOLUTE
 // in-box paths (the box's working dir is repo, bind-mounted at its real path). A relative
 // ".agent/tasks" resolves fine for claude/codex (cwd-relative), but gemini's read_file rejects
@@ -2450,7 +2416,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
 		go func() { defer wg.Done(); spinLoop(bar, stop) }()
 	}
-	// Named --consult peers make each iteration a consult lead: box.Run then mounts exactly
+	// Named --peer peers make each iteration a consult lead: box.Run then mounts exactly
 	// those peers' credentials, the coop-consult wrapper, and the second-opinion directive. A
 	// preset does the same with ITS roles: the routing contract mounts via ConsultLead.
 	lead := ""

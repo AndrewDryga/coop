@@ -260,9 +260,10 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 // detachForkLoop re-execs coop as a session-leader background worker whose stdio is
 // the fork's log, records its pid, and returns immediately. An explicit tasks path
 // (absolute, resolved by the caller) is forwarded so the worker seeds the same queue; an
-// empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. model,
-// preset, and consult are forwarded too, so the worker re-loads the same recipe and scope.
-func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, consult []string) (int, error) {
+// empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. The
+// who-runs slot (a preset name or the composed target) and the --peer set are forwarded too,
+// so the worker re-loads the same recipe and scope.
+func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, peers []string) (int, error) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		return -1, err
 	}
@@ -282,24 +283,25 @@ func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, effort
 	if err != nil {
 		return -1, fmt.Errorf("locate coop binary: %w", err)
 	}
-	// The worker re-parses these, so forward the agent+model+account as ONE positional target
-	// (--model/--credential are retired) — composeTarget round-trips the fork's one-off selection.
-	target, err := composeTarget(agent, model, effort, credential)
-	if err != nil {
-		clearForkPidIfMine(repo, name)
-		return -1, err
+	// The worker re-parses the who-runs positional, so forward ONE token: a preset name (the worker
+	// re-loads it), or the composed target (composeTarget round-trips the fork's one-off model/account;
+	// --model/--credential are retired). A fork picks one, so a preset means no target to compose.
+	who := presetName
+	if who == "" {
+		who, err = composeTarget(agent, model, effort, credential)
+		if err != nil {
+			clearForkPidIfMine(repo, name)
+			return -1, err
+		}
 	}
-	reExec := []string{"fork", name, target, "--loop", "--_detached"}
+	reExec := []string{"fork", name, who, "--loop", "--_detached"}
 	if tasks != "" {
 		// An explicit --tasks is forwarded; the default (empty) is omitted so the worker re-derives
 		// the monorepo-aware queue set from project.TaskDirs itself.
 		reExec = append(reExec, "--tasks", tasks)
 	}
-	if presetName != "" {
-		reExec = append(reExec, "--preset", presetName) // the worker re-loads the preset itself
-	}
-	for _, peer := range consult { // one --consult per named peer (repeatable), re-resolved by the worker
-		reExec = append(reExec, "--consult", peer)
+	for _, peer := range peers { // one --peer per named peer (repeatable), re-resolved by the worker
+		reExec = append(reExec, "--peer", peer)
 	}
 	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork

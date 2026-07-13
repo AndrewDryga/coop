@@ -335,7 +335,7 @@ func TestModelEnvArgs(t *testing.T) {
 	}
 
 	// An EXPLICIT peer target's :model pins COOP_PEER_MODEL_<X>, overriding the config default
-	// (codex's active model is gpt-5, but the --consult codex:gpt-5.5 target wins).
+	// (codex's active model is gpt-5, but the --peer codex:gpt-5.5 target wins).
 	got = modelEnvArgs(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude",
 		Peers: []agents.Target{{Provider: "codex", Model: "gpt-5.5"}}}, []string{"claude", "codex"})
 	want = []string{"-e", "ANTHROPIC_MODEL=opus", "-e", "COOP_PEER_MODEL_CLAUDE=opus", "-e", "COOP_PEER_MODEL_CODEX=gpt-5.5"}

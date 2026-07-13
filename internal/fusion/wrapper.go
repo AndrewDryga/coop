@@ -96,7 +96,7 @@ func renderConsult(as []consultInput) string {
 # coop-consult — ask a peer read-only, with optional cross-turn continuity.
 # Generated and mounted by coop; do not edit.
 #   coop-consult <peer|role> <--fresh|--continue> [prompt]
-# <peer> is ` + peerList + ` (fusion / --consult ad-hoc). A preset CONSULT ROLE — or a
+# <peer> is ` + peerList + ` (fusion / --peer ad-hoc). A preset CONSULT ROLE — or a
 # native role degraded under a non-Claude lead — is addressed by its ROLE name: coop exports
 # COOP_CONSULT_<ROLE>_{AGENT,MODEL,CONTRACT}, so it runs on the role's own agent + model with
 # its persona (CONTRACT) prepended to the prompt. The target is READ-ONLY: it analyses and

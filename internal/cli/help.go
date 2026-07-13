@@ -92,9 +92,10 @@ func renderHelp(cfg *config.Config, ref bool) string {
 
 	group("AGENTS")
 	row("coop <agent>[:model][@account]", "a sandboxed agent (the target grammar)")
+	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop fusion <gov> --peer <a>…", "one leads, named peers advise")
-	row("coop acp <agent|fusion>", "serve as an editor agent (ACP; e.g. Zed)")
-	row("coop <agent> --consult <peer>…", "a read-only second opinion, named peers")
+	row("coop acp <agent|fusion|preset>", "serve as an editor agent (ACP; e.g. Zed)")
+	row("coop <agent> --peer <peer>…", "a read-only second opinion, named peers")
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
@@ -229,16 +230,17 @@ const runHelp = `coop run — run a raw command in the box.
 const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex, gemini, or grok).
 
   Usage: coop <agent>[:model][/effort][@account] [coop flags] [-- <agent args>]
+         coop <preset>   (run an orchestration preset interactively — its lead leads)
 
   The agent is a TARGET — a provider, an optional :model, an optional reasoning /effort,
   an optional @account:
     claude · claude:opus · claude:opus/xhigh · claude@work · claude:opus/high@work
+  In the SAME who-runs slot, a bare word that names a preset runs that recipe instead —
+  coop frontier (its lead + roles; see coop help presets). A run names one, never both.
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --preset <name>      run under an orchestration preset from .agent/presets/<name>/
-                         (lead + roles; see coop help presets)
-    --consult <peer>…    a read-only second opinion from NAMED peers (repeatable); each
-                         <peer> is a target: --consult codex:gpt-5.5 --consult gemini
+    --peer <peer>…       a read-only second opinion from NAMED peers (repeatable); each
+                         <peer> is a target: --peer codex:gpt-5.5 --peer gemini
     --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
 
   Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
@@ -355,10 +357,10 @@ var commandHelp = map[string]string{
   COOP_<AGENT>_MODEL take model[/effort] (e.g. opus/high), so there is no separate effort
   var. Precedence mirrors the model: the target's /effort > a rotation rung's effort > those.`,
 
-	"acp": `coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
+	"acp": `coop acp <agent|fusion|preset> — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp <agent>[:model][/effort][@account] [--preset <name>] [--consult <peer>…]
-         coop acp fusion <governor>[:model][/effort][@account] [--consult <peer>…]
+  Usage: coop acp <agent>[:model][/effort][@account] | <preset>          [--peer <peer>…]
+         coop acp fusion <governor>[:model][/effort][@account] | <preset> [--peer <peer>…]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor. A bare
@@ -388,10 +390,10 @@ var commandHelp = map[string]string{
   The target pins the session's agent, model, and account — an editor can run two
   entries on different ones, e.g. ["acp","claude:opus@work"].
 
-  --preset <name> runs the session under an orchestration preset (its lead is the
-  default agent when none is named; see 'coop help presets').
+  A bare preset name in the who-runs slot runs the session under that orchestration
+  preset (its lead is the agent — or governor, under fusion; see 'coop help presets').
 
-  --consult <peer>… lets the session ask NAMED peers for a read-only second opinion
+  --peer <peer>… lets the session ask NAMED peers for a read-only second opinion
   (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
   from your editor.
 
@@ -415,23 +417,23 @@ var commandHelp = map[string]string{
 
 	"fusion": `coop fusion <governor> --peer <agent>… — one agent leads, named peers advise, it synthesizes.
 
-  Usage: coop fusion <governor>[:model][/effort][@account] --peer <agent>… [--preset <name>] [args...]
+  Usage: coop fusion <governor>[:model][/effort][@account] | <preset> --peer <agent>… [args...]
 
-  The governor is a REQUIRED target — name it (or let a --preset's lead govern); there is
+  The governor is a REQUIRED target — name it (or let a preset's lead govern); there is
   no implicit default. Its :model, /effort, and @account fold into this run; the peers keep
   their own. Peers advise read-only; only the governor writes. Lighter, opt-in variant:
-  coop <agent> --consult <peer>…
+  coop <agent> --peer <peer>…
 
   --peer <agent> names a council member (repeatable, at least one required — or a
   preset that supplies consult roles): coop fusion claude --peer codex:gpt-5.5 --peer gemini.
   Each <peer> is a target; only the named peers' credentials mount. There is no implicit
   "consult everyone signed in".
 
-  --preset <name> loads an orchestration preset: its lead governs when you don't name a
-  governor, and its role routing rides along with the council directive ('coop help presets').
+  A bare preset name in the governor slot loads an orchestration preset: its lead governs,
+  and its role routing rides along with the council directive ('coop help presets').
 
-  Like coop <agent>, it forwards extra args to the governor — a leading target
-  picks the governor; anything else (or anything after a --) passes through.`,
+  Like coop <agent>, it forwards extra args to the governor — the leading who-runs slot
+  picks the governor (a target) or a preset; anything after passes through (or after a --).`,
 
 	"presets": `coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
@@ -449,9 +451,10 @@ var commandHelp = map[string]string{
   the new provider and carries the thread best-effort as text); fusion refuses such a ladder
   (one governor per council).
 
-  Load one with --preset <name> on: coop <agent> · loop · fusion · acp ·
-  fork <name> --loop — or per fork in .agent/fleet.yaml (preset: <name>).
-  An explicit target (claude:opus@work) wins over the preset's lead + ladder.
+  Run one by NAMING it in the who-runs slot: coop <name> · coop loop <name> ·
+  coop fusion <name> · coop acp <name> · coop fork <fork> <name> --loop — or per fork
+  in .agent/fleet.yaml (agent: <name>). A target (claude:opus@work) in that same slot
+  runs the agent directly instead.
 
   .agent/presets/frontier/preset.yaml:
 
@@ -512,15 +515,14 @@ var commandHelp = map[string]string{
   up and down take --prune (with optional --force) to prune in the same step.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
-  loop) and may set agent: (a TARGET — provider[:model][/effort][@account]; give each fork a
-  DIFFERENT account so they run in parallel) and preset: (an orchestration preset; its
-  lead + ladder drive the fork). A fork takes ONE account — a full rotation ladder lives
-  in a preset. An explicit agent: target overrides the preset lead:
+  loop) and agent: — the who-runs, either a TARGET (provider[:model][/effort][@account];
+  give each fork a DIFFERENT account so they run in parallel) or a PRESET NAME (its lead +
+  ladder drive the fork). A fork takes ONE account — a full rotation ladder lives in a preset:
 
     forks:
       core:
         tasks: .agent/tasks.core
-        preset: frontier
+        agent: frontier
       perf:
         agent: codex:gpt-5.5@work
         tasks: .agent/tasks.perf
@@ -592,7 +594,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,…]] [--tasks <path>]... [--preset <name>] [--consult <peer>…] [--preflight] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--preflight] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -619,12 +621,12 @@ var commandHelp = map[string]string{
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
   rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap
   work loop does the work, a capable model signs it off), between.agent the per-task audit, and
-  work.agent the work rotation when the launch names no target and no --preset.
+  work.agent the work rotation when the launch names no target and no preset.
 
-  --preset <name> runs the loop under an orchestration preset: its lead is the
-  default agent, its lead agent: ladder is the rotation, and each iteration gets the
-  preset's role routing + wrappers ('coop help presets'). With no preset, the loop
-  rotates the agent's default model across all signed-in accounts.
+  A preset in the who-runs slot runs the loop under that orchestration preset: its lead is
+  the agent, its lead agent: ladder is the rotation, and each iteration gets the preset's role
+  routing + wrappers ('coop help presets'). With no preset, the loop rotates the agent's
+  default model across all signed-in accounts.
 
   The target is a one-off ladder for this run (no preset needed): a bare provider
   (claude) fans the agent's default model across all signed-in accounts, claude:opus
@@ -632,11 +634,11 @@ var commandHelp = map[string]string{
   the rungs on a rate limit. Below a rung's own model sits the account's marked default
   ('coop models'), then COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
 
-  --consult <peer>… lets each iteration ask NAMED peers for a read-only second opinion
+  --peer <peer>… lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
   orchestrator pattern running unattended. Off by default: it widens each box's
   credential scope to exactly the named peers. Also on fork loops:
-  coop fork <name> <target> --loop --consult codex --consult gemini.
+  coop fork <name> <target> --loop --peer codex --peer gemini.
 
   On macOS, coop holds a caffeinate assertion for the run so the machine doesn't
   idle-sleep mid-drain and stall an overnight loop (COOP_CAFFEINATE=0 to disable).

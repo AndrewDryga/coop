@@ -118,10 +118,14 @@ func TestFleetInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf(".agent/fleet.yaml not written: %v", err)
 	}
-	for _, want := range []string{"forks:", "tasks:", "agent:", "preset:", "coop fleet up"} {
+	for _, want := range []string{"forks:", "tasks:", "agent:", "coop fleet up"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("fleet template missing %q:\n%s", want, body)
 		}
+	}
+	// preset: was dropped — the who-runs lives in agent: now, so the template must not resurrect it.
+	if strings.Contains(string(body), "preset:") {
+		t.Errorf("fleet template should no longer show a preset: key (agent: absorbs presets):\n%s", body)
 	}
 	// The template's forks map is empty, so it parses to an empty fleet (nothing to start yet).
 	if entries, err := parseFleetYAML(string(body)); err != nil || len(entries) != 0 {
@@ -133,15 +137,15 @@ func TestFleetInit(t *testing.T) {
 	}
 }
 
-// .agent/fleet.yaml is the primary fleet format: author order is preserved, agent: is a target
-// (provider[:model][@account]), a fork names its agent OR a preset (no implicit default), and
-// every invalid shape errors with the fork named.
+// .agent/fleet.yaml is the primary fleet format: author order is preserved, agent: is the
+// who-runs — a target (provider[:model][@account]) OR a preset name (classified into the entry's
+// preset field), no implicit default — and every invalid shape errors with the fork named.
 func TestParseFleetYAML(t *testing.T) {
 	got, err := parseFleetYAML(`
 forks:
   core:
     tasks: .agent/tasks.core
-    preset: frontier
+    agent: frontier
   chores:
     agent: gemini:gemini-3.5-flash@work
     tasks: .agent/tasks.chores
@@ -153,6 +157,7 @@ forks:
 		t.Fatal(err)
 	}
 	want := []fleetEntry{
+		// agent: frontier is a preset name (not a target) → classified into preset, agent cleared.
 		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier"},
 		{name: "chores", agent: "gemini:gemini-3.5-flash@work", tasks: ".agent/tasks.chores"},
 		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain"},
@@ -165,12 +170,14 @@ forks:
 		"malformed":           "forks: [\n",
 		"no forks map":        "other: {}\n",
 		"missing tasks":       "forks:\n  a: {agent: claude}\n",
-		"unknown provider":    "forks:\n  a: {agent: borg, tasks: t}\n",
+		"no who":              "forks:\n  a: {tasks: t}\n",                                  // agent: is required (a target or a preset name)
+		"malformed target":    "forks:\n  a: {agent: \"claude:\", tasks: t}\n",              // a known provider with an empty :model
 		"unknown model key":   "forks:\n  a: {agent: claude, tasks: t, model: opus}\n",      // the model rides agent:
 		"unknown cred key":    "forks:\n  a: {agent: claude, tasks: t, credential: work}\n", // the account rides agent:
 		"account ladder":      "forks:\n  a: {agent: \"claude@work,personal\", tasks: t}\n", // a fork takes one account
 		"unknown field":       "forks:\n  a: {tasks: t, sidekick: yes}\n",
 		"unknown profile key": "forks:\n  a: {tasks: t, profile: work}\n",
+		"preset key dropped":  "forks:\n  a: {tasks: t, preset: frontier}\n",             // preset: is retired — agent: absorbs it
 		"consult not a key":   "forks:\n  a: {tasks: t, agent: claude, consult: true}\n", // consult was dropped
 		"bad name":            "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
 		"duplicate":           "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",

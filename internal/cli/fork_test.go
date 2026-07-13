@@ -204,12 +204,12 @@ func TestParseForkCreate(t *testing.T) {
 		wantFresh bool
 		wantErr   bool
 	}{
-		{[]string{"perf"}, "", false, false}, // no positional agent → "" (forkCreate errors later if no preset)
+		{[]string{"perf"}, "", false, false}, // no positional who → "" (forkCreate errors later if no preset)
 		{[]string{"perf", "codex"}, "codex", false, false},
 		{[]string{"perf", "gemini", "--fresh"}, "gemini", true, false},
 		{[]string{}, "", false, true},
-		{[]string{"perf", "bogus"}, "", false, true},
-		{[]string{"ls"}, "", false, true}, // reserved name
+		{[]string{"perf", "bogus"}, "", false, false}, // "bogus" is a preset NAME now (agent stays ""; validated later), not an error
+		{[]string{"ls"}, "", false, true},             // reserved name
 	}
 	for _, tc := range tests {
 		fa, err := parseForkCreate(tc.args)
@@ -227,19 +227,22 @@ func TestParseForkCreate(t *testing.T) {
 	}
 }
 
-// TestParseForkCreateConsult: --consult <peer> is repeatable and rides a loop fork's args; on a
-// non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), and a valueless
-// --consult errors (it takes a value).
-func TestParseForkCreateConsult(t *testing.T) {
-	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex", "--consult", "gemini:gemini-3.5-flash"})
-	if err != nil || !slices.Equal(fa.consult, []string{"codex", "gemini:gemini-3.5-flash"}) {
-		t.Errorf("parseForkCreate --consult (repeatable) = ({consult:%v}, %v), want [codex gemini:gemini-3.5-flash]", fa.consult, err)
+// TestParseForkCreatePeer: --peer <peer> is repeatable and rides a loop fork's args; on a
+// non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), a valueless --peer
+// errors (it takes a value), and the retired --consult is now just an unknown arg.
+func TestParseForkCreatePeer(t *testing.T) {
+	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--peer", "codex", "--peer", "gemini:gemini-3.5-flash"})
+	if err != nil || !slices.Equal(fa.peers, []string{"codex", "gemini:gemini-3.5-flash"}) {
+		t.Errorf("parseForkCreate --peer (repeatable) = ({peers:%v}, %v), want [codex gemini:gemini-3.5-flash]", fa.peers, err)
 	}
-	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult"}); err == nil {
-		t.Error("parseForkCreate: a valueless --consult must error (it takes a value)")
+	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--peer"}); err == nil {
+		t.Error("parseForkCreate: a valueless --peer must error (it takes a value)")
 	}
-	if _, err := parseForkCreate([]string{"perf", "claude", "--consult", "codex"}); err == nil {
-		t.Error("parseForkCreate: --consult without --loop must error (name peers on a loop)")
+	if _, err := parseForkCreate([]string{"perf", "claude", "--peer", "codex"}); err == nil {
+		t.Error("parseForkCreate: --peer without --loop must error (name peers on a loop)")
+	}
+	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("parseForkCreate: --consult is retired — should be an unknown flag now, got %v", err)
 	}
 }
 

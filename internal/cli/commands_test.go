@@ -302,68 +302,75 @@ func TestReopenVerdictLost(t *testing.T) {
 // no target (hasTarget=false) and the provider is required (caller errors or a preset lead
 // supplies it). A malformed/unknown token errors; --model/--credential are unexpected args now.
 func TestLoopTargetResolution(t *testing.T) {
-	if _, has, _, _, err := parseLoopArgs(nil, false); err != nil || has {
-		t.Errorf("parseLoopArgs(nil) = (has=%v, %v), want (false, nil) — no implicit default", has, err)
+	if _, has, ps, _, _, err := parseLoopArgs(nil, false); err != nil || has || ps != "" {
+		t.Errorf("parseLoopArgs(nil) = (has=%v, preset=%q, %v), want (false, \"\", nil) — no implicit default", has, ps, err)
 	}
 	for _, ag := range []string{"claude", "codex", "gemini"} {
-		tg, has, _, _, err := parseLoopArgs([]string{ag}, false)
-		if err != nil || !has || tg.Provider != ag {
-			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, %v), want provider=%q", ag, tg, has, err, ag)
+		tg, has, ps, _, _, err := parseLoopArgs([]string{ag}, false)
+		if err != nil || !has || ps != "" || tg.Provider != ag {
+			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, preset=%q, %v), want provider=%q", ag, tg, has, ps, err, ag)
 		}
 	}
-	if tg, has, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has ||
+	if tg, has, ps, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has || ps != "" ||
 		tg.Provider != "claude" || tg.Model != "opus-4.8" || len(tg.Accounts) != 1 || tg.Accounts[0] != "work" {
-		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, %v)", tg, err)
+		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, has=%v, preset=%q, %v)", tg, has, ps, err)
 	}
-	if _, _, _, _, err := parseLoopArgs([]string{"bogus"}, false); err == nil {
-		t.Error("parseLoopArgs(bogus): want error (unknown token)")
+	// A bare non-target word is a PRESET NAME now (its existence is validated later by
+	// loadRunPreset), not an unknown-token error.
+	if tg, has, ps, _, _, err := parseLoopArgs([]string{"frontier"}, false); err != nil || has || ps != "frontier" || tg.Provider != "" {
+		t.Errorf("parseLoopArgs(frontier) = (%+v, has=%v, preset=%q, %v), want a preset name and no target", tg, has, ps, err)
 	}
-	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--model", "opus"}, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
-		t.Errorf("--model should be an unexpected argument now, got %v", err)
-	}
-	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--credential", "work"}, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
-		t.Errorf("--credential should be an unexpected argument now, got %v", err)
+	// The model/account ride the target and a preset is the positional, so --model/--credential/
+	// --preset are all unexpected args now.
+	for _, bad := range [][]string{{"claude", "--model", "opus"}, {"claude", "--credential", "work"}, {"claude", "--preset", "frontier"}} {
+		if _, _, _, _, _, err := parseLoopArgs(bad, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+			t.Errorf("parseLoopArgs(%v) should be an unexpected argument, got %v", bad, err)
+		}
 	}
 }
 
 func TestParseLoopArgs(t *testing.T) {
-	// --consult is pre-extracted by cmdLoop (see TestExtractConsult), so parseLoopArgs never sees
-	// it — it resolves the target + the boolean flags only.
+	// --peer is pre-extracted by cmdLoop (see TestExtractPeer), so parseLoopArgs never sees it — it
+	// resolves the who-runs positional (a target OR a preset name) + the boolean flags only.
 	cases := []struct {
 		args          []string
 		def           bool // the loop.yaml preflight.enabled default
 		wantAgent     string
 		wantModel     string
+		wantPreset    string
 		wantDebug     bool
 		wantPreflight bool
 		wantErr       bool
 	}{
-		{nil, false, "", "", false, false, false},
-		{[]string{"codex"}, false, "codex", "", false, false, false},
-		{[]string{"--debug-on-fail"}, false, "", "", true, false, false},
-		{[]string{"gemini", "--debug"}, false, "", "", false, false, true},        // --debug is not a known flag → error
-		{[]string{"--debug-on-fail", "codex"}, false, "", "", false, false, true}, // a target must LEAD; a trailing positional errors
-		{[]string{"bogus"}, false, "", "", false, false, true},
+		{nil, false, "", "", "", false, false, false},
+		{[]string{"codex"}, false, "codex", "", "", false, false, false},
+		{[]string{"--debug-on-fail"}, false, "", "", "", true, false, false},
+		{[]string{"gemini", "--debug"}, false, "", "", "", false, false, true},        // --debug is not a known flag → error
+		{[]string{"--debug-on-fail", "codex"}, false, "", "", "", false, false, true}, // a who must LEAD; a trailing positional errors
+		// A bare non-target word is a PRESET NAME now (not an unknown-token error).
+		{[]string{"frontier"}, false, "", "", "frontier", false, false, false},
+		{[]string{"frontier", "--preflight"}, false, "", "", "frontier", false, true, false},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
-		{[]string{"--preflight"}, false, "", "", false, true, false},
-		{[]string{"codex", "--preflight"}, false, "codex", "", false, true, false},
-		{nil, true, "", "", false, true, false},                         // preflight.enabled default
-		{[]string{"--no-preflight"}, true, "", "", false, false, false}, // flag overrides default-on
+		{[]string{"--preflight"}, false, "", "", "", false, true, false},
+		{[]string{"codex", "--preflight"}, false, "codex", "", "", false, true, false},
+		{nil, true, "", "", "", false, true, false},                         // preflight.enabled default
+		{[]string{"--no-preflight"}, true, "", "", "", false, false, false}, // flag overrides default-on
 		// The model/account ride the target now; --model/--credential are unexpected args (error).
-		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", false, false, false},
-		{[]string{"claude:opus@work"}, false, "claude", "opus", false, false, false},
-		{[]string{"--model", "haiku"}, false, "", "", false, false, true},               // unexpected arg
-		{[]string{"claude", "--credential", "work"}, false, "", "", false, false, true}, // unexpected arg
+		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", "", false, false, false},
+		{[]string{"claude:opus@work"}, false, "claude", "opus", "", false, false, false},
+		{[]string{"--model", "haiku"}, false, "", "", "", false, false, true},               // unexpected arg
+		{[]string{"claude", "--credential", "work"}, false, "", "", "", false, false, true}, // unexpected arg
+		{[]string{"claude", "--preset", "frontier"}, false, "", "", "", false, false, true}, // --preset retired → unexpected arg
 	}
 	for _, c := range cases {
-		tg, _, debug, preflight, err := parseLoopArgs(c.args, c.def)
+		tg, _, ps, debug, preflight, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || debug != c.wantDebug || preflight != c.wantPreflight) {
-			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q debug=%v preflight=%v), want (%q, %q, %v, %v)",
-				c.args, c.def, tg.Provider, tg.Model, debug, preflight, c.wantAgent, c.wantModel, c.wantDebug, c.wantPreflight)
+		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v), want (%q, %q, %q, %v, %v)",
+				c.args, c.def, tg.Provider, tg.Model, ps, debug, preflight, c.wantAgent, c.wantModel, c.wantPreset, c.wantDebug, c.wantPreflight)
 		}
 	}
 }
@@ -376,22 +383,25 @@ func TestParseGovernor(t *testing.T) {
 		wantGov     string
 		wantModel   string
 		wantProfile string
+		wantPreset  string
 		wantRest    []string
 	}{
-		{"no governor named — empty, the caller requires one", nil, "", "", "", nil},
-		{"positional governor", []string{"claude"}, "claude", "", "", nil},
+		{"no governor named — empty, the caller requires one", nil, "", "", "", "", nil},
+		{"positional governor", []string{"claude"}, "claude", "", "", "", nil},
 		// The governor is a target: its model + account fold out for the one-off selection.
-		{"governor target model+account", []string{"claude:opus-4.8@work"}, "claude", "opus-4.8", "work", nil},
-		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", "", "", []string{"exec"}},
-		{"passthrough args keep order", []string{"exec", "foo"}, "", "", "", []string{"exec", "foo"}},
-		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", "", "", []string{"-p", "hi"}},
-		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "", "", "", []string{"--governor", "claude"}},
+		{"governor target model+account", []string{"claude:opus-4.8@work"}, "claude", "opus-4.8", "work", "", nil},
+		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", "", "", "", []string{"exec"}},
+		// A leading non-target bare word is the PRESET NAME (the who slot); the rest passes through.
+		{"leading preset governs, rest passes through", []string{"frontier", "foo"}, "", "", "", "frontier", []string{"foo"}},
+		{"bare preset name", []string{"frontier"}, "", "", "", "frontier", nil},
+		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", "", "", "", []string{"-p", "hi"}},
+		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "", "", "", "", []string{"--governor", "claude"}},
 		// A SECOND agent token is NOT swallowed as the governor — only the first is; the rest passes through.
-		{"second agent token passes through", []string{"codex", "gemini"}, "codex", "", "", []string{"gemini"}},
+		{"second agent token passes through", []string{"codex", "gemini"}, "codex", "", "", "", []string{"gemini"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gov, model, profile, _, rest, _, err := a.parseGovernor(c.args)
+			gov, model, profile, _, ps, rest, _, err := a.parseGovernor(c.args)
 			if err != nil {
 				t.Fatalf("parseGovernor(%v) errored: %v", c.args, err)
 			}
@@ -404,6 +414,9 @@ func TestParseGovernor(t *testing.T) {
 			if profile != c.wantProfile {
 				t.Errorf("profile = %q, want %q", profile, c.wantProfile)
 			}
+			if ps != c.wantPreset {
+				t.Errorf("preset = %q, want %q", ps, c.wantPreset)
+			}
 			if !slices.Equal(rest, c.wantRest) {
 				t.Errorf("rest = %v, want %v", rest, c.wantRest)
 			}
@@ -411,10 +424,10 @@ func TestParseGovernor(t *testing.T) {
 	}
 }
 
-// TestExtractConsult: --consult is REPEATABLE, one peer target per flag. The old boolean form
-// (no value) errors with the rewrite; each value is collected in order; after `--` an agent's own
-// --consult passes through verbatim.
-func TestExtractConsult(t *testing.T) {
+// TestExtractPeer: --peer is REPEATABLE, one peer target per flag. A valueless occurrence errors
+// (points at the repeatable form); each value is collected in order; after `--` an agent's own
+// --peer passes through verbatim. The retired --consult spelling is now an ordinary passthrough arg.
+func TestExtractPeer(t *testing.T) {
 	cases := []struct {
 		args     []string
 		want     []string
@@ -423,34 +436,36 @@ func TestExtractConsult(t *testing.T) {
 	}{
 		{nil, nil, nil, false},
 		{[]string{"-p", "hi"}, nil, []string{"-p", "hi"}, false},
-		{[]string{"--consult", "codex"}, []string{"codex"}, nil, false},
-		{[]string{"--consult", "codex:gpt-5.5", "--consult", "gemini"}, []string{"codex:gpt-5.5", "gemini"}, nil, false},
-		{[]string{"--consult=codex", "-p", "hi"}, []string{"codex"}, []string{"-p", "hi"}, false},
-		{[]string{"-p", "hi", "--consult", "gemini"}, []string{"gemini"}, []string{"-p", "hi"}, false},
-		// The old boolean spelling (no value) errors with the rewrite.
-		{[]string{"--consult"}, nil, nil, true},
-		{[]string{"--consult", "--other"}, nil, nil, true},
-		// After --, a --consult is the agent's own arg, not coop's — passed through verbatim.
-		{[]string{"--", "--consult", "x"}, nil, []string{"--", "--consult", "x"}, false},
+		{[]string{"--peer", "codex"}, []string{"codex"}, nil, false},
+		{[]string{"--peer", "codex:gpt-5.5", "--peer", "gemini"}, []string{"codex:gpt-5.5", "gemini"}, nil, false},
+		{[]string{"--peer=codex", "-p", "hi"}, []string{"codex"}, []string{"-p", "hi"}, false},
+		{[]string{"-p", "hi", "--peer", "gemini"}, []string{"gemini"}, []string{"-p", "hi"}, false},
+		// A valueless --peer errors (points at the repeatable form).
+		{[]string{"--peer"}, nil, nil, true},
+		{[]string{"--peer", "--other"}, nil, nil, true},
+		// After --, a --peer is the agent's own arg, not coop's — passed through verbatim.
+		{[]string{"--", "--peer", "x"}, nil, []string{"--", "--peer", "x"}, false},
+		// The retired --consult is now just an unknown/passthrough token, not a peer flag.
+		{[]string{"--consult", "codex"}, nil, []string{"--consult", "codex"}, false},
 	}
 	for _, c := range cases {
-		got, rest, err := extractConsult(c.args)
+		got, rest, err := extractPeer(c.args)
 		if (err != nil) != c.wantErr {
-			t.Errorf("extractConsult(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
+			t.Errorf("extractPeer(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
 		if c.wantErr {
 			continue
 		}
 		if !slices.Equal(got, c.want) || !slices.Equal(rest, c.wantRest) {
-			t.Errorf("extractConsult(%v) = (%v, %v), want (%v, %v)", c.args, got, rest, c.want, c.wantRest)
+			t.Errorf("extractPeer(%v) = (%v, %v), want (%v, %v)", c.args, got, rest, c.want, c.wantRest)
 		}
 	}
 }
 
-// TestResolvePeers: a --peer/--consult value is one peer target — a known, authed provider with
-// an optional :model and NO account. An @account, an unauthed provider, and an unknown provider
-// each error (naming the peer); an empty list is no peers, no error.
+// TestResolvePeers: a --peer value is one peer target — a known, authed provider with an optional
+// :model and NO account. An @account, an unauthed provider, and an unknown provider each error
+// (naming the peer); an empty list is no peers, no error.
 func TestResolvePeers(t *testing.T) {
 	dir := t.TempDir()
 	// claude authed (a credential file); codex/gemini not signed in.
@@ -458,11 +473,11 @@ func TestResolvePeers(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
 	a := &app{cfg: &config.Config{ConfigDir: dir}}
 
-	peers, err := a.resolvePeers("--consult", []string{"claude:opus-4.8"})
+	peers, err := a.resolvePeers("--peer", []string{"claude:opus-4.8"})
 	if err != nil || len(peers) != 1 || peers[0].Provider != "claude" || peers[0].Model != "opus-4.8" {
 		t.Fatalf("resolvePeers(claude:opus-4.8) = (%+v, %v)", peers, err)
 	}
-	if _, err := a.resolvePeers("--consult", []string{"claude@work"}); err == nil {
+	if _, err := a.resolvePeers("--peer", []string{"claude@work"}); err == nil {
 		t.Error("a peer with an @account must be rejected (a peer runs on its default account)")
 	}
 	if _, err := a.resolvePeers("--peer", []string{"codex"}); err == nil {
@@ -471,7 +486,7 @@ func TestResolvePeers(t *testing.T) {
 	if _, err := a.resolvePeers("--peer", []string{"borg"}); err == nil {
 		t.Error("an unknown provider must be rejected")
 	}
-	if peers, err := a.resolvePeers("--consult", nil); err != nil || peers != nil {
+	if peers, err := a.resolvePeers("--peer", nil); err != nil || peers != nil {
 		t.Errorf("resolvePeers(nil) = (%v, %v), want (nil, nil)", peers, err)
 	}
 }
@@ -787,12 +802,12 @@ func TestStrictFlagParsing(t *testing.T) {
 	}
 }
 
-// The top-level help documents coop's --consult wrapper flag and stops claiming `coop <agent>
+// The top-level help documents coop's --peer wrapper flag and stops claiming `coop <agent>
 // --help` shows coop's flags (it forwards to the agent).
-func TestHelpDocumentsConsultAndAgentHelp(t *testing.T) {
+func TestHelpDocumentsPeerAndAgentHelp(t *testing.T) {
 	h := helpText(&config.Config{})
-	if !strings.Contains(h, "--consult") {
-		t.Error("top-level help should document the --consult wrapper flag")
+	if !strings.Contains(h, "--peer") {
+		t.Error("top-level help should document the --peer wrapper flag")
 	}
 	if !strings.Contains(h, "--help is the agent's own") {
 		t.Error("footer should note that for an agent, --help is the agent's own")
