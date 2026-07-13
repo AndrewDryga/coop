@@ -676,7 +676,12 @@ var commandHelp = map[string]string{
 
 	"init": `coop init [--stack asdf] — scaffold coop's working set into the repo.
 
-  Usage: coop init [--stack asdf] [--services postgres,redis]
+  Usage: coop init [--stack asdf] [--services postgres,redis] [--agents claude,codex|all]
+
+  Per-agent dirs (.claude/.codex/.gemini) are scaffolded only for the agents you're
+  signed in to — or the --agents list ("all" for every one). A repo you keep on
+  only .agent/ still works: a box synthesizes a missing agent's skills from
+  .agent/skills on demand, so an unused agent dir isn't clutter you carry.
 
   Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, the
   workflow skills, and two starter subagents for the orchestrator pattern —

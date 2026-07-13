@@ -1114,10 +1114,39 @@ func (a *app) cmdDown(args []string) (int, error) {
 	return a.rt.Run(os.Stdin, os.Stdout, os.Stderr, cargs...)
 }
 
+// scaffoldableAgents are the agents with a per-agent dir `coop init` can scaffold (grok reads the
+// root AGENTS.md, no dir of its own).
+var scaffoldableAgents = []string{"claude", "codex", "gemini"}
+
+// scaffoldAgentSet resolves which per-agent dirs `coop init` scaffolds: the --agents list when given
+// ("all" → every scaffoldable agent; else the named ones, kept to the scaffoldable set), else the
+// agents you're signed in to. Empty (no --agents, none signed in) → .agent/ only — a box synthesizes
+// a missing agent's skills from .agent/ on demand, so the un-scaffolded agents still work.
+func scaffoldAgentSet(cfg *config.Config, flag string, flagSet bool) []string {
+	pick := func(names []string) []string {
+		var out []string
+		for _, n := range names {
+			if slices.Contains(scaffoldableAgents, n) && !slices.Contains(out, n) {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	if flagSet {
+		if strings.TrimSpace(flag) == "all" {
+			return append([]string{}, scaffoldableAgents...)
+		}
+		return pick(strings.FieldsFunc(flag, func(r rune) bool { return r == ',' || r == ' ' }))
+	}
+	return pick(box.AuthedAgents(cfg))
+}
+
 func (a *app) cmdInit(args []string) (int, error) {
 	stack := ""
 	var services []string
 	servicesSet := false
+	agentsFlag := ""
+	agentsSet := false
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--stack"); ok {
 			if e != nil {
@@ -1135,9 +1164,17 @@ func (a *app) cmdInit(args []string) (int, error) {
 			i += n - 1
 			continue
 		}
+		if v, n, ok, e := flagValue(args, i, "--agents"); ok {
+			if e != nil {
+				return 2, e
+			}
+			agentsFlag, agentsSet = v, true
+			i += n - 1
+			continue
+		}
 		// An unknown token is a typo — error before doing any scaffold work, rather than
 		// silently ignoring it and acting as if a flag were never passed.
-		return 2, unknownErr("init flag", args[i], []string{"--stack", "--services"})
+		return 2, unknownErr("init flag", args[i], []string{"--stack", "--services", "--agents"})
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -1154,7 +1191,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if !servicesSet && ui.IsTerminal(os.Stdin) {
 		services = promptServices(os.Stdin)
 	}
-	if err := scaffold.Init(repo, stack, langs); err != nil {
+	// Which per-agent dirs to scaffold: `--agents` if given (a name list, or "all"), else the agents
+	// you're signed in to. Others aren't clutter you delete later — a box synthesizes a missing
+	// agent's skills from .agent/ on demand.
+	agentDirs := scaffoldAgentSet(a.cfg, agentsFlag, agentsSet)
+	if err := scaffold.Init(repo, stack, langs, agentDirs); err != nil {
 		return 0, err
 	}
 	if err := scaffold.WriteCompose(repo, services); err != nil {
@@ -1167,6 +1208,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// (only when the repo has its own Docker and no Dockerfile.agent yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
+	if len(agentDirs) > 0 {
+		ui.Info("per-agent dirs: %s — others synthesize their skills in-box on demand", strings.Join(agentDirs, ", "))
+	} else {
+		ui.Info("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
+	}
 	// Monorepo: detect member dirs (each with a .agent/), record them in the root .agent/project.yaml
 	// so coop aggregates their task queues, and give each member a project.yaml if it lacks one. A
 	// single repo still gets a project.yaml template. Never clobbers an existing file.

@@ -220,7 +220,7 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	repo := t.TempDir()
-	if err := Init(repo, "", nil); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -350,7 +350,7 @@ func TestInitGitHooks(t *testing.T) {
 	// A fresh repo gets core.hooksPath pointed at the tracked, executable hook.
 	repo := t.TempDir()
 	gitInit(repo)
-	if err := Init(repo, "", nil); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := gitConfigGet(repo, "core.hooksPath"); got != ".githooks" {
@@ -368,7 +368,7 @@ func TestInitGitHooks(t *testing.T) {
 	if err := gitConfigSet(repo2, "core.hooksPath", ".my-hooks"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Init(repo2, "", nil); err != nil {
+	if err := Init(repo2, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := gitConfigGet(repo2, "core.hooksPath"); got != ".my-hooks" {
@@ -378,7 +378,7 @@ func TestInitGitHooks(t *testing.T) {
 
 func TestInitIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	if err := Init(repo, "", nil); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	// Edit a file, then re-init: it must be kept, not overwritten.
@@ -391,7 +391,7 @@ func TestInitIdempotent(t *testing.T) {
 	old := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
-	err := Init(repo, "", nil)
+	err := Init(repo, "", nil, []string{"claude", "codex", "gemini"})
 	_ = w.Close()
 	os.Stderr = old
 	logged, _ := io.ReadAll(r)
@@ -424,7 +424,7 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 	// A real CLAUDE.md (not a symlink) must survive init untouched.
 	real := filepath.Join(repo, "CLAUDE.md")
 	os.WriteFile(real, []byte("# my project rules"), 0o644)
-	if err := Init(repo, "", nil); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Readlink(real); err == nil {
@@ -440,7 +440,7 @@ func TestInitStack(t *testing.T) {
 	// services are opt-in via `coop init`'s prompt / --services, so Init never adds db/redis).
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("golang 1.26.4\n"), 0o644)
-	if err := Init(repo, "asdf", nil); err != nil {
+	if err := Init(repo, "asdf", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
@@ -452,12 +452,12 @@ func TestInitStack(t *testing.T) {
 	}
 
 	// A removed per-language stack is now an error pointing at .tool-versions.
-	if err := Init(t.TempDir(), "go", nil); err == nil {
+	if err := Init(t.TempDir(), "go", nil, nil); err == nil {
 		t.Error("--stack go should error now that language stacks are gone")
 	}
 
 	// --stack asdf without a .tool-versions is an error (nothing to install from).
-	if err := Init(t.TempDir(), "asdf", nil); err == nil {
+	if err := Init(t.TempDir(), "asdf", nil, nil); err == nil {
 		t.Error("--stack asdf without a .tool-versions should error")
 	}
 }
@@ -467,7 +467,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	// installs straight from it.
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("erlang 29.0.1\nelixir 1.20.0-otp-29\ngolang 1.26.4\n"), 0o644)
-	if err := Init(repo, "", nil); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
@@ -482,7 +482,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 
 	// No --stack and no .tool-versions → no Dockerfile is scaffolded.
 	repo2 := t.TempDir()
-	if err := Init(repo2, "", nil); err != nil {
+	if err := Init(repo2, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(repo2, "Dockerfile.agent")); !os.IsNotExist(err) {
@@ -493,7 +493,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	// the bad flag is surfaced rather than silently using .tool-versions.
 	repo3 := t.TempDir()
 	os.WriteFile(filepath.Join(repo3, ".tool-versions"), []byte("elixir 1.20.0-otp-29\n"), 0o644)
-	if err := Init(repo3, "python", nil); err == nil {
+	if err := Init(repo3, "python", nil, nil); err == nil {
 		t.Error("--stack python should error regardless of .tool-versions")
 	}
 }
@@ -549,5 +549,38 @@ func TestSkillsTemplatesMatchCanonical(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitAgentDirsGating(t *testing.T) {
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	// claude-only → .claude scaffolded, .codex/.gemini NOT; .agent + AGENTS.md always.
+	repo := t.TempDir()
+	if err := Init(repo, "", nil, []string{"claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(repo, ".claude", "settings.json")) {
+		t.Error(".claude should be scaffolded for claude")
+	}
+	for _, d := range []string{".codex", ".gemini", "GEMINI.md"} {
+		if exists(filepath.Join(repo, d)) {
+			t.Errorf("%s should NOT be scaffolded for claude-only", d)
+		}
+	}
+	if !exists(filepath.Join(repo, ".agent", "skills")) || !exists(filepath.Join(repo, "AGENTS.md")) {
+		t.Error(".agent/ and AGENTS.md are always scaffolded")
+	}
+	// No agents → .agent/ only, no per-agent dirs at all.
+	repo2 := t.TempDir()
+	if err := Init(repo2, "", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{".claude", ".codex", ".gemini", "CLAUDE.md", "GEMINI.md"} {
+		if exists(filepath.Join(repo2, d)) {
+			t.Errorf("%s should NOT be scaffolded with no agents", d)
+		}
+	}
+	if !exists(filepath.Join(repo2, ".agent", "rules")) {
+		t.Error(".agent/ is always scaffolded even with no agents")
 	}
 }

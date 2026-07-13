@@ -953,3 +953,18 @@ func TestSignOnExitAndPromptWarn(t *testing.T) {
 		t.Error("promptSignWarn should fire only when signs && headUnsigned")
 	}
 }
+
+func TestScaffoldAgentSet(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()} // no agents signed in
+	if got := scaffoldAgentSet(cfg, "all", true); len(got) != 3 {
+		t.Errorf(`--agents all → 3 scaffoldable agents, got %v`, got)
+	}
+	// A named list is kept to the scaffoldable set — grok has no per-agent dir, so it's dropped.
+	if got := scaffoldAgentSet(cfg, "claude,grok,codex", true); len(got) != 2 || got[0] != "claude" || got[1] != "codex" {
+		t.Errorf("named list should keep scaffoldable only: %v", got)
+	}
+	// No flag, no credentials → empty (.agent/ only).
+	if got := scaffoldAgentSet(cfg, "", false); len(got) != 0 {
+		t.Errorf("no flag + no creds → empty, got %v", got)
+	}
+}

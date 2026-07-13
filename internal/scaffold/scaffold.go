@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/taskstate"
@@ -26,15 +27,26 @@ var templates embed.FS
 // check (from DetectStacks, or the caller's interactive prompt); empty means a neutral gate.
 // Per-file progress prints as faint ui.Detail lines; the caller prints the summary and the
 // next-step actions. Existing files are never clobbered.
-func Init(repo, stack string, gateLangs []string) error {
+func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	s := &scaffolder{repo: repo}
+	// A per-agent dir (.claude/.codex/.gemini) is scaffolded only for agents in agentDirs — the ones
+	// you actually use. A repo that drops the others stays clean: a box synthesizes a missing agent's
+	// skills from .agent/ on demand (see box.synthSkillsMounts). agentDirs is the signed-in set (or
+	// `coop init --agents …`); empty means .agent/ only.
+	has := func(a string) bool { return slices.Contains(agentDirs, a) }
 	dirs := []string{
 		filepath.Join(repo, ".agent", "rules"),
 		filepath.Join(repo, ".agent", "skills"),
 		filepath.Join(repo, ".agent", "presets"), // orchestration recipes live here (coop presets init writes one)
-		filepath.Join(repo, ".claude", "hooks"),
-		filepath.Join(repo, ".codex"),
-		filepath.Join(repo, ".gemini"),
+	}
+	if has("claude") {
+		dirs = append(dirs, filepath.Join(repo, ".claude", "hooks"))
+	}
+	if has("codex") {
+		dirs = append(dirs, filepath.Join(repo, ".codex"))
+	}
+	if has("gemini") {
+		dirs = append(dirs, filepath.Join(repo, ".gemini"))
 	}
 	// The task-queue state dirs come from the shared taskstate package, so `coop init` can never
 	// scaffold a name the cli can't read. The numeric prefix sorts `ls .agent/tasks` by lifecycle.
@@ -45,23 +57,27 @@ func Init(repo, stack string, gateLangs []string) error {
 		return err
 	}
 
-	files := []struct {
+	type scaffFile struct {
 		dest, src string
 		perm      os.FileMode
-	}{
+	}
+	files := []scaffFile{
 		{filepath.Join(repo, "AGENTS.md"), "templates/AGENTS.md", 0o644},
 		{filepath.Join(repo, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644},
 		// One committed loop config (fully commented → no behavior change until you uncomment a key).
 		{filepath.Join(repo, ".agent", "loop.yaml"), "templates/agent/loop.yaml", 0o644},
-		{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
-		{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
-		// Starter subagents for the orchestrator pattern: the lead delegates reasoning-heavy
-		// phases to an Opus-pinned specialist and mechanical work to a Sonnet-pinned one, so
-		// the big model's tokens go to planning and synthesis. Native Claude Code files — the
-		// description frontmatter routes delegation, so they're inert until a task fits.
-		{filepath.Join(repo, ".claude", "agents", "deep-reasoner.md"), "templates/claude/agents/deep-reasoner.md", 0o644},
-		{filepath.Join(repo, ".claude", "agents", "fast-worker.md"), "templates/claude/agents/fast-worker.md", 0o644},
+	}
+	if has("claude") {
+		// Claude's settings + stop-guard hook, and the starter subagents for the orchestrator pattern
+		// (the lead delegates reasoning-heavy phases to an Opus-pinned specialist and mechanical work to
+		// a Sonnet-pinned one). Native Claude Code files — inert until a task fits their frontmatter.
 		// commit-gate.sh is generated per-stack in installGitHooks, not copied verbatim.
+		files = append(files,
+			scaffFile{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
+			scaffFile{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
+			scaffFile{filepath.Join(repo, ".claude", "agents", "deep-reasoner.md"), "templates/claude/agents/deep-reasoner.md", 0o644},
+			scaffFile{filepath.Join(repo, ".claude", "agents", "fast-worker.md"), "templates/claude/agents/fast-worker.md", 0o644},
+		)
 	}
 	for _, f := range files {
 		if err := s.writeIfAbsent(f.dest, f.src, f.perm); err != nil {
@@ -73,13 +89,20 @@ func Init(repo, stack string, gateLangs []string) error {
 	// symlink to it. The workflow skills likewise live once, in .agent/skills, and
 	// each agent's skills dir (.claude / .codex / .gemini) symlinks to it. A real
 	// (non-symlink) instruction file or skills dir is never clobbered.
-	if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "CLAUDE.md")); err != nil {
-		return err
+	if has("claude") {
+		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "CLAUDE.md")); err != nil {
+			return err
+		}
 	}
-	if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "GEMINI.md")); err != nil {
-		return err
+	if has("gemini") {
+		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "GEMINI.md")); err != nil {
+			return err
+		}
 	}
 	for _, dir := range []string{".claude", ".codex", ".gemini"} {
+		if !has(strings.TrimPrefix(dir, ".")) {
+			continue
+		}
 		if err := s.linkIfAbsent("../.agent/skills", filepath.Join(repo, dir, "skills")); err != nil {
 			return err
 		}
@@ -95,8 +118,12 @@ func Init(repo, stack string, gateLangs []string) error {
 	if err := s.updateGitignore(); err != nil {
 		return err
 	}
-	if err := s.installGitHooks(gateLangs); err != nil {
-		return err
+	// The commit-gate hook lives in .claude/hooks, so it's Claude-only — skip it when Claude isn't
+	// scaffolded (its box gets the gate synthesized like its skills).
+	if has("claude") {
+		if err := s.installGitHooks(gateLangs); err != nil {
+			return err
+		}
 	}
 
 	// The toolchain is driven by .tool-versions (asdf). With no --stack, auto-detect

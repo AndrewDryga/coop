@@ -716,6 +716,16 @@ across repos, while project rules stay in the repo's own `AGENTS.md`. A per-agen
 wins over the shared one: drop a `CLAUDE.md` into `~/.config/coop/agents/claude/` (or
 `AGENTS.md` into `codex/`, …) and that agent uses it instead.
 
+**`.agent/` is the only cornerstone.** `coop init` scaffolds the per-agent dirs
+(`.claude/`/`.codex/`/`.gemini/`) only for the agents you're signed in to — or the
+`--agents claude,codex` (or `all`) you name. A repo that never uses an agent can just
+delete its dir: when a box runs an agent whose dir is absent, coop synthesizes the
+workflow skills from the shared `.agent/skills` at the box's user-level
+`~/.<agent>/skills` (a writable copy — the host `.agent/` stays untouched). The one
+thing that needs the dir back is running that agent's OWN CLI on the host; boxes don't.
+When a repo *has* the per-agent dir, that committed copy wins and is used as-is (so a box
+can still self-improve it).
+
 ### MCP servers, defined once
 
 `coop init` seeds an empty `~/.config/coop/agents/mcp.json` (the standard

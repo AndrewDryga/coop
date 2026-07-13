@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop init` scaffolds per-agent dirs only for the agents you use.** It now creates
+  `.claude/`/`.codex/`/`.gemini/` only for the agents you're signed in to — or the `--agents
+  claude,codex` (or `all`) you name — instead of all of them. `.agent/` is always scaffolded; the
+  un-scaffolded agents aren't clutter you carry, because a box synthesizes a missing agent's skills
+  from `.agent/skills` on demand. A repo that never uses an agent can delete its dir (the one thing
+  that needs it back is running that agent's own CLI on the host). With no agents signed in and no
+  `--agents`, it scaffolds `.agent/` only.
+
 - **`.agent/` is now enough — a box synthesizes an agent's skills from `.agent/skills` when the repo
   has no per-agent dir.** A repo that keeps only vendor-neutral `.agent/` (no committed
   `.claude/`/`.codex/`/`.gemini/`) still gives the agent its workflow skills: coop mounts
