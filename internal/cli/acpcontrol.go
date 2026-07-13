@@ -52,16 +52,10 @@ const (
 	coopProviderID = "coop_provider"
 	coopAccountID  = "coop_account"
 	coopPresetID   = "coop_preset"
-	// coopSetupID is the RETIRED single mixed dropdown ("cred:<name>" / "preset:<name>" /
-	// "agent:<name>" values). Still ACCEPTED on set: an editor's persisted
-	// default_config_options may replay it at startup, and breaking that would strand a
-	// running config. Never rendered anymore.
-	coopSetupID = "coop_setup"
 )
 
-// coopOwnedIDs are the selector ids coop rebuilds on every refresh (the retired one included,
-// so a stale cached array can't keep rendering it).
-var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, coopPresetID: true, coopSetupID: true}
+// coopOwnedIDs are the selector ids coop rebuilds on every refresh.
+var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, coopPresetID: true}
 
 // stripConfigIDs are the native claude-agent-acp toolbar dropdowns coop removes: the permission-mode
 // picker (coop always runs yolo — the box is the sandbox) and the subagent picker (subagents still
@@ -1411,15 +1405,6 @@ func (c *acpControl) selectorSel(configID, value string) (newSel string, recogni
 			return "", true
 		}
 		return "preset:" + value, true
-	case coopSetupID:
-		// The retired mixed dropdown's value grammar, still accepted for editors whose persisted
-		// default_config_options replay it at startup.
-		if v, ok := strings.CutPrefix(value, "agent:"); ok {
-			if !agents.Valid(v) || len(accountsFor(c.cfg, v)) == 0 || fusion {
-				return "", true
-			}
-		}
-		return value, true
 	}
 	return "", false
 }
@@ -1829,9 +1814,9 @@ func (c *acpControl) refreshSetup(cached json.RawMessage) json.RawMessage {
 	return b
 }
 
-// refreshCoopOptions strips every coop-owned dropdown from a cached configOptions array (the
-// retired coop_setup included) and prepends freshly-built ones — the single place the "coop
-// dropdowns lead, natives follow" order is enforced on a refresh. The natives are dropped too
+// refreshCoopOptions strips every coop-owned dropdown from a cached configOptions array and
+// prepends freshly-built ones — the single place the "coop dropdowns lead, natives follow" order
+// is enforced on a refresh. The natives are dropped too
 // on a preset (the preset pins them) and after a provider switch (they still describe the OLD
 // lead's model menu — nativesStale), so an ack never resurrects them from the cache before the
 // restart's box truth lands.

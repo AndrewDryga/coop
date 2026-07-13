@@ -20,19 +20,18 @@ func modelsApp(t *testing.T) *app {
 	return &app{cfg: &config.Config{ConfigDir: dir}}
 }
 
-// TestCredentialsModelRetired: v3 dropped model-on-credential — a credential is just an
-// account, the model is a separate axis. Both the path form and the verb-first form
-// tombstone (exit 2) pointing at --model / presets.
-func TestCredentialsModelRetired(t *testing.T) {
+// TestCredentialsModelIsNotAnAttribute: v3 dropped model-on-credential — a credential is just an
+// account, the model is a separate axis. A `model` token (path form or leading verb) is now just an
+// unknown attribute/agent (exit 2), not a special note.
+func TestCredentialsModelIsNotAnAttribute(t *testing.T) {
 	a := modelsApp(t)
 	for _, args := range [][]string{
 		{"claude", "work", "model", "opus"}, // path form
 		{"claude", "work", "model"},         // path form, no value
-		{"model", "claude", "work", "opus"}, // verb-first form
+		{"model", "claude", "work", "opus"}, // leading verb
 	} {
-		code, err := a.cmdCredentials(args)
-		if code != 2 || err == nil || !strings.Contains(err.Error(), "retired") || !strings.Contains(err.Error(), "target") {
-			t.Errorf("cmdCredentials(%v) = (%d, %v), want a retired-with-rewrite error pointing at the target", args, code, err)
+		if code, err := a.cmdCredentials(args); code != 2 || err == nil {
+			t.Errorf("cmdCredentials(%v) = (%d, %v), want (2, error)", args, code, err)
 		}
 	}
 }

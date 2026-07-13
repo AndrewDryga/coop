@@ -18,7 +18,7 @@ func TestAuthedAgents(t *testing.T) {
 
 	// codex authed via its credential file; gemini via an env-file API key; claude
 	// has neither → not authed. A commented or empty key must not count. Creds live in
-	// profiles/default (the flat vault is retired).
+	// profiles/default.
 	os.MkdirAll(filepath.Join(dir, "codex", "profiles", "default"), 0o755)
 	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
 	os.WriteFile(filepath.Join(dir, "env"), []byte("# OPENAI_API_KEY=ignored\nGEMINI_API_KEY=real\nEMPTY=\n"), 0o644)
@@ -42,7 +42,7 @@ func peerTargets(names ...string) []agents.Target {
 func TestCredentialScope(t *testing.T) {
 	dir := t.TempDir()
 	// claude + gemini authed (so they're consultable peers); codex is not. Creds live in the
-	// profiles/default layout (the flat vault is retired — migrateFlatVaults moves it there).
+	// profiles/default layout.
 	os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755)
 	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
 	os.WriteFile(filepath.Join(dir, "env"), []byte("GEMINI_API_KEY=real\n"), 0o644)

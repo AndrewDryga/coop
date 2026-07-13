@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,27 +24,6 @@ func TestSplitFrontmatterSkipsLeadingComment(t *testing.T) {
 	// regression: a plain `---`-at-line-0 file (no comment) still parses.
 	if f2, _ := splitFrontmatter("---\ntitle: plain\n---\nbody\n"); f2["title"] != "plain" {
 		t.Errorf("no-comment frontmatter regressed: %q", f2["title"])
-	}
-}
-
-// TestLegacyTasksMigrationHint: a coop-v2 repo (a `.agent/TASKS.md`, no `.agent/tasks/`) must be
-// pointed at MIGRATING.md — not told to `coop init`, which would scaffold an empty queue beside the
-// populated legacy file and read as "v3 ate my tasks". Guards the #1 v3 upgrade-breakage risk.
-func TestLegacyTasksMigrationHint(t *testing.T) {
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "TASKS.md"), []byte("## Active\n- [ ] old task\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, sub := range [][]string{{"list"}, {"add", "x"}} {
-		if _, err := appFor(repo).cmdTasks(sub); err == nil || !strings.Contains(err.Error(), "MIGRATING.md") {
-			t.Errorf("`coop tasks %v` on a v2 repo should point at MIGRATING.md; got %v", sub, err)
-		}
-	}
-	if isTaskDir(filepath.Join(repo, ".agent", "tasks")) {
-		t.Error("a command on a v2 repo must NOT bootstrap an empty .agent/tasks queue")
 	}
 }
 

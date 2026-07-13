@@ -90,9 +90,6 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderAdd(root, args, stateTodo, "tasks add")
 	case "claim":
 		return tasksFolderMove(root, args, stateInProgress, "claim", "claimed")
-	case "start": // v3: renamed to claim
-		note, _ := removedCommandNote("tasks start")
-		return 2, errors.New(note)
 	case "block":
 		return tasksFolderBlock(root, args)
 	case "unblock":

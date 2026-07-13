@@ -175,25 +175,6 @@ func TestLoopReviewPromptAppend(t *testing.T) {
 	}
 }
 
-// TestLoopFilesTombstone: any retired .agent/loop/*.md (or legacy .agent/audit.md) fires a one-time
-// note pointing at .agent/loop.yaml; absent → no note. The note names the offending file(s).
-func TestLoopFilesTombstone(t *testing.T) {
-	repo := t.TempDir()
-	if got := loopFilesTombstone(repo); got != "" {
-		t.Errorf("no retired file → no tombstone note, got %q", got)
-	}
-	if err := os.MkdirAll(filepath.Join(repo, ".agent", "loop"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop", "review.md"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	note := loopFilesTombstone(repo)
-	if !strings.Contains(note, ".agent/loop/review.md") || !strings.Contains(note, ".agent/loop.yaml") {
-		t.Errorf("tombstone must name the retired file and .agent/loop.yaml, got %q", note)
-	}
-}
-
 // TestLoopBetweenPrompt: a header names the just-finished task(s) — the audit's subject, so the
 // prompt never asks the agent to guess "the most recent" — then between.prompt (SET, not read
 // from a file), then the fixed footer.
@@ -319,7 +300,7 @@ func TestReopenVerdictLost(t *testing.T) {
 
 // The loop's leading positional is a target (provider[:model][@account]); no positional →
 // no target (hasTarget=false) and the provider is required (caller errors or a preset lead
-// supplies it). A malformed/unknown token errors; --model/--credential tombstone.
+// supplies it). A malformed/unknown token errors; --model/--credential are unexpected args now.
 func TestLoopTargetResolution(t *testing.T) {
 	if _, has, _, _, err := parseLoopArgs(nil, false); err != nil || has {
 		t.Errorf("parseLoopArgs(nil) = (has=%v, %v), want (false, nil) — no implicit default", has, err)
@@ -337,11 +318,11 @@ func TestLoopTargetResolution(t *testing.T) {
 	if _, _, _, _, err := parseLoopArgs([]string{"bogus"}, false); err == nil {
 		t.Error("parseLoopArgs(bogus): want error (unknown token)")
 	}
-	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--model", "opus"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
-		t.Errorf("--model should tombstone, got %v", err)
+	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--model", "opus"}, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("--model should be an unexpected argument now, got %v", err)
 	}
-	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--credential", "work"}, false); err == nil || !strings.Contains(err.Error(), "retired") {
-		t.Errorf("--credential should tombstone, got %v", err)
+	if _, _, _, _, err := parseLoopArgs([]string{"claude", "--credential", "work"}, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("--credential should be an unexpected argument now, got %v", err)
 	}
 }
 
@@ -360,7 +341,7 @@ func TestParseLoopArgs(t *testing.T) {
 		{nil, false, "", "", false, false, false},
 		{[]string{"codex"}, false, "codex", "", false, false, false},
 		{[]string{"--debug-on-fail"}, false, "", "", true, false, false},
-		{[]string{"gemini", "--debug"}, false, "", "", false, false, true},        // v3: --debug retired → error
+		{[]string{"gemini", "--debug"}, false, "", "", false, false, true},        // --debug is not a known flag → error
 		{[]string{"--debug-on-fail", "codex"}, false, "", "", false, false, true}, // a target must LEAD; a trailing positional errors
 		{[]string{"bogus"}, false, "", "", false, false, true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
@@ -368,11 +349,11 @@ func TestParseLoopArgs(t *testing.T) {
 		{[]string{"codex", "--preflight"}, false, "codex", "", false, true, false},
 		{nil, true, "", "", false, true, false},                         // preflight.enabled default
 		{[]string{"--no-preflight"}, true, "", "", false, false, false}, // flag overrides default-on
-		// The model/account ride the target now; --model/--credential tombstone (error).
+		// The model/account ride the target now; --model/--credential are unexpected args (error).
 		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", false, false, false},
 		{[]string{"claude:opus@work"}, false, "claude", "opus", false, false, false},
-		{[]string{"--model", "haiku"}, false, "", "", false, false, true},               // retired
-		{[]string{"claude", "--credential", "work"}, false, "", "", false, false, true}, // retired
+		{[]string{"--model", "haiku"}, false, "", "", false, false, true},               // unexpected arg
+		{[]string{"claude", "--credential", "work"}, false, "", "", false, false, true}, // unexpected arg
 	}
 	for _, c := range cases {
 		tg, _, debug, preflight, err := parseLoopArgs(c.args, c.def)
@@ -495,8 +476,8 @@ func TestResolvePeers(t *testing.T) {
 	}
 }
 
-// TestCmdLoginTarget: the account rides the target (coop login claude@work); --credential
-// tombstones; a :model has no meaning for login; an account ladder is loop-only. The happy
+// TestCmdLoginTarget: the account rides the target (coop login claude@work); a stray --credential
+// is an unexpected arg; a :model has no meaning for login; an account ladder is loop-only. The happy
 // path parses and reaches loginTo (which then needs a TTY) — proof the target flowed through.
 func TestCmdLoginTarget(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
@@ -504,8 +485,8 @@ func TestCmdLoginTarget(t *testing.T) {
 	if code, err := a.cmdLogin([]string{"claude@work"}); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Errorf("cmdLogin(claude@work) = (%d, %v), want it to parse and hit the TTY check", code, err)
 	}
-	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), "retired") {
-		t.Errorf("cmdLogin --credential must tombstone, got %v", err)
+	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("cmdLogin --credential must be an unexpected argument, got %v", err)
 	}
 	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "no model") {
 		t.Errorf("cmdLogin claude:opus must reject the model, got %v", err)
@@ -515,25 +496,9 @@ func TestCmdLoginTarget(t *testing.T) {
 	}
 }
 
-// The retired --credential/--model no longer parse anywhere — the target grammar carries the
-// account/model (see TestParseTarget). A leftover --credential tombstones at each surface.
-func TestRetiredTargetFlagErr(t *testing.T) {
-	for _, args := range [][]string{{"--credential", "work"}, {"--credentials=work"}, {"--model", "opus"}, {"--model=opus"}} {
-		if err := retiredTargetFlagErr(args); err == nil {
-			t.Errorf("retiredTargetFlagErr(%v) = nil, want a tombstone", args)
-		}
-	}
-	// It stops at `--`: the agent's OWN --model/--credential after `--` passes through untouched.
-	for _, args := range [][]string{{"--", "--model", "opus"}, {"claude", "--", "--credential", "x"}} {
-		if err := retiredTargetFlagErr(args); err != nil {
-			t.Errorf("retiredTargetFlagErr(%v) = %v, want nil (post-`--` is the agent's)", args, err)
-		}
-	}
-}
-
 func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
 	// A nonexistent account in the target must error before any box work (claude@ghost), so a
-	// typo never silently creates a husk; and --credential tombstones.
+	// typo never silently creates a husk.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	code, err := a.launchAgent("claude@ghost", []string{"-p", "hi"})
 	if code != 2 || err == nil {
@@ -541,9 +506,6 @@ func TestLaunchAgentRejectsUnknownProfile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ghost") {
 		t.Errorf("error should name the bad account: %v", err)
-	}
-	if _, e := a.launchAgent("claude", []string{"--credential", "work"}); e == nil || !strings.Contains(e.Error(), "retired") {
-		t.Errorf("--credential should tombstone, got %v", e)
 	}
 }
 
@@ -578,21 +540,21 @@ func TestSelectRunProfile(t *testing.T) {
 	}
 }
 
-// --credential is wired into every agent-launch path; a nonexistent credential must fail fast
-// (before any box/Docker work) on fusion and acp too, not just a plain agent run.
+// A nonexistent account in the target must fail fast (before any box/Docker work) on fusion and
+// acp too, not just a plain agent run; a stray --credential is a rejected arg on each surface.
 func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	if code, err := a.cmdFusion([]string{"claude@ghost"}); code != 2 || err == nil {
 		t.Errorf("cmdFusion claude@ghost = (%d, %v), want 2 + error", code, err)
 	}
 	if code, err := a.cmdFusion([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdFusion --credential (retired) = (%d, %v), want 2 + tombstone", code, err)
+		t.Errorf("cmdFusion --credential = (%d, %v), want 2 + error", code, err)
 	}
 	if code, err := a.cmdACP([]string{"claude@ghost"}); code != 2 || err == nil {
 		t.Errorf("cmdACP claude@ghost = (%d, %v), want 2 + error", code, err)
 	}
 	if code, err := a.cmdACP([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdACP --credential (retired) = (%d, %v), want 2 + tombstone", code, err)
+		t.Errorf("cmdACP --credential = (%d, %v), want 2 + error", code, err)
 	}
 }
 
@@ -730,22 +692,6 @@ func TestCmdACPRejectsExtraArgs(t *testing.T) {
 	}
 }
 
-func TestExtractSupervise(t *testing.T) {
-	got, rest := extractSupervise([]string{"claude", "--supervise"})
-	if !got || len(rest) != 1 || rest[0] != "claude" {
-		t.Fatalf("with flag: supervise=%v rest=%v", got, rest)
-	}
-	got, rest = extractSupervise([]string{"fusion", "claude"})
-	if got || len(rest) != 2 {
-		t.Fatalf("without flag: supervise=%v rest=%v", got, rest)
-	}
-	// After --, a --supervise is the inner agent's own arg — not consumed by coop.
-	got, rest = extractSupervise([]string{"claude", "--", "--supervise"})
-	if got || !slices.Equal(rest, []string{"claude", "--", "--supervise"}) {
-		t.Fatalf("after --: supervise=%v rest=%v, want false + verbatim", got, rest)
-	}
-}
-
 // `coop run` with no command is a usage error (it doesn't default to an agent), and `coop run
 // --help`/-h prints run's own page — neither enters the box (which would exec `--help` and crash).
 func TestCmdRunMetaCases(t *testing.T) {
@@ -861,55 +807,6 @@ func TestTopLevelListsAllGroupVerbs(t *testing.T) {
 		if !strings.Contains(h, "coop fleet "+verb) {
 			t.Errorf("top-level help should list `coop fleet %s` as its own row", verb)
 		}
-	}
-}
-
-// migrateFlatVaults retires a legacy flat login into profiles/default, leaves an already-migrated
-// agent alone, skips agents never used (no empty dir left behind), and is idempotent.
-func TestMigrateFlatVaults(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir}
-
-	// claude: a flat vault — login sits directly in claude/, no profiles/ yet.
-	claudeFlat := filepath.Join(dir, "claude")
-	if err := os.MkdirAll(claudeFlat, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(claudeFlat, ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// gemini: already on the named-profile layout — must be left exactly as-is.
-	geminiWork := filepath.Join(dir, "gemini", "profiles", "work")
-	if err := os.MkdirAll(geminiWork, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// codex: never used (no dir at all).
-
-	migrateFlatVaults(cfg)
-
-	// claude's flat login moved into profiles/default; the flat path no longer holds it.
-	if !pathExists(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json")) {
-		t.Error("flat claude login was not migrated into profiles/default")
-	}
-	if pathExists(filepath.Join(claudeFlat, ".credentials.json")) {
-		t.Error("flat claude login still present at the old path after migration")
-	}
-	// gemini's existing profile is untouched and no stray default was invented for it.
-	if !pathExists(geminiWork) {
-		t.Error("existing gemini profile was disturbed by the migration")
-	}
-	if pathExists(filepath.Join(dir, "gemini", "profiles", "default")) {
-		t.Error("migration wrongly created a default profile for an already-migrated agent")
-	}
-	// codex was never used → no empty dir litters its (nonexistent) home.
-	if pathExists(filepath.Join(dir, "codex")) {
-		t.Error("migration created a dir for an agent that was never used")
-	}
-
-	// Idempotent: a second run leaves the migrated login exactly where it is.
-	migrateFlatVaults(cfg)
-	if !pathExists(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json")) {
-		t.Error("second migrateFlatVaults disturbed the migrated claude login")
 	}
 }
 

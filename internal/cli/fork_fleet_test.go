@@ -131,18 +131,6 @@ func TestFleetInit(t *testing.T) {
 	if code, err := a.fleetInit(); err == nil || code == 0 {
 		t.Errorf("re-init should refuse to clobber, got (%d, %v)", code, err)
 	}
-	// A repo with only a LEGACY .agent/fleet refuses too — init must not create the ambiguity.
-	legacy := filepath.Join(t.TempDir(), "l")
-	if err := os.MkdirAll(filepath.Join(legacy, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, ".agent", "fleet"), []byte("a claude t\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	a2 := &app{cfg: &config.Config{RepoOverride: legacy}}
-	if code, err := a2.fleetInit(); err == nil || code == 0 || !strings.Contains(err.Error(), "pre-v3") {
-		t.Errorf("init over a pre-v3 fleet should refuse and name the migration, got (%d, %v)", code, err)
-	}
 }
 
 // .agent/fleet.yaml is the primary fleet format: author order is preserved, agent: is a target
@@ -157,11 +145,9 @@ forks:
   chores:
     agent: gemini:gemini-3.5-flash@work
     tasks: .agent/tasks.chores
-    consult: false
   plain:
     agent: claude
     tasks: .agent/tasks.plain
-    consult: true
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -169,24 +155,25 @@ forks:
 	want := []fleetEntry{
 		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier"},
 		{name: "chores", agent: "gemini:gemini-3.5-flash@work", tasks: ".agent/tasks.chores"},
-		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain", consult: true},
+		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseFleetYAML =\n%+v\nwant\n%+v", got, want)
 	}
 
 	for name, in := range map[string]string{
-		"malformed":          "forks: [\n",
-		"no forks map":       "other: {}\n",
-		"missing tasks":      "forks:\n  a: {agent: claude}\n",
-		"unknown provider":   "forks:\n  a: {agent: borg, tasks: t}\n",
-		"model retired":      "forks:\n  a: {agent: claude, tasks: t, model: opus}\n",      // → put it in agent:
-		"credential retired": "forks:\n  a: {agent: claude, tasks: t, credential: work}\n", // → put it in agent:
-		"account ladder":     "forks:\n  a: {agent: \"claude@work,personal\", tasks: t}\n", // a fork takes one account
-		"unknown field":      "forks:\n  a: {tasks: t, sidekick: yes}\n",
-		"pre-v3 profile":     "forks:\n  a: {tasks: t, profile: work}\n",
-		"bad name":           "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
-		"duplicate":          "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
+		"malformed":           "forks: [\n",
+		"no forks map":        "other: {}\n",
+		"missing tasks":       "forks:\n  a: {agent: claude}\n",
+		"unknown provider":    "forks:\n  a: {agent: borg, tasks: t}\n",
+		"unknown model key":   "forks:\n  a: {agent: claude, tasks: t, model: opus}\n",      // the model rides agent:
+		"unknown cred key":    "forks:\n  a: {agent: claude, tasks: t, credential: work}\n", // the account rides agent:
+		"account ladder":      "forks:\n  a: {agent: \"claude@work,personal\", tasks: t}\n", // a fork takes one account
+		"unknown field":       "forks:\n  a: {tasks: t, sidekick: yes}\n",
+		"unknown profile key": "forks:\n  a: {tasks: t, profile: work}\n",
+		"consult not a key":   "forks:\n  a: {tasks: t, agent: claude, consult: true}\n", // consult was dropped
+		"bad name":            "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
+		"duplicate":           "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
 	} {
 		if _, err := parseFleetYAML(in); err == nil {
 			t.Errorf("%s: want an error, got none", name)
@@ -224,9 +211,8 @@ func TestComposeTarget(t *testing.T) {
 	}
 }
 
-// The pre-v3 one-line .agent/fleet is NEVER read: alone or alongside fleet.yaml, its
-// presence errors with the migrate-and-delete pointer; fleet.yaml alone loads.
-func TestLoadFleetRejectsPreV3File(t *testing.T) {
+// Only .agent/fleet.yaml is read; a stray one-line .agent/fleet file is simply ignored.
+func TestLoadFleetIgnoresStrayFile(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -235,23 +221,19 @@ func TestLoadFleetRejectsPreV3File(t *testing.T) {
 	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
 		t.Errorf("no fleet: want the init pointer, got %v", err)
 	}
+	// A stray .agent/fleet is not a fleet — loading still points at init, not the file.
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude t\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "no longer read") {
-		t.Errorf("pre-v3 file alone: want the migrate-and-delete error, got %v", err)
+	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
+		t.Errorf("stray .agent/fleet should be ignored (init pointer), got %v", err)
 	}
+	// fleet.yaml loads regardless of the stray file sitting beside it.
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  b: {agent: claude, tasks: t}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "no longer read") {
-		t.Errorf("pre-v3 file alongside yaml: want the migrate-and-delete error, got %v", err)
-	}
-	if err := os.Remove(filepath.Join(repo, ".agent", "fleet")); err != nil {
-		t.Fatal(err)
-	}
 	if entries, err := a.loadFleet(repo); err != nil || len(entries) != 1 || entries[0].name != "b" {
-		t.Errorf("yaml alone should load: %v (%+v)", err, entries)
+		t.Errorf("yaml should load (stray file ignored): %v (%+v)", err, entries)
 	}
 }
 

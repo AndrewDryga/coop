@@ -15,35 +15,27 @@ import (
 
 // fleetEntry is one fork in the declarative fleet: a name, the agent TARGET it runs
 // (provider[:model][@account] — so a fleet can put each fork on its own model/account instead
-// of all contending for the same first one), the tasks tree that seeds its loop, the
-// orchestration preset it runs under, and whether its loop consults peers. agent may be empty
-// when a preset supplies the lead. A fork takes ONE account (no @a,b ladder — a full rotation
-// lives in a preset); the target overrides the preset lead for that fork only.
+// of all contending for the same first one), the tasks tree that seeds its loop, and the
+// orchestration preset it runs under. agent may be empty when a preset supplies the lead. A fork
+// takes ONE account (no @a,b ladder — a full rotation lives in a preset); the target overrides the
+// preset lead for that fork only.
 type fleetEntry struct {
-	name    string
-	agent   string // a target: provider[:model][@account] ("" ⇒ the preset supplies the lead)
-	tasks   string
-	preset  string
-	consult bool
+	name   string
+	agent  string // a target: provider[:model][@account] ("" ⇒ the preset supplies the lead)
+	tasks  string
+	preset string
 }
 
-// fleetFile is the PRE-V3 one-line-per-fork fleet (.agent/fleet). It is never read —
-// its presence only produces a migrate-and-delete error, so a stale file can't silently
-// diverge from .agent/fleet.yaml (the one fleet format).
-func fleetFile(repo string) string { return filepath.Join(repo, ".agent", "fleet") }
-
 // fleetYAMLFile is the declarative fleet: .agent/fleet.yaml, a `forks:` map of fork
-// name → {tasks, agent, preset, consult}.
+// name → {tasks, agent, preset}.
 func fleetYAMLFile(repo string) string { return filepath.Join(repo, ".agent", "fleet.yaml") }
 
 // fleetForkYAML is one fork's YAML shape. Tasks is required; agent is a target
-// (provider[:model][@account]) and defaults to the preset's lead when omitted. model:/credential:
-// are retired — the model + account ride agent: (e.g. agent: claude:opus@work).
+// (provider[:model][@account]) and defaults to the preset's lead when omitted.
 type fleetForkYAML struct {
-	Agent   string `yaml:"agent"` // a target: provider[:model][@account]
-	Tasks   string `yaml:"tasks"`
-	Preset  string `yaml:"preset"`
-	Consult bool   `yaml:"consult"`
+	Agent  string `yaml:"agent"` // a target: provider[:model][@account]
+	Tasks  string `yaml:"tasks"`
+	Preset string `yaml:"preset"`
 }
 
 // parseFleetYAML parses .agent/fleet.yaml preserving the author's fork order (a plain
@@ -69,15 +61,13 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 	for i := 0; i+1 < len(doc.Forks.Content); i += 2 {
 		name := doc.Forks.Content[i].Value
 		// Node.Decode doesn't honor KnownFields, so reject unknown per-fork keys explicitly —
-		// a typo'd key (or the pre-v3 profile= spelling) must error, not silently drop.
+		// a typo'd key must error, not silently drop.
 		if node := doc.Forks.Content[i+1]; node.Kind == yaml.MappingNode {
 			for k := 0; k+1 < len(node.Content); k += 2 {
 				switch key := node.Content[k].Value; key {
-				case "agent", "tasks", "preset", "consult":
-				case "model", "credential":
-					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %s: is retired — put it in agent: (a target, e.g. agent: claude:opus@work)", name, key)
+				case "agent", "tasks", "preset":
 				default:
-					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown key %q (known: agent, tasks, preset, consult)", name, key)
+					return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: unknown key %q (known: agent, tasks, preset)", name, key)
 				}
 			}
 		}
@@ -85,7 +75,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 		if err := doc.Forks.Content[i+1].Decode(&f); err != nil {
 			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %v", name, err)
 		}
-		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, preset: f.Preset, consult: f.Consult}
+		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks, preset: f.Preset}
 		if !validForkName(e.name) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: invalid fork name %q", e.name)
 		}
@@ -141,11 +131,6 @@ func composeTarget(agent, model, effort, credential string) (string, error) {
 }
 
 func (a *app) loadFleet(repo string) ([]fleetEntry, error) {
-	// The pre-v3 one-line .agent/fleet is never read — even alongside a fleet.yaml, its
-	// presence is an error, so a stale copy can't sit there quietly diverging.
-	if fileExists(fleetFile(repo)) {
-		return nil, errors.New(".agent/fleet is the pre-v3 fleet format and is no longer read — translate each line into a forks: entry in .agent/fleet.yaml (see MIGRATING.md), then delete .agent/fleet")
-	}
 	data, err := os.ReadFile(fleetYAMLFile(repo))
 	if err != nil {
 		return nil, errors.New("no .agent/fleet.yaml — run 'coop fleet init' to scaffold one")
@@ -185,41 +170,48 @@ func (a *app) cmdFleet(args []string) (int, error) {
 }
 
 // fleetTemplate seeds .agent/fleet.yaml with a documented, ready-to-edit format.
-const fleetTemplate = `# coop fleet — a declarative set of fork loops. Start it with: coop fleet up
+const fleetTemplate = `# coop fleet — a declarative set of fork loops.
 #
-# Each fork under forks: needs tasks: (the task tree that seeds its loop, relative to
-# the repo). Everything else is optional:
-#   agent:        a TARGET — provider[:model][@account], e.g. claude, codex:gpt-5.5, or
-#                 gemini:gemini-3.5-flash@work (see 'coop models' / 'coop credentials').
-#                 Defaults to the preset's lead when omitted. A fork takes ONE account;
-#                 give each fork a DIFFERENT one so they don't contend for the same rate
-#                 limit. A full rotation ladder lives in a preset, not here.
-#   preset:       an orchestration preset from .agent/presets/<name>/ (its lead + ladder
-#                 drive the fork — see 'coop help presets').
-#   (consult: names peers explicitly — the fleet grammar for that is coming; a bare
-#    consult: true is refused at 'coop fleet up' until then.)
+# Start it with:  coop fleet up
 #
-# Example:
-# forks:
-#   core:
-#     tasks: .agent/tasks.core
-#     preset: frontier
-#   chores:
-#     agent: gemini:gemini-3.5-flash@work
-#     tasks: .agent/tasks.chores
+# Each fork listed under 'forks:' gets its own clone, branch, and loop. Only one
+# field is required — 'tasks:'. Everything else is optional:
+#
+#   tasks:    (required) the task tree that seeds this fork's loop, relative to
+#             the repo — for example .agent/tasks.core
+#
+#   agent:    a TARGET, provider[:model][@account] — for example claude,
+#             codex:gpt-5.5, or gemini:gemini-3.5-flash@work.
+#             (See 'coop models' and 'coop credentials'.) Defaults to the
+#             preset's lead when omitted.
+#
+#             A fork takes ONE account, so give each fork a DIFFERENT one and
+#             they won't contend for the same rate limit. A full rotation ladder
+#             belongs in a preset, not here.
+#
+#   preset:   an orchestration preset from .agent/presets/<name>/ — its lead and
+#             ladder drive the fork. (See 'coop help presets'.)
+#
+# Example — two forks, one on a preset, one on a pinned model:
+#
+#         forks:
+#           core:
+#             tasks: .agent/tasks.core
+#             preset: frontier
+#
+#           chores:
+#             agent: gemini:gemini-3.5-flash@work
+#             tasks: .agent/tasks.chores
 
 forks: {}
 `
 
 // fleetInit writes a documented .agent/fleet.yaml template so you can declare a fleet
-// without remembering the format. It never clobbers an existing fleet, in either format.
+// without remembering the format. It never clobbers an existing fleet.
 func (a *app) fleetInit() (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
-	}
-	if fileExists(fleetFile(repo)) {
-		return 1, errors.New(".agent/fleet is the pre-v3 format and is no longer read — translate it into .agent/fleet.yaml (see MIGRATING.md), then delete it")
 	}
 	path := fleetYAMLFile(repo)
 	if fileExists(path) {
@@ -262,12 +254,6 @@ func (a *app) fleetUp(args []string) (int, error) {
 	// detached worker's log. (A fork with no profile= falls back to the repo pool / all signed-in.)
 	var unsigned []string
 	for _, e := range fleet {
-		// The boolean consult: meant "ask every other signed-in agent" — that implicit peer policy
-		// is retired. A fork's loop now names its peers explicitly, which the fleet YAML can't yet
-		// express (Task B gives it a peers list); until then, refuse rather than silently drop it.
-		if e.consult {
-			return 2, fmt.Errorf("fleet up: fork %q sets consult: true, but the implicit 'consult everyone' peer policy is retired — name peers explicitly (coming to the fleet grammar); drop consult: for now", e.name)
-		}
 		if e.agent == "" {
 			continue // preset-only fork; forkCreate validates the lead after resolving it
 		}
@@ -299,7 +285,6 @@ func (a *app) fleetUp(args []string) (int, error) {
 		if e.preset != "" {
 			forkArgs = append(forkArgs, "--preset", e.preset)
 		}
-		// e.consult is refused up front (the implicit peer policy is retired), so no --consult here.
 		if code, err := a.cmdFork(forkArgs); err != nil {
 			return code, fleetAbortErr(e.name, err, started)
 		}

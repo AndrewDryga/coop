@@ -22,23 +22,14 @@ import (
 //
 //	coop credentials claude personal default
 //
-// The older verb-first forms (`default|rm <agent> <credential> …`) were retired in v3 — they
-// tombstone with the path-grammar rewrite (see removedCommandNote "profiles verb").
+// A leading verb (`default|rm|model …`) reads as an unknown agent now — the path grammar above is
+// the only spelling for an edit.
 func (a *app) cmdCredentials(args []string) (int, error) {
 	if len(args) > 0 {
 		if _, ok := agents.Get(args[0]); ok && len(args) > 1 {
 			return a.profilePath(args[0], args[1], args[2:])
 		}
 		switch args[0] {
-		case "default", "rm":
-			// v3: the verb-first forms (`coop credentials rm <agent> <p>`) are retired for the path grammar
-			// (`coop credentials <agent> <p> rm`, handled above). Tombstone the old spelling loudly.
-			note, _ := removedCommandNote("profiles verb")
-			return 2, errors.New(note)
-		case "model":
-			// v3: a model isn't a credential property — set it with --model or a preset.
-			note, _ := removedCommandNote("credentials model")
-			return 2, errors.New(note)
 		case "ls":
 			// Bare `coop credentials` already lists — steer `ls` there instead of "unknown agent" (rule:
 			// `ls` is the list verb, so it must lead somewhere useful, not read as an agent filter).
@@ -165,10 +156,6 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 		return a.showProfile(agent, profile)
 	}
 	switch rest[0] {
-	case "model":
-		// v3: a model isn't a credential property — set it with --model or a preset.
-		note, _ := removedCommandNote("credentials model")
-		return 2, errors.New(note)
 	case "default":
 		if len(rest) > 1 {
 			return 2, fmt.Errorf("unexpected argument %q (usage: coop credentials %s %s default)", rest[1], agent, profile)

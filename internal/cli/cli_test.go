@@ -229,34 +229,25 @@ func TestExitCodeContract(t *testing.T) {
 	}
 }
 
-// v3 retires renamed-command aliases: each retired form exits 2 with a tombstone naming the rewrite,
-// via the one removedCommandNote registry.
+// v3 keeps no renamed-command aliases: a retired form is just an unknown command/subcommand now
+// (exit 2), not a special "X is retired" note. Locked in against a future re-mint.
 func TestV3RetiredForms(t *testing.T) {
-	for _, key := range []string{"clone", "pool", "tasks start", "loop --debug", "profiles", "profiles verb"} {
-		if note, ok := removedCommandNote(key); !ok || note == "" {
-			t.Errorf("removedCommandNote(%q) missing a tombstone", key)
-		}
-	}
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	// clone, top-level pool, and profiles (renamed to credentials) tombstone through dispatch
-	// (no runtime needed — they fall to default).
+	// clone, top-level pool, and profiles (renamed to credentials) fall through to the plain
+	// unknown-command error (exit 2) via dispatch — no runtime needed.
 	for _, argv := range [][]string{{"clone", "x"}, {"pool", "add", "p"}, {"profiles"}, {"profiles", "claude"}} {
 		code, err := a.dispatch(argv)
 		if code != 2 || err == nil {
-			t.Errorf("dispatch(%v) = (%d, %v), want (2, a tombstone)", argv, code, err)
+			t.Errorf("dispatch(%v) = (%d, %v), want (2, unknown-command error)", argv, code, err)
 		}
 	}
-	// The profiles tombstone names the replacement command.
-	if _, err := a.dispatch([]string{"profiles"}); err == nil || !strings.Contains(err.Error(), "coop credentials") {
-		t.Errorf("profiles tombstone should point at coop credentials, got: %v", err)
-	}
-	// verb-first credential edits → tombstone (path grammar is the replacement).
+	// A leading verb-first credential edit reads as an unknown agent now (exit 2).
 	if code, err := a.cmdCredentials([]string{"rm", "claude", "work"}); code != 2 || err == nil {
-		t.Errorf("verb-first credentials rm = (%d, %v), want (2, a tombstone)", code, err)
+		t.Errorf("verb-first credentials rm = (%d, %v), want (2, error)", code, err)
 	}
-	// tasks start → tombstone (renamed to claim).
+	// tasks start → unknown tasks command (renamed to claim).
 	if code, err := cmdTasksFolder("", t.TempDir(), []string{"start", "x"}); code != 2 || err == nil {
-		t.Errorf("tasks start = (%d, %v), want (2, a tombstone)", code, err)
+		t.Errorf("tasks start = (%d, %v), want (2, unknown tasks command)", code, err)
 	}
 }
 
@@ -276,33 +267,6 @@ func TestHelpForAgentShowsWrapperFlags(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("agent help missing %q:\n%s", want, out)
 		}
-	}
-}
-
-// `coop status` and `coop help status` must show the SAME removal tombstone — one source, both paths.
-func TestRemovedCommandNoteParity(t *testing.T) {
-	note, ok := removedCommandNote("status")
-	if !ok || !strings.Contains(note, "was removed") {
-		t.Fatalf("removedCommandNote(status) = (%q, %v), want the tombstone", note, ok)
-	}
-	if _, ok := removedCommandNote("tasks"); ok {
-		t.Error("a live command must not carry a removal note")
-	}
-	// `coop status` path: unknownCommandErr returns the note verbatim.
-	if err := unknownCommandErr([]string{"status"}); err == nil || err.Error() != note {
-		t.Errorf("unknownCommandErr(status) = %v, want the tombstone verbatim", err)
-	}
-	// `coop help status` path: helpForCommand prints the same note (stderr) and exits 2 — NOT the
-	// generic "unknown command" (which would also be exit 2, hence the text check).
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := helpForCommand("status")
-	_ = w.Close()
-	os.Stderr = old
-	out, _ := io.ReadAll(r)
-	if code != 2 || !strings.Contains(string(out), "was removed") {
-		t.Errorf("helpForCommand(status) = exit %d, out=%q; want 2 + the tombstone", code, out)
 	}
 }
 

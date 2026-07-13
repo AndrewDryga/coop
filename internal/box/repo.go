@@ -34,9 +34,8 @@ func ServicesProject(repo string) string {
 }
 
 // ComposeFileRel is the repo-relative (slash-form) path of the sibling-services compose file:
-// one committed location under .agent/, beside loop.yaml/project.yaml (the old root
-// compose.agent.yml is retired). ComposeFile returns it when it exists to auto-run on the HOST
-// daemon (validated first by box.ValidateComposeFile).
+// one committed location under .agent/, beside loop.yaml/project.yaml. ComposeFile returns it
+// when it exists to auto-run on the HOST daemon (validated first by box.ValidateComposeFile).
 const ComposeFileRel = ".agent/compose.yml"
 
 // ComposeFile returns the repo's sibling-services compose file (.agent/compose.yml), or "" if it's

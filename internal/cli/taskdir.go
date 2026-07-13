@@ -70,18 +70,6 @@ func isTaskDir(path string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// legacyTasksFile returns the path to a coop-v2 `.agent/TASKS.md` sitting beside the (v3) folder
-// queue dir, or "" if none. An upgrading customer is pointed at MIGRATING.md instead of being told
-// to `coop init` — which would scaffold an EMPTY queue next to their populated legacy file and read
-// as "v3 ate my tasks". queueRoot is the queue dir (…/.agent/tasks); the legacy file is its sibling.
-func legacyTasksFile(queueRoot string) string {
-	p := filepath.Join(filepath.Dir(queueRoot), "TASKS.md")
-	if fileExists(p) {
-		return p
-	}
-	return ""
-}
-
 // subtaskRe matches a markdown checkbox list item (a subtask) and captures its marker.
 // It allows leading indentation so nested steps still count; the marker is one char.
 var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)

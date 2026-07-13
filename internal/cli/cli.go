@@ -62,10 +62,6 @@ func (a *app) ensureRuntime() error {
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
 func Main(argv []string) int {
 	cfg := config.Load()
-	// Retire any legacy flat credential vault into profiles/default before anything reads a
-	// profile — even help checks sign-in state and lists profiles. One-time, idempotent, and
-	// best-effort (filesystem only, so it needs no container runtime). See migrateFlatVaults.
-	migrateFlatVaults(cfg)
 	// Once a day, check for a newer coop in the background and mention it as the command's
 	// parting line (deferred, so it runs on every return path). See startUpdateCheck.
 	defer startUpdateCheck(cfg, argv)()
@@ -250,10 +246,6 @@ func helpForCommand(cmd string) int {
 		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
 		return 0
 	default:
-		if note, ok := removedCommandNote(cmd); ok { // `coop help status` shows the same tombstone as `coop status`
-			ui.Error("%s", note)
-			return 2
-		}
 		candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
 		msg := fmt.Sprintf("unknown command %q", cmd)
 		if guess, ok := nearestCommand(cmd, candidates); ok {
@@ -274,45 +266,10 @@ func isKnownCommand(cmd string) bool {
 	return agents.Valid(cmd)
 }
 
-// removedCommandNote is the one tombstone registry for every retired command/alias/flag: each maps to
-// a migration line naming the replacement, so a retired form fails loudly (exit 2) with the rewrite
-// instead of doing nothing, or being silently re-minted as a forever-alias. Keyed by the top-level
-// command name (checked by unknownCommandErr / helpForCommand) or a descriptive key for a sub-form
-// (its own dispatch site looks it up). ok is false for anything that was never removed. See MIGRATING.md.
-func removedCommandNote(cmd string) (string, bool) {
-	switch cmd {
-	case "status": // replaced by the task board (the default) + the per-fork fleet board
-		return "coop status was removed — watch the work with `coop tasks watch` " +
-			"(the queue + any active forks, deduped); for the per-fork fleet board use `coop fleet watch` " +
-			"(snapshot: `coop fork ls`)", true
-	case "clone": // v3: renamed-command aliases die loudly rather than living forever
-		return "coop clone was renamed to coop fork (v2.4) — run: coop fork <name>", true
-	case "pool", "loop pool":
-		return "coop loop pool was retired in v3 — a loop's rotation lives in a preset's models: ladder (a bare model rotates all your accounts). See: coop help presets", true
-	case "tasks start":
-		return "coop tasks start was renamed to claim — run: coop tasks claim <id>", true
-	case "loop --debug":
-		return "coop loop --debug was renamed — use --debug-on-fail", true
-	case "profiles": // v3: the account concept is public-named credentials; presets carry the runtime recipe
-		return "coop profiles was renamed to coop credentials in v3 (a credential is a stored " +
-			"account/login; orchestration recipes are presets — see coop help presets) — run: coop credentials", true
-	case "profiles verb":
-		return "coop credentials edits read as a path — run: coop credentials <agent> <credential> " +
-			"<default|rm> (e.g. coop credentials claude work default)", true
-	case "credentials model":
-		return "setting a model on a credential was retired in v3 — a credential is just an account. " +
-			"Set the model inline in the target (claude:opus) or in a preset's models: ladder (see coop help presets)", true
-	}
-	return "", false
-}
-
 // unknownCommandErr explains an unrecognized command: a "did you mean" for a likely typo,
 // and how to run an actual command in the box (which is no longer implicit).
 func unknownCommandErr(argv []string) error {
 	sub := argv[0]
-	if note, ok := removedCommandNote(sub); ok {
-		return fmt.Errorf("%s", note)
-	}
 	msg := fmt.Sprintf("unknown command %q", sub)
 	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
 	if guess, ok := nearestCommand(sub, candidates); ok {

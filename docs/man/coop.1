@@ -319,9 +319,6 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.
 
-  (--supervise is accepted as a no-op — the proxy is always on now, but older editor
-  (Zed) agent_servers entries still send it, and coop can't rewrite your editor config.)
-
 coop fusion <governor> --peer <agent>… — one agent leads, named peers advise, it synthesizes.
 
   Usage: coop fusion <governor>[:model][/effort][@account] --peer <agent>… [--preset <name>] [args...]
@@ -360,9 +357,7 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
   loop) and may set agent: (a TARGET — provider[:model][/effort][@account]; give each fork a
   DIFFERENT account so they run in parallel) and preset: (an orchestration preset; its
   lead + ladder drive the fork). A fork takes ONE account — a full rotation ladder lives
-  in a preset. The old per-fork model:/credential: keys are retired (the model+account
-  ride agent:); a per-fork consult: true is refused for now (name peers explicitly — the
-  fleet grammar for that is coming). An explicit agent: target overrides the preset lead:
+  in a preset. An explicit agent: target overrides the preset lead:
 
     forks:
       core:
@@ -372,8 +367,7 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
         agent: codex:gpt-5.5@work
         tasks: .agent/tasks.perf
 
-  The pre-v3 one-line .agent/fleet is NOT read — its presence is an error until you
-  translate it (see MIGRATING.md) and delete it. List forks: coop fork ls
+  List forks: coop fork ls
 
 coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
@@ -448,15 +442,12 @@ coop loop [agent] — work the task queue until done, then sign off.
   built-in — it's off unless enabled + set; coop prepends the just-finished task's id + folder,
   the audit's exact subject). signoff.rounds is the round cap, preflight.enabled the pre-loop
   cleanup, work.command a raw per-iteration override. A missing file or field = the built-in
-  default. (The retired .agent/loop/*.md and legacy .agent/audit.md tombstone once if left
-  behind; coop init scaffolds a commented loop.yaml.)
+  default. (coop init scaffolds a commented loop.yaml.)
 
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
   rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap
   work loop does the work, a capable model signs it off), between.agent the per-task audit, and
-  work.agent the work rotation when the launch names no target and no --preset. (The
-  COOP_LOOP_MODEL / COOP_REVIEW_MODEL / COOP_MAX_REVIEW_ROUNDS / COOP_LOOP_CMD / COOP_PREFLIGHT
-  env vars are RETIRED — their config lives in loop.yaml.)
+  work.agent the work rotation when the launch names no target and no --preset.
 
   --preset <name> runs the loop under an orchestration preset: its lead is the
   default agent, its lead agent: ladder is the rotation, and each iteration gets the

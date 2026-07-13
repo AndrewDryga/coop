@@ -234,11 +234,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 				return fa, aerr
 			}
 			fa.agent, fa.agentSet, fa.model, fa.effort, fa.credential = t.Provider, true, t.Model, t.Effort, acct
-		case x == "--model" || strings.HasPrefix(x, "--model="):
-			return fa, errors.New("--model is retired — put the model in the target: coop fork <name> <provider>:<model> (e.g. claude:opus)")
-		case x == "--credential", x == "--credentials",
-			strings.HasPrefix(x, "--credential="), strings.HasPrefix(x, "--credentials="):
-			return fa, errors.New("--credential is retired — put the account in the target: coop fork <name> <provider>@<account> (e.g. claude@work)")
 		case x == "--fresh":
 			fa.fresh = true
 		case x == "--force", x == "-f":
@@ -832,9 +827,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	// --model/--credential are retired — name the fork's ACP session in the positional target
 	// (coop fork <name> acp claude:opus@work), like plain `coop acp`.
-	if err := retiredTargetFlagErr(rest); err != nil {
-		return 2, err
-	}
 	agent, model, profile, effort := "", "", "", ""
 	for _, x := range rest {
 		switch {

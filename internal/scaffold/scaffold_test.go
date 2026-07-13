@@ -99,66 +99,6 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	}
 }
 
-// TestUpdateGitignoreUpgrade: an older root-anchored block (.agent/*, no project.yaml un-ignore) is
-// upgraded in place to the monorepo-aware form, without duplicating the block.
-func TestUpdateGitignoreUpgrade(t *testing.T) {
-	repo := t.TempDir()
-	old := "node_modules/\n\n# coop working state\n.agent/*\n!.agent/rules/\n!.agent/skills/\n"
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&scaffolder{repo: repo}).updateGitignore(); err != nil {
-		t.Fatal(err)
-	}
-	gi := string(mustRead(t, filepath.Join(repo, ".gitignore")))
-	if strings.Contains(gi, "\n.agent/*\n") {
-		t.Errorf("old root-anchored .agent/* not upgraded:\n%s", gi)
-	}
-	if !strings.Contains(gi, "**/.agent/*") || !strings.Contains(gi, "!.agent/project.yaml") {
-		t.Errorf("upgrade missing the monorepo pattern or project.yaml un-ignore:\n%s", gi)
-	}
-	// Root-only knowledge un-ignores are widened to any-depth (a member may carry its own).
-	if strings.Contains(gi, "\n!.agent/rules/\n") || !strings.Contains(gi, "!**/.agent/rules/") {
-		t.Errorf("rules/ un-ignore not widened to any depth:\n%s", gi)
-	}
-	if n := strings.Count(gi, "**/.agent/*"); n != 1 {
-		t.Errorf("**/.agent/* appears %d times, want 1:\n%s", n, gi)
-	}
-}
-
-// TestUpdateGitignoreAddsLoop: a block that already has the monorepo pattern + audit.md but predates
-// loop.yaml (the committed loop config) gets its un-ignore inserted after audit.md, once; an older
-// gitignore carrying the retired `!**/.agent/loop/` dir un-ignore is upgraded to loop.yaml in place.
-func TestUpdateGitignoreAddsLoop(t *testing.T) {
-	repo := t.TempDir()
-	old := "node_modules/\n\n# coop working state\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/audit.md\n!.agent/project.yaml\n"
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&scaffolder{repo: repo}).updateGitignore(); err != nil {
-		t.Fatal(err)
-	}
-	gi := string(mustRead(t, filepath.Join(repo, ".gitignore")))
-	if !strings.Contains(gi, "!**/.agent/audit.md\n!**/.agent/loop.yaml\n") {
-		t.Errorf("loop.yaml un-ignore not inserted after audit.md:\n%s", gi)
-	}
-	// Idempotent: a second run doesn't add it again.
-	_ = (&scaffolder{repo: repo}).updateGitignore()
-	gi2 := string(mustRead(t, filepath.Join(repo, ".gitignore")))
-	if n := strings.Count(gi2, "!**/.agent/loop.yaml"); n != 1 {
-		t.Errorf("loop.yaml un-ignore appears %d times, want 1:\n%s", n, gi2)
-	}
-	// An older gitignore with the retired loop/ dir un-ignore upgrades in place (no duplicate).
-	repo2 := t.TempDir()
-	legacy := "**/.agent/*\n!**/.agent/rules/\n!**/.agent/loop/\n!.agent/project.yaml\n"
-	os.WriteFile(filepath.Join(repo2, ".gitignore"), []byte(legacy), 0o644)
-	_ = (&scaffolder{repo: repo2}).updateGitignore()
-	gi3 := string(mustRead(t, filepath.Join(repo2, ".gitignore")))
-	if strings.Contains(gi3, "!**/.agent/loop/\n") || !strings.Contains(gi3, "!**/.agent/loop.yaml") {
-		t.Errorf("legacy loop/ un-ignore not upgraded to loop.yaml:\n%s", gi3)
-	}
-}
-
 // TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
 // .claude/, rules), a project.yaml (the root's alone), nor the retired BACKLOG.md.
 func TestInitSubproject(t *testing.T) {
@@ -176,15 +116,6 @@ func TestInitSubproject(t *testing.T) {
 			t.Errorf("member should NOT have %s (top-level only / retired)", rel)
 		}
 	}
-}
-
-func mustRead(t *testing.T, path string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
 }
 
 // TestDockerfileTemplatesTrustAnyWorktree guards the real-path-mount contract:

@@ -121,9 +121,6 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		}
 		return a.loginTo(tool, acct)
 	}
-	if err := retiredTargetFlagErr(args); err != nil {
-		return 2, err
-	}
 	// `coop claude --preset frontier` loads the orchestration preset: its roles seed the run
 	// (routing contract, role models/credentials, wrappers); `coop <agent>` names the lead
 	// explicitly, so the preset's lead.agent never overrides the command's own.
@@ -217,23 +214,6 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 	return nil
 }
 
-// extractBoolFlag pulls one of coop's own bool flags out of an agent's args (so it isn't
-// forwarded to the agent CLI) and reports whether it was present. Everything after a `--`
-// is the agent's own args and is passed through verbatim.
-func extractBoolFlag(args []string, flag string) (found bool, rest []string) {
-	for i, a := range args {
-		if a == "--" {
-			return found, append(rest, args[i:]...)
-		}
-		if a == flag {
-			found = true
-			continue
-		}
-		rest = append(rest, a)
-	}
-	return found, rest
-}
-
 // extractConsult pulls every --consult <target> (repeatable) out of a normal/loop/fork-loop
 // run's args — each value is one peer the lead may consult read-only on hard calls (see
 // box.RunSpec.Peers). The OLD boolean --consult (no value) is retired (v3-clean): a valueless
@@ -249,10 +229,10 @@ func extractPeer(args []string) (peers, rest []string, err error) {
 }
 
 // extractRepeatable collects every `--flag <value>` occurrence (repeatable) out of args, in
-// order, returning the values and the remaining args. A valueless occurrence (the old boolean
-// spelling, or a typo) errors, pointing at the repeatable form. Stops at `--` — everything after
-// is the agent's own, forwarded verbatim (so an agent's OWN --consult/--peer still reaches it).
-func extractRepeatable(args []string, flag, tombstone string) (vals, rest []string, err error) {
+// order, returning the values and the remaining args. A valueless occurrence (a typo, or a bare
+// flag) errors, pointing at the repeatable form. Stops at `--` — everything after is the agent's
+// own, forwarded verbatim (so an agent's OWN --consult/--peer still reaches it).
+func extractRepeatable(args []string, flag, hint string) (vals, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
 			return vals, append(rest, args[i:]...), nil
@@ -260,7 +240,7 @@ func extractRepeatable(args []string, flag, tombstone string) (vals, rest []stri
 		if args[i] == flag || strings.HasPrefix(args[i], flag+"=") {
 			v, n, _, e := flagValue(args, i, flag)
 			if e != nil {
-				return nil, nil, fmt.Errorf("%s takes a value now — %s", flag, tombstone)
+				return nil, nil, fmt.Errorf("%s takes a value — %s", flag, hint)
 			}
 			vals = append(vals, v)
 			i += n - 1
@@ -295,30 +275,8 @@ func (a *app) defaultCmd(tool string) []string {
 	return []string{tool}
 }
 
-// migrateFlatVaults retires any legacy flat credential vault into the named-profile layout at
-// startup: for each agent whose <ConfigDir>/<agent>/ dir predates profiles/, box.EnsureProfilesDir
-// moves the login into profiles/default so every read path can assume named profiles. It runs once
-// (from Main) before anything reads a profile, is idempotent — a no-op once profiles/ exists — and
-// best-effort: a rare rename failure is surfaced as a warning and nothing is deleted, so the flat
-// login stays put and the user can retry or simply log in again. Agents never used (no <agent>/ dir)
-// are skipped, so this doesn't leave an empty profiles/ behind for them.
-func migrateFlatVaults(cfg *config.Config) {
-	for _, name := range agents.Names() {
-		base := filepath.Join(cfg.ConfigDir, name)
-		if fi, err := os.Stat(base); err != nil || !fi.IsDir() {
-			continue // never used this agent — nothing to migrate
-		}
-		if err := box.EnsureProfilesDir(cfg, name); err != nil {
-			ui.Warn("could not migrate %s credentials into the profile layout: %v — log in again if %s stops authenticating", name, err, name)
-		}
-	}
-}
-
 func (a *app) cmdLogin(args []string) (int, error) {
 	// The account rides the target now (coop login claude@work); --credential is retired.
-	if err := retiredTargetFlagErr(args); err != nil {
-		return 2, err
-	}
 	// The agent is required — bare `coop login` must not silently default to one (it would open a
 	// browser and block); name it explicitly, like the help shows. A stray extra arg is a typo,
 	// not a second target, so reject it rather than silently ignore.
@@ -474,12 +432,10 @@ func defaultACPProvider(cfg *config.Config) string {
 }
 
 func (a *app) cmdACP(args []string) (int, error) {
-	// The ACP proxy is ALWAYS in the path (not only under --supervise): it's coop's control point for
-	// the editor session — restart resilience, plus rewriting the session so coop owns the toolbar
-	// (yolo, model default, the credential/preset selector). The OUTER process validates the args
-	// (fail fast), then supervises; the INNER (COOP_ACP_INNER=1) runs the box. --supervise is now the
-	// default — strip and ignore it so an existing editor config that still passes it keeps working.
-	_, args = extractSupervise(args)
+	// The ACP proxy is ALWAYS in the path: it's coop's control point for the editor session —
+	// restart resilience, plus rewriting the session so coop owns the toolbar (yolo, model default,
+	// the credential/preset selector). The OUTER process validates the args (fail fast), then
+	// supervises; the INNER (COOP_ACP_INNER=1) runs the box.
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
 	consultVals, args, err := extractConsult(args)
 	if err != nil {
@@ -494,9 +450,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// --model/--credential are retired on this surface too — pin the session in the positional
 	// target instead, so an editor's agent_servers entry runs ["acp","claude:opus@work"].
-	if err := retiredTargetFlagErr(args); err != nil {
-		return 2, err
-	}
 	// --preset: routing + role wiring for the editor session; the preset's lead is the
 	// default agent (or governor, under fusion) when none is named.
 	presetName, args, err := extractRunPreset(args)
@@ -654,10 +607,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
-}
-
-func extractSupervise(args []string) (supervise bool, rest []string) {
-	return extractBoolFlag(args, "--supervise")
 }
 
 // acpResumeState is the whole handoff a `coop acp` supervisor carries across a SIGHUP re-exec: the
@@ -911,9 +860,6 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	// --model/--credential are retired — pin the governor in its target (coop fusion
 	// claude:opus@work); the peers keep their own defaults. `--`-aware, so the
 	// governor's OWN flags (codex's --profile) still pass through after a `--`.
-	if err := retiredTargetFlagErr(args); err != nil {
-		return 2, err
-	}
 	// The council is named EXPLICITLY with --peer (repeatable). --consult is the normal-run
 	// spelling; on fusion it's a mistake worth naming rather than leaking to the governor's CLI.
 	for _, x := range args {
@@ -1368,13 +1314,6 @@ func (a *app) cmdInit(args []string) (int, error) {
 			}
 		}
 	}
-	if lf := legacyTasksFile(filepath.Join(repo, tasksRoot)); lf != "" {
-		rel := lf
-		if r, err := filepath.Rel(repo, lf); err == nil {
-			rel = r
-		}
-		ui.Warn("a legacy %s is present — v3 uses a folder per task and did NOT migrate it; convert it with MIGRATING.md", rel)
-	}
 	scaffold.SuggestDocker(repo)
 	ui.Steps(initNextSteps(repo, services)...)
 	return 0, nil
@@ -1481,9 +1420,6 @@ func promptGateLangs(in io.Reader) []string {
 // positional was given (a preset then supplies the lead).
 func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, debugOnFail, preflight bool, err error) {
 	preflight = def
-	if err = retiredTargetFlagErr(args); err != nil {
-		return agents.Target{}, false, false, preflight, err
-	}
 	t, hasTarget, rest, err := takeHeadTarget(args)
 	if err != nil {
 		return agents.Target{}, false, false, preflight, err
@@ -1492,9 +1428,6 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, debugOn
 		switch x {
 		case "--debug-on-fail":
 			debugOnFail = true
-		case "--debug": // v3: renamed to --debug-on-fail
-			note, _ := removedCommandNote("loop --debug")
-			return t, hasTarget, debugOnFail, preflight, errors.New(note)
 		case "--preflight":
 			preflight = true
 		case "--no-preflight":
@@ -1507,10 +1440,6 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget, debugOn
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
-	if len(args) > 0 && args[0] == "pool" { // v3: the persistent pool is gone — rotation lives in a preset
-		note, _ := removedCommandNote("loop pool")
-		return 2, errors.New(note)
-	}
 	flags, rest, err := extractTasksFlags(args)
 	if err != nil {
 		return 2, err
@@ -1795,24 +1724,6 @@ func reviewContextFooter(repo string, queues []string) string {
 		" GATE INTEGRITY: a task that changed a gate-defining file — the Makefile/gate, .agent/project.yaml, .agent/loop.yaml, .claude/hooks/, or CI — could be passing by WEAKENING its own checker (removing an assertion, relaxing the gate, disabling a hook). Scrutinize any such change and REOPEN the task if the gate was weakened rather than the code fixed; a green gate the candidate loosened is not a pass."
 }
 
-// loopFilesTombstone returns a one-time warning when any RETIRED loop config file still exists —
-// .agent/loop/{review,audit,between}.md or the legacy .agent/audit.md. Those knobs moved into one
-// .agent/loop.yaml (signoff.prompt / preflight.prompt APPEND, between.prompt SETS), and coop NO
-// LONGER reads the old files. Empty when none linger. loop() surfaces it once so an unmigrated repo
-// isn't silently ignored. Pure (returns the string), so it's unit-testable.
-func loopFilesTombstone(repo string) string {
-	var found []string
-	for _, rel := range []string{".agent/loop/review.md", ".agent/loop/audit.md", ".agent/loop/between.md", ".agent/audit.md"} {
-		if fileExists(filepath.Join(repo, filepath.FromSlash(rel))) {
-			found = append(found, rel)
-		}
-	}
-	if len(found) == 0 {
-		return ""
-	}
-	return "found retired loop config file(s) " + strings.Join(found, ", ") + " — loop settings now live in one .agent/loop.yaml (signoff.prompt/preflight.prompt append the built-ins; between.prompt sets the audit) and the old files are NO LONGER read; fold them into .agent/loop.yaml, then delete them"
-}
-
 // loopBetweenPrompt is the opt-in per-task audit run after each completed task. A header names
 // the task(s) the last iteration moved to done — the audit's subject, computed at fire time so
 // the between.prompt never has to make the agent GUESS "the most recent" from folder mtimes.
@@ -2005,11 +1916,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// A queue is a directory (.agent/tasks), so check for one with isTaskDir — fileExists is
 	// false for a directory and used to reject every folder queue, so the loop never ran.
 	if !slices.ContainsFunc(hosts, isTaskDir) {
-		if len(hosts) > 0 {
-			if lf := legacyTasksFile(hosts[0]); lf != "" {
-				return -1, legacyMigrateErr(repo, lf, queues[0])
-			}
-		}
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	if !box.ImageExists(a.rt, img) {
@@ -2042,13 +1948,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in) and
 	// is built per-firing so it can name the task the iteration just finished.
 	betweenEnabled := len(custom) == 0 && lc.Between.Enabled
-	// Tombstone the retired .agent/loop/*.md (and legacy .agent/audit.md) once: those knobs moved
-	// into .agent/loop.yaml and coop no longer reads the old files — don't silently ignore them.
-	if len(custom) == 0 {
-		if note := loopFilesTombstone(repo); note != "" {
-			ui.Warn("%s", note)
-		}
-	}
 	// Per-stage signoff/between rotations from .agent/loop.yaml — each runs on its OWN configured
 	// provider/model/effort/account and rotates its own fallback ladder on a limit (NOT a model name
 	// pasted onto the work provider). An unset stage falls back: between → signoff → the work loop.

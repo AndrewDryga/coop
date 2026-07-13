@@ -62,7 +62,7 @@ func TestParseForkCreateCredential(t *testing.T) {
 	if fa.credential != "work" || fa.model != "opus-4.8" {
 		t.Errorf("credential=%q model=%q, want work / opus-4.8", fa.credential, fa.model)
 	}
-	// --profile/--credential/--model are all retired — each errors (unknown arg or tombstone),
+	// --profile/--credential/--model are not fork flags — each errors as an unknown arg,
 	// in both space and = forms.
 	for _, args := range [][]string{
 		{"perf", "--profile", "work"}, {"perf", "--profile=work"},
@@ -70,7 +70,7 @@ func TestParseForkCreateCredential(t *testing.T) {
 		{"perf", "--model", "opus"},
 	} {
 		if _, err := parseForkCreate(args); err == nil {
-			t.Errorf("parseForkCreate(%v): a retired flag must error, got nil", args)
+			t.Errorf("parseForkCreate(%v): an unknown flag must error, got nil", args)
 		}
 	}
 }

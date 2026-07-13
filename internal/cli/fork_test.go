@@ -229,14 +229,14 @@ func TestParseForkCreate(t *testing.T) {
 
 // TestParseForkCreateConsult: --consult <peer> is repeatable and rides a loop fork's args; on a
 // non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), and a valueless
-// --consult errors (the old boolean spelling is retired).
+// --consult errors (it takes a value).
 func TestParseForkCreateConsult(t *testing.T) {
 	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex", "--consult", "gemini:gemini-3.5-flash"})
 	if err != nil || !slices.Equal(fa.consult, []string{"codex", "gemini:gemini-3.5-flash"}) {
 		t.Errorf("parseForkCreate --consult (repeatable) = ({consult:%v}, %v), want [codex gemini:gemini-3.5-flash]", fa.consult, err)
 	}
 	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult"}); err == nil {
-		t.Error("parseForkCreate: a valueless --consult must error (retired boolean spelling)")
+		t.Error("parseForkCreate: a valueless --consult must error (it takes a value)")
 	}
 	if _, err := parseForkCreate([]string{"perf", "claude", "--consult", "codex"}); err == nil {
 		t.Error("parseForkCreate: --consult without --loop must error (name peers on a loop)")
@@ -244,7 +244,7 @@ func TestParseForkCreateConsult(t *testing.T) {
 }
 
 // TestParseForkCreateTarget: the positional target's :model and @account fold into forkArgs;
-// the retired --model/--credential flags tombstone (v3-clean) with the rewrite.
+// --model/--credential are not fork flags — they error as unknown args.
 func TestParseForkCreateTarget(t *testing.T) {
 	fa, err := parseForkCreate([]string{"perf", "codex:gpt-5"})
 	if err != nil || fa.agent != "codex" || fa.model != "gpt-5" || fa.credential != "" {
@@ -258,14 +258,14 @@ func TestParseForkCreateTarget(t *testing.T) {
 	if _, err := parseForkCreate([]string{"perf", "claude@work,personal"}); err == nil {
 		t.Error("parseForkCreate: a >1-account target must error on a fork (loop-only ladder)")
 	}
-	for _, tomb := range [][]string{
+	for _, bad := range [][]string{
 		{"perf", "codex", "--model", "gpt-5"},
 		{"perf", "--model=opus", "--loop"},
 		{"perf", "claude", "--credential", "work"},
 		{"perf", "claude", "--credential=work"},
 	} {
-		if _, err := parseForkCreate(tomb); err == nil {
-			t.Errorf("parseForkCreate(%v): a retired flag must tombstone, not parse", tomb)
+		if _, err := parseForkCreate(bad); err == nil {
+			t.Errorf("parseForkCreate(%v): --model/--credential must error (unknown flag), not parse", bad)
 		}
 	}
 }
@@ -452,8 +452,8 @@ func TestLatestTaskLogOnlyDone(t *testing.T) {
 }
 
 // `coop fork <name> acp claude@ghost` pins the account in the positional target (like plain
-// `coop acp`); an unknown account errors on the account itself. The retired --credential flag
-// tombstones with the rewrite.
+// `coop acp`); an unknown account errors on the account itself. A stray --credential is a
+// rejected arg.
 func TestForkACPAcceptsCredential(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	code, err := a.forkACP("myfork", []string{"claude@ghost"})
@@ -464,7 +464,7 @@ func TestForkACPAcceptsCredential(t *testing.T) {
 		t.Errorf("a target's @account should be accepted, not rejected as an argument: %v", err)
 	}
 	if code, err := a.forkACP("myfork", []string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("fork acp --credential (retired) = (%d, %v), want (2, tombstone)", code, err)
+		t.Errorf("fork acp --credential = (%d, %v), want (2, error)", code, err)
 	}
 }
 

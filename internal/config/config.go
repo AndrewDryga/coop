@@ -523,9 +523,7 @@ func (c *Config) EffortFor(agent string) string {
 
 // AgentProfileDir is the host folder for one named credential profile of an agent:
 // <ConfigDir>/<agent>/profiles/<name>/. "default" is just the profile named "default" —
-// a startup migration (migrateFlatVaults → box.EnsureProfilesDir) moves any legacy flat
-// login into profiles/default before anything reads a profile, so this always resolves
-// under profiles/.
+// every login lives under profiles/, so this always resolves there.
 func (c *Config) AgentProfileDir(agent, name string) string {
 	if name == "" {
 		name = DefaultProfile
@@ -534,8 +532,7 @@ func (c *Config) AgentProfileDir(agent, name string) string {
 }
 
 // Profiles lists agent's credential profile names from its profiles/ dir, or nothing when the
-// agent has never been used. A legacy flat login is migrated into profiles/default at startup
-// (see migrateFlatVaults), so it appears here too.
+// agent has never been used (or has no profiles/ dir yet).
 func (c *Config) Profiles(agent string) []string {
 	entries, err := os.ReadDir(filepath.Join(c.ConfigDir, agent, profilesSubdir))
 	if err != nil {

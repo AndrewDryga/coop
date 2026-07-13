@@ -69,7 +69,7 @@ func TestACPControlRewrite(t *testing.T) {
 	if len(ids) < 3 || ids[0] != "coop_preset" || ids[1] != "coop_provider" || ids[2] != "coop_account" {
 		t.Errorf("coop's dropdowns must lead (provider, account, preset), got %v", ids)
 	}
-	for _, bad := range []string{"mode", "agent", "coop_setup"} {
+	for _, bad := range []string{"mode", "agent"} {
 		if slices.Contains(ids, bad) {
 			t.Errorf("%s dropdown not stripped: %v", bad, ids)
 		}
@@ -96,7 +96,7 @@ func TestACPControlRewrite(t *testing.T) {
 // TestACPControlRewriteConfigUpdateNotification: coop's toolbar rewrite must ALSO apply to a
 // config_option_update NOTIFICATION (params.update.configOptions), not just a session/new result — it's
 // the shape the adapter pushes on a mid-session change and the one coop's replay rebuilds after a
-// credential/preset switch. Missing it dropped the coop_setup dropdown from the toolbar after a switch
+// credential/preset switch. Missing it dropped coop's dropdowns from the toolbar after a switch
 // (the reported bug: switching profile→credential left only the raw adapter dropdowns).
 func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
 	c := newTestControl(t)
@@ -362,24 +362,24 @@ func TestACPControlPassthrough(t *testing.T) {
 func TestACPControlFromEditor(t *testing.T) {
 	c := newTestControl(t)
 	c.sel = "cred:personal" // deterministic starting point
-	// A prior session/new rewrite would have cached the option array (coop_setup first).
-	c.cached["s"] = json.RawMessage(`[{"id":"coop_setup","currentValue":"cred:personal"},{"id":"model"}]`)
+	// A prior session/new rewrite would have cached the option array (coop's dropdowns first).
+	c.cached["s"] = json.RawMessage(`[{"id":"coop_account","currentValue":"personal"},{"id":"model"}]`)
 
 	// A native option set (model/effort/fast) passes through to the adapter untouched.
 	if h, _, _, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/set_config_option","params":{"sessionId":"s","configId":"model","value":"sonnet"}}`)); h {
 		t.Error("a native model set must pass through (handled=false), not be intercepted")
 	}
 
-	// A NO-OP coop_setup (same value) is handled but must NOT restart — else it respawns the box at
-	// startup before any transcript, and session/load fails "Resource not found" (the reported bug).
-	if h, _, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:personal"}}`)); !h || restart {
-		t.Errorf("no-op coop_setup = (handled=%v restart=%v), want handled with NO restart", h, restart)
+	// A NO-OP account set (the value it's already on) is handled but must NOT restart — else it respawns
+	// the box at startup before any transcript, and session/load fails "Resource not found" (the reported bug).
+	if h, _, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_account","value":"personal"}}`)); !h || restart {
+		t.Errorf("no-op coop_account = (handled=%v restart=%v), want handled with NO restart", h, restart)
 	}
 
 	// A real change restarts, updates the selection, and the ack echoes the NEW currentValue.
-	h, resp, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"cred:work"}}`))
+	h, resp, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_account","value":"work"}}`))
 	if !h || !restart {
-		t.Errorf("coop_setup change = (handled=%v restart=%v), want both true", h, restart)
+		t.Errorf("coop_account change = (handled=%v restart=%v), want both true", h, restart)
 	}
 	if !strings.Contains(string(resp), `"currentValue":"work"`) {
 		t.Errorf("ack's Account dropdown must show the new currentValue work (not the stale cache), got: %s", resp)
@@ -388,7 +388,7 @@ func TestACPControlFromEditor(t *testing.T) {
 		t.Errorf("after cred:work, selection = (%q,%q), want (work, \"\")", cred, preset)
 	}
 
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":8,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_setup","value":"preset:frontier"}}`))
+	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":8,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_preset","value":"frontier"}}`))
 	if cred, preset := c.selection(); cred != "" || preset != "frontier" {
 		t.Errorf("after preset:frontier, selection = (%q,%q), want (\"\", frontier)", cred, preset)
 	}
@@ -1326,13 +1326,6 @@ func TestACPProviderSelector(t *testing.T) {
 	}
 	if _, restart := set("coop_preset", "none"); !restart || !strings.HasPrefix(c.sel, "cred:") {
 		t.Errorf("preset none: restart=%v sel=%q, want back to a credential", restart, c.sel)
-	}
-	// The RETIRED coop_setup id still drives the selection (an editor's persisted defaults).
-	if _, restart := set("coop_setup", "preset:frontier"); !restart || c.sel != "preset:frontier" {
-		t.Errorf("legacy coop_setup: restart=%v sel=%q, want preset:frontier", restart, c.sel)
-	}
-	if handled, restart := set("coop_setup", "agent:bogus"); !handled || restart {
-		t.Errorf("legacy bogus agent: handled=%v restart=%v, want a refused ack", handled, restart)
 	}
 }
 

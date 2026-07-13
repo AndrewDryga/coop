@@ -285,7 +285,6 @@ func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
 	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
 	// Every other subcommand needs an existing queue to act on.
 	if !isTaskDir(root) {
-		legacy := legacyTasksFile(root)
 		switch sub {
 		case "":
 			// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no
@@ -296,14 +295,8 @@ func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
 			}
 			return groupHelp("tasks")
 		case "add":
-			if legacy != "" {
-				return 2, legacyMigrateErr(repo, legacy, rel)
-			}
 			// fall through — tasksFolderAdd creates the queue dir
 		default:
-			if legacy != "" {
-				return 2, legacyMigrateErr(repo, legacy, rel)
-			}
 			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"…\"' to start one here)", rel, rel)
 		}
 	}
@@ -312,25 +305,7 @@ func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
 
 func tasksAddInQueue(repo, rel string, args []string, projectName string) (int, error) {
 	root := filepath.Join(repo, rel)
-	if !isTaskDir(root) {
-		if legacy := legacyTasksFile(root); legacy != "" {
-			return 2, legacyMigrateErr(repo, legacy, rel)
-		}
-	}
 	return tasksFolderAddWithProject(root, args, stateTodo, "tasks add", projectName)
-}
-
-// legacyMigrateErr is shown when a coop-v2 `.agent/TASKS.md` exists but the v3 folder queue does
-// not — pointing at MIGRATING.md instead of `coop init`, which would scaffold an empty queue beside
-// the populated legacy file and read as "v3 ate my tasks". legacyAbs is the legacy file's abs path.
-func legacyMigrateErr(repo, legacyAbs, queueRel string) error {
-	rel := legacyAbs
-	if r, err := filepath.Rel(repo, legacyAbs); err == nil {
-		rel = r
-	}
-	return fmt.Errorf("found a legacy %s from coop v2 — v3 stores one folder per task under %s/. "+
-		"convert it once with the prompt in MIGRATING.md, then re-run ('coop init' scaffolds an EMPTY "+
-		"queue and does NOT migrate it)", rel, queueRel)
 }
 
 // tasksListAll rolls up `coop tasks ls` across several configured queues (a monorepo with a

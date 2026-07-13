@@ -105,7 +105,7 @@ func (a *app) completionCandidates(prev []string) []string {
 		}
 	case "loop":
 		if len(prev) == 1 {
-			return agents.Names() // `coop loop [agent]`; `pool` is retired (tombstoned), never completed
+			return agents.Names() // `coop loop [agent]`; `pool` is not a command, never completed
 		}
 	case "login", "credentials", "models", "fusion", "acp":
 		if len(prev) == 1 {

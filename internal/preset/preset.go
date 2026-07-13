@@ -133,14 +133,8 @@ type yamlPreset struct {
 }
 
 type yamlLead struct {
-	Agent  yaml.Node `yaml:"agent"` // a TARGET or a target-LADDER, cross-provider ok (folds in models:)
+	Agent  yaml.Node `yaml:"agent"` // a TARGET or a target-LADDER, cross-provider ok
 	Prompt string    `yaml:"prompt"`
-	// Retired shapes — rejected with the agent:-target rewrite so a pre-unification preset fails
-	// loud, not silently. models: folded into agent: (each entry a provider:model@account target).
-	Models      any `yaml:"models"`
-	Model       any `yaml:"model"`
-	Credentials any `yaml:"credentials"`
-	Credential  any `yaml:"credential"`
 }
 
 type yamlRole struct {
@@ -148,16 +142,11 @@ type yamlRole struct {
 	// Agent is a TARGET: provider[:model] (the model rides here; no @account). Decoded as a
 	// node so a LIST gets a purposeful "one target per role" error, not a raw yaml type error.
 	Agent      yaml.Node `yaml:"agent"`
-	Model      any       `yaml:"model"` // retired — the model rides agent: (e.g. agent: codex:gpt-5.5)
 	When       []string  `yaml:"when"`
 	Prompt     string    `yaml:"prompt"`
 	Subagent   string    `yaml:"subagent"`
 	Commit     string    `yaml:"commit"`
 	Concurrent string    `yaml:"concurrent"`
-	// Roles run on their agent's default account — only the lead rotates. Credentials here are
-	// rejected with that pointer (not a cryptic unknown-field error).
-	Credentials any `yaml:"credentials"`
-	Credential  any `yaml:"credential"`
 	// Not implemented in v1 — they imply enforcement that doesn't exist yet, so
 	// setting them must fail loud instead of silently granting nothing.
 	Permissions any `yaml:"permissions"`
@@ -263,11 +252,8 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 		return fmt.Errorf("preset %s: %s", name, fmt.Sprintf(format, a...))
 	}
 
-	// Lead. agent: is a TARGET or a target ladder; its model+account fold in
-	// (models:/model:/credentials: are retired). LeadAgent is the provider; LeadLadder the ladder.
-	if y.Lead.Models != nil || y.Lead.Model != nil || y.Lead.Credentials != nil || y.Lead.Credential != nil {
-		return nil, bad("lead.models/model/credentials are retired — fold them into agent: as a target ladder (e.g. agent: [claude:claude-fable-5, claude:claude-opus-4-8@work])")
-	}
+	// Lead. agent: is a TARGET or a target ladder; its model+account fold in.
+	// LeadAgent is the provider; LeadLadder the ladder.
 	leadAgent, ladder, err := leadLadder(&y.Lead.Agent)
 	if err != nil {
 		return nil, bad("lead.agent: %v", err)
@@ -324,8 +310,8 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	if y.Agent.Value == "" {
 		return r, bad("agent is required — a target: provider[:model] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
 	}
-	// agent: is a TARGET — provider[:model]. The model rides here (model: is retired); a role
-	// runs its agent's DEFAULT account, so an @account is rejected (only the lead rotates accounts).
+	// agent: is a TARGET — provider[:model]. The model rides here; a role runs its agent's DEFAULT
+	// account, so an @account is rejected (only the lead rotates accounts).
 	t, terr := agents.ParseTarget(y.Agent.Value)
 	if terr != nil {
 		return r, bad("agent %q: %v", y.Agent.Value, terr)
@@ -334,12 +320,6 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 		return r, bad("agent %q pins an account — a role runs its agent's default account (only the lead rotates); drop the @account", y.Agent.Value)
 	}
 	r.Agent, r.Model, r.Effort = t.Provider, t.Model, t.Effort
-	if y.Credentials != nil || y.Credential != nil {
-		return r, bad("credentials only apply to the lead — a role runs on its agent's default account; put the rotation ladder in lead.agent")
-	}
-	if y.Model != nil {
-		return r, bad("model: is retired for a role — put the model in agent: (e.g. agent: %s:<model>)", r.Agent)
-	}
 	if y.Permissions != nil || y.WritePaths != nil || y.DenyPaths != nil {
 		return r, bad("permissions/write_paths/deny_paths are not supported — coop can't enforce path-level permissions yet, so declaring them would only pretend to")
 	}

@@ -39,26 +39,6 @@ func takeHeadTarget(args []string) (t agents.Target, ok bool, rest []string, err
 	return t, true, args[1:], nil
 }
 
-// retiredTargetFlagErr tombstones coop's own --model/--credential (v3-clean): they're now
-// segments of the positional target. Stops at a "--" separator — like the extractors it
-// replaces — so an agent's OWN --model after `--` (coop claude -- --model x) still passes
-// through untouched. nil when neither coop flag is present.
-func retiredTargetFlagErr(args []string) error {
-	for _, a := range args {
-		if a == "--" {
-			return nil // everything after is the agent's, not coop's
-		}
-		f, _, _ := strings.Cut(a, "=")
-		switch f {
-		case "--model":
-			return fmt.Errorf("--model is retired — put the model in the target: coop <cmd> <provider>:<model> (e.g. claude:opus)")
-		case "--credential", "--credentials":
-			return fmt.Errorf("--credential is retired — put the account in the target: coop <cmd> <provider>@<account> (e.g. claude@work)")
-		}
-	}
-	return nil
-}
-
 // isTargetHead reports whether s begins with a registered provider (so `coop <s>` names an
 // agent run, not a command/preset). Used by the top-level dispatch.
 func isTargetHead(s string) bool {

@@ -10,8 +10,7 @@ import (
 // TestCLIConformance graduates the committed .agent/rules into the gate: it walks the CLI surface as
 // data and asserts the taste rules mechanically, so drift (a lister that forgot `list`, a destructive
 // verb without `remove`, a verb added with no help row, a retired alias quietly re-accepted) fails CI
-// instead of review. See .agent/rules/{list-verb-ls,destructive-verb-rm,help-output-style}.md and the
-// v3 tombstone registry (removedCommandNote).
+// instead of review. See .agent/rules/{list-verb-ls,destructive-verb-rm,help-output-style}.md.
 func TestCLIConformance(t *testing.T) {
 	newApp := func() *app {
 		return &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
@@ -78,12 +77,12 @@ func TestCLIConformance(t *testing.T) {
 		}
 	})
 
-	// v3 retired aliases tombstone (exit 2) rather than being silently re-accepted or squatting a
-	// generic name — locked in against a future re-mint.
-	t.Run("retired_forms_tombstone", func(t *testing.T) {
+	// v3 retired aliases are unknown commands (exit 2) rather than being silently re-accepted or
+	// squatting a generic name — locked in against a future re-mint.
+	t.Run("retired_forms_unknown", func(t *testing.T) {
 		for _, argv := range [][]string{{"clone", "x"}, {"pool", "add", "p"}} {
 			if code, err := newApp().dispatch(argv); code != 2 || err == nil {
-				t.Errorf("retired %v should tombstone (exit 2), got (%d, %v)", argv, code, err)
+				t.Errorf("retired %v should be an unknown command (exit 2), got (%d, %v)", argv, code, err)
 			}
 		}
 	})

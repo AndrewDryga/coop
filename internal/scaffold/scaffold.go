@@ -317,31 +317,8 @@ func (s *scaffolder) updateGitignore() error {
 	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop.yaml\n!**/.agent/compose.yml\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
-	// Upgrade an older root-anchored block (.agent/*) to the monorepo-aware form in place; likewise
-	// widen root-only knowledge un-ignores to any-depth, but keep project.yaml top-level only.
-	content = strings.ReplaceAll(content, "\n.agent/*\n", "\n**/.agent/*\n")
-	content = strings.ReplaceAll(content, "!**/.agent/project.yaml", "!.agent/project.yaml")
-	for _, k := range []string{"rules/", "skills/", "presets/", "audit.md"} {
-		content = strings.ReplaceAll(content, "!.agent/"+k, "!**/.agent/"+k)
-	}
-	switch {
-	case !strings.Contains(content, "**/.agent/*"):
+	if !strings.Contains(content, "**/.agent/*") {
 		content += block // no coop block yet — append the whole thing
-	case !strings.Contains(content, "!.agent/project.yaml"):
-		// Block present but predates project.yaml — un-ignore the top-level config so it's committed.
-		content = strings.Replace(content, "**/.agent/*\n", "**/.agent/*\n!.agent/project.yaml\n", 1)
-	}
-	// loop.yaml (the committed loop config) supersedes the old loop/ dir of .md files: upgrade an
-	// existing `!**/.agent/loop/` un-ignore in place, and un-ignore it in an older gitignore that
-	// carries the block but neither line (anchoring after the audit.md un-ignore every pre-loop block had).
-	content = strings.ReplaceAll(content, "!**/.agent/loop/\n", "!**/.agent/loop.yaml\n")
-	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/loop.yaml") {
-		content = strings.Replace(content, "!**/.agent/audit.md\n", "!**/.agent/audit.md\n!**/.agent/loop.yaml\n", 1)
-	}
-	// .agent/compose.yml (the committed sibling-services file, retiring the root compose.agent.yml)
-	// un-ignores beside loop.yaml in an existing block that predates it.
-	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/compose.yml") {
-		content = strings.Replace(content, "!**/.agent/loop.yaml\n", "!**/.agent/loop.yaml\n!**/.agent/compose.yml\n", 1)
 	}
 	if content == orig {
 		return nil // already up to date
