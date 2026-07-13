@@ -1,10 +1,34 @@
 # Changelog
 
-## Unreleased
+## 5.0.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **One grammar names who runs — and `--preset`/`--consult` are gone.** Everywhere coop names who
+  runs (the positional of `coop <agent>`/`loop`/`fork`/`acp`/`fusion`, and the `agent:` key in
+  `fleet.yaml` + `loop.yaml`), a bare provider is a TARGET and any other bare word is a PRESET name —
+  so `coop loop frontier`, `coop fork feat frontier`, and `agent: frontier` all mean the same thing,
+  like a `loop.yaml` ladder rung already did. **BREAKING:** `--preset` is removed (name the preset in
+  the positional slot); `--consult` is renamed to `--peer` everywhere (coop already calls these
+  agents "peers"); fleet's separate `preset:` key is dropped (`agent:` absorbs it). The retired
+  spellings are now ordinary unknown args — update any editor/CI invocation that passed them.
 
-## 4.1.0
+- **Every legacy tombstone is dropped — no retired-form handling anywhere.** coop kept a helpful
+  error for every renamed/retired form (old commands, `--model`/`--credential`, retired preset/fleet
+  keys, the `.agent/loop/*.md` + `TASKS.md` + pre-v3 `.agent/fleet` files, the flat-vault migration,
+  the `.gitignore` in-place upgrade, `--supervise`, the `coop_setup` ACP dropdown). All gone: a
+  retired form now hits the ordinary unknown-command/field/argument error or is simply ignored.
+  **BREAKING** for anyone still on those forms (MIGRATING.md still documents the moves); notably
+  `coop acp --supervise` now errors, so drop it from editor configs.
+
+- **The knowledge base is self-improving — agents own it, no human gate.** `.agent/kb` was
+  human-curated: an agent could only drop a draft in `kb/inbox/` for a human to promote. Now agents
+  maintain the live kb directly, in the same commit as the work; every card carries an `updated`
+  date, its `subsystem`, and the `sources` it maps, plus a small changelog, so staleness is obvious
+  — and cards still load only for their own subsystem (the safety rail). `kb/inbox/` is removed.
+
+- **The loop cites a commit by its Coop-Task trailer, not its re-signed SHA.** The per-cycle re-sign
+  rewrites commit SHAs, so an agent that wrote its commit's SHA into log.md got its task spuriously
+  reopened by signoff ("that commit doesn't exist"). The work prompt now points agents at the stable
+  `Coop-Task:` trailer, and signoff finds the commit by that trailer instead of a volatile SHA.
 
 - **`coop acp` picks up a rebuilt coop on SIGHUP without dropping the editor.** Zed owns the
   `coop acp` process — its stdio IS the transport — so the old way to load a new binary,
