@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -659,6 +660,50 @@ func extractSupervise(args []string) (supervise bool, rest []string) {
 	return extractBoolFlag(args, "--supervise")
 }
 
+// acpResumeState is the whole handoff a `coop acp` supervisor carries across a SIGHUP re-exec: the
+// proxy's session state + the controller's selection. JSON-serialized to a 0600 temp file whose path
+// rides COOP_ACP_RESUME_STATE into the re-exec'd process.
+type acpResumeState struct {
+	Proxy acpproxy.Snapshot `json:"proxy"`
+	Ctrl  ctrlSnapshot      `json:"ctrl"`
+}
+
+// writeResumeState JSON-encodes the handoff to a 0600 temp file (CreateTemp is 0600) and returns its
+// path — the setup lines it carries are sensitive, so it's owner-only and removed after one read.
+func writeResumeState(st acpResumeState) (string, error) {
+	data, err := json.Marshal(st)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp("", "coop-acp-resume-*.json")
+	if err != nil {
+		return "", err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		os.Remove(f.Name()) // a flush failure on close still wrote bytes — don't leave the setup lines in /tmp
+		return "", cerr
+	}
+	return f.Name(), nil
+}
+
+// readResumeState reads + REMOVES the handoff file (consumed once, so a stale file can't resurrect on
+// a later crash-respawn) and unsets the env var so the child boxes don't inherit it.
+func readResumeState(path string) (acpResumeState, error) {
+	defer os.Remove(path)
+	os.Unsetenv("COOP_ACP_RESUME_STATE")
+	var st acpResumeState
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return st, err
+	}
+	return st, json.Unmarshal(data, &st)
+}
+
 // cmdACPSupervise serves the editor on stdio and runs the real `coop acp <rest>` as a
 // child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
 // the child's container dies, acpproxy starts a new child and replays the ACP
@@ -676,6 +721,33 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		return 1, err
 	}
 	superID := hex.EncodeToString(idbuf)
+
+	// A SIGHUP re-exec left us its state: restore the controller's selection and hand the proxy
+	// snapshot to Run so the editor's live threads are re-established on the first (fresh) box. A
+	// missing/corrupt file degrades to a fresh start (new threads still work).
+	var resume *acpproxy.Snapshot
+	if path := os.Getenv("COOP_ACP_RESUME_STATE"); path != "" {
+		if st, rerr := readResumeState(path); rerr == nil {
+			ctrl.restore(st.Ctrl)
+			resume = &st.Proxy
+			acpproxy.Trace("resumed from re-exec: %d session(s)", len(st.Proxy.Sessions))
+		} else {
+			fmt.Fprintf(os.Stderr, "coop acp: resume state unreadable (%v) — starting fresh\n", rerr)
+		}
+	}
+	// SIGHUP → a graceful reload (re-exec the freshly-built binary in place). SIGTERM/SIGINT stay
+	// STOP (below), so coop is always stoppable.
+	reload := make(chan struct{}, 1)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		<-hup
+		select {
+		case reload <- struct{}{}:
+		default:
+		}
+	}()
 
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
 	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,
@@ -713,7 +785,28 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	defer pool.reap() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
-	err = acpproxy.Run(ctx, os.Stdin, os.Stdout, factory, ctrl.hooks())
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload})
+	// A SIGHUP reload: write the combined state to a 0600 temp file and re-exec THIS binary in place —
+	// same PID + fd 0/1/2, so the editor's transport never breaks. Run's reload path already stopped
+	// the box; reap the warm boxes here (execve replaces the image, so deferred reap won't run) and
+	// skip the label sweep — the re-exec'd process regenerates its own superID and owns the next box.
+	if snap, ok := acpproxy.ReloadSnapshot(err); ok {
+		pool.reap()
+		// Sweep any box still labelled with THIS superID before exec — a warm spawn that was mid-flight
+		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
+		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
+		// and no new box is spawned until after exec, so nothing we need is swept.
+		a.rt.KillByLabel(box.LabelSupervisor, superID)
+		path, werr := writeResumeState(acpResumeState{Proxy: *snap, Ctrl: ctrl.snapshot()})
+		if werr != nil {
+			return 1, fmt.Errorf("acp reload: %w", werr)
+		}
+		if xerr := syscall.Exec(self, os.Args, append(os.Environ(), "COOP_ACP_RESUME_STATE="+path)); xerr != nil {
+			os.Remove(path)
+			return 1, fmt.Errorf("acp reload: exec %s: %w", self, xerr)
+		}
+		return 0, nil // unreachable — execve replaced the process on success
+	}
 	// Final teardown sweep, once, when the whole supervised session ends: a per-generation Stop
 	// removes only its own box (by cidfile), so the last live generation — or a box orphaned by a
 	// swap — is cleaned up here by this supervisor's id. (Doing this per-generation would kill the

@@ -133,7 +133,39 @@ var errReplayTimeout = errors.New("acpproxy: timed out waiting for the restarted
 // clientIn is os.Stdin and process exit reaps it — but it means Run is single-use per
 // clientIn, not a reusable in-process library: don't call it in a loop expecting the
 // reader to stop when ctx cancels. Close clientIn to release the goroutine.
+// RunOpts carries resume/reload state for a supervisor re-exec (a SIGHUP reload). The zero value is
+// a normal start (both nil), so Run is unchanged for callers that don't reload.
+type RunOpts struct {
+	Resume *Snapshot       // seed + replay this session state on the FIRST child (a resumed start)
+	Reload <-chan struct{} // a receive triggers a graceful reload: snapshot + stop child + return reloadError
+}
+
+// reloadError is returned by RunWith when a reload fires; it carries the snapshot to hand the
+// re-exec'd process. Extract it with ReloadSnapshot.
+type reloadError struct{ Snap Snapshot }
+
+func (e *reloadError) Error() string { return "acpproxy: reload requested" }
+
+// ReloadSnapshot returns the snapshot carried by a reload error (and true), else (nil, false).
+func ReloadSnapshot(err error) (*Snapshot, bool) {
+	var re *reloadError
+	if errors.As(err, &re) {
+		return &re.Snap, true
+	}
+	return nil, false
+}
+
+// Run proxies the editor to a factory-spawned child, restarting it transparently — a thin wrapper
+// over RunWith with no resume/reload (the shape existing callers use).
 func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks) error {
+	return RunWith(ctx, clientIn, clientOut, factory, hooks, RunOpts{})
+}
+
+// RunWith is Run plus resume/reload: opts.Resume seeds + replays session state onto the first child
+// (a resumed start), and a receive on opts.Reload snapshots, stops the child, and returns a
+// reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is
+// byte-identical to the pre-reload Run.
+func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks, opts RunOpts) error {
 	p := &proxy{
 		out:       clientOut,
 		hooks:     hooks,
@@ -142,6 +174,10 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 		newReqs:   map[string]json.RawMessage{},
 		pending:   map[string]bool{},
 	}
+	// Resume: seed the restored session state before the first child, then replay onto it below.
+	if opts.Resume != nil {
+		p.restore(*opts.Resume)
+	}
 
 	child, err := factory(ctx)
 	if err != nil {
@@ -149,6 +185,29 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 	}
 	reader := bufio.NewReaderSize(child.Out, readBuf)
 	p.setChild(child)
+	// A resumed start replays the restored setup + sessions onto its FIRST child (a normal start
+	// skips replay — the first child has nothing to restore). A replay failure degrades to a fresh
+	// start rather than exiting: new threads must still work.
+	if opts.Resume != nil {
+		if rerr := p.replay(child, reader); rerr != nil {
+			Trace("resume replay failed (%v) — starting fresh", rerr)
+			// The first box may be HUNG (errReplayTimeout leaves it live by contract — the caller
+			// stops it), and replay's reader goroutine may still be blocked on it. Pumping this child
+			// would freeze the editor and race the reader, so stop it, drop the restored state, and
+			// spawn a clean first child so new threads still work.
+			child.Stop()
+			p.mu.Lock()
+			p.setup = nil
+			p.sessions = map[string]*sess{}
+			p.mu.Unlock()
+			child, err = factory(ctx)
+			if err != nil {
+				return err
+			}
+			reader = bufio.NewReaderSize(child.Out, readBuf)
+			p.setChild(child)
+		}
+	}
 
 	clientGone := make(chan struct{})
 	go func() {
@@ -168,10 +227,32 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 	// the loop exits, and the box is torn down even without a client stdin EOF.
 	go func() { <-ctx.Done(); p.shutdownChild() }()
 
+	// Reload (SIGHUP re-exec): a receive on opts.Reload snapshots + stops the child so pumpChild
+	// unblocks, and the loop returns a reloadError carrying the snapshot. A nil channel never fires,
+	// so a normal run is unaffected.
+	var reloading atomic.Bool
+	if opts.Reload != nil {
+		go func() {
+			select {
+			case <-opts.Reload:
+				reloading.Store(true)
+				p.shutdownChild()
+			case <-ctx.Done():
+			}
+		}()
+	}
+
 	rapid := 0
 	for {
 		start := time.Now()
 		p.pumpChild(reader) // returns when this child's Out closes
+		// A reload was requested: hand the snapshot back to the caller (which re-execs the binary),
+		// NOT counting it as a failure and NOT failing pending — the editor's transport survives.
+		if reloading.Load() {
+			snap := p.snapshot()
+			child.Stop()
+			return &reloadError{Snap: snap}
+		}
 		select {
 		case <-clientGone:
 			child.Stop()
@@ -201,6 +282,11 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 		// The child died while the editor is still here: replace it transparently.
 		next, err := factory(ctx)
 		if err != nil {
+			// A SIGHUP racing a failed respawn: re-exec (carry the sessions forward) rather than exit
+			// on the editor — the reload is the intent, the respawn failure is incidental.
+			if reloading.Load() {
+				return &reloadError{Snap: p.snapshot()}
+			}
 			p.failAllPending()
 			return err
 		}
@@ -210,6 +296,9 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 		// editor isn't frozen waiting — better a clean "server exited" than an infinite hang.
 		if err := p.replay(next, nr); err != nil {
 			next.Stop()
+			if reloading.Load() { // same race, one step later — prefer the reload over a give-up
+				return &reloadError{Snap: p.snapshot()}
+			}
 			p.failAllPending()
 			return err
 		}

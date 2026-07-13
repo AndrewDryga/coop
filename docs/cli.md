@@ -304,6 +304,13 @@ coop acp <agent|fusion> — serve as an ACP agent over stdio (for editors).
   replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable it (one
   fewer idle box per signed-in provider) on a low-RAM machine.
 
+  Picking up a rebuilt coop WITHOUT restarting your editor: send the running server
+  SIGHUP — 'pkill -HUP -f "coop acp"'. It re-execs the freshly-installed binary in
+  place (same process, same stdio), tears down its box, and re-establishes your open
+  threads against a fresh box on the new binary — the editor never sees a disconnect.
+  (SIGTERM/SIGINT still STOP it; only SIGHUP reloads. A box restart already picks up
+  box-side changes, so SIGHUP is for supervisor-side changes to coop itself.)
+
   Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
   create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
   ~/.config/coop/acp-trace-<pid>.log (the sentinel works on an already-running server).

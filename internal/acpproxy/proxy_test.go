@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1007,4 +1008,147 @@ func TestProxySnapshotRestore(t *testing.T) {
 	if s2 := dst.sessions["S2"]; s2 == nil || s2.turned {
 		t.Errorf("S2's turned=false must survive: %+v", s2)
 	}
+}
+
+// drainReader consumes a reader until EOF so a proxy write to the client side can't deadlock a test
+// that isn't asserting on client output.
+func drainReader(r *bufio.Reader) {
+	for {
+		if _, err := r.ReadBytes('\n'); err != nil {
+			return
+		}
+	}
+}
+
+// TestProxyResumeReplaysOnFirstChild: a resumed RunWith (Resume set) replays initialize +
+// session/load for a restored turned session onto its FIRST child — today's first child skips replay.
+func TestProxyResumeReplaysOnFirstChild(t *testing.T) {
+	c1 := newFakeChild()
+	factory := func(context.Context) (*Child, error) { return c1.child(), nil }
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	childIn1 := bufio.NewReader(c1.inR)
+	go drainReader(bufio.NewReader(clientOutR)) // replay pushes config_option_update to the client
+
+	snap := &Snapshot{
+		Setup:    [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)},
+		Sessions: []SessionSnap{{EditorID: "S1", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true}},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWith(context.Background(), clientInR, clientOutW, factory, nil, RunOpts{Resume: snap})
+	}()
+
+	var sawInit, sawLoad bool
+	for i := 0; i < 2; i++ {
+		line := readLine(t, childIn1)
+		h := parse(line)
+		switch h.Method {
+		case "initialize":
+			sawInit = true
+		case "session/load":
+			if sid := sessionID(h.Params); sid != "S1" {
+				t.Fatalf("session/load sessionId = %q, want S1", sid)
+			}
+			sawLoad = true
+		default:
+			t.Fatalf("unexpected resume-replay frame: %s", line)
+		}
+		writeLine(t, c1.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
+	}
+	if !sawInit || !sawLoad {
+		t.Fatalf("resume replay on first child missing init=%v load=%v", sawInit, sawLoad)
+	}
+	clientInW.Close()
+	c1.outW.Close()
+	<-done
+}
+
+// TestProxyReloadReturnsSnapshot: firing Reload returns a reloadError carrying a snapshot of the
+// live state and stops the child — the editor's transport is meant to survive the re-exec.
+func TestProxyReloadReturnsSnapshot(t *testing.T) {
+	c1 := newFakeChild()
+	factory := func(context.Context) (*Child, error) { return c1.child(), nil }
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	clientOut := bufio.NewReader(clientOutR)
+	childIn1 := bufio.NewReader(c1.inR)
+	reload := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWith(context.Background(), clientInR, clientOutW, factory, nil, RunOpts{Reload: reload})
+	}()
+
+	// Establish initialize + a session so the snapshot has state to carry.
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, clientOut)
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	readLine(t, clientOut)
+
+	close(reload) // request the reload
+	err := <-done
+	snap, ok := ReloadSnapshot(err)
+	if !ok || snap == nil {
+		t.Fatalf("a reload should return a reloadError carrying a snapshot, got %v", err)
+	}
+	if len(snap.Setup) == 0 {
+		t.Errorf("snapshot should carry the setup (initialize): %+v", snap)
+	}
+	if len(snap.Sessions) != 1 || snap.Sessions[0].EditorID != "S1" {
+		t.Errorf("snapshot should carry session S1: %+v", snap.Sessions)
+	}
+}
+
+// TestProxyResumeReplayTimeoutRespawnsClean: if the FIRST box after a re-exec HANGS during resume
+// replay (errReplayTimeout), the proxy must NOT pump the hung child (that freezes the editor and
+// races the reader). It stops the hung child, drops the restored sessions, and spawns a clean first
+// child so NEW threads still work. Regression for the resume-degrade blocker.
+func TestProxyResumeReplayTimeoutRespawnsClean(t *testing.T) {
+	defer func(g time.Duration) { replayStartupGrace = g }(replayStartupGrace)
+	replayStartupGrace = 80 * time.Millisecond // the hung first child times out fast
+
+	c1 := newFakeChild() // never answers replay → errReplayTimeout
+	c2 := newFakeChild() // the clean respawn
+	var calls atomic.Int32
+	factory := func(context.Context) (*Child, error) {
+		if calls.Add(1) == 1 {
+			return c1.child(), nil // the hung first box
+		}
+		return c2.child(), nil // clean respawn (and any teardown re-spawn — never blocks)
+	}
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	clientOut := bufio.NewReader(clientOutR)
+	go drainReader(bufio.NewReader(c1.inR)) // let replay's writes to the hung child complete
+
+	snap := &Snapshot{
+		Setup:    [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)},
+		Sessions: []SessionSnap{{EditorID: "S1", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true}},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWith(context.Background(), clientInR, clientOutW, factory, nil, RunOpts{Resume: snap})
+	}()
+
+	// The hung child times out; a brand-new session must then land on the CLEAN respawn (c2), proving
+	// the proxy didn't freeze on c1 and recovered to a working first child.
+	childIn2 := bufio.NewReader(c2.inR)
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":9,"method":"session/new","params":{"cwd":"/w2"}}`)
+	if m := parse(readLine(t, childIn2)).Method; m != "session/new" {
+		t.Fatalf("clean respawn (c2) should receive the new session/new, got %q", m)
+	}
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":9,"result":{"sessionId":"S9"}}`)
+	if h := parse(readLine(t, clientOut)); string(h.ID) != "9" { // the editor sees its result — not frozen
+		t.Fatalf("editor should see the session/new result (id 9), got id %q", string(h.ID))
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("hung first box should have forced a respawn (>=2 factory calls), got %d", calls.Load())
+	}
+
+	clientInW.Close() // client gone → the proxy stops the live child and returns; no c2.outW race
+	<-done
 }

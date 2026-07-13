@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop acp` picks up a rebuilt coop on SIGHUP without dropping the editor.** Zed owns the
+  `coop acp` process — its stdio IS the transport — so the old way to load a new binary,
+  `pkill -f 'coop acp'`, killed that process and Zed (which never relaunches an agent server that
+  exits) failed every later request until you restarted the editor. Now `pkill -HUP -f 'coop acp'`
+  re-execs the freshly-installed binary IN PLACE (`syscall.Exec` — same PID, same fd 0/1/2, so the
+  editor's pipe never breaks), tears down the old box, and re-establishes your already-open threads
+  against a fresh box on the new binary by reusing the box-restart replay (initialize + session/load
+  + config_option_update). SIGTERM/SIGINT still STOP it — reload is a distinct signal, so coop stays
+  stoppable. The handoff rides a mode-0600 temp file that's deleted after one read; a corrupt/absent
+  one degrades to a fresh start rather than crashing.
+
 - **ACP provider switches are near-instant — coop keeps a box warm per signed-in provider.** A
   switch was ~5s: a warm container is ~0.9s, but the rest was the node adapter cold-start +
   initialize/session-load replay. coop now pre-spawns a box for each OTHER signed-in provider in the
