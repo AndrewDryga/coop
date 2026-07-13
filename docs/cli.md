@@ -61,6 +61,7 @@ SETUP & MAINTENANCE
   coop build                        build the box image (stable, pinned)
   coop update                       self-update coop, then rebuild the box
   coop completion <shell>           shell tab-completion (bash, zsh)
+  coop sign                         re-sign unpushed commits with your host key
   coop prompt                       a one-line status for a shell prompt / tmux
   coop help                         this help
   coop version                      print the version

@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sign` re-signs your unpushed commits with your host key — and the loop does it per cycle.**
+  Box commits are made unsigned (no key ever enters a box), so a remote that requires signed commits
+  (a protected `main`, like many projects) rejects them. `coop sign` re-signs the unpushed range —
+  `@{upstream}..HEAD`, or `--from <ref>` when there's no upstream — on the host, using your GLOBAL git
+  signing config (so a poisoned repo can't plant a `gpg.program`). It never pushes, never rewrites
+  pushed history, and refuses a dirty tree or a range with a merge commit. `coop loop` signs each
+  cycle's commits the same way when you sign by default (`commit.gpgsign=true`), with an end-of-run
+  sweep for stragglers — best-effort, so a signing hiccup warns rather than derailing the run. The
+  `Coop-Task` trailer survives the re-sign, so the commit↔task binding is unaffected.
+
 - **Loop commits are now bound to their task, and the queue self-repairs.** Every loop commit ends
   with a `Coop-Task: <id>` trailer (the work prompt and AGENTS.md instruct it), so the host can
   finally map a commit to the task it completed — previously nothing did (`git log --grep <id>` was

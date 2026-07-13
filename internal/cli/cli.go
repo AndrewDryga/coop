@@ -196,6 +196,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdBuild(rest)
 	case "update":
 		return a.cmdUpdate(rest)
+	case "sign": // host-local: re-sign the unpushed range with your host key (no box)
+		return a.cmdSign(rest)
 	case "prompt": // pure-local: a one-line status for a shell prompt / tmux (no git per fork, no docker)
 		return a.cmdPrompt(rest)
 	case "completion": // pure-local: print a shell completion script

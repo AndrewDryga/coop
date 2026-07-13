@@ -159,6 +159,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box")
 	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
+	row("coop sign", "re-sign unpushed commits with your host key")
 	row("coop prompt", "a one-line status for a shell prompt / tmux")
 	row("coop help", "this help")
 	row("coop version", "print the version")
@@ -246,6 +247,21 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
 // own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
 // the agent's own CLI). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
+	"sign": `coop sign — re-sign this branch's unpushed commits with your host key.
+
+  Usage: coop sign [--from <ref>]
+
+  Box commits are made UNSIGNED — no signing key ever enters a box — so a remote
+  that requires signed commits (a protected main, like many projects) rejects
+  work a loop or an interactive box produced. 'coop sign' re-signs them on the
+  HOST, where your signing key lives, using your GLOBAL git signing config (so a
+  poisoned repo can't point gpg.program at a planted binary).
+
+  The range is the UNPUSHED one — @{upstream}..HEAD — git's own rule for what is
+  safe to rewrite: it never touches pushed history and never pushes. With no
+  upstream, pass --from <ref> (e.g. the commit you last pushed). It refuses a
+  dirty tree and a range containing a merge commit. 'coop loop' signs each cycle
+  automatically when you sign by default (commit.gpgsign=true).`,
 	"prompt": `coop prompt — one compact status line for a shell prompt, tmux, or menubar.
 
   Usage: coop prompt

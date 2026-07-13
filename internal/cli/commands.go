@@ -1949,6 +1949,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	fails, waits, retries, completed, stalls := 0, 0, 0, 0, 0
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
+	loopStartHead := prevHead                     // for the end-of-run signing sweep (catches any straggler cycle)
 	// Loop-until-accepted: drain the work queue, run the signoff pass, and if it reopened
 	// anything, drain and sign off AGAIN — repeating until a signoff reopens nothing (accepted) or
 	// the round cap is hit (block the stuck task for a human). The cap scales with the batch —
@@ -2024,6 +2025,18 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			case actContinue:
 				completed++
 				n++
+				// Sign this cycle's commits with your host key NOW — before the stall rebaseline and the
+				// between audit read HEAD — so box commits (made unsigned) satisfy a protected remote.
+				// Only when you sign by default; best-effort — a signing failure warns and leaves them
+				// unsigned rather than derailing the run. Re-signing rewrites SHAs, but the Coop-Task
+				// trailer survives the amend, so the commit↔task binding holds.
+				if wantsSigning() {
+					if signed, serr := a.signUnpushed(repo, iterHead); serr != nil {
+						ui.Warn("could not sign this cycle's commits: %v — left unsigned", serr)
+					} else if signed > 0 {
+						ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
+					}
+				}
 				// A clean iteration that neither finishes/blocks a task NOR commits means the agent keeps
 				// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
 				// rather than loop forever (a commit or a block still counts as progress).
@@ -2139,6 +2152,16 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		}
 		// signoffAccepted (nothing reopened) or signoffCapReached (just blocked) → the loop is done.
 		break
+	}
+	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
+	// but it catches any straggler — a commit from a previously interrupted run, or a preflight
+	// commit — so the whole run's range is signed before you push. Best-effort.
+	if wantsSigning() && len(custom) == 0 {
+		if signed, serr := a.signUnpushed(repo, loopStartHead); serr != nil {
+			ui.Warn("end-of-run signing sweep failed: %v — some commits may be unsigned (run `coop sign`)", serr)
+		} else if signed > 0 {
+			ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
+		}
 	}
 	cf, _ := queueProgress(hosts)
 	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
