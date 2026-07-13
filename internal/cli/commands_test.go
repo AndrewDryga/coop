@@ -106,6 +106,8 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 		"10_in_progress/", "00_todo/", "git status", "git diff",
 		"state.md", "resume note", "final step", "finished state",
 		"Work exactly ONE task per run", "the loop's job, not yours",
+		// Reference the commit by its stable trailer, not its volatile SHA (coop re-signs on the host).
+		"Coop-Task: <task-id>` trailer", "NOT its SHA", "re-signs your commit",
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("folder work prompt missing %q:\n%s", want, work)
