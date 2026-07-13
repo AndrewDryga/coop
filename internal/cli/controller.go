@@ -35,6 +35,48 @@ func commitsForTask(repo, rangeExpr, id string) []string {
 	return shas
 }
 
+// gateGuardGlobs name the files that DEFINE what "green" means — the candidate's own verifier: the
+// Makefile/gate, the loop + project config, the hooks, CI. A task that edits these could weaken the
+// gate to pass itself (cross-vendor review is no defense when every reviewer trusts the same mutable
+// oracle). A trailing "/" matches a directory prefix; else an exact base name.
+var gateGuardGlobs = []string{
+	"Makefile", "makefile", "GNUmakefile",
+	".agent/project.yaml", ".agent/loop.yaml",
+	".claude/hooks/", ".claude/settings.json", ".claude/settings.local.json",
+	".github/workflows/",
+}
+
+// isGateGuardPath reports whether a repo-relative path is gate-defining (in gateGuardGlobs).
+func isGateGuardPath(f string) bool {
+	for _, g := range gateGuardGlobs {
+		if strings.HasSuffix(g, "/") {
+			if strings.HasPrefix(f, g) {
+				return true
+			}
+		} else if f == g || strings.HasSuffix(f, "/"+g) {
+			return true
+		}
+	}
+	return false
+}
+
+// protectedGateChanges returns the gate-defining files a commit range (base..head) touched — the
+// boring first step of the verifier trust boundary: detect (host-side, deterministic) when a task
+// edited its own checker, so the review can be told to scrutinize it rather than trust it blind.
+// Empty when the range is empty or touched none.
+func protectedGateChanges(repo, base, head string) []string {
+	if base == "" || head == "" || base == head {
+		return nil
+	}
+	var hits []string
+	for _, f := range strings.Split(gitOut(repo, "diff", "--name-only", base+".."+head), "\n") {
+		if f = strings.TrimSpace(f); f != "" && isGateGuardPath(f) {
+			hits = append(hits, f)
+		}
+	}
+	return hits
+}
+
 // queueSnapshot maps task id → state across the hosts, for diffing what an iteration moved.
 func queueSnapshot(hosts []string) map[string]string {
 	m := map[string]string{}

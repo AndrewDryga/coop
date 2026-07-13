@@ -197,7 +197,7 @@ func TestLoopFilesTombstone(t *testing.T) {
 // from a file), then the fixed footer.
 func TestLoopBetweenPrompt(t *testing.T) {
 	finished := []string{"2026-07-11-fix-timer — /repo/.agent/tasks/99_done/2026-07-11-fix-timer"}
-	p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "\nAudit the task named above.\n", finished)
+	p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "\nAudit the task named above.\n", finished, nil)
 	if !strings.HasPrefix(p, "The task(s) the last iteration just completed") || !strings.Contains(p, "2026-07-11-fix-timer — ") {
 		t.Errorf("the header must name the finished task:\n%s", p)
 	}
@@ -207,8 +207,12 @@ func TestLoopBetweenPrompt(t *testing.T) {
 	if !strings.Contains(p, "its folder back to 10_in_progress/") {
 		t.Errorf("the fixed context footer must trail the between prompt:\n%s", p)
 	}
+	// A gate-defining change adds a PROTECTED CHANGE note naming the file.
+	if pg := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "Audit.", finished, []string{"Makefile"}); !strings.Contains(pg, "PROTECTED CHANGE") || !strings.Contains(pg, "Makefile") {
+		t.Errorf("a gate-file change should add the protected-change note:\n%s", pg)
+	}
 	// No identified task (defensive) → no header, prompt leads.
-	if p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "Audit.", nil); !strings.HasPrefix(p, "Audit.") {
+	if p := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "Audit.", nil, nil); !strings.HasPrefix(p, "Audit.") {
 		t.Errorf("without finished tasks the prompt should lead:\n%s", p)
 	}
 }

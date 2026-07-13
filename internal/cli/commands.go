@@ -1619,7 +1619,8 @@ func loopSignoffPrompt(repo string, queues []string, appendPrompt string) string
 func reviewContextFooter(repo string, queues []string) string {
 	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box — reopen a task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), and note what was missing in its log.md. Execute every reopen IMMEDIATELY as you decide it (move the folder, then write the note) — never batch reopens for the end and never leave them waiting on background work: an interrupted session loses any verdict not yet written to the queue.",
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md")) +
-		" When you are completely finished, end your reply with a line of exactly this form and nothing after it: `REVIEW COMPLETE — reopened <N>`, where <N> is the count of tasks you moved back to 10_in_progress/ this pass (0 if you reopened none). The loop compares that count against the folders that actually moved, so a claim that doesn't match the queue is treated as a lost verdict and the review is re-run — never batch or defer a reopen past this line."
+		" When you are completely finished, end your reply with a line of exactly this form and nothing after it: `REVIEW COMPLETE — reopened <N>`, where <N> is the count of tasks you moved back to 10_in_progress/ this pass (0 if you reopened none). The loop compares that count against the folders that actually moved, so a claim that doesn't match the queue is treated as a lost verdict and the review is re-run — never batch or defer a reopen past this line." +
+		" GATE INTEGRITY: a task that changed a gate-defining file — the Makefile/gate, .agent/project.yaml, .agent/loop.yaml, .claude/hooks/, or CI — could be passing by WEAKENING its own checker (removing an assertion, relaxing the gate, disabling a hook). Scrutinize any such change and REOPEN the task if the gate was weakened rather than the code fixed; a green gate the candidate loosened is not a pass."
 }
 
 // loopFilesTombstone returns a one-time warning when any RETIRED loop config file still exists —
@@ -1647,7 +1648,7 @@ func loopFilesTombstone(repo string) string {
 // loopcfg.Load requires it when between.enabled), then the same fixed context footer with the
 // queue paths and reopen mechanics. It reviews the just-completed task and may reopen it — the
 // loop reworks it first.
-func loopBetweenPrompt(repo string, queues []string, setPrompt string, finished []string) string {
+func loopBetweenPrompt(repo string, queues []string, setPrompt string, finished, gateHits []string) string {
 	var b strings.Builder
 	if len(finished) > 0 {
 		b.WriteString("The task(s) the last iteration just completed — the ONLY subject of this audit:\n")
@@ -1655,6 +1656,10 @@ func loopBetweenPrompt(repo string, queues []string, setPrompt string, finished 
 			b.WriteString("  - " + f + "\n")
 		}
 		b.WriteString("\n")
+	}
+	if len(gateHits) > 0 {
+		b.WriteString("PROTECTED CHANGE: this iteration edited gate-defining file(s) — " + strings.Join(gateHits, ", ") +
+			". Before anything else, verify the change did NOT weaken the checker (remove/relax an assertion, disable a hook, loosen the gate) to make the task pass; reopen it if it did.\n\n")
 	}
 	b.WriteString(strings.TrimSpace(setPrompt))
 	b.WriteString("\n\n")
@@ -2016,9 +2021,17 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			// Attempt evidence: the tasks this iteration moved to done, and any it finished with NO
 			// Coop-Task commit in its HEAD range — unbindable, so warn (never silent) and record it.
 			finished := finishedTasks(snapBefore, queueSnapshot(hosts))
-			missing := untrailered(repo, iterHead, gitOut(repo, "rev-parse", "HEAD"), finished)
+			headAfter := gitOut(repo, "rev-parse", "HEAD")
+			missing := untrailered(repo, iterHead, headAfter, finished)
 			if len(missing) > 0 {
 				ui.Warn("task(s) %s finished with no Coop-Task commit this iteration — the harness can't bind them to a commit (the commit needs a `Coop-Task: <id>` trailer)", strings.Join(missing, ", "))
+			}
+			// Verifier trust boundary (first step): a task that edited a gate-defining file could be
+			// passing by WEAKENING its own checker. Detect it host-side and warn; the review footer and
+			// the between-audit note tell the reviewer to scrutinize it (a hard dual-run gate is a follow-up).
+			gateHits := protectedGateChanges(repo, iterHead, headAfter)
+			if len(gateHits) > 0 {
+				ui.Warn("this iteration edited gate-defining file(s) %s — the review must confirm the gate wasn't weakened to pass", strings.Join(gateHits, ", "))
 			}
 			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing)
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
@@ -2061,7 +2074,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				if betweenEnabled {
 					if finished := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finished) > 0 {
 						ui.Info("between-tasks audit — reviewing %s", strings.Join(taskIDsOf(finished), ", "))
-						prompt := loopBetweenPrompt(repo, queues, lc.Between.Prompt, finished)
+						prompt := loopBetweenPrompt(repo, queues, lc.Between.Prompt, finished, gateHits)
 						// Runs on between.agent's own target and fails closed — but a per-task audit that
 						// can't run warns loudly (the task went unaudited) rather than halting the run.
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")

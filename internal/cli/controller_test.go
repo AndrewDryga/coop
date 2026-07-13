@@ -92,6 +92,68 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	}
 }
 
+func TestIsGateGuardPath(t *testing.T) {
+	guarded := []string{"Makefile", "sub/Makefile", ".agent/project.yaml", ".agent/loop.yaml",
+		".claude/hooks/stop-guard.sh", ".claude/settings.json", ".github/workflows/ci.yml"}
+	for _, f := range guarded {
+		if !isGateGuardPath(f) {
+			t.Errorf("%q should be gate-defining", f)
+		}
+	}
+	// Ordinary source and test files are NOT gate-defining — only the checker's own definition is.
+	for _, f := range []string{"internal/cli/sign.go", "internal/cli/sign_test.go", "README.md", "docs/cli.md"} {
+		if isGateGuardPath(f) {
+			t.Errorf("%q should NOT be gate-defining (only the gate's own definition is)", f)
+		}
+	}
+}
+
+func TestProtectedGateChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"), "GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(p, s string) {
+		full := filepath.Join(repo, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "T")
+	write("code.go", "package x")
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	// A commit that touches ordinary code → no protected change.
+	write("code.go", "package x // edit")
+	git("add", "-A")
+	git("commit", "-q", "-m", "code edit")
+	if hits := protectedGateChanges(repo, base, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 0 {
+		t.Errorf("an ordinary code change is not protected: %v", hits)
+	}
+	// A commit that weakens the Makefile → flagged.
+	mid := gitOut(repo, "rev-parse", "HEAD")
+	write("Makefile", "check:\n\ttrue\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "loosen the gate")
+	if hits := protectedGateChanges(repo, mid, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != "Makefile" {
+		t.Errorf("a Makefile change should be flagged, got %v", hits)
+	}
+}
+
 // TestReconcileQueueAfterMerge: a queued task whose Coop-Task trailer just landed moves to done;
 // a blocked task with a landed trailer is NOT moved (flagged for a human); an unlanded task stays.
 func TestReconcileQueueAfterMerge(t *testing.T) {

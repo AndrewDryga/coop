@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop now flags when a task edits its own verifier.** In an unattended loop a candidate can
+  weaken the checker to pass itself — edit `*_test.go`, the `Makefile`/gate, `.agent/project.yaml`,
+  `.agent/loop.yaml`, `.claude/hooks/`, or CI — and cross-vendor review is no defense when every
+  reviewer trusts the same mutable oracle. coop now DETECTS (host-side, deterministically) when an
+  iteration's commits touched a gate-defining file, warns, and tells the review to verify the gate
+  wasn't weakened rather than the code fixed (a per-task note in the between audit, plus a standing
+  gate-integrity directive in every review). This is the boring first step — the stronger dual-run
+  / approval enforcement is a filed follow-up pending the enforcement-model decision.
+
 - **The box image is ~470MB smaller (3.16GB → 2.69GB) on a `node:24-slim` base.** The full `node:24`
   base shipped build-essential/git/python/mercurial/openssh that the box's own apt layer already
   re-installs — so those installs were near-no-ops on a fat base. On slim the box installs exactly
