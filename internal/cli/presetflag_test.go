@@ -59,8 +59,10 @@ func TestFusionLadderGuard(t *testing.T) {
 	}
 }
 
-// applyPreset seeds role + lead selections; explicit CLI flags applied after still win;
-// and a native role must never clobber the lead's own model.
+// applyPreset seeds ONLY the lead's model/credentials into global config; explicit CLI flags
+// applied after still win. Role models stay OUT of global provider state (they ride each role's
+// wrapper target), so a native role never clobbers the lead and a consult/delegate role never
+// shadows a provider that later becomes the lead — see TestRoleModelDoesNotShadowRotatedLead.
 func TestApplyPresetPrecedence(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	p := cliFrontier()
@@ -70,12 +72,18 @@ func TestApplyPresetPrecedence(t *testing.T) {
 	if got := a.cfg.ModelFor("claude"); got != "claude-fable-5" {
 		t.Errorf("lead model = %q, want claude-fable-5 (a native role must not clobber the lead)", got)
 	}
-	// Consult/delegate roles pin their agents' models and credentials.
-	if got := a.cfg.ModelFor("codex"); got != "gpt-5.5" {
-		t.Errorf("critic model = %q, want gpt-5.5", got)
+	// Consult/delegate role models are NOT seeded into global provider state — they ride each
+	// role's wrapper target (Role.TargetList()), so global ModelFor for a role-only provider
+	// stays empty (which is what keeps a rotated lead on that provider from being shadowed).
+	if got := a.cfg.ModelFor("codex"); got != "" {
+		t.Errorf("critic (codex) model in global config = %q, want \"\" (roles ride the wrapper, not global config)", got)
 	}
-	if got := a.cfg.ModelFor("gemini"); got != "gemini-3.5-flash" {
-		t.Errorf("fast model = %q, want gemini-3.5-flash", got)
+	if got := a.cfg.ModelFor("gemini"); got != "" {
+		t.Errorf("fast (gemini) model in global config = %q, want \"\"", got)
+	}
+	// The role's model is carried on its own target for the wrapper env.
+	if got := p.Roles[0].TargetList(); got != "codex:gpt-5.5" {
+		t.Errorf("critic role target = %q, want codex:gpt-5.5 (the role's model rides its target)", got)
 	}
 	if got := a.cfg.ActiveProfile("codex"); got != "default" {
 		t.Errorf("critic credential = %q, want default (roles run on the agent's default account)", got)
@@ -87,26 +95,90 @@ func TestApplyPresetPrecedence(t *testing.T) {
 		t.Error("applyPreset must remember the preset for the RunSpecs")
 	}
 
-	// An explicit CLI --model applied after (the caller's order) wins over the preset.
+	// An explicit CLI --model applied after (the caller's order) wins over the preset lead.
 	a.selectRunModel("claude", "claude-opus-4-8")
 	if got := a.cfg.ModelFor("claude"); got != "claude-opus-4-8" {
 		t.Errorf("explicit model = %q, want it to beat the preset's", got)
 	}
 
 	// A different effective lead: the preset's lead model/credentials must NOT transfer
-	// (claude's model id pinned onto gemini would be nonsense), and a role that happens
-	// to share the lead's agent must not pollute the lead's own selection either — the
-	// fast role still carries its model via the delegate wrapper env, not via the lead.
+	// (claude's model id pinned onto gemini would be nonsense).
 	b := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	b.applyPreset(cliFrontier(), "gemini")
 	if got := b.cfg.ModelFor("gemini"); got != "" {
-		t.Errorf("gemini lead model = %q, want \"\" (neither the claude lead's nor the fast role's)", got)
+		t.Errorf("gemini lead model = %q, want \"\" (the claude lead's model must not transfer)", got)
 	}
 	if got := b.cfg.ActiveProfile("gemini"); got != "default" {
 		t.Errorf("gemini lead credential = %q, want default (the claude lead's 'work' must not transfer)", got)
 	}
-	if got := b.cfg.ModelFor("codex"); got != "gpt-5.5" {
-		t.Errorf("roles on OTHER agents still apply: codex = %q, want gpt-5.5", got)
+}
+
+// TestRoleModelDoesNotShadowRotatedLead is the regression for the frontier dogfood miss: a
+// provider that first appears as a preset ROLE (codex thinker on terra) and later becomes the
+// LEAD via cross-provider rotation (codex:sol) must launch on the LEAD's rotated model, not the
+// role's. Before the fix, the role seeded codex into the active-model tier, which ModelFor
+// preferred over the rotation target — so the lead ran terra while telemetry announced sol.
+func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	// Frontier in miniature: claude leads first, failing over to codex:sol; codex ALSO owns the
+	// thinker (terra) and fast (luna) roles — the same provider playing three parts at once.
+	p := &preset.Preset{
+		Name: "frontier", LeadAgent: "claude",
+		LeadLadder: []agents.Target{
+			{Provider: "claude", Model: "claude-fable-5", Effort: "xhigh"},
+			{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"personal"}},
+		},
+		Roles: []preset.Role{
+			{Name: "fast", Mode: preset.ModeDelegate, Agent: "codex", Model: "gpt-5.6-luna", Effort: "xhigh"},
+			{Name: "thinker", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.6-terra", Effort: "xhigh"},
+		},
+	}
+	a.applyPreset(p, "claude")
+
+	codex, ok := agents.Get("codex")
+	if !ok {
+		t.Fatal("codex agent not registered")
+	}
+
+	// Initial lead is claude on fable — unchanged; codex owns roles only, so nothing leaks into
+	// its global model tier.
+	if got := a.cfg.ModelFor("claude"); got != "claude-fable-5" {
+		t.Fatalf("initial lead model = %q, want claude-fable-5", got)
+	}
+	if got := a.cfg.ModelFor("codex"); got != "" {
+		t.Fatalf("codex role model leaked into global config = %q, want \"\" (roles ride the wrapper)", got)
+	}
+
+	// The loop fails the claude rung over to the codex lead rung — applyTarget is THE choke point
+	// for a rotation. The executed codex command must now carry the LEAD's sol, not a role model.
+	a.applyTarget(newRotation([]agents.Target{
+		{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"personal"}},
+	}))
+	cmd := strings.Join(codex.Interactive(a.cfg), " ")
+	if !strings.Contains(cmd, "--model gpt-5.6-sol") {
+		t.Errorf("rotated codex lead command = %q, want it to launch gpt-5.6-sol", cmd)
+	}
+	if strings.Contains(cmd, "gpt-5.6-terra") || strings.Contains(cmd, "gpt-5.6-luna") {
+		t.Errorf("rotated codex lead command = %q, must NOT launch a role model (terra/luna)", cmd)
+	}
+	// The rendered model line and telemetry both read ModelFor — it must agree with the command.
+	if got := a.cfg.ModelFor("codex"); got != "gpt-5.6-sol" {
+		t.Errorf("rotated lead ModelFor(codex) = %q, want gpt-5.6-sol (render + telemetry read this)", got)
+	}
+	if got := a.cfg.ActiveProfile("codex"); got != "personal" {
+		t.Errorf("rotated lead account = %q, want personal", got)
+	}
+
+	// coop-consult thinker still routes to terra: its model rides the role's OWN wrapper target,
+	// untouched by the lead rotation.
+	var thinker preset.Role
+	for _, r := range p.Roles {
+		if r.Name == "thinker" {
+			thinker = r
+		}
+	}
+	if got := thinker.TargetList(); got != "codex:gpt-5.6-terra/xhigh" {
+		t.Errorf("thinker wrapper target = %q, want codex:gpt-5.6-terra/xhigh (consult stays on terra)", got)
 	}
 }
 

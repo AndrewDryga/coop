@@ -72,28 +72,24 @@ func fusionLadderGuard(p *preset.Preset, governor string) error {
 	return nil
 }
 
-// applyPreset seeds the run's model/credential selections from the preset, around the
-// resolved lead: consult/delegate roles pin their agent's model/credentials (a native
-// role runs inside the lead's session, so it pins nothing), and the lead's own
-// model/credentials apply only when the effective lead IS the preset's lead agent — a loop
-// work.agent ladder like [gemini, frontier] runs frontier's routing under a gemini lead, which
-// must not inherit claude's model id. Callers apply explicit CLI flags AFTER this, so they
-// override. It also
-// remembers the preset on the app, so every RunSpec this run builds can carry it.
+// applyPreset seeds the run's model/credential selections from the preset lead, then
+// remembers the preset on the app so every RunSpec this run builds can carry it. Only the
+// LEAD's model/credentials are seeded into global provider state, and only when the effective
+// lead IS the preset's lead agent — a loop work.agent ladder like [gemini, frontier] runs
+// frontier's routing under a gemini lead, which must not inherit claude's model id. Callers
+// apply explicit CLI flags AFTER this, so they override.
+//
+// A role's model/effort are deliberately NOT seeded into global provider state. A role rides
+// its OWN target (provider:model/effort) in the coop-consult/coop-delegate wrapper env
+// (Role.TargetList() → COOP_CONSULT/DELEGATE_<ROLE>_TARGETS), which every provider's arm passes
+// straight through as `--model`. Per-provider global state can't represent a provider that plays
+// several parts at once — frontier runs codex as the thinker (terra), the fast delegate (luna),
+// AND a lead rung (sol) — and seeding a role's model into the active tier would shadow the lead's
+// rotated target when that provider later becomes the lead (ModelFor prefers the active tier),
+// launching the role's model under the lead's banner while telemetry reports the rotated one.
 func (a *app) applyPreset(p *preset.Preset, lead string) {
 	if p == nil {
 		return
-	}
-	for _, r := range p.Roles {
-		if r.Mode == preset.ModeNative || r.Agent == lead {
-			continue // the lead's own selection is handled below and must not be clobbered by a role
-		}
-		if r.Model != "" {
-			a.cfg.SetActiveModel(r.Agent, r.Model) // the role runs on its agent's default account
-		}
-		if r.Effort != "" {
-			a.cfg.SetActiveEffort(r.Agent, r.Effort)
-		}
 	}
 	if lead == p.LeadAgent && len(p.LeadLadder) > 0 {
 		// A run that doesn't rotate (single, or the loop before its first applyTarget) uses the
