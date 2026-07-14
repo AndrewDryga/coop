@@ -7,9 +7,9 @@ source for `docs/cli.md` + `docs/man/coop.1` + `site/llms.txt`), README code fen
 site's `<pre>` blocks.
 
 **Why:** "I'm really annoyed by all the times you did not align comments in one vertical line
-nicely!!" — the `coop presets` block and the roles YAML both had one long line (`coop loop
---preset frontier`, `agent: claude:claude-opus-4-8`) whose comment jutted past the column the
-other rows shared. Same failure as a help row pushing past the description gap — see
+nicely!!" — the `coop presets` block and the roles YAML each had a row (`coop loop frontier`,
+`agent: claude:claude-opus-4-8`) whose comment jutted past the column the other rows shared.
+Same failure as a help row pushing past the description gap — see
 [[help-output-style]].
 
 **How to apply:**

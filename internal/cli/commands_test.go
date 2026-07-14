@@ -502,6 +502,13 @@ func TestLoopTargetResolution(t *testing.T) {
 		tg.Provider != "claude" || tg.Model != "opus-4.8" || len(tg.Accounts) != 1 || tg.Accounts[0] != "work" {
 		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, has=%v, preset=%q, %v)", tg, has, ps, err)
 	}
+	// Keep the documented preset invocation tied to the parser: cmdLoop passes the words after
+	// "coop loop" to parseLoopArgs, so its positional preset must remain accepted.
+	const documentedPresetLoop = "coop loop frontier"
+	words := strings.Fields(documentedPresetLoop)
+	if tg, has, ps, _, _, _, err := parseLoopArgs(words[2:], false); err != nil || has || ps != "frontier" || tg.Provider != "" {
+		t.Errorf("%q = (%+v, has=%v, preset=%q, %v), want positional preset frontier", documentedPresetLoop, tg, has, ps, err)
+	}
 	// A bare non-target word is a PRESET NAME now (its existence is validated later by
 	// loadRunPreset), not an unknown-token error.
 	if tg, has, ps, _, _, _, err := parseLoopArgs([]string{"frontier"}, false); err != nil || has || ps != "frontier" || tg.Provider != "" {

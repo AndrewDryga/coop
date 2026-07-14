@@ -15,7 +15,7 @@ none and rejects it), and the account are all optional. `--model`, `--credential
 | `coop <agent> --credential <acct>` | `coop <agent>@<acct>` — e.g. `coop claude@work` |
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
-| bare `coop` / `loop` / `acp` / `fusion` (defaulted to claude) | name the agent — `coop claude`, `coop loop claude`, … (or a `--preset` whose lead supplies it) |
+| bare `coop` / `loop` / `acp` / `fusion` (defaulted to claude) | name the agent — `coop claude`, `coop loop claude`, … (or positional `coop loop <preset>`, whose lead supplies it) |
 | `coop <agent> --consult` (boolean) | `coop <agent> --consult <peer>…` — name each peer (repeatable): `--consult codex:gpt-5.5 --consult gemini` |
 | `coop fusion <gov>` (consulted everyone signed in) | `coop fusion <gov> --peer <agent>…` — a council needs ≥1 named peer (repeatable) |
 
@@ -28,8 +28,9 @@ gone. A named peer's credentials are the only ones mounted for consultation (the
 `coop-consult` refuses any other), so an overnight run can't quietly hand your Codex login to a
 Claude lead you never asked to consult it.
 
-`--preset <name>` is unchanged (a preset is an orthogonal axis — role wiring — not another
-spelling of the target). A per-fork `consult: true` in `.agent/fleet.yaml` now refuses at `coop
+Name a preset in the positional who-runs slot — `coop <preset>` or `coop loop <preset>` — rather
+than with a flag (a preset is an orthogonal axis — role wiring — not another spelling of the
+target). A per-fork `consult: true` in `.agent/fleet.yaml` now refuses at `coop
 fleet up`; name peers explicitly (the fleet grammar for that lands with the preset/fleet
 unification).
 

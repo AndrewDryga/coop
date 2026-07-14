@@ -20,7 +20,7 @@ work:
   # PRESET NAME (frontier — the iteration runs under that preset: its lead ladder + roles). coop
   # rotates to the next rung on a rate limit (a preset rung's own ladder first). A bare provider
   # word (claude/codex/gemini/grok) is a target; any other bare word must name a preset.
-  # Default: the agent on the command line (`coop loop claude`) or a --preset's lead.
+  # Default: the agent on the command line (`coop loop claude`) or a positional preset's lead.
   #
   # One rung: the frontier preset already carries the failover pair — Fable 5/xhigh leading
   # with GPT-5.6 Sol/xhigh as the cross-vendor twin — plus the thinker/critic/fast roles.
