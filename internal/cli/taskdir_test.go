@@ -190,7 +190,7 @@ func TestReadTaskTreeDedupesTornMove(t *testing.T) {
 }
 
 func TestQueueCountsAndSource(t *testing.T) {
-	// queueCounts/queueHasTodo/wsTaskSource all read the .agent/tasks tree.
+	// queueCounts and wsTaskSource both read the .agent/tasks tree.
 	ws := t.TempDir()
 	dir := filepath.Join(ws, tasksRoot)
 	writeTaskFile(t, filepath.Join(dir, stateTodo, "2026-01-01-a", "task.md"), "# one\n")
@@ -204,9 +204,6 @@ func TestQueueCountsAndSource(t *testing.T) {
 	}
 	if active != "two" {
 		t.Errorf("active = %q", active)
-	}
-	if !queueHasTodo(dir) {
-		t.Errorf("queueHasTodo should be true with a todo/ task")
 	}
 	// A missing/empty tree reads as all-zero, no panic.
 	if c0, a0 := queueCounts(filepath.Join(t.TempDir(), "nope")); c0.total() != 0 || a0 != "" {

@@ -32,13 +32,6 @@ func fenceMarker(line string) bool {
 	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
 }
 
-// queueHasTodo reports whether a queue (a .agent/tasks directory) still has an unclaimed task —
-// a non-empty todo/ state dir.
-func queueHasTodo(queue string) bool {
-	c, _ := taskTreeCounts(readTaskTree(queue))
-	return c.Todo > 0
-}
-
 // taskCounts tallies a task queue by state (todo/in_progress/blocked/done).
 type taskCounts struct{ Todo, Doing, Done, Blocked int }
 

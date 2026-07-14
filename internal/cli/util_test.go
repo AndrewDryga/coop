@@ -41,25 +41,6 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-func TestQueueHasTodo(t *testing.T) {
-	// done/ and in_progress/ tasks are not open todos.
-	root := filepath.Join(t.TempDir(), ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(root, stateDone, "d", "task.md"), "# done\n")
-	writeTaskFile(t, filepath.Join(root, stateInProgress, "w", "task.md"), "# wip\n")
-	if queueHasTodo(root) {
-		t.Error("done/in_progress tasks must not count as a todo")
-	}
-	// A real todo task does.
-	writeTaskFile(t, filepath.Join(root, stateTodo, "n", "task.md"), "# next\n")
-	if !queueHasTodo(root) {
-		t.Error("a todo/ task should count")
-	}
-	// A missing queue dir is not a todo (and doesn't panic).
-	if queueHasTodo(filepath.Join(t.TempDir(), "nope")) {
-		t.Error("a missing queue should be false")
-	}
-}
-
 func TestQueueProgress(t *testing.T) {
 	// Two queue dirs; queueProgress sums both, active = the first in_progress task.
 	q1 := filepath.Join(t.TempDir(), ".agent", "tasks")
