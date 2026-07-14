@@ -326,10 +326,9 @@ func setLiveConfig(ctx context.Context, t *testing.T, client *acpClient, session
 	return liveConfigOptions(t, response)
 }
 
-// TestComposableSelectorState drives coop's real outer ACP control layer. The adapters differ, but
-// these dropdowns are provider-independent: every ack must retain the other two dimensions while
-// the supervisor swaps real credential-scoped boxes behind the editor stream.
-func TestComposableSelectorState(t *testing.T) {
+// TestPresetOwnsSelectorState drives coop's real outer ACP control layer. A direct preset owns the
+// toolbar and ignores persisted plain selector writes; leaving it exposes the normal plain controls.
+func TestPresetOwnsSelectorState(t *testing.T) {
 	if _, err := exec.LookPath("coop"); err != nil {
 		t.Skip("coop not on PATH (run `make install`)")
 	}
@@ -360,41 +359,65 @@ func TestComposableSelectorState(t *testing.T) {
 		t.Fatalf("session/new returned no sessionId: %#v", response)
 	}
 	options := liveConfigOptions(t, response)
-	for _, id := range []string{"coop_preset", "coop_provider", "coop_account"} {
-		if _, ok := options[id]; !ok {
-			t.Fatalf("initial toolbar missing %s: %+v", id, options)
-		}
+	if len(options) != 1 {
+		t.Fatalf("initial direct-preset toolbar = %+v, want only coop_preset", options)
 	}
-	if options["coop_preset"].CurrentValue != "frontier" || options["coop_account"].CurrentValue != "auto" {
+	if options["coop_preset"].CurrentValue != "frontier" {
 		t.Fatalf("initial preset toolbar is not truthful: %+v", options)
 	}
+	for _, tc := range []struct {
+		configID string
+		value    string
+	}{
+		{"coop_provider", "codex"},
+		{"coop_account", "work"},
+	} {
+		options = setLiveConfig(ctx, t, live.client, sessionID, tc.configID, tc.value)
+		if len(options) != 1 || options["coop_preset"].CurrentValue != "frontier" {
+			t.Fatalf("active preset %s replay changed toolbar: %+v", tc.configID, options)
+		}
+	}
+
 	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_preset", "none")
-	if options["coop_preset"].CurrentValue != "none" {
-		t.Fatalf("leaving the initial preset did not clear only the recipe: %+v", options)
+	for _, id := range []string{"coop_preset", "coop_provider", "coop_account"} {
+		if _, ok := options[id]; !ok {
+			t.Fatalf("leaving preset did not expose normal control %s: %+v", id, options)
+		}
 	}
-	account := liveOptionValue(t, options["coop_account"], "auto")
-	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_account", account)
-	if options["coop_account"].CurrentValue != account || options["coop_preset"].CurrentValue != "none" {
-		t.Fatalf("account ack lost state: %+v", options)
+	if options["coop_preset"].CurrentValue != "none" || options["coop_account"].CurrentValue != "auto" {
+		t.Fatalf("leaving preset did not return to plain provider/automatic account: %+v", options)
 	}
+
+	plainProvider := options["coop_provider"].CurrentValue
+	for _, option := range options["coop_provider"].Options {
+		if option.Value != "" && option.Value != plainProvider {
+			plainProvider = option.Value
+			break
+		}
+	}
+	if plainProvider != options["coop_provider"].CurrentValue {
+		options = setLiveConfig(ctx, t, live.client, sessionID, "coop_provider", plainProvider)
+	}
+	plainAccount := "auto"
+	for _, option := range options["coop_account"].Options {
+		if option.Value != "" && option.Value != "auto" {
+			plainAccount = option.Value
+			break
+		}
+	}
+	if plainAccount != "auto" {
+		options = setLiveConfig(ctx, t, live.client, sessionID, "coop_account", plainAccount)
+	}
+	plainProvider = options["coop_provider"].CurrentValue
+	plainAccount = options["coop_account"].CurrentValue
 
 	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_preset", "frontier")
-	if options["coop_preset"].CurrentValue != "frontier" || options["coop_account"].CurrentValue != account {
-		t.Fatalf("preset ack lost account pin: %+v", options)
+	if len(options) != 1 || options["coop_preset"].CurrentValue != "frontier" {
+		t.Fatalf("frontier did not reclaim the toolbar: %+v", options)
 	}
-	currentProvider := options["coop_provider"].CurrentValue
-	provider := liveOptionValue(t, options["coop_provider"], currentProvider)
-	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_provider", provider)
-	if options["coop_preset"].CurrentValue != "frontier" || options["coop_provider"].CurrentValue != provider {
-		t.Fatalf("provider ack lost preset: %+v", options)
+	if plainProvider == "" || plainAccount == "" {
+		t.Fatalf("plain controls did not expose effective values before re-entering preset: provider=%q account=%q", plainProvider, plainAccount)
 	}
-
-	providerAccount := liveOptionValue(t, options["coop_account"], "auto")
-	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_account", providerAccount)
-	if options["coop_preset"].CurrentValue != "frontier" || options["coop_provider"].CurrentValue != provider || options["coop_account"].CurrentValue != providerAccount {
-		t.Fatalf("composed ack = %+v", options)
-	}
-	t.Logf("composed live selection: preset=frontier provider=%s account=%s", provider, providerAccount)
 }
 
 func TestSuperviseResume(t *testing.T) {

@@ -920,15 +920,16 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 
 coop's proxy sits between the editor and the box and owns the session:
 
-- **A `coop` dropdown in the toolbar** lists your credentials and the repo's
-  same-provider [presets](#presets-the-whole-arrangement-in-one-yaml-file). Switching
-  restarts the box on the new identity and replays the session — the conversation
-  survives, because ACP transcripts live on a shared, credential-independent store; a
-  switch made mid-turn re-sends the in-flight prompt, so the turn completes on the new
-  target instead of erroring. The model dropdown defaults to the target's `:model`/config
-  (still switchable in-editor); under a preset the native model/effort dropdowns are
-  hidden — the preset's ladder and roles pin them; the permission-mode dropdown is gone
-  (always yolo).
+- **The toolbar has a normal and an active-preset shape.** A plain session shows Preset,
+  Provider, and Account. Switching a plain provider or account restarts the box on the new
+  identity and replays the session — the conversation survives, because ACP transcripts live
+  on a shared, credential-independent store; a switch made mid-turn re-sends the in-flight
+  prompt, so the turn completes on the new target instead of erroring. An active preset shows
+  only Preset: its ladder owns provider, model, effort, account, and roles, while persisted
+  Provider/Account sets are acknowledged and ignored. Selecting None returns Provider and
+  Account with the effective provider and Account set to Auto; select None first whenever you
+  want to choose either manually. The model dropdown defaults to the target's `:model`/config
+  (still switchable in a plain session); the permission-mode dropdown is gone (always yolo).
 - **Rate limits are handled for you.** When a turn hits the provider's limit, coop
   swallows the error, rotates to your next signed-in account, re-sends your prompt, and
   moves the dropdown — the turn just completes on the backup credential. With nothing

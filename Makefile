@@ -45,7 +45,7 @@ casts: build ## Regenerate the site terminal casts (refuses a dirty/untagged ./c
 check: lint test docs-check ## What CI runs: lint + unit tests + CLI-docs freshness
 
 acp-e2e: install ## ACP adapter e2e (needs Docker + a built box + signed-in providers)
-	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|ComposableSelectorState)$$' -count=1 -v ./internal/acpproxy/
+	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState)$$' -count=1 -v ./internal/acpproxy/
 
 review-writes-e2e: ## Review write-policy e2e (needs Docker; pulls a small test image once)
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21

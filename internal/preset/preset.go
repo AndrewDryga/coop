@@ -388,8 +388,8 @@ func promptText(dir, rel string) (string, error) {
 
 // CrossProvider reports whether the lead ladder spans providers — a rung on a different
 // provider than the lead (the first rung). The loop EMBRACES this (rotation swaps the agent
-// per rung); single-lead surfaces don't: fusion errors (one governor for the whole council)
-// and ACP filters to the lead's own rungs (its failover env carries no provider).
+// per rung); single-lead surfaces differ: fusion errors (one governor for the whole council),
+// while ACP honors the full ladder and carries the active provider in its failover target.
 func (p *Preset) CrossProvider() bool {
 	for _, t := range p.LeadLadder {
 		if t.Provider != p.LeadAgent {

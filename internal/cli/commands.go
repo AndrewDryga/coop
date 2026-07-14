@@ -409,7 +409,7 @@ func defaultACPProvider(cfg *config.Config) string {
 func (a *app) cmdACP(args []string) (int, error) {
 	// The ACP proxy is ALWAYS in the path: it's coop's control point for the editor session —
 	// restart resilience, plus rewriting the session so coop owns the toolbar (yolo, model default,
-	// coop's provider/account/preset selectors). The OUTER process validates the args (fail fast), then
+	// coop's plain/preset toolbar selectors). The OUTER process validates the args (fail fast), then
 	// supervises; the INNER (COOP_ACP_INNER=1) runs the box.
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
 	peerVals, args, err := extractPeer(args)
@@ -530,7 +530,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	// The outer process owns the editor stream via the proxy; it builds coop's control layer (the
-	// toolbar rewrite + composable selectors) and re-execs `coop acp <inner>` (COOP_ACP_INNER
+	// toolbar rewrite + preset/plain selectors) and re-execs `coop acp <inner>` (COOP_ACP_INNER
 	// set) to run the box, the current selection carried in the env. The inner falls through to box.Run.
 	if os.Getenv("COOP_ACP_INNER") == "" {
 		repo, _ := box.ResolveRepo(a.cfg.RepoOverride)

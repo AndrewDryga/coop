@@ -67,7 +67,7 @@ func TestACPControlRewrite(t *testing.T) {
 		t.Errorf("sessionId lost in rewrite: %s", res["sessionId"])
 	}
 	if len(ids) < 3 || ids[0] != "coop_preset" || ids[1] != "coop_provider" || ids[2] != "coop_account" {
-		t.Errorf("coop's dropdowns must lead (provider, account, preset), got %v", ids)
+		t.Errorf("coop's dropdowns must lead (preset, provider, account), got %v", ids)
 	}
 	for _, bad := range []string{"mode", "agent"} {
 		if slices.Contains(ids, bad) {
@@ -389,9 +389,15 @@ func TestACPControlFromEditor(t *testing.T) {
 		t.Errorf("after account work, selection = %+v", sel)
 	}
 
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":8,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_preset","value":"frontier"}}`))
-	if sel := c.selection(); sel.Account != "work" || sel.Preset != "frontier" {
-		t.Errorf("after preset frontier, selection = %+v; account pin should survive", sel)
+	_, resp, _, restart = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":8,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_preset","value":"frontier"}}`))
+	if !restart {
+		t.Fatal("entering a preset must restart")
+	}
+	if sel := c.selection(); sel != (acpSelection{Preset: "frontier"}) {
+		t.Errorf("after preset frontier, selection = %+v; preset must clear plain state", sel)
+	}
+	if ids, _ := configOptionIDs(t, resp); !slices.Equal(ids, []string{coopPresetID}) {
+		t.Errorf("active preset ack options = %v, want only %s", ids, coopPresetID)
 	}
 }
 
@@ -425,7 +431,7 @@ func TestACPControlPresetOwnsModel(t *testing.T) {
 		t.Errorf("sessionReady must not force coop's model on a preset session:\n%s", joined)
 	}
 
-	// On a preset the native dropdowns are hidden outright — the ladder and roles pin them.
+	// On a preset the native dropdowns are hidden outright — the ladder and roles own them.
 	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[` +
 		`{"id":"model","type":"select","currentValue":"claude-fable-5","options":[{"value":"opus[1m]","name":"Opus"},{"value":"claude-fable-5","name":"Fable"}]},` +
 		`{"id":"effort","type":"select","currentValue":"high","options":[]},` +
@@ -773,8 +779,8 @@ func presetControl(t *testing.T) *acpControl {
 
 // TestACPControlPresetLadderFailover: a preset session rotates its MODEL ladder on a rate limit
 // (fable→opus) — the step a persistent ACP session can't take via the loop. The rung is advanced, the
-// prompt flagged for a transparent re-send, and the raw error is swallowed (coop_setup stays on the
-// preset; the model dropdown catches up via the replay). This is the reported "per-model rate limits
+// prompt flagged for a transparent re-send, and the raw error is swallowed (the Preset selector stays
+// active; the model catches up via the replay). This is the reported "per-model rate limits
 // not handled" bug — before the fix maybeRotate returned early for any preset.
 func TestACPControlPresetLadderFailover(t *testing.T) {
 	c := presetControl(t)
@@ -1273,103 +1279,141 @@ func coopCurrentValues(t *testing.T, raw []json.RawMessage) map[string]string {
 	return values
 }
 
-// Every dropdown changes only its own dimension. The ack reports the combined effective state,
-// and each accepted transition asks for exactly one restart.
-func TestACPComposableSelectorTransitions(t *testing.T) {
-	cases := []struct {
-		name        string
-		start       acpSelection
-		configID    string
-		value       string
-		want        acpSelection
-		startLead   string
-		wantLead    string
-		wantPreset  string
-		wantAccount string
-	}{
-		{"plain to preset", acpSelection{}, coopPresetID, "frontier", acpSelection{Preset: "frontier"}, "claude", "claude", "frontier", "auto"},
-		{"plain to provider", acpSelection{Account: "personal"}, coopProviderID, "codex", acpSelection{Provider: "codex"}, "claude", "codex", "none", "auto"},
-		{"plain to account", acpSelection{}, coopAccountID, "work", acpSelection{Account: "work"}, "claude", "claude", "none", "work"},
-		{"preset to none", acpSelection{Preset: "frontier"}, coopPresetID, "none", acpSelection{}, "claude", "claude", "none", "auto"},
-		{"preset to provider", acpSelection{Preset: "frontier"}, coopProviderID, "codex", acpSelection{Provider: "codex", Preset: "frontier"}, "claude", "codex", "frontier", "auto"},
-		{"preset to account", acpSelection{Preset: "frontier"}, coopAccountID, "work", acpSelection{Account: "work", Preset: "frontier"}, "claude", "claude", "frontier", "work"},
-		{"composed replaces preset", acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}, coopPresetID, "review", acpSelection{Provider: "codex", Account: "work", Preset: "review"}, "codex", "codex", "review", "work"},
-		{"composed replaces provider", acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}, coopProviderID, "claude", acpSelection{Provider: "claude", Account: "work", Preset: "frontier"}, "codex", "claude", "frontier", "work"},
-		{"composed clears account", acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}, coopAccountID, "auto", acpSelection{Provider: "codex", Preset: "frontier"}, "codex", "codex", "frontier", "auto"},
+func selectorSet(t *testing.T, c *acpControl, configID, value string) (bool, bool, []string) {
+	t.Helper()
+	line := []byte(`{"jsonrpc":"2.0","id":"selector","method":"session/set_config_option","params":{"sessionId":"s","configId":"` + configID + `","value":"` + value + `"}}` + "\n")
+	handled, ack, _, restart := c.fromEditor(line)
+	ids, _ := configOptionIDs(t, ack)
+	return handled, restart, ids
+}
+
+func TestACPPlainSelectorSwitches(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "codex", "work")
+	if handled, restart, ids := selectorSet(t, c, coopProviderID, "codex"); !handled || !restart || !slices.Equal(ids, []string{coopPresetID, coopProviderID, coopAccountID}) {
+		t.Fatalf("plain provider switch = handled %v restart %v options %v", handled, restart, ids)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := newTestControl(t)
-			c.presets = []string{"frontier", "review"}
-			signInCred(t, c.cfg, "claude", "work")
-			signInCred(t, c.cfg, "codex", "work")
-			c.sel = tc.start
-			c.retargetLocked(tc.startLead)
-			line := []byte(`{"jsonrpc":"2.0","id":"transition","method":"session/set_config_option","params":{"sessionId":"s","configId":"` + tc.configID + `","value":"` + tc.value + `"}}` + "\n")
-			handled, ack, _, restart := c.fromEditor(line)
-			if !handled || !restart {
-				t.Fatalf("transition = handled %v, restart %v; want true/true", handled, restart)
-			}
-			if got := c.selection(); got != tc.want {
-				t.Fatalf("selection = %+v, want %+v", got, tc.want)
-			}
-			if c.lead != tc.wantLead {
-				t.Errorf("effective lead = %q, want %q", c.lead, tc.wantLead)
-			}
-			ids, res := configOptionIDs(t, ack)
-			if !slices.Equal(ids, []string{coopPresetID, coopProviderID, coopAccountID}) {
-				t.Fatalf("ack option ids = %v", ids)
-			}
-			var ackOptions []json.RawMessage
-			if err := json.Unmarshal(res["configOptions"], &ackOptions); err != nil {
-				t.Fatal(err)
-			}
-			values := coopCurrentValues(t, ackOptions)
-			if values[coopPresetID] != tc.wantPreset || values[coopProviderID] != tc.wantLead || values[coopAccountID] != tc.wantAccount {
-				t.Errorf("current values = %v, want preset=%q provider=%q account=%q", values, tc.wantPreset, tc.wantLead, tc.wantAccount)
-			}
-		})
+	if got := c.selection(); got != (acpSelection{Provider: "codex"}) {
+		t.Fatalf("plain provider selection = %+v, want codex", got)
+	}
+
+	c = newTestControl(t)
+	signInCred(t, c.cfg, "claude", "work")
+	if handled, restart, ids := selectorSet(t, c, coopAccountID, "work"); !handled || !restart || !slices.Equal(ids, []string{coopPresetID, coopProviderID, coopAccountID}) {
+		t.Fatalf("plain account switch = handled %v restart %v options %v", handled, restart, ids)
+	}
+	if got := c.selection(); got != (acpSelection{Account: "work"}) {
+		t.Fatalf("plain account selection = %+v, want work", got)
 	}
 }
 
-// An account override constrains every compatible preset rung. Model fallback remains, but no rung
-// may weaken the pin by selecting a different account; a different provider override drops the lead
-// ladder while keeping the preset name so role wiring remains mounted.
-func TestACPPresetAccountAndProviderOverrides(t *testing.T) {
+func TestACPEnteringPresetClearsPlainSelection(t *testing.T) {
 	c := newTestControl(t)
-	for _, account := range []string{"personal", "work"} {
-		signInCred(t, c.cfg, "claude", account)
-	}
-	signInCred(t, c.cfg, "gemini", "personal") // no work: this cross-provider rung must drop under the pin
+	signInCred(t, c.cfg, "claude", "personal")
 	signInCred(t, c.cfg, "codex", "work")
-	writeACPTestPreset(t, c.repo, "frontier", "lead:\n  agent: [claude:fable, claude:opus, gemini:flash]\n")
+	writeACPTestPreset(t, c.repo, "frontier", "lead: {agent: claude:fable@personal}\n")
+	c.sel = acpSelection{Provider: "codex", Account: "work"}
 
-	c.sel = acpSelection{Account: "work", Preset: "frontier"}
-	rot := c.presetRotation()
-	if rot == nil {
-		t.Fatal("pinned preset should retain compatible model fallback")
+	handled, restart, ids := selectorSet(t, c, coopPresetID, "frontier")
+	if !handled || !restart || !slices.Equal(ids, []string{coopPresetID}) {
+		t.Fatalf("entering preset = handled %v restart %v options %v", handled, restart, ids)
 	}
-	want := []string{"claude:fable@work", "claude:opus@work"}
-	if got := members(rot.targets); !slices.Equal(got, want) {
-		t.Fatalf("pinned ladder = %v, want %v (gemini@personal must drop)", got, want)
+	if got := c.selection(); got != (acpSelection{Preset: "frontier"}) {
+		t.Fatalf("preset selection = %+v, want preset-only", got)
 	}
-	for _, target := range rot.targets {
-		if target.Account() != "work" {
-			t.Fatalf("account pin weakened on rung %q", target)
+}
+
+func TestACPZedProviderThenPresetUsesPresetLadder(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "claude", "personal")
+	signInCred(t, c.cfg, "codex", "work")
+	writeACPTestPreset(t, c.repo, "frontier", "lead:\n  agent: [claude:fable@personal, codex:gpt-5.5@work]\n")
+
+	if handled, restart, _ := selectorSet(t, c, coopProviderID, "codex"); !handled || !restart {
+		t.Fatalf("Zed provider replay = handled %v restart %v", handled, restart)
+	}
+	if got := c.selection(); got != (acpSelection{Provider: "codex"}) {
+		t.Fatalf("after provider replay selection = %+v", got)
+	}
+	if handled, restart, ids := selectorSet(t, c, coopPresetID, "frontier"); !handled || !restart || !slices.Equal(ids, []string{coopPresetID}) {
+		t.Fatalf("Zed preset replay = handled %v restart %v options %v", handled, restart, ids)
+	}
+	if got := c.selection(); got != (acpSelection{Preset: "frontier"}) {
+		t.Fatalf("after preset replay selection = %+v, want preset-only", got)
+	}
+	if rot := c.presetRotation(); rot == nil {
+		t.Fatal("frontier must have a preset rotation")
+	}
+	target, presetName, ok := c.spawnTarget()
+	if !ok || presetName != "frontier" || target.String() != "claude:fable@personal" {
+		t.Fatalf("frontier first spawn = (%q, %q, %v), want claude:fable@personal", target, presetName, ok)
+	}
+}
+
+func TestACPActivePresetRejectsProviderAndAccount(t *testing.T) {
+	c := newTestControl(t)
+	c.sel = acpSelection{Preset: "frontier"}
+	for _, tc := range []struct {
+		configID string
+		value    string
+	}{
+		{coopProviderID, "codex"},
+		{coopAccountID, "work"},
+	} {
+		handled, restart, ids := selectorSet(t, c, tc.configID, tc.value)
+		if !handled || restart || !slices.Equal(ids, []string{coopPresetID}) {
+			t.Errorf("active %s set = handled %v restart %v options %v", tc.configID, handled, restart, ids)
+		}
+		if got := c.selection(); got != (acpSelection{Preset: "frontier"}) {
+			t.Errorf("active %s set changed selection to %+v", tc.configID, got)
 		}
 	}
-	if target, presetName, ok := c.spawnTarget(); !ok || presetName != "frontier" || target.String() != "claude:fable@work" {
-		t.Fatalf("pinned spawn = (%q, %q, %v)", target, presetName, ok)
+}
+
+func TestACPLeavingPresetKeepsEffectiveProvider(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "codex", "codex-only")
+	c.sel = acpSelection{Preset: "frontier"}
+	c.mu.Lock()
+	c.retargetLocked("codex")
+	c.mu.Unlock()
+	handled, restart, ids := selectorSet(t, c, coopPresetID, "none")
+	if !handled || !restart || !slices.Equal(ids, []string{coopPresetID, coopProviderID, coopAccountID}) {
+		t.Fatalf("leaving preset = handled %v restart %v options %v", handled, restart, ids)
+	}
+	if got := c.selection(); got != (acpSelection{Provider: "codex"}) {
+		t.Fatalf("leaving selection = %+v, want provider codex and automatic account", got)
+	}
+	values := coopCurrentValues(t, c.coopOptions())
+	if values[coopProviderID] != "codex" || values[coopAccountID] != "auto" {
+		t.Fatalf("plain values after leaving preset = %v", values)
+	}
+	if got := string(c.coopOptions()[2]); !strings.Contains(got, `"value":"codex-only"`) {
+		t.Fatalf("plain account options after leaving did not retarget to codex: %s", got)
+	}
+}
+
+func TestACPSelectionNormalizesMixedState(t *testing.T) {
+	dir := t.TempDir()
+	mixed := acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}
+	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", dir, mixed, []string{"frontier"}, nil, false)
+	if got := c.selection(); got != (acpSelection{Preset: "frontier"}) {
+		t.Fatalf("constructor normalized selection = %+v", got)
 	}
 
-	c.sel = acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}
-	c.rot, c.rotFor = nil, acpSelection{}
-	target, presetName, ok := c.spawnTarget()
-	if !ok || presetName != "frontier" || target.String() != "codex@work" {
-		t.Fatalf("provider override = (%q, %q, %v), want codex@work + frontier roles", target, presetName, ok)
+	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", dir, acpSelection{}, []string{"frontier"}, nil, false)
+	c2.restore(ctrlSnapshot{Selection: mixed, Lead: "codex"})
+	if got := c2.selection(); got != (acpSelection{Preset: "frontier"}) {
+		t.Fatalf("restored normalized selection = %+v", got)
 	}
-	if c.presetRotation() != nil {
-		t.Error("a different explicit provider must make the preset lead ladder inert")
+
+	c3 := newTestControl(t)
+	c3.sel = mixed // simulate state persisted by the retired composable contract
+	if handled, restart, ids := selectorSet(t, c3, coopProviderID, "codex"); !handled || restart || !slices.Equal(ids, []string{coopPresetID}) {
+		t.Fatalf("mixed-state provider replay = handled %v restart %v options %v, want normalized no-op", handled, restart, ids)
+	}
+	if got := c3.selection(); got != (acpSelection{Preset: "frontier"}) {
+		t.Fatalf("mixed state after provider replay = %+v, want preset-only", got)
 	}
 }
 
@@ -1385,13 +1429,13 @@ func TestACPInitialPresetSelection(t *testing.T) {
 		t.Fatalf("initial preset target = (%q, %q, %v)", target, presetName, ok)
 	}
 	values := coopCurrentValues(t, c.coopOptions())
-	if values[coopPresetID] != "frontier" || values[coopProviderID] != "claude" || values[coopAccountID] != "auto" {
-		t.Errorf("initial current values = %v", values)
+	if values[coopPresetID] != "frontier" || len(values) != 1 {
+		t.Errorf("initial preset-owned values = %v", values)
 	}
 }
 
 // The Provider dropdown offers the current lead plus other SIGNED-IN providers (never
-// unsigned ones, absent under fusion); each dropdown changes its own selection field, and a
+// unsigned ones, absent under fusion); each plain dropdown changes its own selection field, and a
 // value that could never spawn is refused instead of sending the respawn loop chasing it.
 func TestACPProviderSelector(t *testing.T) {
 	c := newTestControl(t)
@@ -1462,9 +1506,9 @@ func TestACPProviderSelector(t *testing.T) {
 	if _, restart := set("coop_account", "work"); !restart || c.sel.Account != "work" {
 		t.Errorf("account set: restart=%v sel=%+v, want account work", restart, c.sel)
 	}
-	// Auto clears an explicit account pin; unknown accounts are refused no-ops.
+	// Auto clears an explicit account selection; unknown accounts are refused no-ops.
 	if _, restart := set("coop_account", "auto"); !restart || c.sel.Account != "" {
-		t.Errorf("auto should clear the pin and restart: restart=%v sel=%+v", restart, c.sel)
+		t.Errorf("auto should clear the selection and restart: restart=%v sel=%+v", restart, c.sel)
 	}
 	if _, restart := set("coop_account", "ghost"); restart || c.sel.Account != "" {
 		t.Errorf("unknown account: restart=%v sel=%+v, want a refused ack", restart, c.sel)
@@ -1472,12 +1516,18 @@ func TestACPProviderSelector(t *testing.T) {
 	if _, restart := set("coop_account", "work"); !restart {
 		t.Fatal("restoring the work pin should restart")
 	}
-	// Preset on, then off: provider and account overrides survive both transitions.
-	if _, restart := set("coop_preset", "frontier"); !restart || c.sel != (acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}) {
-		t.Errorf("preset set: restart=%v sel=%+v, want composed frontier/codex/work", restart, c.sel)
+	// Preset on clears plain state; while active Provider and Account replay is a no-op.
+	if _, restart := set("coop_preset", "frontier"); !restart || c.sel != (acpSelection{Preset: "frontier"}) {
+		t.Errorf("preset set: restart=%v sel=%+v, want preset-only", restart, c.sel)
 	}
-	if _, restart := set("coop_preset", "none"); !restart || c.sel != (acpSelection{Provider: "codex", Account: "work"}) {
-		t.Errorf("preset none: restart=%v sel=%+v, want preserved codex/work", restart, c.sel)
+	if _, restart := set("coop_provider", "claude"); restart || c.sel != (acpSelection{Preset: "frontier"}) {
+		t.Errorf("active provider replay: restart=%v sel=%+v, want no-op", restart, c.sel)
+	}
+	if _, restart := set("coop_account", "work"); restart || c.sel != (acpSelection{Preset: "frontier"}) {
+		t.Errorf("active account replay: restart=%v sel=%+v, want no-op", restart, c.sel)
+	}
+	if _, restart := set("coop_preset", "none"); !restart || c.sel != (acpSelection{Provider: "codex"}) {
+		t.Errorf("preset none: restart=%v sel=%+v, want effective codex + auto", restart, c.sel)
 	}
 }
 
@@ -1707,19 +1757,17 @@ func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
 	}
 }
 
-// TestACPPresetKeepsComposableSelectors: a preset still hides native model/effort knobs, but
-// Provider and Account remain visible because they refine the preset's lead while roles stay mounted.
-func TestACPPresetKeepsComposableSelectors(t *testing.T) {
+// TestACPPresetOwnsToolbar: plain sessions expose the normal trio; a preset exposes only its
+// selector because its ladder owns provider, model, effort, account, and roles.
+func TestACPPresetOwnsToolbar(t *testing.T) {
 	c := newTestControl(t)
-	// No preset: the full trio.
 	ids := coopIDs(c.coopOptions())
 	if len(ids) != 3 || ids[0] != "coop_preset" || ids[1] != "coop_provider" || ids[2] != "coop_account" {
 		t.Fatalf("plain lead wants preset+provider+account, got %v", ids)
 	}
-	// Under a preset: all three remain, with the recipe active and account automatic.
 	c.sel = acpSelection{Preset: "frontier"}
-	if ids := coopIDs(c.coopOptions()); len(ids) != 3 || ids[0] != "coop_preset" || ids[1] != "coop_provider" || ids[2] != "coop_account" {
-		t.Errorf("preset selectors should remain composable, got %v", ids)
+	if ids := coopIDs(c.coopOptions()); !slices.Equal(ids, []string{coopPresetID}) {
+		t.Errorf("preset toolbar must contain only coop_preset, got %v", ids)
 	}
 }
 

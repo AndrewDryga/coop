@@ -286,13 +286,15 @@ coop acp <agent|fusion|preset> — serve as an ACP agent over stdio (for editors
 
   coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
   sandbox, so no permission prompts), defaults the model dropdown to coop's model,
-  drops the permission-mode and subagent pickers, and leads with three dropdowns
-  mirroring the target grammar — PROVIDER (who runs), ACCOUNT (the lead's login), and
-  PRESET (the recipe); one selection underneath, so changing one refreshes the others.
-  On a preset the native model/effort knobs are hidden — the preset's ladder and roles
-  pin them.
-  An account or same-provider switch is transparent — the conversation is preserved (a
-  shared, credential-independent session store). A PROVIDER switch (picking another
+  drops the permission-mode and subagent pickers, and gives a normal session three
+  dropdowns — PRESET (the recipe), PROVIDER (who runs), and ACCOUNT (the lead's login).
+  An active preset is different: only PRESET renders because its ladder owns the provider,
+  model, effort, account, and roles. Persisted Provider/Account sets while those controls
+  are hidden are acknowledged and ignored. Selecting None returns the normal Provider and
+  Account controls with the effective provider and Account set to Auto; select None first
+  whenever you want to choose a Provider or Account manually.
+  In a plain session, an account or same-provider switch is transparent — the conversation is
+  preserved (a shared, credential-independent session store). A PROVIDER switch (picking another
   signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
   re-creates the session on the new agent and carries the conversation BEST-EFFORT:
   coop prepends the thread so far — message text plus one-line tool narration, no tool

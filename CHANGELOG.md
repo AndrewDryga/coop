@@ -14,6 +14,12 @@
 
 - Introduce five-column Box Run beside progress bars and one-column Pocket Run in dense task rows as Coop's ASCII signature spinners; keep each live surface aligned and add `COOP_SPINNER=0` for quiet debug and recording captures.
 
+- **ACP presets now exclusively own lead selection.** A normal toolbar shows Preset, Provider,
+  and Account; an active preset shows only Preset because its ladder owns provider, model, effort,
+  account, and roles. Persisted hidden Provider/Account sets are acknowledged as no-ops, and
+  selecting None returns the effective provider with Account set to Auto without restoring old
+  plain values.
+
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **Review receipts are bound to exact task deltas.** Between and signoff reviews now report an
@@ -344,10 +350,9 @@
   still be used" at a glance, so rotating one to contain a blast radius is an informed call; an
   env-key login with no marker file shows `—`.
 
-- **A preset now owns the whole ACP toolbar.** With a preset active, its lead ladder pins the
-  provider, model, and effort and rotates the account — so the toolbar renders only the Preset
-  dropdown, not Provider and Account beside it (the native model/effort were already hidden). They
-  were inert knobs that fought the preset; switching back to None restarts the box and its
+- **A preset now owns the whole ACP toolbar.** With a preset active, its lead ladder owns the
+  provider, model, effort, account, and roles — so the toolbar renders only the Preset dropdown
+  (the native model/effort were already hidden). Switching back to None restarts the box and its
   config-update brings Provider, Account, and the native model/effort back.
 
 - **Parallel codex boxes on one account no longer crash each other.** codex ≥0.144 keeps
@@ -378,9 +383,9 @@
   box's own options (grok: `grok-4.5` / `grok-composer-2.5-fast`) replace it when its truth
   arrives.
 
-- **The Preset dropdown now leads the ACP toolbar.** A preset is the top-level selector — it
-  embeds the provider, model, effort, and roles — so it renders before Provider and Account
-  instead of after them, matching what it owns.
+- **The Preset dropdown now leads the normal ACP toolbar.** A preset is the top-level selector — it
+  embeds the provider, model, effort, account, and roles — while an active preset renders only
+  Preset, matching what it owns.
 
 - **A credential/preset switch mid-turn no longer kills the turn.** Switching the coop toolbar
   dropdowns while a reply was streaming failed the in-flight prompt with `-32000 agent restarted,
@@ -395,12 +400,12 @@
   same-provider. The flag now resets on re-create: the next switch re-creates in round one,
   no false warning, one less replay round-trip.
 
-- **A selected preset hides the native model/effort dropdowns.** The preset's ladder and roles pin
+- **A selected preset hides the native model/effort dropdowns.** The preset's ladder and roles own
   the model — the box-native knobs were inert at best and misleading at worst, and an editor
   replaying its persisted defaults (Zed does, on every new session) could silently override the
-  preset's pick in the box. Under a preset only coop's Provider/Account/Preset selectors render,
-  and a native set from the editor is answered by coop instead of reaching the adapter. Leaving
-  the preset brings the native dropdowns back.
+  preset's pick in the box. Under a preset only coop's Preset selector renders; native and hidden
+  Provider/Account sets from the editor are answered by coop instead of reaching the adapter or
+  restarting. Leaving the preset brings the normal and native dropdowns back.
 
 - **The repo's `agents/` examples folder is retired.** Its README documented an `install.sh`
   seeding into `~/.config/coop/agents/` that no longer exists (installs download a prebuilt
@@ -476,10 +481,11 @@
   upgraded in place. A root `compose.agent.yml` is no longer picked up — move it to `.agent/`.
 
 - **ACP sessions can switch PROVIDER — manually or on a rate limit — with the thread carried
-  best-effort.** The editor toolbar now leads with THREE coop dropdowns mirroring the target
-  grammar — **Provider** (who runs), **Account** (the lead's login), **Preset** (the recipe) —
-  one selection underneath, so changing one refreshes the others (the old mixed `coop_setup`
-  dropdown is gone; its persisted editor defaults are still accepted on set). A preset's
+  best-effort.** A normal editor toolbar has THREE coop dropdowns mirroring the target grammar —
+  **Provider** (who runs), **Account** (the lead's login), **Preset** (the recipe) — one selection
+  underneath, so changing one refreshes the others (the old mixed `coop_setup` dropdown is gone;
+  persisted editor defaults are still accepted on set). An active preset is the exception: only
+  `coop_preset` renders, and persisted Provider/Account sets are acknowledged as no-ops. A preset's
   cross-provider ladder rungs rotate on ACP like they do on the loop. A provider switch
   re-creates the session on the new agent (the old provider's transcript is unreadable to it —
   see the 2026-07-04 investigation) and carries the conversation as a labeled plain-text
@@ -511,9 +517,9 @@
 - **Cross-provider lead ladders are bounded to the surfaces that can honor them.** The loop
   embraces them (rotation swaps the agent per rung). `coop fusion` now REFUSES a preset whose
   lead ladder spans providers — fusion runs one governor for the whole council, so a foreign
-  rung could never apply and silently ignoring it would fake a fallback. An ACP session filters
-  to the lead's own rungs (its respawn env carries no provider), so failover keeps working
-  across the lead's models/accounts. A preset ROLE's `agent:` list now gets a purposeful
+  rung could never apply and silently ignoring it would fake a fallback. An ACP session honors
+  the preset's full cross-provider lead ladder (its respawn env carries the active target), so
+  failover keeps working across the lead's models/accounts/providers. A preset ROLE's `agent:` list now gets a purposeful
   rejection ("a role runs ONE target; fallback ladders belong to the lead") instead of a raw
   YAML type error — nothing rotates a role today, and dead config that looks like failover is
   worse than an honest no.
