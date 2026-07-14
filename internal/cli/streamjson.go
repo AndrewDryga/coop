@@ -569,6 +569,184 @@ func firstLine(s string) string {
 	return s
 }
 
+// diagnosticTailMax bounds how far back into aggregated command output we scan for a
+// compact failure line. Failures usually land near the end; the full log still has everything.
+const diagnosticTailMax = 24
+
+// commandFailureDiagnostic picks one meaningful line from a failed command's aggregated
+// output for the compact live view. It strips empty/ANSI-only lines, scans a bounded tail,
+// prefers failure-shaped lines over generic summaries, and falls back to the last informative
+// line. Empty input yields "". Callers truncate for display width.
+func commandFailureDiagnostic(output string) string {
+	lines := diagnosticLines(output)
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > diagnosticTailMax {
+		lines = lines[len(lines)-diagnosticTailMax:]
+	}
+	// Prefer a failure-shaped line that is not just a weak summary (bare FAIL, make Error N).
+	for i := len(lines) - 1; i >= 0; i-- {
+		if looksLikeFailure(lines[i]) && !isWeakDiagnostic(lines[i]) {
+			return lines[i]
+		}
+	}
+	// Any failure-shaped line, including weak ones.
+	for i := len(lines) - 1; i >= 0; i-- {
+		if looksLikeFailure(lines[i]) {
+			return lines[i]
+		}
+	}
+	return lines[len(lines)-1]
+}
+
+// diagnosticLines splits output into cleaned, non-empty lines (ANSI stripped, controls dropped).
+func diagnosticLines(output string) []string {
+	if output == "" {
+		return nil
+	}
+	raw := strings.Split(output, "\n")
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		line = cleanDiagnosticLine(line)
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// cleanDiagnosticLine strips ANSI CSI sequences and other C0 controls, normalizes tabs, and trims.
+func cleanDiagnosticLine(s string) string {
+	s = stripANSISequences(s)
+	s = strings.ReplaceAll(s, "\t", " ")
+	return strings.TrimSpace(s)
+}
+
+// stripANSISequences removes CSI / other ESC sequences and drops remaining C0 controls (except
+// tab, handled by the caller). Keeps the visible text of colored compiler/test output.
+func stripANSISequences(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\033' {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
+					j++
+				}
+				if j < len(s) {
+					j++ // final byte (e.g. 'm')
+				}
+				i = j
+				continue
+			}
+			if j < len(s) {
+				i = j + 1
+				continue
+			}
+			break
+		}
+		c := s[i]
+		// Drop C0 controls except tab (callers normalize tabs to spaces).
+		if (c < 0x20 && c != '\t') || c == 0x7f {
+			i++
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// looksLikeFailure reports whether a cleaned line carries failure-shaped content.
+func looksLikeFailure(line string) bool {
+	if strings.HasPrefix(line, "--- FAIL") || strings.HasPrefix(line, "FAIL") {
+		return true
+	}
+	// Compiler/test locations: path:line:… or path:line:col:…
+	if diagnosticLocation(line) {
+		return true
+	}
+	lower := strings.ToLower(line)
+	for _, nonFailure := range []string{
+		"0 errors", "no errors", "errors: 0", "0 failed", "no failures", "failed: 0",
+	} {
+		if strings.Contains(lower, nonFailure) {
+			return false
+		}
+	}
+	for _, m := range []string{
+		"error", "failed", "failure", "panic:", "fatal", "undefined",
+		"cannot ", "can't ", "denied", "refused", "not found", "no such",
+		"exit status", "exit code", "err:", "fail:",
+	} {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// diagnosticLocation is true for lines that look like file:line: messages (go test, compilers).
+func diagnosticLocation(line string) bool {
+	// Require something:digits: so "ok: done" and "FAIL pkg 0.1s" stay out.
+	i := strings.IndexByte(line, ':')
+	if i <= 0 || i+1 >= len(line) {
+		return false
+	}
+	// digit after first colon (line number)
+	if line[i+1] < '0' || line[i+1] > '9' {
+		return false
+	}
+	// path-ish before colon: has / or .go / .rs / .ts etc, or starts with ./
+	head := line[:i]
+	if strings.ContainsAny(head, "/\\") || strings.Contains(head, ".go") ||
+		strings.HasPrefix(head, "./") || strings.HasPrefix(head, "../") {
+		return true
+	}
+	// "foo_test.go:12: …" — bare file name with extension
+	if j := strings.LastIndexByte(head, '.'); j > 0 && j < len(head)-1 {
+		return true
+	}
+	return false
+}
+
+// isWeakDiagnostic marks generic exit/summary lines that are less useful than a nearby detail.
+func isWeakDiagnostic(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	switch lower {
+	case "fail", "failed", "failure", "error", "errors", "fatal", "panic",
+		"command failed", "tests failed", "build failed", "error: command failed",
+		"error: tests failed", "error: build failed":
+		return true
+	}
+	if strings.Contains(lower, "process completed with exit code") ||
+		strings.Contains(lower, "command failed with exit code") {
+		return true
+	}
+	// go test package rollup: "FAIL pkg 0.1s" (no assertion detail)
+	if strings.HasPrefix(line, "FAIL ") || strings.HasPrefix(line, "FAIL\t") {
+		if !strings.Contains(line, ":") {
+			return true
+		}
+	}
+	// make: *** [target] Error N
+	if strings.HasPrefix(lower, "make:") && strings.Contains(lower, "error") {
+		return true
+	}
+	// *** … exit summary
+	if strings.HasPrefix(line, "***") {
+		return true
+	}
+	// bare "exit status N" / "exit code N"
+	if strings.HasPrefix(lower, "exit status ") || strings.HasPrefix(lower, "exit code ") {
+		return true
+	}
+	return false
+}
+
 // stripLeadingCD removes leading `cd <dir> &&` clauses (or a first line that's only `cd <dir>`) so a
 // streamed Bash line shows the command that did the work, not the chdir an agent prefixes to reach a
 // monorepo subdir — otherwise a whole run reads as identical `cd …/portal` lines. A bare `cd <dir>`

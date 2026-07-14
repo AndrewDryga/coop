@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func TestCodexStreamDecoderFailureAndUnknownItem(t *testing.T) {
 	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
-	for _, want := range []string{"⚙ make check", "  ✗ make check: compile failed", "· future_item"} {
+	for _, want := range []string{"⚙ make check", "  ✗ make check (exit 1): compile failed", "· future_item"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("rendered output missing %q: %q", want, out.String())
 		}
@@ -132,6 +133,82 @@ func TestCodexStreamDecoderFailureAndUnknownItem(t *testing.T) {
 	if tail.Len() != 0 {
 		t.Errorf("tool events leaked into tail: %q", tail.String())
 	}
+}
+
+func TestCommandFailureDiagnostic(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "blank", in: "\n\n  \n", want: ""},
+		{name: "ansi only then detail", in: "\x1b[31m\x1b[0m\n\x1b[31merror: boom\x1b[0m\n", want: "error: boom"},
+		{name: "success first late failure", in: "ok package installed\nbuilding…\nerror: undefined: Foo\n", want: "error: undefined: Foo"},
+		{name: "multiline compiler prefers detail over make summary", in: "# github.com/x\n./foo.go:10:2: undefined: Bar\nmake: *** [check] Error 1\n", want: "./foo.go:10:2: undefined: Bar"},
+		{name: "go test prefers assertion over bare FAIL", in: "--- FAIL: TestFoo (0.00s)\n    foo_test.go:12: expected 1, got 2\nFAIL\nFAIL\tgithub.com/x\t0.01s\n", want: "foo_test.go:12: expected 1, got 2"},
+		{name: "assertion with failed keyword", in: "ok\nassert.Equal failed: want 1 got 2\nFAIL\n", want: "assert.Equal failed: want 1 got 2"},
+		{name: "zero-error summary does not displace detail", in: "./foo.go:8:2: undefined: Thing\n0 errors in generated files\n", want: "./foo.go:8:2: undefined: Thing"},
+		{name: "generic command summary does not displace detail", in: "./foo.go:8:2: undefined: Thing\nError: command failed\n", want: "./foo.go:8:2: undefined: Thing"},
+		{name: "CI exit summary does not displace detail", in: "./foo.go:8:2: undefined: Thing\nError: Process completed with exit code 1.\n", want: "./foo.go:8:2: undefined: Thing"},
+		{name: "failure outside bounded tail is ignored", in: "error: stale early failure\n" + strings.Repeat("recent status\n", diagnosticTailMax), want: "recent status"},
+		{name: "only weak summary", in: "ok\nFAIL\n", want: "FAIL"},
+		{name: "no markers falls back to last line", in: "step one\nstep two stopped\n", want: "step two stopped"},
+		{name: "very long line kept full here", in: "ok\nerror: " + long + "\n", want: "error: " + long},
+		{name: "ansi on late failure", in: "package ready\n\x1b[1;31mError: permission denied\x1b[0m\n", want: "Error: permission denied"},
+		{name: "empty", in: "", want: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := commandFailureDiagnostic(c.in); got != c.want {
+				t.Errorf("commandFailureDiagnostic() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestCodexFailedCommandRendersExitAndTailDiagnostic(t *testing.T) {
+	// Successful first line must not be the failure summary; exit code must appear.
+	output := "package ready\n# github.com/x\n./x.go:3:1: undefined: Z\nmake: *** [check] Error 2\n"
+	// Escape newlines for JSON string.
+	rawOut, err := jsonQuote(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"item.started","item":{"id":"c","type":"command_execution","command":"/bin/bash -lc make check"}}`,
+		`{"type":"item.completed","item":{"id":"c","type":"command_execution","command":"/bin/bash -lc make check","aggregated_output":` + rawOut + `,"exit_code":2}}`,
+		// Successful command: no failure row.
+		`{"type":"item.started","item":{"id":"ok","type":"command_execution","command":"/bin/bash -lc true"}}`,
+		`{"type":"item.completed","item":{"id":"ok","type":"command_execution","command":"/bin/bash -lc true","aggregated_output":"ok\n","exit_code":0}}`,
+	}
+	var out, tail bytes.Buffer
+	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
+	d.flush()
+	got := out.String()
+	wantFail := "  ✗ make check (exit 2): ./x.go:3:1: undefined: Z"
+	if !strings.Contains(got, wantFail) {
+		t.Errorf("failed row missing %q\n--- got ---\n%s", wantFail, got)
+	}
+	if strings.Contains(got, "package ready") {
+		t.Errorf("successful first line leaked into failure summary:\n%s", got)
+	}
+	if strings.Contains(got, "✗ true") || strings.Contains(got, "(exit 0)") {
+		t.Errorf("successful command must not render a failure row:\n%s", got)
+	}
+	if !strings.Contains(got, "⚙ true") {
+		t.Errorf("successful command start line missing:\n%s", got)
+	}
+	if tail.Len() != 0 {
+		t.Errorf("command output leaked into tail: %q", tail.String())
+	}
+}
+
+// jsonQuote returns a JSON string literal for s (including surrounding quotes).
+func jsonQuote(s string) (string, error) {
+	b, err := json.Marshal(s)
+	return string(b), err
 }
 
 func TestCodexStreamDecoderNativeActivity(t *testing.T) {

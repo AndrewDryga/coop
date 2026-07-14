@@ -182,8 +182,9 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 		if label != "" {
 			line += " " + label
 		}
-		if first := firstLine(item.AggregatedOutput); first != "" {
-			line += ": " + truncate(first, 60)
+		line += fmt.Sprintf(" (exit %d)", *item.ExitCode)
+		if diag := commandFailureDiagnostic(item.AggregatedOutput); diag != "" {
+			line += ": " + truncate(diag, 60)
 		}
 		d.emit(line)
 	case "file_change":
