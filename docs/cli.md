@@ -246,11 +246,11 @@ coop models [agent] — the model menu per agent.
   target (claude:opus) or in a preset's lead agent: ladder, never on a credential.
 
   Plain 'coop models' is instant and never needs the container runtime — it only reads
-  the cache. The cache is refreshed two auth-free ways: claude/gemini populate it for free
-  on every 'coop acp' session (the proxy already parses the models), and '--refresh' runs
-  grok/codex's native CLI on the host ('grok models', 'codex debug models'). --refresh is
-  best-effort: an unavailable CLI, timeout, or parse error falls back to the last cache or
-  the static list, noted on that block's 'Last refreshed' line — it never errors or hangs.
+  the cache. '--refresh' runs grok/codex's native catalog CLI on the host ('grok models',
+  'codex debug models') and asks claude/gemini's ACP adapter in a short-lived credential-
+  scoped box. Normal 'coop acp' sessions also refresh claude/gemini opportunistically.
+  Refresh is best-effort: an unavailable CLI/runtime, timeout, or parse error falls back
+  to the last cache or the static list, noted on that block — it never errors or hangs.
 
   Pick per run inline in the target on any launch: 'coop claude:fable',
   'coop fusion claude:opus --peer codex', 'coop loop claude:haiku',

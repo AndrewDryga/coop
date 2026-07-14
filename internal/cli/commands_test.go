@@ -743,6 +743,31 @@ func TestCmdACPRejectsExtraArgs(t *testing.T) {
 	}
 }
 
+func TestCleanACPChildEnv(t *testing.T) {
+	got := cleanACPChildEnv([]string{
+		"PATH=/bin",
+		"COOP_ACP_TARGET=gemini",
+		"COOP_ACP_PRESET=frontier",
+		"COOP_ACP_INNER=1",
+		"COOP_ACP_SUPERVISOR=stale",
+		"COOP_ACP_CIDFILE=/tmp/stale",
+		"COOP_ACP_RESUME_STATE=/tmp/stale",
+		"COOP_ACP_TRACE=1",
+		"COOP_ACP_CARRY_TOKENS=123",
+	})
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{"PATH=/bin", "COOP_ACP_TRACE=1", "COOP_ACP_CARRY_TOKENS=123"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("clean env dropped public setting %q: %v", want, got)
+		}
+	}
+	for _, removed := range []string{"COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE"} {
+		if strings.Contains(joined, removed+"=") {
+			t.Errorf("clean env retained internal setting %q: %v", removed, got)
+		}
+	}
+}
+
 // `coop run` with no command is a usage error (it doesn't default to an agent), and `coop run
 // --help`/-h prints run's own page — neither enters the box (which would exec `--help` and crash).
 func TestCmdRunMetaCases(t *testing.T) {

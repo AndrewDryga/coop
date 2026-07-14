@@ -1,24 +1,34 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/acpproxy"
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // modelsCacheTTL is how long a fetched model list counts as "live" for `coop models`. Past
 // it, coop falls back to the curated static Models() — honest examples beat a stale
-// "(live)". The cache refreshes for free on every `coop acp` session (claude/gemini) and on
-// demand with `coop models --refresh` (grok/codex, via their auth-free native CLI).
+// "(live)". The cache refreshes opportunistically on `coop acp` and on demand with
+// `coop models --refresh` through each provider's real catalog source.
 const modelsCacheTTL = 14 * 24 * time.Hour
 
-// modelFetchTimeout bounds a native-CLI model probe so `coop models --refresh` can never hang.
+// modelFetchTimeout bounds both native-CLI probes and the Claude/Gemini ACP handshake so
+// `coop models --refresh` can never hang.
 const modelFetchTimeout = 15 * time.Second
 
 // modelInfo is one model in the cache: the id the agent's CLI accepts (what --model takes),
@@ -93,9 +103,8 @@ func writeModelsCache(cfg *config.Config, agent string, models []modelInfo) erro
 	return os.Rename(tmp, modelsCachePath(cfg, agent))
 }
 
-// nativeModelFetchers maps an agent to its auth-free host-CLI model probe (grok/codex). The
-// other agents (claude/gemini) have no cheap native list — their cache is populated for free
-// during `coop acp`, where the proxy already parses the ACP session/new models.
+// nativeModelFetchers maps an agent to its auth-free host-CLI model probe (grok/codex).
+// Claude/Gemini advertise models only through ACP and use fetchACPModelCatalog below.
 var nativeModelFetchers = map[string]func() ([]modelInfo, error){
 	"grok":  fetchGrokModels,
 	"codex": fetchCodexModels,
@@ -104,7 +113,7 @@ var nativeModelFetchers = map[string]func() ([]modelInfo, error){
 // runModelCLI runs an agent's auth-free list command on the host and returns its stdout,
 // timeout-bounded. An error (CLI not on PATH, non-zero exit, timeout) tells the caller to
 // keep the cached/static list. The catalog these commands print is credential-independent,
-// so the host's own login (or none) suffices — no box, so --refresh stays Docker-free.
+// so the host's own login (or none) suffices and these two provider probes need no box.
 func runModelCLI(name string, args ...string) ([]byte, error) {
 	if _, err := exec.LookPath(name); err != nil {
 		return nil, err
@@ -130,6 +139,183 @@ func fetchCodexModels() ([]modelInfo, error) {
 		return nil, err
 	}
 	return parseCodexModels(out)
+}
+
+// fetchModelCatalog selects the cheapest real catalog source per provider. The ACP seam is
+// deliberately app-local: unit tests can prove refresh wiring without detecting a runtime, while
+// production always launches the real credential-scoped box.
+func (a *app) fetchModelCatalog(agent string) ([]modelInfo, error) {
+	if fetch := nativeModelFetchers[agent]; fetch != nil {
+		return fetch()
+	}
+	if agent != "claude" && agent != "gemini" {
+		return nil, fmt.Errorf("%s has no model fetcher", agent)
+	}
+	if a.acpModels != nil {
+		return a.acpModels(agent)
+	}
+	return a.fetchACPModelCatalog(agent)
+}
+
+// fetchACPModelCatalog launches one inner ACP box, asks for a fresh session's advertised models,
+// then tears down both its process group and any container generation carrying this exact
+// supervisor id. It bypasses the public supervisor: a two-request probe needs no warm pool,
+// restart replay, or editor control layer.
+func (a *app) fetchACPModelCatalog(agent string) ([]modelInfo, error) {
+	if err := a.ensureRuntime(); err != nil {
+		return nil, err
+	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return nil, err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	superID, err := newSupervisorID()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), modelFetchTimeout)
+	defer cancel()
+	child, err := a.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, agents.Target{Provider: agent}, "", true, io.Discard)
+	if err != nil {
+		return nil, err
+	}
+	result, fetchErr := acpModelHandshake(ctx, child, repo)
+	child.Stop()
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+	_, cleanupErr := a.rt.RemoveByLabel(cleanupCtx, box.LabelSupervisor, superID)
+	cleanupCancel()
+	if fetchErr != nil {
+		if cleanupErr != nil {
+			return nil, errors.Join(fetchErr, cleanupErr)
+		}
+		return nil, fetchErr
+	}
+	if cleanupErr != nil {
+		return nil, cleanupErr
+	}
+	models := parseACPModelResult(agent, result)
+	if len(models) == 0 {
+		return nil, errors.New("ACP session advertised no models")
+	}
+	return models, nil
+}
+
+// acpModelHandshake drives only the setup needed to make adapters advertise their model catalog.
+// It still handles adapter-to-client requests so a provider cannot deadlock the probe waiting on a
+// capability the non-editor client does not implement.
+func acpModelHandshake(ctx context.Context, child *acpproxy.Child, cwd string) (json.RawMessage, error) {
+	r := bufio.NewReaderSize(child.Out, 1<<20)
+	initialize := map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	}
+	if _, err := acpRoundTrip(ctx, child.In, r, 1, "initialize", initialize); err != nil {
+		return nil, err
+	}
+	return acpRoundTrip(ctx, child.In, r, 2, "session/new", map[string]any{
+		"cwd": cwd, "mcpServers": []any{},
+	})
+}
+
+func acpRoundTrip(ctx context.Context, w io.Writer, r *bufio.Reader, id int, method string, params any) (json.RawMessage, error) {
+	request := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
+	if err := writeACPMessage(ctx, w, request); err != nil {
+		return nil, err
+	}
+	for {
+		line, err := readACPLine(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		var frame struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal(line, &frame); err != nil {
+			return nil, fmt.Errorf("decode ACP response: %w", err)
+		}
+		if frame.Method != "" && len(frame.ID) > 0 {
+			if err := writeACPMessage(ctx, w, map[string]any{
+				"jsonrpc": "2.0", "id": frame.ID,
+				"error": map[string]any{"code": -32601, "message": "no capability"},
+			}); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if string(bytes.TrimSpace(frame.ID)) != strconv.Itoa(id) {
+			continue // notification or a response to the refused adapter request
+		}
+		if len(frame.Error) > 0 && string(bytes.TrimSpace(frame.Error)) != "null" {
+			return nil, fmt.Errorf("ACP %s failed: %s", method, frame.Error)
+		}
+		if len(frame.Result) == 0 {
+			return nil, fmt.Errorf("ACP %s returned no result", method)
+		}
+		return frame.Result, nil
+	}
+}
+
+func writeACPMessage(ctx context.Context, w io.Writer, msg any) error {
+	done := make(chan error, 1)
+	go func() { done <- json.NewEncoder(w).Encode(msg) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func readACPLine(ctx context.Context, r *bufio.Reader) ([]byte, error) {
+	type result struct {
+		line []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		line, err := r.ReadBytes('\n')
+		done <- result{line: line, err: err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			return nil, got.err
+		}
+		return got.line, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func parseACPModelResult(agent string, result json.RawMessage) []modelInfo {
+	var doc struct {
+		Models        json.RawMessage `json:"models"`
+		ConfigOptions []struct {
+			ID      string      `json:"id"`
+			Options []acpOption `json:"options"`
+		} `json:"configOptions"`
+	}
+	if json.Unmarshal(result, &doc) != nil {
+		return nil
+	}
+	if agent == "gemini" {
+		return parseGeminiModels(doc.Models)
+	}
+	if agent == "claude" {
+		for _, option := range doc.ConfigOptions {
+			if option.ID == "model" {
+				return parseClaudeModelOption(option.Options)
+			}
+		}
+	}
+	return nil
 }
 
 // parseGrokModels reads `grok models` output — a bullet per model, the default marked:

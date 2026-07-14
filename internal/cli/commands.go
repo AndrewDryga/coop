@@ -643,11 +643,10 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	inner := append([]string{"acp"}, rest...)
 	// A per-supervisor id, stamped on this supervisor's boxes (coop.sup=<id>) so it can
 	// kill exactly its own box(es) on teardown — not other agents' supervised boxes.
-	idbuf := make([]byte, 8)
-	if _, err := rand.Read(idbuf); err != nil {
+	superID, err := newSupervisorID()
+	if err != nil {
 		return 1, err
 	}
-	superID := hex.EncodeToString(idbuf)
 
 	// A SIGHUP re-exec left us its state: restore the controller's selection and hand the proxy
 	// snapshot to Run so the editor's live threads are re-established on the first (fresh) box. A
@@ -681,7 +680,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
 	warm := os.Getenv("COOP_ACP_WARM") != "0"
 	pool := newWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
-		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true)
+		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr)
 	})
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.spawnTarget()
@@ -691,7 +690,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 				return c, nil
 			}
 		}
-		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok)
+		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr)
 		if bareProviderSwitch(t, psName, ok) && cerr == nil {
 			go pool.refill(t.Provider)
 		}
@@ -745,6 +744,29 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	return 0, nil
 }
 
+func newSupervisorID() (string, error) {
+	idbuf := make([]byte, 8)
+	if _, err := rand.Read(idbuf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(idbuf), nil
+}
+
+const acpCleanupTimeout = 5 * time.Second
+
+func cleanACPChildEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, item := range env {
+		key, _, _ := strings.Cut(item, "=")
+		switch key {
+		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE":
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 // bareProviderSwitch reports whether a spawn target is a plain provider switch at default
 // account/model — a bare Target{Provider} — the slow, common case the warm pool covers. An
 // account/model-pinned target or a preset spawns cold (rare; correctness is unaffected).
@@ -753,10 +775,9 @@ func bareProviderSwitch(t agents.Target, psName string, ok bool) bool {
 }
 
 // spawnBox execs a `coop acp` inner box for the given spawn target and wraps it as an acpproxy.Child
-// — the ONE spawn path for both the live factory (ctrl.spawnTarget) and a warm-pool prewarm (a bare
-// provider default), so a warm box is born exactly like a cold one. Extracted verbatim from the
-// original factory closure; only the target resolution moved out to the caller.
-func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID string, ctrl *acpControl, t agents.Target, psName string, hasTarget bool) (*acpproxy.Child, error) {
+// — the ONE spawn path for the live factory, warm-pool prewarm, and short-lived model probe, so each
+// gets the same credentials, process isolation, and teardown.
+func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID string, ctrl *acpControl, t agents.Target, psName string, hasTarget bool, stderr io.Writer) (*acpproxy.Child, error) {
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -768,13 +789,17 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		return nil, err
 	}
 	cidDir, cidPath := "", ""
-	env := append(os.Environ(), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
+	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
 	if hasTarget {
+		if ctrl != nil { // model probes use a bare provider target and need no reset/preset wait
+			if psName != "" {
+				ctrl.waitForPresetRung(ctx)
+			} else if acct := t.Account(); acct != "" {
+				ctrl.waitForReset(ctx, acct)
+			}
+		}
 		if psName != "" {
 			env = append(env, "COOP_ACP_PRESET="+psName)
-			ctrl.waitForPresetRung(ctx)
-		} else if acct := t.Account(); acct != "" {
-			ctrl.waitForReset(ctx, acct)
 		}
 		env = append(env, "COOP_ACP_TARGET="+t.String())
 		acpproxy.Trace("spawn box on target=%s preset=%s", t.String(), psName)
@@ -788,7 +813,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	cmd := exec.Command(self, inner...)
 	cmd.Env = env
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, stderr
 	// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
 	// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -807,17 +832,19 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	pid := cmd.Process.Pid
 	go func() { _ = cmd.Wait() }()
 	stop := func() {
-		// Remove ONLY this generation's box, by its deterministic cidfile id — works even mid-startup,
-		// before labels exist. Then kill the whole process group (inner coop + its run client) and the
-		// pipes. Deliberately NO label sweep here: every generation shares this supervisor's id.
-		if cidPath != "" {
-			if cid, rerr := os.ReadFile(cidPath); rerr == nil {
-				a.rt.RemoveContainer(strings.TrimSpace(string(cid)))
-			}
-		}
+		// Kill the whole process group and close its pipes first, so cleanup cannot wait forever behind
+		// a wedged run client. Then remove ONLY this generation's box by cidfile under a fresh bound —
+		// no label sweep here: every generation shares this supervisor's id.
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
 		inW.Close()
 		outR.Close()
+		if cidPath != "" {
+			if cid, rerr := os.ReadFile(cidPath); rerr == nil {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+				_ = a.rt.RemoveContainerContext(cleanupCtx, strings.TrimSpace(string(cid)))
+				cancel()
+			}
+		}
 		if cidDir != "" {
 			os.RemoveAll(cidDir)
 		}

@@ -289,7 +289,23 @@ func (r Runtime) kill(id string) bool {
 // Used to tear down a supervised box by its deterministic --cidfile id even before its labels
 // are queryable. Reports whether removal succeeded; a no-op (empty id) returns false.
 func (r Runtime) RemoveContainer(id string) bool {
-	return id != "" && exec.Command(r.Name, "rm", "-f", id).Run() == nil
+	return id != "" && r.RemoveContainerContext(context.Background(), id) == nil
+}
+
+// RemoveContainerContext is the cancelable, diagnostic form for cleanup paths that must not hang
+// behind a wedged runtime. The caller owns the deadline.
+func (r Runtime) RemoveContainerContext(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("container id is empty")
+	}
+	out, err := contextCommand(ctx, r.Name, "rm", "-f", id).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return fmt.Errorf("run: %s rm -f %s: %w", r.Name, id, commandOutputError(err, out))
+	}
+	return nil
 }
 
 // RemoveByLabel force-removes (`rm -f`: stop then delete) every running container whose label

@@ -19,8 +19,8 @@ import (
 //
 // The plain command stays instant and Docker-free: it only reads the per-agent cache, never
 // spawning a box. `coop models --refresh [agent]` updates the cache from each agent's
-// auth-free native CLI (grok/codex) and folds each outcome into that block's "Last
-// refreshed" line; claude/gemini refresh for free on every `coop acp`.
+// real catalog source (grok/codex's native host CLI; claude/gemini's boxed ACP adapter)
+// and folds each outcome into that block's "Last refreshed" line.
 func (a *app) cmdModels(args []string) (int, error) {
 	refresh := false
 	var rest []string
@@ -51,7 +51,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 		ids, fetchedAt, live := a.agentModels(agent, ag)
 		fmt.Println(p.Bold(p.Cyan(titleName(agent))))
 		fmt.Println("  " + p.Dim("Models:") + " " + strings.Join(ids, p.Dim(" · ")))
-		fmt.Println("  " + p.Dim("Last refreshed:") + " " + refreshedLine(agent, fetchedAt, live, notes[agent], p))
+		fmt.Println("  " + p.Dim("Last refreshed:") + " " + refreshedLine(fetchedAt, live, notes[agent], p))
 		// The agent-wide env default is config, not repo state — surface it only when set.
 		if def := a.cfg.AgentModelDefault(agent); def != "" {
 			fmt.Println("  " + p.Dim("Default:") + " " + def + " " + p.Dim("(COOP_"+strings.ToUpper(agent)+"_MODEL)"))
@@ -106,26 +106,20 @@ func agoStr(t time.Time) string {
 }
 
 // refreshedLine renders a block's "Last refreshed" value: the age of the live list (green),
-// "never", or the stale age (yellow) — plus, in dim parens, how THIS agent's list refreshes
-// whenever that isn't self-evident: claude/gemini always name `coop acp`, codex/grok name
-// --refresh only while nothing is live. note is --refresh's failure for this agent, if any;
-// it replaces the hint (the user just ran --refresh — say what went wrong instead).
-func refreshedLine(agent string, fetchedAt time.Time, live bool, note string, p ui.Palette) string {
-	native := nativeModelFetchers[agent] != nil
-	hint := "refreshes on `coop acp`"
+// "never", or the stale age (yellow). An unrefreshed block names the command that now works for
+// every provider. note is --refresh's failure for this agent, if any; it replaces the hint (the
+// user just ran --refresh — say what went wrong instead).
+func refreshedLine(fetchedAt time.Time, live bool, note string, p ui.Palette) string {
+	hint := ""
 	var s string
 	switch {
 	case live:
 		s = p.Green(agoStr(fetchedAt))
-		if native {
-			hint = ""
-		}
 	case fetchedAt.IsZero():
 		s = "never"
+		hint = "coop models --refresh"
 	default:
 		s = p.Yellow(agoStr(fetchedAt) + " — stale")
-	}
-	if !live && native {
 		hint = "coop models --refresh"
 	}
 	if note != "" {
@@ -152,22 +146,16 @@ func (a *app) agentModels(agent string, ag agents.Agent) ([]string, time.Time, b
 	return ids, mc.FetchedAt, true
 }
 
-// refreshModels fetches live models for each named agent via its auth-free native CLI and
+// refreshModels fetches live models for each named agent via its provider-specific source and
 // writes the cache, returning a short failure note per agent that couldn't — the menu folds
-// it into that block's "Last refreshed" line. Agents with no native list (claude/gemini) are
-// skipped silently: their blocks already say they refresh on `coop acp`. Best-effort and
-// Docker-free: a note never becomes an error, and the display falls back to the last cache
-// or the static list.
+// it into that block's "Last refreshed" line. Best-effort: a note never becomes an error,
+// and the display falls back to the last cache or the static list.
 func (a *app) refreshModels(names []string) map[string]string {
 	notes := make(map[string]string, len(names))
 	for _, agent := range names {
-		fetch := nativeModelFetchers[agent]
-		if fetch == nil {
-			continue
-		}
-		models, err := fetch()
+		models, err := a.fetchModelCatalog(agent)
 		if err != nil || len(models) == 0 {
-			notes[agent] = "CLI unavailable or no models"
+			notes[agent] = "source unavailable or no models"
 			continue
 		}
 		if err := writeModelsCache(a.cfg, agent, models); err != nil {
