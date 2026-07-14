@@ -15,6 +15,12 @@ func init() { register(claudeAgent{}) }
 
 func (claudeAgent) Name() string        { return "claude" }
 func (claudeAgent) DisplayName() string { return "Claude Code" }
+func (claudeAgent) Stream() StreamSpec {
+	return StreamSpec{
+		Format: StreamClaudeJSON,
+		Flags:  []string{"--output-format", "stream-json", "--verbose"},
+	}
+}
 
 // base is claude's command plus the resolved model and --mcp-config when a shared
 // mcp.json exists — claude reads it directly, where gemini/codex get generated config files.

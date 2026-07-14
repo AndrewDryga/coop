@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -49,17 +50,21 @@ type iterationStreamDecoder interface {
 	lastIterResult() *iterResult
 }
 
-// newIterationStreamDecoder dispatches by provider rather than by a stream marker: several CLIs
-// use overlapping flag names, while their event schemas are not interchangeable.
+// newIterationStreamDecoder dispatches on the schema declared by the provider adapter. Several
+// CLIs use overlapping flag names, so the flags themselves cannot identify the event schema.
 func newIterationStreamDecoder(agent string, out, tail io.Writer, profile, root, model string) iterationStreamDecoder {
-	switch agent {
-	case "claude":
+	adapter, ok := agents.Get(agent)
+	if !ok {
+		return nil
+	}
+	switch adapter.Stream().Format {
+	case agents.StreamClaudeJSON:
 		return newStreamDecoder(out, tail, agent, profile, root)
-	case "codex":
+	case agents.StreamCodexJSON:
 		return newCodexStreamDecoder(out, tail, agent, profile, root, model)
-	case "gemini":
+	case agents.StreamGeminiJSON:
 		return newGeminiStreamDecoder(out, tail, agent, profile, root, model)
-	case "grok":
+	case agents.StreamGrokJSON:
 		return newGrokStreamDecoder(out, tail, agent, profile, root, model)
 	default:
 		return nil
@@ -237,11 +242,11 @@ func streamModelLine(agent, model, profile string) string {
 	if agent == "" {
 		return ui.Dim("· model " + model)
 	}
-	// Dim the labels (· using / model / profile) but leave the values — agent, model, profile —
+	// Dim the labels (· using / model / credential) but leave the values — agent, model, credential —
 	// at normal brightness, so they stand out a touch against the otherwise-faint line.
 	line := ui.Dim("· using ") + agent + ui.Dim(" model ") + model
 	if profile != "" {
-		line += ui.Dim(" profile ") + profile
+		line += ui.Dim(" credential ") + profile
 	}
 	return line
 }

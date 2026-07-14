@@ -11,6 +11,25 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+// StreamFormat identifies the provider-owned NDJSON schema emitted by a headless agent.
+type StreamFormat uint8
+
+const (
+	StreamNone StreamFormat = iota
+	StreamClaudeJSON
+	StreamCodexJSON
+	StreamGeminiJSON
+	StreamGrokJSON
+)
+
+// StreamSpec describes how a headless command opts into structured output. TrailingArgs
+// keeps positional prompts (or a flag/value prompt pair) after the inserted stream flags.
+type StreamSpec struct {
+	Format       StreamFormat
+	Flags        []string
+	TrailingArgs int
+}
+
 // Agent is everything coop needs to drive one coding agent. To add an agent, write a
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
@@ -22,6 +41,8 @@ type Agent interface {
 	Interactive(cfg *config.Config) []string
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).
 	Headless(cfg *config.Config, prompt string) []string
+	// Stream is the agent's structured-output schema and the flags that enable it.
+	Stream() StreamSpec
 	// ACP is the agent's ACP adapter command over stdio (for editors like Zed). It takes
 	// cfg so an adapter that IS the agent's own binary (gemini --acp) can carry the
 	// resolved model flag; a separate adapter binary (claude-agent-acp, codex-acp) takes

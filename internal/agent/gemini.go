@@ -16,6 +16,9 @@ func init() { register(geminiAgent{}) }
 
 func (geminiAgent) Name() string        { return "gemini" }
 func (geminiAgent) DisplayName() string { return "Gemini CLI" }
+func (geminiAgent) Stream() StreamSpec {
+	return StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2}
+}
 
 func (geminiAgent) base(cfg *config.Config) []string {
 	b := cfg.Cmd("COOP_GEMINI_CMD", "gemini --yolo")

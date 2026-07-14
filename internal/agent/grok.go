@@ -16,6 +16,11 @@ func init() { register(grokAgent{}) }
 
 func (grokAgent) Name() string        { return "grok" }
 func (grokAgent) DisplayName() string { return "Grok" }
+func (grokAgent) Stream() StreamSpec {
+	return StreamSpec{
+		Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2,
+	}
+}
 
 // grokReadOnlyTools locks a consult to file-read + search only. grok's --permission-mode
 // plan is a NO-OP in headless (only bypassPermissions takes effect via that flag —

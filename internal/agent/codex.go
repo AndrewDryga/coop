@@ -29,6 +29,9 @@ func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
 func (codexAgent) DisplayName() string { return "Codex" }
+func (codexAgent) Stream() StreamSpec {
+	return StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1}
+}
 
 // base guards against an empty COOP_CODEX_CMD override, since the exec/resume forms
 // index base[0]. The resolved model rides in base as a trailing --model, which codex

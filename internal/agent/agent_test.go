@@ -113,6 +113,27 @@ func TestCommands(t *testing.T) {
 	}
 }
 
+func TestStreamSpecs(t *testing.T) {
+	cases := []struct {
+		name string
+		want StreamSpec
+	}{
+		{"claude", StreamSpec{Format: StreamClaudeJSON, Flags: []string{"--output-format", "stream-json", "--verbose"}}},
+		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1}},
+		{"gemini", StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2}},
+		{"grok", StreamSpec{Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, _ := Get(c.name)
+			got := a.Stream()
+			if got.Format != c.want.Format || got.TrailingArgs != c.want.TrailingArgs || !slices.Equal(got.Flags, c.want.Flags) {
+				t.Errorf("Stream() = %#v, want %#v", got, c.want)
+			}
+		})
+	}
+}
+
 // TestModelSelection: a resolved model rides every command form as a --model flag; a
 // COOP_<AGENT>_CMD that bakes its own --model stays authoritative (no duplicate, which
 // clap-based CLIs reject); and every agent answers Models() (non-empty menu for `coop models`).

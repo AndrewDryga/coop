@@ -2518,21 +2518,6 @@ func (a *app) debugShell(repo, img, agent string) {
 
 const progressPoll = 2 * time.Second // how often the live bar re-reads the queue while an iteration runs
 
-func streamFlags(agent string) []string {
-	switch agent {
-	case "claude":
-		return []string{"--output-format", "stream-json", "--verbose"}
-	case "codex":
-		return []string{"--json"}
-	case "gemini":
-		return []string{"-o", "stream-json"}
-	case "grok":
-		return []string{"--output-format", "streaming-json"}
-	default:
-		return nil
-	}
-}
-
 // iterationCommand adds streaming flags only to coop's known headless forms on a TTY. Claude's
 // existing form appends them after the prompt; the other CLIs require their trailing prompt token
 // (or -p/value pair) to remain last.
@@ -2540,18 +2525,15 @@ func iterationCommand(agent string, cmd, custom []string, tty bool) ([]string, b
 	if len(custom) > 0 {
 		return custom, false
 	}
-	flags := streamFlags(agent)
-	if !tty || len(flags) == 0 {
+	adapter, ok := agents.Get(agent)
+	if !ok {
 		return cmd, false
 	}
-	trailing := 0
-	switch agent {
-	case "codex":
-		trailing = 1
-	case "gemini", "grok":
-		trailing = 2
+	stream := adapter.Stream()
+	if !tty || stream.Format == agents.StreamNone || len(stream.Flags) == 0 {
+		return cmd, false
 	}
-	return spliceBeforeTrailing(cmd, flags, trailing), true
+	return spliceBeforeTrailing(cmd, stream.Flags, stream.TrailingArgs), true
 }
 
 func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {

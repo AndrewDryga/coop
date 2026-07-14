@@ -83,7 +83,7 @@ func TestCodexStreamDecoder(t *testing.T) {
 
 	o := out.String()
 	for _, want := range []string{
-		"· using codex model gpt-5.6 profile work",
+		"· using codex model gpt-5.6 credential work",
 		"⚙ ls",
 		"✦ I'm running the requested command.",
 		"· 15.9k/5 tok",
@@ -235,7 +235,7 @@ func TestGeminiStreamDecoder(t *testing.T) {
 
 	o := out.String()
 	for _, want := range []string{
-		"· using gemini model gemini-3.5-pro profile personal",
+		"· using gemini model gemini-3.5-pro credential personal",
 		"· message system",
 		"✦ hi there",
 		"▸ README.md",
@@ -387,7 +387,7 @@ func TestGrokStreamDecoder(t *testing.T) {
 
 	o := out.String()
 	for _, want := range []string{
-		"· using grok model grok-4.5 profile work",
+		"· using grok model grok-4.5 credential work",
 		"✦ hi there",
 		"· future_event",
 		"· 1 turns · 27.3k/187 tok",

@@ -93,21 +93,21 @@ func TestStreamDecoderResultUsage(t *testing.T) {
 	}
 }
 
-// The init model line names the agent and profile in play when given them, so a loop iteration
-// shows "using claude model … profile personal"; with neither it falls back to "· model …".
+// The init model line names the agent and credential in play when given them, so a loop iteration
+// shows "using claude model … credential personal"; with neither it falls back to "· model …".
 func TestStreamDecoderModelLine(t *testing.T) {
 	init := `{"type":"system","subtype":"init","model":"claude-opus-4-8[1m]"}` + "\n"
 	var out, tail bytes.Buffer
 	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
 	_, _ = d.Write([]byte(init))
-	if got := out.String(); !strings.Contains(got, "· using claude model claude-opus-4-8[1m] profile personal") {
-		t.Errorf("with agent+profile, model line = %q", got)
+	if got := out.String(); !strings.Contains(got, "· using claude model claude-opus-4-8[1m] credential personal") {
+		t.Errorf("with agent+credential, model line = %q", got)
 	}
 	var out2, tail2 bytes.Buffer
 	d2 := newStreamDecoder(&out2, &tail2, "", "", "")
 	_, _ = d2.Write([]byte(init))
 	if got := out2.String(); !strings.Contains(got, "· model claude-opus-4-8[1m]") {
-		t.Errorf("without agent/profile, model line = %q (want the bare fallback)", got)
+		t.Errorf("without agent/credential, model line = %q (want the bare fallback)", got)
 	}
 }
 
