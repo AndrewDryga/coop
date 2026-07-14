@@ -1607,12 +1607,20 @@ func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*
 // Local counters keep review trouble out of the work loop's stop accounting.
 type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming bool)
 
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt string, iterCmd iterationCmdBuilder, hosts []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
+func reviewMountPolicy(writes loopcfg.ReviewWrites, queues []string) (bool, []string) {
+	if writes.RepositoryWritable() {
+		return false, nil
+	}
+	return true, queues
+}
+
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt string, iterCmd iterationCmdBuilder, hosts []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
 	var fails, waits, retries int
 	for {
 		agent := a.applyTarget(rev)
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
-		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, sink, peers)
+		readOnly, writable := reviewMountPolicy(writes, hosts)
+		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, readOnly, writable, sink, peers)
 		if ctx != nil && ctx.Err() != nil {
 			return "", nil, nil // user interrupt — the caller handles stopping, not a review failure
 		}
@@ -2161,7 +2169,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, sink, peers)
+			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, false, nil, sink, peers)
 			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil, nil)
 			prev := rot.active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfCode, pfErr, pfOut, time.Now()); limited {
@@ -2243,7 +2251,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			snapBefore := queueSnapshot(hosts)
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			cmd, streaming := iterCmd(agent, iterWork)
-			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, sink, peers)
+			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, false, nil, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
 				break
@@ -2306,7 +2314,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 						btSnap := queueSnapshot(hosts)
 						btExit := 0
-						btOut, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, iterCmd, hosts, sink, peers, wake)
+						btOut, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, iterCmd, hosts, lc.Between.Writes, sink, peers, wake)
 						if rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(finishedIDs, ", "), rerr)
 							btExit = 1
@@ -2401,7 +2409,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + cs.reviewBlock(health)
-		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, iterCmd, hosts, sink, peers, wake)
+		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
 		}
@@ -2462,7 +2470,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) + "\n\n" + reviewContextFooter(repo, queues)
 			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			vExit := 0
-			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, iterCmd, hosts, sink, peers, wake)
+			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, iterCmd, hosts, lc.Verify.Writes, sink, peers, wake)
 			if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 				vExit = 1
@@ -2705,7 +2713,7 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 // live bar watches for task progress. On interactive terminals the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view).
 // Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, res *iterResult, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target) (code int, output string, res *iterResult, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
 
@@ -2787,6 +2795,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
+		RepoReadOnly: repoReadOnly, RepoWritablePaths: repoWritablePaths,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: stderrW,

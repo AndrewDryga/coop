@@ -77,6 +77,125 @@ func TestRunRepoReadOnly(t *testing.T) {
 	}
 }
 
+func TestRunRepoWritable(t *testing.T) {
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(args))
+	if !slices.Contains(fields, repo+":/workspace") {
+		t.Fatalf("writable repo mount missing from:\n%s", args)
+	}
+	if slices.Contains(fields, repo+":/workspace:ro") {
+		t.Fatalf("full-write repo mount must not be read-only:\n%s", args)
+	}
+}
+
+func TestRunRepoReadOnlyWithWritableDescendants(t *testing.T) {
+	repo := t.TempDir()
+	queues := []string{
+		filepath.Join(repo, ".agent", "tasks"),
+		filepath.Join(repo, "service", ".agent", "tasks"),
+		filepath.Join(repo, "missing", ".agent", "tasks"),
+	}
+	for _, queue := range queues[:2] {
+		if err := os.MkdirAll(queue, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		RepoReadOnly: true, RepoWritablePaths: queues, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(args))
+	want := []string{
+		repo + ":/workspace:ro",
+		queues[0] + ":/workspace/.agent/tasks",
+		queues[1] + ":/workspace/service/.agent/tasks",
+	}
+	last := -1
+	for _, mount := range want {
+		i := slices.Index(fields, mount)
+		if i < 0 || i <= last {
+			t.Fatalf("ordered mount %q missing from:\n%s", mount, args)
+		}
+		last = i
+	}
+}
+
+func TestRepoWritableMountsRejectsUnsafePaths(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := repoWritableMounts(repo, repo, []string{filepath.Dir(repo)}); err == nil {
+		t.Fatal("path outside repo should be rejected")
+	}
+
+	for _, tc := range []struct {
+		name      string
+		linkRel   string
+		targetRel string
+		queueRel  string
+		external  bool
+	}{
+		{
+			name:    "queue root outside repository",
+			linkRel: "external-tasks", queueRel: "external-tasks", external: true,
+		},
+		{
+			name:    "queue root into repository config",
+			linkRel: filepath.Join(".agent", "tasks"), targetRel: "config",
+			queueRel: filepath.Join(".agent", "tasks"),
+		},
+		{
+			name:    "queue ancestor into repository config",
+			linkRel: ".agent", targetRel: "config", queueRel: filepath.Join(".agent", "tasks"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			link := filepath.Join(repo, tc.linkRel)
+			target := filepath.Join(repo, tc.targetRel)
+			if tc.external {
+				target = t.TempDir()
+			}
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			mounts, err := repoWritableMounts(repo, repo, []string{filepath.Join(repo, tc.queueRel)})
+			if err == nil {
+				t.Fatal("symlinked queue should be rejected")
+			}
+			if len(mounts) != 0 {
+				t.Fatalf("unsafe queue produced writable mounts: %#v", mounts)
+			}
+		})
+	}
+}
+
 func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 	repo, policyRepo := t.TempDir(), t.TempDir()
 	for dir, egress := range map[string]string{repo: "open", policyRepo: "none"} {

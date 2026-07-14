@@ -67,6 +67,7 @@ preflight:
 between:
   enabled: true
   agent: [claude:sonnet]
+  writes: repo
   prompt: |
     Audit the finished task.
 `)
@@ -86,6 +87,9 @@ between:
 	if !c.Between.Enabled || len(c.Between.Agent) != 1 || c.Between.Prompt == "" {
 		t.Errorf("between = %+v", c.Between)
 	}
+	if !c.Between.Writes.RepositoryWritable() {
+		t.Errorf("between.writes = %q, want repo", c.Between.Writes)
+	}
 }
 
 func TestLoadRejects(t *testing.T) {
@@ -96,6 +100,7 @@ func TestLoadRejects(t *testing.T) {
 		"preset rung with model":    "work:\n  agent: [frontier:opus]\n", // unknown provider 'frontier'
 		"bad preset name":           "work:\n  agent: [\"has space\"]\n",
 		"between enabled no prompt": "between:\n  enabled: true\n",
+		"unknown review writes":     "signoff:\n  writes: source\n",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

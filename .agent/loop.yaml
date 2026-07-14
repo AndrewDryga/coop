@@ -36,6 +36,13 @@ between:
   # audit, using this target/prompt when configured or the signoff target + built-in prompt otherwise.
   enabled: true
 
+  # Review boxes write task queues only: the repository stays read-only while
+  # every configured queue is remounted read-write so an audit may reopen work.
+  # Set this to repo only when this reviewer is intentionally allowed to fix
+  # source.
+  # Values: tasks | repo. Default: tasks.
+  writes: tasks
+
   # Audit model ladder. Default: the signoff model.
   # The FAST pair: Luna and Opus 4.8 at xhigh, failing over to each other — exactly the
   # tier a focused per-task audit wants.
@@ -56,6 +63,11 @@ between:
     to log.md. Never widen scope beyond the audited task.
 
 signoff:
+  # Signoff writes task queues only by default. Set this to repo only when the
+  # final reviewer is intentionally expected to edit and commit source.
+  # Values: tasks | repo. Default: tasks.
+  writes: tasks
+
   # Work→signoff rounds before a task the signoff keeps reopening is blocked for a human.
   # Batch-scaled: the real cap is clamp(tasks_done / 2, 3, rounds). Default: 5.
   #rounds: 5
@@ -82,3 +94,9 @@ signoff:
       yourself — that's a human's git-reviewed move.
     - No stray working files left behind: the tree is clean after the commit (git status) and
       nothing untracked was smuggled in beside the change.
+
+verify:
+  # Verify writes task queues only by default. Set this to repo only when the
+  # e2e reviewer is intentionally expected to fix what it finds.
+  # Values: tasks | repo. Default: tasks.
+  writes: tasks

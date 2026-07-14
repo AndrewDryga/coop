@@ -12,6 +12,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -92,6 +93,27 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 	if review := loopSignoffPrompt(repo, []string{".agent/tasks"}, "", []string{"t1 — /home/node/proj/.agent/tasks/99_done/t1"}); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
 		t.Errorf("review prompt should name the absolute queue:\n%s", review)
+	}
+}
+
+func TestReviewMountPolicy(t *testing.T) {
+	queues := []string{"/repo/.agent/tasks", "/repo/service/.agent/tasks"}
+	for _, tc := range []struct {
+		name     string
+		writes   loopcfg.ReviewWrites
+		readOnly bool
+		writable []string
+	}{
+		{name: "default", readOnly: true, writable: queues},
+		{name: "explicit tasks", writes: loopcfg.ReviewWritesTasks, readOnly: true, writable: queues},
+		{name: "explicit repository", writes: loopcfg.ReviewWritesRepo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			readOnly, writable := reviewMountPolicy(tc.writes, queues)
+			if readOnly != tc.readOnly || !slices.Equal(writable, tc.writable) {
+				t.Errorf("reviewMountPolicy(%q) = (%v, %v), want (%v, %v)", tc.writes, readOnly, writable, tc.readOnly, tc.writable)
+			}
+		})
 	}
 }
 

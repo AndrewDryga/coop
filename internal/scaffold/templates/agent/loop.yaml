@@ -46,6 +46,13 @@ between:
   # audit, using this target/prompt when configured or the signoff target + built-in prompt otherwise.
   #enabled: true
 
+  # Review boxes can write task queues only: the repository is read-only, then
+  # every configured queue (including monorepo queues) is remounted read-write
+  # so audits may reopen tasks. Use this escape hatch only when the reviewer is
+  # intentionally allowed to fix source.
+  # Values: tasks | repo. Default: tasks.
+  #writes: repo
+
   # Audit model ladder. Default: the signoff model.
   #agent: [claude:sonnet]
 
@@ -56,6 +63,12 @@ between:
   #  and its failure path is tested; reopen it (move the folder back to 10_in_progress/) if not.
 
 signoff:
+  # Like every review stage, signoff writes task queues only by default. Opt
+  # into source fixes only when a workflow expects final review to edit and
+  # commit.
+  # Values: tasks | repo. Default: tasks.
+  #writes: repo
+
   # Work→signoff rounds before a task the signoff keeps reopening is blocked for a human.
   # Batch-scaled: the real cap is clamp(tasks_done / 2, 3, rounds). Default: 5.
   #rounds: 5
@@ -76,6 +89,12 @@ verify:
   # this loop completed, by its Coop-Task trailer, with the files it touched) and does whatever the
   # prompt says — typically e2e/integration tests for the AFFECTED features. Default: off.
   #enabled: true
+
+  # Like every review stage, verify writes task queues only by default. Opt
+  # into full repository writes only when the e2e reviewer is expected to fix
+  # what it finds.
+  # Values: tasks | repo. Default: tasks.
+  #writes: repo
 
   # Verify model ladder. Default: the signoff model.
   #agent: [codex:gpt-5.6-sol/xhigh]
