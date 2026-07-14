@@ -589,10 +589,10 @@ coop build — build the box image (stable, pinned).
   Dockerfile.agent — pinning versions for reproducibility. Re-run after
   changing Dockerfile.agent or .tool-versions. For the latest, use coop update.
 
-  New runs use the fresh image automatically. Supervised editor sessions
-  (coop acp --supervise) are restarted onto it transparently — they reconnect, so
-  you don't lose the session. Other running boxes (a loop, an un-supervised
-  session) keep the old image until they next start.
+  New runs use the fresh image automatically. Editor sessions (coop acp) are
+  restarted onto it transparently — they reconnect, so you don't lose the session.
+  Other running boxes (a loop or an interactive agent session) keep the old image
+  until they next start.
 
 coop update — self-update coop, then rebuild the box image fresh.
 

@@ -734,6 +734,7 @@ func TestCmdACPRejectsExtraArgs(t *testing.T) {
 	for _, args := range [][]string{
 		{"claude", "foo"},
 		{"claude", "--nope"},
+		{"claude", "--supervise"},
 		{"fusion", "claude", "junk"},
 	} {
 		if code, err := a.cmdACP(args); code != 2 || err == nil {

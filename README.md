@@ -924,8 +924,7 @@ coop's proxy sits between the editor and the box and owns the session:
   automatically when the limit lifts.
 - **Restarts don't drop the editor.** A box death (`coop build`/`coop update`, an OOM,
   Docker restarting) respawns the box and replays the handshake transparently — even a
-  thread you hadn't messaged yet survives. (`--supervise` is accepted for older configs
-  but no longer needed — supervision is always on.)
+  thread you hadn't messaged yet survives. Supervision is always on.
 - **Dev servers are reachable.** With `serve.ports` in
   [`.agent/project.yaml`](#see-the-dev-server-in-your-browser), the thread announces
   the stable `http://localhost:<port>` URLs the box's ports are published at.
