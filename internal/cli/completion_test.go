@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -61,6 +64,103 @@ func TestCompletionCandidates(t *testing.T) {
 	if c := a.completionCandidates([]string{"completion"}); !hasCand(c, "bash") || !hasCand(c, "zsh") {
 		t.Errorf("completion completion missing shells: %v", c)
 	}
+
+	loop := a.completionCandidatesFor([]string{"loop"}, "")
+	for _, want := range []string{"claude", "claude:opus", "codex:gpt-5.5", "--peer", "--no-mcp"} {
+		if !hasCand(loop, want) {
+			t.Errorf("loop completion missing %q: %v", want, loop)
+		}
+	}
+	if hasCand(loop, "pool") {
+		t.Error("loop completion must not offer the retired pool command")
+	}
+
+	if got := a.completionCandidatesFor(nil, "claude:"); !hasCand(got, "claude:opus") {
+		t.Errorf("model-prefix completion missing claude:opus: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"loop"}, "codex:gpt-5.5/"); !hasCand(got, "codex:gpt-5.5/high") {
+		t.Errorf("effort-prefix completion missing codex:gpt-5.5/high: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"loop"}, "gemini:gemini-3.5-flash/"); hasCand(got, "gemini:gemini-3.5-flash/high") {
+		t.Errorf("gemini completion must not offer unsupported effort levels: %v", got)
+	}
+}
+
+func TestCompletionTargetsAccountsAndPresets(t *testing.T) {
+	repo, cfg := t.TempDir(), &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+	cfg.RepoOverride = repo
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	presetDir := filepath.Join(repo, ".agent", "presets", "frontier")
+	if err := os.MkdirAll(presetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte("broken: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{cfg: cfg}
+	got := a.completionCandidatesFor([]string{"loop"}, "claude:opus@")
+	for _, want := range []string{"claude:opus@work", "frontier"} {
+		if !hasCand(got, want) {
+			t.Errorf("target completion missing %q: %v", want, got)
+		}
+	}
+	if got := a.completionCandidatesFor([]string{"loop", "--peer"}, "claude:opus@"); hasCand(got, "claude:opus@work") {
+		t.Errorf("peer completion must not offer account-pinned targets: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"loop", "claude", "--peer"}, ""); !hasCand(got, "codex:gpt-5.5") {
+		t.Errorf("peer completion after the loop target missing codex:gpt-5.5: %v", got)
+	}
+}
+
+func TestCompletionAdvancesExactCommand(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
+
+	for _, words := range [][]string{{"loop"}, {"loop", ""}} {
+		out := captureCompletionOutput(t, func() {
+			if code, err := a.cmdComplete(words); code != 0 || err != nil {
+				t.Fatalf("cmdComplete(%q) = (%d, %v)", words, code, err)
+			}
+		})
+		if !strings.Contains(out, "claude\n") || strings.Contains(out, "\nloop\n") {
+			t.Errorf("cmdComplete(%q) did not advance to target candidates:\n%s", words, out)
+		}
+	}
+
+	out := captureCompletionOutput(t, func() {
+		if code, err := a.cmdComplete([]string{"lo"}); code != 0 || err != nil {
+			t.Fatalf("cmdComplete(lo) = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "loop\n") {
+		t.Errorf("partial top-level command did not complete loop:\n%s", out)
+	}
+}
+
+func TestZshCompletionPreservesEmptyWord(t *testing.T) {
+	if !strings.Contains(zshCompletion, `coop __complete "${(@)words[2,$CURRENT]}"`) {
+		t.Fatalf("zsh completion must quote the word array expansion:\n%s", zshCompletion)
+	}
+}
+
+func captureCompletionOutput(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
 }
 
 // `coop tasks claim <TAB>` offers the queue's task ids (a local read).

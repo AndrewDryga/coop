@@ -7,6 +7,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/preset"
 )
 
 // coop completion bash|zsh prints a static script that defers every dynamic value to `coop __complete`
@@ -27,7 +28,7 @@ const zshCompletion = `#compdef coop
 # coop zsh completion. Install: coop completion zsh > "${fpath[1]}/_coop"  (then restart the shell)
 _coop() {
   local -a cands
-  cands=(${(f)"$(coop __complete ${words[2,$CURRENT]} 2>/dev/null)"})
+  cands=(${(f)"$(coop __complete "${(@)words[2,$CURRENT]}" 2>/dev/null)"})
   compadd -- $cands
 }
 compdef _coop coop
@@ -60,7 +61,17 @@ func (a *app) cmdComplete(words []string) (int, error) {
 		cur = words[len(words)-1]
 		prev = words[:len(words)-1]
 	}
-	for _, c := range a.completionCandidates(prev) {
+	cands := a.completionCandidatesFor(prev, cur)
+	// Zsh invokes completion for an already-complete command without adding a trailing
+	// empty word (`coop loop<TAB>`). Advance that exact command into its next slot so the
+	// first Tab is useful; a partial word still completes against the top-level list.
+	if len(prev) == 0 && cur != "" {
+		if next := a.completionCandidatesFor([]string{cur}, ""); len(next) > 0 {
+			cands = next
+			cur = ""
+		}
+	}
+	for _, c := range cands {
 		if strings.HasPrefix(c, cur) {
 			fmt.Println(c)
 		}
@@ -72,8 +83,15 @@ func (a *app) cmdComplete(words []string) (int, error) {
 // after `coop`). It mirrors the dispatch: top-level commands + agents first, then per-family verbs and
 // the local dynamic values (fork names, task ids, profiles).
 func (a *app) completionCandidates(prev []string) []string {
+	return a.completionCandidatesFor(prev, "")
+}
+
+// completionCandidatesFor returns candidates for prev (the already-complete words after `coop`)
+// and cur (the word currently being edited). Keeping cur here lets target completion stay useful
+// without dumping every model/effort/account combination into an empty completion menu.
+func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 	if len(prev) == 0 { // completing the command itself
-		return append(append([]string{}, topLevelCommands...), agents.Names()...)
+		return appendCompletionCandidates(topLevelCommands, a.targetCandidates(cur, false, true), a.presetCandidates())
 	}
 	switch prev[0] {
 	case "fork":
@@ -105,9 +123,33 @@ func (a *app) completionCandidates(prev []string) []string {
 		}
 	case "loop":
 		if len(prev) == 1 {
-			return agents.Names() // `coop loop [agent]`; `pool` is not a command, never completed
+			return appendCompletionCandidates(
+				a.targetCandidates(cur, true, true),
+				a.presetCandidates(),
+				[]string{"--tasks", "--peer", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
+			) // `coop loop [target|preset]`; `pool` is not a command, never completed
 		}
-	case "login", "credentials", "models", "fusion", "acp":
+		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
+			return a.targetCandidates(cur, true, false)
+		}
+		if len(prev) > 1 {
+			return []string{"--tasks", "--peer", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
+		}
+	case "fusion":
+		if len(prev) == 1 {
+			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"--peer"})
+		}
+		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
+			return a.targetCandidates(cur, true, false)
+		}
+	case "acp":
+		if len(prev) == 1 {
+			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"--peer"})
+		}
+		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
+			return a.targetCandidates(cur, true, false)
+		}
+	case "login", "credentials", "models":
 		if len(prev) == 1 {
 			return agents.Names()
 		}
@@ -117,6 +159,92 @@ func (a *app) completionCandidates(prev []string) []string {
 		}
 	}
 	return nil
+}
+
+var effortCompletionLevels = []string{"low", "medium", "high", "xhigh", "max"}
+
+// targetCandidates returns provider targets in the CLI's one target grammar. Model ids come from
+// the existing live cache/static menu; account variants are only expanded once the user types '@'
+// so the initial menu stays readable. Effort variants are likewise shown only after '/'.
+func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) []string {
+	wantModels := includeModels || strings.Contains(cur, ":") || strings.Contains(cur, "/")
+	wantEffort := strings.Contains(cur, "/")
+	wantAccounts := includeAccounts && strings.Contains(cur, "@")
+	var out []string
+	seen := make(map[string]bool)
+	add := func(value string) {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		add(name)
+		if wantAccounts {
+			for _, profile := range a.cfg.Profiles(name) {
+				add(name + "@" + profile)
+			}
+		}
+		if !wantModels {
+			continue
+		}
+		models, _, _ := a.agentModels(name, ag)
+		for _, model := range models {
+			base := name + ":" + model
+			add(base)
+			if wantAccounts {
+				for _, profile := range a.cfg.Profiles(name) {
+					add(base + "@" + profile)
+				}
+			}
+			if !wantEffort || !agents.SupportsEffort(ag) {
+				continue
+			}
+			for _, level := range effortCompletionLevels {
+				effort := base + "/" + level
+				add(effort)
+				if wantAccounts {
+					for _, profile := range a.cfg.Profiles(name) {
+						add(effort + "@" + profile)
+					}
+				}
+			}
+		}
+		if wantEffort && agents.SupportsEffort(ag) {
+			for _, level := range effortCompletionLevels {
+				effort := name + "/" + level
+				add(effort)
+				if wantAccounts {
+					for _, profile := range a.cfg.Profiles(name) {
+						add(effort + "@" + profile)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// presetCandidates lists only names that can actually be loaded from this repo or the global
+// preset directory. Broken presets remain visible so completion never hides repairable config.
+func (a *app) presetCandidates() []string {
+	repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
+	return preset.List(repo, a.cfg.GlobalPresetsDir())
+}
+
+func appendCompletionCandidates(groups ...[]string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, group := range groups {
+		for _, candidate := range group {
+			if candidate != "" && !seen[candidate] {
+				seen[candidate] = true
+				out = append(out, candidate)
+			}
+		}
+	}
+	return out
 }
 
 // forkVerbList2 reports whether v is a fork subcommand that takes a fork name (rm/merge/stop/…), so
