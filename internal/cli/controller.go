@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -201,24 +202,110 @@ func (a *app) resumePrefixFor(repo, id string) string {
 	return resumeLine(id, commitsForTask(repo, "", id))
 }
 
-// assignLoopTask selects the authoritative next task and claims todo work before a box starts.
-// Already in-progress work is a resume and needs no move.
-func assignLoopTask(hosts []string) (taskCounts, queuedTask, bool, error) {
-	c, selected, ok := queueState(hosts)
-	if !ok {
-		return c, queuedTask{}, false, nil
+type taskAssignmentOutcome uint8
+
+const (
+	assignmentDrained taskAssignmentOutcome = iota
+	assignmentUnavailable
+	assignmentReady
+)
+
+type taskAssignment struct {
+	Counts  taskCounts
+	Task    queuedTask
+	Lease   *taskLease
+	Outcome taskAssignmentOutcome
+	Busy    taskLeaseSummary
+}
+
+const maxLeaseRescans = 3
+
+// assignLoopTask scans in stable queue/id order and atomically leases exactly one task before the
+// box starts. An available in-progress task remains preferred, but a foreign-held one is skipped so
+// another controller can take independent todo work. The flock is obtained while a todo folder is
+// still in todo, then rides its atomic rename to in_progress by inode.
+func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error) {
+	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
+		var counts taskCounts
+		var inProgress, todo []queuedTask
+		for _, root := range hosts {
+			for _, item := range readTaskTree(root) {
+				switch item.State {
+				case stateTodo:
+					counts.Todo++
+					todo = append(todo, queuedTask{Root: root, Item: item})
+				case stateInProgress:
+					counts.Doing++
+					inProgress = append(inProgress, queuedTask{Root: root, Item: item})
+				case stateBlocked:
+					counts.Blocked++
+				case stateDone:
+					counts.Done++
+				}
+			}
+		}
+
+		var busy taskLeaseSummary
+		changed := false
+		for _, candidate := range inProgress {
+			lease, observed, err := tryTaskLease(candidate.Root, candidate.Item, owner)
+			if errors.Is(err, errLeaseCandidateGone) {
+				changed = true
+				break
+			}
+			if err != nil {
+				return taskAssignment{}, fmt.Errorf("lease task %s: %w", candidate.Item.ID, err)
+			}
+			if lease == nil {
+				busy.add(observed)
+				continue
+			}
+			return taskAssignment{
+				Counts: counts, Task: candidate, Lease: lease, Outcome: assignmentReady, Busy: busy,
+			}, nil
+		}
+		if changed {
+			continue
+		}
+
+		for _, candidate := range todo {
+			lease, observed, err := tryTaskLease(candidate.Root, candidate.Item, owner)
+			if errors.Is(err, errLeaseCandidateGone) {
+				changed = true
+				break
+			}
+			if err != nil {
+				return taskAssignment{}, fmt.Errorf("lease task %s: %w", candidate.Item.ID, err)
+			}
+			if lease == nil {
+				busy.add(observed)
+				continue
+			}
+			if err := moveTaskDir(candidate.Root, candidate.Item, stateInProgress); err != nil {
+				_ = lease.release()
+				if strings.Contains(err.Error(), "changed state under us") {
+					changed = true
+					break
+				}
+				return taskAssignment{}, fmt.Errorf("claim task %s: %w", candidate.Item.ID, err)
+			}
+			candidate.Item.State = stateInProgress
+			candidate.Item.Dir = filepath.Join(candidate.Root, stateInProgress, candidate.Item.ID)
+			counts.Todo--
+			counts.Doing++
+			return taskAssignment{
+				Counts: counts, Task: candidate, Lease: lease, Outcome: assignmentReady, Busy: busy,
+			}, nil
+		}
+		if changed {
+			continue
+		}
+		if counts.Todo+counts.Doing == 0 {
+			return taskAssignment{Counts: counts, Outcome: assignmentDrained}, nil
+		}
+		return taskAssignment{Counts: counts, Outcome: assignmentUnavailable, Busy: busy}, nil
 	}
-	if selected.Item.State != stateTodo {
-		return c, selected, true, nil
-	}
-	if err := moveTaskDir(selected.Root, selected.Item, stateInProgress); err != nil {
-		return c, queuedTask{}, false, fmt.Errorf("claim task %s: %w", selected.Item.ID, err)
-	}
-	selected.Item.State = stateInProgress
-	selected.Item.Dir = filepath.Join(selected.Root, stateInProgress, selected.Item.ID)
-	c.Todo--
-	c.Doing++
-	return c, selected, true, nil
+	return taskAssignment{}, fmt.Errorf("task queue kept changing while leasing — retry the loop")
 }
 
 // reconcileAction is what post-merge reconciliation should do with one parent-queue task after a

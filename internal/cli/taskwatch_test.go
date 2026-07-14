@@ -86,8 +86,22 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	}
 
 	line := mergedQueue(p, []mergedTask{{taskItem: taskItem{Title: "Task title", State: stateInProgress}}}, 0)[0]
-	if line != "  . Task title" {
-		t.Errorf("compact task row = %q, want %q", line, "  . Task title")
+	if line != "  . Task title · unleased" {
+		t.Errorf("compact task row = %q, want %q", line, "  . Task title · unleased")
+	}
+	for _, tc := range []struct {
+		lease taskLeaseObservation
+		want  string
+	}{
+		{taskLeaseObservation{State: leaseBusy, Provider: "claude"}, "busy claude"},
+		{taskLeaseObservation{State: leaseStalled, Provider: "codex"}, "stalled codex"},
+	} {
+		line := mergedQueue(p, []mergedTask{{
+			taskItem: taskItem{Title: "Task title", State: stateInProgress}, lease: tc.lease,
+		}}, 0)[0]
+		if !strings.Contains(line, tc.want) {
+			t.Errorf("lease row = %q, want %q", line, tc.want)
+		}
 	}
 
 	t.Setenv("COOP_SPINNER", "0")

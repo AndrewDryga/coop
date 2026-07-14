@@ -1620,7 +1620,7 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		agent := a.applyTarget(rev)
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		readOnly, writable := reviewMountPolicy(writes, hosts)
-		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, readOnly, writable, sink, peers)
+		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, readOnly, writable, sink, peers, "")
 		if ctx != nil && ctx.Err() != nil {
 			return "", nil, nil // user interrupt — the caller handles stopping, not a review failure
 		}
@@ -2175,7 +2175,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, false, nil, sink, peers)
+			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, false, nil, sink, peers, "")
 			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil, nil)
 			prev := rot.active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfCode, pfErr, pfOut, time.Now()); limited {
@@ -2224,19 +2224,31 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 				break
 			}
+			// Point cfg at this iteration's target before leasing: the provider/target in metadata
+			// identifies the owning controller, while flock remains the actual authority.
+			agent = a.applyTarget(rot)
+			target := rot.active()
 			// Select and host-claim one authoritative task before the box starts. The returned task
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
-			c, assigned, ok, assignErr := assignLoopTask(hosts)
+			assignment, assignErr := assignLoopTask(hosts, taskLeaseOwner{
+				RunID: a.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
+			})
 			if assignErr != nil {
 				return 1, assignErr
 			}
-			if !ok {
+			if assignment.Outcome == assignmentUnavailable {
+				// Foreign-held work is not a drained queue. Do not sign off a batch another live
+				// controller still owns; its kernel lock will make the task adoptable on death.
+				ui.Info("no task lease available — %s; stopping without signoff", assignment.Busy)
+				return 0, nil
+			}
+			if assignment.Outcome == assignmentDrained {
 				break
 			}
-			// Run this iteration on the pool's active target — its provider (a cross-provider ladder
-			// swaps the agent per rung), its credential (the mount + the agent command both resolve
-			// cfg.AgentDir), and its model. applyTarget returns the active provider for THIS iteration.
-			agent = a.applyTarget(rot)
+			c, assigned, lease := assignment.Counts, assignment.Task, assignment.Lease
+			if lease.legacy {
+				ui.Info("adopting unleased in-progress task %s", assigned.Item.ID)
+			}
 			// Snapshot which tasks are done BEFORE the iteration, so the between audit can name
 			// exactly what this iteration finished (the diff), not guess "the most recent".
 			var doneBefore map[string]string
@@ -2245,7 +2257,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			active := assigned.Item.Title
-			ui.Info("%s", progressBanner(n, c, active))
+			ui.Info("%s · owned by %s", progressBanner(n, c, active), agent)
 			// Informed resume: if an in_progress task already carries a landed Coop-Task commit (a crash
 			// after commit before the folder-move, or a review reopen), prepend a line telling the agent
 			// to disambiguate and act — instead of blindly redoing it. Empty prefix → prompt unchanged.
@@ -2257,7 +2269,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			snapBefore := queueSnapshot(hosts)
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			cmd, streaming := iterCmd(agent, iterWork)
-			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, false, nil, sink, peers)
+			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, false, nil, sink, peers, active)
+			// The worker may have moved the task to done. Stop metadata updates and release the
+			// inode lock BEFORE its tmp cleanup can remove lease.lock.
+			if releaseErr := lease.release(); releaseErr != nil {
+				return 1, fmt.Errorf("release task lease %s: %w", assigned.Item.ID, releaseErr)
+			}
 			// The worker moves its own folder in-box. Sweep every done task's tmp before a stop, retry,
 			// between audit, or final signoff can consume the archive; a completion whose cleanup failed
 			// earlier is retried here, not stranded (a per-iteration delta would miss it after a re-run).
@@ -2730,7 +2747,7 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 // live bar watches for task progress. On interactive terminals the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view).
 // Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target) (code int, output string, res *iterResult, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target, activeTask string) (code int, output string, res *iterResult, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
 
@@ -2740,6 +2757,9 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	if live {
 		region := ui.NewRegion(os.Stderr, func() int { return ui.TermWidth(os.Stderr) })
 		c0, a0 := queueProgress(hosts)
+		if activeTask != "" {
+			a0 = activeTask
+		}
 		bar = newLoopBar(region, time.Now(), c0, a0)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel

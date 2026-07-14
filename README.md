@@ -983,7 +983,7 @@ in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric 
 `ls` in lifecycle order; `coop tasks` shows the clean names). Before each iteration, `loop`
 selects and claims the next task host-side (or resumes one left in `10_in_progress/`), then
 starts a fresh agent assigned to that exact task (no context rot). It won't quit while either
-state has work. Name the agent
+state has acquirable work. Name the agent
 (`claude`/`codex`/`gemini`, or a preset name whose lead supplies it); loop.yaml `work.command` still overrides the whole
 iteration command if you need something custom. When the queue empties, a fresh, **demanding
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
@@ -997,6 +997,14 @@ task it keeps reopening is blocked for a human rather than reported as done. The
 **scales with the batch**: half the tasks worked this run, clamped to
 `[3, signoff.rounds]` (default `5`) — a small batch still gets a few tries, a big
 overnight batch can't ping-pong one stuck task forever.
+
+Each controller leases its exact task with a host-held lock in the task's `tmp/` directory while
+the agent runs. A second loop skips a held task and can take independent todo work; `coop tasks
+watch` shows concise `busy`, `stalled`, or `unleased` lease state without exposing run IDs or PIDs.
+A stale heartbeat is a diagnostic only — a task is adopted immediately only after its kernel lock
+is available, never by timeout. An older, unleased in-progress folder is adopted through that same
+lock acquisition and is called out once. Stop pre-lease Coop controllers before upgrading: an old
+binary does not participate in this safety boundary.
 
 Every review closes with a structured PASS/FAIL receipt naming the exact sorted task IDs it
 reopened. Coop compares that receipt with the review's done-to-actionable folder delta and its

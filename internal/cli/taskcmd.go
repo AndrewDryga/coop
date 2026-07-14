@@ -941,6 +941,9 @@ func listMarkers(p ui.Palette, t taskItem) string {
 	if t.State == stateBlocked {
 		parts = append(parts, p.Red("⚠"))
 	}
+	if t.State == stateInProgress {
+		parts = append(parts, p.Dim(observeTaskLease(t, time.Now()).label()))
+	}
 	return strings.Join(parts, "  ")
 }
 

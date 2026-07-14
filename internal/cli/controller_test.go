@@ -105,10 +105,15 @@ func TestAssignLoopTaskSelectionAndClaim(t *testing.T) {
 	writeTaskFile(t, filepath.Join(q1, stateTodo, "todo-first", "task.md"), "# Todo first\n")
 	writeTaskFile(t, filepath.Join(q2, stateInProgress, "resume", "task.md"), "# Resume me\n")
 
-	c, got, ok, err := assignLoopTask([]string{q1, q2})
-	if err != nil || !ok {
-		t.Fatalf("assignLoopTask resume = ok %v, err %v", ok, err)
+	assignment, err := assignLoopTask([]string{q1, q2}, testLeaseOwner())
+	if err != nil || assignment.Outcome != assignmentReady {
+		t.Fatalf("assignLoopTask resume = %+v, err %v", assignment, err)
 	}
+	defer assignment.Lease.release()
+	if !assignment.Lease.legacy {
+		t.Error("a legacy in-progress task with no lock should be marked as an adoption")
+	}
+	c, got := assignment.Counts, assignment.Task
 	if got.Item.ID != "resume" || got.Root != q2 || got.Item.State != stateInProgress {
 		t.Fatalf("assignLoopTask chose %+v, want the later queue's in_progress task", got)
 	}
@@ -125,10 +130,11 @@ func TestAssignLoopTaskClaimsBeforeReturningAndCanBlock(t *testing.T) {
 	writeTaskFile(t, filepath.Join(q, stateTodo, "b-task", "task.md"), "# B\n")
 	writeTaskFile(t, filepath.Join(q, stateTodo, "a-task", "task.md"), "# A\n")
 
-	c, got, ok, err := assignLoopTask([]string{q})
-	if err != nil || !ok {
-		t.Fatalf("assignLoopTask = ok %v, err %v", ok, err)
+	assignment, err := assignLoopTask([]string{q}, testLeaseOwner())
+	if err != nil || assignment.Outcome != assignmentReady {
+		t.Fatalf("assignLoopTask = %+v, err %v", assignment, err)
 	}
+	c, got := assignment.Counts, assignment.Task
 	if got.Item.ID != "a-task" || got.Item.State != stateInProgress {
 		t.Fatalf("assignment = %+v, want first sorted todo claimed in_progress", got)
 	}
@@ -149,15 +155,19 @@ func TestAssignLoopTaskClaimsBeforeReturningAndCanBlock(t *testing.T) {
 	if !pathExists(filepath.Join(q, stateBlocked, "a-task")) {
 		t.Fatal("assigned task did not bounce to blocked")
 	}
+	if err := assignment.Lease.release(); err != nil {
+		t.Fatalf("release moved task lease: %v", err)
+	}
 }
 
 func TestAssignLoopTaskEmptyIsNoOp(t *testing.T) {
 	q := filepath.Join(t.TempDir(), ".agent", "tasks")
 	writeTaskFile(t, filepath.Join(q, stateDone, "done", "task.md"), "# Done\n")
-	c, _, ok, err := assignLoopTask([]string{q})
-	if err != nil || ok {
-		t.Fatalf("empty actionable queue = ok %v, err %v", ok, err)
+	assignment, err := assignLoopTask([]string{q}, testLeaseOwner())
+	if err != nil || assignment.Outcome != assignmentDrained {
+		t.Fatalf("empty actionable queue = %+v, err %v", assignment, err)
 	}
+	c := assignment.Counts
 	if c.Done != 1 || c.Todo+c.Doing != 0 {
 		t.Fatalf("empty actionable counts = %+v", c)
 	}

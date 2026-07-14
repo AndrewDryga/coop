@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -21,7 +22,8 @@ type watchSource struct {
 // it), or "" when it lives in the local queue. Sources are deduped by task id.
 type mergedTask struct {
 	taskItem
-	fork string
+	fork  string
+	lease taskLeaseObservation
 }
 
 // stateRank orders task states by advancement, so deduping by id keeps the truest state when the
@@ -45,7 +47,11 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 			sources = append(sources, watchSource{label: label, counts: c})
 			for _, t := range items {
 				if ex, ok := merged[t.ID]; !ok || stateRank[t.State] >= stateRank[ex.State] {
-					merged[t.ID] = mergedTask{taskItem: t, fork: fork}
+					m := mergedTask{taskItem: t, fork: fork}
+					if t.State == stateInProgress {
+						m.lease = observeTaskLease(t, time.Now())
+					}
+					merged[t.ID] = m
 				}
 			}
 		}
@@ -213,6 +219,9 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin int) []string {
 		line := "  " + taskWatchMarker(p, m.State, spin) + " " + truncate(oneLineTitle(m.Title), 58)
 		if m.fork != "" && m.State == stateInProgress {
 			line += p.Dim("  ← " + m.fork)
+		}
+		if m.State == stateInProgress {
+			line += p.Dim(" · " + m.lease.label())
 		}
 		out = append(out, line)
 	}
