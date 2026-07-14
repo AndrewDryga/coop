@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Peer consult replies can no longer disappear behind a status line.** Generated lead guidance
+  requires polling a yielded consult session through terminal exit, while empty, malformed,
+  timed-out, and provider-failed replies now fail explicitly without losing peer telemetry.
+
 - **Final signoff receives bounded between-audit evidence.** Receipt-consistent ordinary and
   protected audits retain a compact per-task verdict, tested gate, and unresolved findings for the
   same loop run. Signoff treats reviewer-reported details as context, not acceptance, and stays

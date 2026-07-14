@@ -256,6 +256,9 @@ func TestLeadContract(t *testing.T) {
 		"NEVER commit",                // delegate safety text
 		"review its `git diff`",       // lead owns review
 		"Use for: architecture, debugging",
+		"one-line status is not the reply",
+		"poll that same session to terminal exit",
+		"complete accumulated output",
 		"claude-opus-4-8", "gpt-5.5", "gemini-3.5-flash",
 		"THINKER EXTRA", "LEAD EXTRA",
 	} {
@@ -277,6 +280,9 @@ func TestLeadContract(t *testing.T) {
 	}
 	if !strings.Contains(cx, "coop-consult thinker --fresh") {
 		t.Errorf("native thinker should degrade to `coop-consult thinker` under a codex lead:\n%s", cx)
+	}
+	if n := strings.Count(cx, "poll that same session to terminal exit"); n < 2 {
+		t.Errorf("consult and degraded-native roles both need yielded-session guidance, got %d:\n%s", n, cx)
 	}
 	if !strings.Contains(cx, "coop-consult critic") || !strings.Contains(cx, "coop-delegate fast") {
 		t.Errorf("consult/delegate roles should survive a codex lead:\n%s", cx)

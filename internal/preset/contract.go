@@ -71,6 +71,9 @@ func roleContract(r *Role, lead string) string {
 		b.WriteString("execute, a security-sensitive change, a tradeoff you're about to lock in.\n")
 		b.WriteString("It analyses and reports; it NEVER edits a file or runs a mutating command. Ask it:\n\n")
 		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Name)
+		b.WriteString("\nThe one-line status is not the reply. If your shell or execution tool yields a\n")
+		b.WriteString("session handle, retain it and poll that same session to terminal exit, then read\n")
+		b.WriteString("the complete accumulated output.\n")
 	case ModeDelegate:
 		fmt.Fprintf(&b, "## %s — write-capable delegate (%s)\n", r.Name, roleRunner(r, model))
 		writeWhen(&b, r.When)

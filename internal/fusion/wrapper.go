@@ -326,6 +326,11 @@ while [ "$index" -le "$total" ]; do
 	run_attempt "$dispatch"
 	st=$attempt_status
 	if [ "$st" -eq 0 ]; then
+		if ! grep -q '[^[:space:]]' "$out"; then
+			rm -f "$idfile" "$rungfile"
+			echo "[$peer: provider returned no usable reply — rerun $name with --fresh; if it repeats, check the provider diagnostics]" >&2
+			exit 1
+		fi
 		printf '%s' "$index" >"$rungfile"
 		record_turn
 		exit 0

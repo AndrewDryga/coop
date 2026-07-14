@@ -101,6 +101,9 @@ in place of the placeholder, and run the whole block from your shell — do not 
 peer, even if the first answer already looks sufficient:
 
 %s
+The one-line status is session metadata, not the peer reply. If your shell or
+execution tool yields a session handle for this block, retain it and
+poll that same session to terminal exit, accumulating and reading its complete output.
 If a peer errors or is unavailable, proceed with the others — but always attempt
 all of them before you answer.
 
@@ -166,6 +169,9 @@ status first. Compose a self-contained prompt: your question plus the context to
 answer it.
 
 %s
+The one-line status is session metadata, not the peer reply. If your shell or
+execution tool yields a session handle, retain it and
+poll that same session to terminal exit, accumulating and reading its complete output.
 Default to --fresh — each hard call is best judged independently. Use --continue only
 to drill deeper into the SAME call you already asked about, sending just what changed;
 if the status line says a --continue fell back to FRESH, give full context.

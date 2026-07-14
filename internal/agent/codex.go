@@ -243,9 +243,11 @@ func (codexAgent) BoxEnv(homeInBox string) []string {
 
 func (codexAgent) HomeFallbacks() []HomeFallback { return nil }
 
-// codexText is the jq filter that pulls the agent's reply text out of codex's --json
-// stream; the wrapper emits it once (ShellPrelude) since fresh and resume both use it.
-const codexText = `codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }
+// codexText validates and pulls the agent's reply text out of codex's --json stream;
+// the wrapper emits it once (ShellPrelude) since fresh and resume both use it.
+const codexText = `codex_text() {
+	jq -ers '[.[] | select(.type=="item.completed" and .item.type=="agent_message") | .item.text | select(type=="string" and test("[^[:space:]]"))] | if length==0 then error("no usable agent reply") else .[] end'
+}
 # codex_peer_row logs this consult's token usage (the turn.completed event, read from stdin) to the
 # run's peer-usage file so the loop's closing digest can tally the peer per model. Best-effort: no
 # COOP_RUN_ID (not a loop), no usage event, or any write error → nothing, and it never fails the
@@ -257,6 +259,24 @@ codex_peer_row() {
 	i=$(printf '%s' "$u" | jq '.input_tokens // 0')
 	o=$(printf '%s' "$u" | jq '(.output_tokens // 0) + (.reasoning_output_tokens // 0)')
 	printf '{"run":"%s","role":"%s","provider":"codex","model":"%s","in":%s,"out":%s}\n' "$COOP_RUN_ID" "$1" "$2" "$i" "$o" >>".agent/runs/$COOP_RUN_ID.peers.jsonl" 2>/dev/null || true
+}
+# codex_finish is the shared fresh/resume result path. Telemetry reads the raw stream before
+# validation, while a real provider failure keeps its status and raw events for fallback
+# classification. Only a successful provider must also prove it returned a usable reply.
+codex_finish() {
+	provider_status=$1
+	printf '%s\n' "$out" | codex_peer_row "$role" "$model"
+	if [ "$provider_status" -ne 0 ]; then
+		return "$provider_status"
+	fi
+	reply=$(printf '%s\n' "$out" | codex_text)
+	reply_status=$?
+	if [ "$reply_status" -ne 0 ]; then
+		rm -f "$idfile" "$rungfile"
+		echo "[$peer: Codex returned malformed output or no usable reply — rerun $name with --fresh; if it repeats, check or upgrade Codex]" >&2
+		return 1
+	fi
+	printf '%s\n' "$reply"
 }`
 
 func (codexAgent) ConsultFresh() string {
@@ -264,19 +284,16 @@ func (codexAgent) ConsultFresh() string {
 # Only record the thread id when one was actually parsed — on a timeout/failure $out is empty,
 # and writing an empty idfile would make the next --continue run "codex exec resume ''".
 tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
-if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
-printf '%s\n' "$out" | codex_text
-printf '%s\n' "$out" | codex_peer_row "$role" "$model"
-# codex_text intentionally hides protocol JSON on success. On failure, preserve the
-# raw events so the wrapper can classify structured usageLimitExceeded/turn.failed data.
 if [ "$st" -ne 0 ]; then printf '%s\n' "$out" >&2; fi
-# Propagate codex's own exit status (timeout/error), not the codex_text pipe's 0, so a
-# consult failure is observable like claude/gemini's instead of always looking successful.
-exit "$st"`
+codex_finish "$st"; finish_status=$?
+# A thread becomes resumable only after its first usable reply; otherwise --continue would
+# revive a session the lead never received.
+if [ "$finish_status" -eq 0 ] && [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
+exit "$finish_status"`
 }
 
 func (codexAgent) ConsultResume() string {
-	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; printf '%s\n' "$out" | codex_peer_row "$role" "$model"; if [ "$st" -ne 0 ]; then printf '%s\n' "$out" >&2; fi; exit "$st"`
+	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; if [ "$st" -ne 0 ]; then printf '%s\n' "$out" >&2; fi; codex_finish "$st"; exit "$?"`
 }
 
 func (codexAgent) DelegateExec() string {
