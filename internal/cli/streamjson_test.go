@@ -31,7 +31,7 @@ func TestStreamDecoder(t *testing.T) {
 	d.flush()
 
 	o := out.String()
-	for _, want := range []string{"· model claude-opus-4-8", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ Edit", ".agent/tasks/10_in_progress/2026-06-26-egress/task.md", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
+	for _, want := range []string{"· model claude-opus-4-8", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ task egress", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("rendered output missing %q\n--- got ---\n%s", want, o)
 		}
@@ -288,6 +288,93 @@ func TestStreamDecoderDelegationTools(t *testing.T) {
 
 	if glyph, name, label, ok := consultDelegateDisplay("coop-consult --fresh thinker prompt"); !ok || glyph != "☎" || name != "consult" || label != "→ thinker" {
 		t.Errorf("flags-before-role consult = (%q, %q, %q, %v)", glyph, name, label, ok)
+	}
+}
+
+func TestStreamDecoderTaskLifecycleTools(t *testing.T) {
+	const id = "2026-07-13-fix-loop-rendering"
+	lines := []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"claim","name":"Bash","input":{"command":"mv /workspace/repo/.agent/tasks/00_todo/` + id + ` /workspace/repo/.agent/tasks/10_in_progress/` + id + `"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"done","name":"Bash","input":{"command":"mv .agent/tasks/10_in_progress/` + id + ` .agent/tasks/99_done/` + id + `"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"block","name":"Bash","input":{"command":"mv '.agent/tasks/10_in_progress/` + id + `' '.agent/tasks/50_blocked/` + id + `'"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"unblock","name":"Bash","input":{"command":"mv .agent/tasks/50_blocked/` + id + ` .agent/tasks/00_todo/` + id + `"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"requeue","name":"Bash","input":{"command":"mv .agent/tasks/10_in_progress/` + id + ` .agent/tasks/00_todo/` + id + `"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"log","name":"Edit","input":{"file_path":"/workspace/repo/.agent/tasks/10_in_progress/` + id + `/log.md"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"queue","name":"Write","input":{"file_path":"/workspace/repo/.agent/tasks/00_todo/` + id + `/task.md"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"mkdir","name":"Bash","input":{"command":"mkdir -p /workspace/repo/.agent/tasks/00_todo/` + id + `"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"other-mv","name":"Bash","input":{"command":"mv /tmp/a /tmp/b"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"code","name":"Edit","input":{"file_path":"/workspace/repo/internal/cli/streamjson.go"}}]}}`,
+	}
+	var out, tail bytes.Buffer
+	d := newStreamDecoder(&out, &tail, "claude", "", "/workspace/repo")
+	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
+	d.flush()
+	o := out.String()
+	for _, want := range []string{
+		"⇢ claim fix-loop-rendering",
+		"✓ done fix-loop-rendering",
+		"⏸ block fix-loop-rendering",
+		"↺ unblock fix-loop-rendering",
+		"✎ log fix-loop-rendering",
+		"＋ queue fix-loop-rendering",
+		"· prepare fix-loop-rendering",
+		"⚙ Bash mv /tmp/a /tmp/b",
+		"✎ Edit internal/cli/streamjson.go",
+	} {
+		if !strings.Contains(o, want) {
+			t.Errorf("task lifecycle output missing %q:\n%s", want, o)
+		}
+	}
+	if got := strings.Count(o, "＋ queue fix-loop-rendering"); got != 2 {
+		t.Errorf("queue event count = %d, want transition + task.md write:\n%s", got, o)
+	}
+	for _, raw := range []string{"00_todo/" + id, "10_in_progress/" + id, "99_done/" + id} {
+		if strings.Contains(o, raw) {
+			t.Errorf("semantic task activity leaked raw path %q:\n%s", raw, o)
+		}
+	}
+}
+
+func TestTaskLifecycleDisplayRejectsNearMisses(t *testing.T) {
+	const id = "2026-07-13-fix-loop-rendering"
+	for _, command := range []string{
+		"mv .agent/tasks/00_todo/" + id + "/artifacts/a .agent/tasks/10_in_progress/" + id + "/artifacts/a",
+		"mv .agent/tasks/00_todo/" + id + " .agent/tasks/10_in_progress/2026-07-13-renamed-task",
+		"mv /tmp/a /tmp/b",
+	} {
+		if _, _, _, ok := taskTransitionDisplay(command); ok {
+			t.Errorf("taskTransitionDisplay(%q) classified a non-lifecycle move", command)
+		}
+	}
+	for _, command := range []string{
+		"mkdir -p .agent/tasks/00_todo/" + id + "/artifacts",
+		"mkdir .agent/tasks/00_todo/" + id,
+	} {
+		if _, _, _, ok := taskMkdirDisplay(command); ok {
+			t.Errorf("taskMkdirDisplay(%q) classified a non-setup mkdir", command)
+		}
+	}
+}
+
+func TestTaskFileDisplay(t *testing.T) {
+	const base = ".agent/tasks/10_in_progress/2026-07-13-fix-loop-rendering/"
+	for _, tc := range []struct {
+		file, wantName string
+	}{
+		{"task.md", "task"},
+		{"log.md", "log"},
+		{"state.md", "state"},
+		{"decision.md", "decision"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			glyph, name, label, ok := taskFileDisplay("Edit", base+tc.file)
+			if !ok || glyph != "✎" || name != tc.wantName || label != "fix-loop-rendering" {
+				t.Errorf("taskFileDisplay(%s) = (%q, %q, %q, %v)", tc.file, glyph, name, label, ok)
+			}
+		})
+	}
+	if _, _, _, ok := taskFileDisplay("Edit", "internal/cli/streamjson.go"); ok {
+		t.Error("ordinary code edit classified as a task file")
 	}
 }
 

@@ -335,6 +335,12 @@ func toolDisplay(root, name string, input json.RawMessage) (glyph, displayName, 
 		if glyph, displayName, label, ok := consultDelegateDisplay(command); ok {
 			return glyph, displayName, label, false
 		}
+		if glyph, displayName, label, ok := taskTransitionDisplay(command); ok {
+			return glyph, displayName, label, false
+		}
+		if glyph, displayName, label, ok := taskMkdirDisplay(command); ok {
+			return glyph, displayName, label, false
+		}
 		return "⚙", name, firstLine(relativizeRoot(root, command)), false
 	case "Task":
 		detail := strings.TrimSpace(in.SubagentType)
@@ -348,7 +354,13 @@ func toolDisplay(root, name string, input json.RawMessage) (glyph, displayName, 
 			detail = "→ " + detail
 		}
 		return "⌥", "subagent", detail, false
-	case "Edit", "Write", "NotebookEdit":
+	case "Edit", "Write":
+		if glyph, displayName, label, ok := taskFileDisplay(name, in.FilePath); ok {
+			return glyph, displayName, label, false
+		}
+		rel, inside := repoRel(root, in.FilePath)
+		return "✎", name, rel, !inside
+	case "NotebookEdit":
 		rel, inside := repoRel(root, in.FilePath)
 		return "✎", name, rel, !inside
 	case "Read":
@@ -384,6 +396,142 @@ func consultDelegateDisplay(command string) (glyph, displayName, label string, o
 		return glyph, displayName, "→ " + field, true
 	}
 	return "", "", "", false
+}
+
+type streamedTaskPath struct {
+	state  string
+	id     string
+	file   string
+	nested bool
+}
+
+// streamedTaskPaths extracts only the queue path shape the in-box contract tells agents to use.
+// It scans command text rather than parsing shell syntax, so quoted paths and absolute mount
+// prefixes work while unrelated mv/mkdir commands remain ordinary Bash activity.
+func streamedTaskPaths(text string) []streamedTaskPath {
+	const marker = ".agent/tasks/"
+	var refs []streamedTaskPath
+	for from := 0; from < len(text); {
+		i := strings.Index(text[from:], marker)
+		if i < 0 {
+			break
+		}
+		from += i + len(marker)
+		tail := text[from:]
+		slash := strings.IndexByte(tail, '/')
+		if slash < 0 {
+			continue
+		}
+		state := tail[:slash]
+		if !streamedTaskState(state) {
+			continue
+		}
+		rest := tail[slash+1:]
+		end := streamedTaskTokenEnd(rest)
+		if end == 0 {
+			continue
+		}
+		ref := streamedTaskPath{state: state, id: rest[:end]}
+		if end < len(rest) && rest[end] == '/' {
+			ref.nested = true
+			fileRest := rest[end+1:]
+			fileEnd := streamedTaskTokenEnd(fileRest)
+			if fileEnd > 0 && (fileEnd == len(fileRest) || fileRest[fileEnd] != '/') {
+				switch fileRest[:fileEnd] {
+				case "task.md", "log.md", "state.md", "decision.md":
+					ref.file = strings.TrimSuffix(fileRest[:fileEnd], ".md")
+				}
+			}
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func streamedTaskState(state string) bool {
+	for _, known := range taskStates {
+		if state == known {
+			return true
+		}
+	}
+	return false
+}
+
+func streamedTaskTokenEnd(s string) int {
+	if i := strings.IndexAny(s, "/ \t\r\n\"'`;|&<>()"); i >= 0 {
+		return i
+	}
+	return len(s)
+}
+
+func taskTransitionDisplay(command string) (glyph, displayName, label string, ok bool) {
+	line := strings.TrimSpace(firstLine(command))
+	if line != "mv" && !strings.HasPrefix(line, "mv ") {
+		return "", "", "", false
+	}
+	refs := streamedTaskPaths(line)
+	if len(refs) < 2 || refs[0].nested || refs[1].nested || refs[0].id != refs[1].id || refs[0].state == refs[1].state {
+		return "", "", "", false
+	}
+	src, dst := refs[0], refs[1]
+	if src.state == stateBlocked && (dst.state == stateTodo || dst.state == stateInProgress) {
+		return "↺", "unblock", readableTaskID(dst.id), true
+	}
+	switch dst.state {
+	case stateInProgress:
+		return "⇢", "claim", readableTaskID(dst.id), true
+	case stateDone:
+		return "✓", "done", readableTaskID(dst.id), true
+	case stateBlocked:
+		return "⏸", "block", readableTaskID(dst.id), true
+	case stateTodo:
+		return "＋", "queue", readableTaskID(dst.id), true
+	}
+	return "", "", "", false
+}
+
+func taskMkdirDisplay(command string) (glyph, displayName, label string, ok bool) {
+	line := strings.TrimSpace(firstLine(command))
+	fields := strings.Fields(line)
+	if len(fields) < 3 || fields[0] != "mkdir" {
+		return "", "", "", false
+	}
+	hasParents := false
+	for _, field := range fields[1:] {
+		if field == "--parents" || (strings.HasPrefix(field, "-") && !strings.HasPrefix(field, "--") && strings.Contains(field[1:], "p")) {
+			hasParents = true
+			break
+		}
+	}
+	refs := streamedTaskPaths(line)
+	if !hasParents || len(refs) == 0 || refs[0].nested {
+		return "", "", "", false
+	}
+	return "·", "prepare", readableTaskID(refs[0].id), true
+}
+
+func taskFileDisplay(toolName, path string) (glyph, displayName, label string, ok bool) {
+	refs := streamedTaskPaths(filepath.ToSlash(path))
+	if len(refs) != 1 || refs[0].file == "" {
+		return "", "", "", false
+	}
+	ref := refs[0]
+	if toolName == "Write" && ref.state == stateTodo && ref.file == "task" {
+		return "＋", "queue", readableTaskID(ref.id), true
+	}
+	return "✎", ref.file, readableTaskID(ref.id), true
+}
+
+func readableTaskID(id string) string {
+	if len(id) > len("2006-01-02-") && id[4] == '-' && id[7] == '-' && id[10] == '-' {
+		for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+			if id[i] < '0' || id[i] > '9' {
+				return id
+			}
+		}
+		return id[len("2006-01-02-"):]
+	}
+	return id
 }
 
 // repoRel renders an absolute in-box file path relative to the repo root when it falls inside

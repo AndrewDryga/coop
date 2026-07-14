@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task lifecycle changes stand out in the loop live view.** In-box folder moves now read as
+  claim, queue, done, block, or unblock events; task/log/state/decision edits name the task instead
+  of showing a long mount path, and setup-only task-directory creation recedes to a short line.
+
 - **Loop orchestration reads as orchestration.** Read-only consults, write-capable delegates, and
   native Claude subagents now have distinct glyphs and role/type labels in the live view instead of
   masquerading as generic Bash or `Task` calls; failures keep the same semantic label.
