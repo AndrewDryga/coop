@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1639,47 +1638,72 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 	}
 }
 
-// reviewReopenReceipt parses the trailing "REVIEW COMPLETE — reopened <N>" line a review is told to
-// end with (reviewContextFooter). ok=false when no such line is present — the review didn't finish,
-// or was interrupted before it wrote the receipt, so the loop must NOT read the queue's silence as
-// "nothing reopened". Scans bottom-up (a repeated line's last wins) and keys off the exact
-// "REVIEW COMPLETE" marker + an integer after "reopened", so prose that merely mentions reopening a
-// task doesn't trip it.
-func reviewReopenReceipt(output string) (n int, ok bool) {
+type reviewReceipt struct {
+	verdict  string
+	reopened []string
+}
+
+// reviewReopenReceipt parses the strict terminal receipt emitted by every review. Old count-only
+// receipts are deliberately rejected: only the exact task ids can bind the verdict to the queue
+// delta and distinguish review work from unrelated actionable tasks.
+func reviewReopenReceipt(output string) (reviewReceipt, bool) {
+	const prefix = "REVIEW COMPLETE — "
 	lines := strings.Split(output, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if !strings.Contains(line, "REVIEW COMPLETE") {
+		if line == "" {
 			continue
 		}
-		idx := strings.LastIndex(line, "reopened")
-		if idx < 0 {
-			continue
+		if !strings.HasPrefix(line, prefix) {
+			return reviewReceipt{}, false
 		}
-		fields := strings.Fields(line[idx+len("reopened"):])
-		if len(fields) == 0 {
-			continue
+		parts := strings.Split(strings.TrimPrefix(line, prefix), " — reopened: ")
+		if len(parts) != 2 || (parts[0] != "PASS" && parts[0] != "FAIL") {
+			return reviewReceipt{}, false
 		}
-		if v, err := strconv.Atoi(strings.Trim(fields[0], ".,")); err == nil {
-			return v, true
+		var ids []string
+		if parts[1] != "none" {
+			ids = strings.Split(parts[1], ",")
+			if slices.Contains(ids, "") || !slices.IsSorted(ids) {
+				return reviewReceipt{}, false
+			}
+			if slices.ContainsFunc(ids, func(id string) bool { return strings.ContainsAny(id, " \t\r\n") }) {
+				return reviewReceipt{}, false
+			}
+			for j := 1; j < len(ids); j++ {
+				if ids[j] == ids[j-1] {
+					ids = nil
+					break
+				}
+			}
+			if ids == nil {
+				return reviewReceipt{}, false
+			}
 		}
+		if (parts[0] == "PASS") != (len(ids) == 0) {
+			return reviewReceipt{}, false
+		}
+		return reviewReceipt{verdict: parts[0], reopened: ids}, true
 	}
-	return 0, false
+	return reviewReceipt{}, false
 }
 
-// reopenVerdictLost reports whether a signoff round's reopen receipt disagrees with the folders
-// that ACTUALLY moved — a verdict that may have been lost before it reached the queue, which must
-// not be accepted as "done". True when the receipt is missing (the review didn't finish) or its
-// claimed count doesn't match the reopened-folder delta. A consistent PASS (claimed 0, moved 0) or
-// a consistent reopen (claimed N, moved N) is NOT lost.
-func reopenVerdictLost(claimed int, haveReceipt bool, actualReopened int) bool {
-	return !haveReceipt || claimed != actualReopened
+func reopenVerdictLost(receipt reviewReceipt, haveReceipt bool, actual, subjects []string) bool {
+	if !haveReceipt || !slices.Equal(receipt.reopened, actual) {
+		return true
+	}
+	for _, id := range receipt.reopened {
+		if !slices.Contains(subjects, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // protectedAuditVerdict makes the exceptional between pass fail closed. Ordinary configured
 // audits keep their historical warn-and-continue behavior; a protected audit must both run and
 // leave a receipt consistent with the queue before another task can trust the edited gate.
-func protectedAuditVerdict(protected, interrupted bool, reviewErr error, output string, actualReopened int) error {
+func protectedAuditVerdict(protected, interrupted bool, reviewErr error, output string, actual, subjects []string) error {
 	if !protected {
 		return nil
 	}
@@ -1689,20 +1713,26 @@ func protectedAuditVerdict(protected, interrupted bool, reviewErr error, output 
 	if interrupted {
 		return nil
 	}
-	claimed, ok := reviewReopenReceipt(output)
-	if reopenVerdictLost(claimed, ok, actualReopened) {
-		return fmt.Errorf("verdict inconsistent: review reported %s but %d task folder(s) actually moved", receiptClaim(claimed, ok), actualReopened)
+	receipt, ok := reviewReopenReceipt(output)
+	if reopenVerdictLost(receipt, ok, actual, subjects) {
+		return fmt.Errorf("verdict inconsistent: review reported %s but task delta was %s", receiptClaim(receipt, ok), receiptIDs(actual))
 	}
 	return nil
 }
 
-// receiptClaim renders a review's reopen receipt for a log line: the claimed count, or that the
-// receipt was missing entirely.
-func receiptClaim(n int, ok bool) string {
+// receiptClaim renders a review's verdict and exact ids for a compact diagnostic.
+func receiptClaim(receipt reviewReceipt, ok bool) string {
 	if !ok {
 		return "no receipt"
 	}
-	return fmt.Sprintf("reopened %d", n)
+	return fmt.Sprintf("%s reopening %s", receipt.verdict, receiptIDs(receipt.reopened))
+}
+
+func receiptIDs(ids []string) string {
+	if len(ids) == 0 {
+		return "none"
+	}
+	return strings.Join(ids, ",")
 }
 
 // loopWorkPrompt and loopSignoffPrompt name the queue dir(s) the iteration works as ABSOLUTE
@@ -1769,7 +1799,7 @@ func loopSignoffPrompt(repo string, queues []string, appendPrompt string, finish
 func reviewContextFooter(repo string, queues []string) string {
 	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box — reopen a task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), and note what was missing in its log.md. Execute every reopen IMMEDIATELY as you decide it (move the folder, then write the note) — never batch reopens for the end and never leave them waiting on background work: an interrupted session loses any verdict not yet written to the queue.",
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md")) +
-		" When you are completely finished, end your reply with a line of exactly this form and nothing after it: `REVIEW COMPLETE — reopened <N>`, where <N> is the count of tasks you moved back to 10_in_progress/ this pass (0 if you reopened none). The loop compares that count against the folders that actually moved, so a claim that doesn't match the queue is treated as a lost verdict and the review is re-run — never batch or defer a reopen past this line." +
+		" When you are completely finished, end your reply with exactly one receipt line and nothing after it: `REVIEW COMPLETE — PASS — reopened: none` if every subject passed, or `REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>` listing every task you moved, sorted by task ID with no spaces. The loop compares the verdict and exact IDs against the named review subjects and folders that actually moved; a missing, malformed, or mismatched receipt is re-run — never batch or defer a reopen past this line." +
 		" GATE INTEGRITY: a task that changed a gate-defining file — the Makefile/gate, .agent/project.yaml, .agent/loop.yaml, .claude/hooks/, or CI — could be passing by WEAKENING its own checker (removing an assertion, relaxing the gate, disabling a hook). Scrutinize any such change and REOPEN the task if the gate was weakened rather than the code fixed; a green gate the candidate loosened is not a pass."
 }
 
@@ -1867,16 +1897,16 @@ func signoffRounds(lc *loopcfg.Config) int {
 	return defaultSignoffRounds
 }
 
-// blockReopenedTasks parks every task still reopened after the signoff round cap (anything left in
-// todo/ or in_progress/ once the work loop drained the queue) into 50_blocked/ with a decision.md,
-// so the capped loop exits 3 (blocked on a human) instead of spinning or claiming a false "done".
+// blockReopenedTasks parks the exact tasks reopened by the capped signoff round into 50_blocked/
+// with a decision.md; unrelated actionable work is left untouched, and the capped loop exits 3
+// (blocked on a human) instead of spinning or claiming a false "done".
 // The loop runs on the host, where coop's own task helpers are available, so it moves the folders
 // directly. Best-effort: a move/write failure is surfaced and skipped, never fatal — the closing
 // banner still reports the honest count.
-func blockReopenedTasks(hosts []string, rounds int) {
+func blockReopenedTasks(hosts, reopened []string, rounds int) {
 	for _, host := range hosts {
 		for _, t := range readTaskTree(host) {
-			if t.State != stateTodo && t.State != stateInProgress {
+			if !slices.Contains(reopened, t.ID) || (t.State != stateTodo && t.State != stateInProgress) {
 				continue
 			}
 			if err := moveTaskDir(host, t, stateBlocked); err != nil {
@@ -2248,10 +2278,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(finishedIDs, ", "), rerr)
 							btExit = 1
 						}
-						actualReopened := len(reopenedBySignoff(btSnap, queueSnapshot(hosts)))
-						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, actualReopened, btHead, hosts, nil, nil, auditGateFiles, btRes)
+						reopenedIDs := reopenedBySignoff(btSnap, queueSnapshot(hosts))
+						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, len(reopenedIDs), btHead, hosts, nil, nil, auditGateFiles, btRes)
 						interrupted := softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil)
-						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btOut, actualReopened); verdictErr != nil {
+						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btOut, reopenedIDs, finishedIDs); verdictErr != nil {
 							return 1, fmt.Errorf("protected-change audit for %s: %w — stopped before another task could trust the changed gate; inspect the task and re-run `coop loop`", strings.Join(finishedIDs, ", "), verdictErr)
 						}
 					}
@@ -2348,25 +2378,23 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
 			return 0, nil
 		}
-		// Re-read the queue AFTER the signoff: it may have reopened done tasks into 10_in_progress/.
-		// The signoff runs only once the work loop drained the queue, so anything now actionable was
-		// reopened just now.
-		cf, _ := queueProgress(hosts)
-		reopened := cf.Todo + cf.Doing
-		health.noteReopen(reopenedBySignoff(soSnap, queueSnapshot(hosts))) // which tasks the signoff bounced, for the digest + next round's context
-		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil, nil, soRes)
+		// Derive the review's exact done-to-actionable delta once. Other actionable tasks can exist
+		// independently of this review and must not affect its telemetry, health, or outcome.
+		reopenedIDs := reopenedBySignoff(soSnap, queueSnapshot(hosts))
+		health.noteReopen(reopenedIDs)
+		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, len(reopenedIDs), soHead, hosts, nil, nil, nil, soRes)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
-		// "REVIEW COMPLETE — reopened <N>" receipt; if that count disagrees with the folders that
-		// actually moved (or the receipt is missing entirely), the round is treated as interrupted and
+		// structured receipt; if its ids disagree with the folders that actually moved (or the receipt
+		// is missing entirely), the round is treated as interrupted and
 		// re-run within the cap, or — at the cap — the loop exits loudly rather than claim a false done.
-		claimed, ok := reviewReopenReceipt(signoffOut)
-		if reopenVerdictLost(claimed, ok, reopened) {
+		receipt, ok := reviewReopenReceipt(signoffOut)
+		if reopenVerdictLost(receipt, ok, reopenedIDs, taskIDsOf(subjects)) {
 			if signoffRound >= maxSignoffRounds {
-				return 3, fmt.Errorf("signoff verdict inconsistent after %d rounds: review reported %s but %d task folder(s) actually moved — verdicts may have been lost, a human should look", maxSignoffRounds, receiptClaim(claimed, ok), reopened)
+				return 3, fmt.Errorf("signoff verdict inconsistent after %d rounds: review reported %s but task delta was %s — verdicts may have been lost, a human should look", maxSignoffRounds, receiptClaim(receipt, ok), receiptIDs(reopenedIDs))
 			}
-			ui.Warn("signoff review inconsistent (reported %s, %d folder(s) moved) — re-running the round", receiptClaim(claimed, ok), reopened)
+			ui.Warn("signoff review inconsistent (reported %s, task delta %s) — re-running the round", receiptClaim(receipt, ok), receiptIDs(reopenedIDs))
 			continue
 		}
 		// This round's verdict is consistent — re-anchor the baseline to the post-review done set, so
@@ -2374,15 +2402,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// a task this round just accepted. The lost-verdict path above deliberately keeps the old
 		// baseline: an untrusted round's whole subject set is reviewed again.
 		reviewBaseline = doneTaskDirs(hosts)
-		switch signoffRoundOutcome(signoffRound, maxSignoffRounds, reopened > 0) {
+		switch signoffRoundOutcome(signoffRound, maxSignoffRounds, len(reopenedIDs) > 0) {
 		case signoffContinue:
-			ui.Info("signoff reopened %s — draining again", ui.Count(cf.Todo+cf.Doing, "task"))
+			ui.Info("signoff reopened %s — draining again", ui.Count(len(reopenedIDs), "task"))
 			continue
 		case signoffCapReached:
 			// The work loop couldn't get these tasks to a state the signoff accepts within the cap —
 			// park them for a human rather than spin or claim a false "done" (exit 3 via loopExitCode).
-			ui.Info("signoff still reopening after %d rounds — blocking %s for a human", maxSignoffRounds, ui.Count(cf.Todo+cf.Doing, "task"))
-			blockReopenedTasks(hosts, maxSignoffRounds)
+			ui.Info("signoff still reopening after %d rounds — blocking %s for a human", maxSignoffRounds, ui.Count(len(reopenedIDs), "task"))
+			blockReopenedTasks(hosts, reopenedIDs, maxSignoffRounds)
 		}
 		// signoffAccepted (nothing reopened) or signoffCapReached (just blocked) → the loop is done.
 		break

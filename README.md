@@ -998,6 +998,11 @@ task it keeps reopening is blocked for a human rather than reported as done. The
 `[3, signoff.rounds]` (default `5`) — a small batch still gets a few tries, a big
 overnight batch can't ping-pong one stuck task forever.
 
+Every review closes with a structured PASS/FAIL receipt naming the exact sorted task IDs it
+reopened. Coop compares that receipt with the review's done-to-actionable folder delta and its
+named subjects; unrelated pre-existing queue work does not count as a reopen, while a missing,
+malformed, or mismatched receipt fails closed and is never accepted as a clean review.
+
 Tune the loop in one committed **`.agent/loop.yaml`** — a section per step (`preflight` /
 `work` / `between` / `signoff`), each with its own `agent:` model ladder and a prompt: between
 is the per-task reviewer, signoff the final one. Prompts never *replace* a coop built-in:

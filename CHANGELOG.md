@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Review receipts are bound to exact task deltas.** Between and signoff reviews now report an
+  explicit PASS/FAIL verdict plus a deterministic task-ID list. Coop compares those IDs with the
+  review's done-to-actionable folder delta and named subjects, so unrelated actionable work cannot
+  distort health, telemetry, round outcomes, or receipt validation; malformed and count-only legacy
+  receipts fail closed.
+
 ## 5.3.0
 
 - **Gate-defining changes earn an immediate, fail-closed review.** A completed loop task that edits

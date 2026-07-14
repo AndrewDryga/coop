@@ -34,6 +34,20 @@ func TestFinishedTasksAndReconcileDecision(t *testing.T) {
 	}
 }
 
+func TestReopenedBySignoffUsesExactDoneDelta(t *testing.T) {
+	before := map[string]string{
+		"review-a": stateDone, "review-b": stateDone,
+		"unrelated-doing": stateInProgress, "unrelated-todo": stateTodo,
+	}
+	after := map[string]string{
+		"review-a": stateInProgress, "review-b": stateTodo,
+		"unrelated-doing": stateInProgress, "unrelated-todo": stateTodo,
+	}
+	if got, want := reopenedBySignoff(before, after), []string{"review-a", "review-b"}; !slices.Equal(got, want) {
+		t.Errorf("reopenedBySignoff = %v, want exact sorted delta %v", got, want)
+	}
+}
+
 func TestResumeLine(t *testing.T) {
 	// No landed commit → empty (blind-resume path stays byte-identical).
 	if resumeLine("x", nil) != "" {

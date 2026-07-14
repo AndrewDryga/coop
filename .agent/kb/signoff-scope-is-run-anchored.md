@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/cli/commands.go]
-updated: 2026-07-13
+updated: 2026-07-14
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -11,8 +11,8 @@ human prunes it). Its subjects are a folder diff: `newlyFinished(reviewBaseline,
 with `reviewBaseline` anchored at run start. Empty diff ⇒ the pass is skipped outright — a fresh
 `coop loop` on an already-drained queue runs no review box.
 
-The trap is WHERE the baseline re-anchors. It moves forward only after a round whose
-"REVIEW COMPLETE — reopened <N>" receipt matches the folders that actually moved, and it is taken
+The trap is WHERE the baseline re-anchors. It moves forward only after a round whose structured
+PASS/FAIL receipt names the exact sorted done-to-actionable task-id delta, and it is taken
 from the POST-review done set (the reopened tasks have already left `99_done/`, so when their rework
 re-enters it they show up in the next round's diff). Two wrong placements that fail silently:
 
@@ -28,4 +28,6 @@ apart, and they passed their own iteration.
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-07-14 — updated the receipt contract from a count to an exact verdict + task-id delta and
+  re-verified the baseline placement against `internal/cli/commands.go`.
 - 2026-07-13 — created with the run-scoped signoff change (verified against loop()'s round logic in internal/cli/commands.go).

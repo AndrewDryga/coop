@@ -305,31 +305,45 @@ func TestReviewLadder(t *testing.T) {
 	}
 }
 
-// TestReviewReopenReceipt: the "REVIEW COMPLETE — reopened <N>" tally is parsed off a review's
-// output, tolerant of the dash and trailing punctuation, and a review that merely MENTIONS
-// reopening in prose without the receipt line reads as missing (ok=false) — not as N>0.
 func TestReviewReopenReceipt(t *testing.T) {
 	cases := []struct {
-		name   string
-		out    string
-		wantN  int
-		wantOk bool
+		name, out, verdict string
+		ids                []string
+		ok                 bool
 	}{
-		{"present", "did the review\nREVIEW COMPLETE — reopened 3", 3, true},
-		{"zero", "everything passes\nREVIEW COMPLETE — reopened 0", 0, true},
-		{"hyphen dash", "REVIEW COMPLETE - reopened 2", 2, true},
-		{"trailing period", "REVIEW COMPLETE — reopened 4.", 4, true},
-		{"missing entirely", "I reopened two tasks (in prose) but wrote no receipt", 0, false},
-		{"mentions reopen, receipt 0", "I considered reopening auth-fix but it holds.\nREVIEW COMPLETE — reopened 0", 0, true},
-		{"repeated line, last wins", "REVIEW COMPLETE — reopened 9\nwait, more\nREVIEW COMPLETE — reopened 1", 1, true},
+		{"pass", "done\nREVIEW COMPLETE — PASS — reopened: none", "PASS", nil, true},
+		{"one reopen", "REVIEW COMPLETE — FAIL — reopened: task-a", "FAIL", []string{"task-a"}, true},
+		{"multiple sorted", "REVIEW COMPLETE — FAIL — reopened: task-a,task-b", "FAIL", []string{"task-a", "task-b"}, true},
+		{"old ambiguous receipt", "REVIEW COMPLETE — reopened 2", "", nil, false},
+		{"missing", "I reopened task-a", "", nil, false},
+		{"malformed verdict", "REVIEW COMPLETE — MAYBE — reopened: none", "", nil, false},
+		{"pass with ids", "REVIEW COMPLETE — PASS — reopened: task-a", "", nil, false},
+		{"fail without ids", "REVIEW COMPLETE — FAIL — reopened: none", "", nil, false},
+		{"unsorted", "REVIEW COMPLETE — FAIL — reopened: task-b,task-a", "", nil, false},
+		{"duplicates", "REVIEW COMPLETE — FAIL — reopened: task-a,task-a", "", nil, false},
+		{"spaces in ids", "REVIEW COMPLETE — FAIL — reopened: task-a, task-b", "", nil, false},
+		{"not terminal", "REVIEW COMPLETE — PASS — reopened: none\nmore prose", "", nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			n, ok := reviewReopenReceipt(c.out)
-			if n != c.wantN || ok != c.wantOk {
-				t.Errorf("reviewReopenReceipt = %d/%v, want %d/%v", n, ok, c.wantN, c.wantOk)
+			r, ok := reviewReopenReceipt(c.out)
+			if r.verdict != c.verdict || !slices.Equal(r.reopened, c.ids) || ok != c.ok {
+				t.Errorf("reviewReopenReceipt = %+v/%v, want %s,%v/%v", r, ok, c.verdict, c.ids, c.ok)
 			}
 		})
+	}
+}
+
+func TestReviewPromptRequiresExactReceipt(t *testing.T) {
+	prompt := reviewContextFooter("/repo", []string{".agent/tasks"})
+	for _, want := range []string{
+		"REVIEW COMPLETE — PASS — reopened: none",
+		"REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>",
+		"sorted by task ID", "exact IDs", "named review subjects",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("review prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
@@ -339,21 +353,23 @@ func TestReviewReopenReceipt(t *testing.T) {
 func TestReopenVerdictLost(t *testing.T) {
 	cases := []struct {
 		name     string
-		claimed  int
+		receipt  reviewReceipt
 		haveRcpt bool
-		actual   int
+		actual   []string
+		subjects []string
 		wantLost bool
 	}{
-		{"incident: claimed 6, moved 0", 6, true, 0, true},
-		{"missing receipt", 0, false, 0, true},
-		{"consistent pass", 0, true, 0, false},
-		{"consistent reopen", 2, true, 2, false},
-		{"undercount", 1, true, 3, true},
+		{"claimed reopen moved none", reviewReceipt{"FAIL", []string{"a"}}, true, nil, []string{"a"}, true},
+		{"missing receipt", reviewReceipt{}, false, nil, []string{"a"}, true},
+		{"consistent pass with unrelated actionable", reviewReceipt{"PASS", nil}, true, nil, []string{"a"}, false},
+		{"consistent exact reopen", reviewReceipt{"FAIL", []string{"a", "b"}}, true, []string{"a", "b"}, []string{"a", "b"}, false},
+		{"equal count wrong ids", reviewReceipt{"FAIL", []string{"a"}}, true, []string{"b"}, []string{"a", "b"}, true},
+		{"unexpected id", reviewReceipt{"FAIL", []string{"other"}}, true, []string{"other"}, []string{"a"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := reopenVerdictLost(c.claimed, c.haveRcpt, c.actual); got != c.wantLost {
-				t.Errorf("reopenVerdictLost(%d,%v,%d) = %v, want %v", c.claimed, c.haveRcpt, c.actual, got, c.wantLost)
+			if got := reopenVerdictLost(c.receipt, c.haveRcpt, c.actual, c.subjects); got != c.wantLost {
+				t.Errorf("reopenVerdictLost(%+v,%v,%v,%v) = %v, want %v", c.receipt, c.haveRcpt, c.actual, c.subjects, got, c.wantLost)
 			}
 		})
 	}
@@ -366,24 +382,40 @@ func TestProtectedAuditVerdict(t *testing.T) {
 		protected, interrupted bool
 		reviewErr              error
 		output                 string
-		actual                 int
+		actual, subjects       []string
 		wantErr                bool
 	}{
 		{name: "ordinary audit keeps existing behavior", reviewErr: runErr},
 		{name: "protected run failure", protected: true, reviewErr: runErr, wantErr: true},
 		{name: "protected missing receipt", protected: true, wantErr: true},
-		{name: "protected mismatch", protected: true, output: "REVIEW COMPLETE — reopened 1", wantErr: true},
-		{name: "protected pass", protected: true, output: "REVIEW COMPLETE — reopened 0"},
-		{name: "protected reopen", protected: true, output: "REVIEW COMPLETE — reopened 2", actual: 2},
+		{name: "protected mismatch", protected: true, output: "REVIEW COMPLETE — FAIL — reopened: a", subjects: []string{"a"}, wantErr: true},
+		{name: "protected pass", protected: true, output: "REVIEW COMPLETE — PASS — reopened: none", subjects: []string{"a"}},
+		{name: "protected reopen", protected: true, output: "REVIEW COMPLETE — FAIL — reopened: a,b", actual: []string{"a", "b"}, subjects: []string{"a", "b"}},
+		{name: "protected unexpected id", protected: true, output: "REVIEW COMPLETE — FAIL — reopened: other", actual: []string{"other"}, subjects: []string{"a"}, wantErr: true},
 		{name: "user interruption", protected: true, interrupted: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := protectedAuditVerdict(c.protected, c.interrupted, c.reviewErr, c.output, c.actual)
+			err := protectedAuditVerdict(c.protected, c.interrupted, c.reviewErr, c.output, c.actual, c.subjects)
 			if (err != nil) != c.wantErr {
 				t.Errorf("protectedAuditVerdict error = %v, wantErr %v", err, c.wantErr)
 			}
 		})
+	}
+}
+
+func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
+	q := filepath.Join(t.TempDir(), ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(q, stateInProgress, "review-reopen", "task.md"), "# Reopen\n")
+	writeTaskFile(t, filepath.Join(q, stateInProgress, "unrelated", "task.md"), "# Unrelated\n")
+
+	blockReopenedTasks([]string{q}, []string{"review-reopen"}, 3)
+
+	if !pathExists(filepath.Join(q, stateBlocked, "review-reopen")) {
+		t.Fatal("exact review reopen was not blocked")
+	}
+	if !pathExists(filepath.Join(q, stateInProgress, "unrelated")) {
+		t.Fatal("unrelated actionable task was moved by the signoff cap")
 	}
 }
 
