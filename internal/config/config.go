@@ -38,6 +38,7 @@ type Config struct {
 	Cache         bool // COOP_CACHE — mount the shared dependency cache volume
 	Caffeinate    bool // COOP_CAFFEINATE — hold a system sleep inhibitor (caffeinate on macOS) while a loop runs
 	NoUpdateCheck bool // COOP_NO_UPDATE_CHECK — opt out of the once-a-day update-available check
+	StreamTrace   bool // COOP_STREAM_TRACE — persist raw and rendered output for streaming loop attempts
 
 	ServicesNet    string   // COOP_SERVICES_NET — override the services network name
 	ACPCarryTokens int      // COOP_ACP_CARRY_TOKENS — per-session budget (≈tokens, ~4 bytes each) for the conversation carried across an ACP provider switch (default 200000)
@@ -166,6 +167,7 @@ func Load() *Config {
 		Cache:         flag("COOP_CACHE"),
 		Caffeinate:    flag("COOP_CAFFEINATE"),
 		NoUpdateCheck: flagOff("COOP_NO_UPDATE_CHECK"),
+		StreamTrace:   flagOff("COOP_STREAM_TRACE"),
 
 		ServicesNet:    get("COOP_SERVICES_NET", ""),
 		ACPCarryTokens: getInt("COOP_ACP_CARRY_TOKENS", 200_000),

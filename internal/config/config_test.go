@@ -46,6 +46,9 @@ func TestDefaults(t *testing.T) {
 	if c.NoUpdateCheck {
 		t.Error("NoUpdateCheck is opt-in — must default off (the daily check runs by default)")
 	}
+	if c.StreamTrace {
+		t.Error("StreamTrace is opt-in — must default off")
+	}
 	if c.MCPFile != filepath.Join(wantDir, "mcp.json") {
 		t.Errorf("MCPFile = %q", c.MCPFile)
 	}
@@ -64,6 +67,7 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("COOP_NETWORK", "false")
 	t.Setenv("COOP_CAFFEINATE", "off")
 	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
+	t.Setenv("COOP_STREAM_TRACE", "yes")
 
 	c := Load()
 	if c.BaseImage != "custom-box" || c.Workdir != "/code" {
@@ -74,6 +78,9 @@ func TestEnvOverrides(t *testing.T) {
 	}
 	if !c.NoUpdateCheck {
 		t.Error("COOP_NO_UPDATE_CHECK=1 should opt out of the update check")
+	}
+	if !c.StreamTrace {
+		t.Error("COOP_STREAM_TRACE=yes should enable stream tracing")
 	}
 }
 

@@ -41,6 +41,8 @@ type app struct {
 	rtSet     bool                                     // whether rt has been detected yet (ensureRuntime is lazy — see below)
 	preset    *preset.Preset                           // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	runID     string                                   // the active loop run's id, passed to boxes as COOP_RUN_ID so consult peers log usage; empty outside a loop
+	streamSeq int                                      // streaming box attempt sequence within runID
+	streamOff bool                                     // an open failure disables best-effort tracing for the rest of the run
 	gateOK    func(gateRepo, treeDir, img string) bool // test seam for the merge gate; nil → the real box gate
 	acpModels func(agent string) ([]modelInfo, error)  // test seam for Claude/Gemini model refresh; nil → a real ACP box
 }

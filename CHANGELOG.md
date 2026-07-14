@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Streaming loop traces preserve both sides of the live view.** Set `COOP_STREAM_TRACE=1` to
+  capture every streaming box attempt's byte-exact provider JSONL and Coop's rendered lines under
+  `.agent/runs/<run>.streams/` with owner-only permissions. Tracing is best-effort and disables
+  itself after one file-open warning, so a full or unwritable disk cannot break the loop it is
+  observing.
+
 ## 5.2.0
 
 - **Every provider streams the same live view in the loop.** Codex dumped its banner and raw exec

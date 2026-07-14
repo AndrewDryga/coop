@@ -2006,6 +2006,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	_, _ = rand.Read(ridb)
 	runid := hex.EncodeToString(ridb)
 	a.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
+	a.streamSeq, a.streamOff = 0, false
 	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
 	iterCmd := func(iterAgent, prompt string) ([]string, bool) {
@@ -2617,6 +2618,11 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	}
 	// A built-in loop command on a TTY emits its provider's streaming JSON. Decode it into human
 	// activity lines, feeding only narration and terminal errors to the rate-limit tail.
+	rawTrace, renderedTrace, closeTrace := a.iterationStreamTrace(repo, agent, streaming)
+	defer closeTrace()
+	if renderedTrace != nil {
+		outWs = append(outWs, renderedTrace)
+	}
 	var stdoutW io.Writer
 	var dec iterationStreamDecoder
 	if streaming {
@@ -2624,8 +2630,15 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	}
 	if dec != nil {
 		stdoutW = dec
+		if rawTrace != nil {
+			stdoutW = io.MultiWriter(rawTrace, dec)
+		}
 	} else {
-		stdoutW = io.MultiWriter(append(outWs, tail)...)
+		plainWs := append(outWs, tail)
+		if rawTrace != nil {
+			plainWs = append([]io.Writer{rawTrace}, plainWs...)
+		}
+		stdoutW = io.MultiWriter(plainWs...)
 	}
 	var stderrW io.Writer = io.MultiWriter(errWs...)
 	var stderrFilter *stderrLineFilter

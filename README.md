@@ -1374,6 +1374,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
+| `COOP_STREAM_TRACE` | (off) | set to persist each streaming loop attempt's raw provider JSONL and rendered output under `.agent/runs/<run>.streams/` |
 
 Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the
 `COOP_<AGENT>_CMD` overrides — are split into `argv` with shell quoting (single/double
@@ -1405,6 +1406,7 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 | **A pinned `.tool-versions` tool (`go`, `ruby`, …) is installed yet "not found" in a *login* shell** | asdf's shims sit on PATH via the image's `ENV`, which only reaches the agent process and non-login shells. A login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH and drops the shims. The base box adds an `/etc/profile.d` drop-in to re-add them; rebuild an older box with `coop build` to pick it up. |
 | **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <agent>` runs in a terminal first. |
 | **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
+| **A loop's live view misrenders provider activity** | Run it with `COOP_STREAM_TRACE=1`; each streaming attempt writes byte-exact raw JSONL plus Coop's rendered lines under `.agent/runs/<run>.streams/`. The files may contain prompts, tool inputs, and model output — treat them as sensitive. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
 | **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
 | **"box image is stale … run 'coop build'"** | You changed `Dockerfile.agent` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
