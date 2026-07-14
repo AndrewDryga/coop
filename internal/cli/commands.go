@@ -1572,11 +1572,14 @@ func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*
 // reopened" for "reviewed and accepted". A user interrupt (ctx canceled) returns no error — not a
 // review failure. Returns the completed review's output so the caller can read its reopen receipt.
 // Local counters keep review trouble out of the work loop's stop accounting.
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
+type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming bool)
+
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt string, iterCmd iterationCmdBuilder, hosts []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
 	var fails, waits, retries int
 	for {
 		agent := a.applyTarget(rev)
-		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, hosts, sink, peers)
+		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
+		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, sink, peers)
 		if ctx != nil && ctx.Err() != nil {
 			return "", nil, nil // user interrupt — the caller handles stopping, not a review failure
 		}
@@ -1934,10 +1937,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		a.cfg.MCPFile = ""
 	}
 	custom := lc.Work.Command
-	// Claude on a TTY streams its activity as JSON we decode into live lines; other agents, a
-	// custom work.command, or a non-terminal (pipe/CI/fork log) keep plain text output. Decided
-	// per iteration in iterCmd (a cross-provider rotation can swap the active agent), keyed off the
-	// stream-json marker runIteration finds in the command.
+	// On a TTY every built-in provider streams JSON that coop decodes into the same live lines.
+	// A custom work.command or non-terminal (pipe/CI/fork log) keeps plain text output. This is
+	// decided per iteration because a cross-provider rotation can swap the active agent.
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
 	work := loopWorkPrompt(repo, queues) // the signoff/verify prompts are built per round with the run's change context
@@ -1972,15 +1974,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	a.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
 	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
-	iterCmd := func(prompt string) []string {
-		if len(custom) > 0 {
-			return custom
+	iterCmd := func(iterAgent, prompt string) ([]string, bool) {
+		var cmd []string
+		if len(custom) == 0 {
+			cmd = a.agentLoopCmd(iterAgent, prompt)
 		}
-		cmd := a.agentLoopCmd(agent, prompt)
-		if agent == "claude" && tty { // only claude streams JSON; recomputed per iteration (agent may rotate)
-			cmd = append(cmd, "--output-format", "stream-json", "--verbose")
-		}
-		return cmd
+		return iterationCommand(iterAgent, cmd, custom, tty)
 	}
 	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
 	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
@@ -2026,7 +2025,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// that need judgment. Best-effort like the signoff pass — a failure never blocks work.
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			pfCode, _, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, s)), hosts, sink, peers)
+			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
+			pfCode, _, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, sink, peers)
 			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
 		}
 	}
@@ -2095,7 +2095,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			snapBefore := queueSnapshot(hosts)
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(iterWork), hosts, sink, peers)
+			cmd, streaming := iterCmd(agent, iterWork)
+			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
 				break
@@ -2169,7 +2170,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						// can't run warns loudly (the task went unaudited) rather than halting the run.
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 						btExit := 0
-						_, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, iterCmd(prompt), hosts, sink, peers, wake)
+						_, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, iterCmd, hosts, sink, peers, wake)
 						if rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
 							btExit = 1
@@ -2182,7 +2183,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				// the pool, switch to another subscription and retry immediately; otherwise wait
 				// for the reset. Either way the same iteration is retried, not burned.
 				if rot.rotates() {
-					agent = a.rotateOnLimit(rot, resetAt, &waits, wake) // may swap the agent (cross-provider)
+					// Advancing the rotation is the point — the loop head re-derives the agent
+					// from rot (applyTarget), so the returned name would go unread here.
+					a.rotateOnLimit(rot, resetAt, &waits, wake)
 				} else {
 					sleepForLimit(wait, resetAt, wake)
 				}
@@ -2236,7 +2239,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + cs.reviewBlock(health)
-		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake)
+		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, iterCmd, hosts, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
 		}
@@ -2299,7 +2302,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) + "\n\n" + reviewContextFooter(repo, queues)
 			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			vExit := 0
-			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, iterCmd(vPrompt), hosts, sink, peers, wake)
+			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, iterCmd, hosts, sink, peers, wake)
 			if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 				vExit = 1
@@ -2490,12 +2493,62 @@ func (a *app) debugShell(repo, img, agent string) {
 
 const progressPoll = 2 * time.Second // how often the live bar re-reads the queue while an iteration runs
 
+func streamFlags(agent string) []string {
+	switch agent {
+	case "claude":
+		return []string{"--output-format", "stream-json", "--verbose"}
+	case "codex":
+		return []string{"--json"}
+	case "gemini":
+		return []string{"-o", "stream-json"}
+	case "grok":
+		return []string{"--output-format", "streaming-json"}
+	default:
+		return nil
+	}
+}
+
+// iterationCommand adds streaming flags only to coop's known headless forms on a TTY. Claude's
+// existing form appends them after the prompt; the other CLIs require their trailing prompt token
+// (or -p/value pair) to remain last.
+func iterationCommand(agent string, cmd, custom []string, tty bool) ([]string, bool) {
+	if len(custom) > 0 {
+		return custom, false
+	}
+	flags := streamFlags(agent)
+	if !tty || len(flags) == 0 {
+		return cmd, false
+	}
+	trailing := 0
+	switch agent {
+	case "codex":
+		trailing = 1
+	case "gemini", "grok":
+		trailing = 2
+	}
+	return spliceBeforeTrailing(cmd, flags, trailing), true
+}
+
+func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
+	if len(insert) == 0 {
+		return cmd
+	}
+	at := len(cmd) - trailing
+	if at < 0 {
+		at = 0
+	}
+	result := make([]string, 0, len(cmd)+len(insert))
+	result = append(result, cmd[:at]...)
+	result = append(result, insert...)
+	return append(result, cmd[at:]...)
+}
+
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
 // capturing the tail so a rate-limit notice can be detected. hosts are the queue files the
 // live bar watches for task progress. On interactive terminals the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view).
 // Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, res *iterResult, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, res *iterResult, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
 
@@ -2521,15 +2574,23 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		outWs = append(outWs, sink)
 		errWs = append(errWs, sink)
 	}
-	// Claude's loop command (set by iterCmd on a TTY) emits stream-json; decode it into human
-	// activity lines, feeding only the human text to tail so rate-limit detection still works.
+	// A built-in loop command on a TTY emits its provider's streaming JSON. Decode it into human
+	// activity lines, feeding only narration and terminal errors to the rate-limit tail.
 	var stdoutW io.Writer
-	var dec *streamDecoder
-	if slices.Contains(cmd, "stream-json") {
-		dec = newStreamDecoder(io.MultiWriter(outWs...), tail, agent, a.cfg.ActiveProfile(agent), box.Workdir(a.cfg, repo))
+	var dec iterationStreamDecoder
+	if streaming {
+		dec = newIterationStreamDecoder(agent, io.MultiWriter(outWs...), tail, a.cfg.ActiveProfile(agent), box.Workdir(a.cfg, repo), a.cfg.ModelFor(agent))
+	}
+	if dec != nil {
 		stdoutW = dec
 	} else {
 		stdoutW = io.MultiWriter(append(outWs, tail)...)
+	}
+	var stderrW io.Writer = io.MultiWriter(errWs...)
+	var geminiErr *geminiStderrFilter
+	if _, ok := dec.(*geminiStreamDecoder); ok {
+		geminiErr = newGeminiStderrFilter(stderrW)
+		stderrW = geminiErr
 	}
 
 	var wg sync.WaitGroup
@@ -2551,7 +2612,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
-		Stderr: io.MultiWriter(errWs...),
+		Stderr: stderrW,
 		Ctx:    ctx,
 	})
 	if live {
@@ -2559,8 +2620,13 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		wg.Wait() // no goroutine repaints the region after this, so the teardown below is clean
 	}
 	if dec != nil {
-		dec.flush()    // before tail.String(): the last events must reach the rate-limit tail
-		res = dec.last // the result event's cost/turns/tokens tally (nil if none landed), for telemetry
+		dec.flush()                // before tail.String(): final events must reach the rate-limit tail
+		res = dec.lastIterResult() // result cost/turns/tokens (nil if none landed), for telemetry
+	}
+	if geminiErr != nil {
+		if flushErr := geminiErr.flush(); err == nil {
+			err = flushErr
+		}
 	}
 	if live {
 		funnel.flush()

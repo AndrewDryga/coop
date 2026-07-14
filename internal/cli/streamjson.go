@@ -26,28 +26,68 @@ const llmIcon = "✦"
 // are deliberately NOT sent to tail: they're the agent's own work and can contain strings
 // like "429" that would false-match the limit markers.
 type streamDecoder struct {
-	out     io.Writer         // rendered activity lines → terminal (+ fork log)
-	tail    io.Writer         // human text → the rate-limit detector's tail
+	*ndjsonDecoder
 	agent   string            // the agent whose stream this is (e.g. claude), for the model line
 	profile string            // the credential profile in play, for the model line
 	root    string            // the repo's in-box mount; tool paths show relative to it (empty = off)
-	buf     []byte            // partial trailing line carried between Writes
 	tool    map[string]string // tool_use id → label, to name a failed tool_result
 	last    *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
-	return &streamDecoder{out: out, tail: tail, agent: agent, profile: profile, root: root, tool: map[string]string{}}
+	d := &streamDecoder{agent: agent, profile: profile, root: root, tool: map[string]string{}}
+	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
+	return d
 }
 
-func (d *streamDecoder) Write(p []byte) (int, error) {
+// iterationStreamDecoder is the stdout seam runIteration needs from every provider decoder.
+// The concrete type remains provider-specific so each stream schema stays small and explicit.
+type iterationStreamDecoder interface {
+	io.Writer
+	flush()
+	lastIterResult() *iterResult
+}
+
+// newIterationStreamDecoder dispatches by provider rather than by a stream marker: several CLIs
+// use overlapping flag names, while their event schemas are not interchangeable.
+func newIterationStreamDecoder(agent string, out, tail io.Writer, profile, root, model string) iterationStreamDecoder {
+	switch agent {
+	case "claude":
+		return newStreamDecoder(out, tail, agent, profile, root)
+	case "codex":
+		return newCodexStreamDecoder(out, tail, agent, profile, root, model)
+	case "gemini":
+		return newGeminiStreamDecoder(out, tail, agent, profile, root, model)
+	case "grok":
+		return newGrokStreamDecoder(out, tail, agent, profile, root, model)
+	default:
+		return nil
+	}
+}
+
+// ndjsonDecoder owns the byte-stream mechanics shared by every provider: partial lines across
+// Writes, final-line flushing, and raw passthrough for diagnostics that are not JSON events.
+// Provider decoders only handle complete, valid JSON values.
+type ndjsonDecoder struct {
+	out       io.Writer
+	tail      io.Writer
+	buf       []byte
+	event     func(json.RawMessage)
+	beforeRaw func()
+}
+
+func newNDJSONDecoder(out, tail io.Writer, event func(json.RawMessage)) *ndjsonDecoder {
+	return &ndjsonDecoder{out: out, tail: tail, event: event}
+}
+
+func (d *ndjsonDecoder) Write(p []byte) (int, error) {
 	d.buf = append(d.buf, p...)
 	for {
 		i := bytes.IndexByte(d.buf, '\n')
 		if i < 0 {
 			break
 		}
-		d.event(d.buf[:i])
+		d.line(d.buf[:i])
 		d.buf = d.buf[i+1:]
 	}
 	return len(p), nil
@@ -55,33 +95,53 @@ func (d *streamDecoder) Write(p []byte) (int, error) {
 
 // flush renders any trailing line left without a newline. A well-formed NDJSON stream ends
 // with one, so this is belt-and-suspenders for a truncated final event.
-func (d *streamDecoder) flush() {
+func (d *ndjsonDecoder) flush() {
 	if len(bytes.TrimSpace(d.buf)) > 0 {
-		d.event(d.buf)
+		d.line(d.buf)
 	}
 	d.buf = nil
 }
 
-func (d *streamDecoder) emit(s string) { fmt.Fprintln(d.out, s) }
+func (d *ndjsonDecoder) emit(s string) { fmt.Fprintln(d.out, s) }
 
-func (d *streamDecoder) toTail(s string) {
+func (d *ndjsonDecoder) toTail(s string) {
 	if d.tail != nil && s != "" {
 		fmt.Fprintln(d.tail, s)
 	}
 }
 
-// event parses and renders one NDJSON line.
-func (d *streamDecoder) event(raw []byte) {
+func (d *ndjsonDecoder) line(raw []byte) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return
 	}
+	if !json.Valid(raw) {
+		d.passthrough(raw)
+		return
+	}
+	d.event(json.RawMessage(raw))
+}
+
+func (d *ndjsonDecoder) rawLine(raw []byte) {
+	s := string(bytes.TrimSpace(raw))
+	d.emit(s)
+	d.toTail(s)
+}
+
+func (d *ndjsonDecoder) passthrough(raw []byte) {
+	if d.beforeRaw != nil {
+		d.beforeRaw()
+	}
+	d.rawLine(raw)
+}
+
+// event parses and renders one NDJSON line.
+func (d *streamDecoder) event(raw json.RawMessage) {
 	var ev streamEvent
 	if json.Unmarshal(raw, &ev) != nil {
 		// Not an event (a stray diagnostic line) — show it as-is and let the tail see it,
 		// rather than dropping output or crashing the run on an unexpected schema.
-		d.emit(string(raw))
-		d.toTail(string(raw))
+		d.passthrough(raw)
 		return
 	}
 	switch ev.Type {
@@ -99,6 +159,8 @@ func (d *streamDecoder) event(raw []byte) {
 		// session_state_changed and any future type: nothing to show.
 	}
 }
+
+func (d *streamDecoder) lastIterResult() *iterResult { return d.last }
 
 // assistant renders an assistant turn's content: visible text (the agent talking) and tool
 // calls. Thinking blocks are skipped to keep the view about what's being done.
@@ -164,18 +226,21 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 // model, so we deliberately don't.
 func (d *streamDecoder) system(ev *streamEvent) {
 	if ev.Subtype == "init" && ev.Model != "" {
-		if d.agent == "" {
-			d.emit(ui.Dim("· model " + ev.Model))
-			return
-		}
-		// Dim the labels (· using / model / profile) but leave the values — agent, model, profile —
-		// at normal brightness, so they stand out a touch against the otherwise-faint line.
-		line := ui.Dim("· using ") + d.agent + ui.Dim(" model ") + ev.Model
-		if d.profile != "" {
-			line += ui.Dim(" profile ") + d.profile
-		}
-		d.emit(line)
+		d.emit(streamModelLine(d.agent, ev.Model, d.profile))
 	}
+}
+
+func streamModelLine(agent, model, profile string) string {
+	if agent == "" {
+		return ui.Dim("· model " + model)
+	}
+	// Dim the labels (· using / model / profile) but leave the values — agent, model, profile —
+	// at normal brightness, so they stand out a touch against the otherwise-faint line.
+	line := ui.Dim("· using ") + agent + ui.Dim(" model ") + model
+	if profile != "" {
+		line += ui.Dim(" profile ") + profile
+	}
+	return line
 }
 
 // rateLimit shows a real limit and translates it into the text the loop's detector already

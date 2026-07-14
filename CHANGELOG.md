@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Every provider streams the same live view in the loop.** Codex dumped its banner and raw exec
+  blocks, Gemini printed only errors, and Grok buffered run-on prose; each provider now enables its
+  streaming JSON mode on a TTY and decodes it into the same model line, tool glyphs, `✦` text, and
+  closing token line. Work and review stages led by Codex, Gemini, or Grok also record their token
+  usage in the run's cost telemetry; dollars remain Claude-only because the other CLIs do not
+  report cost.
+
 - **A gemini box can read the gitignored task queue.** Gemini's `read_file` rejected every
   `task.md` as "ignored by configured ignore patterns": its file tools honor `.gitignore`, while
   the queue is gitignored working state. Coop's mounted per-box settings now force
