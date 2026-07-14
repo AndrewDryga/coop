@@ -43,10 +43,31 @@ func rangeCount(repo, base string) int {
 	return n
 }
 
+// signRangeBase bounds the rewrite to work descended from base. A loop iteration may amend its
+// starting commit, making the old and new commits siblings; in that case their merge base is the
+// last commit that must remain untouched. Unrelated histories are refused rather than guessed.
+func signRangeBase(repo, base string) (string, error) {
+	if gitRun(repo, "merge-base", "--is-ancestor", base, "HEAD") == nil {
+		return base, nil
+	}
+	common := strings.Fields(gitOut(repo, "merge-base", "--all", base, "HEAD"))
+	if len(common) == 0 {
+		return "", fmt.Errorf("cannot safely re-sign work from %s: it has no common base with HEAD", base)
+	}
+	if len(common) != 1 {
+		return "", fmt.Errorf("cannot safely re-sign work from %s: it has multiple common bases with HEAD", base)
+	}
+	return common[0], nil
+}
+
 // signUnpushed re-signs base..HEAD with the host's signing config (trustedSignArgs, read from the
 // GLOBAL git config so a poisoned repo can't plant a gpg.program). -f forces the rewrite so an
 // already-signed or already-based range is still re-signed. Returns how many commits were re-signed.
 func (a *app) signUnpushed(repo, base string) (int, error) {
+	base, err := signRangeBase(repo, base)
+	if err != nil {
+		return 0, err
+	}
 	n := rangeCount(repo, base)
 	if n == 0 {
 		return 0, nil

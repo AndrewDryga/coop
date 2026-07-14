@@ -74,6 +74,43 @@ func TestHeadUnsigned(t *testing.T) {
 	// (The signed→false path shares the exact gpgsig-header check that TestSignUnpushed asserts.)
 }
 
+func TestSignRangeBase(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "iteration start")
+	iterHead := gitOut(repo, "rev-parse", "HEAD")
+
+	if got, err := signRangeBase(repo, iterHead); err != nil || got != iterHead {
+		t.Fatalf("descendant base = %q, %v; want %q", got, err, iterHead)
+	}
+	git("commit", "--amend", "-q", "--allow-empty", "-m", "review amendment")
+	if got, err := signRangeBase(repo, iterHead); err != nil || got != base {
+		t.Fatalf("amended-sibling base = %q, %v; want common base %q", got, err, base)
+	}
+
+	// Two merges with reversed parents form a criss-cross: neither shared parent is better
+	// than the other, so choosing either one would make the signing range ambiguous.
+	tree := gitOut(repo, "write-tree")
+	left := gitOut(repo, "commit-tree", tree, "-p", base, "-m", "left")
+	right := gitOut(repo, "commit-tree", tree, "-p", base, "-m", "right")
+	leftMerge := gitOut(repo, "commit-tree", tree, "-p", left, "-p", right, "-m", "left merge")
+	rightMerge := gitOut(repo, "commit-tree", tree, "-p", right, "-p", left, "-m", "right merge")
+	git("reset", "-q", "--hard", rightMerge)
+	if _, err := signRangeBase(repo, leftMerge); err == nil || !strings.Contains(err.Error(), "multiple common bases") {
+		t.Fatalf("ambiguous history error = %v; want clear multiple-common-bases failure", err)
+	}
+
+	git("checkout", "--orphan", "unrelated")
+	git("commit", "-q", "--allow-empty", "-m", "unrelated")
+	if _, err := signRangeBase(repo, iterHead); err == nil || !strings.Contains(err.Error(), "no common base") {
+		t.Fatalf("unrelated history error = %v; want clear no-common-base failure", err)
+	}
+}
+
 func TestSignUnpushed(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -147,5 +184,28 @@ func TestSignUnpushed(t *testing.T) {
 	// The base itself (pushed history) is untouched — never rewritten.
 	if gitOut(repo, "rev-parse", base+"^{commit}") == "" {
 		t.Error("the base commit should still exist (not rewritten)")
+	}
+
+	// A review may amend the commit that was HEAD when the iteration began. Re-sign the amended
+	// sibling from their common parent, preserving both the reviewed message and tree.
+	runIn("reset", "-q", "--hard", base)
+	if err := os.WriteFile(filepath.Join(repo, "reviewed.txt"), []byte("amended\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn("add", "reviewed.txt")
+	runIn("commit", "-q", "-m", "before review")
+	iterHead := gitOut(repo, "rev-parse", "HEAD")
+	runIn("commit", "--amend", "-q", "-m", "review rationale preserved")
+	if _, err := a.signUnpushed(repo, iterHead); err != nil {
+		t.Fatalf("sign amended sibling: %v", err)
+	}
+	if got := gitOut(repo, "show", "-s", "--format=%s", "HEAD"); got != "review rationale preserved" {
+		t.Errorf("signed message = %q; want review amendment", got)
+	}
+	if got := gitOut(repo, "show", "HEAD:reviewed.txt"); got != "amended" {
+		t.Errorf("signed tree content = %q; want amended", got)
+	}
+	if headUnsigned(repo) {
+		t.Error("amended sibling should carry a signature after signing")
 	}
 }
