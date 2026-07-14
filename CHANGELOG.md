@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.1.0
 
 - **The loop reports what a run cost — per task, per model, and everywhere you review it.** The
   closing digest now shows cost + tokens per shipped task and a run total; a run that spread work
