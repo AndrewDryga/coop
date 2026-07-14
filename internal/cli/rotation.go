@@ -141,6 +141,7 @@ func (a *app) rotateOnLimit(r *rotation, resetAt time.Time, waits *int, wake <-c
 	if sleep > 0 {
 		ui.Info("all %d targets are rate limited — waiting for the soonest reset", len(r.targets))
 		sleepForLimit(sleep, until, wake)
+		r.clearExpired(time.Now())
 		return agent
 	}
 	ui.Info("target %q rate limited — switching to %q", prev, r.active())
@@ -163,7 +164,7 @@ func (r *rotation) members() []string {
 func (r *rotation) rotates() bool { return len(r.targets) > 1 }
 
 // onLimit records that the active target is rate-limited until resetAt (a zero resetAt
-// means "unknown", so it backs off by attempt), then advances to the next usable target.
+// means "unknown", so it backs off by attempt), then selects the next usable target.
 // Keyed per target, so opus@work cooling leaves fable@work free. Returns the sleep before
 // the next iteration — 0 when another target is free now — and, when sleeping, the time
 // it's waiting until.
@@ -172,10 +173,18 @@ func (r *rotation) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep
 		resetAt = now.Add(limitWait(limitHint{limited: true}, attempt, now))
 	}
 	r.limited[r.targets[r.idx].String()] = resetAt
+	return r.selectTarget(attempt, now)
+}
+
+// selectTarget keeps the current rung when it is usable, otherwise advances to the first
+// usable rung in rotation order. If every rung is still cooling, it parks on the soonest
+// reset and returns the bounded wait. Expired marks are discarded as part of selection.
+func (r *rotation) selectTarget(attempt int, now time.Time) (sleep time.Duration, until time.Time) {
+	r.clearExpired(now)
 	n := len(r.targets)
-	for i := 1; i <= n; i++ {
+	for i := 0; i < n; i++ {
 		cand := (r.idx + i) % n
-		if t, ok := r.limited[r.targets[cand].String()]; !ok || !t.After(now) {
+		if _, limited := r.limited[r.targets[cand].String()]; !limited {
 			r.idx = cand
 			return 0, time.Time{}
 		}
@@ -189,6 +198,14 @@ func (r *rotation) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep
 	r.idx = earliest
 	until = r.limited[r.targets[earliest].String()]
 	return limitWait(limitHint{limited: true, resetAt: until}, attempt, now), until
+}
+
+func (r *rotation) clearExpired(now time.Time) {
+	for target, until := range r.limited {
+		if !until.After(now) {
+			delete(r.limited, target)
+		}
+	}
 }
 
 // oneOffLadder builds a single-entry ladder from a run's decomposed one-off selection — the

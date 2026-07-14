@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,6 +80,56 @@ func TestRotationUnknownResetBacksOff(t *testing.T) {
 	}
 	if sleep, _ := r.onLimit(time.Time{}, 2, now); sleep <= 0 || sleep > limitMaxWait {
 		t.Errorf("all limited w/ unknown reset: sleep=%v, want a bounded backoff", sleep)
+	}
+}
+
+func TestRotationSelectionSkipsFutureLimitAndClearsExpired(t *testing.T) {
+	now := time.Unix(1000, 0)
+	r := rts("a", "b", "c")
+	r.limited["claude@a"] = now.Add(time.Hour)
+	if sleep, _ := r.selectTarget(1, now); sleep != 0 || r.active().String() != "claude@b" {
+		t.Fatalf("future-limited a: sleep=%v active=%q, want 0 + b", sleep, r.active())
+	}
+
+	r = rts("a", "b", "c")
+	r.limited["claude@a"] = now.Add(-time.Second)
+	if sleep, _ := r.selectTarget(1, now); sleep != 0 || r.active().String() != "claude@a" {
+		t.Fatalf("expired a: sleep=%v active=%q, want 0 + a", sleep, r.active())
+	}
+	if len(r.limited) != 0 {
+		t.Errorf("expired marks not cleared: %v", r.limited)
+	}
+}
+
+func TestRememberPreflightLimitAdvancesWorkRotation(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	reset := now.Add(time.Hour)
+	r := rts("personal", "backup", "third")
+	out := fmt.Sprintf("Claude AI usage limit reached|%d", reset.Unix())
+
+	sleep, until, limited := rememberPreflightLimit(r, 1, nil, out, now)
+	if !limited || sleep != 0 || !until.IsZero() || r.active().String() != "claude@backup" {
+		t.Fatalf("preflight limit: limited=%v sleep=%v until=%v active=%q, want true, 0, zero, backup", limited, sleep, until, r.active())
+	}
+	if got := r.limited["claude@personal"]; !got.Equal(reset) {
+		t.Errorf("personal limited until %v, want %v", got, reset)
+	}
+
+	// Successful prose and output exhaustion are not provider limits and must not rotate.
+	for _, tc := range []struct {
+		name string
+		code int
+		out  string
+	}{
+		{"successful prose", 0, out},
+		{"output exhaustion", 1, "maximum output length reached"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rts("personal", "backup", "third")
+			if _, _, limited := rememberPreflightLimit(r, tc.code, nil, tc.out, now); limited || r.active().String() != "claude@personal" {
+				t.Errorf("limited=%v active=%q, want false + personal", limited, r.active())
+			}
+		})
 	}
 }
 

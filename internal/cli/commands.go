@@ -2026,8 +2026,18 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, sink, peers)
+			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, sink, peers)
 			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
+			prev := rot.active()
+			if wait, until, limited := rememberPreflightLimit(rot, pfCode, pfErr, pfOut, time.Now()); limited {
+				if wait > 0 {
+					ui.Info("all %d targets are rate limited after pre-flight — waiting for the soonest reset", len(rot.targets))
+					sleepForLimit(wait, until, wake)
+					rot.clearExpired(time.Now())
+				} else {
+					ui.Info("pre-flight target %q rate limited — starting work on %q", prev, rot.active())
+				}
+			}
 		}
 	}
 	label := strings.Join(queues, ", ")
@@ -2337,6 +2347,21 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	}
 	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
 	return loopExitCode(cf), nil
+}
+
+// rememberPreflightLimit carries a failed custom pre-flight's provider limit into the work
+// rotation. A successful pre-flight may legitimately discuss limits, and output exhaustion is
+// resumable rather than a provider limit, so neither changes target selection.
+func rememberPreflightLimit(r *rotation, code int, runErr error, out string, now time.Time) (wait time.Duration, until time.Time, limited bool) {
+	if runErr == nil && code == 0 {
+		return 0, time.Time{}, false
+	}
+	hint := detectLimit(out, now)
+	if !hint.limited || hint.outputLimited {
+		return 0, time.Time{}, false
+	}
+	wait, until = r.onLimit(hint.resetAt, 1, now)
+	return wait, until, true
 }
 
 // doneNudgeThreshold is how many done task folders accumulate before the loop's close suggests
