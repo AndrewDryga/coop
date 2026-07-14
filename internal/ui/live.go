@@ -3,14 +3,30 @@ package ui
 import (
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
 )
 
-// SpinFrames is the braille spinner cycle used by the live displays.
-var SpinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+// SpinFrames traces a one-cell orbit around the edge of a braille cell.
+var SpinFrames = []string{"⠉", "⠸", "⠤", "⠇"}
+
+// SpinnerEnabled reports whether live views should animate. Freezing keeps the live region and
+// progress updates while avoiding high-frequency terminal redraws in recordings and debuggers.
+func SpinnerEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("COOP_SPINNER")))
+	return v != "0" && v != "false"
+}
+
+// SpinFrame returns the shared orbit frame, pinned to its first cell when animation is disabled.
+func SpinFrame(spin int) string {
+	if !SpinnerEnabled() || spin < 0 {
+		spin = 0
+	}
+	return SpinFrames[spin%len(SpinFrames)]
+}
 
 // Region owns a block of lines pinned to the bottom of a terminal and repaints them in place,
 // so a status display updates without scrolling away. Update scrolls optional history lines

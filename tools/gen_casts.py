@@ -82,7 +82,7 @@ def model_line(agent="claude", model="claude-opus-4-8[1m]", credential="personal
 
 
 ICON_LLM = magenta("✦")  # streamjson.go: the agent's own voice
-SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]  # ui.SpinFrames
+SPIN = ["⠉", "⠸", "⠤", "⠇"]  # ui.SpinFrames
 
 
 def cyan(s):
@@ -228,7 +228,7 @@ class LoopBar:
         prog = green(str(self.done)) + "/%d done" % self.total
         if self.active:
             prog += " · now: " + self.active
-        return "%s %s %s %s" % (cyan(SPIN[self.spin % len(SPIN)]), bar(self.done, self.total, 20), prog, dim(el))
+        return "%s %s %s %s" % (SPIN[self.spin % len(SPIN)], bar(self.done, self.total, 20), prog, dim(el))
 
     def _paint(self, history=""):
         if self.shown:
@@ -487,7 +487,7 @@ def scene_fleet():
 
     def render(done, spin, final=False):
         running = sum(1 for _, n, total in forks if done[n] < total)
-        head_glyph = green("✓") if running == 0 else cyan(SPIN[spin % len(SPIN)])
+        head_glyph = green("✓") if running == 0 else SPIN[spin % len(SPIN)]
         rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
         for agent, n, total in forks:
             d = done[n]
@@ -497,7 +497,7 @@ def scene_fleet():
             if d >= total:
                 glyph, what, log = green("✓"), green("✓ done"), "✓ queue verified done — %d/%d" % (total, total)
             else:
-                glyph, what, log = cyan(SPIN[spin % len(SPIN)]), doing[n][d], logs[n]
+                glyph, what, log = SPIN[spin % len(SPIN)], doing[n][d], logs[n]
             rows.append(fleet_row(glyph, agent, n, d, total, what, countw=3, log=log, cost=cost))
         tot_done = sum(done.values())
         bar_line = f"{head_glyph} {bar(tot_done, 8, 27)} {tot_done}/8 tasks · {running} running · 0 blocked"

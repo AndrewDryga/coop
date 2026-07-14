@@ -190,7 +190,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 func stateGlyph(running bool, done, total, spin int) string {
 	switch {
 	case running:
-		return ui.Cyan(ui.SpinFrames[spin%len(ui.SpinFrames)])
+		return ui.SpinFrame(spin)
 	case total > 0 && done == total:
 		return ui.Green("✓")
 	default:

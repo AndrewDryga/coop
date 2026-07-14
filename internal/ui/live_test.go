@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestClip(t *testing.T) {
@@ -29,6 +30,33 @@ func TestClip(t *testing.T) {
 	}
 }
 
+func TestSpinFramesAndFreeze(t *testing.T) {
+	want := []string{"⠉", "⠸", "⠤", "⠇"}
+	if len(SpinFrames) != len(want) {
+		t.Fatalf("SpinFrames = %v, want %v", SpinFrames, want)
+	}
+	for i, frame := range want {
+		if SpinFrames[i] != frame || visible(frame) != 1 {
+			t.Errorf("SpinFrames[%d] = %q (width %d), want one-cell %q", i, SpinFrames[i], visible(frame), frame)
+		}
+	}
+
+	t.Setenv("COOP_SPINNER", "0")
+	for i := 0; i < len(SpinFrames)*2; i++ {
+		if got := SpinFrame(i); got != want[0] {
+			t.Errorf("frozen SpinFrame(%d) = %q, want %q", i, got, want[0])
+		}
+	}
+	t.Setenv("COOP_SPINNER", "false")
+	if SpinnerEnabled() {
+		t.Error("COOP_SPINNER=false should freeze animation")
+	}
+	t.Setenv("COOP_SPINNER", "1")
+	if got := SpinFrame(5); got != want[1] {
+		t.Errorf("animated SpinFrame(5) = %q, want %q", got, want[1])
+	}
+}
+
 // visible counts runes outside ANSI escapes, for asserting clip's width. A carriage return is
 // cursor motion (Region parks the cursor with one), not a visible cell.
 func visible(s string) int {
@@ -43,10 +71,11 @@ func visible(s string) int {
 			}
 			continue
 		}
-		if s[i] != '\r' {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r != '\r' {
 			n++
 		}
-		i++
+		i += size
 	}
 	return n
 }

@@ -238,7 +238,7 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin int) []string {
 func taskWatchMarker(p ui.Palette, state string, spin int) string {
 	switch state {
 	case stateInProgress:
-		return p.Yellow(ui.SpinFrames[spin%len(ui.SpinFrames)])
+		return p.Yellow(ui.SpinFrame(spin))
 	case stateBlocked:
 		return p.Red("⚑")
 	default: // todo

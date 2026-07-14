@@ -2738,9 +2738,12 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	var stop chan struct{}
 	if live {
 		stop = make(chan struct{})
-		wg.Add(2)
+		wg.Add(1)
 		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
-		go func() { defer wg.Done(); spinLoop(bar, stop) }()
+		if ui.SpinnerEnabled() {
+			wg.Add(1)
+			go func() { defer wg.Done(); spinLoop(bar, stop) }()
+		}
 	}
 	// Named --peer peers make each iteration a consult lead: box.Run then mounts exactly
 	// those peers' credentials, the coop-consult wrapper, and the second-opinion directive. A

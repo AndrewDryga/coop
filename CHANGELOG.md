@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Replace generic live-view spinners with the one-cell co:op orbit, add `COOP_SPINNER=0` for quiet debug/recording captures, and remove cyan styling from loop/fleet orbit marks.
+
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **Review receipts are bound to exact task deltas.** Between and signoff reviews now report an

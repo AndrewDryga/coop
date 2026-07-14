@@ -28,8 +28,8 @@ func TestFleetDashboard(t *testing.T) {
 			t.Errorf("dashboard missing %q\n%s", want, joined)
 		}
 	}
-	// state glyphs: running → spinner frame "⠋", all-done → ✓ done, empty queue → (no queue), idle → ◦.
-	if !strings.Contains(joined, "⠋") {
+	// state glyphs: running → first orbit frame, all-done → ✓ done, empty queue → (no queue), idle → ◦.
+	if !strings.Contains(joined, "⠉") {
 		t.Errorf("running fork should show a spinner:\n%s", joined)
 	}
 	if !strings.Contains(joined, "✓ done") {
@@ -101,7 +101,7 @@ func TestFleetDashboardCost(t *testing.T) {
 }
 
 func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
-	const spin0 = "⠋" // ui.SpinFrames[0] — what a running bar shows at spin=0
+	const spin0 = "⠉" // ui.SpinFrames[0] — what a running bar shows at spin=0
 	bar := func(rows []fleetRow) string {
 		out := fleetDashboard("repo", rows, 0)
 		return out[len(out)-1] // out = [header, "", rows…, "", bar]

@@ -45,3 +45,22 @@ func TestLoopBarReceivesUILines(t *testing.T) {
 		t.Errorf("ui.Info should funnel into the loop bar's region, got:\n%q", buf.String())
 	}
 }
+
+func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
+	saved := ui.SpinFrames
+	ui.SpinFrames = []string{"S", "T"}
+	defer func() { ui.SpinFrames = saved }()
+	t.Setenv("COOP_SPINNER", "0")
+
+	var buf bytes.Buffer
+	bar := newLoopBar(ui.NewRegion(&buf, func() int { return 80 }), time.Now(), taskCounts{Todo: 1}, "demo")
+	bar.render("")
+	bar.tick()
+	out := buf.String()
+	if strings.Contains(out, "T") || !strings.Contains(out, "S") {
+		t.Fatalf("frozen loop bar should keep its first frame, got %q", out)
+	}
+	if strings.Contains(out, "\033[36mS") {
+		t.Fatalf("loop spinner should not carry cyan styling, got %q", out)
+	}
+}
