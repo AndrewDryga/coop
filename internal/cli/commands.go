@@ -2587,10 +2587,15 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		stdoutW = io.MultiWriter(append(outWs, tail)...)
 	}
 	var stderrW io.Writer = io.MultiWriter(errWs...)
-	var geminiErr *geminiStderrFilter
-	if _, ok := dec.(*geminiStreamDecoder); ok {
-		geminiErr = newGeminiStderrFilter(stderrW)
-		stderrW = geminiErr
+	var stderrFilter *stderrLineFilter
+	switch dec.(type) {
+	case *codexStreamDecoder:
+		stderrFilter = newCodexStderrFilter(stderrW)
+	case *geminiStreamDecoder:
+		stderrFilter = newGeminiStderrFilter(stderrW)
+	}
+	if stderrFilter != nil {
+		stderrW = stderrFilter
 	}
 
 	var wg sync.WaitGroup
@@ -2623,8 +2628,8 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		dec.flush()                // before tail.String(): final events must reach the rate-limit tail
 		res = dec.lastIterResult() // result cost/turns/tokens (nil if none landed), for telemetry
 	}
-	if geminiErr != nil {
-		if flushErr := geminiErr.flush(); err == nil {
+	if stderrFilter != nil {
+		if flushErr := stderrFilter.flush(); err == nil {
 			err = flushErr
 		}
 	}

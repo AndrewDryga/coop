@@ -14,20 +14,35 @@ import (
 const (
 	geminiColorWarning = "Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience."
 	geminiYOLOWarning  = "YOLO mode is enabled. All tool calls will be automatically approved."
+	codexRouterError   = "ERROR codex_core::tools::router:"
 )
 
-// geminiStderrFilter removes two unconditional CLI notices from the live view while preserving
-// every other stderr byte, including a final line without a newline.
-type geminiStderrFilter struct {
-	out io.Writer
-	buf []byte
+// stderrLineFilter removes provider-specific noise from the live view while preserving every
+// other stderr byte, including a final line without a newline.
+type stderrLineFilter struct {
+	out  io.Writer
+	buf  []byte
+	drop func([]byte) bool
 }
 
-func newGeminiStderrFilter(out io.Writer) *geminiStderrFilter {
-	return &geminiStderrFilter{out: out}
+func newGeminiStderrFilter(out io.Writer) *stderrLineFilter {
+	return &stderrLineFilter{
+		out: out,
+		drop: func(line []byte) bool {
+			text := string(line)
+			return text == geminiColorWarning || text == geminiYOLOWarning
+		},
+	}
 }
 
-func (f *geminiStderrFilter) Write(p []byte) (int, error) {
+func newCodexStderrFilter(out io.Writer) *stderrLineFilter {
+	return &stderrLineFilter{
+		out:  out,
+		drop: func(line []byte) bool { return bytes.Contains(line, []byte(codexRouterError)) },
+	}
+}
+
+func (f *stderrLineFilter) Write(p []byte) (int, error) {
 	f.buf = append(f.buf, p...)
 	for {
 		i := bytes.IndexByte(f.buf, '\n')
@@ -42,7 +57,7 @@ func (f *geminiStderrFilter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (f *geminiStderrFilter) flush() error {
+func (f *stderrLineFilter) flush() error {
 	if len(f.buf) == 0 {
 		return nil
 	}
@@ -51,8 +66,8 @@ func (f *geminiStderrFilter) flush() error {
 	return err
 }
 
-func (f *geminiStderrFilter) writeLine(line []byte, newline bool) error {
-	if string(line) == geminiColorWarning || string(line) == geminiYOLOWarning {
+func (f *stderrLineFilter) writeLine(line []byte, newline bool) error {
+	if f.drop(line) {
 		return nil
 	}
 	if _, err := f.out.Write(line); err != nil {
@@ -73,13 +88,14 @@ type codexStreamDecoder struct {
 	root    string
 	model   string
 	tool    map[string]string
+	shown   map[string]struct{}
 	last    *iterResult
 }
 
 func newCodexStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *codexStreamDecoder {
 	d := &codexStreamDecoder{
 		agent: agent, profile: profile, root: root, model: model,
-		tool: map[string]string{},
+		tool: map[string]string{}, shown: map[string]struct{}{},
 	}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	return d
@@ -97,6 +113,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 	case "turn.started":
 	case "item.started":
 		d.itemStarted(ev.Item)
+	case "item.updated":
 	case "item.completed":
 		d.itemCompleted(ev.Item)
 	case "turn.completed":
@@ -125,13 +142,18 @@ func (d *codexStreamDecoder) showModel() {
 }
 
 func (d *codexStreamDecoder) itemStarted(item codexStreamItem) {
-	if item.Type != "command_execution" {
-		return
+	switch item.Type {
+	case "command_execution":
+		label := streamCommandLabel(item.Command)
+		shown := truncate(label, 60)
+		d.emit(streamToolLine("⚙", shown, false))
+		d.tool[item.ID] = shown
+	case "web_search":
+		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
+	case "collab_tool_call":
+		d.showItem(item, "⇢", codexCollabLabel(item.Tool))
+	case "todo_list":
 	}
-	label := streamCommandLabel(item.Command)
-	shown := truncate(label, 60)
-	d.emit(streamToolLine("⚙", shown, false))
-	d.tool[item.ID] = shown
 }
 
 func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
@@ -158,8 +180,65 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 			line += ": " + truncate(first, 60)
 		}
 		d.emit(line)
+	case "file_change":
+		d.fileChange(item)
+	case "web_search":
+		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
+	case "collab_tool_call":
+		d.showItem(item, "⇢", codexCollabLabel(item.Tool))
+	case "todo_list":
 	default:
 		d.emitUnknown(item.Type)
+	}
+}
+
+func (d *codexStreamDecoder) fileChange(item codexStreamItem) {
+	shown := false
+	for _, change := range item.Changes {
+		path := strings.TrimSpace(change.Path)
+		if path == "" {
+			continue
+		}
+		label, inside := repoRel(d.root, path)
+		d.emit(streamToolLine("✎", label, !inside))
+		shown = true
+	}
+	if !shown {
+		d.emit(streamToolLine("✎", "file change", false))
+	}
+}
+
+func (d *codexStreamDecoder) showItem(item codexStreamItem, glyph, label string) {
+	key := item.Type + "\x00" + item.ID
+	if _, ok := d.shown[key]; ok {
+		return
+	}
+	d.shown[key] = struct{}{}
+	d.emit(streamToolLine(glyph, label, false))
+}
+
+func codexWebSearchLabel(query string) string {
+	if query = strings.TrimSpace(query); query != "" {
+		return query
+	}
+	return "web search"
+}
+
+func codexCollabLabel(tool string) string {
+	tool = strings.TrimSpace(tool)
+	switch tool {
+	case "spawn_agent":
+		return "spawn agent"
+	case "send_input":
+		return "send input"
+	case "wait":
+		return "wait"
+	case "close_agent":
+		return "close agent"
+	case "":
+		return "collaboration"
+	default:
+		return strings.Join(strings.Fields(strings.ReplaceAll(tool, "_", " ")), " ")
 	}
 }
 
@@ -195,6 +274,12 @@ type codexStreamItem struct {
 	AggregatedOutput string `json:"aggregated_output"`
 	ExitCode         *int   `json:"exit_code"`
 	Text             string `json:"text"`
+	Query            string `json:"query"`
+	Tool             string `json:"tool"`
+	Changes          []struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	} `json:"changes"`
 }
 
 type codexStreamUsage struct {

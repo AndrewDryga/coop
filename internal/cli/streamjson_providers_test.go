@@ -114,23 +114,90 @@ func TestCodexStreamDecoderFailureAndUnknownItem(t *testing.T) {
 	lines := []string{
 		`{"type":"item.started","item":{"id":"bad","type":"command_execution","command":"/bin/bash -lc cd /repo && make check"}}`,
 		`{"type":"item.completed","item":{"id":"bad","type":"command_execution","command":"/bin/bash -lc cd /repo && make check","aggregated_output":"compile failed\nmore detail","exit_code":1}}`,
-		`{"type":"item.started","item":{"id":"change","type":"file_change"}}`,
-		`{"type":"item.completed","item":{"id":"change","type":"file_change"}}`,
+		`{"type":"item.started","item":{"id":"future","type":"future_item"}}`,
+		`{"type":"item.completed","item":{"id":"future","type":"future_item"}}`,
 	}
 	var out, tail bytes.Buffer
 	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
-	for _, want := range []string{"⚙ make check", "  ✗ make check: compile failed", "· file_change"} {
+	for _, want := range []string{"⚙ make check", "  ✗ make check: compile failed", "· future_item"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("rendered output missing %q: %q", want, out.String())
 		}
 	}
-	if strings.Count(out.String(), "· file_change") != 1 {
+	if strings.Count(out.String(), "· future_item") != 1 {
 		t.Errorf("paired unknown item should render once: %q", out.String())
 	}
 	if tail.Len() != 0 {
 		t.Errorf("tool events leaked into tail: %q", tail.String())
+	}
+}
+
+func TestCodexStreamDecoderNativeActivity(t *testing.T) {
+	lines := []string{
+		`{"type":"item.completed","item":{"id":"change","type":"file_change","changes":[{"path":"internal/cli/x.go","kind":"update"},{"path":"/repo/internal/cli/y.go","kind":"update"},{"path":" ","kind":"delete"}],"status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"empty-change","type":"file_change","changes":[],"status":"completed"}}`,
+		`{"type":"item.started","item":{"id":"search","type":"web_search","query":"Codex exec JSON schema","action":{}}}`,
+		`{"type":"item.completed","item":{"id":"search","type":"web_search","query":"Codex exec JSON schema","action":{}}}`,
+		`{"type":"item.completed","item":{"id":"empty-search","type":"web_search","query":"","action":{}}}`,
+		`{"type":"item.started","item":{"id":"spawn","type":"collab_tool_call","tool":"spawn_agent","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"spawn","type":"collab_tool_call","tool":"spawn_agent","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"send","type":"collab_tool_call","tool":"send_input","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"wait","type":"collab_tool_call","tool":"wait","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"close","type":"collab_tool_call","tool":"close_agent","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"other","type":"collab_tool_call","tool":"review_thread","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"empty-collab","type":"collab_tool_call","tool":"","status":"completed"}}`,
+	}
+	var out, tail bytes.Buffer
+	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	writeSplit(t, d, strings.Join(lines, "\n")+"\n")
+	d.flush()
+
+	for _, want := range []string{
+		"✎ internal/cli/x.go",
+		"✎ internal/cli/y.go",
+		"✎ file change",
+		"⌕ Codex exec JSON schema",
+		"⌕ web search",
+		"⇢ spawn agent",
+		"⇢ send input",
+		"⇢ wait",
+		"⇢ close agent",
+		"⇢ review thread",
+		"⇢ collaboration",
+	} {
+		if count := strings.Count(out.String(), want); count != 1 {
+			t.Errorf("rendered output count for %q = %d, want 1:\n%s", want, count, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "· file_change") || strings.Contains(out.String(), "· web_search") || strings.Contains(out.String(), "· collab_tool_call") {
+		t.Errorf("known Codex activity rendered as unknown:\n%s", out.String())
+	}
+	if tail.Len() != 0 {
+		t.Errorf("activity events leaked into tail: %q", tail.String())
+	}
+}
+
+func TestCodexStreamDecoderSuppressesLivePlanChurn(t *testing.T) {
+	lines := []string{
+		`{"type":"item.started","item":{"id":"todo","type":"todo_list","items":[{"text":"test","completed":false}]}}`,
+		`{"type":"item.updated","item":{"id":"todo","type":"todo_list","items":[{"text":"test","completed":true}]}}`,
+		`{"type":"item.completed","item":{"id":"todo","type":"todo_list","items":[{"text":"test","completed":true}]}}`,
+		`{"type":"item.updated","item":{"id":"future-update","type":"future_item"}}`,
+		`{"type":"item.started","item":{"id":"future","type":"future_item"}}`,
+		`{"type":"item.completed","item":{"id":"future","type":"future_item"}}`,
+	}
+	var out, tail bytes.Buffer
+	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
+	d.flush()
+
+	if got, want := out.String(), "· future_item\n"; got != want {
+		t.Errorf("rendered plan churn = %q, want only future item %q", got, want)
+	}
+	if tail.Len() != 0 {
+		t.Errorf("plan churn leaked into tail: %q", tail.String())
 	}
 }
 
@@ -261,6 +328,45 @@ func TestGeminiStderrFilter(t *testing.T) {
 	}
 	if final.Len() != 0 {
 		t.Errorf("final noise line without newline was not dropped: %q", final.String())
+	}
+}
+
+func TestCodexStderrFilter(t *testing.T) {
+	routerLine := "2026-07-13T23:00:00Z ERROR codex_core::tools::router: failed to route tool\n"
+	nearMiss := "WARN codex_core::tools::router: retrying\r\n"
+	blob := "before\r\n" + routerLine + nearMiss + "real error\nfinal without newline"
+	var out bytes.Buffer
+	f := newCodexStderrFilter(&out)
+	cut := strings.Index(blob, codexRouterError) + len("ERROR codex_core::tools")
+	if _, err := f.Write([]byte(blob[:cut])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte(blob[cut:])); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.flush(); err != nil {
+		t.Fatal(err)
+	}
+	want := "before\r\n" + nearMiss + "real error\nfinal without newline"
+	if out.String() != want {
+		t.Errorf("filtered stderr = %q, want %q", out.String(), want)
+	}
+
+	var final bytes.Buffer
+	f = newCodexStderrFilter(&final)
+	unterminated := "timestamp " + codexRouterError + " final diagnostic"
+	cut = strings.Index(unterminated, codexRouterError) + len("ERROR codex_core")
+	if _, err := f.Write([]byte(unterminated[:cut])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte(unterminated[cut:])); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if final.Len() != 0 {
+		t.Errorf("final router error without newline was not dropped: %q", final.String())
 	}
 }
 
