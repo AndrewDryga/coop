@@ -293,6 +293,9 @@ func TestLoopBetweenPrompt(t *testing.T) {
 	if !strings.Contains(p, "its folder back to 10_in_progress/") {
 		t.Errorf("the fixed context footer must trail the between prompt:\n%s", p)
 	}
+	if !strings.Contains(p, "AUDIT EVIDENCE — <id> — gate:") {
+		t.Errorf("the between prompt must request structured audit evidence:\n%s", p)
+	}
 	// A gate-defining change adds a PROTECTED CHANGE note naming the file.
 	if pg := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "Audit.", finished, []string{"Makefile"}); !strings.Contains(pg, "PROTECTED CHANGE") || !strings.Contains(pg, "Makefile") {
 		t.Errorf("a gate-file change should add the protected-change note:\n%s", pg)
@@ -406,6 +409,8 @@ func TestReviewPromptRequiresExactReceipt(t *testing.T) {
 		"REVIEW COMPLETE — PASS — reopened: none",
 		"REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>",
 		"sorted by task ID", "exact IDs", "named review subjects",
+		"authoritative review", "do NOT invoke the review-board skill or spawn another review board",
+		"focused read-only investigation",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("review prompt missing %q:\n%s", want, prompt)

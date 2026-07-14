@@ -1840,9 +1840,12 @@ func loopSignoffPrompt(repo string, queues []string, appendPrompt string, finish
 func reviewContextFooter(repo string, queues []string) string {
 	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box — reopen a task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), and note what was missing in its log.md. Execute every reopen IMMEDIATELY as you decide it (move the folder, then write the note) — never batch reopens for the end and never leave them waiting on background work: an interrupted session loses any verdict not yet written to the queue.",
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md")) +
+		" You are the authoritative review for this stage: do NOT invoke the review-board skill or spawn another review board. When evidence is missing, do focused read-only investigation yourself (inspect the code, tests, history, or run a targeted verifier)." +
 		" When you are completely finished, end your reply with exactly one receipt line and nothing after it: `REVIEW COMPLETE — PASS — reopened: none` if every subject passed, or `REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>` listing every task you moved, sorted by task ID with no spaces. The loop compares the verdict and exact IDs against the named review subjects and folders that actually moved; a missing, malformed, or mismatched receipt is re-run — never batch or defer a reopen past this line." +
 		" GATE INTEGRITY: a task that changed a gate-defining file — the Makefile/gate, .agent/project.yaml, .agent/loop.yaml, .claude/hooks/, or CI — could be passing by WEAKENING its own checker (removing an assertion, relaxing the gate, disabling a hook). Scrutinize any such change and REOPEN the task if the gate was weakened rather than the code fixed; a green gate the candidate loosened is not a pass."
 }
+
+const auditEvidencePrompt = "Before the final receipt, write exactly one compact evidence line for EACH audit subject: `AUDIT EVIDENCE — <id> — gate: <test actually run, or not run with why> — findings: <unresolved findings, or none>`. Put those lines immediately before the receipt, one per task and with no duplicates. This preserves observations for final signoff; it does not decide acceptance."
 
 // loopBetweenPrompt is the opt-in per-task audit run after each completed task. A header names
 // the task(s) the last iteration moved to done — the audit's subject, computed at fire time so
@@ -1865,6 +1868,8 @@ func loopBetweenPrompt(repo string, queues []string, setPrompt string, finished,
 			". Before anything else, verify the change did NOT weaken the checker (remove/relax an assertion, disable a hook, loosen the gate) to make the task pass; reopen it if it did.\n\n")
 	}
 	b.WriteString(strings.TrimSpace(setPrompt))
+	b.WriteString("\n\n")
+	b.WriteString(auditEvidencePrompt)
 	b.WriteString("\n\n")
 	b.WriteString(reviewContextFooter(repo, queues))
 	return b.String()
@@ -2087,6 +2092,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
 	health := newLoopHealth() // per-task risk signals (reopens, gate edits, untagged) accumulated across the run
+	audits := newAuditEvidenceStore()
 	// The signoff pass (end-of-loop) and between-tasks audits both run only under the signoff-aware
 	// agent form, not a custom work.command. Ordinary between review is opt-in; a completed task that
 	// changed a protected gate path gets the narrow built-in audit even when it is off.
@@ -2325,6 +2331,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btOut, reopenedIDs, finishedIDs); verdictErr != nil {
 							return 1, fmt.Errorf("protected-change audit for %s: %w — stopped before another task could trust the changed gate; inspect the task and re-run `coop loop`", strings.Join(finishedIDs, ", "), verdictErr)
 						}
+						if rerr == nil && !interrupted {
+							audits.capture(finishedIDs, reopenedIDs, protectedAudit, btOut)
+							audits.drop(reopenedIDs)
+						}
 					}
 				}
 			}
@@ -2408,7 +2418,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
-		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + cs.reviewBlock(health)
+		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(taskIDsOf(subjects)) + cs.reviewBlock(health)
 		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
@@ -2438,6 +2448,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Warn("signoff review inconsistent (reported %s, task delta %s) — re-running the round", receiptClaim(receipt, ok), receiptIDs(reopenedIDs))
 			continue
 		}
+		audits.drop(reopenedIDs)
 		// This round's verdict is consistent — re-anchor the baseline to the post-review done set, so
 		// the next round reviews only what re-enters done/ (reworked reopens, new completions), never
 		// a task this round just accepted. The lost-verdict path above deliberately keeps the old

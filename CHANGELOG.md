@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Final signoff receives bounded between-audit evidence.** Receipt-consistent ordinary and
+  protected audits retain a compact per-task verdict, tested gate, and unresolved findings for the
+  same loop run. Signoff treats reviewer-reported details as context, not acceptance, and stays
+  independently authoritative; review stages now also prohibit recursively invoking `review-board`
+  while permitting focused read-only investigation.
+
 - Introduce five-column Box Run beside progress bars and one-column Pocket Run in dense task rows as Coop's ASCII signature spinners; keep each live surface aligned and add `COOP_SPINNER=0` for quiet debug and recording captures.
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->

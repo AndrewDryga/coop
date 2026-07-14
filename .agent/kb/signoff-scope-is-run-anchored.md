@@ -2,7 +2,7 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/cli/commands.go]
+sources: [internal/cli/commands.go, internal/cli/loopchanges.go]
 updated: 2026-07-14
 ---
 
@@ -25,9 +25,16 @@ Accepted tradeoff, by design: done tasks from a previous CRASHED run (completed 
 off) are history to the new run and are not re-reviewed — there is no reviewed-marker to tell them
 apart, and they passed their own iteration.
 
+Completed between audits add a second, separate run-scoped handoff: `auditEvidenceStore` keeps only
+receipt-consistent per-task summaries, caps their prompt size, and drops them when signoff reopens a
+task. The receipt verdict is host-bound; gate and finding text is reviewer-reported context only, so
+signoff still independently inspects the task and runs the gate.
+
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-07-14 — documented the bounded audit-evidence handoff and rechecked its replacement/drop
+  semantics against `internal/cli/commands.go` and `internal/cli/loopchanges.go`.
 - 2026-07-14 — updated the receipt contract from a count to an exact verdict + task-id delta and
   re-verified the baseline placement against `internal/cli/commands.go`.
 - 2026-07-13 — created with the run-scoped signoff change (verified against loop()'s round logic in internal/cli/commands.go).
