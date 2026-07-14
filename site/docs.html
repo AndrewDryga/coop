@@ -732,8 +732,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <td>
                                 a read-only peer, asked as
                                 <code>coop-consult &lt;role&gt;</code> — runs the
-                                role's agent on its model, with the role's prompt
-                                as the peer's persona; it can't edit files
+                                role's target or fallback ladder, with the role's
+                                prompt as the peer's persona; it can't edit files
                             </td>
                         </tr>
                         <tr>
@@ -741,8 +741,9 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             <td>
                                 a write-capable worker via
                                 <code>coop-delegate</code>: it may edit the
-                                worktree but never commits — the lead reviews
-                                the diff, runs the gate, and commits
+                                worktree but never commits — fallback requires
+                                an unchanged clean worktree; the lead reviews the
+                                diff, runs the gate, and commits
                             </td>
                         </tr>
                     </table>
@@ -758,10 +759,10 @@ roles:
     prompt: roles/thinker.md
   critic:                         <span class="t"># read-only cross-vendor review</span>
     mode: consult
-    agent: codex
+    agent: [codex:gpt-5.6-sol, grok:grok-4.5]
   fast:                           <span class="t"># cheap, write-capable mechanical work</span>
     mode: delegate
-    agent: gemini</pre>
+    agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]</pre>
                     <div class="why">
                         <span class="why-label"
                             >What coop generates from it</span
@@ -780,6 +781,13 @@ roles:
                             target on the command line
                             (<code>claude:opus@work</code>) still overrides the
                             recipe.
+                        </p>
+                        <p>
+                            Consult and delegate ladders skip providers without
+                            mounted credentials. Every available rung's credential
+                            home is mounted in the lead box. Consult fallback replays
+                            its saved transcript; delegate fallback requires every
+                            file and Git history to remain unchanged.
                         </p>
                     </div>
                 </section>

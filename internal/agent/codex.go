@@ -265,13 +265,16 @@ tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2
 if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
 printf '%s\n' "$out" | codex_text
 printf '%s\n' "$out" | codex_peer_row "$role" "$model"
+# codex_text intentionally hides protocol JSON on success. On failure, preserve the
+# raw events so the wrapper can classify structured usageLimitExceeded/turn.failed data.
+if [ "$st" -ne 0 ]; then printf '%s\n' "$out" >&2; fi
 # Propagate codex's own exit status (timeout/error), not the codex_text pipe's 0, so a
 # consult failure is observable like claude/gemini's instead of always looking successful.
 exit "$st"`
 }
 
 func (codexAgent) ConsultResume() string {
-	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; printf '%s\n' "$out" | codex_peer_row "$role" "$model"; exit "$st"`
+	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; printf '%s\n' "$out" | codex_peer_row "$role" "$model"; if [ "$st" -ne 0 ]; then printf '%s\n' "$out" >&2; fi; exit "$st"`
 }
 
 func (codexAgent) DelegateExec() string {

@@ -256,8 +256,7 @@ func TestLeadInstructions(t *testing.T) {
 // (contract) prepended so it answers AS that role.
 func TestConsultWrapperResolvesRoles(t *testing.T) {
 	for _, want := range []string{
-		"COOP_CONSULT_${key}_AGENT",
-		"COOP_CONSULT_${key}_MODEL",
+		"COOP_CONSULT_${key}_TARGETS",
 		"COOP_CONSULT_${key}_CONTRACT",
 		`cat "$persona"`, // the role's persona is prepended to the prompt
 	} {
@@ -285,7 +284,7 @@ func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
 	if err == nil {
 		t.Fatalf("wrapper allowed an unlisted peer:\n%s", out)
 	}
-	if !strings.Contains(string(out), "not in this run's council") {
+	if !strings.Contains(string(out), "not in this run's credential scope") {
 		t.Errorf("expected the council-refusal message, got:\n%s", out)
 	}
 	// A LISTED peer clears the council gate (it then tries to run the agent, which isn't
@@ -294,6 +293,294 @@ func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
 	cmd.Env = append(os.Environ(), "COOP_PEERS=claude gemini")
 	if out, _ := cmd.CombinedOutput(); strings.Contains(string(out), "not in this run's council") {
 		t.Errorf("a listed peer must clear the council gate, got:\n%s", out)
+	}
+}
+
+func TestConsultWrapperRoleFallsBackAndContinuesSelectedRung(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "calls")
+	writeStub := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeStub("claude", `echo "claude $*" >>"$CALLS"
+echo "usage limit reached" >&2
+exit 9`)
+	writeStub("gemini", `echo "gemini $*" >>"$CALLS"
+echo "gemini-answer"`)
+	writeStub("timeout", `shift 3
+exec "$@"`)
+
+	role := "fallbacktest"
+	idfile := filepath.Join("/tmp", "coop-consult-"+strings.ToUpper(role)+".id")
+	rungfile := filepath.Join("/tmp", "coop-consult-"+strings.ToUpper(role)+".rung")
+	defer os.Remove(idfile)
+	defer os.Remove(rungfile)
+	os.Remove(idfile)
+	os.Remove(rungfile)
+	env := append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"TMPDIR="+dir,
+		"CALLS="+calls,
+		"COOP_PEERS=claude gemini",
+		"COOP_CONSULT_FALLBACKTEST_TARGETS=claude:claude-opus-4-8/xhigh gemini:gemini-3.5-flash",
+	)
+	run := func(mode, prompt string) (string, int) {
+		t.Helper()
+		cmd := exec.Command(wrapper, role, mode, prompt)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(out), exit.ExitCode()
+		}
+		t.Fatalf("run wrapper: %v", err)
+		return "", -1
+	}
+
+	out, code := run("--fresh", "question")
+	if code != 0 {
+		t.Fatalf("fresh fallback exit = %d, want 0:\n%s", code, out)
+	}
+	for _, want := range []string{"claude:claude-opus-4-8/xhigh rate limited", "starting fallback 2/2", "gemini-answer"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fresh fallback output missing %q:\n%s", want, out)
+		}
+	}
+	firstCalls, _ := os.ReadFile(calls)
+	if !strings.Contains(string(firstCalls), "claude ") || !strings.Contains(string(firstCalls), "gemini ") {
+		t.Fatalf("fresh calls did not run both rungs:\n%s", firstCalls)
+	}
+
+	if err := os.WriteFile(calls, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code = run("--continue", "delta")
+	if code != 0 || !strings.Contains(out, "continued on gemini:gemini-3.5-flash") {
+		t.Fatalf("continue selected rung = (exit %d):\n%s", code, out)
+	}
+	continuedCalls, _ := os.ReadFile(calls)
+	if strings.Contains(string(continuedCalls), "claude ") || !strings.Contains(string(continuedCalls), "gemini --approval-mode plan --resume") {
+		t.Fatalf("continue must resume only the successful Gemini rung:\n%s", continuedCalls)
+	}
+}
+
+func TestConsultWrapperContinueFallbackReplaysTranscript(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "claude-state")
+	geminiArgs := filepath.Join(dir, "gemini-args")
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("claude", `if [ ! -f "$STATE" ]; then
+  : >"$STATE"
+  echo FIRST_ANSWER
+  exit 0
+fi
+echo "rate limit exceeded" >&2
+exit 9`)
+	write("gemini", `printf '%s\n' "$@" >"$GEMINI_ARGS"
+echo FALLBACK_ANSWER`)
+	write("timeout", "shift 3\nexec \"$@\"")
+
+	for _, suffix := range []string{"id", "rung", "context"} {
+		path := filepath.Join("/tmp", "coop-consult-CONTEXTTEST."+suffix)
+		os.Remove(path)
+		defer os.Remove(path)
+	}
+	env := append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"TMPDIR="+dir,
+		"STATE="+state,
+		"GEMINI_ARGS="+geminiArgs,
+		"COOP_PEERS=claude gemini",
+		"COOP_CONSULT_CONTEXTTEST_TARGETS=claude:one gemini:two",
+	)
+	run := func(mode, prompt string) (string, int) {
+		cmd := exec.Command(wrapper, "contexttest", mode, prompt)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(out), exit.ExitCode()
+		}
+		t.Fatalf("wrapper: %v", err)
+		return "", -1
+	}
+	if out, code := run("--fresh", "FIRST_QUESTION"); code != 0 || !strings.Contains(out, "FIRST_ANSWER") {
+		t.Fatalf("initial consult = (exit %d):\n%s", code, out)
+	}
+	out, code := run("--continue", "SECOND_DELTA")
+	if code != 0 || !strings.Contains(out, "trying fallback 2/2") || !strings.Contains(out, "FALLBACK_ANSWER") {
+		t.Fatalf("continued fallback = (exit %d):\n%s", code, out)
+	}
+	args, _ := os.ReadFile(geminiArgs)
+	for _, want := range []string{"saved transcript", "FIRST_QUESTION", "FIRST_ANSWER", "SECOND_DELTA"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("fresh fallback prompt missing %q:\n%s", want, args)
+		}
+	}
+}
+
+func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
+	cases := []struct {
+		name       string
+		claudeBody string
+		geminiBody string
+		wantCode   int
+		wantGemini bool
+		wantText   string
+	}{
+		{
+			name:       "successful prose mentioning a limit",
+			claudeBody: `echo "claude $*" >>"$CALLS"; echo "rate limit handling documented"`,
+			geminiBody: `echo "gemini $*" >>"$CALLS"`,
+			wantCode:   0,
+		},
+		{
+			name:       "ordinary failure",
+			claudeBody: `echo "claude $*" >>"$CALLS"; echo "bad request while task text mentions rate limit handling" >&2; exit 7`,
+			geminiBody: `echo "gemini $*" >>"$CALLS"`,
+			wantCode:   7,
+		},
+		{
+			name:       "timeout after marker",
+			claudeBody: `echo "claude $*" >>"$CALLS"; echo "rate limit exceeded" >&2; exit 124`,
+			geminiBody: `echo "gemini $*" >>"$CALLS"`,
+			wantCode:   124,
+		},
+		{
+			name:       "all rungs limited once",
+			claudeBody: `echo "claude $*" >>"$CALLS"; echo "usage limit reached" >&2; exit 9`,
+			geminiBody: `echo "gemini $*" >>"$CALLS"; echo "RESOURCE_EXHAUSTED" >&2; exit 8`,
+			wantCode:   8,
+			wantGemini: true,
+			wantText:   "exhausted all 2 target(s)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			wrapper := filepath.Join(dir, "coop-consult")
+			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			write := func(name, body string) {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("claude", tc.claudeBody)
+			write("gemini", tc.geminiBody)
+			write("timeout", "shift 3\nexec \"$@\"")
+			calls := filepath.Join(dir, "calls")
+			role := "decisiontest"
+			idfile := filepath.Join("/tmp", "coop-consult-DECISIONTEST.id")
+			rungfile := filepath.Join("/tmp", "coop-consult-DECISIONTEST.rung")
+			defer os.Remove(idfile)
+			defer os.Remove(rungfile)
+			os.Remove(idfile)
+			os.Remove(rungfile)
+			cmd := exec.Command(wrapper, role, "--fresh", "question")
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+":"+os.Getenv("PATH"),
+				"TMPDIR="+dir,
+				"CALLS="+calls,
+				"COOP_PEERS=claude gemini",
+				"COOP_CONSULT_DECISIONTEST_TARGETS=claude:one gemini:two",
+			)
+			out, err := cmd.CombinedOutput()
+			code := 0
+			if exit, ok := err.(*exec.ExitError); ok {
+				code = exit.ExitCode()
+			} else if err != nil {
+				t.Fatalf("wrapper: %v\n%s", err, out)
+			}
+			if code != tc.wantCode {
+				t.Fatalf("exit = %d, want %d:\n%s", code, tc.wantCode, out)
+			}
+			gotCalls, _ := os.ReadFile(calls)
+			hasGemini := strings.Contains(string(gotCalls), "gemini ")
+			if hasGemini != tc.wantGemini {
+				t.Errorf("Gemini called = %v, want %v:\n%s", hasGemini, tc.wantGemini, gotCalls)
+			}
+			if strings.Count(string(gotCalls), "claude ") != 1 || strings.Count(string(gotCalls), "gemini ") > 1 {
+				t.Errorf("each rung must run at most once:\n%s", gotCalls)
+			}
+			if tc.wantText != "" && !strings.Contains(string(out), tc.wantText) {
+				t.Errorf("output missing %q:\n%s", tc.wantText, out)
+			}
+		})
+	}
+}
+
+func TestConsultWrapperValidatesEveryRungBeforeDispatch(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "calls")
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\necho called >\"$CALLS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wrapper, "guardtest", "--fresh", "question")
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"CALLS="+calls,
+		"COOP_PEERS=claude",
+		"COOP_CONSULT_GUARDTEST_TARGETS=claude:one not-a-provider:two",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "unknown peer in guardtest ladder") {
+		t.Fatalf("invalid later rung should fail validation:\n%s", out)
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatalf("first rung dispatched before the later rung was validated")
+	}
+}
+
+func TestConsultWrapperSkipsRungWithoutMountedCredentials(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"claude":  "#!/bin/sh\necho AVAILABLE_OK\n",
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command(wrapper, "scopetest", "--fresh", "question")
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"TMPDIR="+dir,
+		"COOP_PEERS=claude",
+		"COOP_CONSULT_SCOPETEST_TARGETS=claude:one gemini:two",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "skipping gemini:two") || !strings.Contains(string(out), "AVAILABLE_OK") {
+		t.Fatalf("unmounted fallback should be skipped while valid rung runs: %v\n%s", err, out)
 	}
 }
 

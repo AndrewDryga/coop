@@ -33,8 +33,8 @@ spelling of the target). A per-fork `consult: true` in `.agent/fleet.yaml` now r
 fleet up`; name peers explicitly (the fleet grammar for that lands with the preset/fleet
 unification).
 
-**Presets follow the same grammar** — `agent:` holds a target (or, for the lead, a target
-ladder); the separate `model:`/`models:` keys retire:
+**Presets follow the same grammar** — `agent:` holds a target or target ladder (native roles
+remain one Claude target); the separate `model:`/`models:` keys retire:
 
 | Retired preset shape | Use |
 | --- | --- |
@@ -46,7 +46,11 @@ across vendors on a rate limit, running each rung's agent, and an ACP session do
 re-creates the session on the new provider and carries the conversation best-effort as a labeled
 plain-text preamble). The lead (the default agent, and what a single run uses) is the first rung's
 provider. `coop fusion` refuses a cross-provider ladder (one governor for the whole council). A
-ROLE's `agent:` is exactly one target — fallback ladders belong to the lead.
+Consult and delegate ROLE ladders fail over inside their wrappers after a proven non-zero
+rate-limit response. Native roles remain one target because subagent frontmatter has no runtime
+fallback hook. Role rungs always use each provider's default account; `@account` remains lead-only.
+Unsigned-in providers are skipped, while every available rung's credential home is mounted in
+the lead box.
 
 ## v3: retired command aliases
 

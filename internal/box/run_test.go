@@ -73,6 +73,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "TZ=America/Merida",
 		"-v", "/repo:/workspace",
 		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
+		"-e", "COOP_PRIMARY=claude",
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
 		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
@@ -306,6 +307,7 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}, mounts,
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, nil, "", "")
 	for _, want := range [][]string{
+		{"-e", "COOP_PRIMARY=codex"},
 		{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"},
 		{"-v", "/tmp/coop-consult:" + fusion.ConsultWrapperPath + ":ro"},
 		{"-v", "/tmp/claude-ins:/home/node/.claude/CLAUDE.md:ro"},
@@ -660,6 +662,18 @@ func TestCredentialScopePreset(t *testing.T) {
 	if !slices.Equal(scope, []string{"claude", "codex"}) {
 		t.Errorf("one-role preset scope = %v, want [claude codex] — gemini has no role", scope)
 	}
+
+	// Every fallback provider joins the scope before the box starts; mounting only the
+	// primary rung would make a syntactically-valid ladder fail when it rotates.
+	ladderRole := &preset.Preset{Name: "fallback", LeadAgent: "claude",
+		Roles: []preset.Role{{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Ladder: []agents.Target{
+			{Provider: "codex", Model: "gpt-5.6-sol"},
+			{Provider: "gemini", Model: "gemini-3.5-flash"},
+		}}}}
+	scope = credentialScope(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: ladderRole})
+	if !slices.Equal(scope, []string{"claude", "codex", "gemini"}) {
+		t.Errorf("fallback role scope = %v, want every rung [claude codex gemini]", scope)
+	}
 }
 
 // A preset with a consult role exports COOP_PEER_MODEL_<AGENT> for scoped agents whose
@@ -760,6 +774,42 @@ func TestPresetRoleMountsRunID(t *testing.T) {
 	}
 	if containsSeq(args(""), []string{"-e", "COOP_RUN_ID="}) {
 		t.Error("an empty RunID must inject no COOP_RUN_ID")
+	}
+}
+
+func TestPresetRoleMountsExportsFallbackTargets(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node"}
+	p := &preset.Preset{LeadAgent: "claude", Roles: []preset.Role{
+		{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.6-sol", Ladder: []agents.Target{
+			{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
+			{Provider: "grok", Model: "grok-4.5", Effort: "high"},
+		}},
+		{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Ladder: []agents.Target{
+			{Provider: "gemini", Model: "gemini-3.5-flash"},
+			{Provider: "codex", Model: "gpt-5.4-mini"},
+		}},
+	}}
+	_, args, tmpFiles, tmpDirs := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude"}, "/w")
+	defer func() {
+		for _, path := range tmpFiles {
+			os.Remove(path)
+		}
+		for _, path := range tmpDirs {
+			os.RemoveAll(path)
+		}
+	}()
+	for _, want := range [][]string{
+		{"-e", "COOP_CONSULT_CRITIC_TARGETS=codex:gpt-5.6-sol/xhigh grok:grok-4.5/high"},
+		{"-e", "COOP_DELEGATE_FAST_TARGETS=gemini:gemini-3.5-flash codex:gpt-5.4-mini"},
+	} {
+		if !containsSeq(args, want) {
+			t.Errorf("role mount args missing %v: %v", want, args)
+		}
+	}
+	for _, retired := range []string{"COOP_CONSULT_CRITIC_AGENT", "COOP_CONSULT_CRITIC_MODEL", "COOP_DELEGATE_FAST_AGENT", "COOP_DELEGATE_FAST_MODEL"} {
+		if strings.Contains(strings.Join(args, "\n"), retired) {
+			t.Errorf("role mount still exports retired singleton env %s: %v", retired, args)
+		}
 	}
 }
 

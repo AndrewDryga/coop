@@ -26,13 +26,12 @@ lead:
 # account; only the lead rotates accounts. Every field is documented below.
 roles:
   thinker:
-    # mode: consult — a READ-ONLY peer via coop-consult (a consult is one wrapper
-    # call, so a role takes ONE target; fallback ladders belong to the lead above).
+    # mode: consult — a READ-ONLY peer via coop-consult. Its agent may be one
+    # target or a fallback ladder; only a failed rate-limit response advances it.
     mode: consult
-    # agent — a target: provider[:model][/effort], ONE target (fallback ladders belong to
-    # the lead). Terra at xhigh: near-frontier deep thinking without burning the Sol/Fable
-    # quota the lead and the final review run on; its Opus 4.8 twin covers the same duty
-    # in .agent/loop.yaml ladders.
+    # agent — a target or fallback list: provider[:model][/effort]. Terra at xhigh:
+    # near-frontier deep thinking without burning the Sol/Fable quota the lead and
+    # final review run on; its Opus 4.8 twin covers the same duty in loop ladders.
     agent: codex:gpt-5.6-terra/xhigh
     # when — OPTIONAL routing hints; the lead's cue for what to route here.
     when: [architecture, debugging, security, code-review, before-commit]
@@ -43,7 +42,7 @@ roles:
     # mode: consult — a READ-ONLY peer via coop-consult for a second opinion;
     # it cannot edit files.
     mode: consult
-    # agent — a target: provider[:model][/effort] (omit the model for the agent's default).
+    # agent — a target or fallback list: provider[:model][/effort].
     # Grok 4.5: the second critical opinion from OUTSIDE the claude+codex pair doing the
     # work — a third vendor's blind spots, for one-way doors and security calls.
     agent: grok:grok-4.5/high
@@ -54,9 +53,9 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — a target: provider[:model][/effort]. Luna at xhigh: the fast tier's
-    # lead hands (its Opus 4.8 twin backs the fast tier in .agent/loop.yaml, where
-    # ladders are legal — a role takes one target).
+    # agent — a target or fallback list: provider[:model][/effort]. Luna at xhigh:
+    # the fast tier's lead hands; a fallback runs only if a limited rung left every
+    # file and Git history unchanged.
     agent: codex:gpt-5.6-luna/xhigh
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]

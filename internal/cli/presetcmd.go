@@ -113,12 +113,24 @@ func (a *app) showPreset(repo, name string) (int, error) {
 	}
 	fmt.Println(lead)
 	for _, r := range p.Roles {
-		line := fmt.Sprintf("  %s  %s %s", pal.Bold(padRight(r.Name, 10)), r.Mode, r.Agent)
+		line := fmt.Sprintf("  %s  %s", pal.Bold(padRight(r.Name, 10)), r.Mode)
+		ladder := r.TargetLadder()
+		if len(ladder) > 1 {
+			targets := make([]string, len(ladder))
+			for i, target := range ladder {
+				targets[i] = target.String()
+			}
+			line += pal.Dim("  ladder ") + strings.Join(targets, ", ")
+		} else {
+			line += " " + r.Agent
+		}
 		if r.Subagent != "" {
 			line += pal.Dim("  @") + r.Subagent
 		}
-		if kind, value := roleTuning(r); kind != "" {
-			line += pal.Dim("  "+kind+" ") + value
+		if len(ladder) <= 1 {
+			if kind, value := roleTuning(r); kind != "" {
+				line += pal.Dim("  "+kind+" ") + value
+			}
 		}
 		if len(r.When) > 0 {
 			line += pal.Dim("  for: " + strings.Join(r.When, ", "))

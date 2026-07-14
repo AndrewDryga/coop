@@ -64,8 +64,9 @@ roles:
     # mode: consult — a READ-ONLY peer for a second opinion (often another
     # vendor), asked as coop-consult critic; it cannot edit files.
     mode: consult
-    # agent — a target: provider[:model][/effort] (one of claude, codex, gemini). The model is
-    # optional; omit it (agent: codex) for the agent's default.
+    # agent — a target or fallback LIST: provider[:model][/effort]. A failed consult advances
+    # only on a proven rate limit; each provider uses its default account. Unsigned-in rungs skip.
+    # Example: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
     agent: codex:gpt-5.6-sol/xhigh
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
@@ -76,8 +77,9 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — a target: provider[:model] (one of claude, codex, gemini); omit the model
-    # (agent: gemini) for the agent's default.
+    # agent — a target or fallback LIST: provider[:model][/effort]. Delegate fallback is
+    # allowed only while every file and Git history remain unchanged after the limited rung.
+    # Example: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
     agent: gemini:gemini-3.5-flash
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]

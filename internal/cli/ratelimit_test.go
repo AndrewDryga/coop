@@ -210,7 +210,7 @@ func TestDecideIteration(t *testing.T) {
 
 	// Consecutive rate-limit waits stop at the cap.
 	fails, waits = 0, maxLimitWaits
-	if a, _, _ := decideIteration(1, nil, "rate limit", now, &fails, &waits, &retries); a != actStop {
+	if a, _, _ := decideIteration(1, nil, "rate limit exceeded", now, &fails, &waits, &retries); a != actStop {
 		t.Errorf("at limit cap: action = %d, want actStop", a)
 	}
 

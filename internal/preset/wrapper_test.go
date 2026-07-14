@@ -76,12 +76,257 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 	}
 	h.env = append(os.Environ(),
 		"PATH="+h.dir+":"+os.Getenv("PATH"),
-		"COOP_DELEGATE_FAST_AGENT=gemini",
-		"COOP_DELEGATE_FAST_MODEL=gemini-3.5-flash",
+		"COOP_DELEGATE_FAST_TARGETS=gemini:gemini-3.5-flash",
 		"COOP_DELEGATE_FAST_CONTRACT="+contract,
 		"COOP_DELEGATE_LOCK="+h.lock,
+		"COOP_PRIMARY=claude",
+		"COOP_PEERS=codex gemini grok",
 	)
 	return h
+}
+
+func TestDelegateWrapperFallsBackOnRateLimit(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex:gpt-5.6-sol/xhigh gemini:gemini-3.5-flash")
+	h.stub("codex", "echo codex >>"+calls+"; echo 'usage limit reached' >&2; exit 9")
+	h.stub("gemini", "echo gemini >>"+calls+"; echo fallback-work")
+	out, code := h.run("fast", "Implement the thing")
+	if code != 0 {
+		t.Fatalf("exit = %d, want fallback success:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\ngemini\n" {
+		t.Fatalf("calls = %q, want rung 0 then rung 1", got)
+	}
+	for _, want := range []string{"codex:gpt-5.6-sol/xhigh rate limited", "done on gemini:gemini-3.5-flash"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDelegateWrapperDoesNotFallbackOnOrdinaryFailure(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo codex >>"+calls+"; echo ordinary-failure >&2; exit 7")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if code != 7 {
+		t.Fatalf("exit = %d, want original failure 7:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\n" {
+		t.Fatalf("calls = %q, want no fallback", got)
+	}
+}
+
+func TestDelegateWrapperStopsFallbackAfterEdit(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo codex >>"+calls+"; echo partial > partial.txt; echo 'rate limit exceeded' >&2; exit 8")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if code != 8 || !strings.Contains(out, "after changing the worktree") {
+		t.Fatalf("changed-tree limit = (exit %d), want safe refusal:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\n" {
+		t.Fatalf("calls = %q, want no fallback after an edit", got)
+	}
+}
+
+func TestDelegateWrapperStopsFallbackAfterIgnoredEdit(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	if err := os.WriteFile(filepath.Join(h.repo, ".gitignore"), []byte("ignored-state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", ".gitignore"}, {"commit", "-qm", "ignore fixture"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = h.repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo codex >>"+calls+"; echo changed > ignored-state; echo 'rate limit exceeded' >&2; exit 8")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if code != 8 || !strings.Contains(out, "changing ignored files") {
+		t.Fatalf("ignored edit = (exit %d), want safe refusal:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\n" {
+		t.Fatalf("calls = %q, want no fallback after ignored edit", got)
+	}
+}
+
+func TestDelegateWrapperStopsFallbackAfterCommitAndReset(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo codex >>"+calls+"; git commit --allow-empty -qm transient; git reset --hard HEAD^ >/dev/null; echo 'rate limit exceeded' >&2; exit 8")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if code != 8 || !strings.Contains(out, "Git history") {
+		t.Fatalf("commit-reset = (exit %d), want reflog refusal:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\n" {
+		t.Fatalf("calls = %q, want no fallback after commit-reset", got)
+	}
+}
+
+func TestDelegateWrapperFailsClosedWhenGitStatusFails(t *testing.T) {
+	h := newDelegateHarness(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim := "#!/bin/sh\nif [ \"$1\" = status ]; then exit 70; fi\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(h.dir, "git"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo codex >>"+calls+"; echo 'rate limit exceeded' >&2; exit 8")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if code != 8 || !strings.Contains(out, "could not be verified") {
+		t.Fatalf("git status failure = (exit %d), want fail-closed refusal:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\n" {
+		t.Fatalf("calls = %q, want no fallback when Git inspection fails", got)
+	}
+}
+
+func TestDelegateWrapperReleasesLockWhenAttemptDirFails(t *testing.T) {
+	h := newDelegateHarness(t)
+	notDir := filepath.Join(h.dir, "not-a-directory")
+	if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.env = append(h.env, "TMPDIR="+notDir)
+	h.stub("gemini", "")
+	out, code := h.run("fast", "task")
+	if code != 2 || !strings.Contains(out, "cannot create attempt directory") {
+		t.Fatalf("attempt-dir failure = (exit %d):\n%s", code, out)
+	}
+	if _, err := os.Stat(h.lock); !os.IsNotExist(err) {
+		t.Fatalf("delegate lock leaked after attempt-dir failure: %v", err)
+	}
+}
+
+func TestDelegateWrapperStopsFallbackFromDirtyBaseline(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	if err := os.WriteFile(filepath.Join(h.repo, "existing.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.stub("codex", "echo codex >>"+calls+"; echo 'rate limit exceeded' >&2; exit 6")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if code != 6 || !strings.Contains(out, "worktree was already dirty") {
+		t.Fatalf("dirty-tree limit = (exit %d), want safe refusal:\n%s", code, out)
+	}
+	got, _ := os.ReadFile(calls)
+	if string(got) != "codex\n" {
+		t.Fatalf("calls = %q, want no fallback from dirty baseline", got)
+	}
+}
+
+func TestDelegateWrapperFallbackDecisionMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		codexBody  string
+		geminiBody string
+		wantCode   int
+		wantGemini bool
+		wantText   string
+	}{
+		{
+			name:       "successful prose mentioning a limit",
+			codexBody:  `echo codex >>"$CALLS"; echo "rate limit handling documented"`,
+			geminiBody: `echo gemini >>"$CALLS"`,
+			wantCode:   0,
+		},
+		{
+			name:       "failed prose mentioning a limit",
+			codexBody:  `echo codex >>"$CALLS"; echo "failed while task text mentions rate limit handling"; exit 7`,
+			geminiBody: `echo gemini >>"$CALLS"`,
+			wantCode:   7,
+		},
+		{
+			name:       "all rungs limited once",
+			codexBody:  `echo codex >>"$CALLS"; echo "usage limit reached" >&2; exit 9`,
+			geminiBody: `echo gemini >>"$CALLS"; echo "RESOURCE_EXHAUSTED" >&2; exit 8`,
+			wantCode:   8,
+			wantGemini: true,
+			wantText:   "FAILED on gemini:two",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newDelegateHarness(t)
+			calls := filepath.Join(h.dir, "calls")
+			h.env = append(h.env,
+				"CALLS="+calls,
+				"COOP_DELEGATE_FAST_TARGETS=codex:one gemini:two",
+			)
+			h.stub("codex", tc.codexBody)
+			h.stub("gemini", tc.geminiBody)
+			out, code := h.run("fast", "task")
+			if code != tc.wantCode {
+				t.Fatalf("exit = %d, want %d:\n%s", code, tc.wantCode, out)
+			}
+			gotCalls, _ := os.ReadFile(calls)
+			hasGemini := strings.Contains(string(gotCalls), "gemini")
+			if hasGemini != tc.wantGemini {
+				t.Errorf("Gemini called = %v, want %v:\n%s", hasGemini, tc.wantGemini, gotCalls)
+			}
+			if strings.Count(string(gotCalls), "codex") != 1 || strings.Count(string(gotCalls), "gemini") > 1 {
+				t.Errorf("each rung must run at most once:\n%s", gotCalls)
+			}
+			if tc.wantText != "" && !strings.Contains(out, tc.wantText) {
+				t.Errorf("output missing %q:\n%s", tc.wantText, out)
+			}
+		})
+	}
+}
+
+func TestDelegateWrapperValidatesEveryRungBeforeDispatch(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex:one not-a-provider:two", "CALLS="+calls)
+	h.stub("codex", `echo called >"$CALLS"`)
+	out, code := h.run("fast", "task")
+	if code != 2 || !strings.Contains(out, "unknown agent") {
+		t.Fatalf("invalid later rung = (exit %d), want validation failure:\n%s", code, out)
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatal("first rung dispatched before the later rung was validated")
+	}
+}
+
+func TestDelegateWrapperSkipsRungWithoutMountedCredentials(t *testing.T) {
+	h := newDelegateHarness(t)
+	for i, entry := range h.env {
+		if strings.HasPrefix(entry, "COOP_DELEGATE_FAST_TARGETS=") {
+			h.env[i] = "COOP_DELEGATE_FAST_TARGETS=claude:one codex:two"
+		}
+		if strings.HasPrefix(entry, "COOP_PEERS=") {
+			h.env[i] = "COOP_PEERS=gemini"
+		}
+	}
+	h.stub("claude", "echo AVAILABLE_OK")
+	out, code := h.run("fast", "task")
+	if code != 0 || !strings.Contains(out, "skipping codex:two") || !strings.Contains(out, "AVAILABLE_OK") {
+		t.Fatalf("unmounted fallback should be skipped while valid rung runs (exit %d):\n%s", code, out)
+	}
 }
 
 // stub installs a fake agent binary that records its argv, then runs extra script.
@@ -130,7 +375,7 @@ func TestDelegateWrapperRunsRole(t *testing.T) {
 func TestDelegateWrapperRejects(t *testing.T) {
 	h := newDelegateHarness(t)
 	h.stub("gemini", "")
-	// A role with no COOP_DELEGATE_<ROLE>_AGENT export isn't a delegate role.
+	// A role with no COOP_DELEGATE_<ROLE>_TARGETS export isn't a delegate role.
 	if out, code := h.run("ghost", "x"); code != 2 || !strings.Contains(out, "unknown delegate role") {
 		t.Errorf("unknown role: (code=%d)\n%s", code, out)
 	}

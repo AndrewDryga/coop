@@ -3,6 +3,7 @@ package preset
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -120,7 +121,9 @@ func TestLoadValidation(t *testing.T) {
 		{"bad account in lead target", "lead: {agent: \"claude:opus@../x\"}", nil, "invalid account"},
 		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, "empty account"},
 		{"role model unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "malformed YAML"},
-		{"role ladder is lead-only", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: [codex, gemini]}}", nil, "a role runs ONE target"},
+		{"empty role ladder", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: []}}", nil, "empty list"},
+		{"native role ladder rejected", "lead: {agent: claude}\nroles: {r: {mode: native, agent: [claude:sonnet, claude:opus]}}", nil, "subagent frontmatter has no fallback hook"},
+		{"role ladder map entry rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: [codex, {p: gemini}]}}", nil, "agent[1] must be a target"},
 		{"role agent map rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: {p: codex}}}", nil, "not a map"},
 		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
 		{"role credentials unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "malformed YAML"},
@@ -145,6 +148,42 @@ func TestLoadValidation(t *testing.T) {
 				t.Errorf("error = %v, want it to contain %q", err, c.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadRoleFallbackLadder(t *testing.T) {
+	repo := writePreset(t, "ladder", `
+lead: {agent: claude}
+roles:
+  critic:
+    mode: consult
+    agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high, gemini]
+`, nil)
+	p, err := Load(repo, "", "ladder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Roles) != 1 {
+		t.Fatalf("roles = %+v, want one", p.Roles)
+	}
+	r := p.Roles[0]
+	want := []string{"codex:gpt-5.6-sol/xhigh", "grok:grok-4.5/high", "gemini"}
+	if len(r.TargetLadder()) != len(want) {
+		t.Fatalf("role ladder = %v, want %v", r.TargetLadder(), want)
+	}
+	for i, target := range r.TargetLadder() {
+		if got := target.String(); got != want[i] {
+			t.Errorf("role ladder[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+	if r.Agent != "codex" || r.Model != "gpt-5.6-sol" || r.Effort != "xhigh" {
+		t.Errorf("primary projection = %s:%s/%s, want first rung", r.Agent, r.Model, r.Effort)
+	}
+	if got := r.TargetList(); got != strings.Join(want, " ") {
+		t.Errorf("TargetList = %q, want %q", got, strings.Join(want, " "))
+	}
+	if got := p.RoleAgents(); !slices.Equal(got, []string{"codex", "grok", "gemini"}) {
+		t.Errorf("RoleAgents = %v, want every fallback provider", got)
 	}
 }
 

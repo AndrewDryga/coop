@@ -459,7 +459,9 @@ Each run mounts only the **launched agent's** credentials: `coop claude` mounts
 The exceptions are the modes where the lead is explicitly told to call its peers —
 `coop fusion <gov> --peer …` and `coop <agent> --peer <peer>…` (and forks) — which
 also mount the **named** peers so they can be consulted read-only (only those you
-name, never everyone signed in). Raw runs (`coop run`,
+name, never everyone signed in). A preset is explicit too: every signed-in provider
+named by a consult/delegate role ladder is mounted for that role; unavailable rungs are
+skipped. Raw runs (`coop run`,
 `coop shell`) and maintenance runs (the merge gate, `coop doctor`) mount no agent
 credentials at all. `coop login <agent>` mounts only the agent being signed in.
 
@@ -656,12 +658,12 @@ roles:
 
   critic:                          # independent critique from another vendor, read-only
     mode: consult
-    agent: codex:gpt-5.6-sol/xhigh # a role runs on its agent's default account (no @account)
+    agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
     when: [plan-review, security, tradeoffs]
 
   fast:                           # cheap mechanical work, write-capable
     mode: delegate
-    agent: gemini:gemini-3.5-flash
+    agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never                 # it edits; the LEAD reviews the diff, gates, commits
     concurrent: never             # delegate runs are serialized
@@ -689,8 +691,13 @@ and its role-addressed invocation (`@coop-thinker`, `coop-consult critic --fresh
 generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
 `subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A **consult**
-role runs its agent on the role's model, and the role's prompt (if any) is the persona the
-peer adopts — so two consult roles on one agent stay distinct. Native roles run inside the
+role accepts one target or a fallback list. Its wrapper advances only after a failed command
+proves a rate limit; ordinary failures stay visible. Consult continuity follows the successful
+rung and replays its saved transcript if the next provider must start fresh. A delegate advances
+only from a clean worktree when the limited rung changed neither files (ignored ones included)
+nor Git history. Providers without mounted credentials are skipped. Every available rung's
+credential home is mounted for the lead box. The role's prompt (if any) is the persona the peer adopts — so
+two consult roles on one agent stay distinct. Native roles run inside the
 lead's session, so under a `codex`/`gemini` lead they **degrade to exactly such a consult** —
 same model and persona, `coop-consult <role>` instead of in-session — so a non-Claude lead
 still gets Claude's deep reasoning.

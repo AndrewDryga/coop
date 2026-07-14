@@ -20,7 +20,7 @@ func presetsRepo(t *testing.T) string {
 	}
 	yaml := "lead: {agent: claude:claude-fable-5@work}\n" +
 		"roles:\n" +
-		"  critic: {mode: consult, agent: codex:gpt-5.6-sol/xhigh}\n" +
+		"  critic: {mode: consult, agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]}\n" +
 		"  fast: {mode: delegate, agent: gemini:gemini-3.5-flash, when: [boilerplate]}\n"
 	if err := os.WriteFile(filepath.Join(good, "preset.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult codex", "model gpt-5.6-sol/xhigh", "delegate gemini", "model gemini-3.5-flash", "for: boilerplate", "coop loop frontier"} {
+	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult", "ladder codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high", "delegate gemini", "model gemini-3.5-flash", "for: boilerplate", "coop loop frontier"} {
 		if !strings.Contains(show, want) {
 			t.Errorf("show missing %q:\n%s", want, show)
 		}

@@ -65,14 +65,14 @@ func roleContract(r *Role, lead string) string {
 		fmt.Fprintf(&b, "Invoke it as the @%s subagent in your own session — it thinks inside your\n", SubagentName(r))
 		b.WriteString("context; you weigh its conclusion and act on it yourself.\n")
 	case ModeConsult:
-		fmt.Fprintf(&b, "## %s — read-only consult (%s, %s)\n", r.Name, r.Agent, model)
+		fmt.Fprintf(&b, "## %s — read-only consult (%s)\n", r.Name, roleRunner(r, model))
 		writeWhen(&b, r.When)
 		b.WriteString("Ask it at the moments that are expensive to get wrong — a plan you're about to\n")
 		b.WriteString("execute, a security-sensitive change, a tradeoff you're about to lock in.\n")
 		b.WriteString("It analyses and reports; it NEVER edits a file or runs a mutating command. Ask it:\n\n")
 		fmt.Fprintf(&b, "  coop-consult %s --fresh \"<a self-contained prompt: your question + the context needed to answer it>\"\n", r.Name)
 	case ModeDelegate:
-		fmt.Fprintf(&b, "## %s — write-capable delegate (%s, %s)\n", r.Name, r.Agent, model)
+		fmt.Fprintf(&b, "## %s — write-capable delegate (%s)\n", r.Name, roleRunner(r, model))
 		writeWhen(&b, r.When)
 		b.WriteString("The lead's DEFAULT implementer for mechanical work — anything specifiable\n")
 		b.WriteString("exactly in a few sentences: boilerplate, repetitive edits, scaffolding,\n")
@@ -93,6 +93,18 @@ func roleContract(r *Role, lead string) string {
 		b.WriteString("\n" + r.PromptText + "\n")
 	}
 	return b.String()
+}
+
+func roleRunner(r *Role, primaryModel string) string {
+	ladder := r.TargetLadder()
+	if len(ladder) <= 1 {
+		return r.Agent + ", " + primaryModel
+	}
+	targets := make([]string, len(ladder))
+	for i, target := range ladder {
+		targets[i] = target.String()
+	}
+	return "fallback " + strings.Join(targets, " -> ")
 }
 
 func writeWhen(b *strings.Builder, when []string) {

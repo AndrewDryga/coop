@@ -162,7 +162,7 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
          coop presets init [name]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
-  work to — each role an agent: target (provider[:model][/effort]) + routing hints. The lead's
+  work to — each role an agent: target or fallback list + routing hints. The lead's
   agent: is a target, or a fallback ladder (even CROSS-PROVIDER, [claude:fable, codex:gpt-5.6-sol]):
   a bare provider:model runs on EVERY signed-in account (rotating on a rate limit),
   provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
@@ -187,7 +187,7 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
       # a target, or a ladder (cross-provider ok) — frontier models at xhigh effort
       agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
       prompt: roles/lead.md                 # Optional Markdown, appended to the generated contract.
-    roles:                                  # agent: is a target — provider[:model][/effort], default account
+    roles:                                  # consult/delegate agent: may be a fallback list; default accounts
       thinker:                              # native Claude subagent — deep thinking in-session
         mode: native
         agent: claude:claude-opus-4-8/xhigh # model + effort ride agent: (generates coop-thinker)
@@ -195,11 +195,11 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
         prompt: roles/thinker.md            # its system prompt (or set subagent: <name> to reuse one)
       critic:                               # read-only peer via coop-consult
         mode: consult
-        agent: codex:gpt-5.6-sol/xhigh      # omit :model/effort for the agent's defaults
+        agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
         when: [plan-review, security]
       fast:                                 # write-capable delegate via coop-delegate
         mode: delegate
-        agent: gemini:gemini-3.5-flash
+        agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
         when: [boilerplate, bulk-edits, test-scaffolding]
         commit: never                       # the delegate edits; the LEAD reviews, gates, commits
         concurrent: never                   # delegate runs are serialized
@@ -210,8 +210,13 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   append to the generated text, never replace it. A native role generates a coop-<role>
   Claude subagent in the box from itself (its model + when + prompt) — never written to
   your repo; set subagent: <name> to reference an existing .claude/agents/ subagent
-  instead. A consult role runs its agent on the role's model, and the role's prompt (if
-  any) is the persona the peer adopts. Native roles run inside the lead's session, so
+  instead. Consult/delegate ladders advance once per target only after a failed command
+  proves a rate limit; ordinary failures stay visible. A delegate advances only from a
+  clean worktree when the limited rung left every file and Git history unchanged. A consult
+  remembers its successful rung and transcript for --continue. Providers without mounted
+  credentials are skipped; every available rung's credential home is mounted in the lead box.
+  The role's prompt (if any) is its persona.
+  Native roles run inside the lead's session, so
   under a codex/gemini/grok lead they degrade to exactly such a consult (same model + persona),
   coop-consult <role> instead of @coop-<role>.
   A delegate may edit the worktree but must not commit — coop-delegate fails loud if HEAD

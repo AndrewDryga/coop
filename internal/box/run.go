@@ -449,7 +449,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 	}
 	// coop-delegate: a preset with a write-capable delegate role mounts the wrapper (on
 	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*
-	// env the wrapper resolves a role's agent/model/contract from — so the box needs no
+	// env the wrapper resolves a role's target ladder/contract from — so the box needs no
 	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
 	if spec.Preset.HasDelegate() {
 		if p, err := writeTempFile(preset.DelegateWrapper()); err != nil {
@@ -469,13 +469,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 					mounts = append(mounts, extraMount{cp, dst})
 					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst)
 				}
-				extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_AGENT="+role.Agent)
-				if role.Model != "" {
-					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_MODEL="+role.Model)
-				}
-				if role.Effort != "" {
-					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_EFFORT="+role.Effort)
-				}
+				extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_TARGETS="+role.TargetList())
 			}
 		}
 	}
@@ -520,13 +514,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 				extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
 			}
 		}
-		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_AGENT="+role.Agent)
-		if role.Model != "" {
-			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_MODEL="+role.Model)
-		}
-		if role.Effort != "" {
-			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_EFFORT="+role.Effort)
-		}
+		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_TARGETS="+role.TargetList())
 	}
 	return
 }
@@ -1041,6 +1029,12 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 			}
 		}
 		args = append(args, modelEnvArgs(cfg, spec, scope)...)
+		// COOP_PRIMARY plus COOP_PEERS describe the mounted credential scope to role wrappers.
+		// Direct consults are still restricted to peers; preset roles may deliberately use the
+		// primary provider as one rung, so they validate against both.
+		if len(scope) > 0 {
+			args = append(args, "-e", "COOP_PRIMARY="+scope[0])
+		}
 		// COOP_PEERS is the space-separated peer set (scope minus the lead) — exactly the agents
 		// whose credentials this box mounts as peers. The in-box coop-consult refuses any target
 		// not in it, so a compromised lead can't consult (and thus can't drive) an agent the run

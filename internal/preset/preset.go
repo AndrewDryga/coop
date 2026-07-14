@@ -30,14 +30,16 @@ const (
 	ModeDelegate = "delegate" // a write-capable delegate via coop-delegate
 )
 
-// Role is one named role in a preset. A role has no credentials — it runs on its agent's
-// default (marked) account and never rotates; only the LEAD rotates (see LeadLadder).
+// Role is one named role in a preset. Consult and delegate roles may carry an ordered
+// fallback ladder; every rung uses that provider's default account. Agent/Model/Effort
+// project the first rung for native-role generation, contracts, and compact displays.
 type Role struct {
 	Name       string
-	Mode       string   // native | consult | delegate
-	Agent      string   // known agent
-	Model      string   // optional model id ("" = the agent's own default)
-	Effort     string   // optional reasoning-effort level ("" = the agent's own default)
+	Mode       string // native | consult | delegate
+	Agent      string // known agent
+	Model      string // optional model id ("" = the agent's own default)
+	Effort     string // optional reasoning-effort level ("" = the agent's own default)
+	Ladder     []agents.Target
 	When       []string // routing hints injected into the lead contract
 	Subagent   string   // native only, OPTIONAL: reference an existing subagent; empty ⇒ coop generates coop-<Name>
 	PromptText string   // roles/<name>.md content, appended to the generated contract
@@ -139,8 +141,7 @@ type yamlLead struct {
 
 type yamlRole struct {
 	Mode string `yaml:"mode"`
-	// Agent is a TARGET: provider[:model] (the model rides here; no @account). Decoded as a
-	// node so a LIST gets a purposeful "one target per role" error, not a raw yaml type error.
+	// Agent is a TARGET or, for consult/delegate, a fallback ladder. Accounts are not allowed.
 	Agent      yaml.Node `yaml:"agent"`
 	When       []string  `yaml:"when"`
 	Prompt     string    `yaml:"prompt"`
@@ -295,31 +296,40 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	default:
 		return r, bad("mode %q is not one of native, consult, delegate", y.Mode)
 	}
+	var rawTargets []string
 	switch y.Agent.Kind {
 	case yaml.ScalarNode:
+		rawTargets = []string{y.Agent.Value}
 	case 0:
 		return r, bad("agent is required — a target: provider[:model] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
 	case yaml.SequenceNode:
-		// Not a parse gap — a deliberate boundary: nothing rotates a role (a consult/delegate is
-		// one wrapper call; only the lead's loop rotates), so accepting a ladder here would be
-		// dead config that looks like failover.
-		return r, bad("agent: is a list — a role runs ONE target; fallback ladders belong to the lead (lead.agent)")
+		if len(y.Agent.Content) == 0 {
+			return r, bad("agent is an empty list — name at least one target, or write a single one")
+		}
+		if r.Mode == ModeNative {
+			return r, bad("agent is a list, but mode: native accepts one Claude target — subagent frontmatter has no fallback hook; use mode: consult or delegate for a ladder")
+		}
+		for i, node := range y.Agent.Content {
+			if node.Kind != yaml.ScalarNode {
+				return r, bad("agent[%d] must be a target (provider[:model]), not a map or list", i)
+			}
+			rawTargets = append(rawTargets, node.Value)
+		}
 	default:
-		return r, bad("agent: must be a target (provider[:model]), not a map")
+		return r, bad("agent must be a target (provider[:model]) or a list of targets, not a map")
 	}
-	if y.Agent.Value == "" {
-		return r, bad("agent is required — a target: provider[:model] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
+	for i, raw := range rawTargets {
+		t, terr := agents.ParseTarget(raw)
+		if terr != nil {
+			return r, bad("agent[%d] %q: %v", i, raw, terr)
+		}
+		if len(t.Accounts) > 0 {
+			return r, bad("agent[%d] %q pins an account — roles use each provider's default account; drop the @account", i, raw)
+		}
+		r.Ladder = append(r.Ladder, t)
 	}
-	// agent: is a TARGET — provider[:model]. The model rides here; a role runs its agent's DEFAULT
-	// account, so an @account is rejected (only the lead rotates accounts).
-	t, terr := agents.ParseTarget(y.Agent.Value)
-	if terr != nil {
-		return r, bad("agent %q: %v", y.Agent.Value, terr)
-	}
-	if len(t.Accounts) > 0 {
-		return r, bad("agent %q pins an account — a role runs its agent's default account (only the lead rotates); drop the @account", y.Agent.Value)
-	}
-	r.Agent, r.Model, r.Effort = t.Provider, t.Model, t.Effort
+	first := r.Ladder[0]
+	r.Agent, r.Model, r.Effort = first.Provider, first.Model, first.Effort
 	if y.Permissions != nil || y.WritePaths != nil || y.DenyPaths != nil {
 		return r, bad("permissions/write_paths/deny_paths are not supported — coop can't enforce path-level permissions yet, so declaring them would only pretend to")
 	}
@@ -436,11 +446,39 @@ func (p *Preset) RoleAgents() []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, r := range p.Roles {
-		if r.Mode == ModeNative || seen[r.Agent] {
+		if r.Mode == ModeNative {
 			continue
 		}
-		seen[r.Agent] = true
-		out = append(out, r.Agent)
+		for _, target := range r.TargetLadder() {
+			if seen[target.Provider] {
+				continue
+			}
+			seen[target.Provider] = true
+			out = append(out, target.Provider)
+		}
 	}
 	return out
+}
+
+// TargetLadder returns a role's ordered targets. The synthesized first target keeps
+// programmatically-built Roles (mostly tests and internal callers) compatible with the
+// pre-ladder struct without making every caller populate redundant fields.
+func (r Role) TargetLadder() []agents.Target {
+	if len(r.Ladder) > 0 {
+		return r.Ladder
+	}
+	if r.Agent == "" {
+		return nil
+	}
+	return []agents.Target{{Provider: r.Agent, Model: r.Model, Effort: r.Effort}}
+}
+
+// TargetList renders the ladder in the target grammar for the in-box wrapper env.
+func (r Role) TargetList() string {
+	targets := r.TargetLadder()
+	parts := make([]string, len(targets))
+	for i, target := range targets {
+		parts[i] = target.String()
+	}
+	return strings.Join(parts, " ")
 }

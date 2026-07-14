@@ -97,16 +97,13 @@ func renderConsult(as []consultInput) string {
 # Generated and mounted by coop; do not edit.
 #   coop-consult <peer|role> <--fresh|--continue> [prompt]
 # <peer> is ` + peerList + ` (fusion / --peer ad-hoc). A preset CONSULT ROLE — or a
-# native role degraded under a non-Claude lead — is addressed by its ROLE name: coop exports
-# COOP_CONSULT_<ROLE>_{AGENT,MODEL,CONTRACT}, so it runs on the role's own agent + model with
-# its persona (CONTRACT) prepended to the prompt. The target is READ-ONLY: it analyses and
-# reports, it never edits your files. --fresh starts a new session; --continue resumes the
-# last one for that target (send only the delta). Prompt is the trailing arg or piped on
-# stdin. The first line printed is the session status to read. Each consult is time-bounded
-# (default 30m; set COOP_CONSULT_TIMEOUT in seconds).
-# The model is resolved into $model below (a role's COOP_CONSULT_<ROLE>_MODEL wins over the
-# per-peer COOP_PEER_MODEL_<PEER>), expanded into the --model flag in each arm.
+# native role degraded under a non-Claude lead — is addressed by its ROLE name. Its
+# COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target remains
+# READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and,
+# if that provider is now rate limited, starts the next provider fresh. Each rung is
+# attempted once and each attempt is time-bounded (default 30m; COOP_CONSULT_TIMEOUT).
 set -u
+umask 077
 
 die() { echo "coop-consult: $1" >&2; exit 2; }
 [ "$#" -ge 2 ] || die "usage: coop-consult <peer|role> <--fresh|--continue> [prompt]"
@@ -120,50 +117,98 @@ case "$name" in
 esac
 key=$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')
 # A preset consult role (or a native role degraded under a non-Claude lead) carries its own
-# agent/model/persona via COOP_CONSULT_<ROLE>_*; otherwise the name IS the peer agent.
-eval "peer=\${COOP_CONSULT_${key}_AGENT:-}"
-eval "rolemodel=\${COOP_CONSULT_${key}_MODEL:-}"
-eval "roleeffort=\${COOP_CONSULT_${key}_EFFORT:-}"
+# target ladder/persona via COOP_CONSULT_<ROLE>_*; otherwise the name IS the peer agent.
+eval "targets=\${COOP_CONSULT_${key}_TARGETS:-}"
 eval "persona=\${COOP_CONSULT_${key}_CONTRACT:-}"
-if [ -n "$peer" ]; then
-	role=1
+if [ -n "$targets" ]; then
+	role=$name
 else
-	peer=$name
+	targets=$name
 	persona=
 	role=
 fi
-# The peer must be BOTH a registered adapter AND in this run's council (COOP_PEERS — the
-# agents whose credentials coop actually mounted). The second check is the security gate:
-# it refuses a peer the run never named, so a compromised lead can't consult (and thereby
-# drive) an unlisted agent even though its adapter arm exists below.
-case "$peer" in
-` + peerAlt + `) ;;
-*) die "unknown peer: $name (expected ` + peerList + `, or a preset consult role)" ;;
-esac
-case " ${COOP_PEERS:-} " in
-*" $peer "*) ;;
-*) die "peer not in this run's council: $name (COOP_PEERS='${COOP_PEERS:-}')" ;;
-esac
-# Resolve the model into one $model: a role's own model wins; else the per-peer default
-# coop exported (COOP_PEER_MODEL_<PEER>). One var, so every arm expands it the same way.
-peerkey=$(printf '%s' "$peer" | tr 'a-z-' 'A-Z_')
-eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"
-if [ -n "$role" ] && [ -n "$rolemodel" ]; then model=$rolemodel; fi
-# Effort resolves the same way — a role's own effort wins over the per-peer default. Always
-# set (possibly empty) so each arm's ${effort:+…} is safe under set -u.
-eval "effort=\${COOP_PEER_EFFORT_${peerkey}:-}"
-if [ -n "$role" ] && [ -n "$roleeffort" ]; then effort=$roleeffort; fi
-prompt=${*:-}
-[ -n "$prompt" ] || prompt=$(cat)
-# A role's persona (its contract) is prepended so the peer answers AS that role.
-if [ -n "$persona" ] && [ -r "$persona" ]; then
-	prompt=$(cat "$persona"; printf '\n\n---\n\nYour question:\n\n%s' "$prompt")
-fi
+question=${*:-}
+[ -n "$question" ] || question=$(cat)
 # The prompt is captured above, so no peer needs stdin. Detach it: claude -p reads
 # piped stdin on top of its arg and blocks forever on an inherited open pipe (the
 # governor backgrounds these consults). One redirect covers every peer.
 exec </dev/null
 idfile="/tmp/coop-consult-${key}.id"
+rungfile="/tmp/coop-consult-${key}.rung"
+contextfile="/tmp/coop-consult-${key}.context"
+attempt_dir=${TMPDIR:-/tmp}/coop-consult-${key}-$$
+mkdir "$attempt_dir" || die "cannot create attempt directory: $attempt_dir"
+trap 'rm -rf "$attempt_dir"' EXIT INT TERM
+
+load_target() {
+	target=$1
+	effort=
+	case "$target" in
+	*/*) effort=${target##*/} ;;
+	esac
+	head=${target%%/*}
+	model=
+	case "$head" in
+	*:*) peer=${head%%:*}; model=${head#*:} ;;
+	*) peer=$head ;;
+	esac
+}
+
+resolve_defaults() {
+	peerkey=$(printf '%s' "$peer" | tr 'a-z-' 'A-Z_')
+	if [ -z "$model" ]; then eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"; fi
+	if [ -z "$effort" ]; then eval "effort=\${COOP_PEER_EFFORT_${peerkey}:-}"; fi
+}
+
+load_rung() {
+	wanted=$1
+	n=0
+	set -f
+	# shellcheck disable=SC2086
+	set -- $targets
+	for candidate do
+		n=$((n + 1))
+		if [ "$n" -eq "$wanted" ]; then load_target "$candidate"; return 0; fi
+	done
+	return 1
+}
+
+# Split only host-validated target tokens. Validate every fallback before the first
+# provider runs so a malformed or out-of-scope later rung cannot surprise the lead.
+set -f
+# shellcheck disable=SC2086
+set -- $targets
+total=$#
+[ "$total" -gt 0 ] || die "consult role $name has an empty target ladder"
+for target do
+	load_target "$target"
+	case "$peer" in
+` + peerAlt + `) ;;
+	*) die "unknown peer in $name ladder: $peer (expected ` + peerList + `)" ;;
+	esac
+	if [ -n "$role" ]; then scope="${COOP_PRIMARY:-} ${COOP_PEERS:-}"; else scope=${COOP_PEERS:-}; fi
+	case " $scope " in
+*" $peer "*) available_targets="${available_targets:-} $target" ;;
+	*)
+		if [ -n "$role" ]; then
+			echo "[coop-consult $name: skipping $target — provider credentials are not mounted]" >&2
+		else
+			die "peer not in this run's credential scope: $peer"
+		fi
+		;;
+	esac
+done
+targets=${available_targets# }
+# shellcheck disable=SC2086
+set -- $targets
+total=$#
+[ "$total" -gt 0 ] || die "consult role $name has no target with mounted credentials"
+
+case "$mode" in
+--fresh | --continue) ;;
+*) die "mode must be --fresh or --continue" ;;
+esac
+if [ "$mode" = --fresh ]; then rm -f "$idfile" "$rungfile" "$contextfile"; fi
 
 new_id() {
 	if [ -r /proc/sys/kernel/random/uuid ]; then
@@ -174,6 +219,7 @@ new_id() {
 	fi
 }
 `)
+	b.WriteString(agents.ShellRateLimitDetector())
 	if p := preludes(as); p != "" {
 		b.WriteString(p + "\n")
 	}
@@ -193,27 +239,118 @@ run() {
 	return "$st"
 }
 
-case "$mode" in
---continue)
-	if [ -f "$idfile" ]; then
-		id=$(cat "$idfile")
-		echo "[$peer: continued — recalls your earlier consult; send only the delta]"
-		case "$peer" in
-` + indentArms(resume.String(), "\t\t") + `		*) die "unknown peer: $peer" ;;
-		esac
-		exit
-	fi
-	echo "[$peer: --continue had no live session — started FRESH, resend full context]"
-	;;
---fresh) echo "[$peer: fresh session]" ;;
-*) die "mode must be --fresh or --continue" ;;
-esac
+dispatch_fresh() {
+	id=$(new_id)
+	case "$peer" in
+` + indentArms(fresh.String(), "\t") + `	*) return 2 ;;
+	esac
+}
 
-# Fresh session (also the fallback when --continue found no stored id).
-id=$(new_id)
-case "$peer" in
-` + fresh.String() + `*) die "unknown peer: $peer" ;;
-esac
+dispatch_resume() {
+	id=$(cat "$idfile")
+	case "$peer" in
+` + indentArms(resume.String(), "\t") + `	*) return 2 ;;
+	esac
+}
+
+run_attempt() {
+	dispatch=$1
+	out=$attempt_dir/output-$index
+	status=$attempt_dir/status-$index
+	build_prompt "$dispatch"
+	# Keep output live through tee, while the status file preserves the provider's
+	# real exit code even for adapter bodies that exit explicitly.
+	{
+		(
+			if [ "$dispatch" = resume ]; then dispatch_resume; else dispatch_fresh; fi
+		)
+		printf '%s\n' "$?" >"$status"
+	} 2>&1 | tee "$out"
+	attempt_status=$(cat "$status" 2>/dev/null || printf 1)
+	case "$attempt_status" in '' | *[!0-9]*) attempt_status=1 ;; esac
+}
+
+build_prompt() {
+	delivery=$1
+	prompt=$question
+	if [ "$delivery" = fresh ] && [ "$mode" = --continue ] && [ -s "$contextfile" ]; then
+		prompt=$(printf '%s\n\n' 'Continue this consult from the saved transcript:'; cat "$contextfile"; printf '\n\nCurrent follow-up:\n%s' "$question")
+	fi
+	# A role's persona is prepended on every provider, including a fresh fallback.
+	if [ -n "$persona" ] && [ -r "$persona" ]; then
+		prompt=$(cat "$persona"; printf '\n\n---\n\nYour question:\n\n%s' "$prompt")
+	fi
+}
+
+record_turn() {
+	if [ "$mode" = --fresh ] || [ ! -f "$contextfile" ]; then
+		: >"$contextfile"
+	else
+		printf '\n\n---\n\n' >>"$contextfile"
+	fi
+	{
+		printf 'Question:\n%s\n\nReply:\n' "$question"
+		cat "$out"
+	} >>"$contextfile"
+}
+
+start=1
+dispatch=fresh
+if [ "$mode" = --continue ] && [ -f "$idfile" ]; then
+	if [ -f "$rungfile" ]; then start=$(cat "$rungfile"); fi
+	case "$start" in
+	'' | *[!0-9]*) start=1 ;;
+	esac
+	if [ "$start" -lt 1 ] || [ "$start" -gt "$total" ]; then start=1; fi
+	dispatch=resume
+fi
+
+index=$start
+while [ "$index" -le "$total" ]; do
+	load_rung "$index" || die "cannot resolve rung $index for $name"
+	resolve_defaults
+	if [ "$dispatch" = resume ]; then
+		echo "[$peer: continued on $target — recalls your earlier consult; send only the delta]"
+	elif [ "$mode" = --continue ] && [ "$index" -eq "$start" ]; then
+		if [ -s "$contextfile" ]; then
+			echo "[$peer: --continue had no live session — started FRESH from the saved transcript]"
+		else
+			echo "[$peer: --continue had no live session — started FRESH, resend full context]"
+		fi
+	elif [ "$index" -eq 1 ]; then
+		echo "[$peer: fresh session]"
+	else
+		echo "[$peer: starting fallback $index/$total fresh on $target]"
+	fi
+
+	run_attempt "$dispatch"
+	st=$attempt_status
+	if [ "$st" -eq 0 ]; then
+		printf '%s' "$index" >"$rungfile"
+		record_turn
+		exit 0
+	fi
+	if [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; then
+		exit "$st"
+	fi
+	if ! coop_rate_limited "$out"; then
+		exit "$st"
+	fi
+	if [ "$dispatch" = resume ] && [ ! -s "$contextfile" ]; then
+		echo "[$peer: rate limited, but no saved transcript can seed a fresh fallback; rerun $name with --fresh]" >&2
+		exit "$st"
+	fi
+	rm -f "$idfile" "$rungfile"
+	if [ "$index" -ge "$total" ]; then
+		echo "[$peer: rate limited; role $name exhausted all $total target(s)]" >&2
+		exit "$st"
+	fi
+	echo "[$peer: $target rate limited — trying fallback $((index + 1))/$total]" >&2
+	index=$((index + 1))
+	dispatch=fresh
+done
+
+exit 2
 `)
 	return b.String()
 }

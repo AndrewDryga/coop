@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -38,21 +39,6 @@ var (
 	// Output/token exhaustion is recoverable by immediately asking the same model to continue; it is
 	// not a provider rate limit, so it must not rotate credentials or sleep until a reset.
 	outputLimitRe = regexp.MustCompile(`(?i)(?:output limit|max(?:imum)? output length|max(?:imum)?[_ -]?output[_ -]?tokens?|output length limit|finish[_ ]?reason["'\s:=]+(?:length|max[_ -]?tokens?))`)
-	// Broad markers with no parseable reset — a limit we should back off from. "at capacity"
-	// is codex's model-overload notice ("Selected model is at capacity. Please try a different
-	// model.") — a transient provider-side limit handled like an overload: rotate to the next
-	// rung (a different model heeds its own advice), or back off until it clears.
-	limitMarkers = []string{
-		"usage limit", "rate limit", "rate-limit", "rate limited",
-		"ratelimited", "overloaded", "at capacity", "resource exhausted",
-		"quota exceeded", "quota limit", "exceeded quota", "insufficient quota",
-		"usagelimit", "usagelimitexceeded",
-	}
-	// The HTTP 429 status, matched with word boundaries. A bare Contains(lower, "429") also
-	// matched an unrelated number an agent happened to print — a line count ("1429 files"), a
-	// byte offset, a hash fragment ("…429…") — turning an ordinary failed iteration into a
-	// rate-limit wait. \b429\b fires only on the standalone status a real 429 is reported as.
-	status429Re = regexp.MustCompile(`\b429\b`)
 )
 
 // detectLimit inspects an iteration's captured output for a model rate/usage
@@ -104,12 +90,7 @@ func detectLimit(output string, now time.Time) limitHint {
 			}
 		}
 	}
-	for _, mark := range limitMarkers {
-		if strings.Contains(lower, mark) {
-			return limitHint{limited: true}
-		}
-	}
-	if status429Re.MatchString(lower) {
+	if agents.CLIRateLimited(lower) {
 		return limitHint{limited: true}
 	}
 	return limitHint{}
