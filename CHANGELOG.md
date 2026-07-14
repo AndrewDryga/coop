@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 5.2.0
 
 - **Every provider streams the same live view in the loop.** Codex dumped its banner and raw exec
   blocks, Gemini printed only errors, and Grok buffered run-on prose; each provider now enables its
@@ -10,6 +8,11 @@
   closing token line. Work and review stages led by Codex, Gemini, or Grok also record their token
   usage in the run's cost telemetry; dollars remain Claude-only because the other CLIs do not
   report cost.
+
+- **Zsh completion now follows Coop's full target grammar.** The first Tab after an exact command
+  advances to that command's arguments, and target positions complete available providers, models,
+  effort levels, credentials, and presets. Loop, fusion, and ACP peer positions also offer the
+  contextually valid targets and flags instead of falling back to the top-level command list.
 
 - **A gemini box can read the gitignored task queue.** Gemini's `read_file` rejected every
   `task.md` as "ignored by configured ignore patterns": its file tools honor `.gitignore`, while
@@ -20,6 +23,16 @@
   already runs host-side, but the custom-cleanup box still forbade queue moves; one agent wrongly
   responded by parking five healthy tasks in `50_blocked/`. Its wrapper now permits only directed
   folder moves while task work, code, gates, and commits remain forbidden.
+
+- **Long loops stop repeating and immediately retrying known rate limits.** A provider's structured
+  limit notice is rendered once while its full text still reaches the detector, and a failed custom
+  pre-flight now carries the target's reset into work rotation. Cooling targets are skipped until
+  their reset; when every target is limited, the loop still waits for the earliest one.
+
+- **Loop boxes now enforce the same Staticcheck gate as the host.** The shared image builds and
+  installs a pinned analyzer, closing the gap that let a host-red commit pass inside a loop. The
+  fork hardening fixture also neutralizes ambient global Git hooks repo-locally, so the stronger
+  in-box gate remains deterministic.
 
 - **`coop fork stop` now proves the fork's box is gone before reporting success.** The worker still
   gets its graceful process-group shutdown first; the exact `coop.fork=<name>` container reap now
