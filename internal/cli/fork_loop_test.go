@@ -266,9 +266,11 @@ func TestForkStopReapsBoxAfterWorkerExit(t *testing.T) {
 		containerID string
 		failure     string
 		pending     bool
+		pidOnly     bool
 	}{
 		{name: "orphan present", containerID: "box-perf"},
 		{name: "already gone"},
+		{name: "pid-only fallback", pidOnly: true},
 		{name: "interrupted stop resumes live worker", containerID: "box-perf", pending: true},
 		{name: "query failure is retryable", containerID: "box-perf", failure: "ps"},
 		{name: "remove failure is not success", containerID: "box-perf", failure: "rm"},
@@ -339,9 +341,12 @@ while :; do sleep 10; done
 			if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			token := procStartToken(pid)
-			if token == "" {
-				t.Fatal("could not read worker start identity")
+			token := ""
+			if !tc.pidOnly {
+				token = procStartToken(pid)
+				if token == "" {
+					t.Fatal("could not read worker start identity")
+				}
 			}
 			pidState, err := (forkWorkerState{pid: pid, token: token, pending: tc.pending}).marshal()
 			if err != nil {
@@ -551,6 +556,34 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 	}
 	if got := forkRunningPid(repo, "live"); got != os.Getpid() {
 		t.Errorf("forkRunningPid(live, matching token) = %d, want %d", got, os.Getpid())
+	}
+}
+
+func TestWriteForkPidFallsBackToLivenessWithoutStableToken(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldRead := readProcStartToken
+	readProcStartToken = func(int) string { return "" }
+	t.Cleanup(func() { readProcStartToken = oldRead })
+
+	if err := writeForkPid(repo, "live", os.Getpid()); err != nil {
+		t.Fatalf("writeForkPid without a stable token: %v", err)
+	}
+	data, err := os.ReadFile(forkPid(repo, "live"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := parseForkWorkerState(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.pid != os.Getpid() || state.token != "" {
+		t.Fatalf("pid-only fallback state = %+v, want pid %d with no token", state, os.Getpid())
+	}
+	if got := forkProcessIdentity(state.pid, state.token); got != processIdentityMatch {
+		t.Fatalf("pid-only live identity = %v, want kill(0) match", got)
 	}
 }
 

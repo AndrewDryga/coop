@@ -93,7 +93,7 @@ const (
 )
 
 // forkProcessIdentity separates conservative liveness from authorization to signal. Status and
-// destructive guards treat unknown as busy; forkStop signals only an exact stable-token match.
+// destructive guards treat unknown as busy; a missing best-effort token falls back to kill(0).
 func forkProcessIdentity(pid int, token string) processIdentity {
 	if pid <= 1 { // a detached worker cannot be init; -1 is kill(2)'s broadcast target
 		return processGone
@@ -102,6 +102,9 @@ func forkProcessIdentity(pid int, token string) processIdentity {
 		return processGone
 	} else if err != nil {
 		return processIdentityUnknown
+	}
+	if token == "" {
+		return processIdentityMatch
 	}
 	if !stableProcToken(token) {
 		return processIdentityUnknown
@@ -265,9 +268,6 @@ func writeForkPidUnlocked(repo, name string, pid int) error {
 		return fmt.Errorf("refuse invalid detached worker pid %d", pid)
 	}
 	token := procStartToken(pid)
-	if token == "" {
-		return fmt.Errorf("read stable start identity for pid %d", pid)
-	}
 	return writeForkWorkerState(repo, name, forkWorkerState{pid: pid, token: token})
 }
 
@@ -333,10 +333,10 @@ func clearForkPidIfMineUnlocked(repo, name string) {
 
 // procStartToken returns an opaque identity for pid that's fixed for the process's lifetime — its
 // numeric kernel start time. A pid reused by a later process reports a different token. Empty if
-// the platform cannot read it (callers then fail safe instead of persisting an unauthenticated pid).
-func procStartToken(pid int) string {
-	return platformProcStartToken(pid)
-}
+// the platform cannot read it; callers then fall back to kill(0)-only liveness.
+var readProcStartToken = platformProcStartToken
+
+func procStartToken(pid int) string { return readProcStartToken(pid) }
 
 func stableProcToken(token string) bool {
 	return strings.HasPrefix(token, "linux-proc-v1:") || strings.HasPrefix(token, "darwin-kinfo-v1:")
@@ -678,7 +678,7 @@ func (a *app) forkStop(args []string) (int, error) {
 	}
 	pid, token := state.pid, state.token
 	identity := forkProcessIdentity(pid, token)
-	if pid > 0 && !stableProcToken(token) && identity != processGone {
+	if pid > 0 && token != "" && !stableProcToken(token) && identity != processGone {
 		return 1, fmt.Errorf("fork %s has legacy state for live pid %d, so coop will not signal an unverified process — %s", name, pid, forkWorkerRecovery(name, pid))
 	}
 	if identity == processIdentityUnknown {

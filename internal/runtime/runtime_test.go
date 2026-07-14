@@ -154,9 +154,9 @@ func TestSilent(t *testing.T) {
 	}
 }
 
-// A deadline on an error-reporting label reap kills the runtime CLI's whole process group, including
-// helpers it spawned. This keeps `fork stop` bounded without leaking a child behind the timeout.
-func TestRemoveByLabelDeadlineKillsRuntimeGroup(t *testing.T) {
+// Canceling an error-reporting label reap kills the runtime CLI's whole process group, including
+// helpers it spawned. This keeps `fork stop` bounded without leaking a child behind its deadline.
+func TestRemoveByLabelCancellationKillsRuntimeGroup(t *testing.T) {
 	dir := t.TempDir()
 	runtimeCLI := filepath.Join(dir, "runtime")
 	childPIDFile := filepath.Join(dir, "child-pid")
@@ -172,18 +172,41 @@ fi
 	}
 	t.Setenv("COOP_TEST_CHILD_PID_FILE", childPIDFile)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
 	start := time.Now()
-	if _, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("RemoveByLabel deadline error = %v, want context deadline exceeded", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf")
+		done <- err
+	}()
+
+	var data []byte
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var err error
+		data, err = os.ReadFile(childPIDFile)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read runtime helper pid: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("runtime helper pid was not recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RemoveByLabel cancellation error = %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveByLabel did not return after cancellation")
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("RemoveByLabel returned after %v, want a bounded cancellation", elapsed)
-	}
-	data, err := os.ReadFile(childPIDFile)
-	if err != nil {
-		t.Fatalf("runtime helper pid was not recorded: %v", err)
 	}
 	childPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {

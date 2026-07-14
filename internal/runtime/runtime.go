@@ -222,7 +222,7 @@ func (r Runtime) appleContainerIDsContext(ctx context.Context, filters ...string
 	for _, filter := range filters {
 		label, ok := strings.CutPrefix(filter, "label=")
 		if !ok {
-			return nil, fmt.Errorf("Apple container does not support filter %q", filter)
+			return nil, fmt.Errorf("filter %q is unsupported on Apple container", filter)
 		}
 		key, value, ok := strings.Cut(label, "=")
 		if !ok || key == "" {
