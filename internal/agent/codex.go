@@ -241,6 +241,8 @@ func (codexAgent) BoxEnv(homeInBox string) []string {
 	return []string{"CODEX_SQLITE_HOME=" + homeInBox + "/.codex-state"}
 }
 
+func (codexAgent) HomeFallbacks() []HomeFallback { return nil }
+
 // codexText is the jq filter that pulls the agent's reply text out of codex's --json
 // stream; the wrapper emits it once (ShellPrelude) since fresh and resume both use it.
 const codexText = `codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }

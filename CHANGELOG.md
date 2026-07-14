@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A Claude box gets settings and hooks from the `.agent/` cornerstone.** `coop init` now keeps
+  fallback Claude settings and stack-aware hooks under `.agent/claude/`. When a repo omits the
+  matching project `.claude/` artifact, Coop mounts an ephemeral user-level copy for that run;
+  project artifacts still win independently and the committed fallback stays pristine.
+
 - **Loop iterations now receive an authoritative task assignment.** The host selects interrupted
   work first, otherwise claims the next todo before starting the box, and gives the agent that exact
   task ID. The banner and prompt therefore cannot diverge, and agents no longer spend a turn

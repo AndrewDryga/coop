@@ -250,6 +250,13 @@ func (claudeAgent) BoxEnv(homeInBox string) []string {
 	}
 }
 
+func (claudeAgent) HomeFallbacks() []HomeFallback {
+	return []HomeFallback{
+		{Source: ".agent/claude/settings.json", Project: ".claude/settings.json", Target: ".claude/settings.json"},
+		{Source: ".agent/claude/hooks", Project: ".claude/hooks", Target: ".claude/hooks", Dir: true},
+	}
+}
+
 // coop-consult / coop-delegate shell — the wrapper generators concatenate these per-agent
 // arms (see internal/fusion/wrapper.go, internal/preset/wrapper.go). They run against the
 // wrapper's $prompt/$id/$model/$idfile and its run/new_id helpers.

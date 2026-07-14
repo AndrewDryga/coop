@@ -1287,7 +1287,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
 	if len(agentDirs) > 0 {
-		ui.Info("per-agent dirs: %s — others synthesize their skills in-box on demand", strings.Join(agentDirs, ", "))
+		ui.Info("per-agent dirs: %s — missing artifacts synthesize in-box from .agent/ on demand", strings.Join(agentDirs, ", "))
 	} else {
 		ui.Info("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
 	}

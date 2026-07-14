@@ -1,7 +1,8 @@
 // Package scaffold writes the Coop working set into a repo: AGENTS.md, the
-// .agent/ queue, .claude/ settings + hooks, the workflow skills, and optionally
-// a per-project Dockerfile.agent + .agent/compose.yml. Every template is embedded
-// in the binary, so one `coop` binary can scaffold any repo with no extra files.
+// .agent/ queue and agent fallbacks, optional project adapters, the workflow
+// skills, and optionally a per-project Dockerfile.agent + .agent/compose.yml.
+// Every template is embedded in the binary, so one `coop` binary can scaffold
+// any repo with no extra files.
 package scaffold
 
 import (
@@ -38,6 +39,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		filepath.Join(repo, ".agent", "rules"),
 		filepath.Join(repo, ".agent", "skills"),
 		filepath.Join(repo, ".agent", "presets"), // orchestration recipes live here (coop presets init writes one)
+		filepath.Join(repo, ".agent", "claude", "hooks"),
 	}
 	if has("claude") {
 		dirs = append(dirs, filepath.Join(repo, ".claude", "hooks"))
@@ -66,6 +68,10 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		{filepath.Join(repo, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644},
 		// One committed loop config (fully commented → no behavior change until you uncomment a key).
 		{filepath.Join(repo, ".agent", "loop.yaml"), "templates/agent/loop.yaml", 0o644},
+		// Claude fallback adapter: coop copies these user-level into a box only when the matching
+		// project artifact is absent. The project .claude/ adapter below remains authoritative.
+		{filepath.Join(repo, ".agent", "claude", "settings.json"), "templates/agent/claude/settings.json", 0o644},
+		{filepath.Join(repo, ".agent", "claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
 	}
 	if has("claude") {
 		// Claude's settings + stop-guard hook, and the starter subagents for the orchestrator pattern
@@ -118,12 +124,10 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	if err := s.updateGitignore(); err != nil {
 		return err
 	}
-	// The commit-gate hook lives in .claude/hooks, so it's Claude-only — skip it when Claude isn't
-	// scaffolded (its box gets the gate synthesized like its skills).
-	if has("claude") {
-		if err := s.installGitHooks(gateLangs); err != nil {
-			return err
-		}
+	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
+	// project .claude/ adapter. A selected Claude adapter receives its project copy as before.
+	if err := s.installGitHooks(gateLangs, has("claude")); err != nil {
+		return err
 	}
 
 	// The toolchain is driven by .tool-versions (asdf). With no --stack, auto-detect
@@ -252,12 +256,11 @@ func (s *scaffolder) copySkills() error {
 	return nil
 }
 
-// installGitHooks generates the tracked .githooks/pre-commit gate (every committer — Codex,
-// Gemini, a plain `git commit`) and the .claude/hooks/commit-gate.sh (Claude), each carrying
-// the format checks for the repo's detected stacks (langs), then points git at .githooks via
-// core.hooksPath. A repo with no detected stack gets a neutral gate — coop never imposes a
-// check it doesn't use. A user's custom hooksPath is never clobbered.
-func (s *scaffolder) installGitHooks(langs []string) error {
+// installGitHooks generates the tracked .githooks/pre-commit gate (every committer) and Claude's
+// shared fallback commit gate, plus the project-scoped Claude copy when requested. Each carries the
+// detected stack checks. A repo with no detected stack gets a neutral gate. A user's custom
+// hooksPath is never clobbered.
+func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 	if len(langs) > 0 {
 		ui.Detail("commit gate: %s", strings.Join(langs, ", "))
 	} else {
@@ -266,8 +269,13 @@ func (s *scaffolder) installGitHooks(langs []string) error {
 	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".githooks", "pre-commit"), preCommitHook(langs), 0o755); err != nil {
 		return err
 	}
-	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".claude", "hooks", "commit-gate.sh"), claudeCommitGate(langs), 0o755); err != nil {
+	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".agent", "claude", "hooks", "commit-gate.sh"), claudeCommitGate(langs), 0o755); err != nil {
 		return err
+	}
+	if projectClaude {
+		if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".claude", "hooks", "commit-gate.sh"), claudeCommitGate(langs), 0o755); err != nil {
+			return err
+		}
 	}
 	if !gitRepo(s.repo) {
 		ui.Detail("not a git repo yet — after 'git init', run: git config core.hooksPath .githooks")
@@ -314,11 +322,16 @@ func (s *scaffolder) updateGitignore() error {
 	// config — is un-ignored at any depth as well, since a large monorepo member may carry its own;
 	// only project.yaml is TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays
 	// root-anchored.
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/loop.yaml\n!**/.agent/compose.yml\n!.agent/project.yaml\n" +
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/claude/\n!**/.agent/loop.yaml\n!**/.agent/compose.yml\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	if !strings.Contains(content, "**/.agent/*") {
 		content += block // no coop block yet — append the whole thing
+	}
+	// Upgrade an existing Coop block without duplicating it. Older scaffolds predate the shared
+	// Claude fallback and would otherwise keep the new source ignored forever.
+	if !strings.Contains(content, "!**/.agent/claude/") {
+		content = strings.Replace(content, "!**/.agent/skills/\n", "!**/.agent/skills/\n!**/.agent/claude/\n", 1)
 	}
 	if content == orig {
 		return nil // already up to date
@@ -326,7 +339,7 @@ func (s *scaffolder) updateGitignore() error {
 	if err := os.WriteFile(gi, []byte(content), 0o644); err != nil {
 		return err
 	}
-	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/loop + project.yaml tracked)")
+	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/claude/loop + project.yaml tracked)")
 	return nil
 }
 

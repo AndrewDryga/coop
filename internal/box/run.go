@@ -333,10 +333,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// .agent is the cornerstone: synthesize an agent's workflow skills from the shared .agent/skills
 	// when the repo has NO per-agent skills dir of its own — so a repo that keeps only .agent/ (no
 	// committed .claude/.codex/.gemini) still gives the agent its skills, mounted USER-level at
-	// ~/.<agent>/skills (read-only, dies with the box). When the repo HAS the agent's own skills dir,
+	// ~/.<agent>/skills (writable copy, dies with the box). When the repo HAS its own skills dir,
 	// that project mount wins and we synthesize nothing (project beats user, like the subagents mount).
 	synthMounts, synthDirs := synthSkillsMounts(spec.Repo, cfg.HomeInBox, skillsAgentSet(spec))
 	tmpDirs = append(tmpDirs, synthDirs...)
+	if spec.Homes {
+		homeMounts, homeDirs := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, skillsAgentSet(spec))
+		synthMounts = append(synthMounts, homeMounts...)
+		tmpDirs = append(tmpDirs, homeDirs...)
+	}
 
 	// Git environment: a curated ~/.gitconfig (your identity + signing off, since the
 	// box holds no key) and your global gitignore, mounted into every box run. Without
@@ -668,6 +673,54 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []ex
 		}
 		tmpdirs = append(tmpdirs, dst)
 		mounts = append(mounts, extraMount{dst, homeInBox + "/." + ag + "/skills"})
+	}
+	return mounts, tmpdirs
+}
+
+// synthHomeFallbackMounts copies each active adapter's declared fallback artifacts into
+// ephemeral user-level mounts. Project artifacts suppress matching fallbacks independently;
+// writable copies keep both the committed source and host credential profile untouched.
+func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string) {
+	seen := map[string]bool{}
+	for _, name := range agentNames {
+		ag, ok := agents.Get(name)
+		if !ok || seen[name] {
+			continue
+		}
+		seen[name] = true
+		for _, artifact := range ag.HomeFallbacks() {
+			source := filepath.Join(repo, filepath.FromSlash(artifact.Source))
+			projectArtifact := filepath.Join(repo, filepath.FromSlash(artifact.Project))
+			if artifact.Dir {
+				if !dirExists(source) || dirExists(projectArtifact) {
+					continue
+				}
+			} else if !fileExists(source) || fileExists(projectArtifact) {
+				continue
+			}
+
+			dst, err := os.MkdirTemp("", "coop-home-"+name+"-")
+			if err != nil {
+				continue
+			}
+			host := dst
+			if artifact.Dir {
+				err = os.CopyFS(dst, os.DirFS(source))
+			} else {
+				host = filepath.Join(dst, filepath.Base(source))
+				var data []byte
+				data, err = os.ReadFile(source)
+				if err == nil {
+					err = os.WriteFile(host, data, 0o600)
+				}
+			}
+			if err != nil {
+				os.RemoveAll(dst)
+				continue
+			}
+			tmpdirs = append(tmpdirs, dst)
+			mounts = append(mounts, extraMount{host, filepath.Join(homeInBox, filepath.FromSlash(artifact.Target))})
+		}
 	}
 	return mounts, tmpdirs
 }

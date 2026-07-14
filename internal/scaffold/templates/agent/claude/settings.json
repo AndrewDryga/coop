@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./**/*.tfvars)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "hook=\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guard.sh\"; [ -x \"$hook\" ] || hook=\"$CLAUDE_CONFIG_DIR/hooks/stop-guard.sh\"; [ ! -x \"$hook\" ] || exec \"$hook\"" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "hook=\"$CLAUDE_PROJECT_DIR/.claude/hooks/commit-gate.sh\"; [ -x \"$hook\" ] || hook=\"$CLAUDE_CONFIG_DIR/hooks/commit-gate.sh\"; [ ! -x \"$hook\" ] || exec \"$hook\"" } ] }
+    ]
+  }
+}

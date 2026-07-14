@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"encoding/json"
 	"io"
 	"io/fs"
 	"os"
@@ -86,7 +87,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	// Knowledge (rules/skills) is un-ignored at any depth so a member may carry its own; only
 	// project.yaml is top-level.
-	for _, want := range []string{"**/.agent/*\n", "!**/.agent/rules/", "!**/.agent/skills/", "!.agent/project.yaml"} {
+	for _, want := range []string{"**/.agent/*\n", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/claude/", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
@@ -96,6 +97,39 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	if n := strings.Count(string(gi2), "\n**/.agent/*\n"); n != 1 {
 		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
+	}
+}
+
+func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
+	repo := t.TempDir()
+	oldBlock := "# coop working state (commit knowledge, ignore state)\n" +
+		"**/.agent/*\n" +
+		"!**/.agent/rules/\n" +
+		"!**/.agent/skills/\n" +
+		"!**/.agent/presets/\n" +
+		"!**/.agent/loop.yaml\n" +
+		"!**/.agent/compose.yml\n" +
+		"!.agent/project.yaml\n"
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(oldBlock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &scaffolder{repo: repo}
+	if err := s.updateGitignore(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.updateGitignore(); err != nil {
+		t.Fatal(err)
+	}
+	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(gi), "!**/.agent/claude/"); n != 1 {
+		t.Fatalf("Claude fallback allowlist appears %d times, want 1:\n%s", n, gi)
+	}
+	if n := strings.Count(string(gi), "**/.agent/*\n"); n != 1 {
+		t.Fatalf("Coop block appears %d times, want 1:\n%s", n, gi)
 	}
 }
 
@@ -158,6 +192,7 @@ func TestInit(t *testing.T) {
 	// Core files exist with content.
 	for _, rel := range []string{
 		"AGENTS.md", ".agent/tasks/README.md",
+		".agent/claude/settings.json", ".agent/claude/hooks/stop-guard.sh", ".agent/claude/hooks/commit-gate.sh",
 		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
 		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
 		".githooks/pre-commit",
@@ -202,6 +237,21 @@ func TestInit(t *testing.T) {
 	if fi, _ := os.Stat(filepath.Join(repo, ".claude/hooks/stop-guard.sh")); fi != nil && fi.Mode()&0o100 == 0 {
 		t.Error("stop-guard.sh is not executable")
 	}
+	for _, rel := range []string{".agent/claude/hooks/stop-guard.sh", ".agent/claude/hooks/commit-gate.sh"} {
+		if fi, _ := os.Stat(filepath.Join(repo, rel)); fi == nil || fi.Mode()&0o100 == 0 {
+			t.Errorf("%s is missing or not executable", rel)
+		}
+	}
+	sharedSettings, err := os.ReadFile(filepath.Join(repo, ".agent/claude/settings.json"))
+	if err != nil || !json.Valid(sharedSettings) {
+		t.Fatalf("shared Claude settings are missing or invalid JSON: %v\n%s", err, sharedSettings)
+	}
+	for _, want := range []string{"$CLAUDE_PROJECT_DIR/.claude/hooks/", "$CLAUDE_CONFIG_DIR/hooks/"} {
+		if !strings.Contains(string(sharedSettings), want) {
+			t.Errorf("shared Claude settings missing hook fallback %q:\n%s", want, sharedSettings)
+		}
+	}
+	assertClaudeHookFallbacks(t, sharedSettings)
 	if fi, _ := os.Stat(filepath.Join(repo, ".githooks/pre-commit")); fi != nil && fi.Mode()&0o100 == 0 {
 		t.Error(".githooks/pre-commit is not executable")
 	}
@@ -253,7 +303,7 @@ func TestInit(t *testing.T) {
 	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets and
 	// the loop.yaml config) at any depth; only project.yaml is top-level.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/loop.yaml", "!.agent/project.yaml", "!.gemini/skills"} {
+	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/claude/", "!**/.agent/loop.yaml", "!.agent/project.yaml", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}
@@ -263,6 +313,66 @@ func TestInit(t *testing.T) {
 	for _, p := range []string{".agent/loop.yaml", ".agent/project.yaml", ".agent/presets"} {
 		if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(p))); err != nil {
 			t.Errorf("scaffold missing %s: %v", p, err)
+		}
+	}
+}
+
+func assertClaudeHookFallbacks(t *testing.T, data []byte) {
+	t.Helper()
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	for event, script := range map[string]string{"Stop": "stop-guard.sh", "PreToolUse": "commit-gate.sh"} {
+		groups := settings.Hooks[event]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Command == "" {
+			t.Fatalf("%s fallback command missing from settings: %s", event, data)
+		}
+		command := groups[0].Hooks[0].Command
+		for _, c := range []struct {
+			name        string
+			projectHook bool
+			userHook    bool
+			want        string
+		}{
+			{"project executable wins", true, true, "project"},
+			{"user executable is fallback", false, true, "user"},
+			{"missing hooks are a no-op", false, false, ""},
+		} {
+			t.Run(event+"/"+c.name, func(t *testing.T) {
+				projectDir := t.TempDir()
+				configDir := t.TempDir()
+				writeHook := func(root, rel, output string) {
+					path := filepath.Join(root, rel, script)
+					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '"+output+"'\n"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if c.projectHook {
+					writeHook(projectDir, ".claude/hooks", "project")
+				}
+				if c.userHook {
+					writeHook(configDir, "hooks", "user")
+				}
+				cmd := exec.Command("sh", "-c", command)
+				cmd.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+projectDir, "CLAUDE_CONFIG_DIR="+configDir)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("fallback command failed: %v\n%s", err, out)
+				}
+				if string(out) != c.want {
+					t.Fatalf("fallback output = %q, want %q", out, c.want)
+				}
+			})
 		}
 	}
 }
@@ -292,6 +402,11 @@ func TestInitGitHooks(t *testing.T) {
 	} else if fi.Mode()&0o100 == 0 {
 		t.Error("pre-commit hook is not executable")
 	}
+	if fi, err := os.Stat(filepath.Join(repo, ".agent/claude/hooks/commit-gate.sh")); err != nil {
+		t.Fatalf("shared Claude commit gate missing: %v", err)
+	} else if fi.Mode()&0o100 == 0 {
+		t.Error("shared Claude commit gate is not executable")
+	}
 
 	// A user's custom hooksPath is left untouched (re-init is non-destructive).
 	repo2 := t.TempDir()
@@ -315,6 +430,10 @@ func TestInitIdempotent(t *testing.T) {
 	// Edit a file, then re-init: it must be kept, not overwritten.
 	readme := filepath.Join(repo, ".agent/tasks/README.md")
 	os.WriteFile(readme, []byte("MY EDITS"), 0o644)
+	sharedSettings := filepath.Join(repo, ".agent/claude/settings.json")
+	sharedGate := filepath.Join(repo, ".agent/claude/hooks/commit-gate.sh")
+	os.WriteFile(sharedSettings, []byte("MY CLAUDE SETTINGS"), 0o644)
+	os.WriteFile(sharedGate, []byte("#!/bin/sh\n# MY CLAUDE GATE\n"), 0o755)
 
 	// Capture the re-run's log. An unchanged symlink must read as "kept existing", not the action
 	// verb "linked" (which looks like a rewrite on every subsequent init); and a kept skill must
@@ -342,6 +461,12 @@ func TestInitIdempotent(t *testing.T) {
 
 	if b, _ := os.ReadFile(readme); string(b) != "MY EDITS" {
 		t.Error("re-init clobbered an edited .agent/tasks/README.md")
+	}
+	if b, _ := os.ReadFile(sharedSettings); string(b) != "MY CLAUDE SETTINGS" {
+		t.Error("re-init clobbered edited shared Claude settings")
+	}
+	if b, _ := os.ReadFile(sharedGate); string(b) != "#!/bin/sh\n# MY CLAUDE GATE\n" {
+		t.Error("re-init clobbered edited shared Claude commit gate")
 	}
 	// .gitignore rule must not be duplicated.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -513,5 +638,10 @@ func TestInitAgentDirsGating(t *testing.T) {
 	}
 	if !exists(filepath.Join(repo2, ".agent", "rules")) {
 		t.Error(".agent/ is always scaffolded even with no agents")
+	}
+	for _, rel := range []string{".agent/claude/settings.json", ".agent/claude/hooks/stop-guard.sh", ".agent/claude/hooks/commit-gate.sh"} {
+		if !exists(filepath.Join(repo2, rel)) {
+			t.Errorf("shared Claude fallback %s should be scaffolded with no per-agent dirs", rel)
+		}
 	}
 }

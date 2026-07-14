@@ -888,3 +888,226 @@ func TestSynthSkillsMounts(t *testing.T) {
 		}
 	}
 }
+
+func TestSynthHomeFallbackMounts(t *testing.T) {
+	const home = "/home/node"
+	const settingsBody = `{"hooks":{"Stop":[]}}`
+	const hookBody = "#!/bin/sh\nexit 0\n"
+
+	write := func(t *testing.T, repo, rel, body string, perm os.FileMode) {
+		t.Helper()
+		path := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), perm); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, perm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSource := func(t *testing.T, repo string) {
+		t.Helper()
+		write(t, repo, ".agent/claude/settings.json", settingsBody, 0o644)
+		write(t, repo, ".agent/claude/hooks/stop-guard.sh", hookBody, 0o755)
+	}
+	targets := func(mounts []extraMount) map[string]string {
+		out := map[string]string{}
+		for _, m := range mounts {
+			out[m.box] = m.host
+		}
+		return out
+	}
+	cleanup := func(t *testing.T, dirs []string) {
+		t.Helper()
+		for _, dir := range dirs {
+			dir := dir
+			t.Cleanup(func() { os.RemoveAll(dir) })
+		}
+	}
+
+	t.Run("non-Claude scope skips synthesis", func(t *testing.T) {
+		repo := t.TempDir()
+		writeSource(t, repo)
+		if got, dirs := synthHomeFallbackMounts(repo, home, []string{"codex", "gemini"}); got != nil || dirs != nil {
+			t.Fatalf("non-Claude run synthesized mounts=%v dirs=%v", got, dirs)
+		}
+	})
+
+	t.Run("absent source skips synthesis", func(t *testing.T) {
+		if got, dirs := synthHomeFallbackMounts(t.TempDir(), home, []string{"claude"}); got != nil || dirs != nil {
+			t.Fatalf("absent source synthesized mounts=%v dirs=%v", got, dirs)
+		}
+	})
+
+	t.Run("source artifacts synthesize isolated user-level copies", func(t *testing.T) {
+		repo := t.TempDir()
+		writeSource(t, repo)
+		mounts, dirs := synthHomeFallbackMounts(repo, home, []string{"claude"})
+		cleanup(t, dirs)
+
+		byTarget := targets(mounts)
+		settingsHost, ok := byTarget[home+"/.claude/settings.json"]
+		if !ok {
+			t.Fatalf("missing settings mount in %v", mounts)
+		}
+		hooksHost, ok := byTarget[home+"/.claude/hooks"]
+		if !ok {
+			t.Fatalf("missing hooks mount in %v", mounts)
+		}
+		if len(dirs) != 2 {
+			t.Fatalf("cleanup dirs = %v, want settings + hooks temp dirs", dirs)
+		}
+		if got, err := os.ReadFile(settingsHost); err != nil || string(got) != settingsBody {
+			t.Fatalf("settings copy = %q, %v; want exact source bytes", got, err)
+		}
+		if dirExists(filepath.Join(filepath.Dir(settingsHost), "hooks")) {
+			t.Fatal("settings temp copy must contain only settings.json, not the hooks tree")
+		}
+		hookPath := filepath.Join(hooksHost, "stop-guard.sh")
+		if got, err := os.ReadFile(hookPath); err != nil || string(got) != hookBody {
+			t.Fatalf("hook copy = %q, %v; want exact source bytes", got, err)
+		}
+		if fi, err := os.Stat(hookPath); err != nil || fi.Mode()&0o100 == 0 {
+			t.Fatalf("hook copy is missing or not executable: %v", err)
+		}
+
+		if err := os.WriteFile(settingsHost, []byte("mutated"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hookPath, []byte("mutated"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(filepath.Join(repo, ".agent/claude/settings.json")); string(got) != settingsBody {
+			t.Fatalf("source settings mutated through temp copy: %q", got)
+		}
+		if got, _ := os.ReadFile(filepath.Join(repo, ".agent/claude/hooks/stop-guard.sh")); string(got) != hookBody {
+			t.Fatalf("source hook mutated through temp copy: %q", got)
+		}
+	})
+
+	t.Run("project artifacts win independently", func(t *testing.T) {
+		repo := t.TempDir()
+		writeSource(t, repo)
+		write(t, repo, ".claude/settings.json", `{"project":true}`, 0o644)
+		write(t, repo, ".claude/hooks/stop-guard.sh", hookBody, 0o755)
+		if got, dirs := synthHomeFallbackMounts(repo, home, []string{"claude"}); got != nil || dirs != nil {
+			t.Fatalf("project artifacts should suppress synthesis, got mounts=%v dirs=%v", got, dirs)
+		}
+
+		settingsOnly := t.TempDir()
+		writeSource(t, settingsOnly)
+		write(t, settingsOnly, ".claude/settings.json", `{"project":true}`, 0o644)
+		got, dirs := synthHomeFallbackMounts(settingsOnly, home, []string{"claude"})
+		cleanup(t, dirs)
+		byTarget := targets(got)
+		if _, ok := byTarget[home+"/.claude/settings.json"]; ok {
+			t.Fatalf("project settings must suppress settings synthesis: %v", got)
+		}
+		if _, ok := byTarget[home+"/.claude/hooks"]; !ok {
+			t.Fatalf("project settings alone must not suppress hooks synthesis: %v", got)
+		}
+
+		hooksOnly := t.TempDir()
+		writeSource(t, hooksOnly)
+		write(t, hooksOnly, ".claude/hooks/stop-guard.sh", hookBody, 0o755)
+		got, dirs = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
+		cleanup(t, dirs)
+		byTarget = targets(got)
+		if _, ok := byTarget[home+"/.claude/hooks"]; ok {
+			t.Fatalf("project hooks must suppress hooks synthesis: %v", got)
+		}
+		if _, ok := byTarget[home+"/.claude/settings.json"]; !ok {
+			t.Fatalf("project hooks alone must not suppress settings synthesis: %v", got)
+		}
+	})
+
+	t.Run("each source artifact can synthesize alone", func(t *testing.T) {
+		settingsOnly := t.TempDir()
+		write(t, settingsOnly, ".agent/claude/settings.json", settingsBody, 0o644)
+		got, dirs := synthHomeFallbackMounts(settingsOnly, home, []string{"claude"})
+		cleanup(t, dirs)
+		byTarget := targets(got)
+		if _, ok := byTarget[home+"/.claude/settings.json"]; !ok {
+			t.Fatalf("settings-only source should synthesize settings: %v", got)
+		}
+		if _, ok := byTarget[home+"/.claude/hooks"]; ok {
+			t.Fatalf("settings-only source should not synthesize hooks: %v", got)
+		}
+
+		hooksOnly := t.TempDir()
+		write(t, hooksOnly, ".agent/claude/hooks/stop-guard.sh", hookBody, 0o755)
+		got, dirs = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
+		cleanup(t, dirs)
+		byTarget = targets(got)
+		if _, ok := byTarget[home+"/.claude/hooks"]; !ok {
+			t.Fatalf("hooks-only source should synthesize hooks: %v", got)
+		}
+		if _, ok := byTarget[home+"/.claude/settings.json"]; ok {
+			t.Fatalf("hooks-only source should not synthesize settings: %v", got)
+		}
+	})
+}
+
+func TestRunSynthesizesClaudeConfigForClaudeScope(t *testing.T) {
+	write := func(t *testing.T, repo, rel, body string, perm os.FileMode) {
+		t.Helper()
+		path := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), perm); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, perm); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name         string
+		agent        string
+		wantSettings bool
+		wantHooks    bool
+	}{
+		{"Claude run gets fallback config", "claude", true, true},
+		{"Codex run skips Claude fallback config", "codex", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := t.TempDir()
+			write(t, repo, ".agent/claude/settings.json", `{"hooks":{}}`, 0o644)
+			write(t, repo, ".agent/claude/hooks/stop-guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"true"}, Agent: c.agent, Homes: true, Batch: true, Quiet: true}
+			if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+				t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+			}
+			args, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasSettings := strings.Contains(string(args), ":/home/node/.claude/settings.json")
+			hasHooks := strings.Contains(string(args), ":/home/node/.claude/hooks")
+			if hasSettings != c.wantSettings {
+				t.Fatalf("settings mount present=%v, want %v in:\n%s", hasSettings, c.wantSettings, args)
+			}
+			if hasHooks != c.wantHooks {
+				t.Fatalf("hooks mount present=%v, want %v in:\n%s", hasHooks, c.wantHooks, args)
+			}
+			for _, target := range []string{"/home/node/.claude/settings.json", "/home/node/.claude/hooks"} {
+				for _, arg := range strings.Fields(string(args)) {
+					host, found := strings.CutSuffix(arg, ":"+target)
+					if !found {
+						continue
+					}
+					if _, err := os.Stat(host); !os.IsNotExist(err) {
+						t.Errorf("temporary mount source %s remains after Run: %v", host, err)
+					}
+				}
+			}
+		})
+	}
+}

@@ -133,6 +133,10 @@ type Agent interface {
 	// credentials), given the box home dir. Exported into every box — a var is inert
 	// where its agent isn't running — so a new agent's env needs no box.Run edit.
 	BoxEnv(homeInBox string) []string
+	// HomeFallbacks are committed repo artifacts Coop may copy into this agent's user-level
+	// home for a box run. Each project artifact suppresses its matching fallback. Empty means
+	// the agent has no config shape shared through .agent/ beyond workflow skills.
+	HomeFallbacks() []HomeFallback
 	// ConsultFresh is the shell body for a fresh read-only consult session in the
 	// coop-consult wrapper — run against the wrapper's variables $prompt, $id, $model
 	// (uniformly resolved) and $idfile, plus the run/new_id helpers. It analyses and
@@ -227,6 +231,15 @@ func Packages() []string {
 type MCPMount struct {
 	Content string
 	BoxPath string
+}
+
+// HomeFallback describes one agent-owned config artifact synthesized from a committed source.
+// Paths are repo-relative except Target, which is relative to the agent's user-level home.
+type HomeFallback struct {
+	Source  string
+	Project string
+	Target  string
+	Dir     bool
 }
 
 // ACPSignal is one structured rate-limit marker in an ACP adapter's JSON-RPC errors: a
