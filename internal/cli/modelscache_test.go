@@ -181,7 +181,13 @@ func TestRefreshFallsBackToStatic(t *testing.T) {
 	if _, ok := loadModelsCache(a.cfg, "codex"); ok {
 		t.Error("a failed refresh must not write a cache")
 	}
-	if !strings.Contains(out, "o4-mini") || !strings.Contains(out, "refresh failed") {
+	if !strings.Contains(out, "gpt-5.6-sol") || !strings.Contains(out, "gpt-5.3-codex-spark") ||
+		!strings.Contains(out, "refresh failed") {
 		t.Errorf("after a failed refresh the codex block should stay static and note the failure:\n%s", out)
+	}
+	for _, removed := range []string{"gpt-5-codex", "gpt-5 ·", "o4-mini"} {
+		if strings.Contains(out, removed) {
+			t.Errorf("failed-refresh fallback still advertises removed model %q:\n%s", removed, out)
+		}
 	}
 }
