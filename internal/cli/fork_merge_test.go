@@ -496,6 +496,7 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 			t.Fatal(err)
 		}
 		markerScript(t, filepath.Join(hooks, "post-merge"), marker)
+		git(t, repo, "config", "core.hooksPath", ".git/hooks")
 		ahead := func(branch string) { // a branch one commit ahead of main, so --ff-only fast-forwards
 			git(t, repo, "checkout", "-q", "-b", branch)
 			if err := os.WriteFile(filepath.Join(repo, branch+".txt"), []byte("x\n"), 0o644); err != nil {
