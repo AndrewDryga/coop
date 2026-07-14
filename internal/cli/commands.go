@@ -1576,7 +1576,7 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 	var fails, waits, retries int
 	for {
 		agent := a.applyTarget(rev)
-		code, out, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, hosts, sink, peers)
+		code, out, _, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, hosts, sink, peers)
 		if ctx != nil && ctx.Err() != nil {
 			return "", nil // user interrupt — the caller handles stopping, not a review failure
 		}
@@ -2025,8 +2025,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// that need judgment. Best-effort like the signoff pass — a failure never blocks work.
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			pfCode, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, s)), hosts, sink, peers)
-			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil)
+			pfCode, _, _, _ := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(loopPreflightPrompt(repo, queues, s)), hosts, sink, peers)
+			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
 		}
 	}
 	label := strings.Join(queues, ", ")
@@ -2094,7 +2094,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			snapBefore := queueSnapshot(hosts)
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			code, out, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(iterWork), hosts, sink, peers)
+			code, out, res, err := a.runIteration(iterCtx, repo, img, agent, forkName, iterCmd(iterWork), hosts, sink, peers)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
 				break
@@ -2121,7 +2121,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				ui.Warn("this iteration edited gate-defining file(s) %s — the review must confirm the gate wasn't weakened to pass", strings.Join(gateHits, ", "))
 			}
 			health.noteIteration(finished, gateHits, missing) // for the signoff/verify context + the closing digest
-			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing)
+			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing, res)
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
@@ -2172,7 +2172,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
 							btExit = 1
 						}
-						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts, nil, nil)
+						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts, nil, nil, nil)
 					}
 				}
 			case actWait:
@@ -2250,7 +2250,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		cf, _ := queueProgress(hosts)
 		reopened := cf.Todo + cf.Doing
 		health.noteReopen(reopenedBySignoff(soSnap, queueSnapshot(hosts))) // which tasks the signoff bounced, for the digest + next round's context
-		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil)
+		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil, nil)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
@@ -2301,7 +2301,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 				vExit = 1
 			}
-			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil)
+			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil, nil)
 		}
 	}
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
@@ -2318,7 +2318,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// A human-facing digest above the verdict banner: what shipped (per task + areas), what's blocked,
 	// and any task the run flagged — so you see what to review/e2e at a glance.
 	if len(custom) == 0 {
-		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, blockedTaskIDs(hosts)); digest != "" {
+		cost := costFromRecords(readStageRecords(repo, runid))
+		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, blockedTaskIDs(hosts), cost); digest != "" {
 			fmt.Fprintln(os.Stderr, digest)
 		}
 		// Done folders accumulate until a human prunes them (agents never delete) — and a big
@@ -2491,7 +2492,7 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // live bar watches for task progress. On interactive terminals the agent's output is funneled
 // into the scroll history above a sticky progress bar (a Docker-build-style live view).
 // Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target) (code int, output string, res *iterResult, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
 
@@ -2555,13 +2556,14 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		wg.Wait() // no goroutine repaints the region after this, so the teardown below is clean
 	}
 	if dec != nil {
-		dec.flush() // before tail.String(): the last events must reach the rate-limit tail
+		dec.flush()    // before tail.String(): the last events must reach the rate-limit tail
+		res = dec.last // the result event's cost/turns/tokens tally (nil if none landed), for telemetry
 	}
 	if live {
 		funnel.flush()
 		bar.stop()
 	}
-	return code, tail.String(), err
+	return code, tail.String(), res, err
 }
 
 // monitorProgress watches the queue while an iteration runs and pushes each task state change

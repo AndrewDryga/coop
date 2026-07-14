@@ -71,3 +71,33 @@ func TestAppendStageRecord(t *testing.T) {
 		}
 	}
 }
+
+func TestCostFromRecords(t *testing.T) {
+	recs := []stageRecord{
+		{Stage: "work", CostUSD: 12.5, InTok: 1000, OutTok: 100, Finished: []string{"a"}},
+		{Stage: "work", CostUSD: 4.0, InTok: 500, OutTok: 50, Finished: []string{"b"}},
+		{Stage: "signoff", CostUSD: 0}, // no cost, no finished — contributes nothing
+		{Stage: "work", CostUSD: 2.0, InTok: 200, OutTok: 20, Finished: []string{"c", "d"}}, // split evenly
+	}
+	rc := costFromRecords(recs)
+	if rc.total.usd != 18.5 {
+		t.Errorf("total = %v, want 18.5", rc.total.usd)
+	}
+	if rc.byTask["a"].usd != 12.5 {
+		t.Errorf("task a = %v, want 12.5", rc.byTask["a"].usd)
+	}
+	if c := rc.byTask["c"]; c.usd != 1.0 || c.inTok != 100 || c.outTok != 10 {
+		t.Errorf("split task c = %+v, want usd 1.0 in 100 out 10", c)
+	}
+	if _, ok := rc.byTask[""]; ok {
+		t.Error("a stage with no finished task must not create a task bucket")
+	}
+}
+
+// readStageRecords is best-effort: a missing run file yields nil, never an error, so the closing
+// summary can't break the run's end.
+func TestReadStageRecordsMissing(t *testing.T) {
+	if recs := readStageRecords(t.TempDir(), "nope"); recs != nil {
+		t.Errorf("missing run file should read nil, got %v", recs)
+	}
+}

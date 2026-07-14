@@ -130,8 +130,12 @@ func TestHumanDigest(t *testing.T) {
 	}
 	h := newLoopHealth()
 	h.noteReopen([]string{"task-json"})
-	d := cs.humanDigest(h, []string{"sign-key-policy"})
-	for _, want := range []string{"Shipped this run", "add --json flag", "Blocked (needs you)", "sign-key-policy", "Look at:", "reopened 1×"} {
+	cost := runCost{
+		byTask: map[string]stageCost{"task-json": {usd: 3.50, inTok: 120000, outTok: 4200}},
+		total:  stageCost{usd: 3.50, inTok: 120000, outTok: 4200},
+	}
+	d := cs.humanDigest(h, []string{"sign-key-policy"}, cost)
+	for _, want := range []string{"Shipped this run", "add --json flag", "$3.50", "Cost:", "120.0k in / 4.2k out", "Blocked (needs you)", "sign-key-policy", "Look at:", "reopened 1×"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("humanDigest missing %q:\n%s", want, d)
 		}

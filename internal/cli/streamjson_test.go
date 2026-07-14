@@ -58,6 +58,41 @@ func TestStreamDecoder(t *testing.T) {
 	}
 }
 
+// A result event with a usage block renders in/out tokens on the closing line and captures the
+// cost/turns/token tally on the decoder for the loop's telemetry; a result WITHOUT usage still
+// renders cost/turns and captures those with zero tokens (no crash, no "tok" on the line).
+func TestStreamDecoderResultUsage(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newStreamDecoder(&out, &tail, "", "", "")
+	// input 4243 + cache_creation 3630 + cache_read 15197 = 23070 in; 698 out.
+	_, _ = d.Write([]byte(`{"type":"result","subtype":"success","num_turns":5,"duration_ms":1000,"total_cost_usd":1.23,"usage":{"input_tokens":4243,"cache_creation_input_tokens":3630,"cache_read_input_tokens":15197,"output_tokens":698}}` + "\n"))
+	d.flush()
+	o := out.String()
+	for _, want := range []string{"· 5 turns", "$1.23", "23.1k/698 tok"} {
+		if !strings.Contains(o, want) {
+			t.Errorf("result line missing %q: %q", want, o)
+		}
+	}
+	if d.last == nil {
+		t.Fatal("decoder did not capture the result tally")
+	}
+	if d.last.CostUSD != 1.23 || d.last.Turns != 5 || d.last.InTok != 23070 || d.last.OutTok != 698 {
+		t.Errorf("captured tally = %+v, want cost 1.23 turns 5 in 23070 out 698", d.last)
+	}
+
+	// No usage block: cost/turns still captured, tokens zero, and the line omits "tok".
+	var out2, tail2 bytes.Buffer
+	d2 := newStreamDecoder(&out2, &tail2, "", "", "")
+	_, _ = d2.Write([]byte(`{"type":"result","subtype":"success","num_turns":2,"duration_ms":500,"total_cost_usd":0.05}` + "\n"))
+	d2.flush()
+	if strings.Contains(out2.String(), "tok") {
+		t.Errorf("a no-usage result should omit tokens: %q", out2.String())
+	}
+	if d2.last == nil || d2.last.CostUSD != 0.05 || d2.last.InTok != 0 {
+		t.Errorf("no-usage tally = %+v, want cost 0.05 in 0", d2.last)
+	}
+}
+
 // The init model line names the agent and profile in play when given them, so a loop iteration
 // shows "using claude model … profile personal"; with neither it falls back to "· model …".
 func TestStreamDecoderModelLine(t *testing.T) {

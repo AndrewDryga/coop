@@ -33,6 +33,7 @@ type streamDecoder struct {
 	root    string            // the repo's in-box mount; tool paths show relative to it (empty = off)
 	buf     []byte            // partial trailing line carried between Writes
 	tool    map[string]string // tool_use id → label, to name a failed tool_result
+	last    *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
@@ -204,9 +205,28 @@ func (d *streamDecoder) result(ev *streamEvent) {
 		return
 	}
 	dur := (time.Duration(ev.DurationMS) * time.Millisecond).Round(time.Second)
-	d.emit(ui.Dim(fmt.Sprintf("· %d turns · %s · $%.2f", ev.NumTurns, dur, ev.TotalCostUSD)))
+	res := &iterResult{CostUSD: ev.TotalCostUSD, Turns: ev.NumTurns, DurationMS: ev.DurationMS}
+	line := fmt.Sprintf("· %d turns · %s · $%.2f", ev.NumTurns, dur, ev.TotalCostUSD)
+	if ev.Usage != nil {
+		res.InTok, res.OutTok = ev.Usage.inputTotal(), ev.Usage.OutputTokens
+		line += fmt.Sprintf(" · %s/%s tok", humanTokens(res.InTok), humanTokens(res.OutTok))
+	}
+	d.last = res
+	d.emit(ui.Dim(line))
 	if t := strings.TrimSpace(ev.Result); t != "" {
 		d.toTail(t) // the final message, in case it carries a limit notice
+	}
+}
+
+// humanTokens renders a token count compactly: 4243→"4.2k", 1_234_567→"1.2M", <1000 verbatim.
+func humanTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }
 
@@ -331,12 +351,40 @@ type streamEvent struct {
 	NumTurns     int             `json:"num_turns"`
 	DurationMS   int             `json:"duration_ms"`
 	TotalCostUSD float64         `json:"total_cost_usd"`
+	Usage        *usageInfo      `json:"usage"`
 }
 
 type rateLimitInfo struct {
 	Status        string `json:"status"`
 	ResetsAt      int64  `json:"resetsAt"`
 	RateLimitType string `json:"rateLimitType"`
+}
+
+// usageInfo is the token accounting on Claude Code's result event. input_tokens is fresh
+// (uncached) input; the two cache fields are input written to / read from the prompt cache; a
+// token-use view sums all three as "input". server_tool_use (web search/fetch counts) is ignored.
+type usageInfo struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// inputTotal sums every input-side token (fresh + cache write + cache read) — the "in" half of the
+// in/out the iteration line and the cost table show.
+func (u usageInfo) inputTotal() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+}
+
+// iterResult is the closing tally the loop reads off the decoder after a box run — the result
+// event's cost, turns, and token totals — so it can attribute cost to the task in telemetry. nil
+// until a (non-error) result event lands; an interrupted run leaves it nil.
+type iterResult struct {
+	CostUSD    float64
+	Turns      int
+	DurationMS int
+	InTok      int
+	OutTok     int
 }
 
 type streamMessage struct {

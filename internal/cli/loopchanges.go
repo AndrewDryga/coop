@@ -292,8 +292,8 @@ func substituteLoopVars(prompt string, cs loopChangeSet, h *loopHealth) string {
 // (per task + its areas), what's blocked on a decision, and any task the run flagged — so you see what
 // to review/e2e at a glance instead of a bare counter. Empty when the run changed nothing and blocked
 // nothing (the bare banner stands).
-func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string) string {
-	if cs.empty() && len(blocked) == 0 {
+func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string, cost runCost) string {
+	if cs.empty() && len(blocked) == 0 && cost.total.usd == 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -304,11 +304,18 @@ func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string) string {
 			if len(t.commits) > 0 {
 				subj = t.commits[0].subject
 			}
-			fmt.Fprintf(&b, "  • %-30s %s  (%s)\n", t.id, subj, strings.Join(subsystemsOf(t.files), ", "))
+			line := fmt.Sprintf("  • %-30s %s  (%s)", t.id, subj, strings.Join(subsystemsOf(t.files), ", "))
+			if c := cost.byTask[t.id]; c.usd > 0 {
+				line += "  " + ui.Dim(fmt.Sprintf("$%.2f", c.usd))
+			}
+			b.WriteString(line + "\n")
 		}
 	}
 	if len(cs.subsystems) > 0 {
 		fmt.Fprintf(&b, "  Touched: %s\n", strings.Join(cs.subsystems, ", "))
+	}
+	if cost.total.usd > 0 {
+		fmt.Fprintf(&b, "  %s $%.2f · %s in / %s out\n", ui.Bold("Cost:"), cost.total.usd, humanTokens(cost.total.inTok), humanTokens(cost.total.outTok))
 	}
 	if len(blocked) > 0 {
 		fmt.Fprintf(&b, "  %s %s — %s\n", ui.Yellow("Blocked (needs you):"), ui.Count(len(blocked), "task"), abbrev(blocked, 4))
