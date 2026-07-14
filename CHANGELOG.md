@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop orchestration reads as orchestration.** Read-only consults, write-capable delegates, and
+  native Claude subagents now have distinct glyphs and role/type labels in the live view instead of
+  masquerading as generic Bash or `Task` calls; failures keep the same semantic label.
+
 - **Loop Bash activity keeps the useful part of repo paths visible.** Repeated in-box repo mount
   prefixes are stripped from streamed Bash command lines before truncation, while absolute paths
   outside the repo remain untouched.

@@ -186,8 +186,8 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 				d.toTail(t) // the tail (limit detection) always gets the plain text
 			}
 		case "tool_use":
-			glyph, label, outside := toolDisplay(d.root, b.Name, b.Input)
-			line := glyph + " " + b.Name
+			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, b.Input)
+			line := glyph + " " + displayName
 			if label != "" {
 				shown := truncate(label, 60)
 				if outside {
@@ -199,7 +199,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 				}
 			}
 			d.emit(line)
-			d.tool[b.ID] = strings.TrimSpace(b.Name + " " + label)
+			d.tool[b.ID] = strings.TrimSpace(displayName + " " + label)
 		}
 	}
 }
@@ -323,26 +323,67 @@ func blockingLimitStatus(s string) bool {
 	return false
 }
 
-// toolDisplay picks a glyph and a one-line summary for a tool call from its input. For the
-// file tools it shows the path repo-relative (against root) and reports outside=true when the
-// path escapes the repo tree, so the caller can flag it. Non-path tools are never "outside".
-func toolDisplay(root, name string, input json.RawMessage) (glyph, label string, outside bool) {
+// toolDisplay picks a glyph, display verb, and one-line summary for a tool call from its input. For
+// file tools it shows the path repo-relative (against root) and reports outside=true when the path
+// escapes the repo tree, so the caller can flag it. Non-path tools are never "outside".
+func toolDisplay(root, name string, input json.RawMessage) (glyph, displayName, label string, outside bool) {
 	var in toolInput
 	_ = json.Unmarshal(input, &in)
 	switch name {
 	case "Bash":
-		return "⚙", firstLine(relativizeRoot(root, stripLeadingCD(in.Command))), false
+		command := stripLeadingCD(in.Command)
+		if glyph, displayName, label, ok := consultDelegateDisplay(command); ok {
+			return glyph, displayName, label, false
+		}
+		return "⚙", name, firstLine(relativizeRoot(root, command)), false
+	case "Task":
+		detail := strings.TrimSpace(in.SubagentType)
+		if description := strings.TrimSpace(in.Description); description != "" {
+			if detail != "" {
+				detail += ": "
+			}
+			detail += description
+		}
+		if detail != "" {
+			detail = "→ " + detail
+		}
+		return "⌥", "subagent", detail, false
 	case "Edit", "Write", "NotebookEdit":
 		rel, inside := repoRel(root, in.FilePath)
-		return "✎", rel, !inside
+		return "✎", name, rel, !inside
 	case "Read":
 		rel, inside := repoRel(root, in.FilePath)
-		return "▸", rel, !inside
+		return "▸", name, rel, !inside
 	case "Grep", "Glob":
-		return "⌕", in.Pattern, false
+		return "⌕", name, in.Pattern, false
 	default:
-		return "·", in.Description, false
+		return "·", name, in.Description, false
 	}
+}
+
+// consultDelegateDisplay recognizes the role-addressed wrappers the lead invokes through Bash.
+// Their grammar is intentionally simple here: command name, optional flag tokens, then role. This
+// is display-only classification, not shell parsing; malformed or unrelated commands fall through.
+func consultDelegateDisplay(command string) (glyph, displayName, label string, ok bool) {
+	fields := strings.Fields(command)
+	if len(fields) < 2 {
+		return "", "", "", false
+	}
+	switch fields[0] {
+	case "coop-consult":
+		glyph, displayName = "☎", "consult"
+	case "coop-delegate":
+		glyph, displayName = "⇢", "delegate"
+	default:
+		return "", "", "", false
+	}
+	for _, field := range fields[1:] {
+		if strings.HasPrefix(field, "-") {
+			continue
+		}
+		return glyph, displayName, "→ " + field, true
+	}
+	return "", "", "", false
 }
 
 // repoRel renders an absolute in-box file path relative to the repo root when it falls inside
@@ -494,8 +535,9 @@ type streamBlock struct {
 }
 
 type toolInput struct {
-	Command     string `json:"command"`
-	FilePath    string `json:"file_path"`
-	Pattern     string `json:"pattern"`
-	Description string `json:"description"`
+	Command      string `json:"command"`
+	FilePath     string `json:"file_path"`
+	Pattern      string `json:"pattern"`
+	Description  string `json:"description"`
+	SubagentType string `json:"subagent_type"`
 }

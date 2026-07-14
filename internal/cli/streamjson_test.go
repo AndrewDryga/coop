@@ -250,9 +250,44 @@ func TestRelativizeRoot(t *testing.T) {
 	}
 
 	input := []byte(`{"command":"cd /home/u/proj && cat /home/u/proj/a /home/u/proj/b\nignored"}`)
-	_, label, outside := toolDisplay(root, "Bash", input)
-	if label != "cat a b" || outside {
-		t.Errorf("toolDisplay(Bash) = (%q, outside=%v), want (cat a b, false)", label, outside)
+	_, displayName, label, outside := toolDisplay(root, "Bash", input)
+	if displayName != "Bash" || label != "cat a b" || outside {
+		t.Errorf("toolDisplay(Bash) = (%q, %q, outside=%v), want (Bash, cat a b, false)", displayName, label, outside)
+	}
+}
+
+func TestStreamDecoderDelegationTools(t *testing.T) {
+	lines := []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"c","name":"Bash","input":{"command":"cd /workspace/repo && coop-consult critic --fresh \"review this\""}}]}}`,
+		`{"type":"user","message":{"content":[{"tool_use_id":"c","type":"tool_result","content":"peer unavailable","is_error":true}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"d","name":"Bash","input":{"command":"coop-delegate fast <<'EOF'\nimplement it\nEOF"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Task","input":{"subagent_type":"deep-reasoner","description":"survey the acpproxy seam"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"ls /workspace/repo/.agent/tasks"}}]}}`,
+	}
+	var out, tail bytes.Buffer
+	d := newStreamDecoder(&out, &tail, "claude", "", "/workspace/repo")
+	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
+	d.flush()
+	o := out.String()
+	for _, want := range []string{
+		"☎ consult → critic",
+		"✗ consult → critic: peer unavailable",
+		"⇢ delegate → fast",
+		"⌥ subagent → deep-reasoner: survey the acpproxy seam",
+		"⚙ Bash ls .agent/tasks",
+	} {
+		if !strings.Contains(o, want) {
+			t.Errorf("delegation output missing %q:\n%s", want, o)
+		}
+	}
+	for _, raw := range []string{"☎ Bash", "⇢ Bash", "⌥ Task"} {
+		if strings.Contains(o, raw) {
+			t.Errorf("semantic tool leaked raw name %q:\n%s", raw, o)
+		}
+	}
+
+	if glyph, name, label, ok := consultDelegateDisplay("coop-consult --fresh thinker prompt"); !ok || glyph != "☎" || name != "consult" || label != "→ thinker" {
+		t.Errorf("flags-before-role consult = (%q, %q, %q, %v)", glyph, name, label, ok)
 	}
 }
 
