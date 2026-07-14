@@ -128,6 +128,42 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 		t.Errorf("blocking limit should render to the user: %q", out.String())
 	}
 
+	// Once the structured event owns the visible notice, Claude's assistant and result echoes
+	// stay in the detector tail without printing the same limit two more times.
+	_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"YOU'VE HIT YOUR WEEKLY LIMIT · resets Jul 16, 2pm"}]}}` + "\n"))
+	_, _ = d.Write([]byte(`{"type":"result","subtype":"error","is_error":true,"result":"Claude AI usage LIMIT reached"}` + "\n"))
+	if got := strings.Count(strings.ToLower(out.String()), "limit"); got != 1 {
+		t.Errorf("structured limit plus text echoes rendered %d limit lines, want 1:\n%s", got, out.String())
+	}
+	for _, want := range []string{"YOU'VE HIT YOUR WEEKLY LIMIT", "Claude AI usage LIMIT reached"} {
+		if !strings.Contains(tail.String(), want) {
+			t.Errorf("suppressed display text missing from detector tail: want %q in %q", want, tail.String())
+		}
+	}
+
+	// Without a structured event, a text-only limit remains visible and detectable.
+	var textOut, textTail bytes.Buffer
+	textDecoder := newStreamDecoder(&textOut, &textTail, "", "", "")
+	_, _ = textDecoder.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your weekly limit"}]}}` + "\n"))
+	if !strings.Contains(textOut.String(), "You've hit your weekly limit") {
+		t.Errorf("text-only limit should remain visible: %q", textOut.String())
+	}
+	if !strings.Contains(textTail.String(), "You've hit your weekly limit") {
+		t.Errorf("text-only limit missing from detector tail: %q", textTail.String())
+	}
+
+	// The structured flag is narrow: ordinary assistant text and result errors still render.
+	var otherOut, otherTail bytes.Buffer
+	otherDecoder := newStreamDecoder(&otherOut, &otherTail, "", "", "")
+	_, _ = otherDecoder.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour"}}` + "\n"))
+	_, _ = otherDecoder.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"Saving diagnostic state"}]}}` + "\n"))
+	_, _ = otherDecoder.Write([]byte(`{"type":"result","subtype":"error","is_error":true,"result":"network unavailable"}` + "\n"))
+	for _, want := range []string{"Saving diagnostic state", "network unavailable"} {
+		if !strings.Contains(otherOut.String(), want) {
+			t.Errorf("unrelated output %q was suppressed:\n%s", want, otherOut.String())
+		}
+	}
+
 	// Informational statuses every run emits must not trip the detector.
 	for _, st := range []string{"allowed", "warning", "queued"} {
 		var o, tl bytes.Buffer

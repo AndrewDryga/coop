@@ -27,11 +27,12 @@ const llmIcon = "✦"
 // like "429" that would false-match the limit markers.
 type streamDecoder struct {
 	*ndjsonDecoder
-	agent   string            // the agent whose stream this is (e.g. claude), for the model line
-	profile string            // the credential profile in play, for the model line
-	root    string            // the repo's in-box mount; tool paths show relative to it (empty = off)
-	tool    map[string]string // tool_use id → label, to name a failed tool_result
-	last    *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
+	agent      string            // the agent whose stream this is (e.g. claude), for the model line
+	profile    string            // the credential profile in play, for the model line
+	root       string            // the repo's in-box mount; tool paths show relative to it (empty = off)
+	tool       map[string]string // tool_use id → label, to name a failed tool_result
+	last       *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
+	limitShown bool              // a blocking structured limit already owns the visible notice
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
@@ -173,8 +174,10 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 		switch b.Type {
 		case "text":
 			if t := strings.TrimSpace(b.Text); t != "" {
-				d.emit(ui.Magenta(llmIcon) + " " + t) // mark the agent's own voice
-				d.toTail(t)                           // the tail (limit detection) gets the plain text
+				if !d.limitShown || !streamLimitNotice(t) {
+					d.emit(ui.Magenta(llmIcon) + " " + t) // mark the agent's own voice
+				}
+				d.toTail(t) // the tail (limit detection) always gets the plain text
 			}
 		case "tool_use":
 			glyph, label, outside := toolDisplay(d.root, b.Name, b.Input)
@@ -255,7 +258,12 @@ func (d *streamDecoder) rateLimit(rl *rateLimitInfo) {
 		when = " — resets " + time.Unix(rl.ResetsAt, 0).Format("Jan 2, 3:04pm")
 	}
 	d.emit(ui.Yellow("⚠ rate limited") + " (" + rl.RateLimitType + ")" + when)
+	d.limitShown = true
 	d.toTail(fmt.Sprintf("Claude AI usage limit reached|%d", rl.ResetsAt))
+}
+
+func streamLimitNotice(s string) bool {
+	return hitLimitRe.MatchString(s) || strings.Contains(strings.ToLower(s), "usage limit reached")
 }
 
 // result renders the iteration's closing summary, or its error.
@@ -265,7 +273,9 @@ func (d *streamDecoder) result(ev *streamEvent) {
 		if msg == "" {
 			msg = "error"
 		}
-		d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
+		if !d.limitShown || !streamLimitNotice(msg) {
+			d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
+		}
 		d.toTail(msg)
 		return
 	}
