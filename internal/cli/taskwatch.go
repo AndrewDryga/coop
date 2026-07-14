@@ -233,16 +233,16 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin int) []string {
 	return out
 }
 
-// taskWatchMarker is the fixed-width per-task mark, colored to match the top counter legend
-// (paintState): a yellow spinner for in-progress, a red flag for blocked, a cyan dot for todo.
+// taskWatchMarker is the one-column per-task mark, colored to match the top counter legend
+// (paintState): yellow Pocket Run for in-progress, a red flag for blocked, a cyan dot for todo.
 func taskWatchMarker(p ui.Palette, state string, spin int) string {
 	switch state {
 	case stateInProgress:
-		return p.Yellow(padRight(ui.SpinFrame(spin), ui.SpinnerWidth))
+		return p.Yellow(ui.CompactSpinFrame(spin))
 	case stateBlocked:
-		return p.Red(padRight("⚑", ui.SpinnerWidth))
+		return p.Red("⚑")
 	default: // todo
-		return p.Cyan(padRight("○", ui.SpinnerWidth))
+		return p.Cyan("○")
 	}
 }
 

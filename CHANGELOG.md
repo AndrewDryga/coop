@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Introduce the five-column ASCII Box Run as Coop's signature live-view spinner, keep live-state columns stable, and add `COOP_SPINNER=0` for quiet debug and recording captures.
+- Introduce five-column Box Run beside progress bars and one-column Pocket Run in dense task rows as Coop's ASCII signature spinners; keep each live surface aligned and add `COOP_SPINNER=0` for quiet debug and recording captures.
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 

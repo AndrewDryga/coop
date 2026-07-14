@@ -65,12 +65,34 @@ func TestTasksWatchFrame(t *testing.T) {
 	}
 }
 
-func TestTaskWatchMarkersKeepTitlesAligned(t *testing.T) {
+func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	p := ui.Palette{}
-	for _, state := range []string{stateInProgress, stateBlocked, stateTodo} {
-		if got := len([]rune(taskWatchMarker(p, state, 0))); got != ui.SpinnerWidth {
-			t.Errorf("taskWatchMarker(%q) width = %d, want %d", state, got, ui.SpinnerWidth)
+	t.Setenv("COOP_SPINNER", "1")
+	for spin, want := range ui.CompactSpinFrames {
+		if got := taskWatchMarker(p, stateInProgress, spin); got != want {
+			t.Errorf("in-progress marker at spin %d = %q, want Pocket Run %q", spin, got, want)
 		}
+	}
+	for _, tc := range []struct {
+		state string
+		want  string
+	}{
+		{stateBlocked, "⚑"},
+		{stateTodo, "○"},
+	} {
+		if got := taskWatchMarker(p, tc.state, 0); got != tc.want || len([]rune(got)) != 1 {
+			t.Errorf("taskWatchMarker(%q) = %q, want one-column %q", tc.state, got, tc.want)
+		}
+	}
+
+	line := mergedQueue(p, []mergedTask{{taskItem: taskItem{Title: "Task title", State: stateInProgress}}}, 0)[0]
+	if line != "  . Task title" {
+		t.Errorf("compact task row = %q, want %q", line, "  . Task title")
+	}
+
+	t.Setenv("COOP_SPINNER", "0")
+	if got := taskWatchMarker(p, stateInProgress, 4); got != ui.CompactSpinFrames[0] {
+		t.Errorf("frozen task marker = %q, want %q", got, ui.CompactSpinFrames[0])
 	}
 }
 

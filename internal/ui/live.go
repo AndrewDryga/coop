@@ -16,6 +16,9 @@ const SpinnerWidth = 5
 // SpinFrames is Box Run: Coop's shared ASCII live-view spinner.
 var SpinFrames = []string{".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."}
 
+// CompactSpinFrames is Pocket Run: the one-column companion for dense live views.
+var CompactSpinFrames = []string{".", ">", "[", "*", "]", ">"}
+
 // SpinnerEnabled reports whether live views should animate. Freezing keeps the live region and
 // progress updates while avoiding high-frequency terminal redraws in recordings and debuggers.
 func SpinnerEnabled() bool {
@@ -25,10 +28,19 @@ func SpinnerEnabled() bool {
 
 // SpinFrame returns the shared Box Run frame, pinned to its first frame when animation is disabled.
 func SpinFrame(spin int) string {
+	return spinFrame(SpinFrames, spin)
+}
+
+// CompactSpinFrame returns the shared Pocket Run frame, pinned to its first frame when animation is disabled.
+func CompactSpinFrame(spin int) string {
+	return spinFrame(CompactSpinFrames, spin)
+}
+
+func spinFrame(frames []string, spin int) string {
 	if !SpinnerEnabled() || spin < 0 {
 		spin = 0
 	}
-	return SpinFrames[spin%len(SpinFrames)]
+	return frames[spin%len(frames)]
 }
 
 // Region owns a block of lines pinned to the bottom of a terminal and repaints them in place,
