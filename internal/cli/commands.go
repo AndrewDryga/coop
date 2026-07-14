@@ -2222,12 +2222,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
 			// Attempt evidence: the tasks this iteration moved to done, and any it finished with NO
-			// Coop-Task commit in its HEAD range — unbindable, so warn (never silent) and record it.
+			// exact Coop-Task commit in its HEAD range or reachable history — unbindable, so warn.
 			finished := finishedTasks(snapBefore, queueSnapshot(hosts))
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
 			missing := untrailered(repo, iterHead, headAfter, finished)
 			if len(missing) > 0 {
-				ui.Warn("task(s) %s finished with no Coop-Task commit this iteration — the harness can't bind them to a commit (the commit needs a `Coop-Task: <id>` trailer)", strings.Join(missing, ", "))
+				ui.Warn("task(s) %s finished with no matching Coop-Task commit — the harness can't bind them to a commit (the commit needs a `Coop-Task: <id>` trailer)", strings.Join(missing, ", "))
 			}
 			// Verifier trust boundary (first step): a task that edited a gate-defining file could be
 			// passing by WEAKENING its own checker. Detect it host-side and warn; the review footer and

@@ -127,8 +127,8 @@ func TestAssignLoopTaskEmptyIsNoOp(t *testing.T) {
 	}
 }
 
-// TestCommitsForTaskAndUntrailered drives the real git trailer read: a commit tagged Coop-Task is
-// found by id; the untrailered check flags a finished task whose range has no such commit.
+// TestCommitsForTaskAndUntrailered drives the real git trailer read: fresh and historical exact
+// trailers bind their task, while absent, different-id, and substring trailers do not.
 func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -164,6 +164,14 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	}
 	if m := untrailered(repo, base, head, []string{"task-42", "task-99"}); len(m) != 1 || m[0] != "task-99" {
 		t.Errorf("untrailered = %v, want [task-99]", m)
+	}
+	// A case-(a) resume may only move the folder after its trailer commit already landed, leaving
+	// HEAD unchanged. Reachable history still binds that completion, but only by exact trailer id.
+	if m := untrailered(repo, head, head, []string{"task-42"}); len(m) != 0 {
+		t.Errorf("historically trailered task-42 should bind without HEAD movement: %v", m)
+	}
+	if m := untrailered(repo, head, head, []string{"task-4", "task"}); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
+		t.Errorf("different ids and substrings must remain untrailered, got %v", m)
 	}
 	// landedTasks sees the trailer across all history.
 	if !landedTasks(repo)["task-42"] {

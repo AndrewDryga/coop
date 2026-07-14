@@ -141,9 +141,9 @@ func reopenedBySignoff(before, after map[string]string) []string {
 	return ids
 }
 
-// untrailered returns the finished ids with NO Coop-Task commit in the iteration's range — a
-// completion the agent didn't tag, so the host can't bind it to a commit. An empty range (no HEAD
-// movement, e.g. a folder move with no commit) leaves every finished id untrailered.
+// untrailered returns the finished ids with NO matching Coop-Task commit. Prefer the iteration's
+// range for fresh work, but fall back to reachable history for a case-(a) resume that only finishes
+// the folder move after its exact trailer commit already landed.
 func untrailered(repo, base, head string, finished []string) []string {
 	rng := ""
 	if base != "" && head != "" && base != head {
@@ -151,7 +151,8 @@ func untrailered(repo, base, head string, finished []string) []string {
 	}
 	var missing []string
 	for _, id := range finished {
-		if rng == "" || len(commitsForTask(repo, rng, id)) == 0 {
+		inRange := rng != "" && len(commitsForTask(repo, rng, id)) > 0
+		if !inRange && len(commitsForTask(repo, "", id)) == 0 {
 			missing = append(missing, id)
 		}
 	}
