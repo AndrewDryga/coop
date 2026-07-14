@@ -179,10 +179,14 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   the new provider and carries the thread best-effort as text); fusion refuses such a ladder
   (one governor per council).
 
-  Run one by NAMING it in the who-runs slot: coop <name> · coop loop <name> ·
-  coop fusion <name> · coop acp <name> · coop fork <fork> <name> --loop — or per fork
-  in .agent/fleet.yaml (agent: <name>). A target (claude:opus@work) in that same slot
-  runs the agent directly instead.
+  Run one by NAMING it in the who-runs slot:
+    coop <name>
+    coop loop <name>
+    coop fusion <name>
+    coop acp <name>
+    coop fork <fork> <name> --loop
+  A fleet can name it per fork in .agent/fleet.yaml (agent: <name>). A target
+  (claude:opus@work) in that same slot runs the agent directly instead.
 
   .agent/presets/frontier/preset.yaml:
 
@@ -256,7 +260,7 @@ coop models [agent] — the model menu per agent.
   id — a bad one fails in the agent's own error.
 
   Reasoning effort is a sibling axis, set with /effort in the same target
-  (claude:opus/xhigh, codex/high): low · medium · high · xhigh · max — coop passes the
+  (claude:opus/xhigh, codex/high): low, medium, high, xhigh, or max — coop passes the
   level through and the agent's CLI validates it (claude, codex, and grok have it; gemini
   has none, so a /effort on gemini errors). One axis carries both — a target and
   COOP_<AGENT>_MODEL take model[/effort] (e.g. opus/high), so there is no separate effort
@@ -622,10 +626,9 @@ coop prompt — one compact status line for a shell prompt, tmux, or menubar.
 
   Usage: coop prompt
 
-  Prints this repo's state on ONE line — task counts and fork/loop activity,
-  "·"-separated, non-zero segments only (e.g. "3 todo · 1 blocked · 2 forks · 1
-  looping"). Nothing prints when the queue is empty and no forks exist, so an
-  embedding prompt stays clean.
+  Prints this repo's state on ONE line — task counts and fork/loop activity, with a
+  compact separator between non-zero segments. Nothing prints when the queue is empty
+  and no forks exist, so an embedding prompt stays clean.
 
   Read-only and cheap: it reads the task dirs + fork pidfiles (plus one git-root
   lookup) — never a per-fork git call and never docker — so it's safe to run on

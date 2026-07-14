@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // `coop up`/`down` in the top-level help are compose-aware: they name the repo's real service keys
@@ -66,6 +67,25 @@ func TestHelpTextAligned(t *testing.T) {
 	// Docs points at the readable docs site (a clickable URL), not the bare words "the README".
 	if !strings.Contains(out, "https://coop.dryga.com") {
 		t.Errorf("help footer should link to the docs site:\n%s", out)
+	}
+}
+
+// Every help surface follows the no-middle-dot rule. The top-level check alone missed focused
+// command topics for years, so enumerate those sources directly instead of relying on one render.
+func TestAllHelpAvoidsMiddleDots(t *testing.T) {
+	pages := map[string]string{
+		"top-level": helpText(&config.Config{}),
+		"agent":     agentHelp,
+		"run":       runHelp,
+		"fork":      forkHelpText(ui.Palette{}),
+	}
+	for name, help := range commandHelp {
+		pages[name] = help
+	}
+	for name, help := range pages {
+		if strings.Contains(help, "·") {
+			t.Errorf("%s help should not use middle-dot separators:\n%s", name, help)
+		}
 	}
 }
 
