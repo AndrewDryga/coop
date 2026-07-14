@@ -18,7 +18,7 @@
 [2.705, "o", "\u001b[K\u001b[1m\u001b[36mcoop:\u001b[0m iteration 1 · 0/3 done · now: Make POST /checkout idempotent\r\n"]
 [2.705, "o", "\u001b[K\u001b[36m⠹\u001b[0m [\u001b[36m\u001b[0m░░░░░░░░░░░░░░░░░░░░] \u001b[32m0\u001b[0m/3 done · now: Make POST /checkout idempotent \u001b[2m0:00\u001b[0m"]
 [3.205, "o", "\r\u001b[J"]
-[3.205, "o", "\u001b[K\u001b[2m· using \u001b[0mclaude\u001b[2m model \u001b[0mclaude-opus-4-8[1m]\u001b[2m profile \u001b[0mpersonal\r\n"]
+[3.205, "o", "\u001b[K\u001b[2m· using \u001b[0mclaude\u001b[2m model \u001b[0mclaude-opus-4-8[1m]\u001b[2m credential \u001b[0mpersonal\r\n"]
 [3.205, "o", "\u001b[K\u001b[36m⠸\u001b[0m [\u001b[36m\u001b[0m░░░░░░░░░░░░░░░░░░░░] \u001b[32m0\u001b[0m/3 done · now: Make POST /checkout idempotent \u001b[2m0:01\u001b[0m"]
 [4.105, "o", "\r\u001b[J"]
 [4.105, "o", "\u001b[K\u001b[35m✦\u001b[0m A retried checkout double-charges — I'll key each order on the Idempotency-Key + a unique index, so a replay returns the first charge. Added a double-submit test; gate green.\r\n"]
