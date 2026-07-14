@@ -455,14 +455,14 @@
                                 <pre
                                     class="term-code"
                                 >lead:
-  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
+  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
 roles:
   thinker:       <span class="t"># deep thinking, in-session</span>
     mode: native <span class="t"># coop generates a coop-thinker subagent</span>
-    agent: claude:claude-opus-4-8
+    agent: claude:claude-opus-4-8/xhigh
   critic:        <span class="t"># read-only, another vendor</span>
     mode: consult
-    agent: codex:gpt-5.5
+    agent: codex:gpt-5.6-sol/xhigh
   fast:          <span class="t"># cheap, write-capable</span>
     mode: delegate
     agent: gemini:gemini-3.5-flash</pre>

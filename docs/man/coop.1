@@ -169,8 +169,8 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
          coop presets init [name]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
-  work to — each role an agent: target (provider[:model]) + routing hints. The lead's
-  agent: is a target, or a fallback ladder (even CROSS-PROVIDER, [claude:opus, codex:gpt-5.5]):
+  work to — each role an agent: target (provider[:model][/effort]) + routing hints. The lead's
+  agent: is a target, or a fallback ladder (even CROSS-PROVIDER, [claude:fable, codex:gpt-5.6-sol]):
   a bare provider:model runs on EVERY signed-in account (rotating on a rate limit),
   provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
   rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
@@ -191,25 +191,25 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   .agent/presets/frontier/preset.yaml:
 
     lead:
-      # a target, or a ladder (cross-provider ok) — fable on all accounts, then opus on work
-      agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
-      prompt: roles/lead.md           # Optional Markdown, appended to the generated contract.
-    roles:                            # agent: is a target — provider[:model], default account
-      thinker:                        # native Claude subagent — deep thinking in-session
+      # a target, or a ladder (cross-provider ok) — frontier models at xhigh effort
+      agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
+      prompt: roles/lead.md                 # Optional Markdown, appended to the generated contract.
+    roles:                                  # agent: is a target — provider[:model][/effort], default account
+      thinker:                              # native Claude subagent — deep thinking in-session
         mode: native
-        agent: claude:claude-opus-4-8 # the model rides agent: (coop generates coop-thinker)
+        agent: claude:claude-opus-4-8/xhigh # model + effort ride agent: (generates coop-thinker)
         when: [architecture, debugging, code-review]
-        prompt: roles/thinker.md      # its system prompt (or set subagent: <name> to reuse one)
-      critic:                         # read-only peer via coop-consult
+        prompt: roles/thinker.md            # its system prompt (or set subagent: <name> to reuse one)
+      critic:                               # read-only peer via coop-consult
         mode: consult
-        agent: codex:gpt-5.5          # omit the :model (agent: codex) for the agent's default
+        agent: codex:gpt-5.6-sol/xhigh      # omit :model/effort for the agent's defaults
         when: [plan-review, security]
-      fast:                           # write-capable delegate via coop-delegate
+      fast:                                 # write-capable delegate via coop-delegate
         mode: delegate
         agent: gemini:gemini-3.5-flash
         when: [boilerplate, bulk-edits, test-scaffolding]
-        commit: never                 # the delegate edits; the LEAD reviews, gates, commits
-        concurrent: never             # delegate runs are serialized
+        commit: never                       # the delegate edits; the LEAD reviews, gates, commits
+        concurrent: never                   # delegate runs are serialized
 
   coop generates the lead's routing contract from this — each role, when to use it, and
   its ROLE-ADDRESSED invocation (@coop-<role>, coop-consult <role>, coop-delegate <role>)

@@ -23,16 +23,16 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 
 # lead — REQUIRED: the agent that leads the session, as a TARGET or a fallback ladder.
 lead:
-  # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (a fallback ladder):
+  # agent — REQUIRED. A target: provider[:model][/effort][@account], or a LIST of them (a fallback ladder):
   #   claude                          the agent's default model, on EVERY signed-in account
-  #   claude:claude-opus-4-8          that model, on every signed-in account (rotating)
+  #   claude:claude-opus-4-8/xhigh    that model at xhigh effort, on every signed-in account
   #   claude:claude-opus-4-8@work     that model pinned to the "work" account only
-  #   [claude:claude-fable-5, claude:claude-opus-4-8@work]   a fallback LADDER
-  #   [claude:claude-opus-4-8, codex:gpt-5.5]   a CROSS-PROVIDER ladder (rotate vendors!)
+  #   [claude:claude-fable-5/xhigh, claude:claude-opus-4-8@work]   a fallback LADDER
+  #   [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]   a CROSS-PROVIDER ladder
   # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry 2, …), running
   # each rung's own agent, keying rate limits per (agent, model, account); a single run uses the
   # first entry, and it's the default agent. Model ids: coop models. Accounts: coop credentials.
-  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
+  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
   # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
@@ -50,10 +50,10 @@ roles:
     # role degrades to a read-only consult. With no subagent: below, coop generates it
     # from this role's model, when, and prompt.
     mode: native
-    # agent — a target: provider[:model]. The model (after the ':') is what the generated
+    # agent — a target: provider[:model][/effort]. The model (after the ':') is what the generated
     # subagent runs on (coop models); a bare provider uses the agent's default. A role runs
     # its agent's DEFAULT account — no @account (only the lead rotates accounts).
-    agent: claude:claude-opus-4-8
+    agent: claude:claude-opus-4-8/xhigh
     # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
     when: [architecture, debugging, code-review, before-commit]
     # prompt — the generated subagent's system prompt. To reference an existing
@@ -64,9 +64,9 @@ roles:
     # mode: consult — a READ-ONLY peer for a second opinion (often another
     # vendor), asked as coop-consult critic; it cannot edit files.
     mode: consult
-    # agent — a target: provider[:model] (one of claude, codex, gemini). The model is
+    # agent — a target: provider[:model][/effort] (one of claude, codex, gemini). The model is
     # optional; omit it (agent: codex) for the agent's default.
-    agent: codex:gpt-5.5
+    agent: codex:gpt-5.6-sol/xhigh
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
     # prompt — OPTIONAL persona the peer adopts for this role's consults

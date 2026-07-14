@@ -644,19 +644,19 @@ lead:
   # provider:model runs on EVERY signed-in account (rotating on rate limit); @account pins
   # one. On a loop it rotates top-to-bottom (running each rung's agent); a single run uses
   # the first. models:/model:/credentials: are retired — the model+account ride agent:.
-  agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
+  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
   prompt: roles/lead.md           # optional Markdown, appended to the generated contract
 
 roles:
-  thinker:                        # deep thinking + review, in the lead's own session
+  thinker:                              # deep thinking + review, in the lead's own session
     mode: native
-    agent: claude:claude-opus-4-8 # a target — the model rides agent: (coop generates coop-thinker)
+    agent: claude:claude-opus-4-8/xhigh # model + effort ride agent: (generates coop-thinker)
     when: [architecture, debugging, code-review, before-commit]
-    prompt: roles/thinker.md      # its system prompt (or set subagent: <name> to reuse one)
+    prompt: roles/thinker.md            # its system prompt (or set subagent: <name> to reuse one)
 
-  critic:                         # independent critique from another vendor, read-only
+  critic:                          # independent critique from another vendor, read-only
     mode: consult
-    agent: codex:gpt-5.5          # a role runs on its agent's default account (no @account)
+    agent: codex:gpt-5.6-sol/xhigh # a role runs on its agent's default account (no @account)
     when: [plan-review, security, tradeoffs]
 
   fast:                           # cheap mechanical work, write-capable

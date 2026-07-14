@@ -283,8 +283,33 @@ func TestScaffold(t *testing.T) {
 	if p.LeadAgent != "claude" || p.LeadModel() != "claude-fable-5" {
 		t.Errorf("template lead = %s/%s", p.LeadAgent, p.LeadModel())
 	}
+	wantLadder := []string{"claude:claude-fable-5/xhigh", "codex:gpt-5.6-sol/xhigh"}
+	if len(p.LeadLadder) != len(wantLadder) {
+		t.Fatalf("template lead ladder = %v, want %v", p.LeadLadder, wantLadder)
+	}
+	for i, want := range wantLadder {
+		if got := p.LeadLadder[i].String(); got != want {
+			t.Errorf("template lead ladder[%d] = %q, want %q", i, got, want)
+		}
+	}
 	if len(p.Roles) != 3 || !p.HasConsult() || !p.HasDelegate() {
 		t.Errorf("template should carry all three role modes: %+v", p.Roles)
+	}
+	wantRoles := map[string]struct{ agent, model, effort string }{
+		"thinker": {"claude", "claude-opus-4-8", "xhigh"},
+		"critic":  {"codex", "gpt-5.6-sol", "xhigh"},
+		"fast":    {"gemini", "gemini-3.5-flash", ""},
+	}
+	for _, role := range p.Roles {
+		want, ok := wantRoles[role.Name]
+		if !ok {
+			t.Errorf("unexpected scaffolded role %q", role.Name)
+			continue
+		}
+		if role.Agent != want.agent || role.Model != want.model || role.Effort != want.effort {
+			t.Errorf("template role %s target = %s:%s/%s, want %s:%s/%s",
+				role.Name, role.Agent, role.Model, role.Effort, want.agent, want.model, want.effort)
+		}
 	}
 	// The active prompt: lines must resolve — every file the template references is
 	// written by Scaffold, and its text is appended to the contract.
