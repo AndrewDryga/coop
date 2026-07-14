@@ -31,6 +31,15 @@ func TestActiveCell(t *testing.T) {
 	}
 }
 
+func TestCostCell(t *testing.T) {
+	if got := (forkStatus{}).costCell(); got != "—" {
+		t.Errorf("a fork with no cost = %q, want —", got)
+	}
+	if got := (forkStatus{Cost: 12.3}).costCell(); got != "$12.30" {
+		t.Errorf("costCell(12.3) = %q, want $12.30", got)
+	}
+}
+
 // captureStderr returns whatever fn writes to os.Stderr (ui.Info goes there).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()

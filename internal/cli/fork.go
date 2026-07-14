@@ -647,13 +647,13 @@ func (a *app) forkLs(args []string) (int, error) {
 	// than %-Ns: a glyph like ⚠/⚑ in TASKS/CHANGES (or a "…" in a truncated name) is multi-byte, so
 	// %-Ns would count bytes, short-pad, and shove later columns out from under their headers.
 	nw := colWidth(names, len("NAME"), 24)
-	const format = "  %s %s %s %s %s %s %s\n"
+	const format = "  %s %s %s %s %s %s %s %s\n"
 	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
 	// escape bytes inside the width count and misalign the header against the rows.
-	fmt.Print(ui.For(os.Stdout).Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), "UPDATED")))
+	fmt.Print(ui.For(os.Stdout).Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), padRight("COST", 8), "UPDATED")))
 	for _, n := range names {
 		s := gatherForkStatus(repo, n)
-		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), s.Updated)
+		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), padRight(s.costCell(), 8), s.Updated)
 	}
 	// A fork whose name is (or became) a reserved verb is unreachable by `coop fork <name>` — that
 	// spelling runs the subcommand. validForkName now refuses such names, so this only catches forks

@@ -15,6 +15,7 @@ type forkStatus struct {
 	Ins, Del                             int
 	Dirty                                bool
 	Counts                               taskCounts
+	Cost                                 float64 // total loop spend across the fork's runs, 0 if it never ran
 }
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
@@ -38,6 +39,7 @@ func gatherForkStatus(repo, name string) forkStatus {
 		Del:     del,
 		Dirty:   gitDirty(ws),
 		Counts:  counts,
+		Cost:    costForRepo(ws).total.usd,
 	}
 }
 
@@ -67,6 +69,14 @@ func (s forkStatus) changesCell() string {
 		cell += " ⚑"
 	}
 	return cell
+}
+
+// costCell renders the fork's total loop spend, or — when it hasn't run (no cost telemetry yet).
+func (s forkStatus) costCell() string {
+	if s.Cost == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("$%.2f", s.Cost)
 }
 
 // activeCell names what the fork is working on: the in-flight (or next) task, or that
