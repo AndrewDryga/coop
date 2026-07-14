@@ -308,7 +308,7 @@ func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
 	// different branch in the ws can't make us land un-rebased, unsigned commits).
 	var rebaseErr error
 	if wantsSigning() {
-		rebaseErr = gitInteractive(ws, withNeut(append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)...)
+		rebaseErr = gitSign(ws, withNeut(append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)...)
 	} else {
 		rebaseErr = gitRun(ws, withNeut("rebase", head, name)...)
 	}

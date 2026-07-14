@@ -15,6 +15,7 @@ const (
 	geminiColorWarning = "Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience."
 	geminiYOLOWarning  = "YOLO mode is enabled. All tool calls will be automatically approved."
 	codexRouterError   = "ERROR codex_core::tools::router:"
+	codexStdinBanner   = "Reading additional input from stdin..."
 )
 
 // stderrLineFilter removes provider-specific noise from the live view while preserving every
@@ -37,8 +38,13 @@ func newGeminiStderrFilter(out io.Writer) *stderrLineFilter {
 
 func newCodexStderrFilter(out io.Writer) *stderrLineFilter {
 	return &stderrLineFilter{
-		out:  out,
-		drop: func(line []byte) bool { return bytes.Contains(line, []byte(codexRouterError)) },
+		out: out,
+		drop: func(line []byte) bool {
+			if bytes.Contains(line, []byte(codexRouterError)) {
+				return true
+			}
+			return string(bytes.TrimRight(line, "\r")) == codexStdinBanner
+		},
 	}
 }
 

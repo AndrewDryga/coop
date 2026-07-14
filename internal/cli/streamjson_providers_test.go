@@ -320,6 +320,23 @@ func TestGeminiStderrFilter(t *testing.T) {
 		t.Errorf("filtered stderr = %q, want %q", out.String(), want)
 	}
 
+	var split bytes.Buffer
+	f = newCodexStderrFilter(&split)
+	chunked := codexStdinBanner + "\r\nkept diagnostic\n"
+	for len(chunked) > 0 {
+		n := min(3, len(chunked))
+		if _, err := f.Write([]byte(chunked[:n])); err != nil {
+			t.Fatal(err)
+		}
+		chunked = chunked[n:]
+	}
+	if err := f.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := split.String(), "kept diagnostic\n"; got != want {
+		t.Errorf("chunked banner filter = %q, want %q", got, want)
+	}
+
 	var final bytes.Buffer
 	f = newGeminiStderrFilter(&final)
 	_, _ = f.Write([]byte(geminiColorWarning))
@@ -334,7 +351,10 @@ func TestGeminiStderrFilter(t *testing.T) {
 func TestCodexStderrFilter(t *testing.T) {
 	routerLine := "2026-07-13T23:00:00Z ERROR codex_core::tools::router: failed to route tool\n"
 	nearMiss := "WARN codex_core::tools::router: retrying\r\n"
-	blob := "before\r\n" + routerLine + nearMiss + "real error\nfinal without newline"
+	banner := "Reading additional input from stdin...\n"
+	bannerCRLF := "Reading additional input from stdin...\r\n"
+	bannerMiss := "Reading additional input from stdin... wait\n"
+	blob := "before\r\n" + routerLine + banner + bannerCRLF + nearMiss + bannerMiss + "real error\nfinal without newline"
 	var out bytes.Buffer
 	f := newCodexStderrFilter(&out)
 	cut := strings.Index(blob, codexRouterError) + len("ERROR codex_core::tools")
@@ -347,7 +367,7 @@ func TestCodexStderrFilter(t *testing.T) {
 	if err := f.flush(); err != nil {
 		t.Fatal(err)
 	}
-	want := "before\r\n" + nearMiss + "real error\nfinal without newline"
+	want := "before\r\n" + nearMiss + bannerMiss + "real error\nfinal without newline"
 	if out.String() != want {
 		t.Errorf("filtered stderr = %q, want %q", out.String(), want)
 	}

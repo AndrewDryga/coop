@@ -73,7 +73,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		return 0, nil
 	}
 	args := append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", base)
-	if err := gitInteractive(repo, args...); err != nil {
+	if err := gitSign(repo, args...); err != nil {
 		_ = gitRun(repo, "rebase", "--abort")
 		return 0, fmt.Errorf("re-signing %s..HEAD failed (a signing key/agent issue?): %w", base, err)
 	}

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,53 @@ func TestHasYes(t *testing.T) {
 	}
 	if hasYes([]string{"x", "--yesss", "yes"}) {
 		t.Error("hasYes must match only the exact -y/--yes flags")
+	}
+}
+
+func TestGitSignOutput(t *testing.T) {
+	bin := t.TempDir()
+	fakeGit := filepath.Join(bin, "git")
+	script := "#!/bin/sh\nprintf 'git stdout\\n'\nprintf 'git diagnostic\\n' >&2\n[ \"$FAKE_GIT_FAIL\" != 1 ]\n"
+	if err := os.WriteFile(fakeGit, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("GIT_TRACE", "")
+
+	var stderr bytes.Buffer
+	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
+		t.Fatalf("successful gitSignTo = %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("successful gitSignTo leaked output: %q", stderr.String())
+	}
+	t.Setenv("GIT_TRACE", "0")
+	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
+		t.Fatalf("GIT_TRACE=0 gitSignTo = %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("GIT_TRACE=0 should stay quiet: %q", stderr.String())
+	}
+
+	t.Setenv("FAKE_GIT_FAIL", "1")
+	stderr.Reset()
+	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err == nil {
+		t.Fatal("failed gitSignTo returned nil")
+	}
+	for _, want := range []string{"git stdout", "git diagnostic"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("failed gitSignTo output %q missing %q", stderr.String(), want)
+		}
+	}
+
+	t.Setenv("FAKE_GIT_FAIL", "")
+	t.Setenv("GIT_TRACE", "1")
+	stderr.Reset()
+	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
+		t.Fatalf("traced gitSignTo = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "git diagnostic") {
+		t.Errorf("traced gitSignTo did not replay output: %q", stderr.String())
 	}
 }
 

@@ -343,6 +343,24 @@ func gitInteractive(dir string, args ...string) error {
 	return cmd.Run()
 }
 
+// gitSign runs a hardened git command (like a rebase with signing), wiring Stdin
+// so a TTY pinentry still works, but capturing CombinedOutput to silence benign chatter.
+// The captured output is replayed to Stderr only on failure, or if GIT_TRACE is set.
+func gitSign(dir string, args ...string) error {
+	return gitSignTo(os.Stderr, dir, args...)
+}
+
+func gitSignTo(stderr io.Writer, dir string, args ...string) error {
+	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd.Stdin = os.Stdin
+	out, err := cmd.CombinedOutput()
+	trace := strings.TrimSpace(os.Getenv("GIT_TRACE"))
+	if err != nil || (trace != "" && trace != "0" && !strings.EqualFold(trace, "false")) {
+		_, _ = stderr.Write(out)
+	}
+	return err
+}
+
 // gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the
 // trusted scope an agent can't write — for any value coop reads then EXECUTES or reads a host file
 // from: your core.editor, your signing program, your global core.excludesfile. The repo's own
