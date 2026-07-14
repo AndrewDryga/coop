@@ -159,7 +159,7 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 func TestIsGateGuardPath(t *testing.T) {
 	guarded := []string{"Makefile", "sub/Makefile", ".agent/project.yaml", ".agent/loop.yaml",
 		".agent/skills/sweep/SKILL.md", ".agent/skills/sweep/queue-guard.sh",
-		".claude/settings.json", ".github/workflows/ci.yml"}
+		".claude/settings.json", ".claude/hooks/commit-gate.sh", ".github/workflows/ci.yml"}
 	for _, f := range guarded {
 		if !isGateGuardPath(f) {
 			t.Errorf("%q should be gate-defining", f)

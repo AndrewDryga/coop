@@ -18,7 +18,8 @@ const (
 	Done       = "99_done"
 
 	// Backlog holds unscheduled ideas as task folders (`coop backlog`). It is DELIBERATELY absent
-	// from All: every counter, lister, loop iteration, and the Stop hook walk All (or key off Todo),
+	// from All: every counter and lister walks All, while loops and the sweep Stop hook key off the
+	// actionable Todo plus InProgress states,
 	// so keeping Backlog out of it means all of them ignore xx_backlog for free — it's a staging
 	// drawer, not a fifth lifecycle state. Only the `coop backlog` commands read it directly.
 	Backlog = "xx_backlog"

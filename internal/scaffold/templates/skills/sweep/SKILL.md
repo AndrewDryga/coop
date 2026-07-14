@@ -25,14 +25,15 @@ are the spine: this repo's `AGENTS.md` and the worked examples in `.agent/rules/
 Build *to* them, then *check the diff against them*.
 
 ## 1. Prepare
-- Set the runtime's persistent goal/tracker when it exists: do not stop until every task that was
-  in scope is committed and archived, and both `00_todo/` and `10_in_progress/` are empty.
+- Set the runtime's persistent goal/tracker when it exists: do not stop until every scoped task is
+  committed and archived or properly blocked, and both `00_todo/` and `10_in_progress/` are empty.
 - Read `AGENTS.md` in full (the gate **and** the contract), `.agent/tasks/README.md`,
-  and every `.agent/rules/*.md` (the taste KB). Run `coop tasks` to announce the
-  queue and the open `00_todo/` count.
+  and every `.agent/rules/*.md` (the taste KB). If `coop` is on PATH, run `coop tasks`; otherwise
+  inspect the queue state directories directly to announce the open `00_todo/` count.
 
 ## 2. The loop — claim the next task, repeat until 00_todo/ and 10_in_progress/ are empty
-1. **Claim** — `coop tasks claim <id>` (moves `00_todo/` → `10_in_progress/`) *first*, so a
+1. **Claim** — if `coop` is on PATH, run `coop tasks claim <id>`; otherwise move the task folder
+   from `00_todo/` to the existing `10_in_progress/` directory yourself. Do this *first*, so a
    parallel agent won't grab it. A task already in `10_in_progress/` is a prior attempt —
    resume it: read its `state.md`, then `git status`/`git diff`.
 2. **Build** — wear the hats; obey `AGENTS.md`, match `.agent/rules/` and the
@@ -45,16 +46,19 @@ Build *to* them, then *check the diff against them*.
    the house rules. Fix what you find; iterate until you'd defend it.
 5. **Commit** — one focused commit for this task; keep the task's `state.md` (resume
    snapshot) and `log.md` (journal — the *what + why*) current.
-6. **Done** — `coop tasks done <id>` (moves it to `99_done/`; the move ships in the
+6. **Done** — if `coop` is on PATH, run `coop tasks done <id>`; otherwise move the task folder to
+   the existing `99_done/` directory yourself (the move ships in the
    commit). A finished task is **moved**, never deleted — leave it in `99_done/`; never run
-   `coop tasks rm` (pruning the archive is the human's call). Blocked instead? `coop tasks
-   block <id>` and fill in its `decision.md` (the question · options · recommendation), then move on.
-7. Spot unrelated work? Park it with `coop backlog add` and return to the queue —
+   `coop tasks rm` (pruning the archive is the human's call). Blocked instead? Fill in
+   `decision.md` (question · options · recommendation), then use `coop tasks block <id>` when
+   available or move the folder to the existing `50_blocked/` directory yourself.
+7. Spot unrelated work? Use `coop backlog add` when available, or create a self-contained folder
+   under `.agent/tasks/xx_backlog/`, then return to the queue —
    don't derail the current task.
 
 ## 3. Finish
 - When `00_todo/` and `10_in_progress/` are empty, run a completeness pass: re-check every task
   you moved to `99_done/` against `git log` —
   gate green *and* a commit exists. Reopen anything that doesn't hold up with
-  `coop tasks claim <id>` (back to `10_in_progress/`), and go again.
+  `coop tasks claim <id>` when available, or move it back to `10_in_progress/`, and go again.
 - Report: tasks shipped, anything parked in the backlog or `50_blocked/`, gate status.

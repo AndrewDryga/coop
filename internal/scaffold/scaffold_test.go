@@ -196,7 +196,6 @@ func TestInit(t *testing.T) {
 		".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh",
 		".claude/settings.json", ".claude/hooks/commit-gate.sh",
 		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
-		".agent/skills/sweep/queue-guard.sh",
 		".githooks/pre-commit",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
@@ -261,6 +260,7 @@ func TestInit(t *testing.T) {
 		t.Fatalf("project Claude settings are missing or invalid JSON: %v\n%s", err, projectSettings)
 	}
 	assertNoClaudeStopHook(t, projectSettings)
+	assertProjectClaudeCommitGate(t, projectSettings)
 	if fi, _ := os.Stat(filepath.Join(repo, ".githooks/pre-commit")); fi != nil && fi.Mode()&0o100 == 0 {
 		t.Error(".githooks/pre-commit is not executable")
 	}
@@ -400,10 +400,43 @@ func assertNoClaudeStopHook(t *testing.T, data []byte) {
 	}
 }
 
+func assertProjectClaudeCommitGate(t *testing.T, data []byte) {
+	t.Helper()
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	groups := settings.Hooks["PreToolUse"]
+	if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Command != `$CLAUDE_PROJECT_DIR/.claude/hooks/commit-gate.sh` {
+		t.Fatalf("project commit gate command missing or changed: %s", data)
+	}
+	projectDir := t.TempDir()
+	hook := filepath.Join(projectDir, ".claude/hooks/commit-gate.sh")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf project-gate\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", groups[0].Hooks[0].Command)
+	cmd.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+projectDir)
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "project-gate" {
+		t.Fatalf("project commit gate command failed: %v, output %q", err, out)
+	}
+}
+
 func TestInitGitHooks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "system"))
 	gitInit := func(dir string) {
 		t.Helper()
 		if out, err := exec.Command("git", "-C", dir, "init").CombinedOutput(); err != nil {

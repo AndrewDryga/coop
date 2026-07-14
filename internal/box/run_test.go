@@ -940,7 +940,7 @@ func TestSynthSkillsMounts(t *testing.T) {
 
 func TestSynthHomeFallbackMounts(t *testing.T) {
 	const home = "/home/node"
-	const settingsBody = `{"hooks":{"Stop":[]}}`
+	const settingsBody = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"$CLAUDE_CONFIG_DIR/hooks/commit-gate.sh"}]}]}}`
 	const hookBody = "#!/bin/sh\nexit 0\n"
 
 	write := func(t *testing.T, repo, rel, body string, perm os.FileMode) {

@@ -1028,7 +1028,11 @@ task and makes no commits, and it's the symmetric front bookend to the review pa
 by default.
 
 The `/sweep` skill carries a scoped `Stop` hook, so only an active sweep is held while actionable
-tasks remain. `init` also installs a fast Claude commit-gate hook. Because that is Claude-only,
+tasks remain. `coop init` is non-destructive, so an existing repo must migrate manually: remove
+only the stock `Stop` group from `.claude/settings.json` (keep `PreToolUse` and custom hooks), delete
+`.claude/hooks/stop-guard.sh` only if it is the old stock guard, remove stale `.agent/active`, and
+merge the current `.agent/skills/sweep/` files while preserving local customizations. Fresh
+scaffolds already have this layout. `init` also installs a fast Claude commit-gate hook. Because that is Claude-only,
 `init` *also* installs a tracked git pre-commit gate (`.githooks/pre-commit`) and points
 `core.hooksPath` at it, so the format check runs for *every* committer — Codex, Gemini, and a plain
 `git commit` — and rides along on a fresh clone. A custom `core.hooksPath` is left
