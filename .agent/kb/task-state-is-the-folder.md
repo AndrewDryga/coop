@@ -2,8 +2,8 @@
 name: task-state-is-the-folder
 description: a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 subsystem: tasks
-sources: [internal/cli/taskdir.go]
-updated: 2026-07-12
+sources: [internal/cli/taskdir.go, internal/cli/taskcmd.go]
+updated: 2026-07-14
 ---
 A task is a folder, and its STATE is which directory it sits in: `00_todo/` `10_in_progress/`
 `50_blocked/` `99_done/` (the numeric prefix only sorts `ls` in lifecycle order). Moving the folder
@@ -18,4 +18,5 @@ silently RENAMES the task folder to a file called `10_in_progress`, corrupting t
 state dirs first.
 
 ## Changelog
+- 2026-07-14 — reverified folder-state ordering, state-dir scaffolding, and atomic move semantics against `taskdir.go` + `taskcmd.go`.
 - 2026-07-12 — created: task state = its folder; a bare `mv` to a missing state dir silently renames the task to a file (`scaffoldStateDirs` pre-creates all four).

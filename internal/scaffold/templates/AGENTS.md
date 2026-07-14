@@ -53,7 +53,7 @@ Durable working memory the BOOT protocol reads back. Knowledge (`rules/`, `skill
 local (git-ignored) so it never creates commit noise or merge churn.
 - `tasks/` — the work queue: one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`.
   See `tasks/README.md` for the layout and the per-task files (`task.md`, plus optional
-  `spec.md`, `log.md`, `state.md`, `decision.md`, `screenshots/`, `artifacts/`). `coop tasks`
+  `spec.md`, `log.md`, `state.md`, `decision.md`, `screenshots/`, `artifacts/`, `tmp/`). `coop tasks`
   lists and moves them.
 - `state.md` — a small, overwritten resume snapshot of the task in flight (status, what's
   done, the next action, traps), kept inside the in-progress task's own folder. The loop's
@@ -62,6 +62,10 @@ local (git-ignored) so it never creates commit noise or merge churn.
   `10_in_progress/` task, or you after a review — resumes from the note instead of re-deriving it
   from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
   travels with the task to `99_done/`.
+- `tmp/` · `artifacts/` — task-local working outputs with different lifetimes. Put disposable,
+  resumable scratch work (including temporary worktrees and patches) in `tmp/`; it follows todo,
+  in-progress, and blocked moves, then Coop removes it when the task reaches done. Promote evidence
+  worth retaining to `artifacts/` before completion; artifacts remain with the archived task.
 - backlog — the BIG or not-yet-ready: work that needs a spec, a decision, or real scoping before it
   can be worked. A simple, ready task you discover goes straight to `00_todo/` (`coop tasks add`),
   NOT here — the backlog is not a dumping ground for small stuff. Kept as task folders in the

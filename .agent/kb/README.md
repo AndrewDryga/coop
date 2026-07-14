@@ -50,3 +50,4 @@ updated: <YYYY-MM-DD>                # last edit
 - [review-task-only-mounts](review-task-only-mounts.md) — review boxes bind the repo read-only, then remount validated task-queue descendants writable; their order is the isolation boundary
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
+- [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist

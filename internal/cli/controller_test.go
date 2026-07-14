@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,41 @@ func TestFinishedTasksAndReconcileDecision(t *testing.T) {
 	}
 	if _, present := got["safe"]; present {
 		t.Error("an unlanded task must not be reconciled")
+	}
+}
+
+func TestCleanupFinishedTaskTmp(t *testing.T) {
+	root := t.TempDir()
+	doneID := "2026-01-01-done"
+	strandedID := "2026-01-01-stranded" // a completion whose earlier tmp cleanup failed, now retried
+	liveID := "2026-01-02-live"
+	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "task.md"), "# done\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "tmp", "scratch"), "remove\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, strandedID, "task.md"), "# stranded\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, strandedID, "tmp", "scratch"), "remove\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, liveID, "task.md"), "# live\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, liveID, "tmp", "scratch"), "retain\n")
+
+	// The loop sweeps EVERY done task, so a leftover tmp from a prior run's failed cleanup is
+	// reclaimed on a later run even though it is not part of any fresh done delta.
+	if err := cleanupFinishedTaskTmp([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(filepath.Join(root, stateDone, doneID, "tmp")) {
+		t.Error("observed done task kept its tmp")
+	}
+	if pathExists(filepath.Join(root, stateDone, strandedID, "tmp")) {
+		t.Error("a stranded done task's leftover tmp was not retried")
+	}
+	if !fileExists(filepath.Join(root, stateInProgress, liveID, "tmp", "scratch")) {
+		t.Error("cleanup touched an unfinished task's tmp")
+	}
+
+	oldCleaner := taskTmpCleaner
+	taskTmpCleaner = func(string) error { return errors.New("loop cleanup failed") }
+	t.Cleanup(func() { taskTmpCleaner = oldCleaner })
+	if err := cleanupFinishedTaskTmp([]string{root}); err == nil || !strings.Contains(err.Error(), "loop cleanup failed") {
+		t.Errorf("loop cleanup failure = %v, want propagated error", err)
 	}
 }
 
@@ -271,9 +307,12 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	}
 	q := filepath.Join(repo, tasksRoot)
 	writeTaskFile(t, filepath.Join(q, stateTodo, "todo1", "task.md"), "# todo1\n")
+	writeTaskFile(t, filepath.Join(q, stateTodo, "todo1", "tmp", "scratch"), "remove\n")
 	writeTaskFile(t, filepath.Join(q, stateInProgress, "wip1", "task.md"), "# wip1\n")
+	writeTaskFile(t, filepath.Join(q, stateInProgress, "wip1", "tmp", "scratch"), "remove\n")
 	writeTaskFile(t, filepath.Join(q, stateBlocked, "blk1", "task.md"), "# blk1\n")
 	writeTaskFile(t, filepath.Join(q, stateBlocked, "blk1", "decision.md"), "# blocked\n")
+	writeTaskFile(t, filepath.Join(q, stateBlocked, "blk1", "tmp", "scratch"), "retain\n")
 	writeTaskFile(t, filepath.Join(q, stateTodo, "safe", "task.md"), "# safe\n")
 	git("init", "-q")
 	git("config", "user.email", "t@t")
@@ -302,6 +341,12 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	}
 	if !pathExists(filepath.Join(q, stateTodo, "safe")) {
 		t.Error("an unlanded task must stay put")
+	}
+	if pathExists(filepath.Join(q, stateDone, "todo1", "tmp")) || pathExists(filepath.Join(q, stateDone, "wip1", "tmp")) {
+		t.Error("fork reconciliation must clean completed task tmp")
+	}
+	if !fileExists(filepath.Join(q, stateBlocked, "blk1", "tmp", "scratch")) {
+		t.Error("fork reconciliation must retain blocked task tmp")
 	}
 	// The reconciled task got a note in its log.md.
 	if data, _ := os.ReadFile(filepath.Join(q, stateDone, "todo1", "log.md")); !strings.Contains(string(data), "reconciled: landed by fork fork1") {

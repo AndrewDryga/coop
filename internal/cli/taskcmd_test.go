@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -121,6 +122,18 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if got := readTaskTree(root)[0].State; got != stateInProgress {
 		t.Fatalf("after claim, state = %s", got)
 	}
+	tmpFile := filepath.Join(root, stateInProgress, id, "tmp", "scratch.patch")
+	artifact := filepath.Join(root, stateInProgress, id, "artifacts", "evidence.txt")
+	writeTaskFile(t, tmpFile, "resume me\n")
+	writeTaskFile(t, artifact, "keep me\n")
+	// An interrupted iteration resumes by claiming the already-in-progress task; non-done moves
+	// must retain both its disposable scratch and durable evidence.
+	if code, err := tasksFolderMove(root, []string{id}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		t.Fatalf("resume claim: code=%d err=%v", code, err)
+	}
+	if !fileExists(tmpFile) {
+		t.Fatal("an interrupted in-progress task lost its tmp")
+	}
 
 	// block → moves to blocked/ and writes decision.md
 	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
@@ -133,6 +146,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !fileExists(filepath.Join(root, stateBlocked, id, "decision.md")) {
 		t.Error("decision.md not created on block")
 	}
+	if !fileExists(filepath.Join(root, stateBlocked, id, "tmp", "scratch.patch")) {
+		t.Error("blocking a task must retain its tmp")
+	}
 
 	// unblock WITH an answer → todo (available again; the in_progress lock is taken by claim), the
 	// resolved decision.md rides along. (A no-answer unblock of an unresolved decision is refused —
@@ -143,17 +159,50 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if readTaskTree(root)[0].State != stateTodo {
 		t.Fatal("after unblock, not back in todo")
 	}
+	if !fileExists(filepath.Join(root, stateTodo, id, "tmp", "scratch.patch")) {
+		t.Error("unblocking a task must retain its tmp")
+	}
 	// unblocking a non-blocked task is an error (it's in todo now), not a silent reopen.
 	if code, err := tasksFolderUnblock(root, []string{id}); code == 0 || err == nil {
 		t.Errorf("unblock of a non-blocked task should error, got (%d, %v)", code, err)
 	}
 
-	// done → done/
+	if code, err := tasksFolderMove(root, []string{id}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		t.Fatalf("reclaim: code=%d err=%v", code, err)
+	}
+	if !fileExists(filepath.Join(root, stateInProgress, id, "tmp", "scratch.patch")) {
+		t.Error("reclaiming a task must retain its tmp")
+	}
+
+	// done → done/ and removes only tmp; durable artifacts survive for review/archive.
 	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	if readTaskTree(root)[0].State != stateDone {
 		t.Fatal("after done, not done")
+	}
+	if pathExists(filepath.Join(root, stateDone, id, "tmp")) {
+		t.Error("done must remove the completed task's tmp")
+	}
+	if !fileExists(filepath.Join(root, stateDone, id, "artifacts", "evidence.txt")) {
+		t.Error("done must retain durable artifacts")
+	}
+
+	// Review reopens are ordinary non-done moves: scratch created for the next attempt survives
+	// the move, then the next successful completion removes it.
+	reopenedTmp := filepath.Join(root, stateDone, id, "tmp", "review-notes.txt")
+	writeTaskFile(t, reopenedTmp, "resume review fix\n")
+	if code, err := tasksFolderMove(root, []string{id}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		t.Fatalf("review reopen: code=%d err=%v", code, err)
+	}
+	if !fileExists(filepath.Join(root, stateInProgress, id, "tmp", "review-notes.txt")) {
+		t.Error("review reopen must retain tmp")
+	}
+	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
+		t.Fatalf("done after review reopen: code=%d err=%v", code, err)
+	}
+	if pathExists(filepath.Join(root, stateDone, id, "tmp")) {
+		t.Error("done after review reopen must remove tmp")
 	}
 
 	// no-op move when already in the target state
@@ -167,6 +216,87 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if len(readTaskTree(root)) != 0 {
 		t.Fatal("after remove, tree not empty")
+	}
+}
+
+func TestTaskTmpCleanupIsContained(t *testing.T) {
+	base := t.TempDir()
+	taskDir := filepath.Join(base, "task")
+	outside := filepath.Join(base, "outside")
+	writeTaskFile(t, filepath.Join(taskDir, "task.md"), "# task\n")
+	writeTaskFile(t, filepath.Join(outside, "keep.txt"), "keep\n")
+
+	if _, err := taskLocalPath(taskDir, "../outside"); err == nil {
+		t.Error("taskLocalPath accepted parent traversal")
+	}
+	if _, err := taskLocalPath(taskDir, outside); err == nil {
+		t.Error("taskLocalPath accepted an absolute path")
+	}
+
+	// A tmp symlink is unlinked, never followed into its target.
+	if err := os.Symlink(outside, filepath.Join(taskDir, "tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTaskTmp(taskDir); err != nil {
+		t.Fatalf("remove symlink tmp: %v", err)
+	}
+	if !fileExists(filepath.Join(outside, "keep.txt")) || pathExists(filepath.Join(taskDir, "tmp")) {
+		t.Error("tmp symlink cleanup escaped the task or left the link behind")
+	}
+
+	// Nor may the task folder itself be a symlink: following it would move the deletion boundary.
+	writeTaskFile(t, filepath.Join(taskDir, "tmp", "keep.txt"), "keep\n")
+	linkedTask := filepath.Join(base, "linked-task")
+	if err := os.Symlink(taskDir, linkedTask); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTaskTmp(linkedTask); err == nil {
+		t.Error("cleanup accepted a symlinked task folder")
+	}
+	if !fileExists(filepath.Join(taskDir, "tmp", "keep.txt")) {
+		t.Error("rejected task-folder symlink still deleted its target")
+	}
+
+	// Symlinks nested inside a real tmp tree are removed as links; their external targets survive.
+	if err := os.Symlink(outside, filepath.Join(taskDir, "tmp", "outside-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTaskTmp(taskDir); err != nil {
+		t.Fatalf("remove real tmp containing a symlink: %v", err)
+	}
+	if !fileExists(filepath.Join(outside, "keep.txt")) {
+		t.Error("nested tmp symlink cleanup escaped into its target")
+	}
+}
+
+func TestTasksDoneSurfacesTmpCleanupFailure(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-cleanup-fails"
+	writeTaskFile(t, filepath.Join(root, stateInProgress, id, "task.md"), "# cleanup fails\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, id, "tmp", "scratch"), "keep until cleaned\n")
+
+	oldCleaner := taskTmpCleaner
+	taskTmpCleaner = func(string) error { return errors.New("injected cleanup failure") }
+	t.Cleanup(func() { taskTmpCleaner = oldCleaner })
+	code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done")
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "injected cleanup failure") ||
+		!strings.Contains(err.Error(), "retry: coop tasks done "+id) {
+		t.Fatalf("done cleanup failure = (%d, %v), want loud retryable failure", code, err)
+	}
+	if got := readTaskTree(root)[0].State; got != stateDone {
+		t.Fatalf("successful folder transition should remain observable for retry, got %s", got)
+	}
+	if !fileExists(filepath.Join(root, stateDone, id, "tmp", "scratch")) {
+		t.Error("injected cleanup failure unexpectedly removed tmp")
+	}
+
+	// `done` on an already-done task retries cleanup, so the surfaced failure is recoverable.
+	taskTmpCleaner = oldCleaner
+	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
+		t.Fatalf("retry done cleanup: code=%d err=%v", code, err)
+	}
+	if pathExists(filepath.Join(root, stateDone, id, "tmp")) {
+		t.Error("retry did not clean tmp")
 	}
 }
 

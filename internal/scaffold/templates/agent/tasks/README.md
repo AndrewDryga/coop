@@ -36,7 +36,8 @@ archive is a manual, human step: `coop tasks rm --all-done`.
       spec.md        optional — the design, when it outgrows task.md's Approach
       decision.md    the pending decision (present ⇔ task is in 50_blocked/)
       screenshots/   optional — screenshots, the common visual deliverable (git-ignored)
-      artifacts/     optional — other outputs: repros, data, generated files (git-ignored)
+      artifacts/     optional — durable evidence retained with the completed task (git-ignored)
+      tmp/           optional — resumable disposable work, removed when the task reaches done
 
 `coop tasks add "<title>"` seeds **task.md + log.md + state.md**, each opening with a short
 HTML-comment header that explains the file (so it's self-documenting, yet renders clean once
@@ -200,11 +201,16 @@ For a task whose plan outgrows task.md's **Approach** (more than ~a screen). Put
 design here — the shape, the trade-offs, the rejected alternatives — and keep task.md's Approach
 to a one-line pointer. Write it with `/spec`. Small tasks don't need one.
 
-## screenshots/ · artifacts/ (optional, git-ignored)
+## screenshots/ · artifacts/ · tmp/ (optional, git-ignored)
 
-`screenshots/` is the common visual deliverable (a UI change, a before/after). `artifacts/` is
-everything else an agent produces that isn't source: repros, captured data, generated files.
-Both are git-ignored, so they never bloat a commit.
+`screenshots/` is the common visual deliverable (a UI change, a before/after). `artifacts/` holds
+other durable evidence a reviewer or future maintainer needs: repros, captured data, generated
+files. Both remain with the task in `99_done/` until a human prunes the archive.
+
+`tmp/` is the task-local workspace for disposable scratch worktrees, patches, and generated files.
+It follows the task through todo, in-progress, and blocked transitions so interrupted work can
+resume. Moving the task to done removes `tmp/` automatically before review; promote anything worth
+retaining to `artifacts/` first. All three directories are git-ignored, so they never bloat a commit.
 
 ---
 
@@ -213,7 +219,8 @@ Both are git-ignored, so they never bloat a commit.
 - One task = one outcome = one commit (the code change). The `99_done/` move itself is local — the queue is gitignored.
 - Claim with `coop tasks claim <id>` BEFORE you start.
 - Blocked? `coop tasks block <id>`, then fill in `50_blocked/<id>/decision.md`.
-- Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted.
+- Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted; only its
+  disposable `tmp/` is removed. A cleanup failure fails completion loudly.
 - Pruning the archive is a manual, human step: `coop tasks rm --all-done` (or
   `coop tasks rm <id>` for one). The loop and `/sweep` never do this.
 - A todo task must NOT carry a `decision.md` (that means it's blocked); a blocked one MUST.

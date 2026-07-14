@@ -115,6 +115,26 @@ func finishedTasks(before, after map[string]string) []string {
 	return ids
 }
 
+// cleanupFinishedTaskTmp handles the loop's in-box completion path: the worker moved the folder, so
+// the host removes tmp before any between-task or signoff reviewer consumes a done task. It sweeps
+// EVERY done task, not just this iteration's delta: a completion whose cleanup failed earlier left
+// its folder in done with tmp intact, and delta-scoping would never retry it — a later `coop loop`
+// run sees no new done delta for it. removeTaskTmp is a no-op once tmp is gone, so re-scanning
+// already-clean done tasks is cheap. On the first error the loop stops before a reviewer sees stale tmp.
+func cleanupFinishedTaskTmp(hosts []string) error {
+	for _, host := range hosts {
+		for _, t := range readTaskTree(host) {
+			if t.State != stateDone {
+				continue
+			}
+			if err := cleanupCompletedTaskTmp(t.ID, t.Dir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a
 // human decision, for the closing digest. Sorted.
 func blockedTaskIDs(hosts []string) []string {
@@ -270,7 +290,12 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName string) {
 				ui.Warn("reconcile: could not move %s to done: %v", act.ID, err)
 				continue
 			}
-			appendTaskLog(filepath.Join(host, stateDone, act.ID), "reconciled: landed by fork "+forkName)
+			doneDir := filepath.Join(host, stateDone, act.ID)
+			if err := cleanupCompletedTaskTmp(act.ID, doneDir); err != nil {
+				ui.Warn("reconcile: %v — fix the obstruction, then retry: coop tasks done %s", err, act.ID)
+				continue
+			}
+			appendTaskLog(doneDir, "reconciled: landed by fork "+forkName)
 		}
 	}
 }

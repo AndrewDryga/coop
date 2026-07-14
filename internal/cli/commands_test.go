@@ -184,6 +184,7 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/", "into 50_blocked/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
 		"state.md", "resume note", "final step", "finished state",
+		"assigned task's tmp/ directory", "survives interruption and blocked transitions", "durable artifacts/ directory",
 		"Work exactly ONE task per run", "the loop's job, not yours",
 		// Reference the commit by its stable trailer, not its volatile SHA (coop re-signs on the host).
 		"Coop-Task: <task-id>` trailer", "NOT its SHA", "re-signs your commit",
@@ -239,6 +240,7 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 		"FAILURE/edge path",                         // 3. tested for real
 		"docs/README/CHANGELOG",                     // 4. polished
 		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate
+		"tmp/ was disposable", "evidence that needed to survive completion belongs in artifacts/",
 		"MOVING its folder back to 10_in_progress/", // reopen by moving
 		"THE MOMENT you decide",                     // execute reopens immediately, never batched
 		"make no commits",

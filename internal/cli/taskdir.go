@@ -15,7 +15,7 @@ import (
 
 // The folder-based task system. A task is a FOLDER under .agent/tasks/<state>/<id>/
 // holding a task.md (a small YAML-ish frontmatter + a markdown body) and, optionally,
-// spec.md / log.md / state.md / decision.md / screenshots/ / artifacts/. A task's
+// spec.md / log.md / state.md / decision.md / screenshots/ / artifacts/ / tmp/. A task's
 // workflow state is the parent directory it sits in — there is no status field, so
 // nothing can drift. Moving the folder between state dirs IS the state change.
 // The contract is in AGENTS.md; converting a legacy single-file queue is MIGRATING.md.

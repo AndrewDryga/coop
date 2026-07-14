@@ -21,5 +21,10 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 - Keep `--yes` (skip the prompt) distinct from `--force` (override a safety guard like unmerged/dirty).
   `--force` is never a prompt-skip; `--yes` is never a guard-override.
 - Deletion prompts default to **No**; only a land-then-remove flow may default Yes on the *land* step.
+- Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
+  Reaching done may remove exactly that containment-checked child without a second prompt (the loop
+  cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
+  task-folder symlinks, and fail completion loudly if cleanup fails. Never generalize this exception
+  to screenshots, artifacts, task folders, archives, credentials, forks, or unspecified scratch.
 
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].

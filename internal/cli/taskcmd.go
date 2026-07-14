@@ -397,11 +397,21 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 		return 1, err
 	}
 	if t.State == newState {
+		if newState == stateDone {
+			if err := cleanupCompletedTaskTmp(t.ID, t.Dir); err != nil {
+				return -1, fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+			}
+		}
 		ui.Note("%s is already %s", t.ID, stateLabel(newState))
 		return 0, nil
 	}
 	if err := moveTaskDir(root, t, newState); err != nil {
 		return -1, err
+	}
+	if newState == stateDone {
+		if err := cleanupCompletedTaskTmp(t.ID, filepath.Join(root, stateDone, t.ID)); err != nil {
+			return -1, fmt.Errorf("%w — the task is in done; fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+		}
 	}
 	ui.OK("%s %s", pastVerb, t.ID)
 	return 0, nil
@@ -523,6 +533,79 @@ func moveTaskDir(root string, t taskItem, newState string) error {
 		return fmt.Errorf("can't move %s: it changed state under us (a concurrent move won) — re-run 'coop tasks'", t.ID)
 	}
 	return os.Rename(t.Dir, dest)
+}
+
+// taskLocalPath resolves a child beneath taskDir and rejects traversal or absolute paths. Today
+// cleanup passes the constant "tmp"; keeping the containment check at the deletion boundary makes
+// that invariant explicit and prevents a future caller from turning task cleanup into an arbitrary
+// path remover.
+func taskLocalPath(taskDir, child string) (string, error) {
+	if child == "" || filepath.IsAbs(child) {
+		return "", fmt.Errorf("task-local path %q must be relative", child)
+	}
+	base, err := filepath.Abs(taskDir)
+	if err != nil {
+		return "", err
+	}
+	target, err := filepath.Abs(filepath.Join(base, child))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(base, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("task-local path %q escapes task folder %q", child, base)
+	}
+	return target, nil
+}
+
+// removeTaskTmp deletes only taskDir/tmp. The task folder itself must be a real directory, not a
+// symlink; a tmp symlink is unlinked without following it, and os.RemoveAll likewise does not follow
+// symlinks nested below a real tmp directory. Missing tmp is the normal case for existing tasks.
+func removeTaskTmp(taskDir string) error {
+	info, err := os.Lstat(taskDir)
+	if err != nil {
+		return fmt.Errorf("inspect task folder: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("refusing tmp cleanup through non-directory task folder %q", taskDir)
+	}
+	tmpDir, err := taskLocalPath(taskDir, "tmp")
+	if err != nil {
+		return err
+	}
+	tmpInfo, err := os.Lstat(tmpDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %q: %w", tmpDir, err)
+	}
+	if tmpInfo.Mode()&os.ModeSymlink != 0 {
+		err = os.Remove(tmpDir)
+	} else {
+		err = os.RemoveAll(tmpDir)
+	}
+	if err != nil {
+		return fmt.Errorf("remove %q: %w", tmpDir, err)
+	}
+	if _, err := os.Lstat(tmpDir); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return fmt.Errorf("remove %q: path still exists", tmpDir)
+		}
+		return fmt.Errorf("verify removal of %q: %w", tmpDir, err)
+	}
+	return nil
+}
+
+// taskTmpCleaner is a narrow test seam for proving that every completion path propagates a cleanup
+// error. Production always uses removeTaskTmp.
+var taskTmpCleaner = removeTaskTmp
+
+func cleanupCompletedTaskTmp(id, taskDir string) error {
+	if err := taskTmpCleaner(taskDir); err != nil {
+		return fmt.Errorf("task %s reached done, but its tmp cleanup failed: %w", id, err)
+	}
+	return nil
 }
 
 func tasksFolderBlock(root string, args []string) (int, error) {
