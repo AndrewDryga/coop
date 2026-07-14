@@ -74,10 +74,10 @@ func TestAppendStageRecord(t *testing.T) {
 
 func TestCostFromRecords(t *testing.T) {
 	recs := []stageRecord{
-		{Stage: "work", CostUSD: 12.5, InTok: 1000, OutTok: 100, Finished: []string{"a"}},
-		{Stage: "work", CostUSD: 4.0, InTok: 500, OutTok: 50, Finished: []string{"b"}},
-		{Stage: "signoff", CostUSD: 0}, // no cost, no finished — contributes nothing
-		{Stage: "work", CostUSD: 2.0, InTok: 200, OutTok: 20, Finished: []string{"c", "d"}}, // split evenly
+		{Stage: "work", Provider: "claude", Model: "fable-5", CostUSD: 12.5, InTok: 1000, OutTok: 100, Finished: []string{"a"}},
+		{Stage: "signoff", Provider: "codex", Model: "gpt-5.6-terra", CostUSD: 4.0, InTok: 500, OutTok: 50},
+		{Stage: "verify", CostUSD: 0}, // no cost — contributes nothing
+		{Stage: "work", Provider: "claude", Model: "fable-5", CostUSD: 2.0, InTok: 200, OutTok: 20, Finished: []string{"c", "d"}}, // split evenly
 	}
 	rc := costFromRecords(recs)
 	if rc.total.usd != 18.5 {
@@ -91,6 +91,16 @@ func TestCostFromRecords(t *testing.T) {
 	}
 	if _, ok := rc.byTask[""]; ok {
 		t.Error("a stage with no finished task must not create a task bucket")
+	}
+	// by-model: claude:fable-5 (12.5+2.0) leads codex:gpt-5.6-terra (4.0), sorted by cost desc.
+	if len(rc.byModel) != 2 {
+		t.Fatalf("byModel = %+v, want 2 models", rc.byModel)
+	}
+	if m := rc.byModel[0]; m.model != "claude:fable-5" || m.cost.usd != 14.5 || m.cost.inTok != 1200 {
+		t.Errorf("byModel[0] = %+v, want claude:fable-5 usd 14.5 in 1200", m)
+	}
+	if rc.byModel[1].model != "codex:gpt-5.6-terra" {
+		t.Errorf("byModel[1] = %+v, want codex:gpt-5.6-terra", rc.byModel[1])
 	}
 }
 

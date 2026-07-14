@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -109,12 +110,19 @@ type stageCost struct {
 	outTok int
 }
 
-// runCost is a run's cost broken out per task (a work stage's cost, keyed by the task it finished)
-// plus the run total (EVERY stage's cost, so review overhead shows in the total even before it's
-// attributed per task — that per-model/per-peer attribution is the follow-on slice).
+// runCost is a run's cost broken out per task (a work stage's cost, keyed by the task it finished),
+// per model (every costed stage's model, plus peer models once captured), and the run total (EVERY
+// stage's cost, so review overhead shows in the total even before it's attributed per task).
 type runCost struct {
-	byTask map[string]stageCost
-	total  stageCost
+	byTask  map[string]stageCost
+	byModel []modelSpend
+	total   stageCost
+}
+
+// modelSpend is one model's cost roll-up for the by-model line in the closing digest.
+type modelSpend struct {
+	model string // provider[:model]
+	cost  stageCost
 }
 
 // readStageRecords reads a run's telemetry rows back from .agent/runs/<run>.jsonl. Best-effort: a
@@ -143,13 +151,23 @@ func readStageRecords(repo, run string) []stageRecord {
 // multi-finish; cost with no finished task lands in the total only). Pure — unit-tested.
 func costFromRecords(recs []stageRecord) runCost {
 	rc := runCost{byTask: map[string]stageCost{}}
+	models := map[string]stageCost{}
 	for _, r := range recs {
 		rc.total.usd += r.CostUSD
 		rc.total.inTok += r.InTok
 		rc.total.outTok += r.OutTok
-		n := len(r.Finished)
-		if n == 0 || (r.CostUSD == 0 && r.InTok == 0 && r.OutTok == 0) {
+		if r.CostUSD == 0 && r.InTok == 0 && r.OutTok == 0 {
 			continue
+		}
+		k := modelKey(r.Provider, r.Model)
+		mc := models[k]
+		mc.usd += r.CostUSD
+		mc.inTok += r.InTok
+		mc.outTok += r.OutTok
+		models[k] = mc
+		n := len(r.Finished)
+		if n == 0 {
+			continue // costed but finished no task (e.g. interrupted) — in the total + by-model only
 		}
 		for _, id := range r.Finished {
 			c := rc.byTask[id]
@@ -159,5 +177,30 @@ func costFromRecords(recs []stageRecord) runCost {
 			rc.byTask[id] = c
 		}
 	}
+	rc.byModel = sortedSpend(models)
 	return rc
+}
+
+// modelKey is the by-model bucket key: "provider:model", or just "provider" when the model is blank.
+func modelKey(provider, model string) string {
+	if model == "" {
+		return provider
+	}
+	return provider + ":" + model
+}
+
+// sortedSpend flattens a model→cost map into a slice sorted by cost desc (ties broken by name), so
+// the by-model line is stable and leads with the priciest model.
+func sortedSpend(m map[string]stageCost) []modelSpend {
+	out := make([]modelSpend, 0, len(m))
+	for k, c := range m {
+		out = append(out, modelSpend{k, c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].cost.usd != out[j].cost.usd {
+			return out[i].cost.usd > out[j].cost.usd
+		}
+		return out[i].model < out[j].model
+	})
+	return out
 }

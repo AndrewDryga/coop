@@ -1572,17 +1572,17 @@ func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*
 // reopened" for "reviewed and accepted". A user interrupt (ctx canceled) returns no error — not a
 // review failure. Returns the completed review's output so the caller can read its reopen receipt.
 // Local counters keep review trouble out of the work loop's stop accounting.
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, error) {
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName string, cmd, hosts []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
 	var fails, waits, retries int
 	for {
 		agent := a.applyTarget(rev)
-		code, out, _, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, hosts, sink, peers)
+		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, hosts, sink, peers)
 		if ctx != nil && ctx.Err() != nil {
-			return "", nil // user interrupt — the caller handles stopping, not a review failure
+			return "", nil, nil // user interrupt — the caller handles stopping, not a review failure
 		}
 		switch action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries); action {
 		case actContinue:
-			return out, nil
+			return out, res, nil
 		case actWait:
 			if rev.rotates() {
 				a.rotateOnLimit(rev, resetAt, &waits, wake)
@@ -1593,11 +1593,11 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 			sleepOrWake(wait, wake)
 		case actRetry:
 			if fails > maxLoopFailures {
-				return "", fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
+				return "", nil, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
 			}
 			sleepOrWake(10*time.Second, wake)
 		case actStop:
-			return "", fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
+			return "", nil, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
 		}
 	}
 }
@@ -2168,11 +2168,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						// can't run warns loudly (the task went unaudited) rather than halting the run.
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 						btExit := 0
-						if _, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, iterCmd(prompt), hosts, sink, peers, wake); rerr != nil {
+						_, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, iterCmd(prompt), hosts, sink, peers, wake)
+						if rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
 							btExit = 1
 						}
-						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts, nil, nil, nil)
+						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts, nil, nil, btRes)
 					}
 				}
 			case actWait:
@@ -2234,7 +2235,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + cs.reviewBlock(health)
-		signoffOut, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake)
+		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, iterCmd(signoff), hosts, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
 		}
@@ -2250,7 +2251,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		cf, _ := queueProgress(hosts)
 		reopened := cf.Todo + cf.Doing
 		health.noteReopen(reopenedBySignoff(soSnap, queueSnapshot(hosts))) // which tasks the signoff bounced, for the digest + next round's context
-		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil, nil)
+		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil, soRes)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
@@ -2297,11 +2298,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) + "\n\n" + reviewContextFooter(repo, queues)
 			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			vExit := 0
-			if _, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, iterCmd(vPrompt), hosts, sink, peers, wake); verr != nil {
+			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, iterCmd(vPrompt), hosts, sink, peers, wake)
+			if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 				vExit = 1
 			}
-			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil, nil)
+			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil, vRes)
 		}
 	}
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),

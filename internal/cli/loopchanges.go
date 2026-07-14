@@ -317,6 +317,13 @@ func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string, cost runCos
 	if cost.total.usd > 0 {
 		fmt.Fprintf(&b, "  %s $%.2f · %s in / %s out\n", ui.Bold("Cost:"), cost.total.usd, humanTokens(cost.total.inTok), humanTokens(cost.total.outTok))
 	}
+	if len(cost.byModel) > 1 { // a preset run spreads work + review across models — show the split
+		parts := make([]string, len(cost.byModel))
+		for i, m := range cost.byModel {
+			parts[i] = fmt.Sprintf("%s $%.2f", m.model, m.cost.usd)
+		}
+		fmt.Fprintf(&b, "  by model: %s\n", strings.Join(parts, " · "))
+	}
 	if len(blocked) > 0 {
 		fmt.Fprintf(&b, "  %s %s — %s\n", ui.Yellow("Blocked (needs you):"), ui.Count(len(blocked), "task"), abbrev(blocked, 4))
 	}
