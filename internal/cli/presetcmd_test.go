@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/preset"
 )
 
 // presetsRepo lays out a repo with one valid preset ("frontier") and one broken one.
@@ -19,8 +20,8 @@ func presetsRepo(t *testing.T) string {
 	}
 	yaml := "lead: {agent: claude:claude-fable-5@work}\n" +
 		"roles:\n" +
-		"  critic: {mode: consult, agent: codex:gpt-5.5}\n" +
-		"  fast: {mode: delegate, agent: gemini, when: [boilerplate]}\n"
+		"  critic: {mode: consult, agent: codex:gpt-5.6-sol/xhigh}\n" +
+		"  fast: {mode: delegate, agent: gemini:gemini-3.5-flash, when: [boilerplate]}\n"
 	if err := os.WriteFile(filepath.Join(good, "preset.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -56,10 +57,13 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult codex", "delegate gemini", "for: boilerplate", "coop loop frontier"} {
+	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult codex", "model gpt-5.6-sol/xhigh", "delegate gemini", "model gemini-3.5-flash", "for: boilerplate", "coop loop frontier"} {
 		if !strings.Contains(show, want) {
 			t.Errorf("show missing %q:\n%s", want, show)
 		}
+	}
+	if strings.Contains(show, "gemini-3.5-flash/") {
+		t.Errorf("effort-free role has a dangling slash:\n%s", show)
 	}
 
 	if code, err := a.cmdPresets([]string{"ghost"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no preset") {
@@ -81,6 +85,27 @@ func TestCmdPresets(t *testing.T) {
 	})
 	if !strings.Contains(empty, "no presets") || !strings.Contains(empty, "coop presets init") {
 		t.Errorf("empty listing should point at the scaffolder:\n%s", empty)
+	}
+}
+
+func TestRoleTuning(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		role                preset.Role
+		wantKind, wantValue string
+	}{
+		{"model and effort", preset.Role{Model: "gpt-5.6-sol", Effort: "xhigh"}, "model", "gpt-5.6-sol/xhigh"},
+		{"model only", preset.Role{Model: "gemini-3.5-flash"}, "model", "gemini-3.5-flash"},
+		{"effort only", preset.Role{Effort: "high"}, "effort", "high"},
+		{"neither", preset.Role{}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, value := roleTuning(tc.role)
+			if kind != tc.wantKind || value != tc.wantValue {
+				t.Errorf("roleTuning(%+v) = (%q, %q), want (%q, %q)",
+					tc.role, kind, value, tc.wantKind, tc.wantValue)
+			}
+		})
 	}
 }
 

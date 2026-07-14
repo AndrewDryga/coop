@@ -117,8 +117,8 @@ func (a *app) showPreset(repo, name string) (int, error) {
 		if r.Subagent != "" {
 			line += pal.Dim("  @") + r.Subagent
 		}
-		if r.Model != "" {
-			line += pal.Dim("  model ") + r.Model
+		if kind, value := roleTuning(r); kind != "" {
+			line += pal.Dim("  "+kind+" ") + value
 		}
 		if len(r.When) > 0 {
 			line += pal.Dim("  for: " + strings.Join(r.When, ", "))
@@ -131,4 +131,18 @@ func (a *app) showPreset(repo, name string) (int, error) {
 	fmt.Println()
 	fmt.Println(ui.Dim("  run it: coop " + name + "   ·   coop loop " + name))
 	return 0, nil
+}
+
+func roleTuning(r preset.Role) (kind, value string) {
+	if r.Model == "" {
+		if r.Effort == "" {
+			return "", ""
+		}
+		return "effort", r.Effort
+	}
+	model := r.Model
+	if r.Effort != "" {
+		model += "/" + r.Effort
+	}
+	return "model", model
 }
