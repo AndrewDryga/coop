@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -274,6 +275,45 @@ func TestFleetDownWarnsRunningOrphan(t *testing.T) {
 	out, _ := io.ReadAll(r)
 	if !strings.Contains(string(out), "b") || !strings.Contains(string(out), "not in .agent/fleet.yaml") {
 		t.Errorf("expected a warning about running orphan b:\n%s", out)
+	}
+}
+
+// `fleet down` must not print success and exit zero when one listed fork cannot be stopped. It
+// attempts every listed fork, then returns an actionable aggregate so automation sees the failure.
+func TestFleetDownPropagatesForkStopFailure(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  perf: {agent: claude, tasks: .agent/T.md}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkWorkspace(repo, "perf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worker := exec.Command("sleep", "30")
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = worker.Process.Kill()
+		_ = worker.Wait()
+	})
+	if err := writeForkPid(repo, "perf", worker.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, RuntimeName: "coop-test-runtime-that-does-not-exist"}}
+	code, err := a.fleetDown(nil)
+	if code != 1 || err == nil {
+		t.Fatalf("fleetDown = (%d, %v), want (1, error)", code, err)
+	}
+	for _, want := range []string{"perf", "coop fleet down", "coop fork stop perf"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("fleetDown error missing %q: %v", want, err)
+		}
+	}
+	if err := worker.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("worker should remain tracked when runtime detection fails: %v", err)
 	}
 }
 

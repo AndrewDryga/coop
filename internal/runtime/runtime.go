@@ -4,9 +4,11 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -81,6 +83,36 @@ func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) 
 	return exitCode(r.Name, cmd.Run())
 }
 
+// contextCommand makes a context deadline tear down the runtime CLI's whole process group, not
+// just its direct process. Runtime wrappers may spawn helpers; leaving one alive would turn a
+// bounded cleanup into a process leak. WaitDelay is the final backstop if a killed child wedges.
+func contextCommand(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	cmd.WaitDelay = time.Second
+	return cmd
+}
+
+func commandOutputError(err error, output []byte) error {
+	if len(output) == 0 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			output = exitErr.Stderr
+		}
+	}
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		return fmt.Errorf("%w: %s", err, detail)
+	}
+	return err
+}
+
 // RunInterruptible is Run for a cancelable box. The child runs in its OWN process group, so a
 // Ctrl-C the terminal delivers to coop's foreground group does NOT reach it — that's what lets
 // the loop's first Ctrl-C be a soft stop that finishes the current iteration. Canceling ctx (the
@@ -146,20 +178,90 @@ func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
 }
 
-// psIDs returns the ids of running containers matching all the given ps --filter
-// expressions (e.g. "label=coop=box"). Nil on error or no match.
+// psIDs returns the ids of running containers matching all the given ps --filter expressions
+// (e.g. "label=coop=box"). Legacy best-effort callers treat an error like no match.
 func (r Runtime) psIDs(filters ...string) []string {
+	ids, _ := r.psIDsContext(context.Background(), filters...)
+	return ids
+}
+
+// psIDsContext is the error-reporting, cancelable form used when cleanup must not claim success
+// after a failed query. A real no-match is an empty slice with a nil error.
+func (r Runtime) psIDsContext(ctx context.Context, filters ...string) ([]string, error) {
+	if filepath.Base(r.Name) == "container" {
+		return r.appleContainerIDsContext(ctx, filters...)
+	}
 	args := []string{"ps", "-q"}
 	for _, f := range filters {
 		args = append(args, "--filter", f)
 	}
-	out, err := exec.Command(r.Name, args...).Output()
+	out, err := contextCommand(ctx, r.Name, args...).Output()
 	if err != nil {
-		return nil
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
 	}
 	// Fields (not Split on "\n") so a blank line or a stray CRLF can't yield an empty/`\r`-suffixed
 	// id — which would over-count CountByLabel or silently no-op a kill. Ids carry no whitespace.
-	return strings.Fields(string(out))
+	return strings.Fields(string(out)), nil
+}
+
+// appleContainerIDsContext applies Docker-style exact label filters to Apple container's JSON
+// listing. Its CLI has no `ps --filter`; `list` defaults to running containers, and the current
+// structured resource shape stores ids at the top level and labels under configuration.
+func (r Runtime) appleContainerIDsContext(ctx context.Context, filters ...string) ([]string, error) {
+	type item struct {
+		ID            string `json:"id"`
+		Configuration struct {
+			ID     string            `json:"id"`
+			Labels map[string]string `json:"labels"`
+		} `json:"configuration"`
+	}
+	labels := make(map[string]string, len(filters))
+	for _, filter := range filters {
+		label, ok := strings.CutPrefix(filter, "label=")
+		if !ok {
+			return nil, fmt.Errorf("Apple container does not support filter %q", filter)
+		}
+		key, value, ok := strings.Cut(label, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid label filter %q", filter)
+		}
+		labels[key] = value
+	}
+	out, err := contextCommand(ctx, r.Name, "list", "--format", "json").Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s list --format json: %w", r.Name, commandOutputError(err, nil))
+	}
+	var items []item
+	if err := json.Unmarshal(out, &items); err != nil {
+		return nil, fmt.Errorf("decode Apple container list: %w", err)
+	}
+	var ids []string
+	for _, item := range items {
+		match := true
+		for key, value := range labels {
+			if item.Configuration.Labels[key] != value {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		id := item.ID
+		if id == "" {
+			id = item.Configuration.ID
+		}
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 // CountByLabel returns how many running containers carry the label key=value.
@@ -191,17 +293,25 @@ func (r Runtime) RemoveContainer(id string) bool {
 }
 
 // RemoveByLabel force-removes (`rm -f`: stop then delete) every running container whose label
-// matches key=value, returning how many were removed. Like KillByLabel but it deletes rather
-// than just kills — so a SIGKILL-orphaned `docker run --rm` container (whose run client was
-// killed before it could auto-remove) is gone, not left lingering in Exited state.
-func (r Runtime) RemoveByLabel(key, value string) int {
-	n := 0
-	for _, id := range r.psIDs("label=" + key + "=" + value) {
-		if r.RemoveContainer(id) {
-			n++
-		}
+// matches key=value. It distinguishes no-match from query/removal failure so a caller never reports
+// successful cleanup while a known container may remain. The caller owns the overall deadline.
+func (r Runtime) RemoveByLabel(ctx context.Context, key, value string) (int, error) {
+	ids, err := r.psIDsContext(ctx, "label="+key+"="+value)
+	if err != nil {
+		return 0, fmt.Errorf("list matching containers: %w", err)
 	}
-	return n
+	n := 0
+	for _, id := range ids {
+		out, err := contextCommand(ctx, r.Name, "rm", "-f", id).CombinedOutput()
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			return n, fmt.Errorf("run: %s rm -f %s: %w", r.Name, id, commandOutputError(err, out))
+		}
+		n++
+	}
+	return n, nil
 }
 
 // SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and

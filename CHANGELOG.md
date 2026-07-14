@@ -21,6 +21,14 @@
   responded by parking five healthy tasks in `50_blocked/`. Its wrapper now permits only directed
   folder moves while task work, code, gates, and commits remain forbidden.
 
+- **`coop fork stop` now proves the fork's box is gone before reporting success.** The worker still
+  gets its graceful process-group shutdown first; the exact `coop.fork=<name>` container reap now
+  has a deadline and surfaces runtime query/removal failures instead of confusing them with an
+  already-gone box. Failed reaps and crashed-worker state stay retryable, and a per-fork lifecycle
+  lock prevents a new start from racing that cleanup; `fleet down` also propagates any stop
+  failures. Apple `container` uses its native JSON listing while Docker/Podman retain label filters,
+  so the backstop is exact across the supported runtimes.
+
 ## 5.1.0
 
 - **The loop reports what a run cost — per task, per model, and everywhere you review it.** The

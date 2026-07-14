@@ -317,20 +317,31 @@ func (a *app) fleetDown(args []string) (int, error) {
 	}
 	names := make([]string, len(fleet))
 	stopped := 0
+	var stopErrs []error
 	for i, e := range fleet {
 		names[i] = e.name
-		if forkRunningPid(repo, e.name) != 0 {
+		// A pidfile may be a live worker OR a cleanup marker left by a failed exact-label reap.
+		// Retry either state; silently skipping the marker would strand the fork's box forever.
+		if pathExists(forkPid(repo, e.name)) {
 			if _, err := a.forkStop([]string{e.name}); err == nil {
 				stopped++
+			} else if !pathExists(forkPid(repo, e.name)) {
+				// The worker exited and cleared its pidfile between our check and forkStop's lock.
+				continue
+			} else {
+				stopErrs = append(stopErrs, fmt.Errorf("%s: %w", e.name, err))
 			}
 		}
+	}
+	if len(stopErrs) > 0 {
+		return 1, fmt.Errorf("fleet down stopped %s but failed to stop %s — fix each reported cause, then retry: coop fleet down: %w", ui.Count(stopped, "fork"), ui.Count(len(stopErrs), "fork"), errors.Join(stopErrs...))
 	}
 	ui.OK("stopped %s", ui.Count(stopped, "fork"))
 	// `down` only stops forks listed in .agent/fleet — surface a running fork that isn't (removed
 	// from the file, or started by hand) rather than leave it silently running.
 	for _, n := range fleetOrphans(names, forkNames(repo)) {
-		if forkRunningPid(repo, n) != 0 {
-			ui.Info("note: fork %s is running but not in .agent/fleet.yaml — stop it with: coop fork stop %s", n, n)
+		if forkNeedsStop(repo, n) {
+			ui.Info("note: fork %s is running or awaiting cleanup but not in .agent/fleet.yaml — stop it with: coop fork stop %s", n, n)
 		}
 	}
 	if prune {
@@ -416,8 +427,8 @@ func (a *app) pruneFleet(repo string, force bool) error {
 	}
 	removed, kept := 0, 0
 	for _, n := range orphans {
-		if forkRunningPid(repo, n) != 0 {
-			ui.Warn("kept %s — still running (coop fork stop %s first)", n, n)
+		if forkNeedsStop(repo, n) {
+			ui.Warn("kept %s — still running or awaiting cleanup (coop fork stop %s first)", n, n)
 			kept++
 			continue
 		}

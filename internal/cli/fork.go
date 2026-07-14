@@ -360,6 +360,14 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return -1, err
 		}
 		if ws := forkWorkspace(repo, fa.name); pathExists(ws) {
+			if forkNeedsStop(repo, fa.name) {
+				if !fa.force {
+					return 1, fmt.Errorf("--fresh: fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or add --force to stop it automatically)", fa.name, fa.name)
+				}
+				if code, err := a.forkStop([]string{fa.name}); err != nil {
+					return code, err
+				}
+			}
 			if err := forkRmSafe(forkUnmerged(repo, fa.name), gitDirty(ws), fa.force); err != nil {
 				return 1, fmt.Errorf("--fresh: %w (add --force to recreate anyway)", err)
 			}
@@ -1034,7 +1042,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	// loop first so its container is reaped before the worktree goes.
 	if len(runningForkNames(repo, []string{name})) > 0 {
 		if !force {
-			return 1, fmt.Errorf("fork %q is still running its loop — stop it first: coop fork stop %s (or use --force)", name, name)
+			return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or use --force)", name, name)
 		}
 		if code, err := a.forkStop([]string{name}); err != nil {
 			return code, err

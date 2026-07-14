@@ -309,8 +309,8 @@ func TestForkRmRefusesRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, err := a.forkRm([]string{"busy"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "still running") {
-		t.Errorf("fork rm of a running fork = (%d, %v), want (1, still running)", code, err)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "running or awaiting cleanup") {
+		t.Errorf("fork rm of a running fork = (%d, %v), want (1, running or awaiting cleanup)", code, err)
 	}
 	if !pathExists(ws) {
 		t.Error("fork rm refused but still deleted the running fork's worktree")

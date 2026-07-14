@@ -180,7 +180,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	// started in that gap, and landing onto a live worktree corrupts the in-flight iteration.
 	// This narrows the TOCTOU window to microseconds; it isn't a full lock.
 	if len(runningForkNames(repo, []string{name})) > 0 {
-		return false, fmt.Errorf("fork %q started running its loop — stop it first: coop fork stop %s", name, name)
+		return false, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s", name, name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return false, fmt.Errorf("%s: git fetch: %w", name, err)
@@ -370,7 +370,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	// Rebasing/deleting a fork whose loop is still mid-iteration corrupts the in-flight work and
 	// orphans the worker — refuse, as prune does. Stop the loop first.
 	if len(runningForkNames(repo, []string{name})) > 0 {
-		return 1, fmt.Errorf("fork %q is still running its loop — stop it first: coop fork stop %s (or coop fleet down)", name, name)
+		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or coop fleet down)", name, name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
@@ -425,13 +425,13 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	// in-flight work and orphans the worker. Skip those with a notice and land the rest.
 	skip := map[string]bool{}
 	if live := runningForkNames(repo, names); len(live) > 0 {
-		ui.Info("skipping %s: %s — stop them (coop fleet down) to land", ui.Count(len(live), "still-running fork"), strings.Join(live, ", "))
+		ui.Info("skipping %s: %s — stop them (coop fleet down) to land", ui.Count(len(live), "running/cleanup-pending fork"), strings.Join(live, ", "))
 		for _, n := range live {
 			skip[n] = true
 		}
 	}
 	if len(skip) == len(names) {
-		ui.Info("no forks to merge — every fork is still running")
+		ui.Info("no forks to merge — every fork is running or awaiting cleanup")
 		return 0, nil
 	}
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per

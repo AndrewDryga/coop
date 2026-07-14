@@ -500,8 +500,8 @@ func TestBuildArgs(t *testing.T) {
 	// TestStageBuildContext; that path lives in Build, not baseBuildArgs.)
 }
 
-// A detached fork loop's box is labeled coop.fork=<name> so `coop fork stop` can KillByLabel it
-// after SIGKILL (preventing an orphaned container); a non-fork box has no such label.
+// A detached fork loop's box is labeled coop.fork=<name> so `coop fork stop` can reap it after
+// SIGKILL (preventing an orphaned container); a non-fork box has no such label.
 func TestAssembleArgsForkLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: "open"}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}

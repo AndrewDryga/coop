@@ -153,3 +153,104 @@ func TestSilent(t *testing.T) {
 		t.Error("false should be silent-failure")
 	}
 }
+
+// A deadline on an error-reporting label reap kills the runtime CLI's whole process group, including
+// helpers it spawned. This keeps `fork stop` bounded without leaking a child behind the timeout.
+func TestRemoveByLabelDeadlineKillsRuntimeGroup(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	childPIDFile := filepath.Join(dir, "child-pid")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$1" = ps ]; then
+	sleep 30 &
+	child=$!
+	printf '%s\n' "$child" > "$COOP_TEST_CHILD_PID_FILE"
+	wait "$child"
+fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_CHILD_PID_FILE", childPIDFile)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RemoveByLabel deadline error = %v, want context deadline exceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("RemoveByLabel returned after %v, want a bounded cancellation", elapsed)
+	}
+	data, err := os.ReadFile(childPIDFile)
+	if err != nil {
+		t.Fatalf("runtime helper pid was not recorded: %v", err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse runtime helper pid: %v", err)
+	}
+	if err := waitGone(childPID, 2*time.Second); err != nil {
+		t.Fatalf("runtime helper %d survived context cancellation: %v", childPID, err)
+	}
+}
+
+// Apple container has no Docker-style `ps --filter`; list its running resources as JSON, then
+// match labels locally so one fork's stop cannot remove another fork's box.
+func TestRemoveByLabelAppleContainerExactMatch(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "container")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = list ]; then
+	printf '%s\n' '[{"id":"box-perf","configuration":{"labels":{"coop.fork":"perf"}}},{"id":"box-other","configuration":{"labels":{"coop.fork":"other"}}}]'
+fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if n, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf"); err != nil || n != 1 {
+		t.Fatalf("RemoveByLabel(Apple, perf) = (%d, %v), want (1, nil)", n, err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "list --format json\nrm -f box-perf\n"; got != want {
+		t.Errorf("Apple runtime calls = %q, want %q", got, want)
+	}
+}
+
+func TestRemoveByLabelPreservesRuntimeDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, failure, command, detail string
+	}{
+		{name: "query", failure: "ps", command: "ps -q --filter label=coop.fork=perf", detail: "daemon query broke"},
+		{name: "remove", failure: "rm", command: "rm -f box-perf", detail: "container remove broke"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			runtimeCLI := filepath.Join(dir, "runtime")
+			if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$1" = ps ]; then
+	if [ "$COOP_TEST_FAILURE" = ps ]; then echo 'daemon query broke' >&2; exit 42; fi
+	echo box-perf
+fi
+if [ "$1" = rm ] && [ "$COOP_TEST_FAILURE" = rm ]; then
+	echo 'container remove broke' >&2
+	exit 43
+fi
+`), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_FAILURE", tc.failure)
+			_, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(context.Background(), "coop.fork", "perf")
+			if err == nil || !strings.Contains(err.Error(), "run: "+runtimeCLI+" "+tc.command) || !strings.Contains(err.Error(), tc.detail) {
+				t.Fatalf("RemoveByLabel diagnostic = %v, want command %q and stderr %q", err, tc.command, tc.detail)
+			}
+		})
+	}
+}
