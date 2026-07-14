@@ -73,11 +73,11 @@ def chk(msg):
     return "  " + green("✓") + " " + msg
 
 
-def model_line(agent="claude", model="claude-opus-4-8[1m]", profile="personal"):
-    """streamjson.go's init line: dim labels (· using / model / profile), normal-bright values."""
+def model_line(agent="claude", model="claude-opus-4-8[1m]", credential="personal"):
+    """streamjson.go's init line: dim labels, normal-bright agent/model/credential values."""
     s = dim("· using ") + agent + dim(" model ") + model
-    if profile:
-        s += dim(" profile ") + profile
+    if credential:
+        s += dim(" credential ") + credential
     return s
 
 
@@ -191,6 +191,7 @@ def capture_output(argv, cwd=ROOT, cols=88, rows=44):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     env = {**os.environ, "TERM": "xterm-256color", "CLICOLOR_FORCE": "1", "COLUMNS": str(cols)}
+    env.pop("NO_COLOR", None)
     p = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, cwd=str(cwd), env=env)
     os.close(slave)
     chunks = []
