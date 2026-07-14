@@ -38,6 +38,7 @@ type stageRecord struct {
 	Reopened    int      `json:"reopened,omitempty"`    // review stages: task folders moved back to in_progress
 	Finished    []string `json:"finished,omitempty"`    // work stage: task ids this iteration moved to done
 	Untrailered []string `json:"untrailered,omitempty"` // finished ids with NO Coop-Task commit in range (unbindable)
+	GateFiles   []string `json:"gate_files,omitempty"`  // host-detected gate-defining paths touched by the stage
 	QueueTodo   int      `json:"queue_todo"`
 	QueueDoing  int      `json:"queue_doing"`
 	QueueDone   int      `json:"queue_done"`
@@ -45,7 +46,7 @@ type stageRecord struct {
 
 // buildStageRecord assembles a record from a stage's EFFECTIVE target (the post-rotation Target, so
 // the row shows what ran, not what was configured) and its outcome. Pure — unit-tested.
-func buildStageRecord(run, stage, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, untrailered []string) stageRecord {
+func buildStageRecord(run, stage, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, untrailered, gateFiles []string) stageRecord {
 	return stageRecord{
 		Run:         run,
 		Stage:       stage,
@@ -63,6 +64,7 @@ func buildStageRecord(run, stage, coopVer string, tgt agents.Target, start, end 
 		Reopened:    reopened,
 		Finished:    finished,
 		Untrailered: untrailered,
+		GateFiles:   gateFiles,
 		QueueTodo:   q.Todo,
 		QueueDoing:  q.Doing,
 		QueueDone:   q.Done,
@@ -92,9 +94,9 @@ func appendStageRecord(repo, run string, rec stageRecord) error {
 // recordStage builds and appends a stage record, stamping end-time, HEAD-after, and the queue
 // counts at emit time. Best-effort — a write failure is warned once and swallowed, so telemetry can
 // never break the run it observes.
-func (a *app) recordStage(repo, run, stage string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, untrailered []string, res *iterResult) {
+func (a *app) recordStage(repo, run, stage string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, untrailered, gateFiles []string, res *iterResult) {
 	cnt, _ := queueProgress(hosts)
-	rec := buildStageRecord(run, stage, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, untrailered)
+	rec := buildStageRecord(run, stage, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, untrailered, gateFiles)
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok
 	}

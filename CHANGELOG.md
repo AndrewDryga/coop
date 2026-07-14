@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Gate-defining changes earn an immediate, fail-closed review.** A completed loop task that edits
+  the gate, loop/project configuration, hooks, sweep enforcement, or CI is audited before another
+  task can trust that checker, even when ordinary between-task review is disabled. Exact paths and
+  final signed HEADs remain in run telemetry, while final signoff independently derives protected
+  paths from each task's committed diff.
+
 - **Fresh scaffolds scope queue completion enforcement to `/sweep`.** New projects omit the
   project-global Claude Stop hook and `.agent/active` sentinel, so loops and unrelated sessions are
   never held by stale sweep state. The sweep skill's own hook blocks while either todo or

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -236,6 +237,30 @@ func TestLoopBetweenPrompt(t *testing.T) {
 	}
 }
 
+func TestBetweenAuditSetPrompt(t *testing.T) {
+	if prompt, run := betweenAuditSetPrompt(false, "", nil); run || prompt != "" {
+		t.Errorf("unconfigured ordinary change = %q/%v, want no audit", prompt, run)
+	}
+	if prompt, run := betweenAuditSetPrompt(false, "", []string{"Makefile"}); !run || prompt != defaultProtectedBetweenPrompt {
+		t.Errorf("unconfigured protected change = %q/%v, want built-in audit", prompt, run)
+	}
+	if prompt, run := betweenAuditSetPrompt(true, "  custom audit  ", nil); !run || prompt != "custom audit" {
+		t.Errorf("configured ordinary change = %q/%v, want custom audit", prompt, run)
+	}
+	if prompt, run := betweenAuditSetPrompt(true, "custom audit", []string{"Makefile"}); !run || prompt != "custom audit" {
+		t.Errorf("configured protected change = %q/%v, want custom audit", prompt, run)
+	}
+	if shouldRunBetweenAudit(false, true, false) {
+		t.Error("a failed ordinary iteration must not run the optional audit")
+	}
+	if !shouldRunBetweenAudit(true, true, false) {
+		t.Error("a successful ordinary iteration must run its configured audit")
+	}
+	if !shouldRunBetweenAudit(false, false, true) {
+		t.Error("a failed protected completion must still run the mandatory audit")
+	}
+}
+
 // TestNewlyFinished: the before/after done-set diff names exactly what an iteration completed,
 // sorted; taskIDsOf strips the dirs for the banner.
 func TestNewlyFinished(t *testing.T) {
@@ -329,6 +354,34 @@ func TestReopenVerdictLost(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := reopenVerdictLost(c.claimed, c.haveRcpt, c.actual); got != c.wantLost {
 				t.Errorf("reopenVerdictLost(%d,%v,%d) = %v, want %v", c.claimed, c.haveRcpt, c.actual, got, c.wantLost)
+			}
+		})
+	}
+}
+
+func TestProtectedAuditVerdict(t *testing.T) {
+	runErr := errors.New("review unavailable")
+	cases := []struct {
+		name                   string
+		protected, interrupted bool
+		reviewErr              error
+		output                 string
+		actual                 int
+		wantErr                bool
+	}{
+		{name: "ordinary audit keeps existing behavior", reviewErr: runErr},
+		{name: "protected run failure", protected: true, reviewErr: runErr, wantErr: true},
+		{name: "protected missing receipt", protected: true, wantErr: true},
+		{name: "protected mismatch", protected: true, output: "REVIEW COMPLETE — reopened 1", wantErr: true},
+		{name: "protected pass", protected: true, output: "REVIEW COMPLETE — reopened 0"},
+		{name: "protected reopen", protected: true, output: "REVIEW COMPLETE — reopened 2", actual: 2},
+		{name: "user interruption", protected: true, interrupted: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := protectedAuditVerdict(c.protected, c.interrupted, c.reviewErr, c.output, c.actual)
+			if (err != nil) != c.wantErr {
+				t.Errorf("protectedAuditVerdict error = %v, wantErr %v", err, c.wantErr)
 			}
 		})
 	}

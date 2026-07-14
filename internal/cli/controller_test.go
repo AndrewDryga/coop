@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -216,6 +217,16 @@ func TestProtectedGateChanges(t *testing.T) {
 	git("commit", "-q", "-m", "loosen the gate")
 	if hits := protectedGateChanges(repo, mid, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != "Makefile" {
 		t.Errorf("a Makefile change should be flagged, got %v", hits)
+	}
+}
+
+func TestProtectedGateFiles(t *testing.T) {
+	got := protectedGateFiles([]string{
+		"internal/cli/commands.go", ".claude/settings.json", "Makefile", "Makefile", " .agent/skills/sweep/SKILL.md ",
+	})
+	want := []string{".agent/skills/sweep/SKILL.md", ".claude/settings.json", "Makefile"}
+	if !slices.Equal(got, want) {
+		t.Errorf("protectedGateFiles = %v, want %v", got, want)
 	}
 }
 

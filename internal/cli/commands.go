@@ -1676,6 +1676,26 @@ func reopenVerdictLost(claimed int, haveReceipt bool, actualReopened int) bool {
 	return !haveReceipt || claimed != actualReopened
 }
 
+// protectedAuditVerdict makes the exceptional between pass fail closed. Ordinary configured
+// audits keep their historical warn-and-continue behavior; a protected audit must both run and
+// leave a receipt consistent with the queue before another task can trust the edited gate.
+func protectedAuditVerdict(protected, interrupted bool, reviewErr error, output string, actualReopened int) error {
+	if !protected {
+		return nil
+	}
+	if reviewErr != nil {
+		return fmt.Errorf("could not run: %w", reviewErr)
+	}
+	if interrupted {
+		return nil
+	}
+	claimed, ok := reviewReopenReceipt(output)
+	if reopenVerdictLost(claimed, ok, actualReopened) {
+		return fmt.Errorf("verdict inconsistent: review reported %s but %d task folder(s) actually moved", receiptClaim(claimed, ok), actualReopened)
+	}
+	return nil
+}
+
 // receiptClaim renders a review's reopen receipt for a log line: the claimed count, or that the
 // receipt was missing entirely.
 func receiptClaim(n int, ok bool) string {
@@ -1777,6 +1797,25 @@ func loopBetweenPrompt(repo string, queues []string, setPrompt string, finished,
 	b.WriteString("\n\n")
 	b.WriteString(reviewContextFooter(repo, queues))
 	return b.String()
+}
+
+const defaultProtectedBetweenPrompt = "Audit ONLY the protected gate change named above. Verify from the committed diff and an independent gate run that it preserves or strengthens enforcement rather than removing an assertion, disabling a hook, or relaxing what counts as green. Reopen the task with the concrete weakness if it does not pass that bar."
+
+// betweenAuditSetPrompt keeps ordinary between-task review opt-in, while making a completed task's
+// protected gate edit earn an immediate audit even when between.enabled is false. An unconfigured
+// protected audit uses the signoff target (betweenRot's existing fallback) and this built-in prompt.
+func betweenAuditSetPrompt(configured bool, setPrompt string, gateFiles []string) (string, bool) {
+	if configured {
+		return strings.TrimSpace(setPrompt), true
+	}
+	if len(gateFiles) == 0 {
+		return "", false
+	}
+	return defaultProtectedBetweenPrompt, true
+}
+
+func shouldRunBetweenAudit(iterationSucceeded, auditAvailable, protected bool) bool {
+	return protected || (iterationSucceeded && auditAvailable)
 }
 
 // doneTaskDirs maps every done task's id → its folder across the queue(s). The between audit
@@ -1977,10 +2016,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
 	health := newLoopHealth() // per-task risk signals (reopens, gate edits, untagged) accumulated across the run
-	// The signoff pass (end-of-loop) and the optional between-tasks audit both run only under the
-	// signoff-aware agent form, not a custom work.command. The between audit is opt-in
-	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in) and
-	// is built per-firing so it can name the task the iteration just finished.
+	// The signoff pass (end-of-loop) and between-tasks audits both run only under the signoff-aware
+	// agent form, not a custom work.command. Ordinary between review is opt-in; a completed task that
+	// changed a protected gate path gets the narrow built-in audit even when it is off.
 	betweenEnabled := len(custom) == 0 && lc.Between.Enabled
 	// Per-stage signoff/between rotations from .agent/loop.yaml — each runs on its OWN configured
 	// provider/model/effort/account and rotates its own fallback ladder on a limit (NOT a model name
@@ -2061,7 +2099,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
 			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, sink, peers)
-			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
+			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil, nil)
 			prev := rot.active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfCode, pfErr, pfOut, time.Now()); limited {
 				if wait > 0 {
@@ -2125,7 +2163,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			// Snapshot which tasks are done BEFORE the iteration, so the between audit can name
 			// exactly what this iteration finished (the diff), not guess "the most recent".
 			var doneBefore map[string]string
-			if betweenEnabled {
+			if len(custom) == 0 {
 				doneBefore = doneTaskDirs(hosts)
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
@@ -2169,7 +2207,56 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				ui.Warn("this iteration edited gate-defining file(s) %s — the review must confirm the gate wasn't weakened to pass", strings.Join(gateHits, ", "))
 			}
 			health.noteIteration(finished, gateHits, missing) // for the signoff/verify context + the closing digest
-			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing, res)
+			// Host signing rewrites commit SHAs. Do it before recording successful work so telemetry and
+			// every reviewer name the final commits rather than the unsigned pre-rebase heads.
+			if action == actContinue && wantsSigning() {
+				if signed, serr := a.signUnpushed(repo, iterHead); serr != nil {
+					ui.Warn("could not sign this cycle's commits: %v — left unsigned", serr)
+				} else if signed > 0 {
+					ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
+				}
+				headAfter = gitOut(repo, "rev-parse", "HEAD")
+			}
+			a.recordStage(repo, runid, "work", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing, gateHits, res)
+			// Review a just-completed task now when a successful iteration has ordinary between
+			// review configured OR its complete run-bound diff touched the gate. Protected completion
+			// is checked even when the worker exited nonzero, so a retry cannot hand a changed checker
+			// to the next task before the mandatory audit runs.
+			if len(custom) == 0 {
+				if finishedDirs := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finishedDirs) > 0 {
+					finishedIDs := taskIDsOf(finishedDirs)
+					stepChanges := loopChanges(repo, loopStartHead, headAfter).forTasks(finishedIDs)
+					auditGateFiles := protectedGateFiles(append(stepChanges.gateFiles(), gateHits...))
+					setPrompt, auditAvailable := betweenAuditSetPrompt(betweenEnabled, lc.Between.Prompt, auditGateFiles)
+					protectedAudit := len(auditGateFiles) > 0
+					runAudit := shouldRunBetweenAudit(action == actContinue, auditAvailable, protectedAudit)
+					if runAudit {
+						if protectedAudit && !betweenEnabled {
+							ui.Info("protected-change audit — reviewing %s", strings.Join(finishedIDs, ", "))
+						} else {
+							ui.Info("between-tasks audit — reviewing %s", strings.Join(finishedIDs, ", "))
+						}
+						prompt := loopBetweenPrompt(repo, queues, substituteLoopVars(setPrompt, stepChanges, health), finishedDirs, auditGateFiles) + stepChanges.reviewBlock(health)
+						// An ordinary configured audit preserves its historical warn-and-continue behavior.
+						// A protected audit is mandatory: failure or a missing/mismatched receipt stops
+						// before another task can trust the changed gate.
+						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+						btSnap := queueSnapshot(hosts)
+						btExit := 0
+						btOut, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, iterCmd, hosts, sink, peers, wake)
+						if rerr != nil {
+							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(finishedIDs, ", "), rerr)
+							btExit = 1
+						}
+						actualReopened := len(reopenedBySignoff(btSnap, queueSnapshot(hosts)))
+						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, actualReopened, btHead, hosts, nil, nil, auditGateFiles, btRes)
+						interrupted := softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil)
+						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btOut, actualReopened); verdictErr != nil {
+							return 1, fmt.Errorf("protected-change audit for %s: %w — stopped before another task could trust the changed gate; inspect the task and re-run `coop loop`", strings.Join(finishedIDs, ", "), verdictErr)
+						}
+					}
+				}
+			}
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
@@ -2182,18 +2269,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			case actContinue:
 				completed++
 				n++
-				// Sign this cycle's commits with your host key NOW — before the stall rebaseline and the
-				// between audit read HEAD — so box commits (made unsigned) satisfy a protected remote.
-				// Only when you sign by default; best-effort — a signing failure warns and leaves them
-				// unsigned rather than derailing the run. Re-signing rewrites SHAs, but the Coop-Task
-				// trailer survives the amend, so the commit↔task binding holds.
-				if wantsSigning() {
-					if signed, serr := a.signUnpushed(repo, iterHead); serr != nil {
-						ui.Warn("could not sign this cycle's commits: %v — left unsigned", serr)
-					} else if signed > 0 {
-						ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
-					}
-				}
 				// A clean iteration that neither finishes/blocks a task NOR commits means the agent keeps
 				// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
 				// rather than loop forever (a commit or a block still counts as progress).
@@ -2201,28 +2276,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				prevHead, settledBaseline, stalls, stop = a.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
 				if stop != nil {
 					return code, stop
-				}
-				// Optional between-tasks audit (loop.yaml between.enabled): if this iteration moved a
-				// task to done/, review that just-completed task now, on the between model — the prompt
-				// names it explicitly (the before/after diff), so the audit never has to infer which
-				// task "was most recent". It may reopen it — the next inner iteration picks the
-				// reopened task back up and reworks it before the loop moves on.
-				if betweenEnabled {
-					if finished := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finished) > 0 {
-						ui.Info("between-tasks audit — reviewing %s", strings.Join(taskIDsOf(finished), ", "))
-						stepChanges := loopChanges(repo, iterHead, headAfter) // this step's diff, by task
-						prompt := loopBetweenPrompt(repo, queues, substituteLoopVars(lc.Between.Prompt, stepChanges, health), finished, gateHits) + stepChanges.reviewBlock(health)
-						// Runs on between.agent's own target and fails closed — but a per-task audit that
-						// can't run warns loudly (the task went unaudited) rather than halting the run.
-						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-						btExit := 0
-						_, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, iterCmd, hosts, sink, peers, wake)
-						if rerr != nil {
-							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(taskIDsOf(finished), ", "), rerr)
-							btExit = 1
-						}
-						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, 0, btHead, hosts, nil, nil, btRes)
-					}
 				}
 			case actWait:
 				// A rate/usage limit is expected on long runs. With more than one profile in
@@ -2301,7 +2354,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		cf, _ := queueProgress(hosts)
 		reopened := cf.Todo + cf.Doing
 		health.noteReopen(reopenedBySignoff(soSnap, queueSnapshot(hosts))) // which tasks the signoff bounced, for the digest + next round's context
-		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil, soRes)
+		a.recordStage(repo, runid, "signoff", signoffRot.active(), soStart, 0, 0, reopened, soHead, hosts, nil, nil, nil, soRes)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
@@ -2353,7 +2406,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 				vExit = 1
 			}
-			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil, vRes)
+			a.recordStage(repo, runid, "verify", verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil, nil, vRes)
 		}
 	}
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),

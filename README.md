@@ -1004,8 +1004,11 @@ is the per-task reviewer, signoff the final one. Prompts never *replace* a coop 
 **`signoff.prompt`** and **`preflight.prompt`** *append* extra checks/instructions to theirs (so
 the signoff still reopens a shipped task that fails one — e.g. the CHANGELOG gained an entry, the
 docs were regenerated), while **`between.prompt`** *sets* an opt-in per-task audit that runs after
-each completed task and may reopen it (between has no built-in, so it's off unless enabled + set;
-coop names the just-finished task in the prompt). Each step's `agent:` is a ladder of targets
+each completed task and may reopen it. Ordinary between review is off unless enabled + set, but a
+completed task that changed a gate-defining file always gets an immediate protected audit before
+the loop advances; it uses the configured between target/prompt or falls back to the signoff target
+and a focused built-in prompt. Coop names the just-finished task in either prompt. Each step's
+`agent:` is a ladder of targets
 (`provider[:model][/effort][@account]`) or preset names — so **`signoff.agent`** can review on a
 stronger model than the cheaper `work.agent` loop. Settings live here too: `signoff.rounds`,
 `preflight.enabled`, `work.command`. Every field is optional (a missing file = the built-in

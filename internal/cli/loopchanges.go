@@ -200,24 +200,40 @@ func abbrev(xs []string, n int) string {
 	return strings.Join(xs[:n], ", ") + fmt.Sprintf(", +%d more", len(xs)-n)
 }
 
-func dedupe(xs []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, x := range xs {
-		if !seen[x] {
-			seen[x] = true
-			out = append(out, x)
-		}
-	}
-	return out
-}
-
 func (cs loopChangeSet) taskIDs() []string {
 	ids := make([]string, len(cs.tasks))
 	for i, t := range cs.tasks {
 		ids[i] = t.id
 	}
 	return ids
+}
+
+// forTasks narrows a run-wide change set to the named tasks. Between-task review uses this to show
+// a task's commits from earlier iterations without leaking unrelated completed tasks into an audit
+// whose prompt says the named task is its only subject.
+func (cs loopChangeSet) forTasks(ids []string) loopChangeSet {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out loopChangeSet
+	var files []string
+	for _, t := range cs.tasks {
+		if want[t.id] {
+			out.tasks = append(out.tasks, t)
+			files = append(files, t.files...)
+		}
+	}
+	out.subsystems = subsystemsOf(files)
+	return out
+}
+
+func (cs loopChangeSet) gateFiles() []string {
+	var files []string
+	for _, t := range cs.tasks {
+		files = append(files, t.files...)
+	}
+	return protectedGateFiles(files)
 }
 
 // reviewBlock renders the loop's changes + health as a prompt section for the signoff/verify
@@ -238,15 +254,20 @@ func (cs loopChangeSet) reviewBlock(h *loopHealth) string {
 			subs[i] = c.subject
 		}
 		fmt.Fprintf(&b, "- %s — %s\n    files: %s\n", t.id, abbrev(subs, 3), abbrev(t.files, 6))
-		if th := h.byTask[t.id]; th != nil && th.shaky() {
+		th := h.byTask[t.id]
+		gateFiles := protectedGateFiles(t.files)
+		if th != nil {
+			gateFiles = protectedGateFiles(append(gateFiles, th.gateFiles...))
+		}
+		if (th != nil && th.shaky()) || len(gateFiles) > 0 {
 			var flags []string
-			if th.reopens > 0 {
+			if th != nil && th.reopens > 0 {
 				flags = append(flags, fmt.Sprintf("signoff reopened it %d×", th.reopens))
 			}
-			if g := dedupe(th.gateFiles); len(g) > 0 {
-				flags = append(flags, "edited gate file(s) "+abbrev(g, 3)+" — confirm the gate wasn't weakened to pass")
+			if len(gateFiles) > 0 {
+				flags = append(flags, "edited gate file(s) "+abbrev(gateFiles, 3)+" — confirm the gate wasn't weakened to pass")
 			}
-			if th.untagged {
+			if th != nil && th.untagged {
 				flags = append(flags, "finished with no Coop-Task commit")
 			}
 			shaky = append(shaky, "  • "+t.id+": "+strings.Join(flags, "; "))

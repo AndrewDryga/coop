@@ -47,8 +47,7 @@ func TestReviewBlockAndHealth(t *testing.T) {
 		stat:       " 3 files changed, 40 insertions(+)",
 	}
 	h := newLoopHealth()
-	h.noteReopen([]string{"task-json"})                                 // reopened once
-	h.noteIteration([]string{"task-egress"}, []string{"Makefile"}, nil) // edited a gate file
+	h.noteReopen([]string{"task-json"}) // no iteration health for task-egress: derive its gate flag from committed files
 	block := cs.reviewBlock(h)
 	for _, want := range []string{
 		"task-json", "add --json", "internal/cli/output.go", "Affected areas: internal/box, internal/cli",
@@ -60,6 +59,23 @@ func TestReviewBlockAndHealth(t *testing.T) {
 	}
 	if (loopChangeSet{}).reviewBlock(newLoopHealth()) != "" {
 		t.Error("an empty change set must render no review block")
+	}
+}
+
+func TestTaskScopedGateFiles(t *testing.T) {
+	cs := loopChangeSet{tasks: []taskChanges{
+		{id: "earlier", files: []string{".github/workflows/check.yml", "internal/cli/a.go"}},
+		{id: "current", files: []string{".claude/settings.json", "Makefile", "internal/cli/b.go"}},
+	}}
+	current := cs.forTasks([]string{"current"})
+	if ids := current.taskIDs(); !slices.Equal(ids, []string{"current"}) {
+		t.Fatalf("forTasks ids = %v, want [current]", ids)
+	}
+	if got, want := current.gateFiles(), []string{".claude/settings.json", "Makefile"}; !slices.Equal(got, want) {
+		t.Errorf("gateFiles = %v, want %v", got, want)
+	}
+	if slices.Contains(current.subsystems, ".github") {
+		t.Errorf("task-scoped subsystems leaked an unrelated task: %v", current.subsystems)
 	}
 }
 

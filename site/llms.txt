@@ -443,9 +443,11 @@ coop loop [agent] — work the task queue until done, then sign off.
   each with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
   final review, verify an optional post-signoff pass that e2e-tests the affected features. Prompts
   never REPLACE a coop built-in: signoff.prompt APPENDS to its senior review; between.prompt,
-  verify.prompt, and preflight.prompt SET their pass (none has a built-in prompt — preflight's
-  built-in tidy is coop itself, run host-side, so its prompt is the optional agent cleanup on
-  top). The review
+  verify.prompt, and preflight.prompt SET their pass. Ordinary between review is opt-in and has no
+  built-in prompt, but a completed task that edits a gate-defining file always gets an immediate
+  protected audit; it uses between.agent/prompt when configured, otherwise the signoff target and
+  a focused built-in prompt. Preflight's built-in tidy is coop itself, run host-side, so its prompt
+  is the optional agent cleanup on top. The review
   passes are handed the run's CHANGE CONTEXT — every task completed this loop, by its Coop-Task
   trailer, with the files it touched — so "e2e the affected features" resolves against a concrete
   list; place it inline with {loop.changes} / {loop.tasks} / {loop.affected}. signoff.rounds is the

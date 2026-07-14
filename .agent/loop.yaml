@@ -31,7 +31,9 @@ work:
   #command: []
 
 between:
-  # Opt-in audit run after EACH completed task (may reopen it before the loop moves on). Default: off.
+  # Opt-in audit after EACH completed task (may reopen it before the loop moves on). Default: off.
+  # Exception: a completed task that edits a gate-defining file always gets an immediate protected
+  # audit, using this target/prompt when configured or the signoff target + built-in prompt otherwise.
   enabled: true
 
   # Audit model ladder. Default: the signoff model.
@@ -39,7 +41,7 @@ between:
   # tier a focused per-task audit wants.
   agent: [codex:gpt-5.6-luna/xhigh, claude:claude-opus-4-8/xhigh]
 
-  # The per-task audit prompt — SET it here (between has no built-in; required when enabled).
+  # The ordinary per-task audit prompt — SET it here (required when enabled).
   # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
   prompt: |
     Audit ONLY the task named above — nothing else. Hold it against its own task.md,

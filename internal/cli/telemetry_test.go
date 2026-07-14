@@ -16,7 +16,7 @@ func TestBuildStageRecord(t *testing.T) {
 	start := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	end := start.Add(90 * time.Second)
 	q := taskCounts{Todo: 2, Doing: 1, Done: 5}
-	rec := buildStageRecord("run123", "work", "v4.0.0", tgt, start, end, 0, 3, 2, "abc123", "def456", q, []string{"t-1"}, []string{"t-2"})
+	rec := buildStageRecord("run123", "work", "v4.0.0", tgt, start, end, 0, 3, 2, "abc123", "def456", q, []string{"t-1"}, []string{"t-2"}, []string{".claude/settings.json"})
 
 	// The EFFECTIVE (post-rotation) target is flattened onto the record — provider included, so a
 	// row shows what RAN, the whole point of the fix behind this telemetry.
@@ -29,7 +29,7 @@ func TestBuildStageRecord(t *testing.T) {
 	if rec.HeadBefore != "abc123" || rec.HeadAfter != "def456" {
 		t.Errorf("heads not mapped: %+v", rec)
 	}
-	if len(rec.Finished) != 1 || rec.Finished[0] != "t-1" || len(rec.Untrailered) != 1 || rec.Untrailered[0] != "t-2" {
+	if len(rec.Finished) != 1 || rec.Finished[0] != "t-1" || len(rec.Untrailered) != 1 || rec.Untrailered[0] != "t-2" || len(rec.GateFiles) != 1 || rec.GateFiles[0] != ".claude/settings.json" {
 		t.Errorf("task evidence not mapped: %+v", rec)
 	}
 	if rec.Start != "2026-07-12T10:00:00Z" || rec.End != "2026-07-12T10:01:30Z" {
@@ -40,7 +40,7 @@ func TestBuildStageRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"stage":"work"`, `"provider":"codex"`, `"reopened":2`, `"finished":["t-1"]`, `"untrailered":["t-2"]`, `"queue_done":5`} {
+	for _, want := range []string{`"stage":"work"`, `"provider":"codex"`, `"reopened":2`, `"finished":["t-1"]`, `"untrailered":["t-2"]`, `"gate_files":[".claude/settings.json"]`, `"queue_done":5`} {
 		if !strings.Contains(string(line), want) {
 			t.Errorf("json missing %s:\n%s", want, line)
 		}
