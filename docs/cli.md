@@ -84,7 +84,7 @@ coop fork — a throwaway clone handed to an agent; review and land it like a PR
   coop fork <name> <target|preset> --loop  loop the fork on a tasks folder (-d detaches)
   coop fork ls                      list this repo's forks
   coop fork logs [name]             tail a fork's loop log (no name: all forks)
-  coop fork review <name>           dossier + diff (--stat, --tool, --open)
+  coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
   coop fork <name> acp [target]     front the fork as an ACP agent (for editors)
   coop fork merge <name>            rebase onto your branch and land it (--all = fleet)
   coop fork rm <name>               discard a fork (confirms; refuses unmerged/dirty without --force)
@@ -104,6 +104,7 @@ FLAGS (every short flag has a long form):
   -f, --follow    logs: keep streaming new output
 
 REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
+        --gate rebases in a scratch clone and runs the parent's gate read-only; red/conflict exits 1 (not with --open).
 NAMES   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.
 
 Run 'coop help' for all commands.

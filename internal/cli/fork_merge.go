@@ -144,18 +144,29 @@ func (a *app) mergeGate(repo string) (string, error) {
 	return img, nil
 }
 
-// runGate runs the merge gate in the box against treeDir, reporting whether it passed. The gate
-// POLICY is resolved from gateRepo (the trusted parent), never treeDir — a fork can't weaken its own
-// checker — but it RUNS against treeDir (the rebased candidate), so a red gate never touches the
-// parent. gatePasses routes through the a.gateOK test seam when set.
-func (a *app) runGate(gateRepo, treeDir, img string) bool {
+// runGateMode runs the merge gate in the box against treeDir. The gate POLICY is resolved from
+// gateRepo (the trusted parent), never treeDir — a fork can't weaken its own checker — but it RUNS
+// against treeDir (the rebased candidate), so a red gate never touches the parent. A non-zero gate
+// is a normal red result; an error means the box never started.
+func (a *app) runGateMode(gateRepo, treeDir, img string, readOnly bool) (bool, error) {
 	gate := a.gateFor(gateRepo)
 	ui.Info("revalidating: %s", strings.Join(gate, " "))
-	code, _ := box.Run(a.cfg, a.rt, box.RunSpec{
+	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		PolicyRepo:   gateRepo,
+		RepoReadOnly: readOnly,
+		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
-	return code == 0
+	if err != nil {
+		return false, err
+	}
+	return code == 0, nil
+}
+
+// runGate preserves merge's existing bool-only contract: a box startup failure is a failed gate.
+func (a *app) runGate(gateRepo, treeDir, img string) bool {
+	ok, _ := a.runGateMode(gateRepo, treeDir, img, false)
+	return ok
 }
 
 // gatePasses runs the merge gate (or the test seam, when set).
@@ -164,6 +175,15 @@ func (a *app) gatePasses(gateRepo, treeDir, img string) bool {
 		return a.gateOK(gateRepo, treeDir, img)
 	}
 	return a.runGate(gateRepo, treeDir, img)
+}
+
+// reviewGatePasses is the review-only gate path. Its disposable candidate is mounted read-only,
+// and startup errors remain distinguishable from an ordinary red gate.
+func (a *app) reviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
+	if a.gateOK != nil {
+		return a.gateOK(gateRepo, treeDir, img), nil
+	}
+	return a.runGateMode(gateRepo, treeDir, img, true)
 }
 
 // mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a

@@ -190,7 +190,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
-| `coop fork review <name> [--stat\|--tool]` | dossier + diff; `--stat` = dossier only, `--tool` = your `git difftool` |
+| `coop fork review <name> [--stat\|--tool\|--open] [--gate]` | dossier + diff; `--gate` previews the rebase and gate without touching either source repo |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
@@ -354,6 +354,12 @@ instead:
 |---|---|
 | `--stat` | dossier only, skip the diff |
 | `--tool` | open each changed file in your GUI difftool |
+| `--gate` | rebase in a disposable scratch clone, then run the parent's configured gate in the box with that clone mounted read-only |
+
+`--gate` reports green, red, or rebase conflict before merge. Green (and a clean rebase with no
+gate configured) exits 0; red or conflict exits 1. The parent and fork refs, branches, and worktrees
+stay untouched, and the scratch clone is always removed. Combine it with `--stat` or `--tool`, not
+`--open`, whose editor process may return before the review window closes.
 
 To review in your editor's SCM panel instead, open the fork as a folder with `coop fork
 open <name>` (it uses the editor resolution below).

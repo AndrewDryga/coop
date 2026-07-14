@@ -37,6 +37,11 @@ type RunSpec struct {
 	Repo    string   // host repo to mount
 	Workdir string   // where Repo mounts; empty defers to resolveWorkdir (the repo's real host path)
 	Cmd     []string // command + args to run in the box
+	// PolicyRepo is the trusted source for .agent/project.yaml box policy. Empty uses Repo.
+	PolicyRepo string
+	// RepoReadOnly mounts Repo read-only. Maintenance checks can inspect an isolated candidate
+	// without letting the command alter even that disposable tree.
+	RepoReadOnly bool
 
 	Homes   bool // mount per-agent home dirs, env-file, INSTRUCTIONS, and MCP configs
 	Network bool // join the sibling-services network if `coop up` created one
@@ -127,11 +132,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
-	// The repo's committed box: policy (.agent/project.yaml) overlays the config for THIS run —
+	// The trusted policy repo's committed box: policy (.agent/project.yaml) overlays this run —
 	// each field only where the user didn't explicitly set its COOP_* (env/conf beats file beats
 	// default), on a copy so the shared Config is never mutated. A broken project.yaml warns and
 	// is skipped (same best-effort posture as appendPublish) rather than bricking every launch.
-	if p, err := project.Load(spec.Repo); err == nil {
+	if p, err := project.Load(projectPolicyRepo(spec)); err == nil {
 		cfg = applyProjectPolicy(cfg, p, &spec)
 	} else if !spec.Quiet {
 		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
@@ -141,6 +146,9 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	mounts, err := ComputeMounts(spec.Repo, workdir)
 	if err != nil {
 		return -1, err
+	}
+	if spec.RepoReadOnly && len(mounts) > 0 {
+		mounts[0].RO = true // ComputeMounts guarantees the primary repo bind is first
 	}
 	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
@@ -434,6 +442,13 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 	}
 	return rt.Run(stdin, stdout, stderr, args...)
+}
+
+func projectPolicyRepo(spec RunSpec) string {
+	if spec.PolicyRepo != "" {
+		return spec.PolicyRepo
+	}
+	return spec.Repo
 }
 
 // presetRoleMounts wires a preset's roles into the box and returns the mounts to add, the -e args
@@ -902,7 +917,8 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 // localhost, not 0.0.0.0, so the port isn't exposed to the LAN. Mappings/skips are noted on stderr
 // (the ACP server log or the terminal) — never stdout, which on ACP is the JSON-RPC wire.
 func appendPublish(args []string, cfg *config.Config, spec RunSpec) []string {
-	p, err := project.Load(spec.Repo)
+	policyRepo := projectPolicyRepo(spec)
+	p, err := project.Load(policyRepo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "coop: %v — not publishing ports\n", err)
 		return args
@@ -915,7 +931,7 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec) []string {
 		return args
 	}
 	for _, port := range p.Serve.Ports {
-		host := project.HostPort(spec.Repo, port)
+		host := project.HostPort(policyRepo, port)
 		if !hostPortFree(host) {
 			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — skipping\n", host, port)
 			continue

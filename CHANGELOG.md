@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork review can prove a rebase and gate before merge.** `coop fork review <name> --gate`
+  rebases in a disposable scratch clone, runs the parent's configured gate in the box with the
+  candidate mounted read-only, and reports green, red, or conflict. The parent and fork stay
+  untouched, red/conflict exits non-zero, and the scratch clone is removed on every path.
+
 - **Fork names are shell-inert by construction.** The accepted grammar is now the small ASCII set
   used by normal branch segments (letters, digits, `.`, `_`, and `-`), so shell metacharacters are
   rejected before any workspace, subprocess, or runtime operation. Every execution boundary still

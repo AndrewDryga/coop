@@ -96,7 +96,7 @@ func forkHelpText(p ui.Palette) string {
 		{"coop fork <name> <target|preset> --loop", "loop the fork on a tasks folder (-d detaches)"},
 		{"coop fork ls", "list this repo's forks"},
 		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
-		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open)"},
+		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open, --gate)"},
 		{"coop fork <name> acp [target]", "front the fork as an ACP agent (for editors)"},
 		{"coop fork merge <name>", "rebase onto your branch and land it (--all = fleet)"},
 		{"coop fork rm <name>", "discard a fork (confirms; refuses unmerged/dirty without --force)"},
@@ -133,6 +133,7 @@ func forkHelpText(p ui.Palette) string {
 		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
 	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", p.Bold("REVIEW"))
+	fmt.Fprint(&b, "        --gate rebases in a scratch clone and runs the parent's gate read-only; red/conflict exits 1 (not with --open).\n")
 	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", p.Bold("NAMES"))
 	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
 	return b.String()
@@ -511,12 +512,7 @@ func setupFork(repo, name string) (string, error) {
 //   - the global gitignore (core.excludesfile) content into .git/info/exclude — git's
 //     local, uncommitted ignore file, so no host config path dangles inside the box.
 func propagateGitEnv(repo, ws string) {
-	if email := gitOut(repo, "config", "user.email"); email != "" {
-		_ = gitRun(ws, "config", "user.email", email)
-	}
-	if name := gitOut(repo, "config", "user.name"); name != "" {
-		_ = gitRun(ws, "config", "user.name", name)
-	}
+	propagateGitIdentity(repo, ws)
 	// Signing materials (key + format) travel to the fork so commits can be signed
 	// with your key when they're rebased on land — on the host, where the key lives.
 	// commit.gpgsign is deliberately NOT copied: the keyless box must commit unsigned.
@@ -537,6 +533,17 @@ func propagateGitEnv(repo, ws string) {
 				_ = f.Close()
 			}
 		}
+	}
+}
+
+// propagateGitIdentity gives a clone the trusted parent's resolved commit identity. Git clone does
+// not copy local config, and a preview rebase must work even when the host has no global identity.
+func propagateGitIdentity(repo, ws string) {
+	if email := gitOut(repo, "config", "user.email"); email != "" {
+		_ = gitRun(ws, "config", "user.email", email)
+	}
+	if name := gitOut(repo, "config", "user.name"); name != "" {
+		_ = gitRun(ws, "config", "user.name", name)
 	}
 }
 
@@ -727,8 +734,83 @@ func gitFetchInto(repo, ws, name string) error {
 	return gitRun(repo, "fetch", "--quiet", ws, "+"+name+":review/"+name)
 }
 
+// forkReviewCandidate is a disposable, rebased view of a fork. base remains the parent commit the
+// clone captured; name is the candidate branch. The caller owns cleanup whenever dir is non-empty.
+type forkReviewCandidate struct {
+	dir      string
+	base     string
+	name     string
+	conflict bool
+}
+
+type forkReviewGateOutcome uint8
+
+const (
+	forkReviewGateUnchecked forkReviewGateOutcome = iota
+	forkReviewGateNone
+	forkReviewGateGreen
+	forkReviewGateRed
+	forkReviewGateConflict
+)
+
+func (o forkReviewGateOutcome) exitCode() int {
+	if o == forkReviewGateRed || o == forkReviewGateConflict {
+		return 1
+	}
+	return 0
+}
+
+func (c forkReviewCandidate) cleanup() { _ = os.RemoveAll(c.dir) }
+
+func (c forkReviewCandidate) detachBase() error {
+	return gitRun(c.dir, "checkout", "--quiet", "--detach", c.base)
+}
+
+// prepareForkReviewCandidate clones the parent's committed HEAD, fetches the fork's named branch,
+// and rebases that branch in the scratch clone. Neither source repo is modified: local clone/fetch
+// reads objects only, and every checkout/rebase occurs under c.dir. Preview rebases stay unsigned;
+// signing changes commit identity, not the tree the gate checks, and must not invoke pinentry here.
+func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, err error) {
+	c.dir, err = os.MkdirTemp("", "coop-fork-review-")
+	if err != nil {
+		return c, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			c.cleanup()
+			c = forkReviewCandidate{}
+		}
+	}()
+	if err = gitClone(repo, c.dir); err != nil {
+		return c, fmt.Errorf("clone parent into review scratch: %w", err)
+	}
+	propagateGitIdentity(repo, c.dir)
+	c.base = gitOut(c.dir, "rev-parse", "HEAD")
+	if c.base == "" {
+		return c, errors.New("review scratch has no parent HEAD")
+	}
+	// Detach before the forced fetch so a fork named after the parent's checked-out branch cannot
+	// collide with Git's refusal to update the current branch.
+	if err = c.detachBase(); err != nil {
+		return c, fmt.Errorf("detach review scratch base: %w", err)
+	}
+	c.name = name
+	if err = gitRun(c.dir, "fetch", "--quiet", ws, "+"+name+":refs/heads/"+name); err != nil {
+		return c, fmt.Errorf("fetch fork into review scratch: %w", err)
+	}
+	if err = gitRun(c.dir, "rebase", c.base, name); err != nil {
+		if abortErr := gitRun(c.dir, "rebase", "--abort"); abortErr != nil {
+			return c, fmt.Errorf("rebase review scratch failed and abort failed: %v; %w", err, abortErr)
+		}
+		c.conflict = true
+	}
+	keep = true
+	return c, nil
+}
+
 func (a *app) forkReview(args []string) (int, error) {
-	name, stat, tool, open := "", false, false, false
+	name, stat, tool, open, gate := "", false, false, false, false
 	for _, x := range args {
 		switch x {
 		case "--stat":
@@ -737,6 +819,8 @@ func (a *app) forkReview(args []string) (int, error) {
 			tool = true
 		case "--open":
 			open = true
+		case "--gate":
+			gate = true
 		default:
 			if strings.HasPrefix(x, "-") {
 				return 2, fmt.Errorf("coop fork review: unknown flag %q", x)
@@ -745,10 +829,13 @@ func (a *app) forkReview(args []string) (int, error) {
 		}
 	}
 	if name == "" {
-		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open]")
+		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open] [--gate]")
 	}
 	if !validForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
+	}
+	if gate && open {
+		return 2, errors.New("coop fork review: --gate cannot be combined with --open; use --stat or --tool so the review scratch can be removed reliably")
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -758,13 +845,53 @@ func (a *app) forkReview(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	if err := gitFetchInto(repo, ws, name); err != nil {
+	reviewRepo, ref := repo, "review/"+name
+	outcome := forkReviewGateUnchecked
+	if gate {
+		candidate, err := prepareForkReviewCandidate(repo, ws, name)
+		if err != nil {
+			return -1, err
+		}
+		defer candidate.cleanup()
+		reviewRepo, ref = candidate.dir, candidate.name
+		if candidate.conflict {
+			outcome = forkReviewGateConflict
+		} else {
+			img, gateErr := a.mergeGate(repo)
+			if gateErr != nil {
+				return -1, gateErr
+			}
+			if img == "" {
+				outcome = forkReviewGateNone
+			} else {
+				green, gateErr := a.reviewGatePasses(repo, candidate.dir, img)
+				if gateErr != nil {
+					return -1, fmt.Errorf("run review gate: %w", gateErr)
+				}
+				if green {
+					outcome = forkReviewGateGreen
+				} else {
+					outcome = forkReviewGateRed
+				}
+			}
+		}
+		// The candidate branch stays at its rebased tip while HEAD returns to the captured parent base,
+		// preserving the existing HEAD...ref dossier/diff contract inside the scratch clone.
+		if err := candidate.detachBase(); err != nil {
+			return -1, fmt.Errorf("detach review scratch after gate: %w", err)
+		}
+	} else if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
-	ref := "review/" + name
-	a.forkBrief(repo, ws, name, ref)
+	a.forkBrief(reviewRepo, ws, name, ref, outcome)
 	if s := costSummary(costForRepo(ws)); s != "" {
 		ui.Info("cost: %s", s)
+	}
+	finish := func(code int, err error) (int, error) {
+		if err != nil || code != 0 {
+			return code, err
+		}
+		return outcome.exitCode(), nil
 	}
 
 	switch {
@@ -777,22 +904,22 @@ func (a *app) forkReview(args []string) (int, error) {
 			// Pin the tool's command from global too (empty neutralizes any repo override and lets
 			// git use the built-in for a known tool), so the repo can't redirect even a named tool.
 			cargs = append(cargs, "-c", "difftool."+t+".cmd="+gitGlobalOut("difftool."+t+".cmd"))
-			_ = gitInteractive(repo, append(cargs, "difftool", "HEAD..."+ref)...)
+			_ = gitInteractive(reviewRepo, append(cargs, "difftool", "HEAD..."+ref)...)
 		} else {
 			ui.Note("no global git diff.tool set — showing the diff (--tool ignores repo config, for safety)")
-			_ = gitInteractive(repo, "diff", "--no-ext-diff", "HEAD..."+ref) // internal diff (see default case)
+			_ = gitInteractive(reviewRepo, "diff", "--no-ext-diff", "HEAD..."+ref) // internal diff (see default case)
 		}
-		return 0, nil
+		return finish(0, nil)
 	case stat:
-		return 0, nil // the brief already lists the files
+		return finish(0, nil) // the brief already lists the files
 	case a.cfg.ReviewCmd != "": // a user-defined review command
-		return a.runReviewCmd(repo, ws, name, ref)
+		return finish(a.runReviewCmd(reviewRepo, ws, name, ref))
 	default:
 		// --no-ext-diff: a broken diff.external / GIT_EXTERNAL_DIFF in the host environment would
 		// otherwise make the diff "external diff died" (the -c diff.external= hardening blanks the
 		// config but can't override the env var). Force git's internal diff so review always renders.
-		_ = gitInteractive(repo, "diff", "--no-ext-diff", "HEAD..."+ref)
-		return 0, nil
+		_ = gitInteractive(reviewRepo, "diff", "--no-ext-diff", "HEAD..."+ref)
+		return finish(0, nil)
 	}
 }
 
@@ -927,7 +1054,7 @@ func (a *app) runReviewCmd(repo, ws, name, ref string) (int, error) {
 // of the risk before reading the patch. Everything except the task log is computed by
 // the parent from git facts; the log is the fork's own voice and is labeled as such,
 // so a fork can't steer its review via its narrative.
-func (a *app) forkBrief(repo, ws, name, ref string) {
+func (a *app) forkBrief(repo, ws, name, ref string, gateOutcome forkReviewGateOutcome) {
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	files := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
 	nfiles := 0
@@ -965,11 +1092,23 @@ func (a *app) forkBrief(repo, ws, name, ref string) {
 				fmt.Println(indent(indent(f.render())))
 			}
 		}
-		if len(a.gateFor(repo)) == 0 {
-			fmt.Printf("%s none configured (COOP_GATE or .agent/project.yaml gate:)\n", ui.Bold("gate:"))
-		} else {
-			fmt.Printf("%s runs at merge — rolled back on failure\n", ui.Bold("gate:"))
+		if gateOutcome == forkReviewGateUnchecked {
+			if len(a.gateFor(repo)) == 0 {
+				fmt.Printf("%s none configured (COOP_GATE or .agent/project.yaml gate:)\n", ui.Bold("gate:"))
+			} else {
+				fmt.Printf("%s runs at merge — rolled back on failure\n", ui.Bold("gate:"))
+			}
 		}
+	}
+	switch gateOutcome {
+	case forkReviewGateNone:
+		fmt.Printf("%s none configured — rebase clean\n", ui.Bold("gate:"))
+	case forkReviewGateGreen:
+		fmt.Printf("%s %s green on rebased scratch (read-only)\n", ui.Bold("gate:"), ui.Green("✓"))
+	case forkReviewGateRed:
+		fmt.Printf("%s %s red on rebased scratch (read-only)\n", ui.Bold("gate:"), ui.Red("✗"))
+	case forkReviewGateConflict:
+		fmt.Printf("%s %s conflict while rebasing onto current parent — gate not run\n", ui.Bold("gate:"), ui.Yellow("⚠"))
 	}
 	fmt.Println(ui.Bold("diff:"))
 }

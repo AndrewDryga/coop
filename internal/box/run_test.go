@@ -56,6 +56,55 @@ func TestResolveWorkdir(t *testing.T) {
 	}
 }
 
+func TestRunRepoReadOnly(t *testing.T) {
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		RepoReadOnly: true, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := repo + ":/workspace:ro"
+	if !slices.Contains(strings.Fields(string(args)), want) {
+		t.Fatalf("read-only repo mount %q missing from:\n%s", want, args)
+	}
+}
+
+func TestRunUsesTrustedPolicyRepo(t *testing.T) {
+	repo, policyRepo := t.TempDir(), t.TempDir()
+	for dir, egress := range map[string]string{repo: "open", policyRepo: "none"} {
+		if err := os.MkdirAll(filepath.Join(dir, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".agent", "project.yaml"), []byte("box:\n  egress: "+egress+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, PolicyRepo: policyRepo, Workdir: "/workspace", Cmd: []string{"true"},
+		Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSeq(strings.Fields(string(args)), []string{"--network", "none"}) {
+		t.Fatalf("trusted policy repo's egress:none missing from:\n%s", args)
+	}
+}
+
 func TestAssembleArgsMinimal(t *testing.T) {
 	cfg := &config.Config{
 		HomeInBox: "/home/node",
