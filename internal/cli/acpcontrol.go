@@ -45,9 +45,8 @@ func (a *app) acpPresetNames(repo string) []string {
 // coop's own configOptions — the FIRST dropdowns in the editor toolbar, mirroring the target
 // grammar: Provider (who runs — switching re-creates the thread, context carried best-effort),
 // Account (the lead's login — a transparent switch), and Preset (the orchestration recipe).
-// They render three ways but share ONE selection underneath (c.sel): the last-changed dropdown
-// wins and the others refresh to the effective state. None is a native adapter option, so the
-// proxy intercepts their session/set_config_option and restarts the box on the chosen identity.
+// None is a native adapter option, so the proxy intercepts their session/set_config_option and
+// restarts the box on the composed selection.
 const (
 	coopProviderID = "coop_provider"
 	coopAccountID  = "coop_account"
@@ -63,10 +62,19 @@ var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, co
 // session; a preset hides them too (rewriteConfigOptions — the preset pins them).
 var stripConfigIDs = map[string]bool{"mode": true, "agent": true}
 
+// acpSelection is the composable launch intent behind coop's three dropdowns. Empty Provider means
+// follow the preset/current lead; empty Account means the preset/provider default; empty Preset is
+// a plain lead. The fields are strings so the state is comparable and can key the preset rotation.
+type acpSelection struct {
+	Provider string `json:"provider,omitempty"`
+	Account  string `json:"account,omitempty"`
+	Preset   string `json:"preset,omitempty"`
+}
+
 // acpControl is coop's control layer over one ACP editor session. It rewrites the toolbar the editor
-// sees (force yolo, default the model to coop's, drop mode/subagent, prepend the credential/preset
-// selector) and handles selecting a credential/preset by restarting the box on the chosen identity —
-// the conversation survives because the transcript sits on a shared, credential-independent store.
+// sees (force yolo, default the model to coop's, drop mode/subagent, prepend coop's selectors) and
+// handles their changes by restarting the box on the composed identity. The conversation survives
+// because the transcript sits on a shared, credential-independent store.
 type acpControl struct {
 	cfg     *config.Config // for expanding a selected preset's model ladder into rotation targets
 	repo    string         // repo root, to load a preset by name on a coop_setup switch
@@ -79,7 +87,7 @@ type acpControl struct {
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
 	mu     sync.Mutex
-	sel    string                     // current coop_setup value: "cred:<name>" or "preset:<name>"
+	sel    acpSelection               // composable provider/account/preset overrides
 	cached map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
 
 	// nativesStale marks the cached NATIVE options (model/effort/fast) as belonging to a
@@ -96,10 +104,10 @@ type acpControl struct {
 
 	// Preset rate-limit failover: a preset session rotates the lead's model ladder (fable→opus→…),
 	// unlike a credential session (which rotates accounts on one model). rot is the active preset's
-	// rotation (nil for a credential session); rotPreset names the preset it was built for, so it's
-	// rebuilt when the coop_setup selection moves to a different preset.
-	rot       *rotation
-	rotPreset string
+	// rotation (nil for a plain session); rotFor records every override it was built from, so a
+	// provider/account/preset change rebuilds it.
+	rot    *rotation
+	rotFor acpSelection
 
 	// Transparent rate-limit resend: correlate a rate-limit error (which carries only a request id)
 	// back to its session, and re-send that prompt once the box is back on a fresh credential.
@@ -143,11 +151,7 @@ type histEntry struct{ role, text string }
 // enough for a best-effort carry. The per-session budget is cfg-owned (COOP_ACP_CARRY_TOKENS).
 const historyEntryBytes = 16 << 10
 
-func newACPControl(cfg *config.Config, lead, model, cred, repo string, presets, serveURLs []string, fusion bool) *acpControl {
-	sel := "cred:" + cfg.ActiveProfile(lead)
-	if cred != "" {
-		sel = "cred:" + cred
-	}
+func newACPControl(cfg *config.Config, lead, model, repo string, sel acpSelection, presets, serveURLs []string, fusion bool) *acpControl {
 	return &acpControl{
 		cfg: cfg, repo: repo, fusion: fusion,
 		lead: lead, model: model, creds: cfg.Profiles(lead), presets: presets,
@@ -222,18 +226,11 @@ func (c *acpControl) resumePrompt(session string) []byte {
 	return prompt
 }
 
-// selection returns the current credential and preset (one is "", the other set) the factory reads
-// to build the box for the next (re)spawn.
-func (c *acpControl) selection() (cred, preset string) {
+// selection returns one consistent snapshot for resolver and toolbar reads.
+func (c *acpControl) selection() acpSelection {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if v, ok := strings.CutPrefix(c.sel, "cred:"); ok {
-		return v, ""
-	}
-	if v, ok := strings.CutPrefix(c.sel, "preset:"); ok {
-		return "", v
-	}
-	return "", ""
+	return c.sel
 }
 
 // currentModel is coop's chosen model for the lead. Read under the lock because a set of coop's
@@ -246,30 +243,45 @@ func (c *acpControl) currentModel() string {
 }
 
 // presetRotation returns the active preset's model-ladder rotation, built once per preset from the
-// preset's lead ladder (expandLadder — the SAME targets `coop loop` cycles). Returns nil for a
-// credential session, or when the ladder can't be expanded (no signed-in account, or the preset won't
-// load) — the caller then falls back to the preset's own first entry with no failover. The rotation is
-// cached and rebuilt only when the selected preset changes, so its cursor + per-target limits persist
-// across respawns.
+// preset's lead ladder (expandLadder — the SAME targets `coop loop` cycles). Returns nil for a plain
+// session, a different-provider override, or when the ladder can't be expanded. The caller then uses
+// the composed target with no failover. The rotation is keyed by the full selection, so its cursor and
+// per-target limits persist across respawns but any provider/account/preset change rebuilds it.
 func (c *acpControl) presetRotation() *rotation {
-	_, psName := c.selection()
-	if psName == "" {
+	sel := c.selection()
+	if sel.Preset == "" {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.rot != nil && c.rotPreset == psName {
+	if c.rot != nil && c.rotFor == sel {
 		return c.rot
 	}
-	c.rotPreset, c.rot = psName, nil
-	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), psName)
+	c.rotFor, c.rot = sel, nil
+	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), sel.Preset)
 	if err != nil {
 		return nil
 	}
+	// An explicit different lead keeps the preset's roles but makes its own lead ladder inert,
+	// exactly like presetLeadAgent + applyPreset on a CLI run.
+	if sel.Provider != "" && sel.Provider != p.LeadAgent {
+		return nil
+	}
+	ladder := slices.Clone(p.LeadLadder)
+	if sel.Account != "" {
+		if len(ladder) == 0 {
+			ladder = []agents.Target{{Accounts: []string{sel.Account}}}
+		} else {
+			for i := range ladder {
+				ladder[i].Accounts = []string{sel.Account}
+			}
+		}
+	}
 	// The whole ladder, cross-provider rungs included: the respawn env carries a full target,
 	// so a rung on another provider swaps the lead (the proxy re-creates the session there and
-	// the conversation is carried best-effort as a text preamble).
-	targets, err := expandLadder(c.cfg, p.LeadAgent, p.LeadLadder)
+	// the conversation is carried best-effort as a text preamble). A pinned account filters out
+	// rungs where that exact account is unavailable; it never degrades into another account.
+	targets, err := expandLadder(c.cfg, p.LeadAgent, ladder)
 	if err != nil || len(targets) == 0 {
 		return nil
 	}
@@ -283,9 +295,9 @@ func (c *acpControl) presetRotation() *rotation {
 // switch, a different-lead preset, or a cross-provider preset rung). ok=false only when the
 // selection is unrecognizable (the factory then spawns on the launch args alone).
 func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool) {
-	_, psName := c.selection()
+	sel := c.selection()
 	var rung *agents.Target
-	if psName != "" {
+	if sel.Preset != "" {
 		if rot := c.presetRotation(); rot != nil { // locks internally — resolve before taking c.mu
 			r := rot.active()
 			rung = &r
@@ -294,40 +306,43 @@ func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch {
-	case strings.HasPrefix(c.sel, "cred:"):
-		// A credential switch stays on the current lead and carries coop's model pick, so the
-		// respawned adapter keeps it even where the model rides the spawn command (gemini).
-		t = agents.Target{Provider: c.lead, Model: c.model}
-		if v := strings.TrimPrefix(c.sel, "cred:"); v != "" {
-			t.Accounts = []string{v}
-		}
-	case strings.HasPrefix(c.sel, "agent:"):
-		// A provider switch: that provider's marked default account and default model — the old
-		// lead's model id means nothing to it.
-		t = agents.Target{Provider: strings.TrimPrefix(c.sel, "agent:")}
-	case psName != "":
+	case sel.Preset != "":
 		if rung != nil {
 			t = *rung // the active ladder rung — provider included (a cross-provider rung swaps the lead)
 		} else {
-			// No rotation (no signed-in rungs / unloadable): spawn the preset's lead bare; the
-			// inner's applyPreset then uses the preset's own first entry.
-			t = agents.Target{Provider: c.presetLeadLocked(psName)}
+			// No rotation means either no signed-in rungs, an unloadable preset, or an explicit
+			// different lead. The inner still mounts the preset's roles and applies this target last.
+			provider := sel.Provider
+			if provider == "" {
+				provider = c.presetLead(sel.Preset, c.lead)
+			}
+			t = agents.Target{Provider: provider}
+			if sel.Account != "" {
+				t.Accounts = []string{sel.Account}
+			}
 		}
 	default:
-		return agents.Target{}, "", false
+		provider := sel.Provider
+		if provider == "" {
+			provider = c.lead
+		}
+		if provider == "" {
+			return agents.Target{}, "", false
+		}
+		// A plain account/provider switch carries coop's model pick, so the respawned adapter
+		// keeps it even where the model rides the spawn command (gemini). A different provider
+		// starts bare because the previous provider's model id is meaningless there.
+		model := c.model
+		if provider != c.lead {
+			model = ""
+		}
+		t = agents.Target{Provider: provider, Model: model}
+		if sel.Account != "" {
+			t.Accounts = []string{sel.Account}
+		}
 	}
 	c.retargetLocked(t.Provider)
-	return t, psName, true
-}
-
-// presetLeadLocked resolves a preset's lead provider for the no-rotation spawn fallback,
-// falling back to the current lead when the preset won't load (the inner will surface the
-// real load error). Called with c.mu held; preset.Load is pure file reads.
-func (c *acpControl) presetLeadLocked(name string) string {
-	if p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name); err == nil {
-		return p.LeadAgent
-	}
-	return c.lead
+	return t, sel.Preset, true
 }
 
 // retargetLocked re-derives the per-lead state when the next spawn's provider differs from the
@@ -573,8 +588,8 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	if !bytes.Contains(line, []byte(`"error"`)) {
 		return nil, false
 	}
-	cred, preset := c.selection()
-	if cred == "" && preset == "" {
+	sel := c.selection()
+	if sel.Account == "" && sel.Preset == "" {
 		return nil, false
 	}
 	var h struct {
@@ -606,27 +621,27 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 
 	// A preset session rotates its model ladder (a rung is a model+account); a credential session
 	// rotates accounts on the fixed model (below).
-	if preset != "" {
+	if sel.Preset != "" {
 		return c.rotatePreset(session, canResend, until, now)
 	}
 
-	next := c.nextAccount(cred, until, now)
+	next := c.nextAccount(sel.Account, until, now)
 	if next != "" {
 		c.clearWait(session) // a free rotation breaks the consecutive-wait chain
 		c.mu.Lock()
-		c.sel = "cred:" + next
+		c.sel.Account = next
 		if canResend {
 			c.resend[session] = true
 		}
 		c.mu.Unlock()
 		if canResend {
-			acpproxy.Trace("rate limit on %s: rotating to %s + auto-resending", cred, next)
+			acpproxy.Trace("rate limit on %s: rotating to %s + auto-resending", sel.Account, next)
 			// Swallow the error, move the toolbar dropdown to the new credential, restart on it, and
 			// re-send after replay — the config_option_update is the only thing the editor sees.
 			return c.configOptionUpdate(session), true
 		}
 		// Couldn't identify the prompt — fall back to switching + asking the user to resend.
-		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", cred, next)), true
+		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", sel.Account, next)), true
 	}
 
 	// Nothing free right now: wait for the nearest reset, then re-send on that account. Needs a known
@@ -642,7 +657,7 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return nil, false
 	}
 	c.mu.Lock()
-	c.sel = "cred:" + acct
+	c.sel.Account = acct
 	c.resend[session] = true
 	c.mu.Unlock()
 	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
@@ -774,11 +789,11 @@ func formatWait(d time.Duration) string {
 func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 	// Holding applies only when a rotation could seamlessly resend (a credential session, or a
 	// preset with a rotating ladder). The TERMINAL bookkeeping below runs for every selection kind
-	// — an agent: (provider) session must still forget completed prompts, or the map leaks.
+	// — a provider-only session must still forget completed prompts, or the map leaks.
 	gated := false
-	if cred, preset := c.selection(); cred != "" {
+	if sel := c.selection(); sel.Account != "" && sel.Preset == "" {
 		gated = true
-	} else if preset != "" {
+	} else if sel.Preset != "" {
 		if rot := c.presetRotation(); rot != nil && rot.rotates() {
 			gated = true
 		}
@@ -1226,7 +1241,7 @@ type permOption struct {
 }
 
 // rewriteConfigOptions drops the stripped dropdowns, retargets the model to coop's (when it's one of
-// the adapter's offered values), prepends coop's credential/preset selector, and caches the result
+// the adapter's offered values), prepends coop's selectors, and caches the result
 // per session so a set_config_option response can echo the full set. Native options pass through as
 // raw JSON so any fields coop doesn't model survive. When the adapter emits its models in a `models`
 // field instead of a native `model` configOption (gemini) and no `model` option is present, coop
@@ -1238,7 +1253,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 	}
 	// On a PRESET the preset's lead ladder owns the model — show the box's truth, never coop's
 	// launch-time model over it.
-	_, preset := c.selection()
+	sel := c.selection()
 	model := c.currentModel() // snapshot: a synthesized-model switch mutates it from the editor goroutine
 	out := c.coopOptions()
 	hasModel := false
@@ -1254,22 +1269,22 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 		if head.ID == "model" {
 			hasModel = true
 			c.cacheModels(parseClaudeModelOption(head.Options)) // free refresh of `coop models` for claude
-			if preset == "" && model != "" && optionHasValue(head.Options, model) {
+			if sel.Preset == "" && model != "" && optionHasValue(head.Options, model) {
 				item = withField(item, "currentValue", model) // default to coop's model; still switchable
 			}
 		}
 		// On a preset every native knob (model, effort, fast, …) is inert — the preset's ladder
 		// and roles pin them — so only coop's selectors render. Leaving the preset brings them
 		// back on the next box truth (the restart's config_option_update).
-		if preset != "" {
+		if sel.Preset != "" {
 			continue
 		}
 		out = append(out, item)
 	}
 	// gemini-shape: no native model option, but a models field carrying the choices. Synthesize coop's
 	// own `model` select and latch the lead so fromEditor/sessionReady route via session/set_model.
-	if !hasModel && preset == "" {
-		if synth := c.synthModelOption(models, preset, model); synth != nil {
+	if !hasModel && sel.Preset == "" {
+		if synth := c.synthModelOption(models, sel.Preset, model); synth != nil {
 			out = append(out, synth)
 			c.cacheModels(parseGeminiModels(models)) // free refresh of `coop models` for gemini
 			c.mu.Lock()
@@ -1298,21 +1313,17 @@ func (c *acpControl) cacheModels(models []modelInfo) {
 	_ = writeModelsCache(c.cfg, c.lead, models)
 }
 
-// coopOptions builds coop's toolbar dropdowns. With NO preset: Preset, Provider (omitted for a
-// fusion governor — see fusionLadderGuard), Account — each showing the EFFECTIVE state of the one
-// underlying selection, so after any switch the others catch up on the next refresh. With a preset
-// ACTIVE: only Preset (the preset governs provider/model/effort/account, so the rest would be inert
-// knobs fighting it).
+// coopOptions builds coop's composable toolbar dropdowns: Preset, Provider (omitted for a fusion
+// governor — see fusionLadderGuard), Account. currentValue always reports the effective running
+// lead plus the explicit account/preset overrides.
 func (c *acpControl) coopOptions() []json.RawMessage {
 	c.mu.Lock()
 	sel, lead, creds, fusion := c.sel, c.lead, c.creds, c.fusion
 	c.mu.Unlock()
 	var out []json.RawMessage
-	// Preset FIRST: it's the top-level selector — a preset embeds the provider, model, effort,
-	// and roles, so everything to its right is derived while one is active.
 	ps := "none"
-	if v, ok := strings.CutPrefix(sel, "preset:"); ok && v != "" {
-		ps = v
+	if sel.Preset != "" {
+		ps = sel.Preset
 	}
 	popts := make([]acpOption, 0, len(c.presets)+1)
 	popts = append(popts, acpOption{Value: "none", Name: "None", Description: "No preset — the plain lead"})
@@ -1321,14 +1332,6 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	}
 	out = append(out, marshalSelect(coopPresetID, "Preset",
 		"Orchestration recipe — its lead + ladder drive the session, its roles mount", ps, popts))
-	// A preset GOVERNS the run — its lead ladder pins the provider, model, effort, and rotates
-	// the account. So while one is active only the Preset dropdown renders: Provider and Account
-	// (like the native model/effort, dropped in rewriteConfigOptions) would be inert knobs that
-	// fight the preset. Leaving the preset (None) restarts the box and its config_option_update
-	// brings them all back.
-	if ps != "none" {
-		return out
-	}
 	if !fusion {
 		others := c.spawnableProviders(lead)
 		opts := make([]acpOption, 0, len(others)+1)
@@ -1341,11 +1344,11 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 			"Who runs the session — switching re-creates the thread and carries the context best-effort", lead, opts))
 	}
 	acct := "auto"
-	if v, ok := strings.CutPrefix(sel, "cred:"); ok && v != "" {
-		acct = v
+	if sel.Account != "" {
+		acct = sel.Account
 	}
 	aopts := make([]acpOption, 0, len(creds)+1)
-	aopts = append(aopts, acpOption{Value: "auto", Name: "Auto", Description: "The marked default account, or the preset's ladder"})
+	aopts = append(aopts, acpOption{Value: "auto", Name: "Auto", Description: "The provider default, or each account selected by the preset ladder"})
 	for _, cr := range creds {
 		aopts = append(aopts, acpOption{Value: cr, Name: cr, Description: "Switch to account " + cr + " — the conversation is preserved"})
 	}
@@ -1373,60 +1376,78 @@ func marshalSelect(id, name, desc, current string, opts []acpOption) json.RawMes
 	return b
 }
 
-// selectorSel maps a set of one of coop's selector dropdowns onto the ONE selection string.
-// recognized=false → not a coop dropdown (the line passes through to the adapter). newSel==""
-// → nothing to change (already current, an "auto"/"none" placeholder, or a value refused
-// because it could never spawn — a bogus provider/account would send the respawn loop chasing
-// a box that can never come up).
-func (c *acpControl) selectorSel(configID, value string) (newSel string, recognized bool) {
+// selectorSelection applies one dropdown value to its field while preserving the other two.
+// Invalid/unspawnable values return the unchanged selection and are acknowledged as refused no-ops.
+func (c *acpControl) selectorSelection(configID, value string) (next acpSelection, recognized bool) {
 	c.mu.Lock()
-	lead, creds, fusion := c.lead, c.creds, c.fusion
-	preset := strings.HasPrefix(c.sel, "preset:")
+	next, lead, creds, fusion := c.sel, c.lead, slices.Clone(c.creds), c.fusion
 	c.mu.Unlock()
 	switch configID {
 	case coopProviderID:
 		if value == lead || fusion || !agents.Valid(value) || len(accountsFor(c.cfg, value)) == 0 {
-			return "", true
+			return next, true
 		}
-		return "agent:" + value, true
+		next.Provider = value
+		if next.Account != "" && !slices.Contains(accountsFor(c.cfg, value), next.Account) {
+			next.Account = ""
+		}
+		return next, true
 	case coopAccountID:
-		if value == "auto" || !slices.Contains(creds, value) {
-			return "", true
+		if value == "auto" {
+			next.Account = ""
+			return next, true
 		}
-		return "cred:" + value, true
+		if !slices.Contains(creds, value) {
+			return next, true
+		}
+		next.Account = value
+		return next, true
 	case coopPresetID:
 		if value == "none" {
-			if preset { // leaving the preset: back to the lead's marked default account
-				return "cred:" + c.cfg.DefaultProfileOf(lead), true
-			}
-			return "", true
+			next.Preset = ""
+			return next, true
 		}
 		if !slices.Contains(c.presets, value) {
-			return "", true
+			return next, true
 		}
-		return "preset:" + value, true
+		next.Preset = value
+		provider := next.Provider
+		if provider == "" {
+			provider = c.presetLead(value, lead)
+		}
+		if next.Account != "" && !slices.Contains(accountsFor(c.cfg, provider), next.Account) {
+			next.Account = ""
+		}
+		return next, true
 	}
-	return "", false
+	return next, false
+}
+
+func (c *acpControl) presetLead(name, fallback string) string {
+	if p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name); err == nil {
+		return p.LeadAgent
+	}
+	return fallback
 }
 
 // spawnableProviders lists the OTHER registered providers with at least one signed-in account —
 // the ones a provider switch could actually spawn. The current lead is excluded (its accounts
-// are the cred: entries).
+// are offered by the Account selector).
 // ctrlSnapshot captures the selection state a fresh controller can't re-derive across a supervisor
 // re-exec (creds/presets/accounts re-derive from cfg/repo at construction; retargetLocked recomputes
 // per-lead state). Carried through a SIGHUP reload so the toolbar/lead/model survive the binary swap.
 type ctrlSnapshot struct {
-	Sel              string `json:"sel"`
-	Lead             string `json:"lead"`
-	Model            string `json:"model"`
-	LeadUsesSetModel bool   `json:"lead_uses_set_model"`
+	Selection        acpSelection `json:"selection"`
+	Lead             string       `json:"lead"`
+	Model            string       `json:"model"`
+	LeadUsesSetModel bool         `json:"lead_uses_set_model"`
 }
 
 // snapshot captures the selection state under the lock.
 func (c *acpControl) snapshot() ctrlSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return ctrlSnapshot{Sel: c.sel, Lead: c.lead, Model: c.model, LeadUsesSetModel: c.leadUsesSetModel}
+	return ctrlSnapshot{Selection: c.sel, Lead: c.lead, Model: c.model, LeadUsesSetModel: c.leadUsesSetModel}
 }
 
 // restore re-applies a snapshot into a fresh controller: retargetLocked re-derives the per-lead
@@ -1436,7 +1457,7 @@ func (c *acpControl) restore(s ctrlSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.retargetLocked(s.Lead)
-	c.lead, c.sel, c.model, c.leadUsesSetModel = s.Lead, s.Sel, s.Model, s.LeadUsesSetModel
+	c.lead, c.sel, c.model, c.leadUsesSetModel = s.Lead, s.Selection, s.Model, s.LeadUsesSetModel
 }
 
 // leadProvider is the current lead's provider (the one the active box runs), read under the lock —
@@ -1553,7 +1574,7 @@ func (c *acpControl) sessionReady(sid string) [][]byte {
 	c.mu.Lock()
 	model, setModel := c.model, c.leadUsesSetModel
 	c.mu.Unlock()
-	if _, preset := c.selection(); model != "" && preset == "" {
+	if sel := c.selection(); model != "" && sel.Preset == "" {
 		// A lead that switches via session/set_model (gemini) has no `model` config option, so re-apply
 		// the chosen model with its own method — this is what carries the pick across a box swap, since the
 		// respawned box starts on its launch-time default. Others take the native set_config_option.
@@ -1674,7 +1695,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// to every new session. Forwarding would silently override the preset's pick in the box, so
 	// swallow it and ack with the real (coop-only) option set.
 	if h.Method == "session/set_config_option" && !coopOwnedIDs[h.Params.ConfigID] {
-		if _, preset := c.selection(); preset != "" {
+		if sel := c.selection(); sel.Preset != "" {
 			return true, c.ackOptions(h.ID, h.Params.SessionID), nil, false
 		}
 	}
@@ -1690,7 +1711,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 			return c.setModelFromEditor(h.ID, h.Params.SessionID, h.Params.Value)
 		}
 	}
-	newSel, recognized := c.selectorSel(h.Params.ConfigID, h.Params.Value)
+	next, recognized := c.selectorSelection(h.Params.ConfigID, h.Params.Value)
 	if !recognized {
 		return false, nil, nil, false
 	}
@@ -1699,20 +1720,19 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// a dropdown to the value it's already on; restarting on that no-op would respawn the box before
 	// the session has any transcript, so the replayed session/load fails "Resource not found" and the
 	// conversation is lost before it begins. A no-op (or a refused value) just re-acks.
-	changed := newSel != "" && newSel != c.sel
+	changed := next != c.sel
 	if changed {
-		c.sel = newSel
-		// A provider switch re-derives the per-lead state NOW, not at spawn time: the ack below
-		// renders the coop dropdowns, and building them from the old lead would echo the previous
-		// provider back — the editor's dropdown visibly flips back until the respawn's
-		// config_option_update lands. spawnTarget's own retargetLocked becomes a no-op.
-		if p, ok := strings.CutPrefix(newSel, "agent:"); ok {
-			c.retargetLocked(p)
-		}
-		// The restart this switch triggers kills any in-flight turn mid-stream. Arm the same
-		// transparent resend a rate-limit rotation uses, so each turn completes on the new
-		// target instead of dying with "agent restarted, please retry". promptSession holds
-		// exactly the in-flight prompts — chunkGate forgets completed ones.
+		c.sel = next
+		c.rot, c.rotFor = nil, acpSelection{}
+	}
+	c.mu.Unlock()
+	if changed {
+		// Resolve now so the ack below renders the new effective provider and its account menu,
+		// rather than visibly flipping back until the respawn's config_option_update arrives.
+		_, _, _ = c.spawnTarget()
+		c.mu.Lock()
+		// The restart kills any in-flight turn mid-stream. Arm the same transparent resend a
+		// rate-limit rotation uses so the turn completes on the new composed target.
 		for id, sid := range c.promptSession {
 			if c.lastPrompt[sid] == nil {
 				continue
@@ -1720,10 +1740,10 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 			c.resend[sid] = true
 			delete(c.heldChunk, sid) // a buffered limit notice dies with the old box
 			delete(c.waits, sid)     // a manual switch breaks the consecutive-wait chain
-			acpproxy.Trace("switch to %s: re-sending the in-flight prompt %s for session %s after the swap", newSel, id, sid)
+			acpproxy.Trace("switch to %+v: re-sending the in-flight prompt %s for session %s after the swap", next, id, sid)
 		}
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 	// Ack with the full option set, the coop dropdowns showing the CURRENT value. The cache was
 	// captured at session/new with the old currentValue, so echoing it verbatim would revert the
 	// editor's dropdown; rebuild them fresh.
@@ -1757,9 +1777,9 @@ func (c *acpControl) ackOptions(id json.RawMessage, sid string) []byte {
 // session/set_model to the adapter for the live switch, and acks the editor with the refreshed option
 // set (coop_setup + the model option showing the new value). No box restart — this is a live switch.
 func (c *acpControl) setModelFromEditor(id json.RawMessage, sid, value string) (bool, []byte, []byte, bool) {
-	_, preset := c.selection()
+	sel := c.selection()
 	c.mu.Lock()
-	if value != "" && preset == "" {
+	if value != "" && sel.Preset == "" {
 		c.model = value
 	}
 	cached := c.cached[sid]
@@ -1825,7 +1845,7 @@ func (c *acpControl) refreshCoopOptions(cached json.RawMessage) []json.RawMessag
 	if len(cached) > 0 {
 		_ = json.Unmarshal(cached, &arr)
 	}
-	_, preset := c.selection()
+	sel := c.selection()
 	c.mu.Lock()
 	stale := c.nativesStale
 	c.mu.Unlock()
@@ -1834,7 +1854,7 @@ func (c *acpControl) refreshCoopOptions(cached json.RawMessage) []json.RawMessag
 		var head struct {
 			ID string `json:"id"`
 		}
-		if json.Unmarshal(it, &head) == nil && (coopOwnedIDs[head.ID] || preset != "" || stale) {
+		if json.Unmarshal(it, &head) == nil && (coopOwnedIDs[head.ID] || sel.Preset != "" || stale) {
 			continue
 		}
 		out = append(out, it)

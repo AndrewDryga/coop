@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -270,6 +271,130 @@ func supervisedBoxIDs(t *testing.T) map[string]bool {
 func newSession(ctx context.Context, c *acpClient, cwd string) error {
 	_, err := c.req(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}})
 	return err
+}
+
+type liveConfigOption struct {
+	ID           string `json:"id"`
+	CurrentValue string `json:"currentValue"`
+	Options      []struct {
+		Value string `json:"value"`
+	} `json:"options"`
+}
+
+func liveConfigOptions(t *testing.T, response map[string]any) map[string]liveConfigOption {
+	t.Helper()
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("ACP response has no object result: %#v", response)
+	}
+	raw, err := json.Marshal(result["configOptions"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var options []liveConfigOption
+	if err := json.Unmarshal(raw, &options); err != nil {
+		t.Fatalf("decode configOptions: %v (%s)", err, raw)
+	}
+	byID := make(map[string]liveConfigOption, len(options))
+	for _, option := range options {
+		byID[option.ID] = option
+	}
+	return byID
+}
+
+func liveOptionValue(t *testing.T, option liveConfigOption, reject ...string) string {
+	t.Helper()
+	for _, candidate := range option.Options {
+		if candidate.Value != "" && !slices.Contains(reject, candidate.Value) {
+			return candidate.Value
+		}
+	}
+	t.Fatalf("option %q has no usable value (rejecting %v): %+v", option.ID, reject, option.Options)
+	return ""
+}
+
+func setLiveConfig(ctx context.Context, t *testing.T, client *acpClient, sessionID, configID, value string) map[string]liveConfigOption {
+	t.Helper()
+	response, err := client.req(ctx, "session/set_config_option", map[string]any{
+		"sessionId": sessionID,
+		"configId":  configID,
+		"value":     value,
+	})
+	if err != nil {
+		t.Fatalf("set %s=%s: %v", configID, value, err)
+	}
+	return liveConfigOptions(t, response)
+}
+
+// TestComposableSelectorState drives coop's real outer ACP control layer. The adapters differ, but
+// these dropdowns are provider-independent: every ack must retain the other two dimensions while
+// the supervisor swaps real credential-scoped boxes behind the editor stream.
+func TestComposableSelectorState(t *testing.T) {
+	if _, err := exec.LookPath("coop"); err != nil {
+		t.Skip("coop not on PATH (run `make install`)")
+	}
+	live := startLiveACP(t, "frontier")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.client.req(ctx, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	}); err != nil {
+		t.Fatalf("initialize selector E2E: %v\nstderr:\n%s", err, live.stderr.String())
+	}
+	response, err := live.client.req(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new selector E2E: %v\nstderr:\n%s", err, live.stderr.String())
+	}
+	live.captureSupervisor(t)
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("session/new returned no object result: %#v", response)
+	}
+	sessionID, _ := result["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("session/new returned no sessionId: %#v", response)
+	}
+	options := liveConfigOptions(t, response)
+	for _, id := range []string{"coop_preset", "coop_provider", "coop_account"} {
+		if _, ok := options[id]; !ok {
+			t.Fatalf("initial toolbar missing %s: %+v", id, options)
+		}
+	}
+	if options["coop_preset"].CurrentValue != "frontier" || options["coop_account"].CurrentValue != "auto" {
+		t.Fatalf("initial preset toolbar is not truthful: %+v", options)
+	}
+	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_preset", "none")
+	if options["coop_preset"].CurrentValue != "none" {
+		t.Fatalf("leaving the initial preset did not clear only the recipe: %+v", options)
+	}
+	account := liveOptionValue(t, options["coop_account"], "auto")
+	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_account", account)
+	if options["coop_account"].CurrentValue != account || options["coop_preset"].CurrentValue != "none" {
+		t.Fatalf("account ack lost state: %+v", options)
+	}
+
+	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_preset", "frontier")
+	if options["coop_preset"].CurrentValue != "frontier" || options["coop_account"].CurrentValue != account {
+		t.Fatalf("preset ack lost account pin: %+v", options)
+	}
+	currentProvider := options["coop_provider"].CurrentValue
+	provider := liveOptionValue(t, options["coop_provider"], currentProvider)
+	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_provider", provider)
+	if options["coop_preset"].CurrentValue != "frontier" || options["coop_provider"].CurrentValue != provider {
+		t.Fatalf("provider ack lost preset: %+v", options)
+	}
+
+	providerAccount := liveOptionValue(t, options["coop_account"], "auto")
+	options = setLiveConfig(ctx, t, live.client, sessionID, "coop_account", providerAccount)
+	if options["coop_preset"].CurrentValue != "frontier" || options["coop_provider"].CurrentValue != provider || options["coop_account"].CurrentValue != providerAccount {
+		t.Fatalf("composed ack = %+v", options)
+	}
+	t.Logf("composed live selection: preset=frontier provider=%s account=%s", provider, providerAccount)
 }
 
 func TestSuperviseResume(t *testing.T) {

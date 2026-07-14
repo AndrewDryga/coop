@@ -45,7 +45,7 @@ casts: build ## Regenerate the site terminal casts (refuses a dirty/untagged ./c
 check: lint test docs-check ## What CI runs: lint + unit tests + CLI-docs freshness
 
 acp-e2e: install ## ACP adapter e2e (needs Docker + a built box + signed-in providers)
-	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID)$$' -count=1 -v ./internal/acpproxy/
+	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|ComposableSelectorState)$$' -count=1 -v ./internal/acpproxy/
 
 clean: ## Remove build artifacts
 	@rm -f coop
