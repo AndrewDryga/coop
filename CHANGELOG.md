@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The loop reports what a run cost — per task, per model, and everywhere you review it.** The
+  closing digest now shows cost + tokens per shipped task and a run total; a run that spread work
+  across models (a preset's lead, its review stages, and consult peers) gets a `by model:` line —
+  and each iteration's line gains its token count. The same tally surfaces on `coop fork review` and
+  `coop fork merge` (before you land), on the `coop fleet watch` board (per fork + a fleet total),
+  and as a COST column in `coop fork ls`. It all reads the run telemetry each loop already writes
+  (`.agent/runs/`), so there's no new bookkeeping. Cost is captured for claude-led runs (its result
+  event carries it); codex consult peers contribute their tokens (codex's stream reports no cost).
+
 - **`coop check-secrets` precision: minified bundles stop entropy-firing, JWTs get caught.** The
   entropy heuristic now skips a match drowning in a minified/generated line — one with over 2 KB
   of code *around* the assignment (a bundle puts a whole program on one line, where a high-entropy

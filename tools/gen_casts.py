@@ -100,12 +100,14 @@ def badge(agent):
     return {"claude": _w("c", MAGENTA), "codex": _w("x", GREEN), "gemini": _w("g", YELLOW)}.get(agent, "?")
 
 
-def fleet_row(glyph, agent, name, done, total, doing, countw=3, log=""):
-    """One coop fleet watch row: glyph · badge · name · bar · count · doing · last log.
+def fleet_row(glyph, agent, name, done, total, doing, countw=3, log="", cost=""):
+    """One coop fleet watch row: glyph · badge · name · bar · count · doing · cost · last log.
     The count is left-padded to countw (the frame-global max width) so counts line up one
     space past the bar, and there are two spaces before `doing` — matching fleet_watch.go."""
     count = f"{done}/{total}"
     line = f"{glyph} {badge(agent)} {name:<14} {bar(done, total)} {count:<{countw}}  {doing}"
+    if cost:
+        line += "  " + dim(cost)
     if log:
         line += "  " + dim(log)
     return line
@@ -283,6 +285,7 @@ def scene_loop():
     lb.scroll(ICON_LLM + " A retried checkout double-charges — I'll key each order on the Idempotency-Key + a unique index, so a replay returns the first charge. Added a double-submit test; gate green.", after=0.9)
     lb.scroll("✎ Edit " + dim("internal/payments/checkout.go"))
     lb.scroll("⚙ Bash " + dim('git commit -q -m "payments: make checkout idempotent"'))
+    lb.scroll(dim("· 14 turns · 1m08s · $0.42 · 190k/9.4k tok"))
     lb.set(done=1, active="Cache the /health DB probe")
     lb.tick(2)
 
@@ -290,6 +293,7 @@ def scene_loop():
     lb.scroll(ICON_LLM + " The liveness probe COUNTs orders on every call — caching it 5s behind a singleflight drops ~99% of that load off the primary.", after=0.9)
     lb.scroll("✎ Edit " + dim("internal/health/health.go"))
     lb.scroll("⚙ Bash " + dim('git commit -q -m "health: cache the liveness probe (singleflight)"'))
+    lb.scroll(dim("· 9 turns · 47s · $0.31 · 140k/6.2k tok"))
     lb.set(done=2, active="Rate-limit the public API")
     lb.tick(2)
 
@@ -297,6 +301,7 @@ def scene_loop():
     lb.scroll(ICON_LLM + " A per-token sliding window (Redis) returns 429 + Retry-After, opt-in per route so internal callers stay unthrottled.", after=0.9)
     lb.scroll("✎ Edit " + dim("internal/middleware/ratelimit.go"))
     lb.scroll("⚙ Bash " + dim('git commit -q -m "api: per-token rate limiting"'))
+    lb.scroll(dim("· 11 turns · 58s · $0.38 · 165k/7.9k tok"))
     lb.set(done=3, active="")
     lb.tick(2)
 
@@ -304,6 +309,18 @@ def scene_loop():
     lb.scroll(ICON_LLM + " All three hold up — gate green, each with a commit and a regression test. Nothing to reopen.", after=0.9)
     lb.tick(2)
     lb.clear()
+    # The closing digest: what shipped, cost per task, the run total, and the by-model split — work
+    # ran on claude, the audit/review stages on codex — the "super-helpful ending" the loop now prints.
+    c.line(bold("Shipped this run:"))
+    for tid, subj, sub, cost in [
+        ("make-checkout-idempotent", "payments: idempotent checkout", "payments", "$0.42"),
+        ("cache-health-db-probe", "health: cache liveness probe", "health", "$0.31"),
+        ("rate-limit-public-api", "api: per-token rate limiting", "middleware", "$0.38"),
+    ]:
+        c.line("  • %-26s %-31s %s" % (tid, subj, dim("(%s)  %s" % (sub, cost))))
+    c.line("  Touched: internal/payments, internal/health, internal/middleware")
+    c.line("  " + bold("Cost:") + " $1.47 · 620k in / 31k out")
+    c.line("  by model: claude:claude-opus-4-8 $1.11 · codex:gpt-5.6-terra $0.36", after=1.0)
     c.line(bold(green("✓ queue verified done — 3/3 in 3 iterations")), after=1.4)
     c.write()
 
@@ -375,8 +392,8 @@ def scene_fork():
     c.line(coop("started fork hook (claude) in the background"), after=0.5)
     c.line(coop("  coop fork logs hook -f   ·   coop fork stop hook"), after=1.0)
     c.command("coop fork ls")
-    c.line(bold("  NAME AGENT    BRANCH       STATE     TASKS    CHANGES         UPDATED"), after=0.3)
-    c.line("  hook claude   hook         idle      2/2      +88 -6          2 minutes ago", after=1.1)
+    c.line(bold("  NAME AGENT    BRANCH       STATE     TASKS    CHANGES         COST     UPDATED"), after=0.3)
+    c.line("  hook claude   hook         idle      2/2      +88 -6          $0.63    2 minutes ago", after=1.1)
     c.command("coop fork review hook")
     c.line("review/hook ← hook  ·  2 commit(s), +88 -6 across 3 file(s)", after=0.4)
     c.line(bold("commits:"), after=0.15)
@@ -392,6 +409,7 @@ def scene_fork():
     c.line("    missing / stale / mismatched Stripe-Signature is rejected 400 before any handler runs.", after=0.12)
     c.line("  - Dedupe by Stripe event id (seen-events table + unique index) — a redelivery is a no-op.", after=0.12)
     c.line("  - Gate green: gofmt clean, go build/vet/test ./... pass; added a replay + bad-signature test.", after=0.5)
+    c.line(coop("cost: $0.63 · 210k in / 11k out"), after=0.5)
     c.line(bold("diff:"), after=0.2)
     c.line(bold("diff --git a/internal/webhook/handler.go b/internal/webhook/handler.go"), after=0.1)
     c.line(dim("--- a/internal/webhook/handler.go"), after=0.05)
@@ -410,7 +428,8 @@ def scene_fork():
     c.line(green("+func verifySignature(body []byte, header, secret string) error {  // constant-time HMAC-SHA256"), after=0.05)
     c.line(dim("       … and internal/webhook/verify_test.go (new file, 41 lines)"), after=0.8)
     c.command("coop fork merge hook --yes")
-    c.line(coop("rebase review/hook onto main — 2 commit(s), +88 -6"), after=0.5)
+    c.line(coop("rebase review/hook onto main — 2 commit(s), +88 -6"), after=0.4)
+    c.line(coop("fork cost: $0.63 · 210k in / 11k out"), after=0.5)
     c.line(coop("landing hook onto main"), after=0.6)
     c.line("Successfully rebased and updated refs/heads/hook.", after=0.6)
     c.line(green("✓") + " landed hook", after=0.4)
@@ -462,7 +481,7 @@ def scene_fleet():
         "web": ["fix the checkout hydration bug", "lazy-load the dashboard route", "ship CSP (report-only)"],
         "deps": ["patch the axios CVE (1.6→1.7)", "drop the unused moment.js"],
     }
-    logs = {"api": "⚙ Bash go test ./...", "web": "✎ Edit src/checkout.tsx", "deps": "⚙ Bash npm audit fix"}
+    logs = {"api": "⚙ Bash go test", "web": "✎ Edit src/checkout.tsx", "deps": "⚙ Bash npm audit fix"}
     forks = [("claude", "api", 3), ("gemini", "web", 3), ("codex", "deps", 2)]
 
     def render(done, spin, final=False):
@@ -471,13 +490,19 @@ def scene_fleet():
         rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
         for agent, n, total in forks:
             d = done[n]
+            # Cost is captured for a claude-led fork (its result event carries it); the gemini/codex
+            # leads here don't report one, so their rows show no $ — the honest current behaviour.
+            cost = "$%.2f" % (0.14 * d) if n == "api" and d > 0 else ""
             if d >= total:
                 glyph, what, log = green("✓"), green("✓ done"), "✓ queue verified done — %d/%d" % (total, total)
             else:
                 glyph, what, log = cyan(SPIN[spin % len(SPIN)]), doing[n][d], logs[n]
-            rows.append(fleet_row(glyph, agent, n, d, total, what, countw=3, log=log))
+            rows.append(fleet_row(glyph, agent, n, d, total, what, countw=3, log=log, cost=cost))
         tot_done = sum(done.values())
-        rows += ["", f"{head_glyph} {bar(tot_done, 8, 27)} {tot_done}/8 tasks · {running} running · 0 blocked"]
+        bar_line = f"{head_glyph} {bar(tot_done, 8, 27)} {tot_done}/8 tasks · {running} running · 0 blocked"
+        if done["api"] > 0:
+            bar_line += " · $%.2f" % (0.14 * done["api"])  # the fleet total (only the claude fork reports cost)
+        rows += ["", bar_line]
         return rows
 
     steps = [
