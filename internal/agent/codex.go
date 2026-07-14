@@ -232,7 +232,19 @@ func (codexAgent) BoxEnv(homeInBox string) []string {
 
 // codexText is the jq filter that pulls the agent's reply text out of codex's --json
 // stream; the wrapper emits it once (ShellPrelude) since fresh and resume both use it.
-const codexText = `codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }`
+const codexText = `codex_text() { jq -r 'select(.type=="item.completed" and .item.type=="agent_message").item.text' 2>/dev/null; }
+# codex_peer_row logs this consult's token usage (the turn.completed event, read from stdin) to the
+# run's peer-usage file so the loop's closing digest can tally the peer per model. Best-effort: no
+# COOP_RUN_ID (not a loop), no usage event, or any write error → nothing, and it never fails the
+# consult. codex reports tokens but no cost. Args: <role> <model>.
+codex_peer_row() {
+	[ -n "${COOP_RUN_ID:-}" ] || return 0
+	u=$(jq -c 'select(.type=="turn.completed").usage' 2>/dev/null | tail -n1)
+	[ -n "$u" ] || return 0
+	i=$(printf '%s' "$u" | jq '.input_tokens // 0')
+	o=$(printf '%s' "$u" | jq '(.output_tokens // 0) + (.reasoning_output_tokens // 0)')
+	printf '{"run":"%s","role":"%s","provider":"codex","model":"%s","in":%s,"out":%s}\n' "$COOP_RUN_ID" "$1" "$2" "$i" "$o" >>".agent/runs/$COOP_RUN_ID.peers.jsonl" 2>/dev/null || true
+}`
 
 func (codexAgent) ConsultFresh() string {
 	return `out=$(run codex exec -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?
@@ -241,13 +253,14 @@ func (codexAgent) ConsultFresh() string {
 tid=$(printf '%s\n' "$out" | jq -r 'select(.type=="thread.started").thread_id' 2>/dev/null | head -n1)
 if [ -n "$tid" ]; then printf '%s' "$tid" >"$idfile"; fi
 printf '%s\n' "$out" | codex_text
+printf '%s\n' "$out" | codex_peer_row "$role" "$model"
 # Propagate codex's own exit status (timeout/error), not the codex_text pipe's 0, so a
 # consult failure is observable like claude/gemini's instead of always looking successful.
 exit "$st"`
 }
 
 func (codexAgent) ConsultResume() string {
-	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; exit "$st"`
+	return `out=$(run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"); st=$?; printf '%s\n' "$out" | codex_text; printf '%s\n' "$out" | codex_peer_row "$role" "$model"; exit "$st"`
 }
 
 func (codexAgent) DelegateExec() string {

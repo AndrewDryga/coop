@@ -317,10 +317,14 @@ func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string, cost runCos
 	if cost.total.usd > 0 {
 		fmt.Fprintf(&b, "  %s $%.2f · %s in / %s out\n", ui.Bold("Cost:"), cost.total.usd, humanTokens(cost.total.inTok), humanTokens(cost.total.outTok))
 	}
-	if len(cost.byModel) > 1 { // a preset run spreads work + review across models — show the split
+	if len(cost.byModel) > 1 { // a preset run spreads work + review (+ peers) across models — show the split
 		parts := make([]string, len(cost.byModel))
 		for i, m := range cost.byModel {
-			parts[i] = fmt.Sprintf("%s $%.2f", m.model, m.cost.usd)
+			price := "—" // a peer-only model (e.g. a codex consult) reports tokens but no cost
+			if m.cost.usd > 0 {
+				price = fmt.Sprintf("$%.2f", m.cost.usd)
+			}
+			parts[i] = fmt.Sprintf("%s %s (%s/%s)", m.model, price, humanTokens(m.cost.inTok), humanTokens(m.cost.outTok))
 		}
 		fmt.Fprintf(&b, "  by model: %s\n", strings.Join(parts, " · "))
 	}

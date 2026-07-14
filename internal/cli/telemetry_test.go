@@ -79,7 +79,7 @@ func TestCostFromRecords(t *testing.T) {
 		{Stage: "verify", CostUSD: 0}, // no cost — contributes nothing
 		{Stage: "work", Provider: "claude", Model: "fable-5", CostUSD: 2.0, InTok: 200, OutTok: 20, Finished: []string{"c", "d"}}, // split evenly
 	}
-	rc := costFromRecords(recs)
+	rc := costFromRecords(recs, []peerRecord{{Provider: "codex", Model: "gpt-5.6-terra", In: 1000, Out: 50}})
 	if rc.total.usd != 18.5 {
 		t.Errorf("total = %v, want 18.5", rc.total.usd)
 	}
@@ -99,8 +99,9 @@ func TestCostFromRecords(t *testing.T) {
 	if m := rc.byModel[0]; m.model != "claude:fable-5" || m.cost.usd != 14.5 || m.cost.inTok != 1200 {
 		t.Errorf("byModel[0] = %+v, want claude:fable-5 usd 14.5 in 1200", m)
 	}
-	if rc.byModel[1].model != "codex:gpt-5.6-terra" {
-		t.Errorf("byModel[1] = %+v, want codex:gpt-5.6-terra", rc.byModel[1])
+	// codex:gpt-5.6-terra = the signoff stage $4.0 (500/50) + a token-only peer consult (1000/50).
+	if m := rc.byModel[1]; m.model != "codex:gpt-5.6-terra" || m.cost.usd != 4.0 || m.cost.inTok != 1500 {
+		t.Errorf("byModel[1] = %+v, want codex:gpt-5.6-terra usd 4.0 in 1500 (signoff+peer)", rc.byModel[1])
 	}
 }
 

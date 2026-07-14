@@ -57,6 +57,7 @@ type RunSpec struct {
 	ForkName string // non-empty for a detached fork loop's box: tags it coop.fork=<name> so
 	// `coop fork stop` can tear the container down by label after SIGKILL (else --rm never fires
 	// on a SIGKILL'd run client and the orphaned container keeps mutating the worktree)
+	RunID     string    // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
 	Batch     bool      // loop/doctor: no tty, stdin from /dev/null
 	Quiet     bool      // suppress the "shadowed N secret path(s)" line (doctor)
 	Stdout    io.Writer // capture output (doctor); nil means inherit os.Stdout
@@ -432,6 +433,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string) {
 	if !spec.Homes || spec.Preset == nil {
 		return
+	}
+	// The loop's run id, so a consult/delegate peer can append its token usage to
+	// .agent/runs/<id>.peers.jsonl for the closing cost digest. Empty outside a loop.
+	if spec.RunID != "" {
+		extraArgs = append(extraArgs, "-e", "COOP_RUN_ID="+spec.RunID)
 	}
 	// coop-delegate: a preset with a write-capable delegate role mounts the wrapper (on
 	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*

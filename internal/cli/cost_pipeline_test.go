@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,8 +45,15 @@ func TestCostPipelineE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3. Read the run back, aggregate, and render the digest the user sees.
-	rc := costFromRecords(readStageRecords(repo, run))
+	// 3. An in-turn consult peer (a grok critic) — tokens only, no cost, exactly as the wrapper
+	//    appends it to <run>.peers.jsonl during a work turn.
+	peerLine, _ := json.Marshal(peerRecord{Run: run, Role: "critic", Provider: "grok", Model: "grok-4.5", In: 50000, Out: 800})
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "runs", run+".peers.jsonl"), append(peerLine, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Read the run back, aggregate, and render the digest the user sees.
+	rc := costFromRecords(readStageRecords(repo, run), readPeerRecords(repo, run))
 	cs := loopChangeSet{
 		tasks:      []taskChanges{{id: "my-task", commits: []commitInfo{{"a1", "do the thing"}}, files: []string{"internal/box/x.go"}}},
 		subsystems: []string{"internal/box"},
@@ -51,11 +61,12 @@ func TestCostPipelineE2E(t *testing.T) {
 	d := cs.humanDigest(newLoopHealth(), nil, rc)
 	t.Logf("rendered closing digest:\n%s", d)
 
-	// Per-task cost (claude work, 1.24M in), run total (12.31+4.20), and the two-model split.
+	// Per-task cost (claude work), run total (stage cost; tokens across both stages + the peer), and
+	// the three-model split — the grok peer shows tokens with "—" cost (grok reports none here).
 	for _, want := range []string{
 		"do the thing", "$12.31", // the shipped task carries its cost
-		"Cost:", "$16.51", "1.3M in / 51.0k out", // run total across both stages
-		"by model:", "claude:claude-fable-5 $12.31", "codex:gpt-5.6-terra $4.20", // per-model
+		"Cost:", "$16.51", "1.4M in / 51.8k out", // total: cost from stages, tokens incl. the peer
+		"by model:", "claude:claude-fable-5 $12.31", "codex:gpt-5.6-terra $4.20", "grok:grok-4.5 — (50.0k/800)",
 	} {
 		if !strings.Contains(d, want) {
 			t.Errorf("closing digest missing %q:\n%s", want, d)

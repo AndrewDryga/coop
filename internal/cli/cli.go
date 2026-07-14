@@ -40,6 +40,7 @@ type app struct {
 	rt     runtime.Runtime
 	rtSet  bool                                     // whether rt has been detected yet (ensureRuntime is lazy — see below)
 	preset *preset.Preset                           // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
+	runID  string                                   // the active loop run's id, passed to boxes as COOP_RUN_ID so consult peers log usage; empty outside a loop
 	gateOK func(gateRepo, treeDir, img string) bool // test seam for the merge gate; nil → the real box gate
 }
 

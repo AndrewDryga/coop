@@ -1969,6 +1969,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	ridb := make([]byte, 8)
 	_, _ = rand.Read(ridb)
 	runid := hex.EncodeToString(ridb)
+	a.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
 	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
 	iterCmd := func(prompt string) []string {
@@ -2320,7 +2321,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// A human-facing digest above the verdict banner: what shipped (per task + areas), what's blocked,
 	// and any task the run flagged — so you see what to review/e2e at a glance.
 	if len(custom) == 0 {
-		cost := costFromRecords(readStageRecords(repo, runid))
+		cost := costFromRecords(readStageRecords(repo, runid), readPeerRecords(repo, runid))
 		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, blockedTaskIDs(hosts), cost); digest != "" {
 			fmt.Fprintln(os.Stderr, digest)
 		}
@@ -2547,7 +2548,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		lead = agent
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Peers: peers, Preset: a.preset,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		Stdout: stdoutW,
 		Stderr: io.MultiWriter(errWs...),
