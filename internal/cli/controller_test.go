@@ -48,6 +48,70 @@ func TestResumeLine(t *testing.T) {
 	}
 }
 
+func TestAssignLoopTaskSelectionAndClaim(t *testing.T) {
+	q1 := filepath.Join(t.TempDir(), ".agent", "tasks")
+	q2 := filepath.Join(t.TempDir(), ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(q1, stateTodo, "todo-first", "task.md"), "# Todo first\n")
+	writeTaskFile(t, filepath.Join(q2, stateInProgress, "resume", "task.md"), "# Resume me\n")
+
+	c, got, ok, err := assignLoopTask([]string{q1, q2})
+	if err != nil || !ok {
+		t.Fatalf("assignLoopTask resume = ok %v, err %v", ok, err)
+	}
+	if got.Item.ID != "resume" || got.Root != q2 || got.Item.State != stateInProgress {
+		t.Fatalf("assignLoopTask chose %+v, want the later queue's in_progress task", got)
+	}
+	if c.Todo != 1 || c.Doing != 1 {
+		t.Fatalf("resume counts = %+v, want Todo=1 Doing=1", c)
+	}
+	if !pathExists(filepath.Join(q1, stateTodo, "todo-first")) {
+		t.Fatal("selecting an interrupted task must not claim a different todo")
+	}
+}
+
+func TestAssignLoopTaskClaimsBeforeReturningAndCanBlock(t *testing.T) {
+	q := filepath.Join(t.TempDir(), ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(q, stateTodo, "b-task", "task.md"), "# B\n")
+	writeTaskFile(t, filepath.Join(q, stateTodo, "a-task", "task.md"), "# A\n")
+
+	c, got, ok, err := assignLoopTask([]string{q})
+	if err != nil || !ok {
+		t.Fatalf("assignLoopTask = ok %v, err %v", ok, err)
+	}
+	if got.Item.ID != "a-task" || got.Item.State != stateInProgress {
+		t.Fatalf("assignment = %+v, want first sorted todo claimed in_progress", got)
+	}
+	if c.Todo != 1 || c.Doing != 1 {
+		t.Fatalf("post-claim counts = %+v, want Todo=1 Doing=1", c)
+	}
+	if pathExists(filepath.Join(q, stateTodo, "a-task")) || !pathExists(got.Item.Dir) {
+		t.Fatal("assignment returned before the host-side todo to in_progress move was observable")
+	}
+	if _, active := queueProgress([]string{q}); active != got.Item.Title {
+		t.Fatalf("banner active title = %q, assigned title = %q", active, got.Item.Title)
+	}
+
+	writeTaskFile(t, filepath.Join(got.Item.Dir, "decision.md"), "# Decision\n")
+	if err := moveTaskDir(q, got.Item, stateBlocked); err != nil {
+		t.Fatalf("assigned task should remain movable to blocked: %v", err)
+	}
+	if !pathExists(filepath.Join(q, stateBlocked, "a-task")) {
+		t.Fatal("assigned task did not bounce to blocked")
+	}
+}
+
+func TestAssignLoopTaskEmptyIsNoOp(t *testing.T) {
+	q := filepath.Join(t.TempDir(), ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(q, stateDone, "done", "task.md"), "# Done\n")
+	c, _, ok, err := assignLoopTask([]string{q})
+	if err != nil || ok {
+		t.Fatalf("empty actionable queue = ok %v, err %v", ok, err)
+	}
+	if c.Done != 1 || c.Todo+c.Doing != 0 {
+		t.Fatalf("empty actionable counts = %+v", c)
+	}
+}
+
 // TestCommitsForTaskAndUntrailered drives the real git trailer read: a commit tagged Coop-Task is
 // found by id; the untrailered check flags a finished task whose range has no such commit.
 func TestCommitsForTaskAndUntrailered(t *testing.T) {

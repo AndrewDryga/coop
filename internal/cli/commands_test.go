@@ -74,14 +74,14 @@ func TestLoopExitCode(t *testing.T) {
 // unable to read their own queue (claude resolved it against cwd and was fine).
 func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	repo := "/home/node/proj"
-	work := loopWorkPrompt(repo, []string{".agent/tasks"})
+	work := loopWorkPrompt(repo, []string{".agent/tasks"}, "task-42")
 	for _, want := range []string{"/home/node/proj/.agent/tasks", "/home/node/proj/AGENTS.md"} {
 		if !strings.Contains(work, want) {
 			t.Errorf("work prompt missing absolute %q:\n%s", want, work)
 		}
 	}
 	// Several queues (a monorepo's per-component trees) are all listed, each absolute.
-	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"})
+	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"}, "task-42")
 	for _, want := range []string{"/home/node/proj/portal/.agent/tasks", "/home/node/proj/runner/.agent/tasks"} {
 		if !strings.Contains(multi, want) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
@@ -112,9 +112,9 @@ func TestDropDashDash(t *testing.T) {
 // state.md + the git diff, finalize state.md (never blank it), and work ONE task per run then stop
 // so the loop re-invokes a fresh agent for the next — not one agent draining the queue itself.
 func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
-	work := loopWorkPrompt("/repo", []string{".agent/tasks"})
+	work := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42")
 	for _, want := range []string{
-		"is NOT installed", "moving its folder into 10_in_progress/", "into 99_done/", "into 50_blocked/",
+		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/", "into 50_blocked/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
 		"state.md", "resume note", "final step", "finished state",
 		"Work exactly ONE task per run", "the loop's job, not yours",
@@ -128,6 +128,11 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("folder work prompt missing %q:\n%s", want, work)
+		}
+	}
+	for _, forbidden := range []string{"pick the next task", "claim it by moving", "take the task you claimed"} {
+		if strings.Contains(work, forbidden) {
+			t.Errorf("folder work prompt still delegates host-side selection/claim with %q:\n%s", forbidden, work)
 		}
 	}
 }

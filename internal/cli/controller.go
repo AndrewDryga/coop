@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -160,22 +161,30 @@ func resumeLine(id string, commits []string) string {
 		"for rework (its log.md will say what's wrong) — do that rework. Disambiguate before acting."
 }
 
-// resumePrefixFor builds the informed-resume preamble for the work prompt: a line per in_progress
-// task whose Coop-Task trailer is already in history. Empty when none — the blind-resume path stays
-// byte-identical (nothing is prepended).
-func (a *app) resumePrefixFor(repo string, hosts []string) string {
-	var lines []string
-	for _, h := range hosts {
-		for _, t := range readTaskTree(h) {
-			if t.State != stateInProgress {
-				continue
-			}
-			if l := resumeLine(t.ID, commitsForTask(repo, "", t.ID)); l != "" {
-				lines = append(lines, l)
-			}
-		}
+// resumePrefixFor builds the informed-resume preamble for the assigned task when its Coop-Task
+// trailer is already in history. Empty when none, so a fresh claim keeps the ordinary prompt.
+func (a *app) resumePrefixFor(repo, id string) string {
+	return resumeLine(id, commitsForTask(repo, "", id))
+}
+
+// assignLoopTask selects the authoritative next task and claims todo work before a box starts.
+// Already in-progress work is a resume and needs no move.
+func assignLoopTask(hosts []string) (taskCounts, queuedTask, bool, error) {
+	c, selected, ok := queueState(hosts)
+	if !ok {
+		return c, queuedTask{}, false, nil
 	}
-	return strings.Join(lines, "\n")
+	if selected.Item.State != stateTodo {
+		return c, selected, true, nil
+	}
+	if err := moveTaskDir(selected.Root, selected.Item, stateInProgress); err != nil {
+		return c, queuedTask{}, false, fmt.Errorf("claim task %s: %w", selected.Item.ID, err)
+	}
+	selected.Item.State = stateInProgress
+	selected.Item.Dir = filepath.Join(selected.Root, stateInProgress, selected.Item.ID)
+	c.Todo--
+	c.Doing++
+	return c, selected, true, nil
 }
 
 // reconcileAction is what post-merge reconciliation should do with one parent-queue task after a

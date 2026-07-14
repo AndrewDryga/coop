@@ -968,9 +968,10 @@ coop loop codex           # …or name the agent: claude, codex, or gemini (or a
 
 A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
 in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix sorts
-`ls` in lifecycle order; `coop tasks` shows the clean names). `loop` starts a fresh agent
-per iteration (no context rot), claims the next task from `00_todo/` (or resumes one left
-in `10_in_progress/`), and won't quit while either has work. Name the agent
+`ls` in lifecycle order; `coop tasks` shows the clean names). Before each iteration, `loop`
+selects and claims the next task host-side (or resumes one left in `10_in_progress/`), then
+starts a fresh agent assigned to that exact task (no context rot). It won't quit while either
+state has work. Name the agent
 (`claude`/`codex`/`gemini`, or a preset name whose lead supplies it); loop.yaml `work.command` still overrides the whole
 iteration command if you need something custom. When the queue empties, a fresh, **demanding
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance

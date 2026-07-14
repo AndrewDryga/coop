@@ -37,23 +37,52 @@ type taskCounts struct{ Todo, Doing, Done, Blocked int }
 
 func (c taskCounts) total() int { return c.Todo + c.Doing + c.Done + c.Blocked }
 
-// queueProgress sums task counts across the queue(s) and returns the first active task (the
-// first in_progress, else the first todo) — the loop's at-a-glance progress, from the same
-// taskTreeCounts the status and `coop tasks` views use so they can't disagree.
-func queueProgress(hosts []string) (taskCounts, string) {
+type queuedTask struct {
+	Root string
+	Item taskItem
+}
+
+// queueState reads the queue union once, tallying it and selecting the authoritative next task.
+// An interrupted task wins globally, even when an earlier subproject queue still has todo work;
+// ties preserve queue order and readTaskTree's stable ID order.
+func queueState(hosts []string) (taskCounts, queuedTask, bool) {
 	var total taskCounts
-	active := ""
+	var firstTodo, firstDoing queuedTask
+	haveTodo, haveDoing := false, false
 	for _, h := range hosts {
-		c, a := queueCounts(h)
-		total.Todo += c.Todo
-		total.Doing += c.Doing
-		total.Done += c.Done
-		total.Blocked += c.Blocked
-		if active == "" {
-			active = a
+		for _, t := range readTaskTree(h) {
+			switch t.State {
+			case stateTodo:
+				total.Todo++
+				if !haveTodo {
+					firstTodo, haveTodo = queuedTask{Root: h, Item: t}, true
+				}
+			case stateInProgress:
+				total.Doing++
+				if !haveDoing {
+					firstDoing, haveDoing = queuedTask{Root: h, Item: t}, true
+				}
+			case stateBlocked:
+				total.Blocked++
+			case stateDone:
+				total.Done++
+			}
 		}
 	}
-	return total, active
+	if haveDoing {
+		return total, firstDoing, true
+	}
+	return total, firstTodo, haveTodo
+}
+
+// queueProgress sums task counts across the queue(s) and returns the authoritative next task's
+// title, sharing queueState with the loop assignment so its banner cannot disagree with the box.
+func queueProgress(hosts []string) (taskCounts, string) {
+	total, next, ok := queueState(hosts)
+	if !ok {
+		return total, ""
+	}
+	return total, next.Item.Title
 }
 
 // progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a

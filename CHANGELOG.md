@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop iterations now receive an authoritative task assignment.** The host selects interrupted
+  work first, otherwise claims the next todo before starting the box, and gives the agent that exact
+  task ID. The banner and prompt therefore cannot diverge, and agents no longer spend a turn
+  guessing or moving the queue's claim themselves.
+
 - **Streaming loop traces preserve both sides of the live view.** Set `COOP_STREAM_TRACE=1` to
   capture every streaming box attempt's byte-exact provider JSONL and Coop's rendered lines under
   `.agent/runs/<run>.streams/` with owner-only permissions. Tracing is best-effort and disables

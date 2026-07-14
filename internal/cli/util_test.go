@@ -42,14 +42,15 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestQueueProgress(t *testing.T) {
-	// Two queue dirs; queueProgress sums both, active = the first in_progress task.
+	// Two queue dirs; queueProgress sums both and an in_progress task in a later queue still
+	// beats a todo in the first queue.
 	q1 := filepath.Join(t.TempDir(), ".agent", "tasks")
 	writeTaskFile(t, filepath.Join(q1, stateDone, "a", "task.md"), "# shipped\n")
-	writeTaskFile(t, filepath.Join(q1, stateInProgress, "b", "task.md"), "# wiring it up\n")
 	writeTaskFile(t, filepath.Join(q1, stateTodo, "c", "task.md"), "# later\n")
 	q2 := filepath.Join(t.TempDir(), ".agent", "tasks")
 	writeTaskFile(t, filepath.Join(q2, stateDone, "d", "task.md"), "# also done\n")
-	writeTaskFile(t, filepath.Join(q2, stateTodo, "e", "task.md"), "# another\n")
+	writeTaskFile(t, filepath.Join(q2, stateInProgress, "e", "task.md"), "# wiring it up\n")
+	writeTaskFile(t, filepath.Join(q2, stateTodo, "g", "task.md"), "# another\n")
 	writeTaskFile(t, filepath.Join(q2, stateBlocked, "f", "task.md"), "# stuck\n")
 	c, active := queueProgress([]string{q1, q2})
 	if c.Done != 2 || c.Doing != 1 || c.Todo != 2 || c.Blocked != 1 || c.total() != 6 {

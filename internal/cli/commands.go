@@ -1694,9 +1694,9 @@ func receiptClaim(n int, ok bool) string {
 // CLAUDE.md→AGENTS.md symlink / AGENTS.md / GEMINI.md), so an unconditional "Read AGENTS.md" made
 // each iteration re-read ~2K tokens already in its context and burn a tool turn doing it — the
 // conditional keeps the fallback for a repo where the auto-load didn't happen.
-func loopWorkPrompt(repo string, queues []string) string {
-	return fmt.Sprintf("The project contract is your instruction file, normally already loaded in your context — read %s only if its content is not. Read the task queue(s) %s, then work the queue per the protocol. A task is a folder under a queue dir and its state is its directory (named with a sort prefix): 00_todo/ · 10_in_progress/ · 50_blocked/ · 99_done/. `coop` is NOT installed in this box, so you change a task's state by MOVING its folder between those dirs yourself — that move IS the state change; do not try to run `coop`. First, if a task is already in 10_in_progress/, a previous attempt was interrupted before it committed: read that task's state.md (its resume note — where it stopped, the next action, traps), then run `git status` and `git diff` to see its uncommitted work, and continue it (or discard the partial work with `git restore`/`git checkout` and redo it if off-track) until done. Otherwise pick the next task in 00_todo/ and claim it by moving its folder into 10_in_progress/. As you work, keep that task's state.md current — a small, overwritten snapshot of the status, what is done, the next action, and any traps — refreshed before each commit and before you pause; append your reasoning to its log.md. Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit). Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge. When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale. Then move its folder into 99_done/. If you hit a one-way-door decision, move its folder into 50_blocked/ and fill in its decision.md. If you SPOT a SEPARATE task while working (not part of this one), do NOT fold it into your commit: a simple, ready fix → create its folder in 00_todo/ with a task.md whose acceptance you can state in a line (a later iteration works it); a big one that needs a spec → create it under xx_backlog/ instead (the backlog is only for the big/not-yet-ready, never small stuff). Always update state.md as your final step, leaving it reflecting the finished state (do not blank it). Work exactly ONE task per run: take the task you claimed to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",
-		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues))
+func loopWorkPrompt(repo string, queues []string, assignedID string) string {
+	return fmt.Sprintf("The project contract is your instruction file, normally already loaded in your context — read %s only if its content is not. Read the task queue(s) %s, then work the queue per the protocol. A task is a folder under a queue dir and its state is its directory (named with a sort prefix): 00_todo/ · 10_in_progress/ · 50_blocked/ · 99_done/. `coop` is NOT installed in this box, so you change a task's state by MOVING its folder between those dirs yourself — that move IS the state change; do not try to run `coop`. Work task %s, already claimed in 10_in_progress/. Read that assigned task's task.md and state.md (its resume note — where prior work stopped, the next action, and traps), then run `git status` and `git diff` to find any uncommitted work; continue it, or discard partial work with `git restore`/`git checkout` and redo it if off-track. As you work, keep that task's state.md current — a small, overwritten snapshot of the status, what is done, the next action, and any traps — refreshed before each commit and before you pause; append your reasoning to its log.md. Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit). Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge. When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale. Then move its folder into 99_done/. If you hit a one-way-door decision, move its folder into 50_blocked/ and fill in its decision.md. If you SPOT a SEPARATE task while working (not part of this one), do NOT fold it into your commit: a simple, ready fix → create its folder in 00_todo/ with a task.md whose acceptance you can state in a line (a later iteration works it); a big one that needs a spec → create it under xx_backlog/ instead (the backlog is only for the big/not-yet-ready, never small stuff). Always update state.md as your final step, leaving it reflecting the finished state (do not blank it). Work exactly ONE task per run: take the assigned task to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",
+		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues), assignedID)
 }
 
 // defaultSignoffPrompt is the built-in signoff pass: a senior
@@ -1976,8 +1976,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// decided per iteration because a cross-provider rotation can swap the active agent.
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
-	work := loopWorkPrompt(repo, queues) // the signoff/verify prompts are built per round with the run's change context
-	health := newLoopHealth()            // per-task risk signals (reopens, gate edits, untagged) accumulated across the run
+	health := newLoopHealth() // per-task risk signals (reopens, gate edits, untagged) accumulated across the run
 	// The signoff pass (end-of-loop) and the optional between-tasks audit both run only under the
 	// signoff-aware agent form, not a custom work.command. The between audit is opt-in
 	// (between.enabled + between.prompt); its prompt SETS the audit (between has no built-in) and
@@ -2110,13 +2109,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 				break
 			}
-			// Surface queue progress + the task being worked, so a long run shows movement
-			// instead of a bare counter (the same queueProgress `coop tasks` uses).
-			c, active := queueProgress(hosts)
-			// Keep going while anything is actionable — a todo/ task or an in_progress/ one an
-			// interrupted iteration left mid-task. Stop only when both are empty (the rest is
-			// done/ or blocked/), so a task in_progress when the box died is continued, not stranded.
-			if c.Todo+c.Doing == 0 {
+			// Select and host-claim one authoritative task before the box starts. The returned task
+			// drives both the banner and prompt, so the model cannot guess a different "next" task.
+			c, assigned, ok, assignErr := assignLoopTask(hosts)
+			if assignErr != nil {
+				return 1, assignErr
+			}
+			if !ok {
 				break
 			}
 			// Run this iteration on the pool's active target — its provider (a cross-provider ladder
@@ -2130,12 +2129,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				doneBefore = doneTaskDirs(hosts)
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
+			active := assigned.Item.Title
 			ui.Info("%s", progressBanner(n, c, active))
 			// Informed resume: if an in_progress task already carries a landed Coop-Task commit (a crash
 			// after commit before the folder-move, or a review reopen), prepend a line telling the agent
 			// to disambiguate and act — instead of blindly redoing it. Empty prefix → prompt unchanged.
+			work := loopWorkPrompt(repo, queues, assigned.Item.ID)
 			iterWork := work
-			if pre := a.resumePrefixFor(repo, hosts); pre != "" {
+			if pre := a.resumePrefixFor(repo, assigned.Item.ID); pre != "" {
 				iterWork = pre + "\n\n" + work
 			}
 			snapBefore := queueSnapshot(hosts)
