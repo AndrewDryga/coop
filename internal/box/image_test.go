@@ -68,6 +68,10 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	// them; the packages live in the AGENT_PACKAGES default.
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
+		"ARG GO_IMAGE=golang:1.26.5-bookworm", "FROM ${GO_IMAGE} AS staticcheck-builder",
+		"ARG STATICCHECK_VERSION=v0.7.0",
+		"go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}",
+		"COPY --from=staticcheck-builder /out/staticcheck /usr/local/bin/staticcheck",
 		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
 		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
 		"chown node:node /home/node/.asdf /home/node/.cache",

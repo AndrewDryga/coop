@@ -45,13 +45,24 @@ func installLayer() string {
 const (
 	pinnedNodeImage   = "node:24-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5" // node 24 (slim)
 	floatingNodeImage = "node:24-slim"
+	pinnedGoImage     = "golang:1.26.5-bookworm@sha256:18aedc16aa19b3fd7ded7245fc14b109e054d65d22ed53c355c899582bbb2113"
+	floatingGoImage   = "golang:1.26.5-bookworm"
 )
 
 // baseDockerfileTemplate is BaseDockerfile with %s for the npm package list. The
-// FROM image (NODE_IMAGE) and the agent npm specs (AGENT_PACKAGES) are build args so
-// a build can pin them; the defaults preserve the floating behavior for a raw build.
+// FROM images (NODE_IMAGE and GO_IMAGE) and the agent npm specs (AGENT_PACKAGES) are
+// build args so a build can pin them; the defaults preserve the floating behavior for
+// a raw build.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
+ARG GO_IMAGE=golang:1.26.5-bookworm
+
+FROM ${GO_IMAGE} AS staticcheck-builder
+ARG STATICCHECK_VERSION=v0.7.0
+RUN GOBIN=/out CGO_ENABLED=0 go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+
 FROM ${NODE_IMAGE}
+
+COPY --from=staticcheck-builder /out/staticcheck /usr/local/bin/staticcheck
 
 ARG ASDF_VERSION=0.19.0
 ARG AGENT_PACKAGES="%s"
@@ -235,10 +246,15 @@ func baseBuildArgs(cfg *config.Config, fresh bool) []string {
 		args = append(args, "--pull", "--no-cache")
 	}
 	node := pinnedNodeImage
+	goImage := pinnedGoImage
 	if fresh {
 		node = floatingNodeImage
+		goImage = floatingGoImage
 	}
-	args = append(args, "--build-arg", "NODE_IMAGE="+node)
+	args = append(args,
+		"--build-arg", "NODE_IMAGE="+node,
+		"--build-arg", "GO_IMAGE="+goImage,
+	)
 	if cfg.AgentPackages != "" {
 		args = append(args, "--build-arg", "AGENT_PACKAGES="+cfg.AgentPackages)
 	}

@@ -485,10 +485,20 @@ func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
 
 	// Stable build pins the FROM image; fresh (coop update) floats it and adds --pull --no-cache.
-	if a := baseBuildArgs(cfg, false); !slices.Equal(a, []string{"build", "--build-arg", "NODE_IMAGE=" + pinnedNodeImage, "-t", "coop-box", "-"}) {
+	if a := baseBuildArgs(cfg, false); !slices.Equal(a, []string{
+		"build",
+		"--build-arg", "NODE_IMAGE=" + pinnedNodeImage,
+		"--build-arg", "GO_IMAGE=" + pinnedGoImage,
+		"-t", "coop-box", "-",
+	}) {
 		t.Errorf("base cached: args=%v", a)
 	}
-	if a := baseBuildArgs(cfg, true); !slices.Equal(a, []string{"build", "--pull", "--no-cache", "--build-arg", "NODE_IMAGE=" + floatingNodeImage, "-t", "coop-box", "-"}) {
+	if a := baseBuildArgs(cfg, true); !slices.Equal(a, []string{
+		"build", "--pull", "--no-cache",
+		"--build-arg", "NODE_IMAGE=" + floatingNodeImage,
+		"--build-arg", "GO_IMAGE=" + floatingGoImage,
+		"-t", "coop-box", "-",
+	}) {
 		t.Errorf("base fresh: args=%v", a)
 	}
 	// COOP_AGENT_PACKAGES pins the agent npm specs via a build arg.
