@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Replace generic live-view spinners with the one-cell co:op orbit, add `COOP_SPINNER=0` for quiet debug/recording captures, and remove cyan styling from loop/fleet orbit marks.
+- Introduce the five-column ASCII Box Run as Coop's signature live-view spinner, keep live-state columns stable, and add `COOP_SPINNER=0` for quiet debug and recording captures.
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 

@@ -82,7 +82,13 @@ def model_line(agent="claude", model="claude-opus-4-8[1m]", credential="personal
 
 
 ICON_LLM = magenta("✦")  # streamjson.go: the agent's own voice
-SPIN = ["⠉", "⠸", "⠤", "⠇"]  # ui.SpinFrames
+SPIN_WIDTH = 5  # ui.SpinnerWidth
+SPIN = [".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."]  # ui.SpinFrames
+
+
+def live_mark(s):
+    """Pad a plain live-view mark before color, matching fleet_watch.go."""
+    return f"{s:<{SPIN_WIDTH}}"
 
 
 def cyan(s):
@@ -487,7 +493,7 @@ def scene_fleet():
 
     def render(done, spin, final=False):
         running = sum(1 for _, n, total in forks if done[n] < total)
-        head_glyph = green("✓") if running == 0 else SPIN[spin % len(SPIN)]
+        head_glyph = green(live_mark("✓")) if running == 0 else SPIN[spin % len(SPIN)]
         rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
         for agent, n, total in forks:
             d = done[n]
@@ -495,7 +501,7 @@ def scene_fleet():
             # leads here don't report one, so their rows show no $ — the honest current behaviour.
             cost = "$%.2f" % (0.14 * d) if n == "api" and d > 0 else ""
             if d >= total:
-                glyph, what, log = green("✓"), green("✓ done"), "✓ queue verified done — %d/%d" % (total, total)
+                glyph, what, log = green(live_mark("✓")), green("✓ done"), "✓ queue verified done — %d/%d" % (total, total)
             else:
                 glyph, what, log = SPIN[spin % len(SPIN)], doing[n][d], logs[n]
             rows.append(fleet_row(glyph, agent, n, d, total, what, countw=3, log=log, cost=cost))

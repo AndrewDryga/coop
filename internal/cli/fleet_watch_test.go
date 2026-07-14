@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestFleetDashboard(t *testing.T) {
@@ -28,8 +30,8 @@ func TestFleetDashboard(t *testing.T) {
 			t.Errorf("dashboard missing %q\n%s", want, joined)
 		}
 	}
-	// state glyphs: running → first orbit frame, all-done → ✓ done, empty queue → (no queue), idle → ◦.
-	if !strings.Contains(joined, "⠉") {
+	// State marks: running → first Box Run frame, all-done → ✓ done, empty queue → (no queue), idle → ‖.
+	if !strings.Contains(joined, ui.SpinFrame(0)) {
 		t.Errorf("running fork should show a spinner:\n%s", joined)
 	}
 	if !strings.Contains(joined, "✓ done") {
@@ -44,11 +46,10 @@ func TestFleetDashboard(t *testing.T) {
 
 	// The bottom roll-up bar's right edge lines up with the per-fork bars' right edge. Colors
 	// are off under `go test`, so columns are plain runes — compare the ] of each bar.
+	barRe := regexp.MustCompile(`\[[█░]+\]`)
 	barEnd := func(line string) int {
-		for i, r := range []rune(line) {
-			if r == ']' {
-				return i
-			}
+		if m := barRe.FindStringIndex(line); m != nil {
+			return len([]rune(line[:m[1]])) - 1
 		}
 		return -1
 	}
@@ -101,7 +102,7 @@ func TestFleetDashboardCost(t *testing.T) {
 }
 
 func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
-	const spin0 = "⠉" // ui.SpinFrames[0] — what a running bar shows at spin=0
+	spin0 := ui.SpinFrame(0)
 	bar := func(rows []fleetRow) string {
 		out := fleetDashboard("repo", rows, 0)
 		return out[len(out)-1] // out = [header, "", rows…, "", bar]
@@ -125,6 +126,19 @@ func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
 	// At least one running → the spinner is back; suppression is only for a still fleet.
 	if busy := bar([]fleetRow{{name: "a", running: true, counts: taskCounts{Todo: 2}}}); !strings.Contains(busy, spin0) {
 		t.Errorf("a running fleet bar should spin:\n%q", busy)
+	}
+}
+
+func TestFleetStateGlyphsKeepBarColumnFixed(t *testing.T) {
+	marks := []string{
+		stateGlyph(true, 0, 1, 0),
+		stateGlyph(false, 0, 1, 0),
+		stateGlyph(false, 1, 1, 0),
+	}
+	for _, mark := range marks {
+		if got := len([]rune(mark)); got != ui.SpinnerWidth {
+			t.Errorf("stateGlyph width = %d, want %d: %q", got, ui.SpinnerWidth, mark)
+		}
 	}
 }
 

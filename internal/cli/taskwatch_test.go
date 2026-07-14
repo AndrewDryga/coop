@@ -65,6 +65,15 @@ func TestTasksWatchFrame(t *testing.T) {
 	}
 }
 
+func TestTaskWatchMarkersKeepTitlesAligned(t *testing.T) {
+	p := ui.Palette{}
+	for _, state := range []string{stateInProgress, stateBlocked, stateTodo} {
+		if got := len([]rune(taskWatchMarker(p, state, 0))); got != ui.SpinnerWidth {
+			t.Errorf("taskWatchMarker(%q) width = %d, want %d", state, got, ui.SpinnerWidth)
+		}
+	}
+}
+
 // Several sources — a local queue and a fork — each get a labeled progress line, and an in-progress
 // task a fork claimed is tagged with it.
 func TestTasksWatchFrameMergesForks(t *testing.T) {

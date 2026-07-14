@@ -17,9 +17,8 @@ const (
 )
 
 // fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
-// bars above it. A per-fork bar sits behind: state glyph + space + agent badge + space + name
-// + space (one glyph, one badge, two spaces, the name, one space = nameW + 3 more than the
-// roll-up bar's "spinner + space" prefix).
+// bars above it. Both prefixes start with the same fixed-width state mark, so it cancels; the
+// per-fork row then adds an agent badge, two spaces, and the name (nameW + 3 columns).
 const fleetTotalBarW = fleetNameW + fleetBarW + 3
 
 // fleetRow is one fork's fast-changing state for the live dashboard. It reads only the cheap
@@ -183,18 +182,18 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	return out
 }
 
-// stateGlyph is the 1-cell status mark shared by the per-fork rows and the roll-up bar: an
+// stateGlyph is the fixed-width status mark shared by the per-fork rows and the roll-up bar: an
 // animated spinner only while something is running, a green ✓ when every task is done, else the
 // idle/paused mark. Keeping it shared means a still fleet shows no spinner anywhere — the spinner
 // implies motion, so it must not run next to a "0 running" bar.
 func stateGlyph(running bool, done, total, spin int) string {
 	switch {
 	case running:
-		return ui.SpinFrame(spin)
+		return padRight(ui.SpinFrame(spin), ui.SpinnerWidth)
 	case total > 0 && done == total:
-		return ui.Green("✓")
+		return ui.Green(padRight("✓", ui.SpinnerWidth))
 	default:
-		return "‖" // idle/paused — a 1-cell pause mark (⏸ rendered 2 wide and misaligned the bars)
+		return padRight("‖", ui.SpinnerWidth) // ⏸ renders two cells in common terminals
 	}
 }
 

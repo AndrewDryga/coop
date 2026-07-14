@@ -31,13 +31,13 @@ func TestClip(t *testing.T) {
 }
 
 func TestSpinFramesAndFreeze(t *testing.T) {
-	want := []string{"⠉", "⠸", "⠤", "⠇"}
+	want := []string{".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."}
 	if len(SpinFrames) != len(want) {
 		t.Fatalf("SpinFrames = %v, want %v", SpinFrames, want)
 	}
 	for i, frame := range want {
-		if SpinFrames[i] != frame || visible(frame) != 1 {
-			t.Errorf("SpinFrames[%d] = %q (width %d), want one-cell %q", i, SpinFrames[i], visible(frame), frame)
+		if SpinFrames[i] != frame || visible(frame) != SpinnerWidth {
+			t.Errorf("SpinFrames[%d] = %q (width %d), want %d-column %q", i, SpinFrames[i], visible(frame), SpinnerWidth, frame)
 		}
 	}
 
@@ -52,8 +52,8 @@ func TestSpinFramesAndFreeze(t *testing.T) {
 		t.Error("COOP_SPINNER=false should freeze animation")
 	}
 	t.Setenv("COOP_SPINNER", "1")
-	if got := SpinFrame(5); got != want[1] {
-		t.Errorf("animated SpinFrame(5) = %q, want %q", got, want[1])
+	if got := SpinFrame(8); got != want[1] {
+		t.Errorf("animated SpinFrame(8) = %q, want %q", got, want[1])
 	}
 }
 

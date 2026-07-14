@@ -10,8 +10,11 @@ import (
 	"unicode/utf8"
 )
 
-// SpinFrames traces a one-cell orbit around the edge of a braille cell.
-var SpinFrames = []string{"⠉", "⠸", "⠤", "⠇"}
+// SpinnerWidth is the fixed display width reserved for live-view status marks.
+const SpinnerWidth = 5
+
+// SpinFrames is Box Run: Coop's shared ASCII live-view spinner.
+var SpinFrames = []string{".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."}
 
 // SpinnerEnabled reports whether live views should animate. Freezing keeps the live region and
 // progress updates while avoiding high-frequency terminal redraws in recordings and debuggers.
@@ -20,7 +23,7 @@ func SpinnerEnabled() bool {
 	return v != "0" && v != "false"
 }
 
-// SpinFrame returns the shared orbit frame, pinned to its first cell when animation is disabled.
+// SpinFrame returns the shared Box Run frame, pinned to its first frame when animation is disabled.
 func SpinFrame(spin int) string {
 	if !SpinnerEnabled() || spin < 0 {
 		spin = 0
