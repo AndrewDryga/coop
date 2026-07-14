@@ -231,6 +231,31 @@ func TestRepoRel(t *testing.T) {
 	}
 }
 
+func TestRelativizeRoot(t *testing.T) {
+	const root = "/home/u/proj"
+	for _, tc := range []struct {
+		name, root, command, want string
+	}{
+		{"one repo path", root, "ls /home/u/proj/.agent/tasks/", "ls .agent/tasks/"},
+		{"multiple repo paths", root, "cat /home/u/proj/a /home/u/proj/internal/b", "cat a internal/b"},
+		{"outside path", root, "cat /home/u/other/secret", "cat /home/u/other/secret"},
+		{"sibling sharing prefix", root, "cat /home/u/proj-other/file", "cat /home/u/proj-other/file"},
+		{"empty root disables", "", "ls /home/u/proj/.agent/tasks/", "ls /home/u/proj/.agent/tasks/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := relativizeRoot(tc.root, tc.command); got != tc.want {
+				t.Errorf("relativizeRoot(%q, %q) = %q, want %q", tc.root, tc.command, got, tc.want)
+			}
+		})
+	}
+
+	input := []byte(`{"command":"cd /home/u/proj && cat /home/u/proj/a /home/u/proj/b\nignored"}`)
+	_, label, outside := toolDisplay(root, "Bash", input)
+	if label != "cat a b" || outside {
+		t.Errorf("toolDisplay(Bash) = (%q, outside=%v), want (cat a b, false)", label, outside)
+	}
+}
+
 // With a repo root set, a file tool inside the tree shows a repo-relative path (no mount
 // prefix, no flag); one that escapes it keeps its full path and is flagged with a ⚠.
 func TestStreamDecoderRepoPaths(t *testing.T) {

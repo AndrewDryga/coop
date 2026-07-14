@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop Bash activity keeps the useful part of repo paths visible.** Repeated in-box repo mount
+  prefixes are stripped from streamed Bash command lines before truncation, while absolute paths
+  outside the repo remain untouched.
+
 - **Fork review can prove a rebase and gate before merge.** `coop fork review <name> --gate`
   rebases in a disposable scratch clone, runs the parent's configured gate in the box with the
   candidate mounted read-only, and reports green, red, or conflict. The parent and fork stay

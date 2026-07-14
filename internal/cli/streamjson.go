@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -330,7 +331,7 @@ func toolDisplay(root, name string, input json.RawMessage) (glyph, label string,
 	_ = json.Unmarshal(input, &in)
 	switch name {
 	case "Bash":
-		return "⚙", firstLine(stripLeadingCD(in.Command)), false
+		return "⚙", firstLine(relativizeRoot(root, stripLeadingCD(in.Command))), false
 	case "Edit", "Write", "NotebookEdit":
 		rel, inside := repoRel(root, in.FilePath)
 		return "✎", rel, !inside
@@ -358,6 +359,16 @@ func repoRel(root, p string) (rel string, inside bool) {
 		return p, false // escapes the repo tree
 	}
 	return r, true
+}
+
+// relativizeRoot removes the repeated in-box repo mount prefix from command text. Bash calls can
+// carry several absolute repo paths, so this deliberately stays a plain all-occurrences replace;
+// root plus the path separator keeps sibling paths such as <root>-other intact.
+func relativizeRoot(root, command string) string {
+	if root == "" {
+		return command
+	}
+	return strings.ReplaceAll(command, root+string(os.PathSeparator), "")
 }
 
 // firstLine is s trimmed to its first non-empty line.
