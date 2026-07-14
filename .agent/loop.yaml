@@ -9,16 +9,11 @@
 # sits outside both as the preset's critic — the second critical opinion. No gemini for now.
 
 preflight:
-  # Run the one-shot pre-loop queue tidy (unblocks tasks whose decision.md now has a Resolution;
-  # works no task, changes no code). Default: false.
+  # Run the one-shot pre-loop queue tidy: coop itself returns blocked tasks whose decision.md now
+  # has a Resolution to todo — host-side, no box, no model. (A custom prompt: would spin a box just
+  # for those extra instructions; the LLM self-containment audit that used to live here over-blocked
+  # healthy tasks, so it's gone.)
   enabled: true
-
-  # Extra instructions APPENDED to the built-in cleanup prompt. Default: nothing appended.
-  prompt: |
-    Also hold every 00_todo task to the self-containment contract (AGENTS.md): a fresh agent
-    must be able to work it from task.md + the BOOT files alone. One that can't stand on its
-    own is not ready — move it to 50_blocked with a decision.md naming exactly what's missing
-    (problem? acceptance criteria? approach?). Better one blocked task than one burned iteration.
 
 work:
   # Model ladder for work iterations. Each rung is a TARGET (claude:opus, codex:gpt-5.6-luna) or a
