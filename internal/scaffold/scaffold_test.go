@@ -192,9 +192,11 @@ func TestInit(t *testing.T) {
 	// Core files exist with content.
 	for _, rel := range []string{
 		"AGENTS.md", ".agent/tasks/README.md",
-		".agent/claude/settings.json", ".agent/claude/hooks/stop-guard.sh", ".agent/claude/hooks/commit-gate.sh",
-		".claude/settings.json", ".claude/hooks/stop-guard.sh", ".claude/hooks/commit-gate.sh",
+		".agent/skills/sweep/queue-guard.sh",
+		".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh",
+		".claude/settings.json", ".claude/hooks/commit-gate.sh",
 		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
+		".agent/skills/sweep/queue-guard.sh",
 		".githooks/pre-commit",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
@@ -233,13 +235,15 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// Hooks are executable.
-	if fi, _ := os.Stat(filepath.Join(repo, ".claude/hooks/stop-guard.sh")); fi != nil && fi.Mode()&0o100 == 0 {
-		t.Error("stop-guard.sh is not executable")
-	}
-	for _, rel := range []string{".agent/claude/hooks/stop-guard.sh", ".agent/claude/hooks/commit-gate.sh"} {
+	// Hooks are executable; the old project-global Stop guard is not scaffolded.
+	for _, rel := range []string{".agent/claude/hooks/commit-gate.sh", ".claude/hooks/commit-gate.sh"} {
 		if fi, _ := os.Stat(filepath.Join(repo, rel)); fi == nil || fi.Mode()&0o100 == 0 {
 			t.Errorf("%s is missing or not executable", rel)
+		}
+	}
+	for _, rel := range []string{".agent/claude/hooks/stop-guard.sh", ".claude/hooks/stop-guard.sh"} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); !os.IsNotExist(err) {
+			t.Errorf("retired global hook %s should not be scaffolded", rel)
 		}
 	}
 	sharedSettings, err := os.ReadFile(filepath.Join(repo, ".agent/claude/settings.json"))
@@ -252,6 +256,11 @@ func TestInit(t *testing.T) {
 		}
 	}
 	assertClaudeHookFallbacks(t, sharedSettings)
+	projectSettings, err := os.ReadFile(filepath.Join(repo, ".claude/settings.json"))
+	if err != nil || !json.Valid(projectSettings) {
+		t.Fatalf("project Claude settings are missing or invalid JSON: %v\n%s", err, projectSettings)
+	}
+	assertNoClaudeStopHook(t, projectSettings)
 	if fi, _ := os.Stat(filepath.Join(repo, ".githooks/pre-commit")); fi != nil && fi.Mode()&0o100 == 0 {
 		t.Error(".githooks/pre-commit is not executable")
 	}
@@ -329,7 +338,8 @@ func assertClaudeHookFallbacks(t *testing.T, data []byte) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatal(err)
 	}
-	for event, script := range map[string]string{"Stop": "stop-guard.sh", "PreToolUse": "commit-gate.sh"} {
+	assertNoClaudeStopHook(t, data)
+	for event, script := range map[string]string{"PreToolUse": "commit-gate.sh"} {
 		groups := settings.Hooks[event]
 		if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Command == "" {
 			t.Fatalf("%s fallback command missing from settings: %s", event, data)
@@ -374,6 +384,19 @@ func assertClaudeHookFallbacks(t *testing.T, data []byte) {
 				}
 			})
 		}
+	}
+}
+
+func assertNoClaudeStopHook(t *testing.T, data []byte) {
+	t.Helper()
+	var settings struct {
+		Hooks map[string]json.RawMessage `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := settings.Hooks["Stop"]; ok {
+		t.Fatalf("project-global Stop hook should be absent from settings: %s", data)
 	}
 }
 
@@ -639,9 +662,12 @@ func TestInitAgentDirsGating(t *testing.T) {
 	if !exists(filepath.Join(repo2, ".agent", "rules")) {
 		t.Error(".agent/ is always scaffolded even with no agents")
 	}
-	for _, rel := range []string{".agent/claude/settings.json", ".agent/claude/hooks/stop-guard.sh", ".agent/claude/hooks/commit-gate.sh"} {
+	for _, rel := range []string{".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh"} {
 		if !exists(filepath.Join(repo2, rel)) {
 			t.Errorf("shared Claude fallback %s should be scaffolded with no per-agent dirs", rel)
 		}
+	}
+	if exists(filepath.Join(repo2, ".agent/claude/hooks/stop-guard.sh")) {
+		t.Error("shared Claude fallback should not scaffold the retired global Stop guard")
 	}
 }

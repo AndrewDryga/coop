@@ -43,6 +43,7 @@ func commitsForTask(repo, rangeExpr, id string) []string {
 var gateGuardGlobs = []string{
 	"Makefile", "makefile", "GNUmakefile",
 	".agent/project.yaml", ".agent/loop.yaml",
+	".agent/skills/sweep/",
 	".claude/hooks/", ".claude/settings.json", ".claude/settings.local.json",
 	".github/workflows/",
 }

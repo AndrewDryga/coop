@@ -1027,10 +1027,10 @@ so a fresh run starts from a tidy queue. It works no
 task and makes no commits, and it's the symmetric front bookend to the review pass. Off
 by default.
 
-`init` also installs a `Stop` hook (won't let a session end with work outstanding) and a
-fast Claude commit-gate hook. Because those are Claude-only, `init` *also* installs a
-tracked git pre-commit gate (`.githooks/pre-commit`) and points `core.hooksPath` at
-it, so the format check runs for *every* committer — Codex, Gemini, and a plain
+The `/sweep` skill carries a scoped `Stop` hook, so only an active sweep is held while actionable
+tasks remain. `init` also installs a fast Claude commit-gate hook. Because that is Claude-only,
+`init` *also* installs a tracked git pre-commit gate (`.githooks/pre-commit`) and points
+`core.hooksPath` at it, so the format check runs for *every* committer — Codex, Gemini, and a plain
 `git commit` — and rides along on a fresh clone. A custom `core.hooksPath` is left
 untouched; skip the gate once with `git commit --no-verify`.
 
@@ -1085,7 +1085,7 @@ for changes that span members.
 writes the `project.yaml`, and scaffolds each member with just its own task queue —
 members share the root's AGENTS.md, skills, rules, and box, though a large member may
 commit its own `rules/` if it wants them. `coop tasks queues` prints the resolved queue
-paths when a script (or the Stop hook) needs them.
+paths when a script (such as the sweep queue guard) needs them.
 
 ### A fleet
 

@@ -395,7 +395,7 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
   split <n>        slice the todo tasks into n copy-trees (.agent/tasks.sliceN); loop one fork per slice
-  queues           print each configured queue's path, one per line (for scripts and the Stop hook)
+  queues           print each configured queue's path, one per line (for scripts and the sweep guard)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.

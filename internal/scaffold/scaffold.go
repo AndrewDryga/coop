@@ -71,16 +71,14 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		// Claude fallback adapter: coop copies these user-level into a box only when the matching
 		// project artifact is absent. The project .claude/ adapter below remains authoritative.
 		{filepath.Join(repo, ".agent", "claude", "settings.json"), "templates/agent/claude/settings.json", 0o644},
-		{filepath.Join(repo, ".agent", "claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
 	}
 	if has("claude") {
-		// Claude's settings + stop-guard hook, and the starter subagents for the orchestrator pattern
+		// Claude's settings and starter subagents for the orchestrator pattern
 		// (the lead delegates reasoning-heavy phases to an Opus-pinned specialist and mechanical work to
 		// a Sonnet-pinned one). Native Claude Code files — inert until a task fits their frontmatter.
 		// commit-gate.sh is generated per-stack in installGitHooks, not copied verbatim.
 		files = append(files,
 			scaffFile{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644},
-			scaffFile{filepath.Join(repo, ".claude", "hooks", "stop-guard.sh"), "templates/claude/hooks/stop-guard.sh", 0o755},
 			scaffFile{filepath.Join(repo, ".claude", "agents", "deep-reasoner.md"), "templates/claude/agents/deep-reasoner.md", 0o644},
 			scaffFile{filepath.Join(repo, ".claude", "agents", "fast-worker.md"), "templates/claude/agents/fast-worker.md", 0o644},
 		)

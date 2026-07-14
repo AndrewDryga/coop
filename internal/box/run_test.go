@@ -959,7 +959,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	writeSource := func(t *testing.T, repo string) {
 		t.Helper()
 		write(t, repo, ".agent/claude/settings.json", settingsBody, 0o644)
-		write(t, repo, ".agent/claude/hooks/stop-guard.sh", hookBody, 0o755)
+		write(t, repo, ".agent/claude/hooks/commit-gate.sh", hookBody, 0o755)
 	}
 	targets := func(mounts []extraMount) map[string]string {
 		out := map[string]string{}
@@ -1014,7 +1014,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		if dirExists(filepath.Join(filepath.Dir(settingsHost), "hooks")) {
 			t.Fatal("settings temp copy must contain only settings.json, not the hooks tree")
 		}
-		hookPath := filepath.Join(hooksHost, "stop-guard.sh")
+		hookPath := filepath.Join(hooksHost, "commit-gate.sh")
 		if got, err := os.ReadFile(hookPath); err != nil || string(got) != hookBody {
 			t.Fatalf("hook copy = %q, %v; want exact source bytes", got, err)
 		}
@@ -1031,7 +1031,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		if got, _ := os.ReadFile(filepath.Join(repo, ".agent/claude/settings.json")); string(got) != settingsBody {
 			t.Fatalf("source settings mutated through temp copy: %q", got)
 		}
-		if got, _ := os.ReadFile(filepath.Join(repo, ".agent/claude/hooks/stop-guard.sh")); string(got) != hookBody {
+		if got, _ := os.ReadFile(filepath.Join(repo, ".agent/claude/hooks/commit-gate.sh")); string(got) != hookBody {
 			t.Fatalf("source hook mutated through temp copy: %q", got)
 		}
 	})
@@ -1040,7 +1040,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		repo := t.TempDir()
 		writeSource(t, repo)
 		write(t, repo, ".claude/settings.json", `{"project":true}`, 0o644)
-		write(t, repo, ".claude/hooks/stop-guard.sh", hookBody, 0o755)
+		write(t, repo, ".claude/hooks/commit-gate.sh", hookBody, 0o755)
 		if got, dirs := synthHomeFallbackMounts(repo, home, []string{"claude"}); got != nil || dirs != nil {
 			t.Fatalf("project artifacts should suppress synthesis, got mounts=%v dirs=%v", got, dirs)
 		}
@@ -1060,7 +1060,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 
 		hooksOnly := t.TempDir()
 		writeSource(t, hooksOnly)
-		write(t, hooksOnly, ".claude/hooks/stop-guard.sh", hookBody, 0o755)
+		write(t, hooksOnly, ".claude/hooks/commit-gate.sh", hookBody, 0o755)
 		got, dirs = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
 		cleanup(t, dirs)
 		byTarget = targets(got)
@@ -1086,7 +1086,7 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		}
 
 		hooksOnly := t.TempDir()
-		write(t, hooksOnly, ".agent/claude/hooks/stop-guard.sh", hookBody, 0o755)
+		write(t, hooksOnly, ".agent/claude/hooks/commit-gate.sh", hookBody, 0o755)
 		got, dirs = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
 		cleanup(t, dirs)
 		byTarget = targets(got)
@@ -1127,7 +1127,7 @@ func TestRunSynthesizesClaudeConfigForClaudeScope(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			repo := t.TempDir()
 			write(t, repo, ".agent/claude/settings.json", `{"hooks":{}}`, 0o644)
-			write(t, repo, ".agent/claude/hooks/stop-guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
+			write(t, repo, ".agent/claude/hooks/commit-gate.sh", "#!/bin/sh\nexit 0\n", 0o755)
 			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
 			recorder := filepath.Join(t.TempDir(), "runtime-args")
 			spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"true"}, Agent: c.agent, Homes: true, Batch: true, Quiet: true}

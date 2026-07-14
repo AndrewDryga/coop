@@ -1,15 +1,21 @@
 ---
 name: sweep
-description: Drain this repo's .agent/tasks/ queue autonomously and run-to-completion, taking EACH task to a ship-ready bar — claim a 00_todo/ task (`coop tasks claim`), build it, gate it green, self-review it against the .agent/rules KB and every hat, ITERATE until clean, COMMIT it on its own, then `coop tasks done` — without quitting early. Arms the Stop-hook sentinel. Use to "work all the tasks" / drain a backlog / run an unattended sweep.
+description: Drain this repo's .agent/tasks/ queue autonomously and run-to-completion, taking EACH task to a ship-ready bar — claim a 00_todo/ task (`coop tasks claim`), build it, gate it green, self-review it against the .agent/rules KB and every hat, ITERATE until clean, COMMIT it on its own, then `coop tasks done` — without quitting early. Use to "work all the tasks" / drain a backlog / run an unattended sweep.
 argument-hint: "[optional note or filter]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: 'bash "$CLAUDE_PROJECT_DIR/.agent/skills/sweep/queue-guard.sh"'
 ---
 
 # /sweep — drain the queue to a ship-ready bar, one commit per task
 
-Run the work loop to completion with the Stop hook armed, so it can't quit while
-work remains. Scope: this repo's `.agent/tasks/` (a task is a folder; its state is
-its directory — `coop tasks` lists and moves them).
+Run the work loop to completion. Claude scopes the queue Stop hook above to this skill's
+lifetime; runtimes with a persistent goal/tracker use that too. Scope: this repo's
+`.agent/tasks/` (a task is a folder; its state is its directory — `coop tasks` lists
+and moves them).
 
 **Be agentic.** Each task is taken to a **ship-ready** bar: built, gated, then
 *self-reviewed from every angle it touches and iterated until clean* — and only
@@ -18,14 +24,12 @@ this in review from every hat **and it breaks no house rule.**" The house rules
 are the spine: this repo's `AGENTS.md` and the worked examples in `.agent/rules/`.
 Build *to* them, then *check the diff against them*.
 
-## 1. Arm
-- `printf '%s' "$CLAUDE_CODE_SESSION_ID" > .agent/active` — arms the Stop hook for THIS
-  session (writing your own id also reclaims a stale marker). Until you remove it, trying to stop
-  while any task remains in `00_todo/` is blocked. (It's git-ignored.)
+## 1. Prepare
+- Set the runtime's persistent goal/tracker when it exists: do not stop until every task that was
+  in scope is committed and archived, and both `00_todo/` and `10_in_progress/` are empty.
 - Read `AGENTS.md` in full (the gate **and** the contract), `.agent/tasks/README.md`,
   and every `.agent/rules/*.md` (the taste KB). Run `coop tasks` to announce the
   queue and the open `00_todo/` count.
-- Optionally set a `/goal` to harden "don't stop early" on top of the sentinel.
 
 ## 2. The loop — claim the next task, repeat until 00_todo/ and 10_in_progress/ are empty
 1. **Claim** — `coop tasks claim <id>` (moves `00_todo/` → `10_in_progress/`) *first*, so a
@@ -49,8 +53,8 @@ Build *to* them, then *check the diff against them*.
    don't derail the current task.
 
 ## 3. Finish
-- When `00_todo/` and `10_in_progress/` are empty, `rm -f .agent/active` to disarm, then run
-  a completeness pass: re-check every task you moved to `99_done/` against `git log` —
+- When `00_todo/` and `10_in_progress/` are empty, run a completeness pass: re-check every task
+  you moved to `99_done/` against `git log` —
   gate green *and* a commit exists. Reopen anything that doesn't hold up with
   `coop tasks claim <id>` (back to `10_in_progress/`), and go again.
 - Report: tasks shipped, anything parked in the backlog or `50_blocked/`, gate status.

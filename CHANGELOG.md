@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Queue completion enforcement is scoped to `/sweep`.** The project-global Claude Stop hook and
+  its `.agent/active` sentinel are retired, so loops and unrelated sessions are never held by stale
+  sweep state. The sweep skill's own hook now blocks while either todo or in-progress tasks remain
+  across every configured or mounted queue.
+
 - **Task lifecycle changes stand out in the loop live view.** In-box folder moves now read as
   claim, queue, done, block, or unblock events; task/log/state/decision edits name the task instead
   of showing a long mount path, and setup-only task-directory creation recedes to a short line.

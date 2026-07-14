@@ -242,7 +242,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	}
 	if sub == "queues" {
 		// Print each configured queue's absolute path, one per line — a stable primitive for scripts
-		// and the Stop hook, which counts 00_todo across them so a monorepo /sweep sees every queue.
+		// and the sweep queue guard, which counts actionable tasks across every queue.
 		for _, rel := range rels {
 			fmt.Println(filepath.Join(repo, rel))
 		}
