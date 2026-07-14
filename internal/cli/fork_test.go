@@ -39,24 +39,23 @@ func TestForkTypoSuggestsSubcommand(t *testing.T) {
 }
 
 func TestValidForkName(t *testing.T) {
-	for _, n := range []string{"perf", "deps", "fix-1", "a.b"} {
+	for _, n := range []string{"perf", "deps", "fix-1", "fix_2", "a.b"} {
 		if !validForkName(n) {
 			t.Errorf("validForkName(%q) = false, want true", n)
 		}
 	}
-	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "acp", "a/b", `a\b`, "..", ".", "-x",
-		"my fork", "a\tb", "a\nb", "a=b"} { // whitespace / '=' break the git branch + fleet-file round-trip
+	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "acp", "a/b", `a\b`, "..", ".", ".hidden", "a..b", "a.", "a.lock", "-x",
+		"my fork", "a\tb", "a\nb", "a=b", "a;b", "a$(id)", "a`id`", "a|b", "a&b", `a'b`, `a"b`} {
 		if validForkName(n) {
 			t.Errorf("validForkName(%q) = true, want false", n)
 		}
 	}
 }
 
-// Regression (P0 data-loss): a fork name that escapes the forks home (`..`, `../coop`) or isn't a
-// single safe segment (`.`, `a/b`) must be refused by EVERY name-taking verb before it can reach
-// forkWorkspace → destroyFork → os.RemoveAll. `coop fork rm ..` used to filepath.Join-clean to the
-// parent of all projects (pathExists true, so the "no such fork" guard missed it) and delete it.
-// Each guard runs before box.ResolveRepo, so an unsafe name returns without touching the filesystem.
+// Regression: a fork name that escapes the forks home or carries shell syntax must be refused by
+// EVERY name-taking verb before it reaches a workspace, subprocess, or runtime call. `coop fork rm
+// ..` used to filepath.Join-clean to the parent of all projects and delete it. Each guard runs before
+// box.ResolveRepo, so an unsafe name returns without touching the filesystem.
 func TestForkVerbsRejectUnsafeName(t *testing.T) {
 	repo := t.TempDir()
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -64,11 +63,15 @@ func TestForkVerbsRejectUnsafeName(t *testing.T) {
 		"rm": a.forkRm, "stop": a.forkStop, "open": a.forkOpenEditor,
 		"logs": a.forkLogs, "review": a.forkReview, "path": a.forkPath, "merge": a.forkMerge,
 	}
-	for _, name := range []string{".", "..", "../coop", "a/b"} {
+	for _, name := range []string{
+		".", "..", "../coop", "a/b", "bad name", "bad;name", "bad$(id)", "bad`id`",
+		"bad|name", "bad&name", `bad'name`, `bad"name`, "bad\nname", "-bad",
+	} {
 		for verb, fn := range verbs {
 			code, err := fn([]string{name})
-			if code != 2 || err == nil || !strings.Contains(err.Error(), "invalid fork name") {
-				t.Errorf("fork %s %q = (%d, %v), want (2, invalid fork name)", verb, name, code, err)
+			wantInvalidName := !strings.HasPrefix(name, "-")
+			if code != 2 || err == nil || (wantInvalidName && !strings.Contains(err.Error(), "invalid fork name")) {
+				t.Errorf("fork %s %q = (%d, %v), want an exit-2 rejection before side effects", verb, name, code, err)
 			}
 		}
 		// --fresh recreates a fork (clone + destroy); it routes through forkCreate, which rejects the
@@ -782,13 +785,15 @@ func TestResolveEditor(t *testing.T) {
 func TestRunReviewCmd(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.txt")
-	// COOP_REVIEW_CMD runs via sh -c and must see the fork path/name/ref in env.
+	// COOP_REVIEW_CMD runs via sh -c, but the fork name is environment data, never shell source.
+	// Use command-substitution syntax here so a future interpolation would be immediately visible.
+	name := `$(printf injected)`
 	a := &app{cfg: &config.Config{ReviewCmd: `printf '%s|%s' "$COOP_FORK_NAME" "$COOP_FORK_PATH" > ` + out}}
-	if code, err := a.runReviewCmd(dir, "/the/fork", "demo", "review/demo"); err != nil || code != 0 {
+	if code, err := a.runReviewCmd(dir, "/the/fork", name, "review/demo"); err != nil || code != 0 {
 		t.Fatalf("runReviewCmd = (%d, %v), want (0, nil)", code, err)
 	}
-	if data, _ := os.ReadFile(out); string(data) != "demo|/the/fork" {
-		t.Errorf("COOP_REVIEW_CMD env not passed: got %q, want %q", data, "demo|/the/fork")
+	if data, _ := os.ReadFile(out); string(data) != name+"|/the/fork" {
+		t.Errorf("COOP_REVIEW_CMD env not passed literally: got %q, want %q", data, name+"|/the/fork")
 	}
 }
 

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork names are shell-inert by construction.** The accepted grammar is now the small ASCII set
+  used by normal branch segments (letters, digits, `.`, `_`, and `-`), so shell metacharacters are
+  rejected before any workspace, subprocess, or runtime operation. Every execution boundary still
+  passes the name as argv or environment data rather than interpolating it into shell source.
+
 - **A Claude box gets settings and hooks from the `.agent/` cornerstone.** `coop init` now keeps
   fallback Claude settings and stack-aware hooks under `.agent/claude/`. When a repo omits the
   matching project `.claude/` artifact, Coop mounts an ephemeral user-level copy for that run;

@@ -61,17 +61,25 @@ func forkWorkspace(repo, name string) string {
 	return filepath.Join(forkHome(repo), name)
 }
 
-// validForkName keeps a name to a single safe path/branch segment.
+// validForkName keeps a name to a single shell-inert path/branch segment. Fork names are passed as
+// argv at every subprocess boundary, but the narrow grammar is defense in depth for rendered
+// recovery commands and any future call site that accidentally crosses a shell.
 func validForkName(name string) bool {
 	if name == "" || forkReserved(name) {
 		return false
 	}
-	if name == "." || name == ".." || strings.HasPrefix(name, "-") {
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") ||
+		strings.HasSuffix(name, ".lock") || strings.Contains(name, "..") {
 		return false
 	}
-	// A fork name is also a git branch and a whitespace-/`=`-delimited token in .agent/fleet, so
-	// whitespace or `=` would break the fleet-file round-trip (parseFleet re-splits on Fields).
-	return !strings.ContainsAny(name, "/\\ \t\r\n=")
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
@@ -284,7 +292,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 		}
 	}
 	if !validForkName(fa.name) {
-		return fa, fmt.Errorf("invalid fork name %q (no slashes, not a reserved verb)", fa.name)
+		return fa, fmt.Errorf("invalid fork name %q (use letters, digits, '.', '_', or '-'; not a reserved verb)", fa.name)
 	}
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
