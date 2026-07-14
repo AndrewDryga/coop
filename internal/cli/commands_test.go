@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/preset"
 )
 
 // The loop's closing banner must not claim "verified done" when the signoff reopened work — which it
@@ -75,14 +77,14 @@ func TestLoopExitCode(t *testing.T) {
 // unable to read their own queue (claude resolved it against cwd and was fine).
 func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	repo := "/home/node/proj"
-	work := loopWorkPrompt(repo, []string{".agent/tasks"}, "task-42")
+	work := loopWorkPrompt(repo, []string{".agent/tasks"}, "task-42", "claude", nil, nil)
 	for _, want := range []string{"/home/node/proj/.agent/tasks", "/home/node/proj/AGENTS.md"} {
 		if !strings.Contains(work, want) {
 			t.Errorf("work prompt missing absolute %q:\n%s", want, work)
 		}
 	}
 	// Several queues (a monorepo's per-component trees) are all listed, each absolute.
-	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"}, "task-42")
+	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"}, "task-42", "claude", nil, nil)
 	for _, want := range []string{"/home/node/proj/portal/.agent/tasks", "/home/node/proj/runner/.agent/tasks"} {
 		if !strings.Contains(multi, want) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
@@ -90,6 +92,48 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 	if review := loopSignoffPrompt(repo, []string{".agent/tasks"}, "", []string{"t1 — /home/node/proj/.agent/tasks/99_done/t1"}); !strings.Contains(review, "/home/node/proj/.agent/tasks") {
 		t.Errorf("review prompt should name the absolute queue:\n%s", review)
+	}
+}
+
+func TestLoopWorkPromptPeerCapabilities(t *testing.T) {
+	withoutPeers := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil)
+	for _, want := range []string{"no peer wrappers are mounted", "`coop-consult` and `coop-delegate` are unavailable", "do not invoke or probe them"} {
+		if !strings.Contains(withoutPeers, want) {
+			t.Errorf("no-peer work prompt missing %q:\n%s", want, withoutPeers)
+		}
+	}
+
+	peers := []agents.Target{
+		{Provider: "codex", Model: "gpt-5.5"},
+		{Provider: "gemini"},
+	}
+	withPeers := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", peers, nil)
+	for _, want := range []string{
+		"`coop-consult` is available", "configured read-only targets only", "codex:gpt-5.5, gemini",
+		"`coop-delegate` is unavailable", "do not invoke it", "Do not assume any other peers or preset roles are mounted",
+	} {
+		if !strings.Contains(withPeers, want) {
+			t.Errorf("configured-peer work prompt missing %q:\n%s", want, withPeers)
+		}
+	}
+	for _, role := range []string{"thinker", "critic", "fast"} {
+		if strings.Contains(withPeers, role) {
+			t.Errorf("configured-peer work prompt claims arbitrary role %q is available:\n%s", role, withPeers)
+		}
+	}
+
+	rolePreset := &preset.Preset{Roles: []preset.Role{
+		{Name: "critic", Mode: preset.ModeConsult},
+		{Name: "fast", Mode: preset.ModeDelegate},
+	}}
+	withRoles := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", peers, rolePreset)
+	for _, want := range []string{"read-only targets only: critic", "write-capable roles only: fast"} {
+		if !strings.Contains(withRoles, want) {
+			t.Errorf("preset work prompt missing actual role capability %q:\n%s", want, withRoles)
+		}
+	}
+	if strings.Contains(withRoles, "codex:gpt-5.5") || strings.Contains(withRoles, "gemini") {
+		t.Errorf("preset work prompt should report preset routing, not ignored generic peers:\n%s", withRoles)
 	}
 }
 
@@ -113,7 +157,7 @@ func TestDropDashDash(t *testing.T) {
 // state.md + the git diff, finalize state.md (never blank it), and work ONE task per run then stop
 // so the loop re-invokes a fresh agent for the next — not one agent draining the queue itself.
 func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
-	work := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42")
+	work := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil)
 	for _, want := range []string{
 		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/", "into 50_blocked/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
