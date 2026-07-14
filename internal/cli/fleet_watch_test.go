@@ -84,6 +84,22 @@ func TestFleetDashboard(t *testing.T) {
 
 // When nothing is running, the roll-up bar must not animate a spinner — the spinner implies
 // motion, so a still fleet leads with the idle ‖ (or ✓ when all done), matching the per-fork rows.
+// Per-fork cost shows on its row; the fleet total sums into the roll-up bar. A fork with no cost
+// shows no dollar cell.
+func TestFleetDashboardCost(t *testing.T) {
+	rows := []fleetRow{
+		{name: "api", agent: "claude", running: true, counts: taskCounts{Done: 2, Todo: 1}, cost: 12.50},
+		{name: "deps", agent: "codex", running: false, counts: taskCounts{Done: 3}, cost: 4.00},
+		{name: "web", agent: "gemini", running: false, counts: taskCounts{Todo: 5}}, // no cost → no $ cell
+	}
+	joined := strings.Join(fleetDashboard("r", rows, 0), "\n")
+	for _, want := range []string{"$12.50", "$4.00", "$16.50"} { // two per-fork rows + the fleet total
+		if !strings.Contains(joined, want) {
+			t.Errorf("cost dashboard missing %q\n%s", want, joined)
+		}
+	}
+}
+
 func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
 	const spin0 = "⠋" // ui.SpinFrames[0] — what a running bar shows at spin=0
 	bar := func(rows []fleetRow) string {

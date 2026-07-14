@@ -33,6 +33,7 @@ type fleetRow struct {
 	counts  taskCounts
 	active  string
 	lastLog string
+	cost    float64 // the fork's total spend across its loop runs (from its COOP_RUN_ID telemetry), 0 if none
 }
 
 func gatherFleetRow(repo, name string) fleetRow {
@@ -46,6 +47,7 @@ func gatherFleetRow(repo, name string) fleetRow {
 		counts:  counts,
 		active:  active,
 		lastLog: lastLogLine(forkLog(repo, name)),
+		cost:    costForRepo(ws).total.usd,
 	}
 }
 
@@ -146,6 +148,7 @@ func fleetSettled(rows []fleetRow) bool {
 // Pure (it takes the already-gathered rows) so it unit-tests without a real fleet.
 func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	var running, blocked, done, total int
+	var totalCost float64
 	// Size the done/total column to the widest count actually present (min "0/0"), so every count
 	// sits one space off its bar and the column that follows still lines up — instead of a fixed
 	// gap wide enough for "999/999" that no one has.
@@ -157,6 +160,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 		blocked += r.counts.Blocked
 		done += r.counts.Done
 		total += r.counts.total()
+		totalCost += r.cost
 		if w := len(fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total())); w > countW {
 			countW = w
 		}
@@ -168,6 +172,9 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
 	bar := fmt.Sprintf("%s %s %s tasks · %d running · %s blocked",
 		stateGlyph(running > 0, done, total, spin), ui.ProgressBarStates(done, blocked, total, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
+	if totalCost > 0 {
+		bar += fmt.Sprintf(" · $%.2f", totalCost)
+	}
 
 	out := make([]string, 0, len(body)+4)
 	out = append(out, header, "")
@@ -227,6 +234,9 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	}
 	line := fmt.Sprintf("%s %s %-*s %s %-*s  %s",
 		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBarStates(r.counts.Done, r.counts.Blocked, total, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
+	if r.cost > 0 {
+		line += "  " + ui.Dim(fmt.Sprintf("$%.2f", r.cost))
+	}
 	if r.lastLog != "" {
 		line += "  " + ui.Dim(truncate(r.lastLog, 44))
 	}

@@ -112,3 +112,33 @@ func TestReadStageRecordsMissing(t *testing.T) {
 		t.Errorf("missing run file should read nil, got %v", recs)
 	}
 }
+
+// costForRepo sums every run under a clone (a fork loops across runs) — stage records from all
+// *.jsonl plus peer rows from all *.peers.jsonl. A repo with no runs dir yields a zero cost.
+func TestCostForRepo(t *testing.T) {
+	repo := t.TempDir()
+	if err := appendStageRecord(repo, "run1", stageRecord{Stage: "work", Provider: "claude", Model: "fable-5", CostUSD: 3.0, InTok: 100, OutTok: 10, Finished: []string{"t1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendStageRecord(repo, "run2", stageRecord{Stage: "work", Provider: "claude", Model: "fable-5", CostUSD: 2.0, InTok: 50, OutTok: 5, Finished: []string{"t2"}}); err != nil {
+		t.Fatal(err)
+	}
+	peerLine, _ := json.Marshal(peerRecord{Run: "run2", Provider: "codex", Model: "gpt-5.6-terra", In: 1000, Out: 20})
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "runs", "run2.peers.jsonl"), append(peerLine, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rc := costForRepo(repo)
+	if rc.total.usd != 5.0 {
+		t.Errorf("total cost = %v, want 5.0 (across both runs)", rc.total.usd)
+	}
+	if len(rc.byModel) != 2 {
+		t.Fatalf("byModel = %+v, want claude + the codex peer", rc.byModel)
+	}
+	if rc.byModel[0].model != "claude:fable-5" || rc.byModel[0].cost.usd != 5.0 {
+		t.Errorf("byModel[0] = %+v, want claude:fable-5 $5.0", rc.byModel[0])
+	}
+	if rc := costForRepo(t.TempDir()); rc.total.usd != 0 {
+		t.Errorf("a clone with no runs dir = %v, want zero cost", rc.total.usd)
+	}
+}

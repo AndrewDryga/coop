@@ -747,6 +747,9 @@ func (a *app) forkReview(args []string) (int, error) {
 	}
 	ref := "review/" + name
 	a.forkBrief(repo, ws, name, ref)
+	if s := costSummary(costForRepo(ws)); s != "" {
+		ui.Info("cost: %s", s)
+	}
 
 	switch {
 	case open: // open the fork in your IDE; review via its SCM panel

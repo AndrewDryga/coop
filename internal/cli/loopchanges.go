@@ -351,3 +351,24 @@ func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string, cost runCos
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// costSummary renders a cost as one compact line — total $, tokens, and the by-model split when more
+// than one model ran — for fork review/merge (the digest's one-liner form). Empty when nothing costed.
+func costSummary(rc runCost) string {
+	if rc.total.usd == 0 && rc.total.inTok == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("$%.2f · %s in / %s out", rc.total.usd, humanTokens(rc.total.inTok), humanTokens(rc.total.outTok))
+	if len(rc.byModel) > 1 {
+		parts := make([]string, len(rc.byModel))
+		for i, m := range rc.byModel {
+			price := "—"
+			if m.cost.usd > 0 {
+				price = fmt.Sprintf("$%.2f", m.cost.usd)
+			}
+			parts[i] = m.model + " " + price
+		}
+		s += " · " + strings.Join(parts, " · ")
+	}
+	return s
+}

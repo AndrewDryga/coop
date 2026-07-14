@@ -178,6 +178,27 @@ func readPeerRecords(repo, run string) []peerRecord {
 	return recs
 }
 
+// costForRepo aggregates EVERY run's telemetry under repo (.agent/runs/*.jsonl + the matching
+// *.peers.jsonl) into one runCost — a fork/clone's total spend across all its loop runs, for the
+// fleet board and fork review/merge. Best-effort: no runs dir → a zero runCost.
+func costForRepo(repo string) runCost {
+	entries, err := os.ReadDir(filepath.Join(repo, ".agent", "runs"))
+	if err != nil {
+		return runCost{byTask: map[string]stageCost{}}
+	}
+	var stages []stageRecord
+	var peers []peerRecord
+	for _, e := range entries {
+		switch n := e.Name(); {
+		case strings.HasSuffix(n, ".peers.jsonl"):
+			peers = append(peers, readPeerRecords(repo, strings.TrimSuffix(n, ".peers.jsonl"))...)
+		case strings.HasSuffix(n, ".jsonl"):
+			stages = append(stages, readStageRecords(repo, strings.TrimSuffix(n, ".jsonl"))...)
+		}
+	}
+	return costFromRecords(stages, peers)
+}
+
 // costFromRecords aggregates telemetry into a runCost: every stage's cost/tokens sum into the total,
 // and a stage that carries cost is attributed to the task(s) it finished (split evenly on the rare
 // multi-finish; cost with no finished task lands in the total only). In-turn consult/delegate peers

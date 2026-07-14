@@ -379,6 +379,9 @@ func (a *app) forkMerge(args []string) (int, error) {
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	ui.Info("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
+	if s := costSummary(costForRepo(ws)); s != "" {
+		ui.Info("fork cost: %s", s)
+	}
 	if !approve("rebase and land?", yes) {
 		return 0, nil
 	}
