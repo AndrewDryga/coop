@@ -139,10 +139,19 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 // the queue paths + reopen mechanics.
 func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"}, "Drop stale screenshots.\n")
-	for _, want := range []string{"do NOT work any task", "no commits", "The cleanup to do: Drop stale screenshots.", "/repo/.agent/tasks"} {
+	for _, want := range []string{
+		"do NOT work any task", "write code", "run the gate", "no commits",
+		"/repo/AGENTS.md", "`coop` is NOT installed in this box",
+		"move task folders between the queue's state dirs ONLY as the cleanup instructions below direct",
+		"never start working a task's content", "The cleanup to do: Drop stale screenshots.",
+		"/repo/.agent/tasks",
+	} {
 		if !strings.Contains(pre, want) {
 			t.Errorf("preflight prompt missing %q:\n%s", want, pre)
 		}
+	}
+	if strings.Contains(pre, "Leave every 00_todo/ and 10_in_progress/ task untouched") {
+		t.Errorf("preflight prompt still forbids the queue moves its cleanup may require:\n%s", pre)
 	}
 	rev := loopSignoffPrompt("/repo", []string{".agent/tasks"}, "", []string{"t1 — /repo/.agent/tasks/99_done/t1"})
 	// The demanding default prompt: a header scoping the review to what THIS RUN completed (never

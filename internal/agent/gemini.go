@@ -113,9 +113,14 @@ func (geminiAgent) CredentialEnvKeys() []string {
 	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
 }
 
-// MCP merges the shared servers into gemini's settings.json.
+// MCP builds the settings mounted inside a gemini box: the host settings plus the
+// box-only file-filtering override, and shared servers only when MCP is active.
 func (geminiAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
-	gm, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
+	mcpFile := ""
+	if cfg.MCPActive() {
+		mcpFile = cfg.MCPFile
+	}
+	gm, err := mcp.GenerateGemini(mcpFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
 	if err != nil {
 		return nil, err
 	}

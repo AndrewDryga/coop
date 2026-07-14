@@ -200,7 +200,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	// Generate MCP configs into temp files that live for the container's run.
+	// Generate agent configs into temp files that live for the container's run.
 	var tmpFiles []string
 	var tmpDirs []string
 	defer func() {
@@ -213,25 +213,33 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}()
 	var mcpMounts []extraMount
 	mcpPresent := spec.Homes && cfg.MCPActive()
-	if mcpPresent {
-		// Each agent's adapter says how it consumes the shared mcp.json (a generated
-		// config to mount, or none — claude reads it raw via --mcp-config, below).
-		for _, name := range agents.Names() {
-			ag, _ := agents.Get(name)
-			gen, genErr := ag.MCP(cfg)
-			if genErr != nil {
+	configAgents := agents.Names()
+	configForAgent := cfg
+	if !mcpPresent {
+		// Without shared MCP, ask only adapters whose homes this box mounts. Most return
+		// nothing (or require MCP); an adapter may still supply an always-on box config.
+		configAgents = credentialScope(cfg, spec)
+		withoutMCP := *cfg
+		withoutMCP.MCPFile = ""
+		configForAgent = &withoutMCP
+	}
+	for _, name := range configAgents {
+		ag, _ := agents.Get(name)
+		gen, genErr := ag.MCP(configForAgent)
+		if genErr != nil {
+			if mcpPresent {
 				ui.Info("mcp.json: skipped %s wiring: %v", name, genErr)
+			}
+			continue
+		}
+		for _, m := range gen {
+			p, err := writeTempFile(m.Content)
+			if err != nil {
+				ui.Info("mcp.json: skipped %s wiring: %v", name, err)
 				continue
 			}
-			for _, m := range gen {
-				p, err := writeTempFile(m.Content)
-				if err != nil {
-					ui.Info("mcp.json: skipped %s wiring: %v", name, err)
-					continue
-				}
-				tmpFiles = append(tmpFiles, p)
-				mcpMounts = append(mcpMounts, extraMount{p, m.BoxPath})
-			}
+			tmpFiles = append(tmpFiles, p)
+			mcpMounts = append(mcpMounts, extraMount{p, m.BoxPath})
 		}
 	}
 
@@ -1071,8 +1079,8 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		args = appendROMounts(args, gitMounts)
 		if mcpPresent {
 			args = append(args, "-v", cfg.MCPFile+":"+cfg.MCPInBox+":ro")
-			args = appendROMounts(args, mcpMounts)
 		}
+		args = appendROMounts(args, mcpMounts)
 	}
 
 	args = append(args, cfg.ExtraRunArgs...)

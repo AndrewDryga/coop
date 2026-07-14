@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A gemini box can read the gitignored task queue.** Gemini's `read_file` rejected every
+  `task.md` as "ignored by configured ignore patterns": its file tools honor `.gitignore`, while
+  the queue is gitignored working state. Coop's mounted per-box settings now force
+  `context.fileFiltering.respectGitIgnore=false` without changing the host settings.
+
+- **The pre-flight prompt no longer contradicts a queue-managing cleanup.** The built-in unblock
+  already runs host-side, but the custom-cleanup box still forbade queue moves; one agent wrongly
+  responded by parking five healthy tasks in `50_blocked/`. Its wrapper now permits only directed
+  folder moves while task work, code, gates, and commits remain forbidden.
+
 ## 5.1.0
 
 - **The loop reports what a run cost — per task, per model, and everywhere you review it.** The

@@ -100,7 +100,15 @@ func TestGenerateCodexQuotesNonBareNamesAndEscapes(t *testing.T) {
 }
 
 func TestGenerateGeminiMerge(t *testing.T) {
-	existing := writeTmp(t, "settings.json", `{"theme":"dark","mcpServers":{"old":{"command":"true"}}}`)
+	existingBody := `{
+		"theme":"dark",
+		"context":{
+			"includeDirectories":["src"],
+			"fileFiltering":{"respectGitIgnore":true,"respectGeminiIgnore":true}
+		},
+		"mcpServers":{"old":{"command":"true"}}
+	}`
+	existing := writeTmp(t, "settings.json", existingBody)
 	got, err := GenerateGemini(writeTmp(t, "mcp.json", sample), existing)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +116,10 @@ func TestGenerateGeminiMerge(t *testing.T) {
 	var out struct {
 		Theme      string                    `json:"theme"`
 		MCPServers map[string]map[string]any `json:"mcpServers"`
+		Context    struct {
+			IncludeDirectories []string       `json:"includeDirectories"`
+			FileFiltering      map[string]any `json:"fileFiltering"`
+		} `json:"context"`
 	}
 	if err := json.Unmarshal([]byte(got), &out); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, got)
@@ -115,10 +127,61 @@ func TestGenerateGeminiMerge(t *testing.T) {
 	if out.Theme != "dark" {
 		t.Error("existing top-level setting (theme) must be preserved")
 	}
+	if len(out.Context.IncludeDirectories) != 1 || out.Context.IncludeDirectories[0] != "src" {
+		t.Errorf("existing nested setting must be preserved: %+v", out.Context.IncludeDirectories)
+	}
+	if got := out.Context.FileFiltering["respectGeminiIgnore"]; got != true {
+		t.Errorf("existing file-filtering setting must be preserved, got %v", got)
+	}
+	if got, ok := out.Context.FileFiltering["respectGitIgnore"]; !ok || got != false {
+		t.Errorf("context.fileFiltering.respectGitIgnore = %v, %v; want false, true", got, ok)
+	}
 	for _, name := range []string{"old", "ctx7", "sentry"} {
 		if _, ok := out.MCPServers[name]; !ok {
 			t.Errorf("server %q missing from merged settings", name)
 		}
+	}
+	if after, err := os.ReadFile(existing); err != nil {
+		t.Fatal(err)
+	} else if string(after) != existingBody {
+		t.Error("generating box settings must not mutate the user's host settings")
+	}
+}
+
+func TestGenerateGeminiWithoutMCP(t *testing.T) {
+	existingBody := `{"theme":"dark","context":{"includeDirectories":["src"],"fileFiltering":{"respectGitIgnore":true,"custom":"keep"}}}`
+	existing := writeTmp(t, "settings.json", existingBody)
+	got, err := GenerateGemini("", existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Theme      string          `json:"theme"`
+		MCPServers json.RawMessage `json:"mcpServers"`
+		Context    struct {
+			IncludeDirectories []string       `json:"includeDirectories"`
+			FileFiltering      map[string]any `json:"fileFiltering"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(got), &out); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, got)
+	}
+	if out.Theme != "dark" || len(out.Context.IncludeDirectories) != 1 || out.Context.IncludeDirectories[0] != "src" {
+		t.Errorf("existing settings were not preserved: %+v", out)
+	}
+	if got := out.Context.FileFiltering["custom"]; got != "keep" {
+		t.Errorf("existing file-filtering setting must be preserved, got %v", got)
+	}
+	if got, ok := out.Context.FileFiltering["respectGitIgnore"]; !ok || got != false {
+		t.Errorf("context.fileFiltering.respectGitIgnore = %v, %v; want false, true", got, ok)
+	}
+	if out.MCPServers != nil {
+		t.Errorf("settings-only generation must not add mcpServers: %s", out.MCPServers)
+	}
+	if after, err := os.ReadFile(existing); err != nil {
+		t.Fatal(err)
+	} else if string(after) != existingBody {
+		t.Error("generating box settings must not mutate the user's host settings")
 	}
 }
 

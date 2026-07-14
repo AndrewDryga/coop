@@ -149,6 +149,69 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "coop-cache:/home/node/.cache")
 }
 
+func TestRunMountsGeminiSettingsForGeminiScope(t *testing.T) {
+	cases := []struct {
+		name        string
+		agent       string
+		consultLead string
+		peers       []agents.Target
+		mcpBody     string
+		wantMounts  int
+		forbidMount string
+	}{
+		{"gemini without MCP", "gemini", "", nil, "", 1, ""},
+		{"gemini peer without MCP", "claude", "claude", []agents.Target{{Provider: "gemini"}}, "", 1, ""},
+		{"gemini with MCP has one merged mount", "gemini", "", nil, `{"mcpServers":{"x":{"command":"true"}}}`, 1, ""},
+		{"claude without MCP", "claude", "", nil, "", 0, ""},
+		{"codex without MCP", "codex", "", nil, "", 0, ""},
+		{"codex with empty MCP stub", "codex", "", nil, `{"mcpServers":{}}`, 0, ":/home/node/.codex/config.toml:ro"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			mcpFile := filepath.Join(configDir, "mcp.json")
+			if c.mcpBody != "" {
+				if err := os.WriteFile(mcpFile, []byte(c.mcpBody), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := &config.Config{
+				ConfigDir: configDir,
+				HomeInBox: "/home/node",
+				MCPFile:   mcpFile,
+				MCPInBox:  "/home/node/.mcp.json",
+				Egress:    "none",
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{
+				Image:       "i",
+				Repo:        t.TempDir(),
+				Cmd:         []string{"true"},
+				Agent:       c.agent,
+				Homes:       true,
+				Batch:       true,
+				Quiet:       true,
+				ConsultLead: c.consultLead,
+				Peers:       c.peers,
+			}
+			if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+				t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+			}
+			args, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const mountTarget = ":/home/node/.gemini/settings.json:ro"
+			if got := strings.Count(string(args), mountTarget); got != c.wantMounts {
+				t.Errorf("gemini settings mounts = %d, want %d in:\n%s", got, c.wantMounts, args)
+			}
+			if c.forbidMount != "" && strings.Contains(string(args), c.forbidMount) {
+				t.Errorf("inactive MCP must not generate mount %q in:\n%s", c.forbidMount, args)
+			}
+		})
+	}
+}
+
 // TestAssembleArgsEgressFailsClosed: the box gets full/services networking ONLY when Egress is
 // exactly "open"; "none", a typo, or an unnormalized empty value all yield --network none, so a
 // missed config.normalizeEgress can never silently grant outbound at the box boundary.

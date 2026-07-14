@@ -32,26 +32,41 @@ type server struct {
 	BearerTokenEnvVar string         `json:"bearer_token_env_var"`
 }
 
-// GenerateGemini merges the shared servers into the user's Gemini settings.json,
-// preserving every other setting. existing may be "" or a missing file.
+// GenerateGemini builds the Gemini settings mounted inside a box, preserving the user's
+// settings while forcing box-safe file filtering. A non-empty mcpFile also merges the shared
+// servers; "" leaves the user's mcpServers untouched. existing may be "" or a missing file.
 func GenerateGemini(mcpFile, existing string) (string, error) {
-	servers, err := loadServersAny(mcpFile)
-	if err != nil {
-		return "", err
-	}
 	settings, err := readJSONObject(existing)
 	if err != nil {
 		return "", err
 	}
 
-	merged, _ := settings["mcpServers"].(map[string]any)
-	if merged == nil {
-		merged = map[string]any{}
+	if mcpFile != "" {
+		servers, err := loadServersAny(mcpFile)
+		if err != nil {
+			return "", err
+		}
+		merged, _ := settings["mcpServers"].(map[string]any)
+		if merged == nil {
+			merged = map[string]any{}
+		}
+		for name, def := range servers {
+			merged[name] = def
+		}
+		settings["mcpServers"] = merged
 	}
-	for name, def := range servers {
-		merged[name] = def
+
+	contextSettings, _ := settings["context"].(map[string]any)
+	if contextSettings == nil {
+		contextSettings = map[string]any{}
 	}
-	settings["mcpServers"] = merged
+	fileFiltering, _ := contextSettings["fileFiltering"].(map[string]any)
+	if fileFiltering == nil {
+		fileFiltering = map[string]any{}
+	}
+	fileFiltering["respectGitIgnore"] = false
+	contextSettings["fileFiltering"] = fileFiltering
+	settings["context"] = contextSettings
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

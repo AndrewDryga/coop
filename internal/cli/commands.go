@@ -1840,7 +1840,7 @@ func writeReviewBlockDecision(path, id, title string, rounds int) {
 // its tokens) spins up only for these extra instructions. The guardrails still bound them:
 // cleanup only, no task work, no code, no commits (the queue files are git-ignored anyway).
 func loopPreflightPrompt(repo string, queues []string, customPrompt string) string {
-	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. The project contract is your instruction file, normally already loaded in your context — read %s only if its content is not. The queue(s) are at %s. `coop` is NOT installed in this box, so act by moving task folders yourself. Leave every 00_todo/ and 10_in_progress/ task untouched; change no code and make no commits.\n\nThe cleanup to do: %s",
+	return fmt.Sprintf("Pre-flight cleanup ONLY — do NOT work any task, write code, run the gate, or commit. The project contract is your instruction file, normally already loaded in your context — read %s only if its content is not. The queue(s) are at %s. `coop` is NOT installed in this box, so move task folders between the queue's state dirs ONLY as the cleanup instructions below direct — never start working a task's content. Change no code and make no commits.\n\nThe cleanup to do: %s",
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues), strings.TrimSpace(customPrompt))
 }
 

@@ -20,7 +20,10 @@ preflight:
   # Default: false.
   #enabled: true
 
-  # Extra cleanup instructions — the only part that runs an agent (a box spins up just for these).
+  # These instructions SET the cleanup job for an agent box; it spins up just
+  # for them. The built-in resolved-blocker unblock already ran host-side.
+  # The box may move task folders, but must not work tasks, change code, or
+  # commit.
   # Default: none (the tidy stays host-side).
   #prompt: |
   #  Also drop stale screenshots under .agent/tasks/*/screenshots/.
