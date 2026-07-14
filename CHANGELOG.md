@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+## 5.3.0
+
 - **Gate-defining changes earn an immediate, fail-closed review.** A completed loop task that edits
   the gate, loop/project configuration, hooks, sweep enforcement, or CI is audited before another
   task can trust that checker, even when ordinary between-task review is disabled. Exact paths and
