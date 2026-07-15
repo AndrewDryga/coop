@@ -74,3 +74,20 @@ jobs:
         run: ./coop doctor
         env:
           COOP_RUNTIME: ${{ matrix.runtime }}
+
+  # Unit tests pin the mount arguments, but this boundary matters at runtime: source and gate
+  # files stay read-only while only the task queues are writable during review. Keep it separate
+  # from the default gate so local `make check` remains container-runtime independent.
+  review-writes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: prove task-only review writes at the Docker boundary
+        run: make review-writes-e2e
