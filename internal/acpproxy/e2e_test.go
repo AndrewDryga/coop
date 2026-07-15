@@ -1,16 +1,14 @@
 //go:build acpe2e
 
-// Real-adapter end-to-end for `coop acp`: drive the installed coop as an ACP client
-// over stdio and verify contracts that unit tests cannot prove. Needs Docker, a built
-// box, and signed-in providers. Run with `make acp-e2e` (which installs first).
+// Real-adapter end-to-end for `coop acp`: build an isolated coop binary, drive it as
+// an ACP client over stdio, and verify contracts that unit tests cannot prove. Needs
+// Docker, a built box, and signed-in providers. Run with `make acp-e2e`.
 //
-// It only ever kills the box THIS test started (diffed by container id), so it is safe
-// to run alongside live editor sessions.
+// Tests signal only the supervisor process they start; its normal label-scoped cleanup
+// owns the boxes, so this suite is safe to run alongside live editor sessions.
 package acpproxy_test
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -19,128 +17,38 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
 
-type acpClient struct {
-	wmu     sync.Mutex
-	enc     *json.Encoder
-	mu      sync.Mutex
-	pending map[int]chan map[string]any
-	nextID  int
-	closed  chan struct{}
-	readErr error
-}
+var coopE2EBinary string
 
-func (c *acpClient) send(obj any) error {
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	return c.enc.Encode(obj)
-}
-
-func (c *acpClient) req(ctx context.Context, method string, params any) (map[string]any, error) {
-	c.mu.Lock()
-	c.nextID++
-	id := c.nextID
-	ch := make(chan map[string]any, 1)
-	c.pending[id] = ch
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-	}()
-	if err := c.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
-		return nil, err
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "coop-acp-e2e-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create ACP E2E temp dir: %v\n", err)
+		os.Exit(1)
 	}
-	select {
-	case m := <-ch:
-		if e, ok := m["error"]; ok && e != nil {
-			b, _ := json.Marshal(e)
-			obj, ok := e.(map[string]any)
-			codeNumber, codeOK := obj["code"].(float64)
-			message, messageOK := obj["message"].(string)
-			code := int(codeNumber)
-			if !ok || !codeOK || float64(code) != codeNumber || !messageOK || message == "" {
-				return nil, fmt.Errorf("malformed JSON-RPC error: %s", b)
-			}
-			return nil, &rpcErr{code: code, raw: string(b)}
-		}
-		return m, nil
-	case <-c.closed:
-		c.mu.Lock()
-		err := c.readErr
-		c.mu.Unlock()
-		if err == nil {
-			err = io.EOF
-		}
-		return nil, fmt.Errorf("ACP stream closed: %w", err)
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve repository root: %v\n", err)
+		os.Exit(1)
 	}
-}
-
-// read correlates responses by id and refuses agent→client requests minimally so the
-// adapter never stalls waiting on us.
-func (c *acpClient) read(r io.Reader) {
-	br := bufio.NewReaderSize(r, 1<<20)
-	for {
-		line, err := br.ReadBytes('\n')
-		if len(line) > 0 {
-			var m map[string]any
-			if json.Unmarshal(line, &m) == nil {
-				_, isReq := m["method"]
-				switch {
-				case isReq && m["id"] != nil:
-					_ = c.send(map[string]any{"jsonrpc": "2.0", "id": m["id"], "error": map[string]any{"code": -32601, "message": "no capability"}})
-				case !isReq && m["id"] != nil:
-					if idf, ok := m["id"].(float64); ok {
-						c.mu.Lock()
-						ch := c.pending[int(idf)]
-						c.mu.Unlock()
-						if ch != nil {
-							ch <- m
-						}
-					}
-				}
-			}
-		}
-		if err != nil {
-			c.mu.Lock()
-			c.readErr = err
-			c.mu.Unlock()
-			close(c.closed)
-			return
-		}
+	coopE2EBinary = filepath.Join(dir, "coop")
+	build := exec.Command("go", "build", "-trimpath", "-o", coopE2EBinary, ".")
+	build.Dir = root
+	build.Stdout, build.Stderr = os.Stderr, os.Stderr
+	if err := build.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "build isolated coop for ACP E2E: %v\n", err)
+		os.Exit(1)
 	}
-}
-
-type rpcErr struct {
-	code int
-	raw  string
-}
-
-func (e *rpcErr) Error() string { return e.raw }
-
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.b.Write(p)
-}
-
-func (b *lockedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.b.String()
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 type liveACP struct {
@@ -149,15 +57,13 @@ type liveACP struct {
 	client *acpClient
 	stderr *lockedBuffer
 	done   chan error
-	before map[string]bool
-	super  string
 }
 
 func startLiveACP(t *testing.T, provider string) *liveACP {
 	t.Helper()
-	before := supervisedBoxIDs(t)
-	cmd := exec.Command("coop", "acp", provider)
+	cmd := exec.Command(coopE2EBinary, "acp", provider)
 	cmd.Env = append(os.Environ(), "COOP_ACP_WARM=0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("%s stdin pipe: %v", provider, err)
@@ -175,56 +81,11 @@ func startLiveACP(t *testing.T, provider string) *liveACP {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	c := &acpClient{enc: json.NewEncoder(stdin), pending: map[int]chan map[string]any{}, closed: make(chan struct{})}
+	c := newACPClient(stdin)
 	go c.read(stdout)
-	live := &liveACP{cmd: cmd, stdin: stdin, client: c, stderr: stderr, done: done, before: before}
+	live := &liveACP{cmd: cmd, stdin: stdin, client: c, stderr: stderr, done: done}
 	t.Cleanup(func() { live.stop(t) })
 	return live
-}
-
-func (a *liveACP) captureSupervisor(t *testing.T) []string {
-	t.Helper()
-	mine := diff(supervisedBoxIDs(t), a.before)
-	if len(mine) != 1 {
-		t.Fatalf("ACP session owns %d new supervised boxes, want 1: %v", len(mine), mine)
-	}
-	out, err := exec.Command("docker", "inspect", "--format", `{{index .Config.Labels "coop.sup"}}`, mine[0]).Output()
-	if err != nil {
-		t.Fatalf("inspect ACP supervisor label: %v", err)
-	}
-	a.super = strings.TrimSpace(string(out))
-	if a.super == "" {
-		t.Fatal("ACP test box has no coop.sup label")
-	}
-	return mine
-}
-
-func (a *liveACP) supervisorBoxes(t *testing.T) []string {
-	t.Helper()
-	if a.super == "" {
-		return nil
-	}
-	out, err := exec.Command("docker", "ps", "-aq", "--filter", "label=coop.sup="+a.super).Output()
-	if err != nil {
-		t.Errorf("list ACP test boxes: %v", err)
-		return nil
-	}
-	return strings.Fields(string(out))
-}
-
-func (a *liveACP) removeLeakedBoxes(t *testing.T) {
-	t.Helper()
-	ids := a.supervisorBoxes(t)
-	if len(ids) == 0 {
-		return
-	}
-	args := append([]string{"rm", "-f"}, ids...)
-	out, err := exec.Command("docker", args...).CombinedOutput()
-	if err != nil {
-		t.Errorf("remove leaked ACP test boxes %v: %v (%s)", ids, err, strings.TrimSpace(string(out)))
-		return
-	}
-	t.Errorf("ACP process leaked test boxes after exit; removed %v", ids)
 }
 
 func (a *liveACP) stop(t *testing.T) {
@@ -235,35 +96,19 @@ func (a *liveACP) stop(t *testing.T) {
 		if err != nil {
 			t.Errorf("ACP process exited uncleanly after stdin EOF: %v\nstderr:\n%s", err, a.stderr.String())
 		}
-		a.removeLeakedBoxes(t)
 		return
 	case <-time.After(20 * time.Second):
 	}
-	_ = a.cmd.Process.Signal(os.Interrupt)
+	_ = syscall.Kill(-a.cmd.Process.Pid, syscall.SIGTERM)
 	select {
 	case err := <-a.done:
-		t.Errorf("ACP process needed an interrupt after stdin EOF (exit: %v)\nstderr:\n%s", err, a.stderr.String())
-		a.removeLeakedBoxes(t)
+		t.Errorf("ACP process needed SIGTERM after stdin EOF (exit: %v)\nstderr:\n%s", err, a.stderr.String())
 		return
 	case <-time.After(20 * time.Second):
 	}
-	_ = a.cmd.Process.Kill()
+	_ = syscall.Kill(-a.cmd.Process.Pid, syscall.SIGKILL)
 	<-a.done
-	a.removeLeakedBoxes(t)
-	t.Errorf("ACP process did not stop after stdin EOF and interrupt; stderr:\n%s", a.stderr.String())
-}
-
-func supervisedBoxIDs(t *testing.T) map[string]bool {
-	t.Helper()
-	out, err := exec.Command("docker", "ps", "-q", "--filter", "label=coop.supervised=1").Output()
-	if err != nil {
-		t.Skipf("docker unavailable: %v", err)
-	}
-	ids := map[string]bool{}
-	for _, id := range strings.Fields(string(out)) {
-		ids[id] = true
-	}
-	return ids
+	t.Errorf("ACP process did not stop after stdin EOF and SIGTERM; stderr:\n%s", a.stderr.String())
 }
 
 // newSession opens a session with a cwd that exists *inside the box*. coop mounts the
@@ -329,9 +174,6 @@ func setLiveConfig(ctx context.Context, t *testing.T, client *acpClient, session
 // TestPresetOwnsSelectorState drives coop's real outer ACP control layer. A direct preset owns the
 // toolbar and ignores persisted plain selector writes; leaving it exposes the normal plain controls.
 func TestPresetOwnsSelectorState(t *testing.T) {
-	if _, err := exec.LookPath("coop"); err != nil {
-		t.Skip("coop not on PATH (run `make install`)")
-	}
 	live := startLiveACP(t, "frontier")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -349,7 +191,6 @@ func TestPresetOwnsSelectorState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session/new selector E2E: %v\nstderr:\n%s", err, live.stderr.String())
 	}
-	live.captureSupervisor(t)
 	result, ok := response["result"].(map[string]any)
 	if !ok {
 		t.Fatalf("session/new returned no object result: %#v", response)
@@ -421,9 +262,6 @@ func TestPresetOwnsSelectorState(t *testing.T) {
 }
 
 func TestSuperviseResume(t *testing.T) {
-	if _, err := exec.LookPath("coop"); err != nil {
-		t.Skip("coop not on PATH (run `make install`)")
-	}
 	live := startLiveACP(t, "claude")
 	c := live.client
 
@@ -436,13 +274,14 @@ func TestSuperviseResume(t *testing.T) {
 		t.Skipf("initialize failed (box not built / not signed in?): %v", err)
 	}
 	if err := newSession(ctx, c, cwd); err != nil {
-		t.Fatalf("session/new before kill (auth?): %v", err)
+		t.Fatalf("session/new before reload (auth?): %v", err)
 	}
 
-	// Kill exactly this test's box.
-	mine := live.captureSupervisor(t)
-	t.Logf("killing this session's box(es): %v", mine)
-	_ = exec.Command("docker", append([]string{"kill"}, mine...)...).Run()
+	// Reload exactly this supervisor. It re-execs in place and restores the proxy
+	// snapshot while keeping the editor's stdio connection open.
+	if err := live.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("SIGHUP ACP supervisor: %v", err)
+	}
 
 	// The supervisor should respawn + re-auth; session/new must succeed again while the
 	// new box spins up.
@@ -455,28 +294,13 @@ func TestSuperviseResume(t *testing.T) {
 		time.Sleep(3 * time.Second)
 	}
 	if !resumed {
-		t.Fatal("session/new never succeeded after the box was killed (resume/auth broke)")
+		t.Fatal("session/new never succeeded after supervisor reload (resume/auth broke)")
 	}
 
-	// Shut down (stdin EOF triggers the supervisor's teardown) and confirm this test's
-	// boxes are gone — no orphans.
-	_ = live.stdin.Close()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(live.supervisorBoxes(t)) == 0 {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	leaked := live.supervisorBoxes(t)
-	_ = exec.Command("docker", append([]string{"rm", "-f"}, leaked...)...).Run() // best-effort cleanup
-	t.Fatalf("supervised boxes leaked after exit: %v", leaked)
+	// Cleanup closes stdin; the supervisor owns label-scoped box teardown.
 }
 
 func TestForeignSessionLoadRejectsUnknownID(t *testing.T) {
-	if _, err := exec.LookPath("coop"); err != nil {
-		t.Skip("coop not on PATH (run `make install`)")
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -506,8 +330,6 @@ func TestForeignSessionLoadRejectsUnknownID(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("initialize %s ACP: %v\nstderr:\n%s", tc.provider, err, live.stderr.String())
 			}
-			live.captureSupervisor(t)
-
 			loadCtx, cancelLoad := context.WithTimeout(context.Background(), loadTimeout)
 			started := time.Now()
 			_, err := live.client.req(loadCtx, "session/load", map[string]any{
@@ -557,14 +379,4 @@ func foreignMarker(provider, id string) []string {
 		return []string{id}
 	}
 	return nil
-}
-
-func diff(after, before map[string]bool) []string {
-	var out []string
-	for id := range after {
-		if !before[id] {
-			out = append(out, id)
-		}
-	}
-	return out
 }

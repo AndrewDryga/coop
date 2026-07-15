@@ -51,7 +51,10 @@ tools-test: ## Run standard-library tests for repository maintenance tools
 
 check: lint test docs-check casts-check tools-test ## What CI runs: lint + tests + docs/cast freshness
 
-acp-e2e: install ## ACP adapter e2e (needs Docker + a built box + signed-in providers)
+acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
+	@go test -run '^TestScriptedACPDriver$$' -count=1 -v ./internal/acpproxy/
+
+acp-e2e: ## Real ACP adapter e2e (isolated binary; needs Docker + a built box + signed-in providers)
 	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState)$$' -count=1 -v ./internal/acpproxy/
 
 review-writes-e2e: ## Review write-policy e2e (needs Docker; pulls a small test image once)
@@ -65,4 +68,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check acp-e2e review-writes-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check acp-scripted-e2e acp-e2e review-writes-e2e clean help
