@@ -1,6 +1,7 @@
 package preset
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/fusion"
 )
 
 // TestDelegateWrapperShellcheck keeps the embedded coop-delegate script clean, like the
@@ -81,6 +84,7 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 		"COOP_DELEGATE_LOCK="+h.lock,
 		"COOP_PRIMARY=claude",
 		"COOP_PEERS=codex gemini grok",
+		DelegateDepthEnv+"=0",
 	)
 	return h
 }
@@ -89,14 +93,14 @@ func TestDelegateWrapperFallsBackOnRateLimit(t *testing.T) {
 	h := newDelegateHarness(t)
 	calls := filepath.Join(h.dir, "calls")
 	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex:gpt-5.6-sol/xhigh gemini:gemini-3.5-flash")
-	h.stub("codex", "echo codex >>"+calls+"; echo 'usage limit reached' >&2; exit 9")
-	h.stub("gemini", "echo gemini >>"+calls+"; echo fallback-work")
+	h.stub("codex", "echo codex:$COOP_DELEGATE_DEPTH >>"+calls+"; echo 'usage limit reached' >&2; exit 9")
+	h.stub("gemini", "echo gemini:$COOP_DELEGATE_DEPTH >>"+calls+"; echo fallback-work")
 	out, code := h.run("fast", "Implement the thing")
 	if code != 0 {
 		t.Fatalf("exit = %d, want fallback success:\n%s", code, out)
 	}
 	got, _ := os.ReadFile(calls)
-	if string(got) != "codex\ngemini\n" {
+	if string(got) != "codex:1\ngemini:1\n" {
 		t.Fatalf("calls = %q, want rung 0 then rung 1", got)
 	}
 	for _, want := range []string{"codex:gpt-5.6-sol/xhigh rate limited", "done on gemini:gemini-3.5-flash"} {
@@ -355,7 +359,7 @@ func (h *delegateHarness) run(args ...string) (string, int) {
 
 func TestDelegateWrapperRunsRole(t *testing.T) {
 	h := newDelegateHarness(t)
-	h.stub("gemini", "echo did-the-work")
+	h.stub("gemini", "echo depth=$COOP_DELEGATE_DEPTH; echo did-the-work")
 	out, code := h.run("fast", "Implement the thing")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0:\n%s", code, out)
@@ -363,12 +367,54 @@ func TestDelegateWrapperRunsRole(t *testing.T) {
 	if !strings.Contains(out, "[coop-delegate fast: done") || !strings.Contains(out, "git diff") {
 		t.Errorf("missing the completion summary for the lead:\n%s", out)
 	}
+	if !strings.Contains(out, "depth=1") {
+		t.Errorf("delegate child did not receive %s=1:\n%s", DelegateDepthEnv, out)
+	}
 	argv, _ := os.ReadFile(h.argsLog)
 	got := string(argv)
 	for _, want := range []string{"--yolo", "--model", "gemini-3.5-flash", "ROLE CONTRACT TEXT", "Implement the thing"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("gemini argv missing %q (model/contract/prompt wiring):\n%s", want, got)
 		}
+	}
+}
+
+func TestDelegateWrapperRejectsRecursiveInvocationBeforeLock(t *testing.T) {
+	h := newDelegateHarness(t)
+	launched := filepath.Join(h.dir, "launched")
+	h.stub("gemini", "touch "+launched)
+	if err := os.Mkdir(h.lock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(h.dir, "coop-delegate"), "fast", "nested work")
+	cmd.Dir = h.repo
+	cmd.Env = append(h.env, DelegateDepthEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("recursive invocation waited on the delegate lock instead of failing first: %v", ctx.Err())
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 2 || !strings.Contains(string(out), "recursive delegation is not allowed") {
+		t.Fatalf("recursive invocation = (%v):\n%s", err, out)
+	}
+	if _, err := os.Stat(launched); err == nil || !os.IsNotExist(err) {
+		t.Fatal("recursive invocation launched the provider")
+	}
+}
+
+func TestDelegateDepthDoesNotBlockReadOnlyConsult(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "coop-consult")
+	if err := os.WriteFile(script, []byte(fusion.ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(script)
+	cmd.Env = append(os.Environ(), DelegateDepthEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "usage: coop-consult") || strings.Contains(string(out), "recursive") {
+		t.Fatalf("read-only consult was affected by delegate depth (%v):\n%s", err, out)
 	}
 }
 

@@ -10,6 +10,10 @@ import (
 // on PATH, beside coop-consult, so the lead invokes it as a bare `coop-delegate`.
 const DelegateWrapperPath = "/usr/local/bin/coop-delegate"
 
+// DelegateDepthEnv marks a provider process launched by coop-delegate. The wrapper rejects another
+// delegate call while it is set, bounding write-capable delegation to one level.
+const DelegateDepthEnv = "COOP_DELEGATE_DEPTH"
+
 // EnvKey renders a role name as the env-var infix the wrapper resolves:
 // role "fast" → COOP_DELEGATE_FAST_TARGETS / _CONTRACT.
 func EnvKey(role string) string {
@@ -29,6 +33,8 @@ func delegateArm(name, body string) string {
 //     the wrapper exits non-zero and says so (no auto-reset: fail loud, leave evidence).
 //   - concurrent: never — a global mkdir lock serializes delegate runs; a second call
 //     WAITS for the lock (less surprising for an agent caller than failing fast).
+//   - one level — a delegate child receives COOP_DELEGATE_DEPTH=1, and another wrapper
+//     invocation fails before reading input or acquiring the serialization lock.
 //
 // The role's target ladder/contract come from COOP_DELEGATE_<ROLE>_* env vars exported
 // by host coop (see box.Run), so the wrapper needs no YAML parser in the box. These
@@ -82,6 +88,12 @@ set -u
 umask 077
 
 die() { echo "coop-delegate: $1" >&2; exit 2; }
+case "${COOP_DELEGATE_DEPTH:-0}" in
+'' | 0) ;;
+*) die "recursive delegation is not allowed — return the work to the lead" ;;
+esac
+COOP_DELEGATE_DEPTH=1
+export COOP_DELEGATE_DEPTH
 [ "$#" -ge 1 ] || die "usage: coop-delegate <role> [prompt]"
 role=$1
 shift

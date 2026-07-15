@@ -714,6 +714,9 @@ safety/routing rules — and you edit or delete them freely.
 `coop-delegate` is the write-capable counterpart of the read-only `coop-consult`: the
 delegate may edit the shared worktree, runs are serialized, and it must **not** commit —
 the wrapper compares `HEAD` before and after and fails loud if the delegate committed.
+Write-capable delegation is one level deep: the child receives `COOP_DELEGATE_DEPTH=1`,
+and a nested `coop-delegate` fails before input, lock, or provider launch. A delegate may
+still call a configured read-only `coop-consult` for advice.
 The lead then reviews `git diff`, runs the gate, fixes or reverts what falls short, and
 makes the commit itself. That keeps one reviewer — your strongest model — accountable
 for everything that lands, while the cheap tokens do the typing.
@@ -1409,7 +1412,7 @@ root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
-| `COOP_SPINNER` | `1` | animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Pocket Run in dense task rows. `0`/`false` freezes them and suppresses the loop's fast repaint ticker, useful for debugging and terminal recording |
+| `COOP_SPINNER` | `1` | animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Corner Run in dense task rows. `0`/`false` freezes them and suppresses the loop's fast repaint ticker, useful for debugging and terminal recording |
 | `COOP_STREAM_TRACE` | (off) | set to persist each streaming loop attempt's raw provider JSONL and rendered output under `.agent/runs/<run>.streams/` |
 
 Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the

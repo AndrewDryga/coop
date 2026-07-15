@@ -83,7 +83,7 @@ func roleContract(r *Role, lead string) string {
 		b.WriteString("on work a cheaper model does fine; by the time you can picture the diff, the\n")
 		b.WriteString("spec is already written — hand it off and keep leading. Write it yourself\n")
 		b.WriteString("only when the change is smaller than the prompt it would take to specify.\n")
-		b.WriteString("It MAY edit files in this worktree but must NEVER commit; delegate runs are\nserialized (one at a time). Hand it a task with:\n\n")
+		b.WriteString("It MAY edit files in this worktree but must NEVER commit; delegate runs are\nserialized (one at a time) and bounded to one level. A delegate must not invoke\n`coop-delegate` again; it may still use a configured read-only `coop-consult`. Hand it a task with:\n\n")
 		fmt.Fprintf(&b, "  coop-delegate %s <<'EOF'\n  <a self-contained prompt: the files to touch, the exact change, how to\n   verify — it sees none of your conversation>\n  EOF\n\n", r.Name)
 		b.WriteString("When it returns, YOU review its `git diff`, run the gate, fix or revert what\nfalls short, and make the commit yourself — the delegate's work ships under\nyour review or not at all.\n")
 	}

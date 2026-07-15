@@ -500,7 +500,9 @@ var commandHelp = map[string]string{
   under a codex/gemini/grok lead they degrade to exactly such a consult (same model + persona),
   coop-consult <role> instead of @coop-<role>.
   A delegate may edit the worktree but must not commit — coop-delegate fails loud if HEAD
-  moved — and the lead owns the diff review, the gate, and the commit. Model ids: coop models.
+  moved — and the lead owns the diff review, the gate, and the commit. Write-capable
+  delegation is one level deep: a nested coop-delegate fails before lock/provider launch;
+  configured read-only coop-consult remains available. Model ids: coop models.
   Scaffold one: coop presets init.
 
   WHERE presets live — two locations, repo wins: a preset resolves first from the
