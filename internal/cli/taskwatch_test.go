@@ -70,7 +70,7 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	t.Setenv("COOP_SPINNER", "1")
 	for spin, want := range ui.CompactSpinFrames {
 		if got := taskWatchMarker(p, stateInProgress, spin); got != want {
-			t.Errorf("in-progress marker at spin %d = %q, want Pocket Run %q", spin, got, want)
+			t.Errorf("in-progress marker at spin %d = %q, want Corner Run %q", spin, got, want)
 		}
 	}
 	for _, tc := range []struct {
@@ -86,8 +86,8 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	}
 
 	line := mergedQueue(p, []mergedTask{{taskItem: taskItem{Title: "Task title", State: stateInProgress}}}, 0)[0]
-	if line != "  . Task title · unleased" {
-		t.Errorf("compact task row = %q, want %q", line, "  . Task title · unleased")
+	if line != "  ◰ Task title · unleased" {
+		t.Errorf("compact task row = %q, want %q", line, "  ◰ Task title · unleased")
 	}
 	for _, tc := range []struct {
 		lease taskLeaseObservation

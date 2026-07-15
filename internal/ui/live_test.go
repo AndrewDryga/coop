@@ -32,7 +32,7 @@ func TestClip(t *testing.T) {
 
 func TestSpinFramesAndFreeze(t *testing.T) {
 	boxWant := []string{".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."}
-	compactWant := []string{".", ">", "[", "*", "]", ">"}
+	compactWant := []string{"◰", "◳", "◲", "◱"}
 	for _, tc := range []struct {
 		name   string
 		frames []string
@@ -40,7 +40,7 @@ func TestSpinFramesAndFreeze(t *testing.T) {
 		width  int
 	}{
 		{"Box Run", SpinFrames, boxWant, SpinnerWidth},
-		{"Pocket Run", CompactSpinFrames, compactWant, 1},
+		{"Corner Run", CompactSpinFrames, compactWant, 1},
 	} {
 		if len(tc.frames) != len(tc.want) {
 			t.Fatalf("%s frames = %v, want %v", tc.name, tc.frames, tc.want)
@@ -52,25 +52,35 @@ func TestSpinFramesAndFreeze(t *testing.T) {
 		}
 	}
 
-	t.Setenv("COOP_SPINNER", "0")
-	for i := 0; i < len(SpinFrames)*2; i++ {
-		if got := SpinFrame(i); got != boxWant[0] {
-			t.Errorf("frozen SpinFrame(%d) = %q, want %q", i, got, boxWant[0])
-		}
-		if got := CompactSpinFrame(i); got != compactWant[0] {
-			t.Errorf("frozen CompactSpinFrame(%d) = %q, want %q", i, got, compactWant[0])
-		}
+	for _, value := range []string{"0", "false"} {
+		t.Run("COOP_SPINNER="+value, func(t *testing.T) {
+			t.Setenv("COOP_SPINNER", value)
+			if SpinnerEnabled() {
+				t.Errorf("COOP_SPINNER=%s should freeze animation", value)
+			}
+			for i := 0; i < len(SpinFrames)*2; i++ {
+				if got := SpinFrame(i); got != boxWant[0] {
+					t.Errorf("frozen SpinFrame(%d) = %q, want %q", i, got, boxWant[0])
+				}
+				if got := CompactSpinFrame(i); got != compactWant[0] {
+					t.Errorf("frozen CompactSpinFrame(%d) = %q, want %q", i, got, compactWant[0])
+				}
+			}
+		})
 	}
-	t.Setenv("COOP_SPINNER", "false")
-	if SpinnerEnabled() {
-		t.Error("COOP_SPINNER=false should freeze animation")
-	}
+
 	t.Setenv("COOP_SPINNER", "1")
 	if got := SpinFrame(8); got != boxWant[1] {
 		t.Errorf("animated SpinFrame(8) = %q, want %q", got, boxWant[1])
 	}
-	if got := CompactSpinFrame(7); got != compactWant[1] {
-		t.Errorf("animated CompactSpinFrame(7) = %q, want %q", got, compactWant[1])
+	if got := CompactSpinFrame(5); got != compactWant[1] {
+		t.Errorf("animated CompactSpinFrame(5) = %q, want %q", got, compactWant[1])
+	}
+	if got := SpinFrame(-1); got != boxWant[0] {
+		t.Errorf("negative SpinFrame = %q, want %q", got, boxWant[0])
+	}
+	if got := CompactSpinFrame(-1); got != compactWant[0] {
+		t.Errorf("negative CompactSpinFrame = %q, want %q", got, compactWant[0])
 	}
 }
 

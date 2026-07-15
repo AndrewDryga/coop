@@ -12,7 +12,7 @@
   independently authoritative; review stages now also prohibit recursively invoking `review-board`
   while permitting focused read-only investigation.
 
-- Introduce five-column Box Run beside progress bars and one-column Pocket Run in dense task rows as Coop's ASCII signature spinners; keep each live surface aligned and add `COOP_SPINNER=0` for quiet debug and recording captures.
+- Introduce five-column Box Run beside progress bars and one-column Corner Run (`◰ ◳ ◲ ◱`) in dense task rows as Coop's signature spinners; keep each live surface aligned and add `COOP_SPINNER=0` for quiet debug and recording captures.
 
 - **ACP presets now exclusively own lead selection.** A normal toolbar shows Preset, Provider,
   and Account; an active preset shows only Preset because its ladder owns provider, model, effort,
