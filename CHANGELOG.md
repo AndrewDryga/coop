@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Zsh no longer second-guesses valid Coop targets.** Sourcing the generated completion after
+  `compinit` installs command-local `nocorrect` behavior for `coop`, preserving dynamic completion
+  while leaving spelling correction enabled for every other command. Existing file-only installs
+  need the new source line documented by `coop help completion`.
+
 - **Peer consult replies can no longer disappear behind a status line.** Generated lead guidance
   requires polling a yielded consult session through terminal exit, while empty, malformed,
   timed-out, and provider-failed replies now fail explicitly without losing peer telemetry.

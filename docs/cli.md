@@ -638,7 +638,10 @@ coop completion <bash|zsh> — print a shell completion script.
   Usage: coop completion <bash|zsh>
 
   bash: coop completion bash > ~/.local/share/bash-completion/completions/coop
-  zsh:  coop completion zsh  > "${fpath[1]}/_coop"   (then restart your shell)
+  zsh:  coop completion zsh > "${fpath[1]}/_coop"
+        then add 'source "${fpath[1]}/_coop"' AFTER compinit in ~/.zshrc. Existing
+        file-only installs must add this source line; it enables command-local nocorrect
+        for coop arguments without changing Zsh correction for other commands.
 
   Completes commands and verbs, and — via a hidden 'coop __complete' — live values
   (fork names, task ids, credentials), all from local reads.

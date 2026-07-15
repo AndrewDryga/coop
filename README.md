@@ -237,6 +237,11 @@ spelled out here (there's room to render them).
 | `coop completion <shell>` | shell tab-completion (bash, zsh) |
 | `coop help` · `version` | print help · print the version |
 
+For Zsh, generate with `coop completion zsh > "${fpath[1]}/_coop"`, then source that
+file after `compinit` in `.zshrc`: `source "${fpath[1]}/_coop"`. Existing file-only
+installs need the source line too; it keeps Zsh spelling correction on globally while
+marking only `coop` arguments `nocorrect`.
+
 ## The sandbox
 
 The repo is bind-mounted into the box at the same path it has on your machine, so

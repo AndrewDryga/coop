@@ -25,13 +25,15 @@ complete -o default -F _coop coop
 `
 
 const zshCompletion = `#compdef coop
-# coop zsh completion. Install: coop completion zsh > "${fpath[1]}/_coop"  (then restart the shell)
+# coop zsh integration. Generate to "${fpath[1]}/_coop", then source that file AFTER
+# compinit from .zshrc. Sourcing installs completion plus a command-local nocorrect alias.
 _coop() {
   local -a cands
   cands=(${(f)"$(coop __complete "${(@)words[2,$CURRENT]}" 2>/dev/null)"})
   compadd -- $cands
 }
 compdef _coop coop
+alias coop='nocorrect coop'
 `
 
 // cmdCompletion prints the static completion script for a shell.

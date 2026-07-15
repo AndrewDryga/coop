@@ -3,6 +3,7 @@ package cli
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,6 +143,103 @@ func TestCompletionAdvancesExactCommand(t *testing.T) {
 func TestZshCompletionPreservesEmptyWord(t *testing.T) {
 	if !strings.Contains(zshCompletion, `coop __complete "${(@)words[2,$CURRENT]}"`) {
 		t.Fatalf("zsh completion must quote the word array expansion:\n%s", zshCompletion)
+	}
+	for _, want := range []string{"source that file AFTER", "compdef _coop coop", "alias coop='nocorrect coop'"} {
+		if !strings.Contains(zshCompletion, want) {
+			t.Fatalf("zsh integration missing %q:\n%s", want, zshCompletion)
+		}
+	}
+}
+
+func TestZshCompletionSuppressesOnlyCoopCorrection(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	expect, err := exec.LookPath("expect")
+	if err != nil {
+		t.Skip("expect not available for interactive PTY regression")
+	}
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	coopStub := `#!/bin/sh
+if [ "${1:-}" = __complete ]; then
+  printf 'codex\n'
+  exit 0
+fi
+printf 'STUB:%s\n' "$*"
+`
+	otherStub := "#!/bin/sh\nprintf 'OTHER:%s\\n' \"$*\"\n"
+	for name, body := range map[string]string{"coop": coopStub, "other": otherStub} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	completion := filepath.Join(root, "_coop")
+	if err := os.WriteFile(completion, []byte(zshCompletion), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	expectScript := `set timeout 8
+set root [lindex $argv 0]
+set zsh [lindex $argv 1]
+set completion [lindex $argv 2]
+set env(PATH) "$root/bin:$env(PATH)"
+set env(HOME) $root
+cd $root
+
+proc start_shell {zsh setup} {
+  global spawn_id
+  spawn $zsh -f -i
+  send -- "$setup\r"
+}
+
+# Prove the fixture reproduces the reported correction before installing Coop's integration.
+start_shell $zsh "setopt correct_all"
+send -- "coop loop codex\r"
+expect {
+  -re {correct 'codex' to '.codex'} { send -- "n\r" }
+  timeout { puts stderr "baseline did not reproduce Zsh correction"; exit 10 }
+}
+expect -re {STUB:loop codex}
+send -- "exit\r"
+expect eof
+
+# Source the generated integration after compinit, exercise dynamic completion, and execute.
+start_shell $zsh "setopt correct_all; autoload -Uz compinit; compinit -u -d $root/.zcompdump; source $completion"
+send -- "coop loop cod\t"
+expect -re {coop loop codex}
+send -- "\r"
+expect {
+  -re {correct 'codex' to '.codex'} { puts stderr "coop argument correction was not suppressed"; exit 11 }
+  -re {STUB:loop codex} {}
+  timeout { puts stderr "completed coop command did not reach the stub"; exit 12 }
+}
+
+# The alias is command-local: correction remains active for another command.
+send -- "other codex\r"
+expect {
+  -re {correct 'codex' to '.codex'} { send -- "n\r" }
+  timeout { puts stderr "coop integration disabled correction globally"; exit 13 }
+}
+expect -re {OTHER:codex}
+send -- "exit\r"
+expect eof
+`
+	script := filepath.Join(root, "correction.exp")
+	if err := os.WriteFile(script, []byte(expectScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(expect, script, root, zsh, completion)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("interactive Zsh correction regression: %v\n%s", err, out)
 	}
 }
 
