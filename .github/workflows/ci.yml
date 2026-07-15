@@ -32,6 +32,10 @@ jobs:
           staticcheck ./...
       - name: test
         run: go test ./...
+      - name: scripted provider process e2e
+        # Drives the built Coop binary through CLI -> box args -> a strict fake runtime -> all four
+        # provider fixtures. No container daemon, network, or provider credentials are involved.
+        run: make provider-scripted-e2e
       - name: race
         # internal/acpproxy is concurrent (the editor-reader goroutine vs the main loop share
         # p.mu-guarded state) — a data race there wouldn't fail the plain test run. Its own step

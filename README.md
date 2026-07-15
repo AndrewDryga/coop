@@ -1508,9 +1508,10 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 
 ```bash
-make build     # build ./coop
-make check     # gofmt + vet + staticcheck + unit tests (what CI runs; no Docker needed)
-make doctor    # the integration check — proves isolation, needs a runtime
+make build                 # build ./coop
+make check                 # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
+make provider-scripted-e2e # strict fake-runtime smoke for Claude, Codex, Gemini, and Grok
+make doctor                # the integration check — proves isolation, needs a runtime
 ```
 
 `.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
@@ -1519,3 +1520,14 @@ own box — gets the right `go`/`gofmt` automatically.
 The security-critical logic — secret enumeration (`internal/box/mounts.go`) and run-arg
 assembly (`internal/box/run.go`) — is pure and unit-tested without a runtime; `coop
 doctor` proves the whole thing end-to-end against the real box.
+
+The scripted provider target builds fresh Coop and fixture binaries under a disposable root, starts
+from an allowlist-only environment, and checks the real CLI/box/runtime command boundary for every
+registered provider. Its fake runtime validates and records mounts, env files, workdir, image, and
+provider argv, but it is not a container sandbox; `coop doctor` and `make review-writes-e2e` own that
+proof. On failure, rerun the printed provider subtest with `-v`; its diagnostic includes the
+size-bounded JSONL trace. Host paths are fixture-relative, environment values are default-redacted,
+and free-form label/provider values are represented by deterministic digests, so exact contracts
+remain testable without persisting their contents. A new adapter automatically enters the
+registry-generated matrix; add only its expected argv and credential assertions in the tagged test.
+The runtime/provider fixture itself stays registry-neutral.

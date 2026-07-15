@@ -49,7 +49,11 @@ casts-check: ## Validate published casts for private paths, credentials, and sec
 tools-test: ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
-check: lint test docs-check casts-check tools-test ## What CI runs: lint + tests + docs/cast freshness
+check: lint test provider-scripted-e2e docs-check casts-check tools-test ## What CI runs: lint + tests + deterministic provider process E2E + docs/cast freshness
+
+provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
+	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
+	@go test -tags providere2e -run '^TestProviderScriptedProcessSmoke$$' -count=1 -v ./internal/cli/
 
 acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
 	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/
@@ -68,4 +72,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check acp-scripted-e2e acp-e2e review-writes-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e acp-scripted-e2e acp-e2e review-writes-e2e clean help
