@@ -9,6 +9,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"gopkg.in/yaml.v3"
 )
@@ -256,18 +257,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 	}
 	// Validate per-fork profiles up front, so a typo fails loud here instead of silently in a
 	// detached worker's log. (A fork with no profile= falls back to the repo pool / all signed-in.)
-	var unsigned []string
-	for _, e := range fleet {
-		if e.agent == "" {
-			continue // preset-only fork; forkCreate validates the lead after resolving it
-		}
-		// agent: parsed clean in parseFleetYAML; check its pinned account is signed in (fail loud
-		// here, not silently in a worker's log). No account → the loop rotates all signed-in ones.
-		t, _ := agents.ParseTarget(e.agent)
-		if len(t.Accounts) == 1 && !box.ProfileAuthed(a.cfg, t.Provider, t.Accounts[0]) {
-			unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, t.Provider, t.Accounts[0]))
-		}
-	}
+	unsigned := unsignedFleetAccounts(a.cfg, fleet)
 	if len(unsigned) > 0 {
 		return 2, fmt.Errorf("fleet up: these accounts aren't signed in: %s — run: coop login <provider>@<account>", strings.Join(unsigned, ", "))
 	}
@@ -300,6 +290,22 @@ func (a *app) fleetUp(args []string) (int, error) {
 		}
 	}
 	return 0, nil
+}
+
+func unsignedFleetAccounts(cfg *config.Config, fleet []fleetEntry) []string {
+	var unsigned []string
+	for _, e := range fleet {
+		if e.agent == "" {
+			continue // preset-only fork; forkCreate validates the lead after resolving it
+		}
+		// agent: parsed clean in parseFleetYAML; check its pinned account is signed in (fail loud
+		// here, not silently in a worker's log). No account → the loop rotates all signed-in ones.
+		t, _ := agents.ParseTarget(e.agent)
+		if len(t.Accounts) == 1 && !box.ProfileAuthed(cfg, t.Provider, t.Accounts[0]) {
+			unsigned = append(unsigned, fmt.Sprintf("%s/%s %q", e.name, t.Provider, t.Accounts[0]))
+		}
+	}
+	return unsigned
 }
 
 func (a *app) fleetDown(args []string) (int, error) {

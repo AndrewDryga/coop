@@ -387,13 +387,13 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	// Credential scope: the shared env file is passed in, but a scoped run (a plain agent
-	// or a raw command) strips the API keys of agents it has no business reading — so a
-	// `coop claude` box never sees OPENAI_API_KEY / GEMINI_API_KEY. Non-agent runtime vars
-	// always pass through. assembleArgs computes the same scope for the home mounts.
+	// Credential scope: the shared env file is passed in, but a scoped run strips token keys for
+	// agents it has no business reading and for a provider whose selected named account must not be
+	// shadowed by its global env token. Non-agent runtime vars always pass through. assembleArgs
+	// computes the same provider scope for the home mounts.
 	envFile := ""
 	if spec.Homes && fileExists(cfg.EnvFile()) {
-		drop := envKeysOutsideScope(credentialScope(cfg, spec))
+		drop := envKeysOutsideScope(cfg, credentialScope(cfg, spec))
 		switch {
 		case len(drop) == 0:
 			envFile = cfg.EnvFile() // nothing to strip — pass it through unchanged

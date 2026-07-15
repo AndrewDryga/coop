@@ -2,7 +2,6 @@ package box
 
 import (
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -10,17 +9,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// AuthedAgents returns the agents that look authenticated: a credential file in their
-// config dir, or their API key set in the env file (each adapter names its own marker).
-// It's a presence heuristic — not a validity check, which would mean running each CLI —
-// but enough to decide whether a peer is worth consulting.
+// AuthedAgents returns agents whose active account looks authenticated. The active account is the
+// configured default unless a concrete run selected another stored profile; a provider-wide env
+// token counts only in the default slot. This is a presence heuristic, not a live validity check.
 func AuthedAgents(cfg *config.Config) []string {
 	keys := envFileKeys(cfg.EnvFile())
 	var authed []string
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
-		file, envKey := ag.AuthMarker()
-		if keys[envKey] || fileExists(filepath.Join(cfg.AgentDir(name), file)) {
+		active := cfg.ActiveProfile(name)
+		if profileCredentialPresent(ag, cfg.AgentProfileDir(name, active), keys, active == cfg.DefaultProfileOf(name)) {
 			authed = append(authed, name)
 		}
 	}
@@ -76,25 +74,29 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 	return scope
 }
 
-// envKeysOutsideScope is the set of agent token env-file keys to strip for a run scoped to
-// the given agents: every credential key (the API key plus alternates like
-// ANTHROPIC_AUTH_TOKEN) of every agent except those in scope. Non-agent runtime vars in the
-// env file are never in this set, so they always pass through.
-func envKeysOutsideScope(scope []string) map[string]bool {
+// envKeysOutsideScope is the set of adapter token keys to strip for this concrete run. A provider
+// keeps its env token only when it is in scope and running the default account that token represents;
+// a named file-backed account must not be shadowed by the provider-wide token. Non-agent runtime
+// variables are never in this set, so they always pass through.
+func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
 	in := map[string]bool{}
 	for _, a := range scope {
 		in[a] = true
 	}
 	drop := map[string]bool{}
 	for _, name := range agents.Names() {
-		if in[name] {
+		ag, ok := agents.Get(name)
+		if !ok {
 			continue
 		}
-		if ag, ok := agents.Get(name); ok {
-			for _, envKey := range ag.CredentialEnvKeys() {
-				if envKey != "" {
-					drop[envKey] = true
-				}
+		active := cfg.ActiveProfile(name)
+		if in[name] && active == cfg.DefaultProfileOf(name) &&
+			!profileMarkerPresent(ag, cfg.AgentProfileDir(name, active)) {
+			continue
+		}
+		for _, envKey := range ag.CredentialEnvKeys() {
+			if envKey != "" {
+				drop[envKey] = true
 			}
 		}
 	}
@@ -146,8 +148,9 @@ func excluding(names []string, drop string) []string {
 	return out
 }
 
-// envFileKeys parses a KEY=VALUE env file into the set of keys with a non-empty
-// value (comments and blanks ignored). A missing file yields an empty set.
+// envFileKeys resolves an env file into the keys whose effective values are non-empty. A bare KEY
+// imports the ambient value, and later duplicate assignments win, matching the runtime env-file
+// contract. Comments, blanks, and a missing file yield no keys.
 func envFileKeys(path string) map[string]bool {
 	keys := map[string]bool{}
 	data, err := os.ReadFile(path)
@@ -159,8 +162,24 @@ func envFileKeys(path string) map[string]bool {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if k, v, ok := strings.Cut(line, "="); ok && strings.TrimSpace(v) != "" {
-			keys[strings.TrimSpace(k)] = true
+		if k, v, ok := strings.Cut(line, "="); ok {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			if strings.TrimSpace(v) != "" {
+				keys[k] = true
+			} else {
+				delete(keys, k)
+			}
+			continue
+		}
+		if value, ok := os.LookupEnv(line); ok {
+			if value != "" {
+				keys[line] = true
+			} else {
+				delete(keys, line)
+			}
 		}
 	}
 	return keys

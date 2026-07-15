@@ -4,26 +4,69 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// ProfileAuthed reports whether agent's named profile looks signed in: its credential
-// marker file is present in that profile's dir, or the agent's API key is set in the env
-// file (a key authenticates every profile). Like AuthedAgents, it's a presence heuristic,
-// not a validity check.
+// EffectiveProfiles returns stored profile directories plus one synthetic env-backed default when
+// needed. Consumers that mutate credential directories must continue to use Config.Profiles.
+func EffectiveProfiles(cfg *config.Config, agent string) []string {
+	profiles := cfg.Profiles(agent)
+	def := cfg.DefaultProfileOf(agent)
+	if !slices.Contains(profiles, def) && ProfileAuthed(cfg, agent, def) {
+		profiles = append(profiles, def)
+	}
+	return profiles
+}
+
+// ProfileAuthed reports whether the named agent profile has its credential marker file, or is the
+// one default profile represented by a provider-wide env token. Like AuthedAgents, it's a presence
+// heuristic, not a validity check.
 func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 	ag, ok := agents.Get(agent)
 	if !ok {
 		return false
 	}
-	file, envKey := ag.AuthMarker()
-	if envFileKeys(cfg.EnvFile())[envKey] {
-		return true
+	return profileCredentialPresent(
+		ag,
+		cfg.AgentProfileDir(agent, profile),
+		envFileKeys(cfg.EnvFile()),
+		profile == cfg.DefaultProfileOf(agent),
+	)
+}
+
+// ProfileMarkerPresent reports whether this exact profile has the adapter's login marker. It lets
+// callers distinguish a file-backed account from an env-backed default even after Box has created
+// the profile directory for mounts and session state.
+func ProfileMarkerPresent(cfg *config.Config, agent, profile string) bool {
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return false
 	}
-	return fileExists(filepath.Join(cfg.AgentProfileDir(agent, profile), file))
+	return profileMarkerPresent(ag, cfg.AgentProfileDir(agent, profile))
+}
+
+// profileCredentialPresent is the canonical presence heuristic for one adapter profile. Adapters
+// declare every accepted token key; AuthMarker owns the file shape. Callers may share a parsed env
+// key set when scanning providers, but they never reconstruct provider-specific credential rules.
+// A provider-wide env token represents one effective default account, never every named profile.
+func profileCredentialPresent(ag agents.Agent, profileDir string, envKeys map[string]bool, allowEnv bool) bool {
+	if allowEnv {
+		for _, key := range ag.CredentialEnvKeys() {
+			if envKeys[key] {
+				return true
+			}
+		}
+	}
+	return profileMarkerPresent(ag, profileDir)
+}
+
+func profileMarkerPresent(ag agents.Agent, profileDir string) bool {
+	file, _ := ag.AuthMarker()
+	return fileExists(filepath.Join(profileDir, file))
 }
 
 // ProfileTokenExpiry returns when agent's named-profile credential expires, and whether that's

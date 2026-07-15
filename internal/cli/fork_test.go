@@ -10,6 +10,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func TestForkWorkspace(t *testing.T) {
@@ -152,6 +153,27 @@ func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}} // no profiles signed in
 	if code, err := a.forkCreate([]string{"scratchfork", "claude", "--profile", "ghost"}); code != 2 || err == nil {
 		t.Fatalf("forkCreate with a bad --profile = (%d, %v), want (2, error before any clone)", code, err)
+	}
+}
+
+func TestForkCreateAcceptsEnvOnlyDefaultProfileBeforeImage(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), BoxHome: t.TempDir()}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetDefaultProfile("codex", "work"); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg, rt: runtime.Runtime{Name: "false"}, rtSet: true}
+	code, err := a.forkCreate([]string{"scratchfork", "codex@work"})
+	if err == nil {
+		t.Fatal("forkCreate unexpectedly reached a runnable image")
+	}
+	if code == 2 && strings.Contains(err.Error(), "no account") {
+		t.Fatalf("env-only default was rejected before image lookup: (%d, %v)", code, err)
+	}
+	if pathExists(forkWorkspace(cfg.RepoOverride, "scratchfork")) {
+		t.Error("failed image lookup must not create a fork")
 	}
 }
 

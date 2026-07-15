@@ -182,10 +182,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 // FIRST RUN hint on it without breaking the runtime-free help path.
 func anyAgentSignedIn(cfg *config.Config) bool {
 	for _, agent := range agents.Names() {
-		if box.ProfileAuthed(cfg, agent, cfg.DefaultProfileOf(agent)) {
-			return true
-		}
-		for _, p := range cfg.Profiles(agent) {
+		for _, p := range box.EffectiveProfiles(cfg, agent) {
 			if box.ProfileAuthed(cfg, agent, p) {
 				return true
 			}

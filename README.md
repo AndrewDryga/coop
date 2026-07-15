@@ -493,15 +493,33 @@ coop login codex      # device-code login (the box has no browser for an OAuth r
 coop login gemini     # or it logs in on first use
 ```
 
-…or use API keys — drop them in the env file, passed into every box:
+…or use a token in Coop's env file. Coop recognizes every key the adapter accepts and exposes it
+only to boxes whose credential scope includes that provider:
 
 ```bash
 echo 'ANTHROPIC_API_KEY=sk-…'  >> ~/.config/coop/agents/env
+echo 'OPENAI_API_KEY=sk-…'      >> ~/.config/coop/agents/env
 echo 'GEMINI_API_KEY=AIza…'    >> ~/.config/coop/agents/env
+echo 'XAI_API_KEY=xai-…'        >> ~/.config/coop/agents/env
 ```
 
-A run only sees the API keys of the agents in its credential scope (above): a `coop
-claude` box gets `ANTHROPIC_API_KEY` but not `OPENAI_API_KEY` / `GEMINI_API_KEY`, which
+| Agent | Accepted token keys |
+| --- | --- |
+| Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` |
+| Codex | `OPENAI_API_KEY` |
+| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| Grok | `XAI_API_KEY` |
+
+`KEY=value` stores a value in the file; a bare `KEY` imports its value when it exists in Coop's
+ambient environment. An unset bare import is omitted, while a set import or assignment wins over
+earlier entries. An env-only login appears as the provider's default credential in
+`coop credentials` without requiring a credential marker file. It represents only that one default
+credential; additional named accounts need their own file-backed login. When a named account runs,
+Coop removes that provider's env-token keys so they cannot override the selected account's marker,
+including when that file-backed account is marked as the default.
+
+A run only sees the token keys of the agents in its credential scope (above): a `coop
+claude` box gets Claude's accepted keys but not the Codex, Gemini, or Grok keys, which
 are filtered out before the env file is passed in. Any other variable in the file (a
 `DATABASE_URL`, `COOP_NO_ASDF`, …) is a shared runtime var and reaches every box.
 

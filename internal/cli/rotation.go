@@ -47,7 +47,7 @@ func accountsFor(cfg *config.Config, agent string) []string {
 	if box.ProfileAuthed(cfg, agent, def) {
 		out = append(out, def)
 	}
-	for _, c := range cfg.Profiles(agent) {
+	for _, c := range box.EffectiveProfiles(cfg, agent) {
 		if c != def && box.ProfileAuthed(cfg, agent, c) {
 			out = append(out, c)
 		}

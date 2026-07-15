@@ -196,7 +196,7 @@ func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acp
 	target := agents.Target{Provider: lead, Model: model, Effort: effort}
 	return &acpControl{
 		cfg: cfg, repo: repo, fusion: fusion,
-		lead: lead, model: model, target: target, creds: cfg.Profiles(lead), presets: presets,
+		lead: lead, model: model, target: target, creds: box.EffectiveProfiles(cfg, lead), presets: presets,
 		plainTargets:   map[string]targetPreference{lead: {Model: model, Effort: effort}},
 		accounts:       accountsFor(cfg, lead),
 		sel:            sel,
@@ -463,7 +463,7 @@ func (c *acpControl) retargetLocked(provider string) {
 		return
 	}
 	c.lead = provider
-	c.creds = c.cfg.Profiles(provider)
+	c.creds = box.EffectiveProfiles(c.cfg, provider)
 	c.accounts = accountsFor(c.cfg, provider)
 	c.autoAccount = ""
 	if c.plainTargets == nil {

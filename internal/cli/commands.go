@@ -167,15 +167,16 @@ func (a *app) nudgeIfUnauthed(tool string) {
 }
 
 // selectRunProfile points cfg at the credential profile chosen with the target's @account for a
-// run of tool (a no-op when profile is ""). It requires the profile to already exist — a typo
-// otherwise silently creates an empty husk dir (box.Run pre-creates the active profile), the very
-// clutter `coop credentials rm` cleans up — and notes (without blocking) one that isn't signed in.
+// run of tool (a no-op when profile is ""). It requires a stored profile or the effective env-only
+// default — a typo otherwise silently creates an empty husk dir (box.Run pre-creates the active
+// profile), the very clutter `coop credentials rm` cleans up — and notes (without blocking) one
+// that isn't signed in.
 // Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP.
 func (a *app) selectRunProfile(tool, profile string) error {
 	if profile == "" {
 		return nil
 	}
-	if !slices.Contains(a.cfg.Profiles(tool), profile) {
+	if !slices.Contains(box.EffectiveProfiles(a.cfg, tool), profile) {
 		return fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {
@@ -531,7 +532,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).
-	if profile != "" && !slices.Contains(a.cfg.Profiles(tool), profile) {
+	if profile != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, tool), profile) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	if innerProcess {

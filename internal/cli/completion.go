@@ -187,7 +187,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 		ag, _ := agents.Get(name)
 		add(name)
 		if wantAccounts {
-			for _, profile := range a.cfg.Profiles(name) {
+			for _, profile := range box.EffectiveProfiles(a.cfg, name) {
 				add(name + "@" + profile)
 			}
 		}
@@ -199,7 +199,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 			base := name + ":" + model
 			add(base)
 			if wantAccounts {
-				for _, profile := range a.cfg.Profiles(name) {
+				for _, profile := range box.EffectiveProfiles(a.cfg, name) {
 					add(base + "@" + profile)
 				}
 			}
@@ -210,7 +210,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 				effort := base + "/" + level
 				add(effort)
 				if wantAccounts {
-					for _, profile := range a.cfg.Profiles(name) {
+					for _, profile := range box.EffectiveProfiles(a.cfg, name) {
 						add(effort + "@" + profile)
 					}
 				}
@@ -221,7 +221,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 				effort := name + "/" + level
 				add(effort)
 				if wantAccounts {
-					for _, profile := range a.cfg.Profiles(name) {
+					for _, profile := range box.EffectiveProfiles(a.cfg, name) {
 						add(effort + "@" + profile)
 					}
 				}

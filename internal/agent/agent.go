@@ -112,9 +112,9 @@ type Agent interface {
 	// NativeSubagents owns this adapter's generated native-role format and in-home destination.
 	// A zero descriptor means native preset roles degrade to read-only consults.
 	NativeSubagents() NativeSubagentSupport
-	// AuthMarker is the credential file (under the agent's config dir) it writes on
-	// login, and the env-file key it reads an API key from — either present means it's
-	// set up and worth offering as a consult peer.
+	// AuthMarker is the credential file (under the agent's config dir) it writes on login and
+	// its canonical primary env-file key. Presence checks use CredentialEnvKeys so alternate
+	// tokens are first-class too.
 	AuthMarker() (file, envKey string)
 	// CredentialEnvKeys is every env-file key this agent reads a token from — the
 	// AuthMarker key plus any alternates it honors (e.g. claude also reads

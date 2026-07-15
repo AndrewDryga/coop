@@ -453,19 +453,52 @@ func TestStartSessionAndPreset(t *testing.T) {
 }
 
 func TestMetadata(t *testing.T) {
-	cases := []struct{ name, instr, authFile, authEnv string }{
-		{"claude", "CLAUDE.md", ".credentials.json", "ANTHROPIC_API_KEY"},
-		{"codex", "AGENTS.md", "auth.json", "OPENAI_API_KEY"},
-		{"gemini", "GEMINI.md", "gemini-credentials.json", "GEMINI_API_KEY"},
-		{"grok", "AGENTS.md", "auth.json", "XAI_API_KEY"},
+	cases := []struct {
+		name, instr, authFile, authEnv string
+		credentialEnvKeys              []string
+	}{
+		{"claude", "CLAUDE.md", ".credentials.json", "ANTHROPIC_API_KEY", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}},
+		{"codex", "AGENTS.md", "auth.json", "OPENAI_API_KEY", []string{"OPENAI_API_KEY"}},
+		{"gemini", "GEMINI.md", "gemini-credentials.json", "GEMINI_API_KEY", []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}},
+		{"grok", "AGENTS.md", "auth.json", "XAI_API_KEY", []string{"XAI_API_KEY"}},
 	}
-	for _, c := range cases {
+	names := Names()
+	if len(names) != len(cases) {
+		t.Fatalf("metadata table covers %d adapters, registry has %d: %v", len(cases), len(names), names)
+	}
+	owners := map[string]string{}
+	for i, c := range cases {
+		if names[i] != c.name {
+			t.Fatalf("metadata table[%d] = %q, registry = %q", i, c.name, names[i])
+		}
 		a, _ := Get(c.name)
 		if a.InstructionFile() != c.instr {
 			t.Errorf("%s InstructionFile = %q, want %q", c.name, a.InstructionFile(), c.instr)
 		}
 		if f, e := a.AuthMarker(); f != c.authFile || e != c.authEnv {
 			t.Errorf("%s AuthMarker = (%q,%q), want (%q,%q)", c.name, f, e, c.authFile, c.authEnv)
+		}
+		if got := a.CredentialEnvKeys(); !slices.Equal(got, c.credentialEnvKeys) {
+			t.Errorf("%s CredentialEnvKeys = %v, want %v", c.name, got, c.credentialEnvKeys)
+		}
+		seen := map[string]bool{}
+		primaryCount := 0
+		for _, key := range a.CredentialEnvKeys() {
+			if key == "" || seen[key] {
+				t.Errorf("%s CredentialEnvKeys contains an empty or duplicate key %q", c.name, key)
+			}
+			seen[key] = true
+			if owner, exists := owners[key]; exists {
+				t.Errorf("credential key %q is owned by both %s and %s", key, owner, c.name)
+			} else {
+				owners[key] = c.name
+			}
+			if key == c.authEnv {
+				primaryCount++
+			}
+		}
+		if primaryCount != 1 {
+			t.Errorf("%s primary AuthMarker key %q appears %d times in CredentialEnvKeys", c.name, c.authEnv, primaryCount)
 		}
 	}
 }

@@ -3,9 +3,11 @@ package box
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -68,12 +70,54 @@ func TestProfileAuthed(t *testing.T) {
 	if !ProfileAuthed(cfg, "claude", "work") {
 		t.Error("credential present should be authed")
 	}
-	// An API key in the env file authenticates every profile, even one with no cred file.
+	// An API key in the env file occupies only the default profile slot.
 	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=sk-x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !ProfileAuthed(cfg, "claude", "personal") {
-		t.Error("env API key should authenticate any profile")
+	if !ProfileAuthed(cfg, "claude", "default") {
+		t.Error("env API key should authenticate the default profile")
+	}
+	if ProfileAuthed(cfg, "claude", "personal") {
+		t.Error("env API key must not authenticate an unrelated profile")
+	}
+}
+
+func TestProfileAuthedCredentialMatrix(t *testing.T) {
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		marker, _ := ag.AuthMarker()
+		sources := append([]string{"file"}, ag.CredentialEnvKeys()...)
+		for _, source := range sources {
+			t.Run(name+"/"+source, func(t *testing.T) {
+				cfg := &config.Config{ConfigDir: t.TempDir()}
+				profile := "work"
+				if source == "file" {
+					dir := cfg.AgentProfileDir(name, profile)
+					if err := os.MkdirAll(dir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, marker), []byte("token"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if err := cfg.SetDefaultProfile(name, profile); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if !ProfileAuthed(cfg, name, profile) {
+					t.Errorf("ProfileAuthed(%s, %s via %s) = false", name, profile, source)
+				}
+				if got := EffectiveProfiles(cfg, name); !slices.Contains(got, profile) || len(got) != 1 {
+					t.Errorf("EffectiveProfiles(%s via %s) = %v, want exactly [%s]", name, source, got, profile)
+				}
+				if source != "file" && ProfileAuthed(cfg, name, "personal") {
+					t.Errorf("env credential %s authenticated unrelated %s@personal", source, name)
+				}
+			})
+		}
 	}
 }
 

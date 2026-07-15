@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Credential discovery now follows each adapter's complete authentication contract.** Claude's
+  alternate auth/OAuth tokens and Gemini's `GOOGLE_API_KEY` now drive credential listing, peer and
+  Fusion availability, loop/fleet ladders, ACP defaults, and scoped role mounts just like primary
+  keys or file-backed logins. An env token renders as one usable default credential rather than a
+  false pool of every named account, marker-backed accounts (including a marked default) cannot be
+  shadowed by it, and bare imports use runtime-compatible duplicate precedence.
+
 - **Fusion councils now resolve once and stay valid across terminal and ACP runs.** Terminal
   presets pin and report their first lead rung instead of rejecting cross-provider ladders; ACP
   retains the full ladder, filters the active governor from explicit peers on every spawn, and

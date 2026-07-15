@@ -48,7 +48,7 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 	// expired token gets its own dim line under the block instead of blowing the row sideways.
 	var allProfiles []string
 	for _, agent := range names {
-		allProfiles = append(allProfiles, a.cfg.Profiles(agent)...)
+		allProfiles = append(allProfiles, box.EffectiveProfiles(a.cfg, agent)...)
 	}
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean (p is the profile loop var below)
 	width := colWidth(allProfiles, 0, 40)
@@ -60,7 +60,7 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		}
 		first = false
 		fmt.Println(pal.Bold(agent))
-		profiles := a.cfg.Profiles(agent)
+		profiles := box.EffectiveProfiles(a.cfg, agent)
 		if len(profiles) == 0 {
 			fmt.Printf("  no credentials — run: coop login %s[@<account>]\n", agent)
 			continue
@@ -187,8 +187,10 @@ func (a *app) requireProfile(agent, profile string) error {
 
 // showProfile prints one profile's detail — the path grammar's read at profile depth.
 func (a *app) showProfile(agent, profile string) (int, error) {
-	if err := a.requireProfile(agent, profile); err != nil {
-		return 2, err
+	if !slices.Contains(box.EffectiveProfiles(a.cfg, agent), profile) {
+		if err := a.requireProfile(agent, profile); err != nil {
+			return 2, err
+		}
 	}
 	pal := ui.For(os.Stdout)
 	fmt.Println(pal.Bold(agent + " / " + profile))
@@ -202,7 +204,11 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 		def = "yes"
 	}
 	fmt.Printf("  default    %s\n", def)
-	fmt.Printf("  dir        %s\n", a.cfg.AgentProfileDir(agent, profile))
+	if box.ProfileMarkerPresent(a.cfg, agent, profile) || !box.ProfileAuthed(a.cfg, agent, profile) {
+		fmt.Printf("  dir        %s\n", a.cfg.AgentProfileDir(agent, profile))
+	} else {
+		fmt.Println("  source     env file")
+	}
 	if expired {
 		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+"@"+profile))
 	}

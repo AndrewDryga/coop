@@ -587,6 +587,27 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> login claude@personal   <span class="t"># …and a third</span>
 <span class="k">coop</span> credentials             <span class="t"># list them + which are signed in</span></pre>
                     <p>
+                        API-token users can put provider keys in
+                        <code>~/.config/coop/agents/env</code>. Accepted keys are
+                        <code>ANTHROPIC_API_KEY</code>,
+                        <code>ANTHROPIC_AUTH_TOKEN</code>, and
+                        <code>CLAUDE_CODE_OAUTH_TOKEN</code> for Claude;
+                        <code>OPENAI_API_KEY</code> for Codex;
+                        <code>GEMINI_API_KEY</code> or
+                        <code>GOOGLE_API_KEY</code> for Gemini; and
+                        <code>XAI_API_KEY</code> for Grok. Coop recognizes an
+                        env-only login as the provider's default credential and
+                        scopes every accepted key like a file-backed login. A
+                        bare key imports an existing ambient value; if it is
+                        unset, the entry is omitted. A present import or later
+                        assignment wins over earlier entries. The env token is
+                        one effective default credential, not a substitute for
+                        additional named-account logins; Coop removes those env
+                        keys when a file-backed named account runs so the global
+                        token cannot override it, including when that account is
+                        marked as the default.
+                    </p>
+                    <p>
                         There's no pool to configure: a loop rotates whatever
                         its lead's <a href="#presets">target ladder</a> expands
                         to. A bare <code>provider:model</code> rung in that ladder
