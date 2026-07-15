@@ -290,7 +290,7 @@ func (d *streamDecoder) result(ev *streamEvent) {
 	line := fmt.Sprintf("· %d turns · %s · $%.2f", ev.NumTurns, dur, ev.TotalCostUSD)
 	if ev.Usage != nil {
 		res.InTok, res.OutTok = ev.Usage.inputTotal(), ev.Usage.OutputTokens
-		line += fmt.Sprintf(" · %s/%s tok", humanTokens(res.InTok), humanTokens(res.OutTok))
+		line += " · " + tokenUsage(res.InTok, res.OutTok)
 	}
 	d.last = res
 	d.emit(ui.Dim(line))
@@ -309,6 +309,10 @@ func humanTokens(n int) string {
 	default:
 		return fmt.Sprintf("%d", n)
 	}
+}
+
+func tokenUsage(input, output int) string {
+	return fmt.Sprintf("%s input / %s output", humanTokens(input), humanTokens(output))
 }
 
 // blockingLimitStatus reports whether a rate_limit_event status means the agent is actually

@@ -1616,13 +1616,13 @@ func reviewMountPolicy(writes loopcfg.ReviewWrites, queues []string) (bool, []st
 	return true, queues
 }
 
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt string, iterCmd iterationCmdBuilder, hosts []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
 	var fails, waits, retries int
 	for {
 		agent := a.applyTarget(rev)
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		readOnly, writable := reviewMountPolicy(writes, hosts)
-		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, readOnly, writable, sink, peers, "")
+		code, out, res, err := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, readOnly, writable, sink, peers, activity)
 		if ctx != nil && ctx.Err() != nil {
 			return "", nil, nil // user interrupt — the caller handles stopping, not a review failure
 		}
@@ -2212,7 +2212,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, false, nil, sink, peers, "")
+			pfCode, pfOut, _, pfErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, false, nil, sink, peers, "preflight")
 			a.recordStage(repo, runid, "preflight", rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil, nil)
 			prev := rot.active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfCode, pfErr, pfOut, time.Now()); limited {
@@ -2393,7 +2393,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 						btSnap := queueSnapshot(hosts)
 						btExit := 0
-						btOut, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, iterCmd, hosts, lc.Between.Writes, sink, peers, wake)
+						stage := "between audit"
+						if protectedAudit {
+							stage = "protected audit"
+						}
+						btOut, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, lc.Between.Writes, sink, peers, wake)
 						if rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(finishedIDs, ", "), rerr)
 							btExit = 1
@@ -2509,7 +2513,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(taskIDsOf(subjects)) + cs.reviewBlock(health)
-		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
+		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", taskIDsOf(subjects)), iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
 		if serr != nil {
 			return 1, serr
 		}
@@ -2571,7 +2575,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) + "\n\n" + reviewContextFooter(repo, queues)
 			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			vExit := 0
-			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, iterCmd, hosts, lc.Verify.Writes, sink, peers, wake)
+			verifyIDs := make([]string, 0, len(cs.tasks))
+			for _, task := range cs.tasks {
+				verifyIDs = append(verifyIDs, task.id)
+			}
+			verifyActivity := reviewActivity("verify", verifyIDs)
+			if len(verifyIDs) == 0 {
+				verifyActivity = "verify: unbound changes"
+			}
+			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, lc.Verify.Writes, sink, peers, wake)
 			if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 				vExit = 1
@@ -2830,10 +2842,10 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
 // capturing the tail so a rate-limit notice can be detected. hosts are the queue files the
-// live bar watches for task progress. On interactive terminals the agent's output is funneled
-// into the scroll history above a sticky progress bar (a Docker-build-style live view).
-// Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target, activeTask string) (code int, output string, res *iterResult, err error) {
+// live bar watches task counts while its explicit activity remains fixed. On interactive terminals
+// the agent's output is funneled into the scroll history above a sticky progress bar (a
+// Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, err error) {
 	tail := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
 
@@ -2842,11 +2854,8 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	var funnel *lineWriter
 	if live {
 		region := ui.NewRegion(os.Stderr, func() int { return ui.TermWidth(os.Stderr) })
-		c0, a0 := queueProgress(hosts)
-		if activeTask != "" {
-			a0 = activeTask
-		}
-		bar = newLoopBar(region, time.Now(), c0, a0)
+		c0, _ := queueProgress(hosts)
+		bar = newLoopBar(region, time.Now(), c0, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel
 		// Route coop's own status lines (ui.Info etc. — from here AND box.Run's startup: "shadowed",
@@ -2944,10 +2953,9 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	return code, tail.String(), res, err
 }
 
-// monitorProgress watches the queue while an iteration runs and pushes each task state change
-// into the live bar — the agent moves task folders between state dirs as it works and the host
-// sees those moves through the bind mount, so the bar's count and active task move live even
-// while the agent's own output is still buffered. It returns when stop is closed.
+// monitorProgress watches the queue while an iteration runs and pushes count changes into the live
+// bar. The activity is owned by runIteration and cannot drift to another queue item when a task
+// moves; only done/blocked/total counts are monitored.
 func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 	t := time.NewTicker(progressPoll)
 	defer t.Stop()
@@ -2957,12 +2965,34 @@ func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 		case <-stop:
 			return
 		case <-t.C:
-			// c.total()==0 while we had a baseline is a torn read (a folder caught mid-move) — a
-			// running loop always has tasks; keep the last good counts rather than blink to 0/0.
-			if c, active := queueProgress(hosts); c != last && (c.total() > 0 || last.total() == 0) {
-				bar.setProgress(c, active)
-				last = c
-			}
+			last = updateLoopBarCounts(hosts, last, bar)
 		}
 	}
+}
+
+func updateLoopBarCounts(hosts []string, last taskCounts, bar *loopBar) taskCounts {
+	// c.total()==0 while we had a baseline is a torn read (a folder caught mid-move) — a
+	// running loop always has tasks; keep the last good counts rather than blink to 0/0.
+	c, _ := queueProgress(hosts)
+	if c != last && (c.total() > 0 || last.total() == 0) {
+		bar.setCounts(c)
+		return c
+	}
+	return last
+}
+
+func reviewActivity(stage string, subjects []string) string {
+	if len(subjects) == 0 {
+		return stage
+	}
+	prefix := stage + ": "
+	suffix := ""
+	if len(subjects) > 1 {
+		suffix = fmt.Sprintf(" +%d", len(subjects)-1)
+	}
+	budget := progressActivityWidth - len([]rune(prefix+suffix))
+	if budget < 1 {
+		return truncate(stage, progressActivityWidth)
+	}
+	return prefix + truncate(subjects[0], budget) + suffix
 }

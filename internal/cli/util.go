@@ -85,16 +85,18 @@ func queueProgress(hosts []string) (taskCounts, string) {
 	return total, next.Item.Title
 }
 
+const progressActivityWidth = 48
+
 // progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a
 // blocked tally only when there is one, and the task being worked. The loop prints it both
 // in the per-iteration banner and live, on its own, whenever a task changes state mid-run.
-func progressLine(c taskCounts, active string) string {
+func progressLine(c taskCounts, activity string) string {
 	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.total())
 	if c.Blocked > 0 {
 		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
 	}
-	if active != "" {
-		s += " · now: " + truncate(active, 48)
+	if activity != "" {
+		s += " · now: " + truncate(activity, progressActivityWidth)
 	}
 	return s
 }

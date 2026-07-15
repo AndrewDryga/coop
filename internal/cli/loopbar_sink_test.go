@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,5 +63,71 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 	}
 	if strings.Contains(out, "\033[36mS") {
 		t.Fatalf("loop spinner should not carry cyan styling, got %q", out)
+	}
+}
+
+func TestLoopBarActivityDoesNotFollowQueueSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		activity string
+		setup    func(t *testing.T, root string) taskItem
+	}{
+		{
+			name:     "work remains assigned after completion exposes next todo",
+			activity: "Assigned work",
+			setup: func(t *testing.T, root string) taskItem {
+				assigned := taskItem{ID: "assigned", State: stateInProgress, Dir: filepath.Join(root, stateInProgress, "assigned")}
+				writeTaskFile(t, filepath.Join(assigned.Dir, "task.md"), "# Assigned work\n")
+				writeTaskFile(t, filepath.Join(root, stateTodo, "next", "task.md"), "# Next queued task\n")
+				return assigned
+			},
+		},
+		{
+			name:     "review remains on subject when next todo is claimed",
+			activity: "signoff: reviewed-task",
+			setup: func(t *testing.T, root string) taskItem {
+				writeTaskFile(t, filepath.Join(root, stateDone, "reviewed-task", "task.md"), "# Reviewed task\n")
+				next := taskItem{ID: "next", State: stateTodo, Dir: filepath.Join(root, stateTodo, "next")}
+				writeTaskFile(t, filepath.Join(next.Dir, "task.md"), "# Next queued task\n")
+				return next
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			moving := tc.setup(t, root)
+			counts, _ := queueProgress([]string{root})
+			var output bytes.Buffer
+			bar := newLoopBar(ui.NewRegion(&output, func() int { return 100 }), time.Now(), counts, tc.activity)
+			newState := stateDone
+			if moving.State == stateTodo {
+				newState = stateInProgress
+			}
+			if err := moveTaskDir(root, moving, newState); err != nil {
+				t.Fatal(err)
+			}
+			updated := updateLoopBarCounts([]string{root}, counts, bar)
+			if updated == counts {
+				t.Fatal("fixture did not change queue counts")
+			}
+			if bar.activity != tc.activity {
+				t.Errorf("bar activity drifted to %q, want %q", bar.activity, tc.activity)
+			}
+			if line := bar.line(); !strings.Contains(line, tc.activity) || strings.Contains(line, "Next queued task") {
+				t.Errorf("bar line followed queue selection instead of fixed activity: %q", line)
+			}
+		})
+	}
+}
+
+func TestReviewActivityNamesStageAndSubjectsCompactly(t *testing.T) {
+	for _, stage := range []string{"between audit", "protected audit", "signoff", "verify"} {
+		if got := reviewActivity(stage, []string{"task-a"}); got != stage+": task-a" {
+			t.Errorf("%s activity = %q", stage, got)
+		}
+	}
+	got := reviewActivity("signoff", []string{"2026-07-14-a-very-long-task-name-that-needs-truncation", "task-b", "task-c"})
+	if !strings.HasPrefix(got, "signoff: 2026-07-14-") || !strings.HasSuffix(got, " +2") || len([]rune(got)) > progressActivityWidth {
+		t.Errorf("multi-subject review activity = %q", got)
 	}
 }

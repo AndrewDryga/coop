@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Loop status stays on the work actually running.** Sticky bars keep their assigned task through
+  folder moves, while between, protected, signoff, and verify passes name their own stage and review
+  subject instead of drifting to the next queue item. Provider closing lines now label compact token
+  totals as `input` and `output`, including the website cast.
+
 - **Completed task snapshots are deterministic.** Every direct, loop, retry, and fork-reconciled
   completion atomically sets `state.md` to `Status: complete` and `Next action: none` before review,
   preserving useful summaries and traps before removing task-local `tmp/`. Metadata-only review

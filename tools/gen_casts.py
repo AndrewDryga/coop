@@ -300,7 +300,7 @@ def scene_loop():
     lb.scroll(ICON_LLM + " A retried checkout double-charges — I'll key each order on the Idempotency-Key + a unique index, so a replay returns the first charge. Added a double-submit test; gate green.", after=0.9)
     lb.scroll("✎ Edit " + dim("internal/payments/checkout.go"))
     lb.scroll("⚙ Bash " + dim('git commit -q -m "payments: make checkout idempotent"'))
-    lb.scroll(dim("· 14 turns · 1m08s · $0.42 · 190k/9.4k tok"))
+    lb.scroll(dim("· 14 turns · 1m08s · $0.42 · 190k input / 9.4k output"))
     lb.set(done=1, active="Cache the /health DB probe")
     lb.tick(2)
 
@@ -308,7 +308,7 @@ def scene_loop():
     lb.scroll(ICON_LLM + " The liveness probe COUNTs orders on every call — caching it 5s behind a singleflight drops ~99% of that load off the primary.", after=0.9)
     lb.scroll("✎ Edit " + dim("internal/health/health.go"))
     lb.scroll("⚙ Bash " + dim('git commit -q -m "health: cache the liveness probe (singleflight)"'))
-    lb.scroll(dim("· 9 turns · 47s · $0.31 · 140k/6.2k tok"))
+    lb.scroll(dim("· 9 turns · 47s · $0.31 · 140k input / 6.2k output"))
     lb.set(done=2, active="Rate-limit the public API")
     lb.tick(2)
 
@@ -316,11 +316,12 @@ def scene_loop():
     lb.scroll(ICON_LLM + " A per-token sliding window (Redis) returns 429 + Retry-After, opt-in per route so internal callers stay unthrottled.", after=0.9)
     lb.scroll("✎ Edit " + dim("internal/middleware/ratelimit.go"))
     lb.scroll("⚙ Bash " + dim('git commit -q -m "api: per-token rate limiting"'))
-    lb.scroll(dim("· 11 turns · 58s · $0.38 · 165k/7.9k tok"))
+    lb.scroll(dim("· 11 turns · 58s · $0.38 · 165k input / 7.9k output"))
     lb.set(done=3, active="")
     lb.tick(2)
 
-    lb.scroll(coop("queue empty — running audit pass"), after=0.6)
+    lb.set(active="signoff: make-checkout-idempotent +2")
+    lb.scroll(coop("queue empty — running signoff"), after=0.6)
     lb.scroll(ICON_LLM + " All three hold up — gate green, each with a commit and a regression test. Nothing to reopen.", after=0.9)
     lb.tick(2)
     lb.clear()

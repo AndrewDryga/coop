@@ -19,20 +19,20 @@ func loopBarSupported(_ string, stdoutTTY, stderrTTY bool) bool {
 }
 
 // loopBar is the loop's sticky bottom status while an iteration runs: a spinner, a progress
-// bar, the done/total counts, the active task, and elapsed time — pinned below the agent's
+// bar, the done/total counts, the immutable activity, and elapsed time — pinned below the agent's
 // scrolling activity. history() funnels one line of agent/loop output into the scrollback
 // above the bar so the bar stays correctly positioned. Built only for a fully interactive run.
 type loopBar struct {
-	region *ui.Region
-	start  time.Time
-	mu     sync.Mutex
-	c      taskCounts
-	active string
-	spin   int
+	region   *ui.Region
+	start    time.Time
+	mu       sync.Mutex
+	c        taskCounts
+	activity string
+	spin     int
 }
 
-func newLoopBar(region *ui.Region, start time.Time, c taskCounts, active string) *loopBar {
-	return &loopBar{region: region, start: start, c: c, active: active}
+func newLoopBar(region *ui.Region, start time.Time, c taskCounts, activity string) *loopBar {
+	return &loopBar{region: region, start: start, c: c, activity: activity}
 }
 
 // line renders the bar from current state (caller holds b.mu).
@@ -40,7 +40,7 @@ func (b *loopBar) line() string {
 	return fmt.Sprintf("%s %s %s %s",
 		ui.SpinFrame(b.spin),
 		ui.ProgressBarStates(b.c.Done, b.c.Blocked, b.c.total(), 20),
-		progressLine(b.c, b.active),
+		progressLine(b.c, b.activity),
 		ui.Dim(elapsed(b.start)))
 }
 
@@ -53,9 +53,9 @@ func (b *loopBar) render(history string) {
 
 func (b *loopBar) history(s string) { b.render(s) }
 
-func (b *loopBar) setProgress(c taskCounts, active string) {
+func (b *loopBar) setCounts(c taskCounts) {
 	b.mu.Lock()
-	b.c, b.active = c, active
+	b.c = c
 	b.mu.Unlock()
 	b.render("")
 }

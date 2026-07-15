@@ -127,7 +127,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 			InTok:  ev.Usage.InputTokens,
 			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningOutputTokens,
 		}
-		d.emit(ui.Dim(fmt.Sprintf("· %s/%s tok", humanTokens(d.last.InTok), humanTokens(d.last.OutTok))))
+		d.emit(ui.Dim("· " + tokenUsage(d.last.InTok, d.last.OutTok)))
 	case "turn.failed":
 		msg := strings.TrimSpace(ev.Message)
 		if msg == "" {
@@ -428,7 +428,7 @@ func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 		OutTok:     ev.Stats.OutputTokens,
 	}
 	dur := (time.Duration(ev.Stats.DurationMS) * time.Millisecond).Round(time.Second)
-	d.emit(ui.Dim(fmt.Sprintf("· %s · %s/%s tok", dur, humanTokens(d.last.InTok), humanTokens(d.last.OutTok))))
+	d.emit(ui.Dim(fmt.Sprintf("· %s · %s", dur, tokenUsage(d.last.InTok, d.last.OutTok))))
 	if ev.Status == "success" {
 		return
 	}
@@ -513,7 +513,7 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 			InTok:  ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens,
 			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningTokens,
 		}
-		d.emit(ui.Dim(fmt.Sprintf("· %d turns · %s/%s tok", d.last.Turns, humanTokens(d.last.InTok), humanTokens(d.last.OutTok))))
+		d.emit(ui.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsage(d.last.InTok, d.last.OutTok))))
 	default:
 		if strings.Contains(strings.ToLower(ev.Type), "error") {
 			d.passthrough(raw)

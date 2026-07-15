@@ -58,9 +58,9 @@ func TestStreamDecoder(t *testing.T) {
 	}
 }
 
-// A result event with a usage block renders in/out tokens on the closing line and captures the
+// A result event with a usage block labels input/output tokens on the closing line and captures the
 // cost/turns/token tally on the decoder for the loop's telemetry; a result WITHOUT usage still
-// renders cost/turns and captures those with zero tokens (no crash, no "tok" on the line).
+// renders cost/turns and captures those with zero tokens (no crash, no usage pair on the line).
 func TestStreamDecoderResultUsage(t *testing.T) {
 	var out, tail bytes.Buffer
 	d := newStreamDecoder(&out, &tail, "", "", "")
@@ -68,7 +68,7 @@ func TestStreamDecoderResultUsage(t *testing.T) {
 	_, _ = d.Write([]byte(`{"type":"result","subtype":"success","num_turns":5,"duration_ms":1000,"total_cost_usd":1.23,"usage":{"input_tokens":4243,"cache_creation_input_tokens":3630,"cache_read_input_tokens":15197,"output_tokens":698}}` + "\n"))
 	d.flush()
 	o := out.String()
-	for _, want := range []string{"· 5 turns", "$1.23", "23.1k/698 tok"} {
+	for _, want := range []string{"· 5 turns", "$1.23", "23.1k input / 698 output"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("result line missing %q: %q", want, o)
 		}
@@ -80,16 +80,22 @@ func TestStreamDecoderResultUsage(t *testing.T) {
 		t.Errorf("captured tally = %+v, want cost 1.23 turns 5 in 23070 out 698", d.last)
 	}
 
-	// No usage block: cost/turns still captured, tokens zero, and the line omits "tok".
+	// No usage block: cost/turns still captured, tokens zero, and the line omits the usage pair.
 	var out2, tail2 bytes.Buffer
 	d2 := newStreamDecoder(&out2, &tail2, "", "", "")
 	_, _ = d2.Write([]byte(`{"type":"result","subtype":"success","num_turns":2,"duration_ms":500,"total_cost_usd":0.05}` + "\n"))
 	d2.flush()
-	if strings.Contains(out2.String(), "tok") {
+	if strings.Contains(out2.String(), " input / ") || strings.Contains(out2.String(), " output") {
 		t.Errorf("a no-usage result should omit tokens: %q", out2.String())
 	}
 	if d2.last == nil || d2.last.CostUSD != 0.05 || d2.last.InTok != 0 {
 		t.Errorf("no-usage tally = %+v, want cost 0.05 in 0", d2.last)
+	}
+}
+
+func TestTokenUsageLabelsBothSides(t *testing.T) {
+	if got := tokenUsage(1_234_567, 45_001); got != "1.2M input / 45.0k output" {
+		t.Errorf("tokenUsage = %q", got)
 	}
 }
 

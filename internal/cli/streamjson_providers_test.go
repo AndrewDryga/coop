@@ -87,7 +87,7 @@ func TestCodexStreamDecoder(t *testing.T) {
 		"· using codex model gpt-5.6 credential work",
 		"⚙ ls",
 		"✦ I'm running the requested command.",
-		"· 15.9k/5 tok",
+		"· 15.9k input / 5 output",
 		"not valid json",
 	} {
 		if !strings.Contains(o, want) {
@@ -318,7 +318,7 @@ func TestGeminiStreamDecoder(t *testing.T) {
 		"▸ README.md",
 		"⚙ ls",
 		"· future_event",
-		"· 11s · 23.7k/102 tok",
+		"· 11s · 23.7k input / 102 output",
 		"not valid json",
 	} {
 		if !strings.Contains(o, want) {
@@ -356,7 +356,7 @@ func TestGeminiStreamDecoderFailures(t *testing.T) {
 	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
-	for _, want := range []string{"  ✗ read_file README.md: permission denied", "✗ usage limit reached", "· 2s · 12/3 tok", "✗ quota exhausted"} {
+	for _, want := range []string{"  ✗ read_file README.md: permission denied", "✗ usage limit reached", "· 2s · 12 input / 3 output", "✗ quota exhausted"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("rendered output missing %q: %q", want, out.String())
 		}
@@ -487,7 +487,7 @@ func TestGrokStreamDecoder(t *testing.T) {
 		"· using grok model grok-4.5 credential work",
 		"✦ hi there",
 		"· future_event",
-		"· 1 turns · 27.3k/187 tok",
+		"· 1 turns · 27.3k input / 187 output",
 		"not valid json",
 	} {
 		if !strings.Contains(o, want) {
@@ -553,7 +553,7 @@ func TestBufferedStreamTextFlushesBeforeRawLine(t *testing.T) {
 			`{"type":"end","usage":{},"num_turns":0}`,
 		}
 		_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
-		want := "· using grok model default\n✦ hi\ndiagnostic\n· 0 turns · 0/0 tok\n"
+		want := "· using grok model default\n✦ hi\ndiagnostic\n· 0 turns · 0 input / 0 output\n"
 		if out.String() != want {
 			t.Errorf("Grok raw-line ordering = %q, want %q", out.String(), want)
 		}
