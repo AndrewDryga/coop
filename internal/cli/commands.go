@@ -555,9 +555,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 			}
 		}
 		sel := acpSelection{Account: profile, Preset: presetName}
-		if sel.Account == "" && sel.Preset == "" {
-			sel.Account = a.cfg.ActiveProfile(tool)
-		}
 		if toolSet {
 			sel.Provider = tool
 		}
@@ -793,6 +790,10 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if provider == "" && ctrl != nil {
 		provider = ctrl.leadProvider()
 	}
+	account := t.Account()
+	if account == "" && provider != "" {
+		account = a.cfg.DefaultProfileOf(provider)
+	}
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -864,7 +865,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			os.RemoveAll(cidDir)
 		}
 	}
-	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, Provider: provider}, nil
+	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, Provider: provider, Account: account}, nil
 }
 
 // agentChoices lists the registered agents for a "use one of …" error, from the registry so a

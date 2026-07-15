@@ -404,7 +404,7 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 	if m := method(t, readLine(t, childIn1)); m != "initialize" {
 		t.Fatalf("child1 first frame = %q, want initialize", m)
 	}
-	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"x","name":"X"}]}}`)
 	if id := idStr(t, readLine(t, clientOut)); id != "1" {
 		t.Fatalf("client got id %q, want 1", id)
 	}
@@ -459,7 +459,11 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 			t.Fatalf("unexpected replay frame: %s", line)
 		}
 		// Answer the synthetic request so replay completes.
-		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
+		result := `{}`
+		if h.Method == "initialize" {
+			result = `{"protocolVersion":1,"authMethods":[{"id":"x","name":"X"}]}`
+		}
+		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":%s}`, string(h.ID), result))
 	}
 	if !sawInit || !sawAuth || !sawLoad {
 		t.Fatalf("replay missing init=%v auth=%v load=%v", sawInit, sawAuth, sawLoad)
@@ -480,6 +484,260 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 	// Clean shutdown: closing the client makes Run return without respawning.
 	if err := h.shutdown(); err != nil {
 		t.Fatalf("Run returned %v, want nil on clean client close", err)
+	}
+}
+
+func TestProxyReplayScopesAuthenticationToFreshProviderCapabilities(t *testing.T) {
+	fixture := newFakeChild()
+	child := fixture.child()
+	child.Provider = "claude"
+	child.Account = "default"
+	p := &proxy{
+		out:   io.Discard,
+		setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}` + "\n")},
+		authentication: map[authenticationScope]authenticationState{
+			{"grok", "default"}:   {"grok-login", []byte(`{"jsonrpc":"2.0","id":"g","method":"authenticate","params":{"methodId":"grok-login"}}` + "\n")},
+			{"claude", "default"}: {"claude-login", []byte(`{"jsonrpc":"2.0","id":"c","method":"authenticate","params":{"methodId":"claude-login"}}` + "\n")},
+		},
+		sessions:     map[string]*sess{},
+		byAdapter:    map[string]string{},
+		sessionReqs:  map[string]sessionRequest{},
+		setupReqs:    map[string]setupRequest{},
+		pending:      map[string]bool{},
+		unavailable:  map[string]bool{},
+		forceByID:    map[string]*forceChain{},
+		forceBySess:  map[string]*forceChain{},
+		forceFailed:  map[string]string{},
+		injected:     map[string][]byte{},
+		retired:      map[string]bool{},
+		reactivating: map[string]string{},
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.replay(child, bufio.NewReader(fixture.outR)) }()
+
+	initialize := parse(readLine(t, bufio.NewReader(fixture.inR)))
+	if initialize.Method != "initialize" {
+		t.Fatalf("first replay method = %q, want initialize", initialize.Method)
+	}
+	writeLine(t, fixture.outW, fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"Claude"},"authMethods":[{"id":"claude-login","name":"Claude"}]}}`, initialize.ID,
+	))
+	authenticate := parse(readLine(t, bufio.NewReader(fixture.inR)))
+	if authenticate.Method != "authenticate" || authenticationMethodID(authenticate.Params) != "claude-login" {
+		t.Fatalf("second replay frame = %s, want Claude authenticate", authenticate.Params)
+	}
+	writeLine(t, fixture.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, authenticate.ID))
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("replay: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("replay did not complete after compatible provider authentication")
+	}
+	if !bytes.Contains(p.initResult, []byte(`"name":"Claude"`)) || !p.authMethods["claude-login"] || p.authMethods["grok-login"] {
+		t.Fatalf("fresh child capabilities not retained: result=%s methods=%v", p.initResult, p.authMethods)
+	}
+}
+
+func TestProxyReplaySkipsAuthenticationNoLongerAdvertised(t *testing.T) {
+	fixture := newFakeChild()
+	child := fixture.child()
+	child.Provider = "claude"
+	child.Account = "default"
+	p := &proxy{
+		out:   io.Discard,
+		setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")},
+		authentication: map[authenticationScope]authenticationState{
+			{"claude", "default"}: {"old-login", []byte(`{"jsonrpc":"2.0","id":"a","method":"authenticate","params":{"methodId":"old-login"}}` + "\n")},
+		},
+		sessions: map[string]*sess{}, pending: map[string]bool{}, sessionReqs: map[string]sessionRequest{},
+		byAdapter: map[string]string{}, unavailable: map[string]bool{}, retired: map[string]bool{}, reactivating: map[string]string{},
+		forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{}, injected: map[string][]byte{},
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.replay(child, bufio.NewReader(fixture.outR)) }()
+	initialize := parse(readLine(t, bufio.NewReader(fixture.inR)))
+	writeLine(t, fixture.outW, fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"authMethods":[{"id":"new-login","name":"New"}]}}`, initialize.ID,
+	))
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("replay: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("replay waited for an authenticate method the fresh child did not advertise")
+	}
+}
+
+func TestProxyReplayDoesNotCrossAccounts(t *testing.T) {
+	fixture := newFakeChild()
+	child := fixture.child()
+	child.Provider = "claude"
+	child.Account = "work"
+	p := &proxy{
+		out:   io.Discard,
+		setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")},
+		authentication: map[authenticationScope]authenticationState{
+			{"claude", "default"}: {"claude-login", []byte(`{"jsonrpc":"2.0","id":"a","method":"authenticate","params":{"methodId":"claude-login"}}` + "\n")},
+		},
+		sessions: map[string]*sess{}, pending: map[string]bool{}, sessionReqs: map[string]sessionRequest{},
+		byAdapter: map[string]string{}, unavailable: map[string]bool{}, retired: map[string]bool{}, reactivating: map[string]string{},
+		forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{}, injected: map[string][]byte{},
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.replay(child, bufio.NewReader(fixture.outR)) }()
+	initialize := parse(readLine(t, bufio.NewReader(fixture.inR)))
+	writeLine(t, fixture.outW, fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"authMethods":[{"id":"claude-login","name":"Claude"}]}}`, initialize.ID,
+	))
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("replay: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("work account replayed the default account's compatible authentication")
+	}
+}
+
+func TestProxyReplayStopsWhenInitializeFails(t *testing.T) {
+	fixture := newFakeChild()
+	child := fixture.child()
+	child.Provider = "claude"
+	p := &proxy{
+		out:            io.Discard,
+		setup:          [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")},
+		authentication: map[authenticationScope]authenticationState{},
+		sessions: map[string]*sess{
+			"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", provider: "claude"},
+		},
+		pending: map[string]bool{}, sessionReqs: map[string]sessionRequest{}, byAdapter: map[string]string{},
+		unavailable: map[string]bool{}, retired: map[string]bool{}, reactivating: map[string]string{},
+		forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{}, injected: map[string][]byte{},
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.replay(child, bufio.NewReader(fixture.outR)) }()
+	initialize := parse(readLine(t, bufio.NewReader(fixture.inR)))
+	writeLine(t, fixture.outW, fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"unsupported protocol"}}`, initialize.ID,
+	))
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "initialize failed") {
+			t.Fatalf("replay error = %v, want initialize failure", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("replay sent session traffic after initialize failed")
+	}
+}
+
+func TestProxySerializesAuthenticationMutationsPerProviderAccount(t *testing.T) {
+	h := newProxyHarness(t, 1, nil)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":1,"result":{"authMethods":[{"id":"login"}]}}`)
+	readLine(t, h.clientOut)
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"authenticate","params":{"methodId":"login"}}`)
+	if got := method(t, readLine(t, h.childIn[0])); got != "authenticate" {
+		t.Fatalf("first auth mutation = %q, want authenticate", got)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"logout","params":{}}`)
+	busy := readLine(t, h.clientOut)
+	if idStr(t, busy) != "3" || !strings.Contains(string(busy), "already in progress") {
+		t.Fatalf("concurrent logout response = %s", busy)
+	}
+
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":2,"result":{}}`)
+	readLine(t, h.clientOut)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"logout","params":{}}`)
+	if got := method(t, readLine(t, h.childIn[0])); got != "logout" {
+		t.Fatalf("serialized auth mutation = %q, want logout", got)
+	}
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":4,"result":{}}`)
+	readLine(t, h.clientOut)
+
+	if err := h.shutdown(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+}
+
+func TestProxySerializesResponseRecoveryWithEditorControl(t *testing.T) {
+	responseEntered := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	editorEntered := make(chan struct{})
+	hooks := &Hooks{
+		ToEditor: func(line []byte) ([]byte, bool) {
+			if string(trimQuotes(parse(line).ID)) == "9" {
+				close(responseEntered)
+				<-releaseResponse
+			}
+			return line, false
+		},
+		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
+			h := parse(line)
+			if h.Method != "coop/test" {
+				return false, nil, nil, false
+			}
+			close(editorEntered)
+			return true, successResponse(string(h.ID)), nil, false
+		},
+	}
+	h := newProxyHarness(t, 1, hooks)
+	h.initialize(0)
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":9,"method":"custom","params":{}}`)
+	readLine(t, h.childIn[0])
+	responseWritten := writeLineAsync(h.children[0].outW, `{"jsonrpc":"2.0","id":9,"error":{"code":-32000,"message":"authentication required"}}`)
+	select {
+	case <-responseEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("response did not enter ToEditor")
+	}
+	requestWritten := writeLineAsync(h.clientIn, `{"jsonrpc":"2.0","id":10,"method":"coop/test","params":{}}`)
+	select {
+	case <-editorEntered:
+		t.Fatal("editor control entered while response recovery still owned the controller")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseResponse)
+	if err := <-responseWritten; err != nil {
+		t.Fatal(err)
+	}
+	if id := idStr(t, readLine(t, h.clientOut)); id != "9" {
+		t.Fatalf("first editor response id = %q, want 9", id)
+	}
+	select {
+	case <-editorEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("editor control did not resume after response recovery")
+	}
+	if err := <-requestWritten; err != nil {
+		t.Fatal(err)
+	}
+	if id := idStr(t, readLine(t, h.clientOut)); id != "10" {
+		t.Fatalf("second editor response id = %q, want 10", id)
+	}
+	if err := h.shutdown(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+}
+
+func TestProxyRejectsStaleLiveAuthenticationMethod(t *testing.T) {
+	h := newProxyHarness(t, 1, nil)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"claude-login","name":"Claude"}]}}`)
+	readLine(t, h.clientOut)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"authenticate","params":{"methodId":"grok-login"}}`)
+	errLine := readLine(t, h.clientOut)
+	if id := idStr(t, errLine); id != "2" || !strings.Contains(string(errLine), "not advertised") || !strings.Contains(string(errLine), "coop login") {
+		t.Fatalf("stale authenticate response = %s", errLine)
+	}
+	if err := h.shutdown(); err != nil {
+		t.Fatalf("Run returned %v", err)
 	}
 }
 
@@ -1626,21 +1884,30 @@ func TestProxyReplayFailureIsVisibleInThread(t *testing.T) {
 // so the next child can decide whether the native id belongs to it before choosing load vs new.
 func TestProxySnapshotRestore(t *testing.T) {
 	src := &proxy{
-		out:         io.Discard,
-		setup:       [][]byte{[]byte(`{"method":"initialize"}`), []byte(`{"method":"authenticate"}`)},
+		out:   io.Discard,
+		setup: [][]byte{[]byte(`{"method":"initialize"}`), []byte(`{"method":"authenticate","params":{"methodId":"unsafe-global"}}`)},
+		authentication: map[authenticationScope]authenticationState{
+			{"codex", "default"}: {"oauth", []byte(`{"method":"authenticate","params":{"methodId":"oauth"}}`)},
+		},
 		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/a"}`), adapterID: "adapterX", provider: "codex", turned: true}, "S2": {params: json.RawMessage(`{"cwd":"/b"}`), adapterID: "S2", provider: "claude", closed: true, turned: false}},
 		byAdapter:   map[string]string{},
 		sessionReqs: map[string]sessionRequest{},
 		pending:     map[string]bool{},
 	}
 	snap := src.snapshot()
-	if len(snap.Setup) != 2 || string(snap.Setup[0]) != `{"method":"initialize"}` {
+	if len(snap.Setup) != 1 || string(snap.Setup[0]) != `{"method":"initialize"}` {
 		t.Errorf("setup not snapshotted: %v", snap.Setup)
+	}
+	if len(snap.Authentication) != 1 || snap.Authentication[0].Provider != "codex" || snap.Authentication[0].Account != "default" || snap.Authentication[0].MethodID != "oauth" {
+		t.Errorf("provider authentication not snapshotted: %+v", snap.Authentication)
 	}
 	dst := &proxy{out: io.Discard, sessions: map[string]*sess{}, byAdapter: map[string]string{}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{}}
 	dst.restore(snap)
-	if len(dst.setup) != 2 || string(dst.setup[1]) != `{"method":"authenticate"}` {
+	if len(dst.setup) != 1 || string(dst.setup[0]) != `{"method":"initialize"}` {
 		t.Errorf("setup not restored: %v", dst.setup)
+	}
+	if got := string(dst.authentication[authenticationScope{"codex", "default"}].line); !strings.Contains(got, `"methodId":"oauth"`) {
+		t.Errorf("provider authentication not restored: %q", got)
 	}
 	s1 := dst.sessions["S1"]
 	if s1 == nil || !s1.turned || string(s1.params) != `{"cwd":"/a"}` || s1.adapterID != "adapterX" || s1.provider != "codex" {

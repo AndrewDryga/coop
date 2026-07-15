@@ -30,7 +30,18 @@ then switches providers and proves the replacement receives one direct `session/
 `session/load`. Proxy-level tests cover response-gated mutations and late output from retired child
 generations because those byte orderings need controlled pipes.
 
+The same harness owns authentication and replacement regressions. Each fixture generation records
+its resolved `COOP_ACP_TARGET` beside the wire log, so an auth-required prompt can prove the live
+replacement moved from Auto's default account to `@work`, not merely that another process started.
+Every child transcript must begin with `initialize` and carry no editor-origin `authenticate` or
+`logout`. A Grok-to-Claude switch followed by SIGHUP proves both cross-provider recreation and
+same-provider reload without restarting Zed. A separate SIGHUP case makes the first restored child
+return `auth_required` from `session/load`, then proves Auto selects `@work`, preserves the native
+session id, completes reload on the next child, and does not leak the intermediate error to the editor.
+
 ## Changelog
+- 2026-07-14 - added target identity evidence, automatic auth recovery, fresh-handshake assertions,
+  and Grok-to-Claude plus SIGHUP coverage
 - 2026-07-14 - added same-provider native restore, close/delete lifecycle handling,
   cross-provider identity, and retired-generation coverage
 - 2026-07-14 - added the two-switch carry contract and editor/adapter transcript assertions

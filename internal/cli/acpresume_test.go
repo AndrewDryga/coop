@@ -13,11 +13,17 @@ import (
 func TestACPResumeStateRoundTrip(t *testing.T) {
 	st := acpResumeState{
 		Proxy: acpproxy.Snapshot{
-			Setup:    [][]byte{[]byte(`{"method":"initialize"}`)},
+			Setup: [][]byte{[]byte(`{"method":"initialize"}`)},
+			Authentication: []acpproxy.AuthenticationSnap{{
+				Provider: "codex", Account: "work", MethodID: "oauth",
+				Request: []byte(`{"method":"authenticate","params":{"methodId":"oauth"}}`),
+			}},
 			Sessions: []acpproxy.SessionSnap{{EditorID: "S1", Turned: true}},
 		},
 		Ctrl: ctrlSnapshot{
 			Selection:        acpSelection{Provider: "codex"},
+			AutoAccount:      "work",
+			AuthFailed:       map[string]bool{"codex@default": true},
 			Lead:             "codex",
 			Model:            "m",
 			Target:           agents.Target{Provider: "codex", Model: "m", Effort: "xhigh"},
@@ -35,8 +41,13 @@ func TestACPResumeStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Ctrl.Lead != "codex" || got.Ctrl.Target.Effort != "xhigh" || !got.Ctrl.LeadUsesSetModel || got.Ctrl.Selection.Provider != "codex" {
+	if got.Ctrl.Lead != "codex" || got.Ctrl.Target.Effort != "xhigh" || !got.Ctrl.LeadUsesSetModel || got.Ctrl.Selection.Provider != "codex" ||
+		got.Ctrl.AutoAccount != "work" || !got.Ctrl.AuthFailed["codex@default"] {
 		t.Errorf("ctrl round-trip mismatch: %+v", got.Ctrl)
+	}
+	if len(got.Proxy.Authentication) != 1 || got.Proxy.Authentication[0].Provider != "codex" || got.Proxy.Authentication[0].Account != "work" ||
+		got.Proxy.Authentication[0].MethodID != "oauth" {
+		t.Errorf("authentication round-trip mismatch: %+v", got.Proxy.Authentication)
 	}
 	if len(got.Proxy.Sessions) != 1 || got.Proxy.Sessions[0].EditorID != "S1" || !got.Proxy.Sessions[0].Turned {
 		t.Errorf("proxy round-trip mismatch: %+v", got.Proxy.Sessions)

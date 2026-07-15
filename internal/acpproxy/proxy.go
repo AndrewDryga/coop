@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ type Child struct {
 	Out      io.Reader
 	Stop     func()
 	Provider string // native session ids are scoped to this provider
+	Account  string // successful authentication is scoped to this concrete credential too
 }
 
 // Factory starts a fresh child. ctx is cancelled when the proxy is shutting down.
@@ -53,6 +55,10 @@ type Hooks struct {
 	// auto-rotating to another credential when this one reports a rate limit), replayed like any other
 	// restart so the editor never disconnects. Called for every agent→editor line.
 	ToEditor func(line []byte) (out []byte, restart bool)
+	// ReplayFailure gives the control layer a synthetic replay error before the proxy swallows it.
+	// handled=true means the error is target health (for example auth_required): restart requests a
+	// different child, while out carries an actionable error whose message can be shown in-session.
+	ReplayFailure func(line []byte) (out []byte, restart, handled bool)
 	// SessionReady is called with a sessionId once a session is (re)established — a fresh session/new
 	// OR a replayed session/load after a box restart — so coop can force per-session state that the
 	// adapter resets each launch (yolo mode, coop's model). It returns lines to inject to the ADAPTER;
@@ -189,19 +195,22 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 // byte-identical to the pre-reload Run.
 func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks, opts RunOpts) error {
 	p := &proxy{
-		out:          clientOut,
-		hooks:        hooks,
-		sessions:     map[string]*sess{},
-		byAdapter:    map[string]string{},
-		sessionReqs:  map[string]sessionRequest{},
-		pending:      map[string]bool{},
-		retired:      map[string]bool{},
-		unavailable:  map[string]bool{},
-		reactivating: map[string]string{},
-		injected:     map[string][]byte{},
-		forceByID:    map[string]*forceChain{},
-		forceBySess:  map[string]*forceChain{},
-		forceFailed:  map[string]string{},
+		out:            clientOut,
+		hooks:          hooks,
+		authentication: map[authenticationScope]authenticationState{},
+		setupReqs:      map[string]setupRequest{},
+		authPending:    map[authenticationScope]string{},
+		sessions:       map[string]*sess{},
+		byAdapter:      map[string]string{},
+		sessionReqs:    map[string]sessionRequest{},
+		pending:        map[string]bool{},
+		retired:        map[string]bool{},
+		unavailable:    map[string]bool{},
+		reactivating:   map[string]string{},
+		injected:       map[string][]byte{},
+		forceByID:      map[string]*forceChain{},
+		forceBySess:    map[string]*forceChain{},
+		forceFailed:    map[string]string{},
 	}
 	// Resume: seed the restored session state before the first child, then replay onto it below.
 	if opts.Resume != nil {
@@ -216,9 +225,34 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	p.setChild(child)
 	// A resumed start replays the restored setup + sessions onto its FIRST child (a normal start
 	// skips replay — the first child has nothing to restore). A replay failure degrades to a fresh
-	// start rather than exiting: new threads must still work.
+	// start rather than exiting: new threads must still work. A controller-driven restart during
+	// replay is different: retain the restored state and negotiate the newly-selected target.
 	if opts.Resume != nil {
-		if rerr := p.replay(child, reader); rerr != nil {
+		var rerr error
+		for {
+			epoch := p.currentRestartEpoch()
+			rerr = p.replayAt(child, reader, epoch)
+			if !errors.Is(rerr, errReplaySuperseded) {
+				break
+			}
+			child.Stop()
+			if p.reloading.Load() {
+				return &reloadError{Snap: p.snapshot()}
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			p.clearSupersededIntent(epoch)
+			child, err = factory(ctx)
+			if err != nil {
+				return err
+			}
+			reader = bufio.NewReaderSize(child.Out, readBuf)
+			p.setChild(child)
+		}
+		if rerr != nil {
 			Trace("resume replay failed (%v) — starting fresh", rerr)
 			// The first box may be HUNG (errReplayTimeout leaves it live by contract — the caller
 			// stops it), and replay's reader goroutine may still be blocked on it. Pumping this child
@@ -227,6 +261,9 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			child.Stop()
 			p.mu.Lock()
 			p.setup = nil
+			p.authentication = map[authenticationScope]authenticationState{}
+			p.setupReqs = map[string]setupRequest{}
+			p.authPending = map[authenticationScope]string{}
 			p.sessions = map[string]*sess{}
 			p.mu.Unlock()
 			child, err = factory(ctx)
@@ -381,6 +418,28 @@ type sessionRequest struct {
 	generation uint64
 }
 
+// setupRequest stages provider-owned handshake state behind the child response. Initialize is
+// reusable transport setup as soon as the editor sends it; authenticate is retained only after the
+// provider accepts it, otherwise a failed login would poison every later restart.
+type setupRequest struct {
+	method     string
+	provider   string
+	account    string
+	methodID   string
+	line       []byte
+	generation uint64
+}
+
+type authenticationScope struct {
+	provider string
+	account  string
+}
+
+type authenticationState struct {
+	methodID string
+	line     []byte
+}
+
 type replayBinding struct {
 	adapterID string
 	provider  string
@@ -417,25 +476,31 @@ type clientLine struct {
 type proxy struct {
 	out io.Writer
 
-	controlMu    sync.Mutex // serializes controller hooks with restart decisions and resume admission
-	mu           sync.Mutex
-	child        *Child
-	candidate    *Child // replacement being replayed before it becomes authoritative
-	generation   uint64
-	restartEpoch uint64                    // increments for every selection/restart request, even during replay
-	shuttingDown bool                      // editor gone / ctx cancelled: a concurrent swap must stop the child it publishes
-	setup        [][]byte                  // editor's pre-session setup (initialize, authenticate), in order
-	sessions     map[string]*sess          // editor sessionId -> session state
-	byAdapter    map[string]string         // adapter sessionId -> editor sessionId, only for re-created (diverged) sessions
-	sessionReqs  map[string]sessionRequest // request id -> mutation committed only on success
-	pending      map[string]bool           // editor request id -> awaiting a response
-	retired      map[string]bool           // native ids retired in this child generation; drop late output
-	unavailable  map[string]bool           // editor sessions that did not establish on the active child
-	reactivating map[string]string         // retired native id -> pending load/resume request that may stream history
-	injected     map[string][]byte         // synthetic request id -> request, for response diagnostics
-	forceByID    map[string]*forceChain    // active setting request id -> its ordered chain
-	forceBySess  map[string]*forceChain    // adapter session id -> active setting chain
-	forceFailed  map[string]string         // adapter session id -> setting failure; prompts fail loudly
+	controlMu      sync.Mutex // serializes controller hooks with restart decisions and resume admission
+	mu             sync.Mutex
+	child          *Child
+	candidate      *Child // replacement being replayed before it becomes authoritative
+	generation     uint64
+	restartEpoch   uint64                                      // increments for every selection/restart request, even during replay
+	shuttingDown   bool                                        // editor gone / ctx cancelled: a concurrent swap must stop the child it publishes
+	setup          [][]byte                                    // the editor's initialize request (slice shape preserves old snapshots)
+	authentication map[authenticationScope]authenticationState // one chosen method per provider account
+	setupReqs      map[string]setupRequest                     // request id -> handshake state committed only on success
+	authPending    map[authenticationScope]string              // provider account -> serialized authenticate/logout request id
+	initResult     json.RawMessage                             // active child's fresh initialize result (capabilities included)
+	authMethods    map[string]bool                             // methods advertised by the active child's initialize result
+	initGeneration uint64                                      // generation initResult/authMethods belong to
+	sessions       map[string]*sess                            // editor sessionId -> session state
+	byAdapter      map[string]string                           // adapter sessionId -> editor sessionId, only for re-created (diverged) sessions
+	sessionReqs    map[string]sessionRequest                   // request id -> mutation committed only on success
+	pending        map[string]bool                             // editor request id -> awaiting a response
+	retired        map[string]bool                             // native ids retired in this child generation; drop late output
+	unavailable    map[string]bool                             // editor sessions that did not establish on the active child
+	reactivating   map[string]string                           // retired native id -> pending load/resume request that may stream history
+	injected       map[string][]byte                           // synthetic request id -> request, for response diagnostics
+	forceByID      map[string]*forceChain                      // active setting request id -> its ordered chain
+	forceBySess    map[string]*forceChain                      // adapter session id -> active setting chain
+	forceFailed    map[string]string                           // adapter session id -> setting failure; prompts fail loudly
 
 	hooks       *Hooks      // coop's control layer (nil → pure pass-through)
 	intentional atomic.Bool // set before a coop-driven restart so the loop doesn't count it as a failure
@@ -447,8 +512,18 @@ type proxy struct {
 // the snapshot: a fresh child of the same provider can load it, while another provider must create
 // its own native session without probing a foreign id.
 type Snapshot struct {
-	Setup    [][]byte      `json:"setup"`    // the editor's initialize/authenticate lines, in order
-	Sessions []SessionSnap `json:"sessions"` // one per live editor session
+	Setup          [][]byte             `json:"setup"`                    // initialize only; old snapshots may contain unsafe global authenticate lines
+	Authentication []AuthenticationSnap `json:"authentication,omitempty"` // successful requests, scoped to provider + advertised method
+	Sessions       []SessionSnap        `json:"sessions"`                 // one per live editor session
+}
+
+// AuthenticationSnap is one successful provider-owned authenticate request retained across a
+// supervisor re-exec. MethodID is explicit so restore never has to trust malformed request JSON.
+type AuthenticationSnap struct {
+	Provider string          `json:"provider"`
+	Account  string          `json:"account"`
+	MethodID string          `json:"method_id"`
+	Request  json.RawMessage `json:"request"`
 }
 
 // SessionSnap is one session flattened for serialization.
@@ -465,9 +540,28 @@ type SessionSnap struct {
 func (p *proxy) snapshot() Snapshot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	snap := Snapshot{Setup: make([][]byte, len(p.setup))}
-	for i, l := range p.setup {
-		snap.Setup[i] = append([]byte(nil), l...)
+	snap := Snapshot{}
+	for _, line := range p.setup {
+		if parse(line).Method == "initialize" {
+			snap.Setup = [][]byte{clone(line)}
+			break
+		}
+	}
+	scopes := make([]authenticationScope, 0, len(p.authentication))
+	for scope := range p.authentication {
+		scopes = append(scopes, scope)
+	}
+	sort.Slice(scopes, func(i, j int) bool {
+		if scopes[i].provider == scopes[j].provider {
+			return scopes[i].account < scopes[j].account
+		}
+		return scopes[i].provider < scopes[j].provider
+	})
+	for _, scope := range scopes {
+		state := p.authentication[scope]
+		snap.Authentication = append(snap.Authentication, AuthenticationSnap{
+			Provider: scope.provider, Account: scope.account, MethodID: state.methodID, Request: clone(state.line),
+		})
 	}
 	for id, s := range p.sessions {
 		snap.Sessions = append(snap.Sessions, SessionSnap{
@@ -482,9 +576,23 @@ func (p *proxy) snapshot() Snapshot {
 func (p *proxy) restore(snap Snapshot) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.setup = make([][]byte, len(snap.Setup))
-	for i, l := range snap.Setup {
-		p.setup[i] = append([]byte(nil), l...)
+	p.setup = nil
+	for _, l := range snap.Setup {
+		if parse(l).Method == "initialize" {
+			p.setup = [][]byte{clone(l)}
+			break
+		}
+	}
+	if p.authentication == nil {
+		p.authentication = map[authenticationScope]authenticationState{}
+	}
+	for _, a := range snap.Authentication {
+		request := parse(a.Request)
+		if a.Provider == "" || a.Account == "" || a.MethodID == "" || request.Method != "authenticate" ||
+			a.MethodID != authenticationMethodID(request.Params) {
+			continue
+		}
+		p.authentication[authenticationScope{a.Provider, a.Account}] = authenticationState{a.MethodID, clone(a.Request)}
 	}
 	for _, s := range snap.Sessions {
 		adapterID := s.AdapterID
@@ -504,6 +612,10 @@ func (p *proxy) setChild(c *Child) {
 	p.mu.Lock()
 	p.child = c
 	p.generation++
+	p.initResult = nil
+	p.authMethods = nil
+	p.initGeneration = 0
+	p.authPending = map[authenticationScope]string{}
 	p.retired = map[string]bool{}
 	p.unavailable = map[string]bool{}
 	p.reactivating = map[string]string{}
@@ -541,8 +653,10 @@ func (p *proxy) beginReload() {
 	for id := range p.pending {
 		ids = append(ids, id)
 		delete(p.sessionReqs, id)
+		delete(p.setupReqs, id)
 	}
 	p.pending = map[string]bool{}
+	p.authPending = map[authenticationScope]string{}
 	p.reactivating = map[string]string{}
 	c, candidate := p.child, p.candidate
 	if c != nil {
@@ -643,10 +757,15 @@ func (p *proxy) forwardClient(line []byte, origin clientOrigin) {
 	if p.sessionReqs == nil {
 		p.sessionReqs = map[string]sessionRequest{}
 	}
+	if p.setupReqs == nil {
+		p.setupReqs = map[string]setupRequest{}
+	}
 	if h.isRequest() {
 		provider := ""
+		account := ""
 		if p.child != nil {
 			provider = p.child.Provider
+			account = p.child.Account
 		}
 		adapterID := sid
 		sessionProvider := ""
@@ -714,11 +833,52 @@ func (p *proxy) forwardClient(line []byte, origin clientOrigin) {
 			return
 		}
 		switch h.Method {
-		case "initialize", "authenticate":
-			// The pre-session handshake the editor ran to bring the agent up. A fresh
-			// agent needs the same — notably authenticate, which loads the on-disk
-			// token (without it the new agent reports "authentication required").
-			p.setup = append(p.setup, clone(line))
+		case "initialize":
+			// Initialize parameters describe the editor and can be reused for every child, but each
+			// child's RESPONSE is fresh capability truth. Replace instead of append so a duplicate
+			// editor initialize cannot grow an invalid replay tape.
+			p.setup = [][]byte{clone(line)}
+			p.setupReqs[string(h.ID)] = setupRequest{
+				method: h.Method, provider: provider, account: account, line: clone(line), generation: p.generation,
+			}
+		case "authenticate":
+			methodID := authenticationMethodID(h.Params)
+			// ACP requires methodId to be advertised by THIS initialize response. The editor's
+			// original method menu cannot change after a provider switch, so reject a stale click
+			// locally instead of invoking an unrelated provider method.
+			if p.initGeneration != p.generation || !p.authMethods[methodID] {
+				p.mu.Unlock()
+				_, _ = p.out.Write(authenticationUnavailableResponse(string(h.ID), provider, methodID))
+				return
+			}
+			scope := authenticationScope{provider, account}
+			if p.authPending == nil {
+				p.authPending = map[authenticationScope]string{}
+			}
+			if p.authPending[scope] != "" {
+				p.mu.Unlock()
+				_, _ = p.out.Write(authenticationBusyResponse(string(h.ID), provider, account))
+				return
+			}
+			p.authPending[scope] = string(h.ID)
+			p.setupReqs[string(h.ID)] = setupRequest{
+				method: h.Method, provider: provider, account: account, methodID: methodID, line: clone(line),
+				generation: p.generation,
+			}
+		case "logout":
+			scope := authenticationScope{provider, account}
+			if p.authPending == nil {
+				p.authPending = map[authenticationScope]string{}
+			}
+			if p.authPending[scope] != "" {
+				p.mu.Unlock()
+				_, _ = p.out.Write(authenticationBusyResponse(string(h.ID), provider, account))
+				return
+			}
+			p.authPending[scope] = string(h.ID)
+			p.setupReqs[string(h.ID)] = setupRequest{
+				method: h.Method, provider: provider, account: account, generation: p.generation,
+			}
 		case "session/new":
 			p.sessionReqs[string(h.ID)] = sessionRequest{
 				method: h.Method, provider: provider, params: h.Params, generation: p.generation,
@@ -808,6 +968,15 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			return nil
 		}
 		h := parse(line)
+		// Force-setting responses may synchronously release an editor prompt through forwardClient.
+		// That path acquires controlMu itself, so keep these generation-checked synthetic responses out
+		// of the controller response critical section. Normal responses remain serialized end to end.
+		injectedResponse := h.isResponse() && strings.HasPrefix(string(trimQuotes(h.ID)), InjectPrefix)
+		responseControl := h.isResponse() && !injectedResponse
+		if responseControl {
+			p.controlMu.Lock()
+			defer p.controlMu.Unlock()
+		}
 		if !h.isResponse() {
 			p.mu.Lock()
 			active := p.child == child && p.generation == generation
@@ -836,7 +1005,7 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 		}
 		if h.isResponse() {
 			// Swallow responses to coop's injected force-sets — the editor never sent them.
-			if strings.HasPrefix(string(trimQuotes(h.ID)), InjectPrefix) {
+			if injectedResponse {
 				p.handleInjectedResponseFrom(line, child, generation)
 				return nil
 			}
@@ -852,11 +1021,38 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			}
 			op, wasSession := p.sessionReqs[id]
 			delete(p.sessionReqs, id)
+			setupOp, wasSetup := p.setupReqs[id]
+			delete(p.setupReqs, id)
+			if wasSetup && (setupOp.method == "authenticate" || setupOp.method == "logout") {
+				scope := authenticationScope{setupOp.provider, setupOp.account}
+				if p.authPending[scope] == id {
+					delete(p.authPending, scope)
+				}
+			}
 			delete(p.pending, id)
 			if (op.method == "session/load" || op.method == "session/resume") && p.reactivating[op.adapterID] == id {
 				delete(p.reactivating, op.adapterID)
 			}
 			success := responseSucceeded(h)
+			if wasSetup && setupOp.generation == generation && success {
+				switch setupOp.method {
+				case "initialize":
+					p.initResult = clone(h.Result)
+					p.authMethods = authenticationMethodIDs(h.Result)
+					p.initGeneration = generation
+				case "authenticate":
+					if setupOp.methodID != "" {
+						if p.authentication == nil {
+							p.authentication = map[authenticationScope]authenticationState{}
+						}
+						scope := authenticationScope{setupOp.provider, setupOp.account}
+						p.authentication[scope] = authenticationState{setupOp.methodID, clone(setupOp.line)}
+					}
+				case "logout":
+					scope := authenticationScope{setupOp.provider, setupOp.account}
+					delete(p.authentication, scope)
+				}
+			}
 			readyID := ""
 			closedID := ""
 			endedID := ""
@@ -910,7 +1106,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 				return nil
 			}
 		}
-		p.controlMu.Lock()
+		if !responseControl {
+			p.controlMu.Lock()
+		}
 		out, restart := line, false
 		if p.hooks != nil && p.hooks.ToEditor != nil {
 			out, restart = p.hooks.ToEditor(line)
@@ -920,7 +1118,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			active := p.child == child && p.generation == generation
 			p.mu.Unlock()
 			if !active {
-				p.controlMu.Unlock()
+				if !responseControl {
+					p.controlMu.Unlock()
+				}
 				Trace("dropping hook output from a retired child generation")
 				return nil
 			}
@@ -934,7 +1134,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 		if restart {
 			p.triggerRestart()
 		}
-		p.controlMu.Unlock()
+		if !responseControl {
+			p.controlMu.Unlock()
+		}
 		return nil
 	})
 }
@@ -1342,8 +1544,15 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		return errReplaySuperseded
 	}
 	p.candidate = c
-	setup := make([][]byte, len(p.setup))
-	copy(setup, p.setup)
+	var initialize []byte
+	for _, line := range p.setup {
+		if parse(line).Method == "initialize" {
+			initialize = clone(line)
+			break
+		}
+	}
+	providerAuth, hasProviderAuth := p.authentication[authenticationScope{c.Provider, c.Account}]
+	providerAuth.line = clone(providerAuth.line)
 	snaps := make([]snap, 0, len(p.sessions))
 	for eid, s := range p.sessions {
 		if s.closed {
@@ -1360,16 +1569,8 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		p.mu.Unlock()
 	}()
 
-	Trace("replay: restoring %d session(s) on the restarted box", len(snaps))
-	var msgs [][]byte
-	expect := map[string]bool{}
-	for i, line := range setup {
-		id := fmt.Sprintf("%ssetup-%d", replayPrefix, i)
-		if msg := withID(line, id); msg != nil {
-			msgs = append(msgs, msg)
-			expect[id] = true
-		}
-	}
+	Trace("replay: negotiating %s and restoring %d session(s) on the restarted box", c.Provider, len(snaps))
+	var sessionMsgs [][]byte
 	for _, s := range snaps {
 		// Native ids belong to one provider. Load only when the replacement child is that provider (or
 		// when both sides are provider-agnostic legacy callers); otherwise create directly and let Coop
@@ -1378,29 +1579,15 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		if canLoad {
 			id := replayPrefix + "load-" + s.editorID
 			if msg := loadRequest(id, s.adapterID, s.params); msg != nil {
-				msgs = append(msgs, msg)
-				expect[id] = true
+				sessionMsgs = append(sessionMsgs, msg)
 			}
 		} else {
 			id := replayPrefix + "new-" + s.editorID
 			if msg := newRequest(id, s.params); msg != nil {
-				msgs = append(msgs, msg)
-				expect[id] = true
+				sessionMsgs = append(sessionMsgs, msg)
 			}
 		}
 	}
-
-	// Write the synthetic requests concurrently with reading their responses, so a
-	// full stdin buffer can't deadlock against the child's pending replies.
-	sent := make(chan struct{})
-	go func() {
-		defer close(sent)
-		for _, m := range msgs {
-			if _, err := c.In.Write(m); err != nil {
-				return
-			}
-		}
-	}()
 	// The editor never sees the replayed load/new results (they answer OUR synthetic requests), so it
 	// would keep showing the config it knew before the restart — stale after a credential/preset
 	// switch (e.g. the model dropdown). Collect each re-established session's configOptions from its
@@ -1432,13 +1619,69 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	var recreate []string // turned sessions whose transcript didn't reload — re-created in a second round
 	timeout := replayStartupGrace
 	childEOF := false
+	initID := replayPrefix + "initialize"
+	authReplayID := replayPrefix + "authenticate"
+	var freshInitResult json.RawMessage
+	replayRecovery := func(line []byte) (message string, handled bool, err error) {
+		if p.hooks == nil || p.hooks.ReplayFailure == nil {
+			return "", false, nil
+		}
+		p.controlMu.Lock()
+		p.mu.Lock()
+		current := p.restartEpoch == epoch && p.candidate == c && !p.reloading.Load() && !p.shuttingDown
+		p.mu.Unlock()
+		if !current {
+			p.controlMu.Unlock()
+			return "", false, errReplaySuperseded
+		}
+		out, restart, handled := p.hooks.ReplayFailure(line)
+		if restart {
+			p.triggerRestart()
+		}
+		p.controlMu.Unlock()
+		if restart {
+			return "", true, errReplaySuperseded
+		}
+		if handled && len(out) > 0 {
+			message = errorMessage(parse(out).Error)
+		}
+		return message, handled, nil
+	}
 	process := func(expect map[string]bool) error {
 		for len(expect) > 0 {
 			line, err := readLineCtx(br, timeout)
 			if len(line) > 0 {
 				if h := parse(line); h.isResponse() {
 					id := string(trimQuotes(h.ID))
-					if eid, ok := strings.CutPrefix(id, replayPrefix+"new-"); ok {
+					recoveryMessage, recoveryHandled := "", false
+					if !responseSucceeded(h) {
+						var recoveryErr error
+						recoveryMessage, recoveryHandled, recoveryErr = replayRecovery(line)
+						if recoveryErr != nil {
+							return recoveryErr
+						}
+					}
+					if id == initID {
+						if !responseSucceeded(h) {
+							message := errorMessage(h.Error)
+							if recoveryMessage != "" {
+								message = recoveryMessage
+							}
+							return fmt.Errorf("replay initialize failed for provider %s: %s", c.Provider, message)
+						}
+						freshInitResult = clone(h.Result)
+					} else if id == authReplayID && !responseSucceeded(h) {
+						// A stored method can expire between children. Retire it immediately so later
+						// restarts do not loop; session setup then exposes normal auth_required recovery.
+						p.mu.Lock()
+						delete(p.authentication, authenticationScope{c.Provider, c.Account})
+						p.mu.Unlock()
+						message := errorMessage(h.Error)
+						if recoveryMessage != "" {
+							message = recoveryMessage
+						}
+						Trace("replay: authentication failed for %s@%s and was retired: %s", c.Provider, c.Account, message)
+					} else if eid, ok := strings.CutPrefix(id, replayPrefix+"new-"); ok {
 						// A re-created session — turn-less in round one, or a turned one whose reload
 						// failed in round two: bind the editor's id to the fresh box id so both directions
 						// translate from here on. If even session/new failed, the box is broken.
@@ -1452,15 +1695,25 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 								recreated = append(recreated, eid)
 							}
 						} else if !responseSucceeded(h) {
-							fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, h.Error)
-							Trace("replay: session %s re-create failed: %s", eid, h.Error)
-							failures = append(failures, replayFailure{eid, errorMessage(h.Error)})
+							message := errorMessage(h.Error)
+							if recoveryMessage != "" {
+								message = recoveryMessage
+							}
+							fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, message)
+							Trace("replay: session %s re-create failed: %s", eid, message)
+							failures = append(failures, replayFailure{eid, message})
 						}
 					} else if eid, ok := strings.CutPrefix(id, replayPrefix+"load-"); ok {
 						// A session that DID have a transcript failed to reload — a provider switch (the
 						// new agent can't read the old one's store), or a genuinely lost transcript.
 						// Re-create it fresh in a second round; coop carries the conversation best-effort.
-						if !responseSucceeded(h) {
+						if !responseSucceeded(h) && recoveryHandled {
+							message := recoveryMessage
+							if message == "" {
+								message = errorMessage(h.Error)
+							}
+							failures = append(failures, replayFailure{eid, message})
+						} else if !responseSucceeded(h) {
 							fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; re-creating it fresh (context carried best-effort): %s\n", eid, h.Error)
 							Trace("replay: session %s did NOT reload — re-creating: %s", eid, h.Error)
 							recreate = append(recreate, eid)
@@ -1490,10 +1743,50 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		}
 		return nil
 	}
-	if err := process(expect); err != nil {
+	// Run replay in protocol phases. Initialize must finish before its authMethods can select compatible
+	// provider-owned authentication, and authentication must finish before a session can rely on it.
+	// Each phase writes concurrently with reads so a large session batch cannot fill the child's stdin.
+	sendPhase := func(msgs [][]byte) error {
+		if len(msgs) == 0 || childEOF {
+			return nil
+		}
+		expect := map[string]bool{}
+		for _, msg := range msgs {
+			if h := parse(msg); h.isRequest() {
+				expect[string(trimQuotes(h.ID))] = true
+			}
+		}
+		sent := make(chan struct{})
+		go func() {
+			defer close(sent)
+			for _, msg := range msgs {
+				if _, err := c.In.Write(msg); err != nil {
+					return
+				}
+			}
+		}()
+		err := process(expect)
+		<-sent
 		return err
 	}
-	<-sent // replay writer done: no concurrent write to c.In
+	if len(initialize) > 0 {
+		if err := sendPhase([][]byte{withID(initialize, initID)}); err != nil {
+			return err
+		}
+	}
+	freshAuthMethods := authenticationMethodIDs(freshInitResult)
+	var authMsgs [][]byte
+	if hasProviderAuth && freshAuthMethods[providerAuth.methodID] {
+		authMsgs = append(authMsgs, withID(providerAuth.line, authReplayID))
+	} else if hasProviderAuth {
+		Trace("replay: %s@%s no longer advertises auth method %q; not replaying it", c.Provider, c.Account, providerAuth.methodID)
+	}
+	if err := sendPhase(authMsgs); err != nil {
+		return err
+	}
+	if err := sendPhase(sessionMsgs); err != nil {
+		return err
+	}
 	// Second round: re-create the turned sessions whose reload failed, reusing their original
 	// session/new params (cwd, mcpServers). Serialized after the first writer, so no concurrent
 	// c.In writes; the shared processor remaps them and fires SessionRecreated.
@@ -1520,6 +1813,8 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		ready = map[string]bool{}
 		configUpdates = nil
 		failures = nil
+		freshInitResult = nil
+		freshAuthMethods = nil
 	}
 	p.mu.Lock()
 	current := p.restartEpoch == epoch && p.candidate == c && !p.reloading.Load() && !p.shuttingDown
@@ -1554,7 +1849,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 			}
 		}
 	}
-	if !p.swapChildAt(c, keep, forces, bindings, epoch, true) {
+	if !p.swapChildAt(c, keep, forces, bindings, freshInitResult, freshAuthMethods, epoch, true) {
 		return errReplaySuperseded
 	}
 	for _, eid := range recreated {
@@ -1631,7 +1926,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 // on the new box. The resend re-registers them as pending via fromClient right after the swap —
 // before the new child's pump starts, so no response can race the gap.
 func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]byte, bindings map[string]replayBinding) {
-	_ = p.swapChildAt(c, keep, forces, bindings, p.currentRestartEpoch(), false)
+	_ = p.swapChildAt(c, keep, forces, bindings, nil, nil, p.currentRestartEpoch(), false)
 }
 
 func (p *proxy) swapChildAt(
@@ -1639,6 +1934,8 @@ func (p *proxy) swapChildAt(
 	keep map[string]bool,
 	forces map[string][][]byte,
 	bindings map[string]replayBinding,
+	initResult json.RawMessage,
+	authMethods map[string]bool,
 	epoch uint64,
 	requireCandidate bool,
 ) bool {
@@ -1652,12 +1949,14 @@ func (p *proxy) swapChildAt(
 		// Even a kept prompt is re-admitted below. Its mutation must be replaced with the new
 		// generation's staged request before a response with the reused JSON-RPC id can arrive.
 		delete(p.sessionReqs, id)
+		delete(p.setupReqs, id)
 		if keep[id] {
 			continue
 		}
 		ids = append(ids, id)
 	}
 	p.pending = map[string]bool{}
+	p.authPending = map[authenticationScope]string{}
 	p.retired = map[string]bool{}
 	p.reactivating = map[string]string{}
 	if bindings != nil {
@@ -1678,6 +1977,9 @@ func (p *proxy) swapChildAt(
 		p.candidate = nil
 	}
 	p.generation++
+	p.initResult = clone(initResult)
+	p.authMethods = cloneBoolMap(authMethods)
+	p.initGeneration = p.generation
 	var forceWrites [][]byte
 	var released []clientLine
 	for sid, requests := range forces {
@@ -1740,8 +2042,10 @@ func (p *proxy) failAllPending() {
 		// A staged session mutation on a dead child will never get a response. Drop it so a
 		// later generation reusing the JSON-RPC id cannot commit stale state.
 		delete(p.sessionReqs, id)
+		delete(p.setupReqs, id)
 	}
 	p.pending = map[string]bool{}
+	p.authPending = map[authenticationScope]string{}
 	p.reactivating = map[string]string{}
 	p.mu.Unlock()
 	for _, id := range ids {
@@ -1781,6 +2085,43 @@ func sessionID(raw json.RawMessage) string {
 	}
 	_ = json.Unmarshal(raw, &v)
 	return v.SessionID
+}
+
+func authenticationMethodID(raw json.RawMessage) string {
+	var v struct {
+		MethodID string `json:"methodId"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	return v.MethodID
+}
+
+// authenticationMethodIDs extracts the only method ids valid for authenticate on one initialized
+// child. ACP explicitly scopes methodId to the initialize response, so absent/malformed means none.
+func authenticationMethodIDs(result json.RawMessage) map[string]bool {
+	var v struct {
+		AuthMethods []struct {
+			ID string `json:"id"`
+		} `json:"authMethods"`
+	}
+	_ = json.Unmarshal(result, &v)
+	methods := make(map[string]bool, len(v.AuthMethods))
+	for _, method := range v.AuthMethods {
+		if method.ID != "" {
+			methods[method.ID] = true
+		}
+	}
+	return methods
+}
+
+func cloneBoolMap(src map[string]bool) map[string]bool {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]bool, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 // resultConfigOptions extracts a session/load|new result's configOptions, or nil (an adapter that
@@ -1949,6 +2290,22 @@ func sessionUnavailableResponse(id, sessionID, provider string) []byte {
 		"coop: session %s is not available on provider %s; switch back or start a new thread", sessionID, provider,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32002,"message":` + string(message) + `}}` + "\n")
+}
+
+func authenticationUnavailableResponse(id, provider, methodID string) []byte {
+	message, _ := json.Marshal(fmt.Sprintf(
+		"coop: authentication method %q is not advertised by provider %s; use that provider's Coop account selector or run coop login %s@account",
+		methodID, provider, provider,
+	))
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32602,"message":` + string(message) + `}}` + "\n")
+}
+
+func authenticationBusyResponse(id, provider, account string) []byte {
+	message, _ := json.Marshal(fmt.Sprintf(
+		"coop: authentication is already in progress for %s@%s; wait for it to finish before retrying",
+		provider, account,
+	))
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32003,"message":` + string(message) + `}}` + "\n")
 }
 
 func targetErrorResponse(id, detail string) []byte {

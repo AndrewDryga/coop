@@ -1,7 +1,9 @@
 package acpproxy_test
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -368,6 +370,232 @@ func TestScriptedACPSessionIdentityLifecycle(t *testing.T) {
 	}
 }
 
+func TestScriptedACPAuthenticationRecoveryRotatesAccount(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	signInScriptedProfile(t, tmp, "claude", "work")
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "claude": [
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}},"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/new","result":{"sessionId":"S1","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}],"error":{"code":-32000,"message":"auth_required","data":{"reason":"auth_required"}}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}},"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/new","result":{"sessionId":"S2","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S2","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"recovered on work"}}}}],"result":{"stopReason":"end_turn"}}
+      ]
+    ]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	initialize, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}})
+	if err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	assertEditorAuthenticationHidden(t, initialize)
+	response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	sid := responseSessionID(response)
+	mark := proc.client.mark()
+	if _, err := proc.client.req(ctx, "session/prompt", map[string]any{
+		"sessionId": sid,
+		"prompt":    []any{map[string]any{"type": "text", "text": "recover automatically"}},
+	}); err != nil {
+		t.Fatalf("automatic auth retry: %v\nstderr:\n%s\nwire:\n%s", err, proc.stderr.String(), wireDump(proc.client.transcript()))
+	}
+	awaitScriptedEventContains(t, ctx, proc, mark, "recovered on work")
+
+	state := filepath.Join(tmp, "fixture-state")
+	assertFixtureHandshake(t, filepath.Join(state, "claude-0", "wire.jsonl"))
+	assertFixtureHandshake(t, filepath.Join(state, "claude-1", "wire.jsonl"))
+	target, err := os.ReadFile(filepath.Join(state, "claude-1", "target.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(target), "@work") {
+		t.Fatalf("replacement child target = %q, want the work account", target)
+	}
+}
+
+func TestScriptedACPAuthenticationRecoveryDuringRestart(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	signInScriptedProfile(t, tmp, "claude", "work")
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "claude": [
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/new","result":{"sessionId":"S1","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ready before restart"}}}}],"result":{"stopReason":"end_turn"}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/load","error":{"code":-32000,"message":"auth_required","data":{"reason":"auth_required"}}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/load","result":{"configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"recovered","options":[]}]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}}
+      ]
+    ]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	initialize, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}})
+	if err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	assertEditorAuthenticationHidden(t, initialize)
+	response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	sid := responseSessionID(response)
+	promptScripted(t, ctx, proc, sid, "establish transcript", "ready before restart")
+
+	mark := proc.client.mark()
+	if err := proc.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("SIGHUP scripted supervisor: %v", err)
+	}
+	awaitScriptedEventContains(t, ctx, proc, mark, `"currentValue":"recovered"`)
+
+	state := filepath.Join(tmp, "fixture-state")
+	for _, generation := range []string{"claude-0", "claude-1", "claude-2"} {
+		assertFixtureHandshake(t, filepath.Join(state, generation, "wire.jsonl"))
+	}
+	target, err := os.ReadFile(filepath.Join(state, "claude-2", "target.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(target), "@work") {
+		t.Fatalf("replay recovery child target = %q, want work account", target)
+	}
+	for _, frame := range proc.client.transcript()[mark:] {
+		if strings.Contains(string(frame.Raw), "auth_required") {
+			t.Fatalf("replay authentication error leaked to editor: %s", frame.Raw)
+		}
+	}
+}
+
+func TestScriptedACPGrokToClaudeAndRestart(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "grok": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}},"authMethods":[{"id":"grok-login","name":"Grok Login"}]}},
+      {"method":"session/new","result":{"sessionId":"G1","configOptions":[]}},
+      {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"G1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"grok ready"}}}}],"result":{"stopReason":"end_turn"}}
+    ]],
+    "claude": [
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}},"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/new","result":{"sessionId":"C2","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"C2","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"claude ready"}}}}],"result":{"stopReason":"end_turn"}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}},"authMethods":[{"id":"claude-login","name":"Claude Login"}]}},
+        {"method":"session/load","result":{"configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"reloaded","options":[]}]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}}
+      ]
+    ]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "grok", "grok", "claude")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	initialize, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}})
+	if err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	assertEditorAuthenticationHidden(t, initialize)
+	response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	sid := responseSessionID(response)
+	promptScripted(t, ctx, proc, sid, "start on grok", "grok ready")
+	switchScriptedProvider(t, ctx, proc, sid, "claude")
+	promptScripted(t, ctx, proc, sid, "continue on claude", "claude ready")
+
+	mark := proc.client.mark()
+	if err := proc.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("SIGHUP scripted supervisor: %v", err)
+	}
+	awaitScriptedEventContains(t, ctx, proc, mark, `"currentValue":"reloaded"`)
+
+	state := filepath.Join(tmp, "fixture-state")
+	for _, generation := range []string{"grok-0", "claude-0", "claude-1"} {
+		assertFixtureHandshake(t, filepath.Join(state, generation, "wire.jsonl"))
+	}
+	methods := fixtureWireMethods(t, filepath.Join(state, "claude-1", "wire.jsonl"))
+	if !strings.Contains(strings.Join(methods, ","), "session/load") {
+		t.Fatalf("Claude restart methods = %v, want session/load", methods)
+	}
+}
+
 func promptScripted(t *testing.T, ctx context.Context, proc *scriptedACP, sid, prompt, answer string) {
 	t.Helper()
 	mark := proc.client.mark()
@@ -405,6 +633,80 @@ func switchScriptedProvider(t *testing.T, ctx context.Context, proc *scriptedACP
 	}
 }
 
+func awaitScriptedEventContains(t *testing.T, ctx context.Context, proc *scriptedACP, mark int, want string) {
+	t.Helper()
+	for {
+		event, next, err := proc.client.event(ctx, mark, "session/update")
+		if err != nil {
+			t.Fatalf("await event containing %q: %v\nstderr:\n%s\nwire:\n%s", want, err, proc.stderr.String(), wireDump(proc.client.transcript()))
+		}
+		mark = next
+		if strings.Contains(string(event.Raw), want) {
+			return
+		}
+	}
+}
+
+func assertEditorAuthenticationHidden(t *testing.T, response map[string]any) {
+	t.Helper()
+	result, _ := response["result"].(map[string]any)
+	methods, ok := result["authMethods"].([]any)
+	if !ok || len(methods) != 0 {
+		t.Fatalf("editor initialize authMethods = %#v, want an empty list", result["authMethods"])
+	}
+	capabilities, _ := result["agentCapabilities"].(map[string]any)
+	if _, ok := capabilities["auth"]; ok {
+		t.Fatalf("editor initialize leaked provider logout capability: %#v", capabilities)
+	}
+}
+
+func assertFixtureHandshake(t *testing.T, path string) {
+	t.Helper()
+	methods := fixtureWireMethods(t, path)
+	if len(methods) == 0 || methods[0] != "initialize" {
+		t.Fatalf("%s methods = %v, want initialize first", path, methods)
+	}
+	for _, method := range methods {
+		if method == "authenticate" || method == "logout" {
+			t.Fatalf("%s leaked editor authentication method in %v", path, methods)
+		}
+	}
+}
+
+func fixtureWireMethods(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var methods []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var record struct {
+			Direction string          `json:"direction"`
+			Frame     json.RawMessage `json:"frame"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if record.Direction != "in" {
+			continue
+		}
+		var frame struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(record.Frame, &frame); err != nil {
+			t.Fatalf("decode frame in %s: %v", path, err)
+		}
+		methods = append(methods, frame.Method)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return methods
+}
+
 func buildTestBinary(t *testing.T, root, output, pkg string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "-trimpath", "-o", output, pkg)
@@ -416,21 +718,10 @@ func buildTestBinary(t *testing.T, root, output, pkg string) {
 
 func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target string, providers ...string) *scriptedACP {
 	t.Helper()
-	configDir := filepath.Join(tmp, "config")
 	for _, provider := range providers {
-		profileDir := filepath.Join(configDir, provider, "profiles", "default")
-		if err := os.MkdirAll(profileDir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		ag, ok := agents.Get(provider)
-		if !ok {
-			t.Fatalf("unknown scripted ACP provider %q", provider)
-		}
-		marker, _ := ag.AuthMarker()
-		if err := os.WriteFile(filepath.Join(profileDir, marker), []byte("{}\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		signInScriptedProfile(t, tmp, provider, "default")
 	}
+	configDir := filepath.Join(tmp, "config")
 	cmd := exec.Command(coopBin, "acp", target)
 	cmd.Env = testEnv(os.Environ(), map[string]string{
 		"HOME":                   filepath.Join(tmp, "home"),
@@ -472,6 +763,22 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 	proc := &scriptedACP{cmd: cmd, stdin: stdin, client: client, stderr: stderr, done: done}
 	t.Cleanup(func() { proc.stop(t) })
 	return proc
+}
+
+func signInScriptedProfile(t *testing.T, tmp, provider, profile string) {
+	t.Helper()
+	profileDir := filepath.Join(tmp, "config", provider, "profiles", profile)
+	if err := os.MkdirAll(profileDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ag, ok := agents.Get(provider)
+	if !ok {
+		t.Fatalf("unknown scripted ACP provider %q", provider)
+	}
+	marker, _ := ag.AuthMarker()
+	if err := os.WriteFile(filepath.Join(profileDir, marker), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (p *scriptedACP) stop(t *testing.T) {

@@ -95,9 +95,11 @@ type acpControl struct {
 
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
-	mu     sync.Mutex
-	sel    acpSelection               // tagged plain lead or preset-owned selection
-	cached map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
+	mu          sync.Mutex
+	sel         acpSelection               // tagged plain lead or preset-owned selection
+	autoAccount string                     // concrete account behind Account=Auto after a recovery rotation
+	authFailed  map[string]bool            // provider@account failures already tried in automatic mode
+	cached      map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
 
 	// nativesStale marks the cached NATIVE options (model/effort/fast) as belonging to a
 	// PREVIOUS lead after a provider switch: a refresh drops them instead of echoing the old
@@ -178,6 +180,7 @@ func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acp
 		lead: lead, model: model, target: target, creds: cfg.Profiles(lead), presets: presets,
 		accounts:      accountsFor(cfg, lead),
 		sel:           sel,
+		authFailed:    map[string]bool{},
 		cached:        map[string]json.RawMessage{},
 		limited:       map[string]time.Time{},
 		nativePending: map[string]nativeTargetChange{},
@@ -202,6 +205,7 @@ func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acp
 func (c *acpControl) hooks() *acpproxy.Hooks {
 	return &acpproxy.Hooks{
 		ToEditor:         c.toEditor,
+		ReplayFailure:    c.maybeRecoverAuthentication,
 		SessionReady:     c.sessionReady,
 		InjectedResponse: c.injectedResponse,
 		ChildReset:       c.childReset,
@@ -375,15 +379,27 @@ func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool)
 		if provider == "" {
 			return agents.Target{}, "", false
 		}
+		// Retarget before resolving Auto: autoAccount and accounts belong to the provider that will
+		// actually spawn. Resolving first can leak claude@work into a Codex switch.
+		providerChanged := provider != c.lead
+		c.retargetLocked(provider)
 		// A plain account switch carries Coop's model/effort pick. A provider switch resolves
 		// the new provider's own defaults because the previous provider's values are meaningless.
 		model, effort := c.model, c.target.Effort
-		if provider != c.lead {
+		if providerChanged {
 			model, effort = c.cfg.ModelFor(provider), c.cfg.EffortFor(provider)
 		}
 		t = agents.Target{Provider: provider, Model: model, Effort: effort}
-		if sel.Account != "" {
-			t.Accounts = []string{sel.Account}
+		account := sel.Account
+		if account == "" {
+			account = c.autoAccount
+			if account == "" && len(c.accounts) > 0 {
+				account = c.accounts[0]
+				c.autoAccount = account
+			}
+		}
+		if account != "" {
+			t.Accounts = []string{account}
 		}
 	}
 	c.retargetLocked(t.Provider)
@@ -409,6 +425,7 @@ func (c *acpControl) retargetLocked(provider string) {
 	c.lead = provider
 	c.creds = c.cfg.Profiles(provider)
 	c.accounts = accountsFor(c.cfg, provider)
+	c.autoAccount = ""
 	c.model = ""
 	c.target = agents.Target{Provider: provider, Model: c.cfg.ModelFor(provider), Effort: c.cfg.EffortFor(provider)}
 	c.leadUsesSetModel = false
@@ -466,14 +483,21 @@ func sleepUntilReset(ctx context.Context, until time.Time, label string) {
 // toEditor rewrites an agent→editor line. On any object carrying configOptions/modes (a
 // session/new|load|resume result or a ConfigOptionUpdate notification), it drops the mode+subagent
 // dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
-// watches for a rate-limit error and auto-rotates the credential (restart=true) — see maybeRotate.
+// watches for authentication/rate-limit errors and auto-rotates when possible (restart=true).
 func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 	c.commitNativeTarget(line)
+	// Authentication failure is target health, not an adapter-owned editor flow: Coop credentials are
+	// mounted before launch. Rotate a plain automatic account, or keep a preset/pin exact and replace
+	// the generic error with its login command. This also drops a duplicate auth-required chunk.
+	if rewritten, restart, handled := c.maybeRecoverAuthentication(line); handled {
+		return rewritten, restart
+	}
 	// A rate-limit error → rotate to a free account (or wait for the nearest reset) and re-send the
 	// prompt transparently; maybeRotate also drops any buffered rate-limit notice for that turn.
 	if rewritten, rotated := c.maybeRotate(line); rotated {
 		return rewritten, true
 	}
+	line = hideAuthenticationMethods(line)
 	// Buffer a rate-limit notice chunk until the turn's outcome is known — suppressed if the turn then
 	// rate-limits (a seamless resend), flushed otherwise. This never drops a legit chunk that merely
 	// mentions "rate limit"/"quota"/429, because a chunk is only dropped when a rate-limit error follows.
@@ -492,6 +516,151 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 		out = append(out, notice...)
 	}
 	return out, false
+}
+
+// maybeRecoverAuthentication turns a terminal auth_required error into Coop's credential policy.
+// An automatic plain account advances once through the signed-in accounts. Presets and pinned plain
+// accounts stay on their exact target: preset ladders are rate-limit fallbacks, so auth must never
+// silently change the answering provider. A correlated Auto prompt is resent after restart; every
+// non-rotating path names the exact `coop login provider@account` recovery command.
+func (c *acpControl) maybeRecoverAuthentication(line []byte) (out []byte, restart, handled bool) {
+	if !bytes.Contains(line, []byte(`"error"`)) || !authenticationError(line) {
+		return nil, false, false
+	}
+	var response struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(line, &response) != nil || len(response.ID) == 0 {
+		return nil, false, false
+	}
+
+	sel := c.selection()
+	c.mu.Lock()
+	provider := c.lead
+	accounts := slices.Clone(c.accounts)
+	session := c.promptSession[string(response.ID)]
+	delete(c.promptSession, string(response.ID))
+	canResend := session != "" && len(c.lastPrompt[session]) > 0
+	if session != "" {
+		delete(c.heldChunk, session)
+		delete(c.turnActive, session)
+	}
+	currentAccount := sel.Account
+	if sel.Preset != "" {
+		currentAccount = c.target.Account()
+	}
+	if currentAccount == "" {
+		currentAccount = c.autoAccount
+	}
+	if currentAccount == "" && len(accounts) > 0 {
+		currentAccount = accounts[0]
+	}
+	c.mu.Unlock()
+	if currentAccount == "" {
+		currentAccount = c.cfg.ActiveProfile(provider)
+	}
+
+	if sel.Preset != "" {
+		return rewriteAuthenticationRecovery(line, provider, currentAccount), false, true
+	}
+
+	// Account == "" is the explicit Auto policy. Track the concrete replacement separately so the UI
+	// remains Auto and each signed-in account is tried at most once instead of silently becoming pinned.
+	if sel.Account == "" {
+		now := time.Now()
+		c.mu.Lock()
+		if c.authFailed == nil {
+			c.authFailed = map[string]bool{}
+		}
+		c.authFailed[loginTarget(provider, currentAccount)] = true
+		var next, earliest string
+		var earliestReset time.Time
+		for _, account := range accounts {
+			if account == currentAccount || c.authFailed[loginTarget(provider, account)] {
+				continue
+			}
+			until := c.limited[account]
+			if !until.After(now) {
+				next = account
+				break
+			}
+			if earliest == "" || until.Before(earliestReset) {
+				earliest, earliestReset = account, until
+			}
+		}
+		if next == "" {
+			next = earliest // all remaining accounts are cooling; the factory waits for the soonest
+		}
+		if next != "" {
+			c.autoAccount = next
+			if canResend {
+				c.resend[session] = true
+			}
+		}
+		c.mu.Unlock()
+		if next != "" {
+			if canResend {
+				acpproxy.Trace("authentication failed on %s@%s: rotating to %s + auto-resending", provider, currentAccount, next)
+				return c.configOptionUpdate(session), true, true
+			}
+			msg := fmt.Sprintf("coop: authentication failed for %s@%s; switched to %s@%s. Retry the request. To repair the failed account, run: coop login %s",
+				provider, currentAccount, provider, next, loginTarget(provider, currentAccount))
+			return rewriteErrorMessage(line, msg), true, true
+		}
+	}
+	return rewriteAuthenticationRecovery(line, provider, currentAccount), false, true
+}
+
+func loginTarget(provider, account string) string {
+	if account == "" {
+		account = config.DefaultProfile
+	}
+	return provider + "@" + account
+}
+
+func rewriteAuthenticationRecovery(line []byte, provider, account string) []byte {
+	return rewriteErrorMessage(line, fmt.Sprintf(
+		"coop: authentication failed for %s. Re-authenticate it with: coop login %s",
+		loginTarget(provider, account), loginTarget(provider, account),
+	))
+}
+
+// hideAuthenticationMethods removes provider-owned login actions from Coop's immutable editor-facing
+// initialize contract. Provider switches negotiate fresh capabilities internally, but ACP has no
+// notification that can replace the editor's original auth menu; leaving it visible produces a stale
+// generic Authenticate button for the wrong provider. Coop's Account selector and login command own it.
+func hideAuthenticationMethods(line []byte) []byte {
+	if !bytes.Contains(line, []byte(`"authMethods"`)) && !bytes.Contains(line, []byte(`"auth"`)) {
+		return line
+	}
+	var message map[string]json.RawMessage
+	if json.Unmarshal(line, &message) != nil {
+		return line
+	}
+	var result map[string]json.RawMessage
+	if json.Unmarshal(message["result"], &result) != nil || len(result["protocolVersion"]) == 0 {
+		return line
+	}
+	result["authMethods"] = json.RawMessage("[]")
+	if raw := result["agentCapabilities"]; len(raw) > 0 {
+		var capabilities map[string]json.RawMessage
+		if json.Unmarshal(raw, &capabilities) == nil {
+			delete(capabilities, "auth") // newer ACP versions advertise logout here
+			if encodedCapabilities, err := json.Marshal(capabilities); err == nil {
+				result["agentCapabilities"] = encodedCapabilities
+			}
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return line
+	}
+	message["result"] = encoded
+	encoded, err = json.Marshal(message)
+	if err != nil {
+		return line
+	}
+	return append(encoded, '\n')
 }
 
 func (c *acpControl) commitNativeTarget(line []byte) {
@@ -948,7 +1117,8 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 
 func authenticationRequired(text string) bool {
 	compact := compactJSONName(text)
-	return strings.Contains(compact, "authenticationrequired") ||
+	return compact == "authrequired" ||
+		strings.Contains(compact, "authenticationrequired") ||
 		strings.Contains(compact, "notauthenticated") ||
 		strings.Contains(compact, "signinrequired")
 }
@@ -960,11 +1130,17 @@ func authenticationError(line []byte) bool {
 	if json.Unmarshal(line, &h) != nil || h.Error == nil {
 		return false
 	}
-	found := false
-	walkJSONStrings(h.Error, "", func(_, value string) {
-		found = found || authenticationRequired(value)
+	foundExact, foundMessage := false, false
+	walkJSONStrings(h.Error, "", func(key, value string) {
+		compactKey, compactValue := compactJSONName(key), compactJSONName(value)
+		switch compactKey {
+		case "reason", "errorkind", "type", "code":
+			foundExact = foundExact || compactValue == "authrequired" || compactValue == "authenticationrequired" || compactValue == "notauthenticated"
+		case "message":
+			foundMessage = foundMessage || authenticationRequired(value)
+		}
 	})
-	return found
+	return foundExact || foundMessage
 }
 
 // takeHeld returns and clears a session's buffered limit/auth notice (empty when none).
@@ -1665,25 +1841,27 @@ func (c *acpControl) presetLead(name, fallback string) string {
 	return fallback
 }
 
-// spawnableProviders lists the OTHER registered providers with at least one signed-in account —
-// the ones a provider switch could actually spawn. The current lead is excluded (its accounts
-// are offered by the Account selector).
 // ctrlSnapshot captures the selection state a fresh controller can't re-derive across a supervisor
 // re-exec (creds/presets/accounts re-derive from cfg/repo at construction; retargetLocked recomputes
 // per-lead state). Carried through a SIGHUP reload so the toolbar/lead/model survive the binary swap.
 type ctrlSnapshot struct {
-	Selection        acpSelection  `json:"selection"`
-	Lead             string        `json:"lead"`
-	Model            string        `json:"model"`
-	Target           agents.Target `json:"target"`
-	LeadUsesSetModel bool          `json:"lead_uses_set_model"`
+	Selection        acpSelection    `json:"selection"`
+	AutoAccount      string          `json:"auto_account,omitempty"`
+	AuthFailed       map[string]bool `json:"auth_failed,omitempty"`
+	Lead             string          `json:"lead"`
+	Model            string          `json:"model"`
+	Target           agents.Target   `json:"target"`
+	LeadUsesSetModel bool            `json:"lead_uses_set_model"`
 }
 
 // snapshot captures the selection state under the lock.
 func (c *acpControl) snapshot() ctrlSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return ctrlSnapshot{Selection: normalizeACPSelection(c.sel), Lead: c.lead, Model: c.model, Target: c.target, LeadUsesSetModel: c.leadUsesSetModel}
+	return ctrlSnapshot{
+		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: cloneStringBoolMap(c.authFailed),
+		Lead: c.lead, Model: c.model, Target: c.target, LeadUsesSetModel: c.leadUsesSetModel,
+	}
 }
 
 // restore re-applies a snapshot into a fresh controller: retargetLocked re-derives the per-lead
@@ -1697,7 +1875,22 @@ func (c *acpControl) restore(s ctrlSnapshot) {
 	if s.Target.Provider == "" {
 		s.Target = agents.Target{Provider: s.Lead, Model: s.Model, Effort: c.cfg.EffortFor(s.Lead)}
 	}
-	c.lead, c.sel, c.model, c.target, c.leadUsesSetModel = s.Lead, s.Selection, s.Model, s.Target, s.LeadUsesSetModel
+	c.lead, c.sel, c.autoAccount, c.model, c.target, c.leadUsesSetModel = s.Lead, s.Selection, s.AutoAccount, s.Model, s.Target, s.LeadUsesSetModel
+	c.authFailed = cloneStringBoolMap(s.AuthFailed)
+	if c.authFailed == nil {
+		c.authFailed = map[string]bool{}
+	}
+}
+
+func cloneStringBoolMap(src map[string]bool) map[string]bool {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]bool, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 // leadProvider is the current lead's provider (the one the active box runs), read under the lock —
@@ -1708,6 +1901,9 @@ func (c *acpControl) leadProvider() string {
 	return c.lead
 }
 
+// spawnableProviders lists the OTHER registered providers with at least one signed-in account —
+// the ones a provider switch could actually spawn. The current lead is excluded (its accounts
+// are offered by the Account selector).
 func (c *acpControl) spawnableProviders(lead string) []string {
 	var out []string
 	for _, p := range agents.Names() {
@@ -1952,6 +2148,11 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	if json.Unmarshal(line, &h) != nil {
 		return false, nil, nil, false
 	}
+	if h.Method == "authenticate" || h.Method == "logout" {
+		provider, account := c.authenticationTarget()
+		message := fmt.Sprintf("coop manages authentication per account. Re-authenticate with: coop login %s", loginTarget(provider, account))
+		return true, rpcErrorResponse(h.ID, -32601, message), nil, false
+	}
 	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it, and
 	// record its text in the carried history. If the session was just re-created (a provider
 	// switch), this prompt is the first into the fresh thread — rewrite it with the history
@@ -2018,6 +2219,13 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// conversation is lost before it begins. A no-op (or a refused value) just re-acks.
 	c.sel = normalizeACPSelection(c.sel)
 	changed := next != c.sel
+	if h.Params.ConfigID == coopAccountID && (h.Params.Value == "auto" || next.Account == h.Params.Value) {
+		if h.Params.Value == "auto" && c.autoAccount != "" {
+			changed = true
+		}
+		c.autoAccount = ""
+		c.authFailed = map[string]bool{} // an explicit account action is a deliberate retry boundary
+	}
 	if changed {
 		c.sel = next
 		c.rot, c.rotFor = nil, acpSelection{}
@@ -2046,6 +2254,39 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// captured at session/new with the old currentValue, so echoing it verbatim would revert the
 	// editor's dropdown; rebuild them fresh.
 	return true, c.ackOptions(h.ID, h.Params.SessionID), nil, changed
+}
+
+func (c *acpControl) authenticationTarget() (provider, account string) {
+	c.mu.Lock()
+	provider = c.lead
+	sel := normalizeACPSelection(c.sel)
+	account = sel.Account
+	if sel.Preset != "" {
+		account = c.target.Account()
+	} else if account == "" {
+		account = c.autoAccount
+	}
+	if account == "" && len(c.accounts) > 0 {
+		account = c.accounts[0]
+	}
+	c.mu.Unlock()
+	if account == "" {
+		account = c.cfg.ActiveProfile(provider)
+	}
+	return provider, account
+}
+
+func rpcErrorResponse(id json.RawMessage, code int, message string) []byte {
+	if len(id) == 0 {
+		return nil
+	}
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	}
+	encoded, _ := json.Marshal(response)
+	return append(encoded, '\n')
 }
 
 // ackOptions builds the reply to an editor set_config_option coop answers itself — the full

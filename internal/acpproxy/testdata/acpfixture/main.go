@@ -211,6 +211,9 @@ func claimGeneration(provider string) (int, *os.File, error) {
 	for gen := 0; ; gen++ {
 		dir := filepath.Join(state, fmt.Sprintf("%s-%d", provider, gen))
 		if err := os.Mkdir(dir, 0o755); err == nil {
+			if err := os.WriteFile(filepath.Join(dir, "target.txt"), []byte(os.Getenv("COOP_ACP_TARGET")), 0o600); err != nil {
+				return 0, nil, err
+			}
 			f, err := os.Create(filepath.Join(dir, "wire.jsonl"))
 			return gen, f, err
 		} else if !os.IsExist(err) {

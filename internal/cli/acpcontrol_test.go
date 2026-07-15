@@ -939,6 +939,106 @@ func TestACPControlSuppressesAuthenticationChunkFromCarry(t *testing.T) {
 	}
 }
 
+func TestACPControlHidesProviderAuthenticationMethods(t *testing.T) {
+	c := newTestControl(t)
+	line := []byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"Grok"},"authMethods":[{"id":"grok-login","name":"Grok Login"}],"agentCapabilities":{"loadSession":true,"auth":{"logout":{}}}}}` + "\n")
+	out, restart := c.toEditor(line)
+	if restart {
+		t.Fatal("initialize response must not restart")
+	}
+	if !bytes.Contains(out, []byte(`"authMethods":[]`)) || bytes.Contains(out, []byte("grok-login")) || bytes.Contains(out, []byte(`"logout"`)) {
+		t.Fatalf("provider auth methods leaked into Coop's immutable editor contract: %s", out)
+	}
+	if !bytes.Contains(out, []byte(`"name":"Grok"`)) || !bytes.Contains(out, []byte(`"loadSession":true`)) {
+		t.Fatalf("hiding auth methods lost unrelated initialize capabilities: %s", out)
+	}
+}
+
+func TestACPControlRejectsEditorAuthenticationAndLogout(t *testing.T) {
+	c := newTestControl(t)
+	c.sel = acpSelection{Account: "personal"}
+	for _, method := range []string{"authenticate", "logout"} {
+		handled, response, toAdapter, restart := c.fromEditor([]byte(fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":9,"method":%q,"params":{"methodId":"claude-login"}}`+"\n", method,
+		)))
+		if !handled || restart || toAdapter != nil || !bytes.Contains(response, []byte("coop login claude@personal")) {
+			t.Fatalf("%s was not owned by Coop: handled=%v restart=%v adapter=%s response=%s", method, handled, restart, toAdapter, response)
+		}
+	}
+}
+
+func TestACPControlAuthenticationRotatesAutomaticAccountAndResends(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.sel = acpSelection{} // Account Auto: personal is the current default, work is the fallback.
+	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}` + "\n")
+	fromEditorPrompt(c, prompt)
+	authChunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}` + "\n")
+	if out, restart := c.toEditor(authChunk); out != nil || restart {
+		t.Fatalf("auth chunk should be held for terminal recovery, out=%s restart=%v", out, restart)
+	}
+	authError := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32000,"message":"auth_required"}}` + "\n")
+	out, restart := c.toEditor(authError)
+	if !restart || !bytes.Contains(out, []byte("config_option_update")) || !bytes.Contains(out, []byte(`"currentValue":"auto"`)) || bytes.Contains(out, []byte("auth_required")) {
+		t.Fatalf("automatic auth recovery should rotate silently, out=%s restart=%v", out, restart)
+	}
+	if sel := c.selection(); sel.Account != "" {
+		t.Fatalf("automatic auth recovery silently pinned the policy: %+v", sel)
+	}
+	if target, _, ok := c.spawnTarget(); !ok || target.Account() != "work" {
+		t.Fatalf("automatic auth recovery spawn target = %+v, want work", target)
+	}
+	if !c.resend["S"] || c.heldChunk["S"] != nil {
+		t.Fatalf("automatic auth recovery did not arm a clean resend: resend=%v held=%s", c.resend, c.heldChunk["S"])
+	}
+}
+
+func TestACPControlAuthenticationGivesPinnedLoginRecovery(t *testing.T) {
+	c := newTestControl(t)
+	c.sel = acpSelection{Account: "personal"}
+	authError := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"Authentication required"}}` + "\n")
+	out, restart := c.toEditor(authError)
+	if restart {
+		t.Fatal("a pinned account with no automatic fallback must not restart-loop")
+	}
+	if !bytes.Contains(out, []byte("coop login claude@personal")) || bytes.Contains(out, []byte(`"message":"Authentication required"`)) {
+		t.Fatalf("pinned account recovery is not actionable: %s", out)
+	}
+}
+
+func TestACPControlAuthenticationGivesPresetLoginRecovery(t *testing.T) {
+	c := presetControl(t)
+	if _, _, ok := c.spawnTarget(); !ok {
+		t.Fatal("resolve preset target")
+	}
+	authError := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"code":-32000,"message":"Authentication required"}}` + "\n")
+	out, restart := c.toEditor(authError)
+	if restart || !bytes.Contains(out, []byte("coop login claude@personal")) {
+		t.Fatalf("preset auth failure should stay exact and name its login, out=%s restart=%v", out, restart)
+	}
+	if got := c.rot.active(); got.Model != "claude-fable-5" {
+		t.Fatalf("preset auth failure changed the answering rung: %+v", got)
+	}
+	if c.resend["sess1"] {
+		t.Fatal("preset auth failure armed a resend without changing credentials")
+	}
+}
+
+func TestACPControlAuthenticationAutoSkipsRateLimitedFallback(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work", "backup"}
+	c.autoAccount = "personal"
+	c.limited["work"] = time.Now().Add(time.Hour)
+	authError := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"Authentication required"}}` + "\n")
+	out, restart := c.toEditor(authError)
+	if !restart || !bytes.Contains(out, []byte("switched to claude@backup")) {
+		t.Fatalf("automatic auth fallback should skip cooling work: out=%s restart=%v", out, restart)
+	}
+	if c.autoAccount != "backup" {
+		t.Fatalf("automatic account = %q, want backup", c.autoAccount)
+	}
+}
+
 // TestACPControlWaitsForReset: with no free account, coop points at the nearest reset, tells the editor
 // it's waiting, flags the resend, and keeps the account marked limited so the factory blocks.
 func TestACPControlWaitsForReset(t *testing.T) {
@@ -1431,14 +1531,47 @@ func TestACPSpawnTarget(t *testing.T) {
 	// retargets — creds/accounts belong to the new lead, the old model pick dies.
 	c.sel = acpSelection{Provider: "codex"}
 	tt, ps, ok = c.spawnTarget()
-	if !ok || ps != "" || tt.String() != "codex" {
-		t.Fatalf("agent selection = (%q, %q, %v), want bare codex", tt, ps, ok)
+	if !ok || ps != "" || tt.String() != "codex@work" {
+		t.Fatalf("agent selection = (%q, %q, %v), want codex@work", tt, ps, ok)
 	}
 	if c.lead != "codex" || c.model != "" || c.leadUsesSetModel {
 		t.Errorf("retarget: lead=%q model=%q setModel=%v, want codex/\"\"/false", c.lead, c.model, c.leadUsesSetModel)
 	}
 	if len(c.accounts) != 1 || c.accounts[0] != "work" {
 		t.Errorf("retarget accounts = %v, want codex's signed-in [work]", c.accounts)
+	}
+}
+
+func TestACPSpawnTargetResolvesAutoAfterProviderRetarget(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	signInCred(t, cfg, "claude", "work")
+	signInCred(t, cfg, "codex", "default")
+	c := newACPControl(cfg, "claude", "", "", dir, acpSelection{}, nil, nil, false)
+
+	first, _, ok := c.spawnTarget()
+	if !ok || first.String() != "claude@work" {
+		t.Fatalf("initial automatic target = (%q, %v), want claude@work", first, ok)
+	}
+	c.sel = acpSelection{Provider: "codex"}
+	next, _, ok := c.spawnTarget()
+	if !ok || next.String() != "codex@default" {
+		t.Fatalf("retargeted automatic target = (%q, %v), want codex@default", next, ok)
+	}
+	if c.autoAccount != "default" || !slices.Equal(c.accounts, []string{"default"}) {
+		t.Fatalf("retargeted automatic state = account %q, accounts %v", c.autoAccount, c.accounts)
+	}
+}
+
+func TestACPSpawnTargetAutoUsesSignedAccountWhenDefaultIsUnsigned(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	signInCred(t, cfg, "claude", "work")
+	c := newACPControl(cfg, "claude", "", "", dir, acpSelection{}, nil, nil, false)
+
+	target, _, ok := c.spawnTarget()
+	if !ok || target.String() != "claude@work" || c.autoAccount != "work" {
+		t.Fatalf("automatic target = (%q, %v), state=%q; want signed claude@work", target, ok, c.autoAccount)
 	}
 }
 
@@ -2172,13 +2305,17 @@ func TestACPControlSnapshotRestore(t *testing.T) {
 	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, acpSelection{}, nil, nil, false)
 	c.sel, c.lead, c.model, c.leadUsesSetModel = acpSelection{Provider: "codex"}, "codex", "gpt-5.6-sol", true
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"}
+	c.autoAccount = "work"
+	c.authFailed = map[string]bool{"codex@default": true}
 	snap := c.snapshot()
 
 	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, acpSelection{}, nil, nil, false)
 	c2.restore(snap)
 	if c2.sel != (acpSelection{Provider: "codex"}) || c2.lead != "codex" || c2.model != "gpt-5.6-sol" ||
-		c2.target.Provider != "codex" || c2.target.Model != "gpt-5.6-sol" || c2.target.Effort != "xhigh" || !c2.leadUsesSetModel {
-		t.Errorf("restore mismatch: sel=%+v lead=%q model=%q target=%+v setModel=%v", c2.sel, c2.lead, c2.model, c2.target, c2.leadUsesSetModel)
+		c2.target.Provider != "codex" || c2.target.Model != "gpt-5.6-sol" || c2.target.Effort != "xhigh" || !c2.leadUsesSetModel ||
+		c2.autoAccount != "work" || !c2.authFailed["codex@default"] {
+		t.Errorf("restore mismatch: sel=%+v lead=%q model=%q target=%+v setModel=%v auto=%q failed=%v",
+			c2.sel, c2.lead, c2.model, c2.target, c2.leadUsesSetModel, c2.autoAccount, c2.authFailed)
 	}
 }
 
