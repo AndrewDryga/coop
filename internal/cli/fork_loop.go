@@ -466,7 +466,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
 	// A fork works its own seeded queue(s) in the worktree.
-	code, err := a.loop(ws, img, agent, name, rot, forkQueue, sink, peers, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight
+	code, err := a.loop(ws, img, agent, name, rot, forkQueue, sink, peers, false, false, false) // name labels each box (coop.fork=); detached/fork loops aren't interactive; no pre-flight/once
 	if err == nil && !detached {
 		forkNextSteps(name)
 	}

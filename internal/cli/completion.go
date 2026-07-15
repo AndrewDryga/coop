@@ -126,14 +126,14 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return appendCompletionCandidates(
 				a.targetCandidates(cur, true, true),
 				a.presetCandidates(),
-				[]string{"--tasks", "--peer", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
+				[]string{"--tasks", "--peer", "--once", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
 			) // `coop loop [target|preset]`; `pool` is not a command, never completed
 		}
 		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
 			return a.targetCandidates(cur, true, false)
 		}
 		if len(prev) > 1 {
-			return []string{"--tasks", "--peer", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
+			return []string{"--tasks", "--peer", "--once", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
 		}
 	case "fusion":
 		if len(prev) == 1 {

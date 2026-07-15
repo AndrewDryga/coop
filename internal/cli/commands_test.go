@@ -73,6 +73,24 @@ func TestLoopExitCode(t *testing.T) {
 	}
 }
 
+func TestLoopIntentionalAndInterruptedStopsAreDistinct(t *testing.T) {
+	if loopInterruptedExitCode != 130 {
+		t.Fatalf("loop interrupt exit = %d, want conventional SIGINT status 130", loopInterruptedExitCode)
+	}
+	cf := taskCounts{Done: 3, Todo: 2}
+	if got := loopInterruptedBanner(cf); !strings.Contains(got, "interrupted before queue verification") || !strings.Contains(got, "3/5 done") {
+		t.Errorf("interrupt banner = %q", got)
+	}
+	if got := loopOnceBanner(cf, "task-a", stateDone); !strings.Contains(got, "one-task run complete") ||
+		!strings.Contains(got, "task-a is done") || !strings.Contains(got, "paused before another task or final signoff") || strings.Contains(got, "verified done") {
+		t.Errorf("one-task done banner = %q", got)
+	}
+	if got := loopOnceBanner(taskCounts{Blocked: 2}, "", ""); !strings.Contains(got, "no actionable task") ||
+		!strings.Contains(got, "no box started") || !strings.Contains(got, "2 blocked") {
+		t.Errorf("one-task idle banner = %q", got)
+	}
+}
+
 // The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
 // read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fleet forks
 // unable to read their own queue (claude resolved it against cwd and was fine).
@@ -496,16 +514,16 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 // no target (hasTarget=false) and the provider is required (caller errors or a preset lead
 // supplies it). A malformed/unknown token errors; --model/--credential are unexpected args now.
 func TestLoopTargetResolution(t *testing.T) {
-	if _, has, ps, _, _, _, err := parseLoopArgs(nil, false); err != nil || has || ps != "" {
+	if _, has, ps, _, _, _, _, err := parseLoopArgs(nil, false); err != nil || has || ps != "" {
 		t.Errorf("parseLoopArgs(nil) = (has=%v, preset=%q, %v), want (false, \"\", nil) — no implicit default", has, ps, err)
 	}
 	for _, ag := range []string{"claude", "codex", "gemini"} {
-		tg, has, ps, _, _, _, err := parseLoopArgs([]string{ag}, false)
+		tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{ag}, false)
 		if err != nil || !has || ps != "" || tg.Provider != ag {
 			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, preset=%q, %v), want provider=%q", ag, tg, has, ps, err, ag)
 		}
 	}
-	if tg, has, ps, _, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has || ps != "" ||
+	if tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{"claude:opus-4.8@work"}, false); err != nil || !has || ps != "" ||
 		tg.Provider != "claude" || tg.Model != "opus-4.8" || len(tg.Accounts) != 1 || tg.Accounts[0] != "work" {
 		t.Errorf("parseLoopArgs(claude:opus-4.8@work) = (%+v, has=%v, preset=%q, %v)", tg, has, ps, err)
 	}
@@ -513,18 +531,18 @@ func TestLoopTargetResolution(t *testing.T) {
 	// "coop loop" to parseLoopArgs, so its positional preset must remain accepted.
 	const documentedPresetLoop = "coop loop frontier"
 	words := strings.Fields(documentedPresetLoop)
-	if tg, has, ps, _, _, _, err := parseLoopArgs(words[2:], false); err != nil || has || ps != "frontier" || tg.Provider != "" {
+	if tg, has, ps, _, _, _, _, err := parseLoopArgs(words[2:], false); err != nil || has || ps != "frontier" || tg.Provider != "" {
 		t.Errorf("%q = (%+v, has=%v, preset=%q, %v), want positional preset frontier", documentedPresetLoop, tg, has, ps, err)
 	}
 	// A bare non-target word is a PRESET NAME now (its existence is validated later by
 	// loadRunPreset), not an unknown-token error.
-	if tg, has, ps, _, _, _, err := parseLoopArgs([]string{"frontier"}, false); err != nil || has || ps != "frontier" || tg.Provider != "" {
+	if tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{"frontier"}, false); err != nil || has || ps != "frontier" || tg.Provider != "" {
 		t.Errorf("parseLoopArgs(frontier) = (%+v, has=%v, preset=%q, %v), want a preset name and no target", tg, has, ps, err)
 	}
 	// The model/account ride the target and a preset is the positional, so --model/--credential/
 	// --preset are all unexpected args now.
 	for _, bad := range [][]string{{"claude", "--model", "opus"}, {"claude", "--credential", "work"}, {"claude", "--preset", "frontier"}} {
-		if _, _, _, _, _, _, err := parseLoopArgs(bad, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		if _, _, _, _, _, _, _, err := parseLoopArgs(bad, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
 			t.Errorf("parseLoopArgs(%v) should be an unexpected argument, got %v", bad, err)
 		}
 	}
@@ -542,40 +560,43 @@ func TestParseLoopArgs(t *testing.T) {
 		wantDebug     bool
 		wantPreflight bool
 		wantNoMCP     bool
+		wantOnce      bool
 		wantErr       bool
 	}{
-		{nil, false, "", "", "", false, false, false, false},
-		{[]string{"codex"}, false, "codex", "", "", false, false, false, false},
-		{[]string{"--debug-on-fail"}, false, "", "", "", true, false, false, false},
-		{[]string{"gemini", "--debug"}, false, "", "", "", false, false, false, true},        // --debug is not a known flag → error
-		{[]string{"--debug-on-fail", "codex"}, false, "", "", "", false, false, false, true}, // a who must LEAD; a trailing positional errors
+		{args: nil},
+		{args: []string{"codex"}, wantAgent: "codex"},
+		{args: []string{"--debug-on-fail"}, wantDebug: true},
+		{args: []string{"--once"}, wantOnce: true},
+		{args: []string{"codex", "--once"}, wantAgent: "codex", wantOnce: true},
+		{args: []string{"gemini", "--debug"}, wantErr: true},        // --debug is not a known flag → error
+		{args: []string{"--debug-on-fail", "codex"}, wantErr: true}, // a who must LEAD; a trailing positional errors
 		// A bare non-target word is a PRESET NAME now (not an unknown-token error).
-		{[]string{"frontier"}, false, "", "", "frontier", false, false, false, false},
-		{[]string{"frontier", "--preflight"}, false, "", "", "frontier", false, true, false, false},
+		{args: []string{"frontier"}, wantPreset: "frontier"},
+		{args: []string{"frontier", "--preflight"}, wantPreset: "frontier", wantPreflight: true},
 		// preflight: default off, --preflight turns it on, --no-preflight overrides a default-on.
-		{[]string{"--preflight"}, false, "", "", "", false, true, false, false},
-		{[]string{"codex", "--preflight"}, false, "codex", "", "", false, true, false, false},
-		{nil, true, "", "", "", false, true, false, false},                         // preflight.enabled default
-		{[]string{"--no-preflight"}, true, "", "", "", false, false, false, false}, // flag overrides default-on
+		{args: []string{"--preflight"}, wantPreflight: true},
+		{args: []string{"codex", "--preflight"}, wantAgent: "codex", wantPreflight: true},
+		{def: true, wantPreflight: true},                                    // preflight.enabled default
+		{args: []string{"--no-preflight"}, def: true, wantPreflight: false}, // flag overrides default-on
 		// --no-mcp: this run's boxes mount no MCP (the committed form is loop.yaml mcp: false).
-		{[]string{"--no-mcp"}, false, "", "", "", false, false, true, false},
-		{[]string{"claude", "--no-mcp", "--preflight"}, false, "claude", "", "", false, true, true, false},
+		{args: []string{"--no-mcp"}, wantNoMCP: true},
+		{args: []string{"claude", "--no-mcp", "--preflight"}, wantAgent: "claude", wantPreflight: true, wantNoMCP: true},
 		// The model/account ride the target now; --model/--credential are unexpected args (error).
-		{[]string{"codex:gpt-5"}, false, "codex", "gpt-5", "", false, false, false, false},
-		{[]string{"claude:opus@work"}, false, "claude", "opus", "", false, false, false, false},
-		{[]string{"--model", "haiku"}, false, "", "", "", false, false, false, true},               // unexpected arg
-		{[]string{"claude", "--credential", "work"}, false, "", "", "", false, false, false, true}, // unexpected arg
-		{[]string{"claude", "--preset", "frontier"}, false, "", "", "", false, false, false, true}, // --preset retired → unexpected arg
+		{args: []string{"codex:gpt-5"}, wantAgent: "codex", wantModel: "gpt-5"},
+		{args: []string{"claude:opus@work"}, wantAgent: "claude", wantModel: "opus"},
+		{args: []string{"--model", "haiku"}, wantErr: true},               // unexpected arg
+		{args: []string{"claude", "--credential", "work"}, wantErr: true}, // unexpected arg
+		{args: []string{"claude", "--preset", "frontier"}, wantErr: true}, // --preset retired → unexpected arg
 	}
 	for _, c := range cases {
-		tg, _, ps, debug, preflight, noMCP, err := parseLoopArgs(c.args, c.def)
+		tg, _, ps, debug, preflight, noMCP, once, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight || noMCP != c.wantNoMCP) {
-			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v noMCP=%v), want (%q, %q, %q, %v, %v, %v)",
-				c.args, c.def, tg.Provider, tg.Model, ps, debug, preflight, noMCP, c.wantAgent, c.wantModel, c.wantPreset, c.wantDebug, c.wantPreflight, c.wantNoMCP)
+		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight || noMCP != c.wantNoMCP || once != c.wantOnce) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v noMCP=%v once=%v), want (%q, %q, %q, %v, %v, %v, %v)",
+				c.args, c.def, tg.Provider, tg.Model, ps, debug, preflight, noMCP, once, c.wantAgent, c.wantModel, c.wantPreset, c.wantDebug, c.wantPreflight, c.wantNoMCP, c.wantOnce)
 		}
 	}
 }

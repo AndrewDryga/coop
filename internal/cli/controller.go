@@ -278,6 +278,13 @@ const maxLeaseRescans = 3
 // another controller can take independent todo work. The flock is obtained while a todo folder is
 // still in todo, then rides its atomic rename to in_progress by inode.
 func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error) {
+	return assignLoopTaskOnly(hosts, owner, "")
+}
+
+// assignLoopTaskOnly scopes assignment to one task after --once has selected it. Counts still cover
+// the whole queue for truthful banners, but another actionable task can never be claimed while the
+// selected task is retrying or has been reopened by its between-task audit.
+func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (taskAssignment, error) {
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
 		var counts taskCounts
 		var inProgress, todo []queuedTask
@@ -286,10 +293,14 @@ func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error
 				switch item.State {
 				case stateTodo:
 					counts.Todo++
-					todo = append(todo, queuedTask{Root: root, Item: item})
+					if onlyID == "" || item.ID == onlyID {
+						todo = append(todo, queuedTask{Root: root, Item: item})
+					}
 				case stateInProgress:
 					counts.Doing++
-					inProgress = append(inProgress, queuedTask{Root: root, Item: item})
+					if onlyID == "" || item.ID == onlyID {
+						inProgress = append(inProgress, queuedTask{Root: root, Item: item})
+					}
 				case stateBlocked:
 					counts.Blocked++
 				case stateDone:
@@ -352,6 +363,9 @@ func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error
 		}
 		if changed {
 			continue
+		}
+		if onlyID != "" && len(inProgress)+len(todo) == 0 {
+			return taskAssignment{Counts: counts, Outcome: assignmentDrained}, nil
 		}
 		if counts.Todo+counts.Doing == 0 {
 			return taskAssignment{Counts: counts, Outcome: assignmentDrained}, nil

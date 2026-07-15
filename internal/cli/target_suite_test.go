@@ -36,7 +36,7 @@ func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 			want := perr.Error()
 
 			// CLI surface: the loop's positional target.
-			if _, _, _, _, _, _, err := parseLoopArgs([]string{c.target}, false); err == nil || !strings.Contains(err.Error(), want) {
+			if _, _, _, _, _, _, _, err := parseLoopArgs([]string{c.target}, false); err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("loop positional: err = %v, want it to carry %q", err, want)
 			}
 

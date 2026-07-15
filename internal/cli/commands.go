@@ -1424,11 +1424,11 @@ func promptGateLangs(in io.Reader) []string {
 // and its boolean flags. Model + account come from the target (`--model`/`--credential` are retired);
 // `--peer`/`--tasks` are pre-extracted by cmdLoop. hasTarget is false and presetName "" when no
 // positional was given (a loop.yaml work.agent then supplies the lead).
-func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight, noMCP bool, err error) {
+func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight, noMCP, once bool, err error) {
 	preflight = def
 	t, hasTarget, presetName, rest, err := takeHeadWho(args)
 	if err != nil {
-		return agents.Target{}, false, "", false, preflight, false, err
+		return agents.Target{}, false, "", false, preflight, false, false, err
 	}
 	for _, x := range rest {
 		switch x {
@@ -1440,11 +1440,13 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			preflight = false
 		case "--no-mcp":
 			noMCP = true
+		case "--once":
+			once = true
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, once, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--once] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
 		}
 	}
-	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, nil
+	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, once, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1470,7 +1472,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
-	t, hasTarget, presetName, debugOnFail, preflight, noMCP, err := parseLoopArgs(rest, lc.Preflight.Enabled)
+	t, hasTarget, presetName, debugOnFail, preflight, noMCP, once, err := parseLoopArgs(rest, lc.Preflight.Enabled)
 	if err != nil {
 		return 2, err
 	}
@@ -1528,7 +1530,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight) // local loop: no fork label
+	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight, once) // local loop: no fork label
 }
 
 // resolveWorkAgent turns a .agent/loop.yaml work.agent ladder into the lead agent, an optional
@@ -2049,7 +2051,7 @@ func loopInterruptInfo(msg string) {
 // peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
-func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight bool) (int, error) {
+func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight, once bool) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -2059,17 +2061,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if !slices.ContainsFunc(hosts, isTaskDir) {
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
-	if !box.ImageExists(a.rt, img) {
-		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
-	}
-	// Iterations run Batch (box.Run stays quiet), so surface image staleness once here —
-	// an overnight drain on a month-old box is exactly where a stale nudge earns its line.
-	for _, nudge := range box.StalenessNudges(a.cfg, repo, img) {
-		ui.Info("%s", nudge)
-	}
-	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
-	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.
-	defer armKeepAwake(a.cfg)()
 	// .agent/loop.yaml is the committed loop config (prompts, per-step models, settings). A bad file
 	// fails the run here, before any box work. Absent → an empty config (all built-in defaults).
 	lc, err := loopcfg.Load(repo)
@@ -2086,6 +2077,35 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		a.cfg.MCPFile = ""
 	}
 	custom := lc.Work.Command
+	// --once with no actionable work is a pure host-side no-op: it does not need an image and must
+	// not launch a configured preflight agent. Its built-in preflight may first unblock answered
+	// decisions, since that is host-only and can make exactly one task actionable.
+	preflightBuiltinRan := false
+	if once && preflight && len(custom) == 0 {
+		ui.Info("pre-flight: resolving answered blockers")
+		if ids := unblockResolved(hosts); len(ids) > 0 {
+			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
+		}
+		preflightBuiltinRan = true
+	}
+	if once {
+		cf, _ := queueProgress(hosts)
+		if cf.Todo+cf.Doing == 0 {
+			fmt.Fprintln(os.Stderr, loopOnceBanner(cf, "", ""))
+			return loopExitCode(cf), nil
+		}
+	}
+	if !box.ImageExists(a.rt, img) {
+		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
+	}
+	// Iterations run Batch (box.Run stays quiet), so surface image staleness once here —
+	// an overnight drain on a month-old box is exactly where a stale nudge earns its line.
+	for _, nudge := range box.StalenessNudges(a.cfg, repo, img) {
+		ui.Info("%s", nudge)
+	}
+	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
+	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.
+	defer armKeepAwake(a.cfg)()
 	// On a TTY every built-in provider streams JSON that coop decodes into the same live lines.
 	// A custom work.command or non-terminal (pipe/CI/fork log) keeps plain text output. This is
 	// decided per iteration because a cross-provider rotation can swap the active agent.
@@ -2166,9 +2186,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// --all-done`), never by an agent. Opt-in (preflight.enabled / --preflight); skipped under a
 	// custom work.command (not the agent's headless form).
 	if preflight && len(custom) == 0 {
-		ui.Info("pre-flight: resolving answered blockers")
-		if ids := unblockResolved(hosts); len(ids) > 0 {
-			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
+		if !preflightBuiltinRan {
+			ui.Info("pre-flight: resolving answered blockers")
+			if ids := unblockResolved(hosts); len(ids) > 0 {
+				ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
+			}
 		}
 		// An agent runs only for a CUSTOM cleanup (loop.yaml preflight.prompt) — extra instructions
 		// that need judgment. Best-effort like the signoff pass — a failure never blocks work.
@@ -2192,7 +2214,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
 	stopHint := "Ctrl-C to stop"
-	if iterCtx != nil {
+	if once {
+		stopHint = "one task, then pause"
+	} else if iterCtx != nil {
 		stopHint = "Ctrl-C to stop after this task, again to stop now"
 	}
 	if len(custom) == 0 {
@@ -2207,6 +2231,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	loopStartHead := prevHead                     // for the end-of-run signing sweep (catches any straggler cycle)
+	onceTaskID, onceTaskState := "", ""
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
 	reviewBaseline := doneTaskDirs(hosts)
@@ -2224,15 +2249,25 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 				break
 			}
+			if onceTaskID != "" {
+				state, ok := queueSnapshot(hosts)[onceTaskID]
+				if !ok {
+					return 1, fmt.Errorf("one-task run lost task %s from the queue — inspect `coop tasks` before retrying", onceTaskID)
+				}
+				if state == stateDone || state == stateBlocked {
+					onceTaskState = state
+					break
+				}
+			}
 			// Point cfg at this iteration's target before leasing: the provider/target in metadata
 			// identifies the owning controller, while flock remains the actual authority.
 			agent = a.applyTarget(rot)
 			target := rot.active()
 			// Select and host-claim one authoritative task before the box starts. The returned task
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
-			assignment, assignErr := assignLoopTask(hosts, taskLeaseOwner{
+			assignment, assignErr := assignLoopTaskOnly(hosts, taskLeaseOwner{
 				RunID: a.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
-			})
+			}, onceTaskID)
 			if assignErr != nil {
 				return 1, assignErr
 			}
@@ -2246,6 +2281,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				break
 			}
 			c, assigned, lease := assignment.Counts, assignment.Task, assignment.Lease
+			if onceTaskID == "" {
+				onceTaskID = assigned.Item.ID
+			}
 			if lease.legacy {
 				ui.Info("adopting unleased in-progress task %s", assigned.Item.ID)
 			}
@@ -2283,11 +2321,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop now.
 			if iterCtx != nil && iterCtx.Err() != nil {
-				break
-			}
-			// A first Ctrl-C during this iteration: it ran to completion, so stop before the next
-			// (don't fall through to the retry/wait accounting).
-			if softStop.Load() {
 				break
 			}
 			action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
@@ -2352,7 +2385,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						}
 						reopenedIDs := reopenedBySignoff(btSnap, queueSnapshot(hosts))
 						a.recordStage(repo, runid, "between", betweenRot.active(), btStart, btExit, 0, len(reopenedIDs), btHead, hosts, nil, nil, auditGateFiles, btRes)
-						interrupted := softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil)
+						interrupted := iterCtx != nil && iterCtx.Err() != nil
 						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btOut, reopenedIDs, finishedIDs); verdictErr != nil {
 							return 1, fmt.Errorf("protected-change audit for %s: %w — stopped before another task could trust the changed gate; inspect the task and re-run `coop loop`", strings.Join(finishedIDs, ", "), verdictErr)
 						}
@@ -2362,6 +2395,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						}
 					}
 				}
+			}
+			// A first Ctrl-C lets completion binding, host signing, and the mandatory between/protected
+			// audit finish, then skips retries and the final signoff. The exit remains interrupted (130),
+			// because an intentionally incomplete batch is not queue verification.
+			if softStop.Load() {
+				break
 			}
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
@@ -2415,7 +2454,18 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// signoff pass and the drain summary — the queue isn't done, the user asked to stop.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 			cf, _ := queueProgress(hosts)
-			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
+			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
+			return loopInterruptedExitCode, nil
+		}
+		if once {
+			cf, _ := queueProgress(hosts)
+			if onceTaskID != "" && onceTaskState == "" {
+				onceTaskState = queueSnapshot(hosts)[onceTaskID]
+			}
+			fmt.Fprintln(os.Stderr, loopOnceBanner(cf, onceTaskID, onceTaskState))
+			if onceTaskID == "" {
+				return loopExitCode(cf), nil
+			}
 			return 0, nil
 		}
 		// A custom work.command isn't the signoff-aware agent form, so it gets no signoff pass —
@@ -2451,8 +2501,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// A stop that landed during the signoff pass is honored before the next round is decided.
 		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 			cf, _ := queueProgress(hosts)
-			fmt.Fprintln(os.Stderr, ui.Bold(ui.Yellow(fmt.Sprintf("■ stopped by request — %d/%d done", cf.Done, cf.total()))))
-			return 0, nil
+			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
+			return loopInterruptedExitCode, nil
 		}
 		// Derive the review's exact done-to-actionable delta once. Other actionable tasks can exist
 		// independently of this review and must not affect its telemetry, health, or outcome.
@@ -2698,6 +2748,25 @@ func loopClosingBanner(cf taskCounts, completed int) string {
 		}
 		return ui.Bold(ui.Green(msg))
 	}
+}
+
+const loopInterruptedExitCode = 130
+
+func loopInterruptedBanner(cf taskCounts) string {
+	return ui.Bold(ui.Yellow(fmt.Sprintf("■ interrupted before queue verification — %d/%d done; run 'coop loop' to resume", cf.Done, cf.total())))
+}
+
+func loopOnceBanner(cf taskCounts, id, state string) string {
+	if id == "" {
+		if cf.Blocked > 0 {
+			return ui.Bold(ui.Yellow(fmt.Sprintf("■ one-task run idle — no actionable task; %d blocked on a decision; no box started", cf.Blocked)))
+		}
+		return ui.Bold(ui.Green("✓ one-task run idle — no actionable task; no box started"))
+	}
+	if state == stateBlocked {
+		return ui.Bold(ui.Yellow(fmt.Sprintf("■ one-task run complete — %s is blocked; paused before another task or final signoff", id)))
+	}
+	return ui.Bold(ui.Green(fmt.Sprintf("✓ one-task run complete — %s is done; paused before another task or final signoff", id)))
 }
 
 // debugShell opens an interactive shell in the box against the same repo/image as the

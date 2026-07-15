@@ -605,7 +605,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--preflight] [--no-mcp] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--once] [--preflight] [--no-mcp] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -669,9 +669,10 @@ var commandHelp = map[string]string{
   Set COOP_SPINNER=0 to freeze live spinners and suppress the fast repaint ticker while
   debugging or recording the terminal.
 
-  Ctrl-C is a soft stop: the current iteration finishes and commits, then the loop
-  stops before claiming the next task. Press Ctrl-C again to stop now (tearing the
-  running box down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
+  Ctrl-C is a soft interrupt: the current iteration finishes its completion binding,
+  host signing, and mandatory between/protected audit, then exits 130 before final
+  signoff or another claim. Press Ctrl-C again to stop now (tearing the running box
+  down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
 
   Defaults to .agent/tasks/ — or, in a monorepo, every queue named by the top-level
   .agent/project.yaml ('subprojects:' + the root's own), so one loop drains all the
@@ -679,6 +680,9 @@ var commandHelp = map[string]string{
   set; the loop keeps going while any queue has unfinished work. The whole repo is
   mounted either way.
 
+  --once            work at most one selected task, including retries and its mandatory
+                    between/protected audit, then pause successfully before another task
+                    or final signoff; an empty actionable queue starts no box
   --preflight       run the pre-loop tidy: coop itself returns blocked/ tasks whose decision
                     now has an answer to todo — host-side, no box; an agent runs only for a
                     loop.yaml preflight.prompt cleanup (default it on with preflight.enabled;
@@ -688,10 +692,11 @@ var commandHelp = map[string]string{
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 
-  Exit codes: 0 = queue verified done; 1 = failure; 2 = usage; 3 = stopped with a task
-  blocked on a human decision (including one the review kept reopening past the round cap)
-  — resolve with 'coop tasks decisions', then re-run. So cron/CI can branch without parsing
-  output.
+  Exit codes: 0 = queue verified done or an intentional --once pause; 1 = failure;
+  2 = usage; 3 = stopped with a task blocked on a human decision (including one the
+  review kept reopening past the round cap) — resolve with 'coop tasks decisions', then
+  re-run; 130 = interrupted before queue verification. So cron/CI can branch without
+  parsing output.
 
   loop.yaml work.command overrides the per-iteration command.`,
 

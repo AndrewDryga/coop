@@ -202,7 +202,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop loop [<agent>[:model][@account] \| <preset>] [--tasks <path>] [--peer <peer>…] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini` — or a preset name in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <agent>` (repeatable) so iterations may ask them read-only; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+| `coop loop [<agent>[:model][@account] \| <preset>] [--tasks <path>] [--peer <peer>…] [--once] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini` — or a preset name in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <agent>` (repeatable) so iterations may ask them read-only; `--once` works one selected task through retries and its immediate audit, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 | `coop fleet init` · `up` · `down` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks; `coop tasks split <n>` bootstraps the file) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
@@ -1421,8 +1421,10 @@ five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -
 
 **Exit codes.** Every command follows one contract, so CI and scripts can branch without parsing
 output: `0` success · `1` a failure (or findings — e.g. `coop check-secrets` on a hit) · `2` a usage
-error (unknown command/flag or bad arguments). `coop loop` adds `3` — it stopped with a task blocked
-on a human decision (see [Exit codes](#the-loop) above).
+error (unknown command/flag or bad arguments). `coop loop` adds `3` when it stopped with a task
+blocked on a human decision and `130` when Ctrl-C interrupted it before queue verification; an
+intentional `--once` pause is successful without claiming the whole queue was verified (see
+[Exit codes](#the-loop) above).
 
 **Why no `--json`?** coop's stdout is for a human at a terminal; its *exit codes* are the machine
 contract. The structured data a script would want already lives in files it can read directly — the

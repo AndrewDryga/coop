@@ -173,6 +173,37 @@ func TestAssignLoopTaskEmptyIsNoOp(t *testing.T) {
 	}
 }
 
+func TestAssignLoopTaskOnlyNeverSwitchesTasks(t *testing.T) {
+	root := t.TempDir()
+	targetID := "2026-01-01-target"
+	otherID := "2026-01-01-other"
+	writeTaskFile(t, filepath.Join(root, stateTodo, targetID, "task.md"), "# Target\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, otherID, "task.md"), "# Other\n")
+
+	assignment, err := assignLoopTaskOnly([]string{root}, testLeaseOwner(), targetID)
+	if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != targetID {
+		t.Fatalf("scoped assignment = (%+v, %v), want target task", assignment, err)
+	}
+	if err := assignment.Lease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, targetID)) {
+		t.Fatal("scoped todo task was not claimed")
+	}
+
+	target := taskItem{ID: targetID, State: stateInProgress, Dir: filepath.Join(root, stateInProgress, targetID)}
+	if err := moveTaskDir(root, target, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := assignLoopTaskOnly([]string{root}, testLeaseOwner(), targetID)
+	if err != nil || settled.Outcome != assignmentDrained {
+		t.Fatalf("settled scoped assignment = (%+v, %v), want drained", settled, err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, otherID)) {
+		t.Fatal("one-task mode touched another in-progress task")
+	}
+}
+
 // TestCommitsForTaskAndUntrailered drives the real git trailer parser. Fresh work binds only in its
 // commit range; historical fallback is limited to unchanged-HEAD reconciliation; malformed,
 // duplicate, different-id, and substring values fail closed.

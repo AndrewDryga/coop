@@ -66,7 +66,7 @@ func TestCompletionCandidates(t *testing.T) {
 	}
 
 	loop := a.completionCandidatesFor([]string{"loop"}, "")
-	for _, want := range []string{"claude", "claude:opus", "codex:gpt-5.5", "--peer", "--no-mcp"} {
+	for _, want := range []string{"claude", "claude:opus", "codex:gpt-5.5", "--peer", "--once", "--no-mcp"} {
 		if !hasCand(loop, want) {
 			t.Errorf("loop completion missing %q: %v", want, loop)
 		}
