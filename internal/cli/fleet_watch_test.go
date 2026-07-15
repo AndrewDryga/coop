@@ -83,14 +83,23 @@ func TestFleetDashboard(t *testing.T) {
 	}
 }
 
-func TestFleetBarsShowTinyActiveShare(t *testing.T) {
-	rows := []fleetRow{{name: "active", running: true, counts: taskCounts{Todo: 99, Doing: 1}, active: "work"}}
-	out := fleetDashboard("repo", rows, 0)
-	for _, line := range []string{out[2], out[len(out)-1]} {
-		if !strings.Contains(line, "█") {
-			t.Errorf("fleet row and roll-up should keep a visible active cell: %q", line)
+func TestFleetBarsUseTaskDoingNotRunningProcesses(t *testing.T) {
+	t.Run("task remains active without a running process", func(t *testing.T) {
+		rows := []fleetRow{{name: "active", counts: taskCounts{Todo: 99, Doing: 1}, active: "work"}}
+		out := fleetDashboard("repo", rows, 0)
+		for _, line := range []string{out[2], out[len(out)-1]} {
+			if !strings.Contains(line, "█") {
+				t.Errorf("fleet row and roll-up should keep a visible active cell: %q", line)
+			}
 		}
-	}
+	})
+
+	t.Run("running process has not claimed a task", func(t *testing.T) {
+		out := fleetDashboard("repo", []fleetRow{{name: "starting", running: true, counts: taskCounts{Todo: 100}}}, 0)
+		if line := out[len(out)-1]; strings.Contains(line, "█") {
+			t.Errorf("running process count must not create an active task segment: %q", line)
+		}
+	})
 }
 
 // When nothing is running, the roll-up bar must not animate a spinner — the spinner implies

@@ -134,6 +134,10 @@ func TestProgressBarStates(t *testing.T) {
 		want                           string
 	}{
 		{0, 0, 0, 0, 4, "[░░░░]"},        // no tasks → empty
+		{1, 1, 1, -1, 4, "[░░░░]"},       // non-positive total → empty
+		{1, 1, 1, 3, 0, "[]"},            // zero width → no cells
+		{1, 1, 1, 3, -2, "[]"},           // negative width clamps to zero
+		{-1, -1, -1, 3, 4, "[░░░░]"},     // negative counts cannot create segments
 		{2, 0, 0, 4, 4, "[██░░]"},        // half done
 		{0, 2, 0, 4, 4, "[██░░]"},        // half in progress
 		{2, 1, 1, 4, 4, "[████]"},        // all non-todo states fill
