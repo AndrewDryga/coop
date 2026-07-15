@@ -81,23 +81,56 @@ func TestLoopIntentionalAndInterruptedStopsAreDistinct(t *testing.T) {
 	if got := loopInterruptedBanner(cf); !strings.Contains(got, "interrupted before queue verification") || !strings.Contains(got, "3/5 done") {
 		t.Errorf("interrupt banner = %q", got)
 	}
-	if got := loopOnceBanner(cf, "task-a", stateDone); !strings.Contains(got, "one-task run complete") ||
-		!strings.Contains(got, "task-a is done") || !strings.Contains(got, "paused before another task or final signoff") || strings.Contains(got, "verified done") {
-		t.Errorf("one-task done banner = %q", got)
+	limit := loopTaskLimit{max: 1, settled: 1, lastID: "task-a", lastState: stateDone}
+	if got := loopTaskLimitBanner(cf, limit); !strings.Contains(got, "task limit reached") ||
+		!strings.Contains(got, "last: task-a done") || !strings.Contains(got, "paused before another task or final signoff") || strings.Contains(got, "verified done") {
+		t.Errorf("task-limit banner = %q", got)
 	}
-	if got := loopOnceBanner(taskCounts{Blocked: 2}, "", ""); !strings.Contains(got, "no actionable task") ||
+	if got := loopTaskLimitBanner(taskCounts{Blocked: 2}, loopTaskLimit{max: 3}); !strings.Contains(got, "no actionable task") ||
 		!strings.Contains(got, "no box started") || !strings.Contains(got, "2 blocked") {
-		t.Errorf("one-task idle banner = %q", got)
+		t.Errorf("task-limit idle banner = %q", got)
+	}
+	partial := loopTaskLimit{max: 3, settled: 1, lastID: "task-a", lastState: stateDone}
+	if got := loopTaskLimitBanner(taskCounts{Done: 1}, partial); !strings.Contains(got, "1/3 tasks settled") ||
+		!strings.Contains(got, "no actionable task remains") || !strings.Contains(got, "final signoff not run") {
+		t.Errorf("partial task-limit banner = %q", got)
+	}
+	blocked := loopTaskLimit{max: 2, settled: 2, lastID: "task-b", lastState: stateBlocked}
+	if got := loopTaskLimitBanner(taskCounts{Done: 1, Blocked: 1}, blocked); !strings.Contains(got, "task limit reached") ||
+		!strings.Contains(got, "last: task-b blocked") || !strings.Contains(got, "■") {
+		t.Errorf("blocked task-limit banner = %q", got)
 	}
 }
 
-func TestOneTaskScopeDoesNotPinOrdinaryLoop(t *testing.T) {
-	const selected = "2026-01-01-first"
-	if got := oneTaskScope(false, selected); got != "" {
-		t.Fatalf("ordinary loop scope = %q, want empty so another task can be assigned", got)
+func TestLoopTaskLimitCountsSettledTasks(t *testing.T) {
+	unlimited := loopTaskLimit{}
+	unlimited.assign("first")
+	if got := unlimited.scope(); got != "" {
+		t.Fatalf("unlimited loop scope = %q, want empty", got)
 	}
-	if got := oneTaskScope(true, selected); got != selected {
-		t.Fatalf("one-task scope = %q, want %q", got, selected)
+
+	limit := loopTaskLimit{max: 2}
+	limit.assign("first")
+	if reached, err := limit.observe(map[string]string{"first": stateInProgress}); reached || err != nil || limit.settled != 0 {
+		t.Fatalf("active first task = (reached=%v, err=%v, settled=%d), want not counted", reached, err, limit.settled)
+	}
+	if reached, err := limit.observe(map[string]string{"first": stateDone}); reached || err != nil || limit.settled != 1 || limit.scope() != "" {
+		t.Fatalf("done first task = (reached=%v, err=%v, settled=%d, scope=%q), want 1 and unpinned", reached, err, limit.settled, limit.scope())
+	}
+	limit.assign("second")
+	if reached, err := limit.observe(map[string]string{"second": stateInProgress}); reached || err != nil {
+		t.Fatalf("review-reopened second task should remain selected: reached=%v err=%v", reached, err)
+	}
+	if reached, err := limit.observe(map[string]string{"second": stateBlocked}); !reached || err != nil || limit.settled != 2 || limit.scope() != "second" {
+		t.Fatalf("blocked second task = (reached=%v, err=%v, settled=%d, scope=%q), want limit reached and retained", reached, err, limit.settled, limit.scope())
+	}
+}
+
+func TestLoopTaskLimitRejectsLostSelection(t *testing.T) {
+	limit := loopTaskLimit{max: 1}
+	limit.assign("missing")
+	if _, err := limit.observe(map[string]string{}); err == nil || !strings.Contains(err.Error(), "lost task missing") {
+		t.Fatalf("lost selected task error = %v", err)
 	}
 }
 
@@ -572,14 +605,20 @@ func TestParseLoopArgs(t *testing.T) {
 		wantDebug     bool
 		wantPreflight bool
 		wantNoMCP     bool
-		wantOnce      bool
+		wantMaxTasks  int
 		wantErr       bool
 	}{
 		{args: nil},
 		{args: []string{"codex"}, wantAgent: "codex"},
 		{args: []string{"--debug-on-fail"}, wantDebug: true},
-		{args: []string{"--once"}, wantOnce: true},
-		{args: []string{"codex", "--once"}, wantAgent: "codex", wantOnce: true},
+		{args: []string{"--max-tasks", "1"}, wantMaxTasks: 1},
+		{args: []string{"codex", "--max-tasks", "3"}, wantAgent: "codex", wantMaxTasks: 3},
+		{args: []string{"--max-tasks"}, wantErr: true},
+		{args: []string{"--max-tasks", "0"}, wantErr: true},
+		{args: []string{"--max-tasks", "-1"}, wantErr: true},
+		{args: []string{"--max-tasks", "many"}, wantErr: true},
+		{args: []string{"--max-tasks", "1", "--max-tasks", "2"}, wantErr: true},
+		{args: []string{"--once"}, wantErr: true},
 		{args: []string{"gemini", "--debug"}, wantErr: true},        // --debug is not a known flag → error
 		{args: []string{"--debug-on-fail", "codex"}, wantErr: true}, // a who must LEAD; a trailing positional errors
 		// A bare non-target word is a PRESET NAME now (not an unknown-token error).
@@ -601,14 +640,14 @@ func TestParseLoopArgs(t *testing.T) {
 		{args: []string{"claude", "--preset", "frontier"}, wantErr: true}, // --preset retired → unexpected arg
 	}
 	for _, c := range cases {
-		tg, _, ps, debug, preflight, noMCP, once, err := parseLoopArgs(c.args, c.def)
+		tg, _, ps, debug, preflight, noMCP, maxTasks, err := parseLoopArgs(c.args, c.def)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseLoopArgs(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue
 		}
-		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight || noMCP != c.wantNoMCP || once != c.wantOnce) {
-			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v noMCP=%v once=%v), want (%q, %q, %q, %v, %v, %v, %v)",
-				c.args, c.def, tg.Provider, tg.Model, ps, debug, preflight, noMCP, once, c.wantAgent, c.wantModel, c.wantPreset, c.wantDebug, c.wantPreflight, c.wantNoMCP, c.wantOnce)
+		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight || noMCP != c.wantNoMCP || maxTasks != c.wantMaxTasks) {
+			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v noMCP=%v maxTasks=%d), want (%q, %q, %q, %v, %v, %v, %d)",
+				c.args, c.def, tg.Provider, tg.Model, ps, debug, preflight, noMCP, maxTasks, c.wantAgent, c.wantModel, c.wantPreset, c.wantDebug, c.wantPreflight, c.wantNoMCP, c.wantMaxTasks)
 		}
 	}
 }

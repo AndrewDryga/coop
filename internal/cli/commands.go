@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1421,16 +1422,17 @@ func promptGateLangs(in io.Reader) []string {
 
 // parseLoopArgs resolves `coop loop`'s leading who-runs positional — a TARGET
 // (provider[:model][/effort][@account,…]) OR a PRESET NAME (validated by cmdLoop's loadRunPreset) —
-// and its boolean flags. Model + account come from the target (`--model`/`--credential` are retired);
+// and its flags. Model + account come from the target (`--model`/`--credential` are retired);
 // `--peer`/`--tasks` are pre-extracted by cmdLoop. hasTarget is false and presetName "" when no
 // positional was given (a loop.yaml work.agent then supplies the lead).
-func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight, noMCP, once bool, err error) {
+func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight, noMCP bool, maxTasks int, err error) {
 	preflight = def
 	t, hasTarget, presetName, rest, err := takeHeadWho(args)
 	if err != nil {
-		return agents.Target{}, false, "", false, preflight, false, false, err
+		return agents.Target{}, false, "", false, preflight, false, 0, err
 	}
-	for _, x := range rest {
+	for i := 0; i < len(rest); i++ {
+		x := rest[i]
 		switch x {
 		case "--debug-on-fail":
 			debugOnFail = true
@@ -1440,13 +1442,24 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			preflight = false
 		case "--no-mcp":
 			noMCP = true
-		case "--once":
-			once = true
+		case "--max-tasks":
+			if maxTasks > 0 {
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, errors.New("coop loop: --max-tasks may be specified only once")
+			}
+			if i+1 >= len(rest) {
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, 0, errors.New("coop loop: --max-tasks requires a positive integer")
+			}
+			i++
+			n, convErr := strconv.Atoi(rest[i])
+			if convErr != nil || n <= 0 {
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, 0, fmt.Errorf("coop loop: --max-tasks must be a positive integer, got %q", rest[i])
+			}
+			maxTasks = n
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, once, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--once] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
 		}
 	}
-	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, once, nil
+	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
@@ -1472,7 +1485,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// preflight defaults to loop.yaml preflight.enabled; --preflight/--no-preflight override.
-	t, hasTarget, presetName, debugOnFail, preflight, noMCP, once, err := parseLoopArgs(rest, lc.Preflight.Enabled)
+	t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, err := parseLoopArgs(rest, lc.Preflight.Enabled)
 	if err != nil {
 		return 2, err
 	}
@@ -1530,7 +1543,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight, once) // local loop: no fork label
+	return a.loop(repo, img, agent, "", rot, queues, nil, peers, debugOnFail, preflight, maxTasks) // local loop: no fork label
 }
 
 // resolveWorkAgent turns a .agent/loop.yaml work.agent ladder into the lead agent, an optional
@@ -2062,20 +2075,56 @@ func loopInterruptInfo(msg string) {
 	ui.Info("%s", msg)
 }
 
-// oneTaskScope is the assignment filter for --once. Ordinary loops must always return an empty
-// scope so they continue draining the queue after the first task settles.
-func oneTaskScope(once bool, selectedID string) string {
-	if once {
-		return selectedID
+type loopTaskLimit struct {
+	max       int
+	settled   int
+	currentID string
+	lastID    string
+	lastState string
+}
+
+func (l *loopTaskLimit) enabled() bool { return l.max > 0 }
+
+func (l *loopTaskLimit) scope() string {
+	if !l.enabled() {
+		return ""
 	}
-	return ""
+	return l.currentID
+}
+
+func (l *loopTaskLimit) assign(id string) {
+	if l.enabled() && l.currentID == "" {
+		l.currentID = id
+	}
+}
+
+// observe counts the selected task only after its post-iteration audit has left it done or blocked.
+// A reopened task stays selected; reaching the limit retains the last task for the closing banner.
+func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
+	if l.scope() == "" {
+		return false, nil
+	}
+	state, ok := snapshot[l.currentID]
+	if !ok {
+		return false, fmt.Errorf("task-limited run lost task %s from the queue — inspect `coop tasks` before retrying", l.currentID)
+	}
+	if state != stateDone && state != stateBlocked {
+		return false, nil
+	}
+	l.settled++
+	l.lastID, l.lastState = l.currentID, state
+	if l.settled >= l.max {
+		return true, nil
+	}
+	l.currentID = ""
+	return false, nil
 }
 
 // consult opts every iteration into the second-opinion directive: the box mounts the authed
 // peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
-func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight, once bool) (int, error) {
+func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight bool, maxTasks int) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -2101,21 +2150,22 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		a.cfg.MCPFile = ""
 	}
 	custom := lc.Work.Command
-	// --once with no actionable work is a pure host-side no-op: it does not need an image and must
-	// not launch a configured preflight agent. Its built-in preflight may first unblock answered
-	// decisions, since that is host-only and can make exactly one task actionable.
+	limit := loopTaskLimit{max: maxTasks}
+	// A task-limited run with no actionable work is a pure host-side no-op: it does not need an
+	// image and must not launch a configured preflight agent. Its built-in preflight may first
+	// unblock answered decisions, since that is host-only and can make work actionable.
 	preflightBuiltinRan := false
-	if once && preflight && len(custom) == 0 {
+	if limit.enabled() && preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
 		if ids := unblockResolved(hosts); len(ids) > 0 {
 			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 		}
 		preflightBuiltinRan = true
 	}
-	if once {
+	if limit.enabled() {
 		cf, _ := queueProgress(hosts)
 		if cf.Todo+cf.Doing == 0 {
-			fmt.Fprintln(os.Stderr, loopOnceBanner(cf, "", ""))
+			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
 			return loopExitCode(cf), nil
 		}
 	}
@@ -2238,8 +2288,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	label := strings.Join(queues, ", ")
 	c0, _ := queueProgress(hosts)
 	stopHint := "Ctrl-C to stop"
-	if once {
-		stopHint = "one task, then pause"
+	if limit.enabled() {
+		stopHint = fmt.Sprintf("at most %s, then pause", ui.Count(limit.max, "task"))
 	} else if iterCtx != nil {
 		stopHint = "Ctrl-C to stop after this task, again to stop now"
 	}
@@ -2255,7 +2305,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
 	loopStartHead := prevHead                     // for the end-of-run signing sweep (catches any straggler cycle)
-	onceTaskID, onceTaskState := "", ""
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
 	reviewBaseline := doneTaskDirs(hosts)
@@ -2273,15 +2322,12 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 				break
 			}
-			if selectedID := oneTaskScope(once, onceTaskID); selectedID != "" {
-				state, ok := queueSnapshot(hosts)[selectedID]
-				if !ok {
-					return 1, fmt.Errorf("one-task run lost task %s from the queue — inspect `coop tasks` before retrying", selectedID)
-				}
-				if state == stateDone || state == stateBlocked {
-					onceTaskState = state
-					break
-				}
+			reached, limitErr := limit.observe(queueSnapshot(hosts))
+			if limitErr != nil {
+				return 1, limitErr
+			}
+			if reached {
+				break
 			}
 			// Point cfg at this iteration's target before leasing: the provider/target in metadata
 			// identifies the owning controller, while flock remains the actual authority.
@@ -2291,7 +2337,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
 			assignment, assignErr := assignLoopTaskOnly(hosts, taskLeaseOwner{
 				RunID: a.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
-			}, oneTaskScope(once, onceTaskID))
+			}, limit.scope())
 			if assignErr != nil {
 				return 1, assignErr
 			}
@@ -2302,12 +2348,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				return 0, nil
 			}
 			if assignment.Outcome == assignmentDrained {
+				if limit.scope() != "" {
+					continue // the selected task settled between scans; observe and count its final state
+				}
 				break
 			}
 			c, assigned, lease := assignment.Counts, assignment.Task, assignment.Lease
-			if once && onceTaskID == "" {
-				onceTaskID = assigned.Item.ID
-			}
+			limit.assign(assigned.Item.ID)
 			if lease.legacy {
 				ui.Info("adopting unleased in-progress task %s", assigned.Item.ID)
 			}
@@ -2485,13 +2532,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
 		}
-		if once {
+		if limit.enabled() {
 			cf, _ := queueProgress(hosts)
-			if onceTaskID != "" && onceTaskState == "" {
-				onceTaskState = queueSnapshot(hosts)[onceTaskID]
-			}
-			fmt.Fprintln(os.Stderr, loopOnceBanner(cf, onceTaskID, onceTaskState))
-			if onceTaskID == "" {
+			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
+			if limit.settled == 0 {
 				return loopExitCode(cf), nil
 			}
 			return 0, nil
@@ -2792,17 +2836,26 @@ func loopInterruptedBanner(cf taskCounts) string {
 	return ui.Bold(ui.Yellow(fmt.Sprintf("■ interrupted before queue verification — %d/%d done; run 'coop loop' to resume", cf.Done, cf.total())))
 }
 
-func loopOnceBanner(cf taskCounts, id, state string) string {
-	if id == "" {
+func loopTaskLimitBanner(cf taskCounts, limit loopTaskLimit) string {
+	if limit.settled == 0 {
 		if cf.Blocked > 0 {
-			return ui.Bold(ui.Yellow(fmt.Sprintf("■ one-task run idle — no actionable task; %d blocked on a decision; no box started", cf.Blocked)))
+			return ui.Bold(ui.Yellow(fmt.Sprintf("■ task-limited run idle — no actionable task; %d blocked on a decision; no box started", cf.Blocked)))
 		}
-		return ui.Bold(ui.Green("✓ one-task run idle — no actionable task; no box started"))
+		return ui.Bold(ui.Green("✓ task-limited run idle — no actionable task; no box started"))
 	}
-	if state == stateBlocked {
-		return ui.Bold(ui.Yellow(fmt.Sprintf("■ one-task run complete — %s is blocked; paused before another task or final signoff", id)))
+	last := fmt.Sprintf("last: %s %s", limit.lastID, stateLabel(limit.lastState))
+	if limit.settled >= limit.max {
+		noun := "tasks"
+		if limit.max == 1 {
+			noun = "task"
+		}
+		msg := fmt.Sprintf("task limit reached — %d/%d %s settled (%s); paused before another task or final signoff", limit.settled, limit.max, noun, last)
+		if limit.lastState == stateBlocked {
+			return ui.Bold(ui.Yellow("■ " + msg))
+		}
+		return ui.Bold(ui.Green("✓ " + msg))
 	}
-	return ui.Bold(ui.Green(fmt.Sprintf("✓ one-task run complete — %s is done; paused before another task or final signoff", id)))
+	return ui.Bold(ui.Green(fmt.Sprintf("✓ task-limited run paused — %d/%d tasks settled (%s); no actionable task remains; final signoff not run", limit.settled, limit.max, last)))
 }
 
 // debugShell opens an interactive shell in the box against the same repo/image as the

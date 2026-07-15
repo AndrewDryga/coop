@@ -279,8 +279,8 @@ func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error
 	return assignLoopTaskOnly(hosts, owner, "")
 }
 
-// assignLoopTaskOnly scopes assignment to one task after --once has selected it. Counts still cover
-// the whole queue for truthful banners, but another actionable task can never be claimed while the
+// assignLoopTaskOnly scopes assignment to the current task in a limited run. Counts still cover the
+// whole queue for truthful banners, but another actionable task can never be claimed while the
 // selected task is retrying or has been reopened by its between-task audit.
 func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (taskAssignment, error) {
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {

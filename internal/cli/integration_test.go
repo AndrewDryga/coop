@@ -353,7 +353,7 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
 	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: "false"}}
 
-	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, false, false)
+	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, false, 0)
 	if err == nil {
 		t.Fatalf("expected loop to fail at the image check, got (%d, nil)", code)
 	}
@@ -365,15 +365,15 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 	}
 }
 
-func TestLoopOnceWithNoActionableTaskNeedsNoImage(t *testing.T) {
+func TestLoopTaskLimitWithNoActionableTaskNeedsNoImage(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateDone, "2026-01-01-done", "task.md"), "# Done\n")
 	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: should not launch a box\n")
 	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: "false"}}
 
-	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, true, true)
+	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, true, 3)
 	if err != nil || code != 0 {
-		t.Fatalf("idle one-task loop = (%d, %v), want success without an image", code, err)
+		t.Fatalf("idle task-limited loop = (%d, %v), want success without an image", code, err)
 	}
 }
 

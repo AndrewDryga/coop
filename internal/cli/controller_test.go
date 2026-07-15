@@ -242,7 +242,7 @@ func TestAssignLoopTaskOnlyNeverSwitchesTasks(t *testing.T) {
 		t.Fatalf("settled scoped assignment = (%+v, %v), want drained", settled, err)
 	}
 	if !pathExists(filepath.Join(root, stateInProgress, otherID)) {
-		t.Fatal("one-task mode touched another in-progress task")
+		t.Fatal("task-limited assignment touched another in-progress task")
 	}
 }
 

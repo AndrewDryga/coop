@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replace ambiguous `coop loop --once` with `--max-tasks N`: bounded runs count tasks only after
+  done/blocked settlement following retries and immediate audit, then pause before another claim or
+  final signoff.
+
 - Non-zero in-progress work now keeps at least one yellow cell in loop, fleet, and task-watch
   progress bars, while blocked work retains its existing one-red-cell minimum.
 

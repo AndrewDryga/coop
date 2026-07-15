@@ -67,13 +67,16 @@ func TestCompletionCandidates(t *testing.T) {
 	}
 
 	loop := a.completionCandidatesFor([]string{"loop"}, "")
-	for _, want := range []string{"claude", "claude:opus", "codex:gpt-5.5", "--peer", "--once", "--no-mcp"} {
+	for _, want := range []string{"claude", "claude:opus", "codex:gpt-5.5", "--peer", "--max-tasks", "--no-mcp"} {
 		if !hasCand(loop, want) {
 			t.Errorf("loop completion missing %q: %v", want, loop)
 		}
 	}
 	if hasCand(loop, "pool") {
 		t.Error("loop completion must not offer the retired pool command")
+	}
+	if got := a.completionCandidatesFor([]string{"loop", "--max-tasks"}, ""); !hasCand(got, "1") || !hasCand(got, "3") {
+		t.Errorf("max-tasks completion missing numeric values: %v", got)
 	}
 
 	if got := a.completionCandidatesFor(nil, "claude:"); !hasCand(got, "claude:opus") {

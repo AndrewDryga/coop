@@ -607,7 +607,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--once] [--preflight] [--no-mcp] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -682,9 +682,10 @@ var commandHelp = map[string]string{
   set; the loop keeps going while any queue has unfinished work. The whole repo is
   mounted either way.
 
-  --once            work at most one selected task, including retries and its mandatory
-                    between/protected audit, then pause successfully before another task
-                    or final signoff; an empty actionable queue starts no box
+  --max-tasks <n>   work at most N selected tasks, counting each only after it reaches done
+                    or blocked following retries and its immediate audit; then pause
+                    successfully before another task or final signoff; N must be positive,
+                    and an empty actionable queue starts no box
   --preflight       run the pre-loop tidy: coop itself returns blocked/ tasks whose decision
                     now has an answer to todo — host-side, no box; an agent runs only for a
                     loop.yaml preflight.prompt cleanup (default it on with preflight.enabled;
@@ -694,7 +695,7 @@ var commandHelp = map[string]string{
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
 
-  Exit codes: 0 = queue verified done or an intentional --once pause; 1 = failure;
+  Exit codes: 0 = queue verified done or an intentional --max-tasks pause; 1 = failure;
   2 = usage; 3 = stopped with a task blocked on a human decision (including one the
   review kept reopening past the round cap) — resolve with 'coop tasks decisions', then
   re-run; 130 = interrupted before queue verification. So cron/CI can branch without

@@ -59,7 +59,7 @@ case it moved states and promotes the cast into its durable artifacts:
 
 ```bash
 python3 tools/capture_cast.py \
-  --task 2026-07-14-example --name loop-real -- coop loop --once frontier
+  --task 2026-07-14-example --name loop-real -- coop loop frontier --max-tasks 1
 ```
 
 After reviewing that artifact, deliberately replace the matching published cast and
