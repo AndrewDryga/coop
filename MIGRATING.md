@@ -3,7 +3,7 @@
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`
-(`claude`, `claude:opus`, `claude:opus/xhigh`, `claude@work`, `claude:opus@work`). The provider is
+(`claude`, `claude:opus`, `claude/xhigh`, `claude:opus/xhigh`, `claude@work`, `claude:opus@work`). The provider is
 **required** — there is no implicit `claude` default — while the model, an optional reasoning
 `/effort` (`low`/`medium`/`high`/`xhigh`/`max`, passed straight to the agent's CLI — Gemini has
 none and rejects it), and the account are all optional. `--model`, `--credential`, and the boolean
@@ -16,7 +16,7 @@ none and rejects it), and the account are all optional. `--model`, `--credential
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
 | bare `coop` / `loop` / `acp` / `fusion` (defaulted to claude) | name the agent — `coop claude`, `coop loop claude`, … (or positional `coop loop <preset>`, whose lead supplies it) |
-| `coop <agent> --consult` (boolean) | `coop <agent> --consult <peer>…` — name each peer (repeatable): `--consult codex:gpt-5.5 --consult gemini` |
+| `coop <agent> --consult` (boolean) | `coop <agent> --peer <peer>…` — name each peer (repeatable): `--peer codex:gpt-5.5 --peer gemini` |
 | `coop fusion <gov>` (consulted everyone signed in) | `coop fusion <gov> --peer <agent>…` — a council needs ≥1 named peer (repeatable) |
 
 These apply on **every** launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
@@ -80,8 +80,9 @@ The fleet is YAML-only. The pre-v3 one-line `.agent/fleet` is **not read** — i
 ```yaml
 forks:
   <name>:
-    agent: <provider>[:model][@account]   # a TARGET (was agent + profile=a,b + model=m);
-                                           #   omit to take a preset's lead. e.g. gemini:gemini-3.5-flash@work
+    # A TARGET (was agent + profile=a,b + model=m); omit to take a preset's lead.
+    # e.g. gemini:gemini-3.5-flash@work
+    agent: <provider>[:model][/effort][@account]
     tasks: <tasks-path>
     preset: <name>                         # optional orchestration preset
 ```

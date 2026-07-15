@@ -111,10 +111,13 @@ func (codexAgent) Models() []string {
 // flag in base() is the only coop-driven path.
 func (codexAgent) ModelEnv() string { return "" }
 
-// EffortFlag: codex takes reasoning effort as a config override, -c model_reasoning_effort=<level>
+// Effort: codex takes reasoning effort as a config override, -c model_reasoning_effort=<level>
 // (minimal/low/medium/high/xhigh), on its main command and exec/resume alike.
-func (codexAgent) EffortFlag(level string) []string {
-	return []string{"-c", "model_reasoning_effort=" + level}
+func (codexAgent) Effort() EffortSpec {
+	return EffortSpec{
+		Style: EffortFlagAssignment, Flag: "-c", Aliases: []string{"--config"},
+		Assignment: "model_reasoning_effort",
+	}
 }
 
 // EffortEnv: codex reads no effort env var (its default lives in config.toml), so the flag in

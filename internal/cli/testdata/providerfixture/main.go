@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -73,6 +75,8 @@ type scenario struct {
 	Provider      string   `json:"provider"`
 	ProviderHomes []string `json:"provider_homes,omitempty"`
 	Marker        string   `json:"marker"`
+	Output        *string  `json:"output,omitempty"`
+	Behavior      string   `json:"behavior,omitempty"`
 	ExitCode      int      `json:"exit_code"`
 }
 
@@ -145,7 +149,7 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 			return errors.New("scenario rejected")
 		}
 	}
-	parsed, err := parseRuntime(root, image, args, activeScenario.ProviderHomes...)
+	parsed, err := parseRuntimeForProvider(root, image, args, activeScenario.Provider, activeScenario.ProviderHomes...)
 	if err != nil {
 		return errors.New("runtime invocation rejected")
 	}
@@ -193,6 +197,10 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 }
 
 func parseRuntime(root, image string, args []string, providerHomes ...string) (runtimeCommand, error) {
+	return parseRuntimeForProvider(root, image, args, "", providerHomes...)
+}
+
+func parseRuntimeForProvider(root, image string, args []string, provider string, providerHomes ...string) (runtimeCommand, error) {
 	if len(args) == 1 && args[0] == "--version" {
 		return runtimeCommand{Kind: "version"}, nil
 	}
@@ -221,14 +229,14 @@ func parseRuntime(root, image string, args []string, providerHomes ...string) (r
 	if len(args) == 0 || args[0] != "run" {
 		return runtimeCommand{}, fmt.Errorf("unsupported runtime command %q", strings.Join(args, " "))
 	}
-	run, err := parseRun(root, image, args[1:], providerHomes)
+	run, err := parseRun(root, image, args[1:], provider, providerHomes)
 	if err != nil {
 		return runtimeCommand{}, err
 	}
 	return runtimeCommand{Kind: "run", Run: run}, nil
 }
 
-func parseRun(root, image string, args, providerHomes []string) (runCommand, error) {
+func parseRun(root, image string, args []string, provider string, providerHomes []string) (runCommand, error) {
 	run := runCommand{Env: map[string]string{}}
 	seen := map[string]bool{}
 	imageAt := -1
@@ -319,8 +327,13 @@ func parseRun(root, image string, args, providerHomes []string) (runCommand, err
 			return runCommand{}, fmt.Errorf("image %q appears again in provider argv", image)
 		}
 	}
-	provider, err := providerToken(tail[0])
+	executable, err := providerToken(tail[0])
 	if err != nil {
+		return runCommand{}, err
+	}
+	if provider == "" {
+		provider = executable
+	} else if _, err := providerToken(provider); err != nil {
 		return runCommand{}, err
 	}
 	if run.Workdir == "" || !filepath.IsAbs(run.Workdir) || filepath.Clean(run.Workdir) != run.Workdir {
@@ -594,8 +607,11 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 		return err
 	}
 	providerArgv := append([]string(nil), args[2:]...)
-	if len(providerArgv) == 0 || providerArgv[0] != provider {
-		return fmt.Errorf("provider %s received executable %q", provider, providerArgv)
+	if len(providerArgv) == 0 {
+		return fmt.Errorf("provider %s received no executable", provider)
+	}
+	if _, err := providerToken(providerArgv[0]); err != nil {
+		return fmt.Errorf("provider %s executable: %w", provider, err)
 	}
 	s, err := readScenario(root, scenarioPath)
 	if err != nil {
@@ -614,11 +630,30 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 	if err := record(root, trace, traceRecord{Source: "provider", Event: "start", PID: os.Getpid(), ParentPID: os.Getppid(), Argv: traceProviderArgv(providerArgv), Cwd: traceContainerPath(root, cwd), Environment: traceEnvironment(environmentMap(os.Environ()))}); err != nil {
 		return err
 	}
-	marker := s.Marker
-	if marker == "" {
-		marker = "fixture-ok-" + provider
+	if s.Output != nil {
+		fmt.Fprint(os.Stdout, *s.Output)
+	} else {
+		marker := s.Marker
+		if marker == "" {
+			marker = "fixture-ok-" + provider
+		}
+		fmt.Println(marker)
 	}
-	fmt.Println(marker)
+	if s.Behavior == "wait" {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(signals)
+		if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
+			return err
+		}
+		got := <-signals
+		sig, _ := got.(syscall.Signal)
+		exitCode := 128 + int(sig)
+		if err := record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode, Signal: got.String()}); err != nil {
+			return err
+		}
+		os.Exit(exitCode)
+	}
 	exitCode := s.ExitCode
 	if err := record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode}); err != nil {
 		return err
@@ -630,17 +665,29 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 }
 
 func readScenario(root, path string) (scenario, error) {
+	const maxScenarioBytes = 64 << 10
 	f, err := procharness.OpenRegularFile(root, path, os.O_RDONLY)
 	if err != nil {
 		return scenario{}, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 64<<10))
+	data, err := io.ReadAll(io.LimitReader(f, maxScenarioBytes+1))
 	if err != nil {
 		return scenario{}, err
 	}
+	if len(data) > maxScenarioBytes {
+		return scenario{}, fmt.Errorf("scenario exceeds %d bytes", maxScenarioBytes)
+	}
 	var s scenario
-	if err := json.Unmarshal(data, &s); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&s); err != nil {
+		return scenario{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return scenario{}, errors.New("scenario contains more than one JSON value")
+		}
 		return scenario{}, err
 	}
 	if s.Version != 1 {
@@ -662,7 +709,39 @@ func readScenario(root, path string) (scenario, error) {
 	if s.ExitCode < 0 || s.ExitCode > 255 {
 		return scenario{}, fmt.Errorf("scenario exit code %d is outside 0..255", s.ExitCode)
 	}
+	if s.Marker != "" && s.Output != nil {
+		return scenario{}, errors.New("scenario cannot set both marker and output")
+	}
+	if err := validateScenarioText("marker", s.Marker); err != nil {
+		return scenario{}, err
+	}
+	if s.Output != nil {
+		if err := validateScenarioText("output", *s.Output); err != nil {
+			return scenario{}, err
+		}
+	}
+	switch s.Behavior {
+	case "", "complete":
+	case "wait":
+		if s.ExitCode != 0 {
+			return scenario{}, errors.New("wait scenario cannot set exit_code")
+		}
+	default:
+		return scenario{}, fmt.Errorf("scenario behavior %q is unsupported", s.Behavior)
+	}
 	return s, nil
+}
+
+func validateScenarioText(label, value string) error {
+	if len(value) > 4<<10 {
+		return fmt.Errorf("scenario %s exceeds 4 KiB", label)
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("scenario %s contains control characters", label)
+		}
+	}
+	return nil
 }
 
 func providerEnvironment(root, image, trace, scenarioPath string, values map[string]string) []string {

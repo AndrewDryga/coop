@@ -223,7 +223,7 @@ type forkArgs struct {
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{} // no implicit default — provider required (positional target or the preset lead)
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [<provider>[:model][@account]] [--loop --tasks <path> [-d]]")
+		return fa, errors.New("usage: coop fork <name> [<agent>[:model][/effort][@account]] [--loop --tasks <path> [-d]]")
 	}
 	fa.name = args[0]
 	rest := args[1:]
@@ -974,7 +974,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	for _, x := range rest {
 		switch {
 		case isTargetHead(x):
-			// provider[:model][@account]: model + single account fold into the session's one-off
+			// provider[:model][/effort][@account]: model + single account fold into the session's one-off
 			// selection, applied before acpCommand so gemini's own-binary adapter takes the flag.
 			t, terr := agents.ParseTarget(x)
 			if terr != nil {
@@ -986,7 +986,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			}
 			effort = t.Effort
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [%s][:model][@account]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp [%s][:model][/effort][@account]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
 	if agent == "" {

@@ -105,8 +105,8 @@ func (claudeAgent) Models() []string {
 // reaches the claude-agent-acp adapter (and any claude subprocess) that takes no flags.
 func (claudeAgent) ModelEnv() string { return "ANTHROPIC_MODEL" }
 
-// EffortFlag: Claude Code takes --effort <level> (low/medium/high/xhigh/max) on its command.
-func (claudeAgent) EffortFlag(level string) []string { return []string{"--effort", level} }
+// Effort: Claude Code takes --effort <level> (low/medium/high/xhigh/max) on its command.
+func (claudeAgent) Effort() EffortSpec { return EffortSpec{Flag: "--effort"} }
 
 // EffortEnv: the claude-agent-acp adapter takes no flags, so its effort rides
 // CLAUDE_CODE_EFFORT_LEVEL — the effort analog of ANTHROPIC_MODEL, which box.Run exports.

@@ -11,6 +11,25 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
+func TestEffortOnlyTargetHeadsReachTheSharedParser(t *testing.T) {
+	for _, raw := range []string{"claude/high", "codex/xhigh@work", "grok/low"} {
+		if !isTargetHead(raw) {
+			t.Errorf("isTargetHead(%q) = false, want a direct target", raw)
+		}
+		target, hasTarget, presetName, rest, err := takeHeadWho([]string{raw, "--flag"})
+		if err != nil || !hasTarget || presetName != "" || target.String() != raw || len(rest) != 1 || rest[0] != "--flag" {
+			t.Errorf("takeHeadWho(%q) = (%s, %v, %q, %q, %v)", raw, target.String(), hasTarget, presetName, rest, err)
+		}
+	}
+	// Gemini is still a target head; its shared parser owns the actionable unsupported-effort error.
+	if !isTargetHead("gemini/high") {
+		t.Fatal("gemini/high was misclassified before ParseTarget could reject unsupported effort")
+	}
+	if _, _, _, _, err := takeHeadWho([]string{"gemini/high"}); err == nil || !strings.Contains(err.Error(), "no reasoning-effort control") {
+		t.Fatalf("gemini effort error = %v", err)
+	}
+}
+
 // One grammar, one error set: a malformed target reads the SAME on every surface — the CLI
 // positional, a preset's lead.agent, a preset role's agent:, and a fleet entry — because they
 // all funnel through agents.ParseTarget. Each surface's error must carry the parser's own

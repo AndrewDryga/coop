@@ -161,12 +161,12 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop claude` · `codex` · `gemini` · `grok` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
+| `coop <agent>[:model][/effort][@account] [args]` | a sandboxed Claude, Codex, Gemini, or Grok agent — its autonomous flags, plus any args you add |
 | `coop fusion <agent> --peer <agent>...` · `coop fusion <preset>` | a [governed council](#fusion-a-governed-council): the governor leads, explicit peers and effective preset roles advise |
-| `coop acp <agent>[:model][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <agent> --peer <agent>...` |
+| `coop acp <agent>[:model][/effort][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <agent> --peer <agent>...` |
 | `coop <agent> --peer <peer>…` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <agent>` (repeatable); may ask those peers on hard calls |
 | `coop <preset>` | run an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file) interactively — its lead leads, its roles ride along (a preset name shares the who-runs slot with an agent target) |
-| `coop <agent>:<model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
+| `coop <agent>:<model>[/effort]` | [pick the model and reasoning effort](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
 
 **Credentials, models & presets** ([details](#agents--config))
 
@@ -202,7 +202,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop loop [<agent>[:model][@account] \| <preset>] [--tasks <path>] [--peer <peer>…] [--max-tasks <n>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini` — or a preset name in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model / the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <agent>` (repeatable) so iterations may ask them read-only; `--max-tasks N` works a bounded batch through retries and immediate audits, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+| `coop loop [<agent>[:model][/effort][@account] \| <preset>] [--tasks <path>] [--peer <peer>…] [--max-tasks <n>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini`/`grok` — or a preset name in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model/effort or the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <agent>` (repeatable) so iterations may ask them read-only; `--max-tasks N` works a bounded batch through retries and immediate audits, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 | `coop fleet init` · `up` · `down` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks; `coop tasks split <n>` bootstraps the file) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
@@ -597,6 +597,7 @@ subscription); the model is a separate axis:
 ```bash
 coop models                        # the model menu per agent
 coop claude:opus                   # one run on the big model
+coop codex/high                    # default model at high reasoning effort
 coop claude:opus/xhigh             # …at maximum reasoning effort (low·medium·high·xhigh·max)
 coop frontier                      # a standing lead model + roles, from the preset (its lead leads)
 ```
@@ -605,12 +606,13 @@ One env knob rounds it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`
 agent-wide default. For the loop, put the per-step model in
 [`.agent/loop.yaml`](#run-it-unattended) — `work.agent` for the iterations, `signoff.agent` for a
 stronger final reviewer over the cheaper work loop. In a fleet, give a fork its own with `agent:` (a
-target — `provider[:model][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the
+target — `provider[:model][/effort][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the
 target's `:model` › the preset ladder's active entry › `COOP_<AGENT>_MODEL` › a model baked into
 `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
-**Reasoning effort** is a sibling axis on the same target — `/effort` after the model:
-`coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`, `coop loop claude:opus/low`. Levels are
+**Reasoning effort** is a sibling axis on the same target — `/effort` after the provider or
+optional model: `coop codex/high`, `coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`,
+`coop loop claude:opus/low`. Levels are
 `low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
 (Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
 fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up
@@ -699,7 +701,7 @@ roles:
 ```
 
 Run it by naming the preset in the who-runs slot — its lead leads; a target in that same
-slot (`<agent>[:model][@account]`) runs the agent directly instead:
+slot (`<agent>[:model][/effort][@account]`) runs the agent directly instead:
 
 ```bash
 coop presets init                # scaffold the recipe + starter prompt files, ready to edit
@@ -1178,7 +1180,7 @@ the first conflict or red gate, leaving the rest untouched.
 
 **Declare the fleet once** in `.agent/fleet.yaml` (run `coop fleet init` for a template
 with the format documented inline). Each fork needs `tasks:` (relative to the repo
-root) and `agent:` — the who-runs, either a target (`provider[:model][@account]`; give each fork a
+root) and `agent:` — the who-runs, either a target (`provider[:model][/effort][@account]`; give each fork a
 different account so they don't contend) or a preset name (an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file)
 — its lead + ladder drive the fork). A fork takes ONE account — for a full
 rotation ladder, point it at a preset. The old per-fork `model:`/`credential:` keys are
@@ -1510,7 +1512,7 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```bash
 make build                 # build ./coop
 make check                 # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
-make provider-scripted-e2e # strict fake-runtime smoke for Claude, Codex, Gemini, and Grok
+make provider-scripted-e2e # strict fake-runtime direct-process matrix for all four providers
 make doctor                # the integration check — proves isolation, needs a runtime
 ```
 
@@ -1523,9 +1525,11 @@ doctor` proves the whole thing end-to-end against the real box.
 
 The scripted provider target builds fresh Coop and fixture binaries under a disposable root, starts
 from an allowlist-only environment, and checks the real CLI/box/runtime command boundary for every
-registered provider. Its fake runtime validates and records mounts, env files, workdir, image, and
-provider argv, but it is not a container sandbox; `coop doctor` and `make review-writes-e2e` own that
-proof. On failure, rerun the printed provider subtest with `-v`; its diagnostic includes the
+registered provider. It covers bare and pinned accounts, model/effort precedence and exact native
+argv/env, forwarded args, fail-fast target validation, output passthrough, exit propagation, and
+ready-synchronized foreground-group cancellation. Its fake runtime validates and records mounts,
+env files, workdir, image, and provider argv, but it is not a container sandbox; `coop doctor` and
+`make review-writes-e2e` own that proof. On failure, rerun the printed provider subtest with `-v`; its diagnostic includes the
 size-bounded JSONL trace. Host paths are fixture-relative, environment values are default-redacted,
 and free-form label/provider values are represented by deterministic digests, so exact contracts
 remain testable without persisting their contents. A new adapter automatically enters the

@@ -559,7 +559,7 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 	}
 }
 
-// The loop's leading positional is a target (provider[:model][@account]); no positional →
+// The loop's leading positional is a target (provider[:model][/effort][@account]); no positional →
 // no target (hasTarget=false) and the provider is required (caller errors or a preset lead
 // supplies it). A malformed/unknown token errors; --model/--credential are unexpected args now.
 func TestLoopTargetResolution(t *testing.T) {

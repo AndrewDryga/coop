@@ -25,8 +25,11 @@ func noProviderErr(cmd string) error {
 // isTargetHead reports whether s begins with a registered provider (so `coop <s>` names an
 // agent run, not a command/preset). Used by the top-level dispatch.
 func isTargetHead(s string) bool {
-	beforeAt, _, _ := strings.Cut(s, "@")
-	provider, _, _ := strings.Cut(beforeAt, ":")
+	head := strings.TrimSpace(s)
+	provider := head
+	if i := strings.IndexAny(head, ":/@"); i >= 0 {
+		provider = head[:i]
+	}
 	return agents.Valid(provider)
 }
 

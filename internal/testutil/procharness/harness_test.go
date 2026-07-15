@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -112,6 +113,48 @@ func TestRunDeadlineReapsTheProcessGroup(t *testing.T) {
 			t.Fatal(err)
 		}
 		awaitGone(t, pid)
+	}
+}
+
+func TestStartSignalGroupAndWait(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(layout.State, "ready")
+	script := fmt.Sprintf("trap 'exit 130' INT; : > %s; while :; do sleep 1; done", shellQuote(ready))
+	process, err := Start(Command{
+		Path: "/bin/sh", Args: []string{"-c", script}, Dir: layout.Root,
+		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: 50 * time.Millisecond, MaxOutput: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Cleanup()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("managed process did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := process.SignalGroup(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := process.Wait(ctx)
+	if result.Err != nil || result.ExitCode != 130 {
+		t.Fatalf("signaled managed process = exit %d, err %v", result.ExitCode, result.Err)
+	}
+	if again := process.Cleanup(); again.ExitCode != result.ExitCode || again.Err != result.Err {
+		t.Fatalf("idempotent cleanup = %#v, want %#v", again, result)
+	}
+	if ProcessAlive(process.PID()) {
+		t.Fatalf("managed process %d survived Wait", process.PID())
 	}
 }
 

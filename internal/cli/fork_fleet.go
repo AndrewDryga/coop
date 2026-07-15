@@ -109,7 +109,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 	return out, nil
 }
 
-// composeTarget rebuilds a positional target (provider[:model][@account]) from the pieces a
+// composeTarget rebuilds a positional target (provider[:model][/effort][@account]) from the pieces a
 // fork parsed out of one — used by detachForkLoop to forward the fork's agent+model+account to
 // its re-exec'd worker as a single token. model may itself carry an @account (a contradiction
 // with a separate account is rejected).

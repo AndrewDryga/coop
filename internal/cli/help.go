@@ -91,7 +91,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	}
 
 	group("AGENTS")
-	row("coop <agent>[:model][@account]", "a sandboxed agent (the target grammar)")
+	row("coop <target>", "<agent>[:model][/effort][@account] in a box")
 	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop fusion <agent|preset>", "one leads, council members advise")
 	row("coop acp <agent|fusion|preset>", "serve as an editor agent (ACP; e.g. Zed)")

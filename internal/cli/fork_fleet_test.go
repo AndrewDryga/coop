@@ -139,7 +139,7 @@ func TestFleetInit(t *testing.T) {
 }
 
 // .agent/fleet.yaml is the primary fleet format: author order is preserved, agent: is the
-// who-runs — a target (provider[:model][@account]) OR a preset name (classified into the entry's
+// who-runs — a target (provider[:model][/effort][@account]) OR a preset name (classified into the entry's
 // preset field), no implicit default — and every invalid shape errors with the fork named.
 func TestParseFleetYAML(t *testing.T) {
 	got, err := parseFleetYAML(`

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -216,9 +217,21 @@ type Result struct {
 	StdoutTruncated, StderrTruncated bool
 }
 
-// Run starts a command in its own process group and always drains Wait. Context
-// cancellation terminates the whole group, then escalates to SIGKILL after KillGrace.
-func Run(ctx context.Context, spec Command) Result {
+// Process is one started command whose process group remains owned by the harness until Wait.
+// Tests use the split lifecycle only when they must synchronize on an external ready event before
+// delivering a signal; ordinary tests should use Run.
+type Process struct {
+	cmd            *exec.Cmd
+	done           <-chan error
+	stdout, stderr *boundedBuffer
+	grace          time.Duration
+	waitOnce       sync.Once
+	result         Result
+}
+
+// Start launches a managed command in its own process group. The caller should immediately defer
+// Cleanup, then call Wait when it wants the result. Both are idempotent and share one drain.
+func Start(spec Command) (*Process, error) {
 	max := spec.MaxOutput
 	if max <= 0 {
 		max = 1 << 20
@@ -234,16 +247,38 @@ func Run(ctx context.Context, spec Command) Result {
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = grace
-	result := Result{ExitCode: -1}
 	if err := cmd.Start(); err != nil {
-		result.Err = fmt.Errorf("start %s: %w", spec.Path, err)
-		return finishResult(result, stdout, stderr)
+		return nil, fmt.Errorf("start %s: %w", spec.Path, err)
 	}
-	result.PID = cmd.Process.Pid
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	return &Process{cmd: cmd, done: done, stdout: stdout, stderr: stderr, grace: grace}, nil
+}
+
+// PID returns the process-group leader's pid.
+func (p *Process) PID() int { return p.cmd.Process.Pid }
+
+// SignalGroup delivers sig to the process's owned group. It does not wait or clean up; Wait owns
+// both, so a test can signal a foreground-style cancellation and then collect its exact result.
+func (p *Process) SignalGroup(sig syscall.Signal) error {
+	err := syscall.Kill(-p.PID(), sig)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	return err
+}
+
+// Wait drains a started process. Context cancellation performs the same TERM/grace/KILL group
+// cleanup as Run. A normal leader exit with surviving descendants is a test failure and is cleaned.
+func (p *Process) Wait(ctx context.Context) Result {
+	p.waitOnce.Do(func() { p.result = p.wait(ctx) })
+	return p.result
+}
+
+func (p *Process) wait(ctx context.Context) Result {
+	result := Result{PID: p.PID(), ExitCode: -1}
 	select {
-	case err := <-done:
+	case err := <-p.done:
 		result.ExitCode, result.Err = processExit(err)
 		if processGroupAlive(result.PID) {
 			signalGroup(result.PID, syscall.SIGKILL)
@@ -252,9 +287,27 @@ func Run(ctx context.Context, spec Command) Result {
 			result.Err = errors.Join(result.Err, survivorErr, cleanupErr)
 		}
 	case <-ctx.Done():
-		result.Err = errors.Join(ctx.Err(), cancelProcessGroup(result.PID, done, grace))
+		result.Err = errors.Join(ctx.Err(), cancelProcessGroup(result.PID, p.done, p.grace))
 	}
-	return finishResult(result, stdout, stderr)
+	return finishResult(result, p.stdout, p.stderr)
+}
+
+// Cleanup immediately cancels and drains a process that has not already been waited. It is safe
+// to defer immediately after Start; after a normal Wait it simply returns the cached result.
+func (p *Process) Cleanup() Result {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return p.Wait(ctx)
+}
+
+// Run starts a command in its own process group and always drains Wait. Context
+// cancellation terminates the whole group, then escalates to SIGKILL after KillGrace.
+func Run(ctx context.Context, spec Command) Result {
+	process, err := Start(spec)
+	if err != nil {
+		return Result{ExitCode: -1, Err: err}
+	}
+	return process.Wait(ctx)
 }
 
 func processExit(err error) (int, error) {

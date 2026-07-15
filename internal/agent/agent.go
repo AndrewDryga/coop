@@ -30,6 +30,38 @@ type StreamSpec struct {
 	TrailingArgs int
 }
 
+// EffortFlagStyle is how an agent's command expresses one reasoning-effort value.
+type EffortFlagStyle uint8
+
+const (
+	EffortFlagSplit      EffortFlagStyle = iota // --effort high
+	EffortFlagJoined                            // --effort=high
+	EffortFlagAssignment                        // -c model_reasoning_effort=high
+)
+
+// EffortSpec is the adapter-owned command grammar for reasoning effort. Assignment is used only
+// with EffortFlagAssignment; Aliases are alternate flag names accepted by the same grammar.
+type EffortSpec struct {
+	Style      EffortFlagStyle
+	Flag       string
+	Aliases    []string
+	Assignment string
+}
+
+func (s EffortSpec) Args(level string) []string {
+	if s.Flag == "" || level == "" {
+		return nil
+	}
+	switch s.Style {
+	case EffortFlagJoined:
+		return []string{s.Flag + "=" + level}
+	case EffortFlagAssignment:
+		return []string{s.Flag, s.Assignment + "=" + level}
+	default:
+		return []string{s.Flag, level}
+	}
+}
+
 // ACPSettingMethod is how an adapter changes one setting on an established session.
 type ACPSettingMethod uint8
 
@@ -132,12 +164,10 @@ type Agent interface {
 	// a separate adapter binary that takes no flags (claude-agent-acp) still honors the
 	// chosen model.
 	ModelEnv() string
-	// EffortFlag returns the CLI args that set this agent's reasoning effort to level (a
-	// non-empty level like "high" — claude ["--effort","high"], codex ["-c",
-	// "model_reasoning_effort=high"], grok ["--reasoning-effort","high"]). nil means the agent
-	// takes no effort FLAG (gemini has none; a no-flag ACP adapter carries it via EffortEnv).
-	// Like a model id, level is passed through verbatim — the agent's own CLI validates it.
-	EffortFlag(level string) []string
+	// Effort is this agent's command grammar for reasoning effort. A zero descriptor means the
+	// agent takes no effort flag (gemini has none; a no-flag ACP adapter may use EffortEnv).
+	// Levels pass through verbatim; the agent's own CLI validates them.
+	Effort() EffortSpec
 	// EffortEnv is the environment variable the agent's CLI reads a reasoning effort from
 	// ("" when it has none) — the effort analog of ModelEnv, for a no-flag ACP adapter
 	// (claude-agent-acp reads CLAUDE_CODE_EFFORT_LEVEL). box.Run exports it when an effort is
@@ -190,20 +220,81 @@ type Agent interface {
 	InstallScript() string
 }
 
-// withModel appends `--model <model>` to cmd — the flag all three CLIs accept, on their
-// main command and their exec/resume forms alike. A no-op when no model is chosen, or when
-// cmd already names one (a COOP_<AGENT>_CMD baking its own --model/-m stays authoritative;
-// appending a second would make clap-based CLIs like codex error on the duplicate).
+// withModel applies a resolved model to cmd. A configured model outranks a model baked into
+// COOP_<AGENT>_CMD, so an existing --model/-m value is replaced in place; otherwise the common
+// `--model <model>` form is appended. Empty leaves a command override's own default untouched.
 func withModel(cmd []string, model string) []string {
-	if model == "" || hasModelFlag(cmd) {
+	if model == "" {
 		return cmd
 	}
-	return append(cmd, "--model", model)
+	if out, ok := normalizeFlagValue(cmd, []string{"--model", "-m"}, model); ok {
+		return out
+	}
+	return appendBeforeSeparator(cmd, "--model", model)
+}
+
+// normalizeFlagValue replaces the first split (`--flag old`) or joined (`--flag=old`) value,
+// removes later duplicates, and leaves tokens after `--` alone. It never mutates cmd.
+func normalizeFlagValue(cmd, names []string, value string) ([]string, bool) {
+	out := make([]string, 0, len(cmd)+1)
+	found := false
+	for i := 0; i < len(cmd); i++ {
+		arg := cmd[i]
+		if arg == "--" {
+			out = append(out, cmd[i:]...)
+			break
+		}
+		matched := false
+		for _, name := range names {
+			switch {
+			case arg == name:
+				matched = true
+				if !found {
+					out = append(out, name, value)
+				}
+				found = true
+				if i+1 < len(cmd) && cmd[i+1] != "--" && !strings.HasPrefix(cmd[i+1], "-") {
+					i++
+				}
+			case strings.HasPrefix(arg, name+"="):
+				matched = true
+				if !found {
+					out = append(out, name+"="+value)
+				}
+				found = true
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			out = append(out, arg)
+		}
+	}
+	if !found {
+		return nil, false
+	}
+	return out, true
+}
+
+func appendBeforeSeparator(cmd []string, values ...string) []string {
+	for i, arg := range cmd {
+		if arg == "--" {
+			out := make([]string, 0, len(cmd)+len(values))
+			out = append(out, cmd[:i]...)
+			out = append(out, values...)
+			return append(out, cmd[i:]...)
+		}
+	}
+	return append(cmd, values...)
 }
 
 // hasModelFlag reports whether cmd already carries a model flag (--model/-m, split or =-joined).
 func hasModelFlag(cmd []string) bool {
 	for _, a := range cmd {
+		if a == "--" {
+			return false
+		}
 		if a == "--model" || a == "-m" || strings.HasPrefix(a, "--model=") || strings.HasPrefix(a, "-m=") {
 			return true
 		}
@@ -211,45 +302,121 @@ func hasModelFlag(cmd []string) bool {
 	return false
 }
 
-// withEffort appends the agent's reasoning-effort flag for level to cmd — each CLI spells it
-// differently (claude --effort, codex -c model_reasoning_effort=, grok --reasoning-effort), so
-// the agent supplies the spelling via EffortFlag. A no-op when no effort is chosen, the agent
-// has no flag form (gemini, or a no-flag adapter that reads EffortEnv), or cmd already sets it
-// (a COOP_<AGENT>_CMD baking its own stays authoritative).
+// withEffort applies a resolved effort to cmd. Each CLI supplies its own spelling; a matching
+// value baked into COOP_<AGENT>_CMD is replaced so the resolved target/default keeps precedence,
+// while empty effort leaves the command override untouched.
 func withEffort(cmd []string, a Agent, level string) []string {
 	if level == "" {
 		return cmd
 	}
-	flag := a.EffortFlag(level)
-	if len(flag) == 0 || hasEffortFlag(cmd, flag) {
+	spec := a.Effort()
+	if spec.Flag == "" {
 		return cmd
 	}
-	return append(cmd, flag...)
-}
-
-// hasEffortFlag reports whether cmd already carries flag's effort setting — matched by its
-// identifying token: a "key=" config value's key (codex's -c model_reasoning_effort=), else
-// the "--flag" name (claude's --effort, grok's --reasoning-effort).
-func hasEffortFlag(cmd, flag []string) bool {
-	if len(flag) == 0 {
-		return false
-	}
-	marker := flag[0]
-	if last := flag[len(flag)-1]; strings.Contains(last, "=") {
-		marker = last[:strings.IndexByte(last, '=')+1]
-	}
-	for _, a := range cmd {
-		if a == marker || strings.HasPrefix(a, marker) {
-			return true
+	names := append([]string{spec.Flag}, spec.Aliases...)
+	switch spec.Style {
+	case EffortFlagJoined:
+		if out, ok := normalizeJoinedFlag(cmd, names, level); ok {
+			return out
+		}
+	case EffortFlagAssignment:
+		marker := spec.Assignment + "="
+		if out, ok := normalizeAssignmentFlag(cmd, names, marker, marker+level); ok {
+			return out
+		}
+	default:
+		if out, ok := normalizeFlagValue(cmd, names, level); ok {
+			return out
 		}
 	}
-	return false
+	return appendBeforeSeparator(cmd, spec.Args(level)...)
+}
+
+func normalizeJoinedFlag(cmd, names []string, value string) ([]string, bool) {
+	out := make([]string, 0, len(cmd))
+	found := false
+	for i, arg := range cmd {
+		if arg == "--" {
+			out = append(out, cmd[i:]...)
+			break
+		}
+		matched := false
+		for _, name := range names {
+			if arg == name || strings.HasPrefix(arg, name+"=") {
+				if !found {
+					out = append(out, name+"="+value)
+				}
+				found, matched = true, true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, arg)
+		}
+	}
+	if !found {
+		return nil, false
+	}
+	return out, true
+}
+
+// normalizeAssignmentFlag replaces and deduplicates `-c key=value`-style options while
+// preserving unrelated uses of the same carrier flag.
+func normalizeAssignmentFlag(cmd, names []string, marker, value string) ([]string, bool) {
+	out := make([]string, 0, len(cmd))
+	found := false
+	for i := 0; i < len(cmd); i++ {
+		if cmd[i] == "--" {
+			out = append(out, cmd[i:]...)
+			break
+		}
+		name, matched := matchExact(cmd[i], names)
+		if matched && i+1 < len(cmd) && strings.HasPrefix(cmd[i+1], marker) {
+			if !found {
+				out = append(out, name, value)
+			}
+			found = true
+			i++
+			continue
+		}
+		name, matched = matchJoinedAssignment(cmd[i], names, marker)
+		if matched {
+			if !found {
+				out = append(out, name+"="+value)
+			}
+			found = true
+			continue
+		}
+		out = append(out, cmd[i])
+	}
+	if !found {
+		return nil, false
+	}
+	return out, true
+}
+
+func matchJoinedAssignment(value string, candidates []string, marker string) (string, bool) {
+	for _, candidate := range candidates {
+		if strings.HasPrefix(value, candidate+"="+marker) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func matchExact(value string, candidates []string) (string, bool) {
+	for _, candidate := range candidates {
+		if value == candidate {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // SupportsEffort reports whether the agent has any reasoning-effort control (a CLI flag or an
 // env var). A target that names an effort for an agent without one is rejected in ParseTarget.
 func SupportsEffort(a Agent) bool {
-	return len(a.EffortFlag("medium")) > 0 || a.EffortEnv() != ""
+	return a.Effort().Flag != "" || a.EffortEnv() != ""
 }
 
 // Packages is the union of every agent's npm packages, for the box image's install.

@@ -181,7 +181,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			if run.Run.Network != "none" || !reflect.DeepEqual(run.Run.Labels, []string{"coop=box"}) || run.Run.Interactive || run.Run.TTY {
 				t.Fatalf("runtime boundary = network %q labels %q interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Interactive, run.Run.TTY)
 			}
-			assertProcessMounts(t, layout, provider, run.Run.Mounts)
+			assertProcessMounts(t, layout, provider, "default", run.Run.Mounts)
 			assertProcessEnvironment(t, run.Run.Environment, provider, credentialKey[provider])
 			if len(run.Run.EnvFiles) != 1 || !recordedFixturePath(run.Run.EnvFiles[0]) {
 				t.Fatalf("scoped env files = %q, want one fixture-owned file", run.Run.EnvFiles)
@@ -318,9 +318,9 @@ func oneProcessEvent(t *testing.T, trace []*processTrace, source, event string) 
 	return matches[0]
 }
 
-func assertProcessMounts(t *testing.T, layout procharness.Layout, provider string, mounts []processMount) {
+func assertProcessMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
 	t.Helper()
-	profileSource := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", "default"))
+	profileSource := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
 	repoSource := processTracePath(layout.Root, layout.Repo)
 	profileTarget := "<container>/home/node/." + provider
 	foundProfile, foundRepo := false, false
@@ -343,6 +343,10 @@ func assertProcessMounts(t *testing.T, layout procharness.Layout, provider strin
 		}
 		if mount.Source == profileSource && mount.Target == profileTarget && !mount.ReadOnly {
 			foundProfile = true
+			continue
+		}
+		if mount.Target == profileTarget && !mount.ReadOnly {
+			t.Errorf("unexpected account mounted for %s: %#v", provider, mount)
 			continue
 		}
 		if !mount.ReadOnly {

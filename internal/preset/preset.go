@@ -101,7 +101,7 @@ func leadLadder(node *yaml.Node) (provider string, ladder []agents.Target, err e
 			raw = append(raw, c.Value)
 		}
 	case 0: // absent
-		return "", nil, fmt.Errorf("is required — a target: provider[:model][@account] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
+		return "", nil, fmt.Errorf("is required — a target: <agent>[:model][/effort][@account] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
 	default:
 		return "", nil, fmt.Errorf("must be a target (claude:opus@work) or a list of targets, not a map")
 	}

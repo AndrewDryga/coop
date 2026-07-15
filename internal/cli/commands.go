@@ -99,7 +99,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 // -- separator are stripped first so they aren't forwarded to the agent. A preset lead runs
 // via launchPreset instead (the who-runs positional names a target OR a preset, never both).
 func (a *app) launchAgent(target string, args []string) (int, error) {
-	// The head is a target: provider[:model][@account]. The model/account ride it —
+	// The head is a target: provider[:model][/effort][@account]. Model, effort, and account ride it —
 	// --model/--credential are retired.
 	t, err := agents.ParseTarget(target)
 	if err != nil {
@@ -479,7 +479,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp [claude|codex|gemini|grok|fusion [governor]][:model][@account] | <preset>)", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp <agent>[:model][/effort][@account] | fusion <agent>[:model][/effort][@account] | <preset>)", leftover[0])
 	}
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the
 	// supervisor re-execs the inner box with the resolved spawn target in the env

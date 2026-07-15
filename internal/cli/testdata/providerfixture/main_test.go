@@ -41,6 +41,22 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeKeepsLogicalProviderSeparateFromExecutable(t *testing.T) {
+	root := canonicalTemp(t)
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"run", "-v", repo + ":" + repo, "-w", repo, "fixture-image", "qwen-code", "--yolo"}
+	got, err := parseRuntimeForProvider(root, "fixture-image", args, "qwen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Run.Provider != "qwen" || !reflect.DeepEqual(got.Run.ProviderArgv, []string{"qwen-code", "--yolo"}) {
+		t.Fatalf("logical provider/executable = %q/%q", got.Run.Provider, got.Run.ProviderArgv)
+	}
+}
+
 func TestParseRuntimeRejectsUnknownSyntaxAndImageConfusion(t *testing.T) {
 	root := canonicalTemp(t)
 	repo := filepath.Join(root, "repo")
@@ -334,6 +350,44 @@ func TestFixturePropagatesProviderExitCode(t *testing.T) {
 	}
 	if strings.Contains(string(trace), `"event":"error"`) || !strings.Contains(string(trace), `"exit_code":23`) {
 		t.Fatalf("exit trace =\n%s", trace)
+	}
+}
+
+func TestReadScenarioAcceptsOnlyClosedBoundedBehavior(t *testing.T) {
+	root := canonicalTemp(t)
+	path := filepath.Join(root, "scenario.json")
+	write := func(body string) error {
+		if err := os.WriteFile(path, []byte(body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := readScenario(root, path)
+		return err
+	}
+	for _, body := range []string{
+		`{"version":1,"provider":"future-provider"}`,
+		`{"version":1,"provider":"future-provider","behavior":"complete","output":"plain bytes"}`,
+		`{"version":1,"provider":"future-provider","behavior":"wait"}`,
+	} {
+		if err := write(body); err != nil {
+			t.Errorf("valid scenario rejected: %v\n%s", err, body)
+		}
+	}
+	for _, body := range []string{
+		`{"version":1,"provider":"future-provider","behavior":"shell"}`,
+		`{"version":1,"provider":"future-provider","behavior":"wait","exit_code":3}`,
+		`{"version":1,"provider":"future-provider","marker":"a","output":"b"}`,
+		`{"version":1,"provider":"future-provider","marker":"line\nfeed"}`,
+		`{"version":1,"provider":"future-provider","output":"line\nfeed"}`,
+		`{"version":1,"provider":"future-provider","command":"sh -c id"}`,
+		`{"version":1,"provider":"future-provider"} {"version":1,"provider":"future-provider"}`,
+	} {
+		if err := write(body); err == nil {
+			t.Errorf("unsafe/open scenario accepted:\n%s", body)
+		}
+	}
+	oversized := `{"version":1,"provider":"future-provider"}` + strings.Repeat(" ", 64<<10)
+	if err := write(oversized); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized scenario error = %v, want explicit size rejection", err)
 	}
 }
 

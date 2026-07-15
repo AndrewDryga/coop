@@ -126,8 +126,10 @@ func (grokAgent) Models() []string {
 // ModelEnv: grok reads no default-model env var; the model is -m/--model or config.toml.
 func (grokAgent) ModelEnv() string { return "" }
 
-// EffortFlag: grok takes --reasoning-effort <level> (alias --effort) on `grok` and `grok agent`.
-func (grokAgent) EffortFlag(level string) []string { return []string{"--reasoning-effort", level} }
+// Effort: grok takes --reasoning-effort <level> (alias --effort) on `grok` and `grok agent`.
+func (grokAgent) Effort() EffortSpec {
+	return EffortSpec{Flag: "--reasoning-effort", Aliases: []string{"--effort"}}
+}
 
 // EffortEnv: grok reads no effort env var; the flag in base()/ACP is the coop-driven path.
 func (grokAgent) EffortEnv() string { return "" }

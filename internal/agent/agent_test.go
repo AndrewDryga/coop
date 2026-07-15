@@ -135,9 +135,9 @@ func TestStreamSpecs(t *testing.T) {
 	}
 }
 
-// TestModelSelection: a resolved model rides every command form as a --model flag; a
-// COOP_<AGENT>_CMD that bakes its own --model stays authoritative (no duplicate, which
-// clap-based CLIs reject); and every agent answers Models() (non-empty menu for `coop models`).
+// TestModelSelection: a resolved model rides every command form as a --model flag, replaces
+// a COOP_<AGENT>_CMD baked default without duplicates, and every agent answers Models()
+// (non-empty menu for `coop models`).
 func TestModelSelection(t *testing.T) {
 	cleanCmdEnv(t)
 	cfg := &config.Config{}
@@ -180,11 +180,11 @@ func TestModelSelection(t *testing.T) {
 	if got := a.Interactive(cfg2); !slices.Equal(got, want) {
 		t.Errorf("claude Interactive with COOP_CLAUDE_MODEL = %v, want %v", got, want)
 	}
-	// A CMD override that already names a model wins — no second --model is appended.
+	// A resolved model outranks a CMD override's baked default, without adding a duplicate flag.
 	t.Setenv("COOP_CLAUDE_CMD", "claude --model sonnet")
-	want = []string{"claude", "--model", "sonnet"}
+	want = []string{"claude", "--model", "haiku"}
 	if got := a.Interactive(cfg2); !slices.Equal(got, want) {
-		t.Errorf("claude Interactive with a baked --model = %v, want %v (no duplicate)", got, want)
+		t.Errorf("claude Interactive with resolved + baked model = %v, want %v", got, want)
 	}
 }
 
@@ -192,14 +192,22 @@ func TestWithModel(t *testing.T) {
 	if got := withModel([]string{"claude"}, ""); !slices.Equal(got, []string{"claude"}) {
 		t.Errorf("empty model must be a no-op, got %v", got)
 	}
-	for _, baked := range [][]string{
-		{"codex", "--model", "x"},
-		{"codex", "--model=x"},
-		{"codex", "-m", "x"},
-		{"codex", "-m=x"},
+	if got := withModel([]string{"claude", "--model", "baked"}, ""); !slices.Equal(got, []string{"claude", "--model", "baked"}) {
+		t.Errorf("empty resolved model changed baked command: %v", got)
+	}
+	for _, tc := range []struct {
+		baked, want []string
+	}{
+		{[]string{"codex", "--model", "x"}, []string{"codex", "--model", "y"}},
+		{[]string{"codex", "--model=x"}, []string{"codex", "--model=y"}},
+		{[]string{"codex", "-m", "x"}, []string{"codex", "-m", "y"}},
+		{[]string{"codex", "-m=x"}, []string{"codex", "-m=y"}},
+		{[]string{"codex", "--model", "--json"}, []string{"codex", "--model", "y", "--json"}},
+		{[]string{"codex", "--model", "x", "-m=z"}, []string{"codex", "--model", "y"}},
+		{[]string{"codex", "--", "--model", "prompt"}, []string{"codex", "--model", "y", "--", "--model", "prompt"}},
 	} {
-		if got := withModel(baked, "y"); !slices.Equal(got, baked) {
-			t.Errorf("withModel(%v) must not append a duplicate, got %v", baked, got)
+		if got := withModel(tc.baked, "y"); !slices.Equal(got, tc.want) {
+			t.Errorf("withModel(%v) = %v, want %v", tc.baked, got, tc.want)
 		}
 	}
 }
@@ -276,23 +284,45 @@ func TestWithEffort(t *testing.T) {
 	claude, _ := Get("claude")
 	gemini, _ := Get("gemini")
 	codex, _ := Get("codex")
+	grok, _ := Get("grok")
 	if got := withEffort([]string{"claude"}, claude, ""); !slices.Equal(got, []string{"claude"}) {
 		t.Errorf("empty effort must be a no-op, got %v", got)
+	}
+	if got := withEffort([]string{"claude", "--effort", "baked"}, claude, ""); !slices.Equal(got, []string{"claude", "--effort", "baked"}) {
+		t.Errorf("empty resolved effort changed baked command: %v", got)
 	}
 	if got := withEffort([]string{"gemini"}, gemini, "high"); !slices.Equal(got, []string{"gemini"}) {
 		t.Errorf("withEffort for an effortless agent must be a no-op, got %v", got)
 	}
-	for _, baked := range [][]string{
-		{"claude", "--effort", "low"},
-		{"codex", "-c", "model_reasoning_effort=low"},
+	for _, tc := range []struct {
+		a           Agent
+		baked, want []string
+	}{
+		{claude, []string{"claude", "--effort", "low"}, []string{"claude", "--effort", "high"}},
+		{claude, []string{"claude", "--effort=low"}, []string{"claude", "--effort=high"}},
+		{claude, []string{"claude", "--effort", "--verbose"}, []string{"claude", "--effort", "high", "--verbose"}},
+		{claude, []string{"claude", "--effort", "low", "--effort=max"}, []string{"claude", "--effort", "high"}},
+		{codex, []string{"codex", "-c", "model_reasoning_effort=low"}, []string{"codex", "-c", "model_reasoning_effort=high"}},
+		{codex, []string{"codex", "--config", "model_reasoning_effort=low"}, []string{"codex", "--config", "model_reasoning_effort=high"}},
+		{codex, []string{"codex", "--config=model_reasoning_effort=low"}, []string{"codex", "--config=model_reasoning_effort=high"}},
+		{codex, []string{"codex", "-c", "sandbox_mode=read-only", "-c", "model_reasoning_effort=low", "-c", "model_reasoning_effort=max"}, []string{"codex", "-c", "sandbox_mode=read-only", "-c", "model_reasoning_effort=high"}},
+		{grok, []string{"grok", "--effort", "low"}, []string{"grok", "--effort", "high"}},
+		{grok, []string{"grok", "--effort=low", "--reasoning-effort", "max"}, []string{"grok", "--effort=high"}},
+		{grok, []string{"grok", "--", "--effort", "prompt"}, []string{"grok", "--reasoning-effort", "high", "--", "--effort", "prompt"}},
 	} {
-		a := claude
-		if baked[0] == "codex" {
-			a = codex
+		if got := withEffort(tc.baked, tc.a, "high"); !slices.Equal(got, tc.want) {
+			t.Errorf("withEffort(%v) = %v, want %v", tc.baked, got, tc.want)
 		}
-		if got := withEffort(baked, a, "high"); !slices.Equal(got, baked) {
-			t.Errorf("withEffort(%v) must not append a duplicate, got %v", baked, got)
-		}
+	}
+	joined := EffortSpec{Style: EffortFlagJoined, Flag: "--thinking"}
+	if got := joined.Args("high"); !slices.Equal(got, []string{"--thinking=high"}) {
+		t.Errorf("joined effort args = %v", got)
+	}
+	if got, ok := normalizeJoinedFlag([]string{"agent", "--thinking=low", "--thinking=max"}, []string{"--thinking"}, "high"); !ok || !slices.Equal(got, []string{"agent", "--thinking=high"}) {
+		t.Errorf("joined effort normalization = %v, %v", got, ok)
+	}
+	if got, ok := normalizeAssignmentFlag([]string{"agent", "--config=reasoning=low", "-c", "reasoning=max"}, []string{"-c", "--config"}, "reasoning=", "reasoning=high"); !ok || !slices.Equal(got, []string{"agent", "--config=reasoning=high"}) {
+		t.Errorf("assignment-alias effort normalization = %v, %v", got, ok)
 	}
 }
 

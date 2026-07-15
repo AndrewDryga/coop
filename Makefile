@@ -53,7 +53,7 @@ check: lint test provider-scripted-e2e docs-check casts-check tools-test ## What
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
-	@go test -tags providere2e -run '^TestProviderScriptedProcessSmoke$$' -count=1 -v ./internal/cli/
+	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -v ./internal/cli/
 
 acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
 	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/

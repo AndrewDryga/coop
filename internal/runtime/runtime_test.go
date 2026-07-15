@@ -76,6 +76,14 @@ func TestRunInterruptibleCancelKillsGroup(t *testing.T) {
 		(Runtime{Name: "sh"}).RunInterruptible(ctx, nil, nil, nil, "-c", script)
 		close(done)
 	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(killGrace + 5*time.Second):
+			t.Errorf("RunInterruptible cleanup did not finish")
+		}
+	}()
 
 	gpid := 0
 	for i := 0; i < 300 && gpid == 0; i++ {
@@ -106,6 +114,66 @@ func TestRunInterruptibleCancelKillsGroup(t *testing.T) {
 	if err := waitGone(gpid, 3*time.Second); err != nil {
 		t.Fatalf("grandchild %d survived cancel (process group not torn down): %v", gpid, err)
 	}
+}
+
+func TestRunInterruptibleCancelKillsDescendantAfterLeaderExits(t *testing.T) {
+	// The runtime leader exits promptly on TERM while its child ignores TERM. Cleanup must keep
+	// owning the process group after cmd.Wait returns and escalate the surviving child to KILL.
+	pidfile := filepath.Join(t.TempDir(), "leader-first-gpid")
+	childScript := "trap '' TERM; while :; do sleep 1; done"
+	script := "trap 'exit 0' TERM; sh -c " + shellQuote(childScript) + " & echo $! > " + shellQuote(pidfile) + "; while :; do sleep 1; done"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = (Runtime{Name: "sh"}).RunInterruptible(ctx, nil, nil, nil, "-c", script)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(killGrace + 5*time.Second):
+			t.Errorf("leader-first RunInterruptible cleanup did not finish")
+		}
+	}()
+
+	gpid := 0
+	for i := 0; i < 300 && gpid == 0; i++ {
+		if b, err := os.ReadFile(pidfile); err == nil {
+			gpid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+		if gpid == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if gpid == 0 {
+		t.Fatal("TERM-resistant descendant pid was not recorded")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(killGrace + 5*time.Second):
+		t.Fatal("RunInterruptible did not finish leader-first cancellation")
+	}
+	if err := waitGone(gpid, 3*time.Second); err != nil {
+		_ = syscall.Kill(gpid, syscall.SIGKILL)
+		t.Fatalf("TERM-resistant descendant %d survived leader exit: %v", gpid, err)
+	}
+}
+
+func TestWaitLeaderDoneIsBounded(t *testing.T) {
+	done := make(chan error, 1)
+	if waitLeaderDone(done, 10*time.Millisecond) {
+		t.Fatal("waitLeaderDone reported a completion that never arrived")
+	}
+	done <- nil
+	if !waitLeaderDone(done, time.Second) {
+		t.Fatal("waitLeaderDone missed a buffered completion")
+	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 // waitGone polls until pid is no longer running or the deadline passes.
@@ -233,7 +301,9 @@ fi
 	}
 	t.Setenv("COOP_TEST_EVENTS", events)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// This deadline only guards a broken fixture; timing is not the behavior under test, and the
+	// race suite may run beside the full gate on a loaded host.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if n, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf"); err != nil || n != 1 {
 		t.Fatalf("RemoveByLabel(Apple, perf) = (%d, %v), want (1, nil)", n, err)

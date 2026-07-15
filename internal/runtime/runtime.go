@@ -20,6 +20,9 @@ import (
 // before escalating to SIGKILL — matches `coop fork stop`'s grace.
 const killGrace = 3 * time.Second
 
+// leaderReapTimeout bounds cancellation even if the runtime leader cannot be reaped after KILL.
+const leaderReapTimeout = time.Second
+
 // Runtime is a resolved container CLI (e.g. "docker").
 type Runtime struct {
 	Name string
@@ -130,8 +133,8 @@ func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, 
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-ctx.Done():
-		killGroup(cmd.Process.Pid, done)
-		return -1, ctx.Err()
+		cleanupErr := killGroup(cmd.Process.Pid, done)
+		return -1, errors.Join(ctx.Err(), cleanupErr)
 	case err := <-done:
 		return exitCode(r.Name, err)
 	}
@@ -140,15 +143,45 @@ func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, 
 // killGroup tears down the process group led by pid: SIGTERM, a short grace to exit, then SIGKILL
 // if it's still alive. It signals the whole group (-pid), falling back to the bare pid, and drains
 // done so the child is always reaped (no zombie). Mirrors `coop fork stop`.
-func killGroup(pid int, done <-chan error) {
+func killGroup(pid int, done <-chan error) error {
 	signalGroup(pid, syscall.SIGTERM)
+	leaderDone := false
+	timer := time.NewTimer(killGrace)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if leaderDone && !processGroupAlive(pid) {
+			return nil
+		}
+		select {
+		case <-done:
+			leaderDone = true
+		case <-ticker.C:
+		case <-timer.C:
+			signalGroup(pid, syscall.SIGKILL)
+			if !leaderDone {
+				if !waitLeaderDone(done, leaderReapTimeout) {
+					return fmt.Errorf("runtime process group leader %d did not reap after SIGKILL", pid)
+				}
+			}
+			if !waitProcessGroupGone(pid, time.Second) {
+				return fmt.Errorf("runtime process group %d survived SIGKILL", pid)
+			}
+			return nil
+		}
+	}
+}
+
+func waitLeaderDone(done <-chan error, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case <-done:
-		return
-	case <-time.After(killGrace):
+		return true
+	case <-timer.C:
+		return false
 	}
-	signalGroup(pid, syscall.SIGKILL)
-	<-done
 }
 
 // signalGroup sends sig to the whole process group led by pid (-pid), falling back to the bare
@@ -157,6 +190,19 @@ func signalGroup(pid int, sig syscall.Signal) {
 	if syscall.Kill(-pid, sig) != nil {
 		_ = syscall.Kill(pid, sig)
 	}
+}
+
+func processGroupAlive(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func waitProcessGroupGone(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for processGroupAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return !processGroupAlive(pid)
 }
 
 // exitCode maps a cmd.Run/Wait error to coop's convention: a clean exit is (0, nil), a non-zero
