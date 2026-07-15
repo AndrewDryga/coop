@@ -1,5 +1,5 @@
-// Package fusion builds the "council" wiring for coop's fusion mode: a governor
-// agent that consults its two peers (read-only) and synthesizes the best result.
+// Package fusion builds the council wiring for coop's fusion mode: a governor
+// agent that consults one or more read-only members and synthesizes the best result.
 // It is expressed entirely as an instruction injected into the governor's own
 // instruction file — the governor already has a shell and the peer CLIs live in
 // the same box, so no extra protocol (MCP) is needed. This package is pure (text
@@ -19,17 +19,6 @@ func Valid(tool string, all []string) bool {
 		}
 	}
 	return false
-}
-
-// Peers returns the agents other than the governor, preserving order.
-func Peers(governor string, all []string) []string {
-	peers := make([]string, 0, len(all))
-	for _, a := range all {
-		if a != governor {
-			peers = append(peers, a)
-		}
-	}
-	return peers
 }
 
 // placeholder marks where the lead substitutes the prompt it composes for a peer —
@@ -71,79 +60,79 @@ func peerCmdList(peers []string) string {
 }
 
 // Instruction is the fusion directive for the governor: consult these specific
-// peers read-only and in parallel, then synthesize. Naming the exact commands
+// council members read-only and in parallel, then synthesize. Naming the exact commands
 // makes the governor run the right thing.
-func Instruction(governor string, peers []string) string {
+func Instruction(governor string, members []string) string {
 	return fmt.Sprintf(`# Fusion mode — you are %s, the governor of a model council
 
-Your peers are %s. The defining rule of this mode: you never answer or act alone.
+Your council: %s. The defining rule of this mode: you never answer or act alone.
 Before you respond to ANY question, propose ANY plan, start ANY task, or make ANY
 change — no matter how small, and no matter how confident you are — you MUST first
-consult BOTH peers and then synthesize their answers with your own. Consulting is
+consult every council member and then synthesize their answers with your own. Consulting is
 unconditional: there is no "this one is trivial" or "I already know the answer"
 exception, and answering from your own knowledge alone defeats the entire purpose
 of fusion mode. The only thing that needs no consult is the incidental shell you
 run while carrying out a task you have ALREADY consulted on (ls, cd, cat, git
 status) — those are not themselves tasks.
 
-Your peers are READ-ONLY ADVISORS: they think and report, they never edit a file,
+Council members serve as READ-ONLY ADVISORS: they think and report, they never edit a file,
 run a mutating command, or touch the repo. YOU are the only one who acts. So when
 the task is to change something — "do a code review and file a task in
 .agent/tasks/", "fix the failing test", "refactor this" — do not hand that action
-to a peer; it cannot do it. Ask each peer only for the thinking the action needs —
+to a member; it cannot do it. Ask each member only for the thinking the action needs —
 the review, the diagnosis, the design — then make every edit and run every command
 yourself when you synthesize.
 
-## 1. Consult BOTH peers FIRST — read-only, in parallel
-Consult each peer with coop-consult <peer> --fresh|--continue "<prompt>" — it runs the
-peer read-only and prints a one-line session status first. Compose your prompt, drop it
+## 1. Consult every council member FIRST — read-only, in parallel
+Consult each member with coop-consult <member> --fresh|--continue "<prompt>" — it runs the
+member read-only and prints a one-line session status first. Compose your prompt, drop it
 in place of the placeholder, and run the whole block from your shell — do not drop a
-peer, even if the first answer already looks sufficient:
+member, even if the first answer already looks sufficient:
 
 %s
-The one-line status is session metadata, not the peer reply. If your shell or
+The one-line status is session metadata, not the member reply. If your shell or
 execution tool yields a session handle for this block, retain it and
 poll that same session to terminal exit, accumulating and reading its complete output.
-If a peer errors or is unavailable, proceed with the others — but always attempt
-all of them before you answer.
+If a member errors or is unavailable, proceed with any remaining members — but always attempt
+every member before you answer.
 
 ## 2. Fresh or continue — choose the session mode each turn
-Each peer keeps the session you opened with it, so every consult is either a new
+Each council member keeps the session you opened with it, so every consult is either a new
 thread or a continuation:
 - New question, or a new subject → --fresh, with the FULL self-contained prompt: the
   goal, the relevant code/paths/errors, your question. Use it the first time you
   consult a peer, and whenever you move to an unrelated subject (continuing a stale
   thread only pollutes it).
 - Following up the SAME subject → --continue, with ONLY the delta: what you decided or
-  changed since, what the user now wants, what the other peer said — then your next
-  question. The peer still remembers its own last answer, so don't re-paste what you
+  changed since, what the user now wants, and what other evidence changed — then your next
+  question. The member still remembers its own last answer, so don't re-paste what you
   already gave it. Never forward the user's message verbatim; out of context it is
   meaningless ("fix the second one" tells a peer nothing).
 
 Two rules that keep this honest:
-- The peer remembers ITS OWN consult thread — not your conversation, not your edits.
+- The member remembers ITS OWN consult thread — not your conversation, not your edits.
   Anything that happened on your side since you last consulted it is invisible unless
   you put it in the delta.
 - Believe the status line, not your intent: each call prints "continued" or "fresh".
   If you asked to --continue and it says it started FRESH (the session was lost), the
-  peer has no memory this turn — resend the full context.
+  member has no memory this turn — resend the full context.
 
 ## 3. Synthesize, then act
-- Read every peer's answer in full before you respond.
+- Read every council member's answer in full before you respond.
 - Combine the strongest parts of each with your own reasoning; resolve
   disagreements by evidence or verification, not by a vote.
 - You are the decider: produce the single best answer or implementation — making
-  every edit and running every command yourself — and briefly note where the peers
+  every edit and running every command yourself — and briefly note where the members
   agreed or shifted your approach.
-`, governor, strings.Join(peers, " and "), consultBlock(peers))
+`, governor, strings.Join(members, ", "), consultBlock(members))
 }
 
 // GovernorInstructions is the full instruction file mounted for the governor: the
 // fusion directive first (for prominence), then the governor's existing
 // instructions (a shared INSTRUCTIONS.md or the user's own override), so nothing
 // the user wrote is lost.
-func GovernorInstructions(base, governor string, all []string) string {
-	block := Instruction(governor, Peers(governor, all))
+func GovernorInstructions(base, governor string, members []string) string {
+	block := Instruction(governor, members)
 	if base = strings.TrimSpace(base); base != "" {
 		return block + "\n" + base + "\n"
 	}

@@ -162,8 +162,8 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop claude` · `codex` · `gemini` · `grok` `[args]` | a sandboxed agent — its autonomous flags, plus any args you add |
-| `coop fusion <gov> --peer <agent>…` | a [governed council](#fusion-a-governed-council): the governor leads, the named peers advise |
-| `coop acp <agent>[:model][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <gov> --peer <agent>…` |
+| `coop fusion <agent> --peer <agent>...` · `coop fusion <preset>` | a [governed council](#fusion-a-governed-council): the governor leads, explicit peers and effective preset roles advise |
+| `coop acp <agent>[:model][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <agent> --peer <agent>...` |
 | `coop <agent> --peer <peer>…` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <agent>` (repeatable); may ask those peers on hard calls |
 | `coop <preset>` | run an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file) interactively — its lead leads, its roles ride along (a preset name shares the who-runs slot with an agent target) |
 | `coop <agent>:<model>` | [pick the model](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
@@ -468,7 +468,7 @@ whole vault.
 Each run mounts only the **launched agent's** credentials: `coop claude` mounts
 `~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
 The exceptions are the modes where the lead is explicitly told to call its peers —
-`coop fusion <gov> --peer …` and `coop <agent> --peer <peer>…` (and forks) — which
+`coop fusion <agent> --peer <agent>...` and `coop <agent> --peer <agent>...` (and forks) — which
 also mount the **named** peers so they can be consulted read-only (only those you
 name, never everyone signed in). A preset is explicit too: every signed-in provider
 named by a consult/delegate role ladder is mounted for that role; unavailable rungs are
@@ -690,6 +690,10 @@ coop loop frontier               # unattended: lead credentials rotate, roles ri
 coop fusion frontier             # council governed by the preset's lead + its consult roles
 ```
 
+Terminal Fusion is deliberately non-rotating: for a multi-rung preset it pins and reports the
+first lead target. ACP Fusion keeps the complete ladder, re-evaluates self peers after each
+provider switch, and refuses a preset whose council would become empty on any reachable provider.
+
 Presets resolve from **two locations, repo wins**: the repo's `.agent/presets/<name>/`
 first, then a per-user global dir `~/.config/coop/presets/` (`COOP_PRESETS_DIR` overrides
 it) — so a recipe like `frontier` applies across every repo without symlinking. A repo
@@ -800,8 +804,9 @@ first use, and the server runs `--headless --no-sandbox` (the box is already the
 
 ## Fusion: a governed council
 
-One model leads (the *governor*) and does the real work; the peers you name with `--peer` advise
-read-only; the leader synthesizes the best of all three. A council that argues
+One model leads (the *governor*) and does the real work; explicit providers named with `--peer`
+and effective preset consult roles advise read-only; the leader synthesizes the best of the
+council. A council that argues
 before it commits beats any of its members working alone — the synthesized answer
 outperforms even the single strongest model on its own, Fable 5 included. You stop
 betting the run on one model's blind spots. It's a mode like any other agent —
@@ -813,17 +818,23 @@ coop fusion claude --peer codex --peer gemini    # claude governs instead
 coop fusion claude --peer codex --peer gemini -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
 ```
 
+Explicit peers are unique signed-in providers; terminal Fusion rejects the governor as its own
+peer. Preset council members are addressed by role name, so several roles may use the same
+provider or even the governor provider on another model. A provider/role name collision is
+ambiguous and rejected. With no effective explicit peer or mounted preset role, Fusion exits
+before starting a box instead of silently becoming a normal solo session.
+
 No extra service or protocol behind it: the leader is just that agent running
 normally (it edits, runs the gate, streams), plus a fusion instruction injected into
-the leader's instruction file only. For a non-trivial question it consults its peers
-read-only and in parallel through a small mounted wrapper:
+the leader's instruction file only. Before any response or task it consults every
+configured council member read-only, in parallel where practical, through a small mounted wrapper:
 
 ```bash
 coop-consult claude --fresh    "<prompt>"   # new read-only session; never edits
 coop-consult gemini --continue "<prompt>"   # resume the peer's thread; send only the delta
 ```
 
-The peers are read-only advisors: they analyze and report, and the leader makes
+Council members are read-only advisors: they analyze and report, and the leader makes
 every change itself — even when the task *is* a change, it consults on the thinking
 and does the writing. A peer has none of the leader's conversation, so the leader
 composes a self-contained prompt rather than forwarding your message verbatim — a
@@ -835,10 +846,9 @@ fresh, so the leader knows when to resend). It hides the per-agent session-id
 mechanics — claude/gemini start under a generated id, codex's is captured from its
 JSON stream. The leader then merges the strongest parts, resolves disagreements by
 verification, and proceeds. Because the instruction lands only on the leader, the
-peers it spawns read their normal instructions and never recurse into a council of
-their own. Each consultation is two extra read-only runs, so it's for decisions and
-hard problems, not every keystroke — the leader is told to skip the council for
-trivial steps.
+members it spawns read their normal instructions and never recurse into a council of
+their own. Each consultation adds one read-only run per member, so account for the full
+council when choosing this mode.
 
 **In Zed:** add one entry per leader and pick who governs from the agent dropdown:
 
@@ -896,7 +906,7 @@ coop login claude    # or codex / gemini
     "coop · fusion": {
       "type": "custom",
       "command": "coop",
-      "args": ["acp", "fusion", "claude:opus/xhigh"]    // a council; the governor's model/effort ride the target
+      "args": ["acp", "fusion", "claude:opus/xhigh", "--peer", "codex"] // a council; the governor's model/effort ride the target
     }
   }
 }
@@ -904,7 +914,7 @@ coop login claude    # or codex / gemini
 
 **Pin the model, reasoning effort, and account in coop's target inside `args`** —
 `provider[:model][/effort][@account]` — *not* the editor's own per-option defaults. So a
-council led by Opus at extra-high reasoning effort is `["acp","fusion","claude:opus/xhigh"]`,
+council led by Opus at extra-high reasoning effort is `["acp","fusion","claude:opus/xhigh","--peer","codex"]`,
 and a solo run is `["acp","claude:opus/xhigh@work"]`. The toolbar dropdowns come up reflecting the
 target and stay switchable mid-thread, and coop ignores any editor permission-`mode` setting —
 every session runs yolo (the box is the boundary). **One caveat:** a **codex** governor (or lead)

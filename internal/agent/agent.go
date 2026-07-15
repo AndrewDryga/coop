@@ -46,6 +46,23 @@ type ACPSessionSetting struct {
 	Value    string
 }
 
+// NativeSubagent is the provider-neutral role material an adapter may render into its own native
+// subagent format. The adapter owns file syntax and destination; preset owns the role semantics.
+type NativeSubagent struct {
+	Name        string
+	Description string
+	Model       string
+	Effort      string
+	Prompt      string
+}
+
+// NativeSubagentSupport describes an adapter's complete native-role capability. A zero value
+// means unsupported. HomeDir is relative to that adapter's in-box home; Render returns one file.
+type NativeSubagentSupport struct {
+	HomeDir string
+	Render  func(NativeSubagent) (filename, content string)
+}
+
 // Agent is everything coop needs to drive one coding agent. To add an agent, write a
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
@@ -92,6 +109,9 @@ type Agent interface {
 	// InstructionFile is the agent's native global instruction filename, e.g.
 	// "CLAUDE.md" — where coop writes the shared INSTRUCTIONS.md and fusion directive.
 	InstructionFile() string
+	// NativeSubagents owns this adapter's generated native-role format and in-home destination.
+	// A zero descriptor means native preset roles degrade to read-only consults.
+	NativeSubagents() NativeSubagentSupport
 	// AuthMarker is the credential file (under the agent's config dir) it writes on
 	// login, and the env-file key it reads an API key from — either present means it's
 	// set up and worth offering as a consult peer.

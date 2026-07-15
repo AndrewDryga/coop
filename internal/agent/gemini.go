@@ -106,6 +106,8 @@ func (geminiAgent) EffortEnv() string          { return "" }
 
 func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
 
+func (geminiAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagentSupport{} }
+
 func (geminiAgent) AuthMarker() (file, envKey string) {
 	return "gemini-credentials.json", "GEMINI_API_KEY"
 }

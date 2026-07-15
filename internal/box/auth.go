@@ -66,15 +66,11 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 		add(p.Provider, true)
 	}
 	// A preset's consult/delegate roles run their own agent CLIs from inside the lead's box, so
-	// their (authed) agents join the scope. A native role under a Claude lead runs in-session and
-	// adds nothing — but under a non-Claude lead it degrades to a consult on its own agent, which
-	// then also needs mounting.
+	// their (authed) agents join the scope. A native role under a capable lead runs in-session and
+	// adds nothing; under any other lead it degrades to a consult whose agent needs mounting.
 	if spec.Preset != nil {
-		for _, agent := range spec.Preset.RoleAgents() {
+		for _, agent := range spec.Preset.RunnableRoleAgents(primary) {
 			add(agent, ProfileAuthed(cfg, agent, cfg.ActiveProfile(agent)))
-		}
-		for _, r := range spec.Preset.DegradedNativeRoles(primary) {
-			add(r.Agent, ProfileAuthed(cfg, r.Agent, cfg.ActiveProfile(r.Agent)))
 		}
 	}
 	return scope

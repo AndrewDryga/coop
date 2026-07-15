@@ -83,6 +83,11 @@ type RunSpec struct {
 	// instruction file; its peers are consulted read-only. Empty = not fusion.
 	FusionGovernor string
 
+	// FusionMembers is the ordered, already-resolved set of coop-consult invocation labels for
+	// a Fusion run. Explicit peers use provider names; preset members use role names. The CLI
+	// resolves this alongside Peers so box assembly never reconstructs a different council.
+	FusionMembers []string
+
 	// ConsultLead names the lead agent of a normal (non-fusion) run: it gets a
 	// light, optional "second opinion" directive merged into its instruction file,
 	// naming the EXPLICIT peers (Peers) it may consult read-only on hard calls. Scoped
@@ -133,6 +138,9 @@ func instructionFile(name string) string {
 // agent homes + MCP. It returns the container's exit code (with a nil error when
 // the container merely exited non-zero); a non-nil error means it never started.
 func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
+	if err := validateFusionSpec(spec); err != nil {
+		return -1, err
+	}
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
@@ -271,28 +279,13 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	var fusionMounts []extraMount
 	consultWired := false // true once a fusion/consult directive is injected → mount coop-consult
 	if spec.Homes && spec.FusionGovernor != "" {
-		if file := instructionFile(spec.FusionGovernor); file != "" {
-			base := agentBaseInstructions(cfg, spec.FusionGovernor, file)
-			// Name only the EXPLICIT peers in the council directive — credentials are scoped to
-			// exactly them (credentialScope), so an unnamed agent is never consulted. With no peer
-			// named, fusion degenerates to a normal run: mount the governor's plain instructions,
-			// no directive. (The CLI requires ≥1 --peer for fusion, so this is the degenerate guard.)
-			peers := excluding(peerProviders(spec.Peers), spec.FusionGovernor)
-			content := base
-			if len(peers) > 0 {
-				content = fusion.GovernorInstructions(base, spec.FusionGovernor, append([]string{spec.FusionGovernor}, peers...))
-			}
-			if spec.Preset != nil {
-				// A preset under fusion keeps the council directive and adds the preset's
-				// role routing (its subagents/delegates) ahead of it. The governor is the lead.
-				content = preset.LeadContract(spec.Preset, spec.FusionGovernor) + "\n" + content
-			}
+		if content, file, wired, ok := fusionInstructionMount(cfg, spec); ok {
 			if p, err := writeTempFile(content); err != nil {
 				ui.Info("fusion: skipped instruction wiring: %v", err)
 			} else {
 				tmpFiles = append(tmpFiles, p)
 				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
-				consultWired = len(peers) > 0 // only mount coop-consult when there's a peer to consult
+				consultWired = wired
 			}
 		}
 	}
@@ -331,8 +324,8 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 		}
 	}
 
-	// Preset roles — the coop-delegate wrapper + delegate role env, the generated native
-	// subagents (Claude lead), and each consult-wired role's persona + env — are wired in one
+	// Preset roles — the coop-delegate wrapper + delegate role env, generated native
+	// subagents, and each consult-wired role's persona + env — are wired in one
 	// place; fold what it produced into this run's mounts, args, and cleanup lists.
 	proleMounts, proleArgs, proleFiles, proleDirs := presetRoleMounts(cfg, spec, workdir)
 	fusionMounts = append(fusionMounts, proleMounts...)
@@ -458,6 +451,36 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
+func validateFusionSpec(spec RunSpec) error {
+	if spec.FusionGovernor == "" {
+		if len(spec.FusionMembers) > 0 {
+			return fmt.Errorf("fusion members require a governor")
+		}
+		return nil
+	}
+	if !spec.Homes {
+		return fmt.Errorf("fusion requires agent homes so its instructions, wrapper, and credentials can mount")
+	}
+	if len(spec.FusionMembers) == 0 {
+		return fmt.Errorf("fusion governor %s has no resolved council members", spec.FusionGovernor)
+	}
+	seenMembers := map[string]bool{}
+	for _, member := range spec.FusionMembers {
+		if member == "" || seenMembers[member] {
+			return fmt.Errorf("fusion council contains an empty or duplicate member %q", member)
+		}
+		seenMembers[member] = true
+	}
+	seenPeers := map[string]bool{}
+	for _, peer := range spec.Peers {
+		if seenPeers[peer.Provider] || !seenMembers[peer.Provider] {
+			return fmt.Errorf("fusion explicit peer %q is duplicated or missing from the resolved council", peer.Provider)
+		}
+		seenPeers[peer.Provider] = true
+	}
+	return nil
+}
+
 func repoWritableMounts(repo, workdir string, paths []string) ([]Mount, error) {
 	var mounts []Mount
 	for _, path := range paths {
@@ -514,11 +537,10 @@ func projectPolicyRepo(spec RunSpec) string {
 
 // presetRoleMounts wires a preset's roles into the box and returns the mounts to add, the -e args
 // to append to spec.ExtraArgs, and the temp files/dirs to clean up: the coop-delegate wrapper plus
-// each delegate role's contract and COOP_DELEGATE_<ROLE>_* env; the generated coop-<role> native
-// subagents under a Claude lead (mounted as the box's user-level ~/.claude/agents, separate from the
-// repo's own); and each consult-wired role's persona + COOP_CONSULT_<ROLE>_* env (the explicit
-// consult roles plus natives degraded under a non-Claude lead). A run with no preset (or homes off)
-// returns all-nil.
+// each delegate role's contract and COOP_DELEGATE_<ROLE>_* env; generated coop-<role> native
+// subagents under a capable lead (mounted at the adapter-owned user-level destination); and each
+// consult-wired role's persona + COOP_CONSULT_<ROLE>_* env (explicit consult roles plus natives
+// degraded under an incapable lead). A run with no preset (or homes off) returns all-nil.
 func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string) {
 	if !spec.Homes || spec.Preset == nil {
 		return
@@ -550,32 +572,29 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 					mounts = append(mounts, extraMount{cp, dst})
 					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst)
 				}
-				extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_TARGETS="+role.TargetList())
+				extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role))
 			}
 		}
 	}
 
-	// Preset roles. Native roles under a Claude lead run in-session as generated coop-<role>
-	// subagents; consult roles — the explicit ones, plus natives degraded under a codex/gemini
-	// lead — are wired role-addressed so `coop-consult <role>` runs the role's agent on its
-	// model, with its persona (if any) mounted.
+	// Native roles under a capable lead run in-session as generated coop-<role> subagents.
+	// Explicit consult roles and natives degraded under another lead are wired role-addressed so
+	// `coop-consult <role>` runs the role's agent on its model, with its persona if any.
 	lead := spec.ConsultLead
 	if spec.FusionGovernor != "" {
 		lead = spec.FusionGovernor
 	}
-	if spec.Preset.NativeRolesUsable(lead) {
-		// Claude lead: the generated coop-<role>.md files mount as the box's USER-level agents
-		// dir (~/.claude/agents) — merged by claude with the repo's own .claude/agents, which
-		// stays the live repo mount. Separate on purpose: deleting/editing the repo's agents
-		// can't touch coop's preset roles (and vice versa — the mount is read-only and dies
-		// with the box); a repo agent of the same name deliberately overrides (project beats
-		// user). The role's model rides in the generated frontmatter.
-		if gen := generatedSubagentFiles(spec.Preset); len(gen) > 0 {
+	if ag, ok := agents.Get(lead); ok {
+		support := ag.NativeSubagents()
+		// The adapter renders its native-role files and owns their in-home destination. They mount
+		// from a disposable read-only directory, separate from the repo's own live artifacts.
+		if gen := generatedSubagentFiles(spec.Preset, lead, support); len(gen) > 0 {
 			if dir, err := assembleAgentsDir(gen); err != nil {
 				ui.Info("preset: skipped native subagents: %v", err)
 			} else {
 				tmpDirs = append(tmpDirs, dir)
-				mounts = append(mounts, extraMount{dir, cfg.HomeInBox + "/.claude/agents"})
+				dst := strings.TrimRight(cfg.HomeInBox, "/") + "/" + strings.Trim(support.HomeDir, "/")
+				mounts = append(mounts, extraMount{dir, dst})
 			}
 		}
 	}
@@ -583,7 +602,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 	// env the wrapper resolves agent/model/persona from. coop-consult itself is mounted by Run
 	// (a preset with consult-wired roles is consult-wired — leadInstructionMount); the roles'
 	// agents join the credential scope (credentialScope).
-	for _, role := range append(spec.Preset.Consults(), spec.Preset.DegradedNativeRoles(lead)...) {
+	for _, role := range spec.Preset.ConsultRoles(lead) {
 		key := preset.EnvKey(role.Name)
 		if body := preset.ConsultBody(&role); body != "" {
 			dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
@@ -595,9 +614,27 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 				extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
 			}
 		}
-		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_TARGETS="+role.TargetList())
+		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role))
 	}
 	return
+}
+
+// resolvedRoleTargetList materializes each blank role model/effort from that provider's run
+// config before exporting the wrapper ladder. Provider-scoped COOP_PEER_MODEL_* may carry an
+// ad-hoc peer's explicit override; a blank role target must not inherit that unrelated pin.
+func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
+	targets := role.TargetLadder()
+	parts := make([]string, len(targets))
+	for i, target := range targets {
+		if target.Model == "" {
+			target.Model = cfg.ModelFor(target.Provider)
+		}
+		if target.Effort == "" {
+			target.Effort = cfg.EffortFor(target.Provider)
+		}
+		parts[i] = target.String()
+	}
+	return strings.Join(parts, " ")
 }
 
 // ensureAgentHomes pre-creates the credential-home dir and first-run defaults for exactly
@@ -824,26 +861,25 @@ func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
 // genFile is a coop-generated file: its base name and content.
 type genFile struct{ name, content string }
 
-// generatedSubagentFiles returns the coop-<role>.md subagent (base name + content) for each
-// of a preset's generated native roles (native, no `subagent:`). Pure, so it's unit-tested
-// without a container. Empty when there's no preset or no generated native role.
-func generatedSubagentFiles(p *preset.Preset) []genFile {
-	if p == nil {
+// generatedSubagentFiles asks the active lead adapter to render each generated native role.
+// Empty means no preset, no native roles, or no adapter capability.
+func generatedSubagentFiles(p *preset.Preset, lead string, support agents.NativeSubagentSupport) []genFile {
+	if p == nil || support.Render == nil {
 		return nil
 	}
 	var out []genFile
-	for _, role := range p.GeneratedNativeRoles() {
-		fname, content := preset.GeneratedSubagent(&role)
+	for _, role := range p.GeneratedNativeRoles(lead) {
+		fname, content := support.Render(agents.NativeSubagent{
+			Name: preset.SubagentName(&role), Description: preset.NativeDescription(&role),
+			Model: role.Model, Effort: role.Effort, Prompt: preset.NativeBody(&role),
+		})
 		out = append(out, genFile{fname, content})
 	}
 	return out
 }
 
-// assembleAgentsDir builds a host temp dir holding ONLY the generated coop-<role>.md files, mounted
-// (read-only) as the box's user-level ~/.claude/agents. The repo's .claude/agents is deliberately NOT
-// copied in — it stays the live repo mount, so the user's own subagents remain theirs to edit or
-// delete without dragging coop's preset roles along (claude merges the two levels; a repo agent of
-// the same name wins). Caller mounts the returned dir and cleans it up.
+// assembleAgentsDir builds a host temp dir holding only adapter-rendered native role files. The
+// caller mounts it read-only at the adapter-owned user-level destination and cleans it up.
 func assembleAgentsDir(gen []genFile) (string, error) {
 	dir, err := os.MkdirTemp("", "coop-agents-")
 	if err != nil {
@@ -881,10 +917,33 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, pee
 		if base != "" {
 			content += "\n" + base + "\n"
 		}
-		return content, file, p.HasConsult() || len(p.DegradedNativeRoles(lead)) > 0, true
+		return content, file, len(p.ConsultRoles(lead)) > 0, true
 	}
 	peers = excluding(peers, lead)
 	return fusion.LeadInstructions(base, peers), file, len(peers) > 0, true
+}
+
+// fusionInstructionMount builds the governor instruction file from the exact council labels the
+// CLI resolved. The mandatory Fusion directive comes first, then the preset routing contract,
+// then the user's/base instructions. wired controls the coop-consult executable mount.
+func fusionInstructionMount(cfg *config.Config, spec RunSpec) (content, file string, wired, ok bool) {
+	file = instructionFile(spec.FusionGovernor)
+	if file == "" {
+		return "", "", false, false
+	}
+	content = agentBaseInstructions(cfg, spec.FusionGovernor, file)
+	if spec.Preset != nil {
+		contract := preset.LeadContract(spec.Preset, spec.FusionGovernor)
+		if content != "" {
+			contract += "\n" + content + "\n"
+		}
+		content = contract
+	}
+	wired = len(spec.FusionMembers) > 0
+	if wired {
+		content = fusion.GovernorInstructions(content, spec.FusionGovernor, spec.FusionMembers)
+	}
+	return content, file, wired, true
 }
 
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an
@@ -1030,7 +1089,7 @@ func appendROMounts(args []string, ms []extraMount) []string {
 // runs); the primary agent's command already carries --model, which beats its env var.
 func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 	consults := spec.FusionGovernor != "" || spec.ConsultLead != "" ||
-		(spec.Preset != nil && spec.Preset.HasConsult())
+		(spec.Preset != nil && len(spec.Preset.ConsultRoles(runPrimary(spec))) > 0)
 	// An explicit peer target's :model pins that peer's model (COOP_PEER_MODEL_<X>); otherwise
 	// the peer runs the config default (cfg.ModelFor). The lead isn't in Peers, so it always
 	// falls through to cfg.ModelFor.

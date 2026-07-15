@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Fusion councils now resolve once and stay valid across terminal and ACP runs.** Terminal
+  presets pin and report their first lead rung instead of rejecting cross-provider ladders; ACP
+  retains the full ladder, filters the active governor from explicit peers on every spawn, and
+  rejects any preset whose council would become empty on a reachable provider. Explicit peers are
+  unique by provider, preset members are distinct by role name (so several roles may share one
+  provider), provider/role invocation collisions fail early, and role-only presets now mount the
+  actual `coop-consult` wrapper their contract names. Instructions require every one-or-many
+  council member without assuming exactly two. ACP also carries an explicit empty preset selection
+  into the child, hides/refuses None when it would create solo Fusion, and skips unused plain-box
+  prewarming. Preset first-account pins use the normal credential validator, and role defaults no
+  longer inherit an unrelated raw peer's model.
+
 - Replace ambiguous `coop loop --once` with `--max-tasks N`: bounded runs count tasks only after
   done/blocked settlement following retries and immediate audit, then pause before another claim or
   final signoff.

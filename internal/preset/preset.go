@@ -25,7 +25,7 @@ const Dir = ".agent/presets"
 
 // Role modes: how the lead reaches a role.
 const (
-	ModeNative   = "native"   // a coop-generated Claude subagent (.claude/agents/) in the lead's session
+	ModeNative   = "native"   // a provider-native subagent in the lead's session
 	ModeConsult  = "consult"  // a read-only peer via coop-consult
 	ModeDelegate = "delegate" // a write-capable delegate via coop-delegate
 )
@@ -307,7 +307,7 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 			return r, bad("agent is an empty list — name at least one target, or write a single one")
 		}
 		if r.Mode == ModeNative {
-			return r, bad("agent is a list, but mode: native accepts one Claude target — subagent frontmatter has no fallback hook; use mode: consult or delegate for a ladder")
+			return r, bad("agent is a list, but mode: native accepts one provider target — native subagents have no fallback hook; use mode: consult or delegate for a ladder")
 		}
 		for i, node := range y.Agent.Content {
 			if node.Kind != yaml.ScalarNode {
@@ -337,11 +337,13 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	// Mode-specific shape.
 	switch r.Mode {
 	case ModeNative:
-		if r.Agent != "claude" {
-			return r, bad("mode: native generates a Claude subagent (.claude/agents/) — its agent must be claude, not %s; a codex/gemini role uses consult or delegate", r.Agent)
+		ag, _ := agents.Get(r.Agent)
+		support := ag.NativeSubagents()
+		if support.HomeDir == "" || support.Render == nil {
+			return r, bad("mode: native requires an agent that supports in-session subagents; %s does not (use consult or delegate)", r.Agent)
 		}
-		// subagent is OPTIONAL: set = reference that existing .claude/agents/ subagent;
-		// empty = coop generates coop-<role> in the box from this role (model/when/prompt).
+		// subagent is OPTIONAL: set = reference an adapter-native subagent; empty = coop
+		// generates coop-<role> in the box from this role (model/when/prompt).
 		r.Subagent = y.Subagent
 	default:
 		if y.Subagent != "" {
@@ -386,22 +388,6 @@ func promptText(dir, rel string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// CrossProvider reports whether the lead ladder spans providers — a rung on a different
-// provider than the lead (the first rung). The loop EMBRACES this (rotation swaps the agent
-// per rung); single-lead surfaces differ: fusion errors (one governor for the whole council),
-// while ACP honors the full ladder and carries the active provider in its failover target.
-func (p *Preset) CrossProvider() bool {
-	for _, t := range p.LeadLadder {
-		if t.Provider != p.LeadAgent {
-			return true
-		}
-	}
-	return false
-}
-
-// HasConsult reports whether any role is a read-only consult peer (mount coop-consult).
-func (p *Preset) HasConsult() bool { return p.hasMode(ModeConsult) }
-
 // HasDelegate reports whether any role is a write-capable delegate (mount coop-delegate).
 func (p *Preset) HasDelegate() bool { return p.hasMode(ModeDelegate) }
 
@@ -425,28 +411,26 @@ func (p *Preset) Delegates() []Role {
 	return out
 }
 
-// Consults returns the explicit consult roles, in name order. Each is wired role-addressed
-// (`coop-consult <role>` via COOP_CONSULT_<ROLE>_* env) so it runs its agent on the role's
-// model with the role's persona — natives degraded under a non-Claude lead wire the same way
-// (DegradedNativeRoles).
-func (p *Preset) Consults() []Role {
+// ConsultRoles returns every role that the effective lead invokes through coop-consult, in
+// preset order: explicit consult roles under every lead, plus native roles degraded when the
+// effective lead cannot host generated subagents. This is the canonical wrapper/instruction view.
+func (p *Preset) ConsultRoles(lead string) []Role {
 	var out []Role
 	for _, r := range p.Roles {
-		if r.Mode == ModeConsult {
+		if r.Mode == ModeConsult || (r.Mode == ModeNative && !nativeRoleUsable(&r, lead)) {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-// RoleAgents returns the distinct agents of consult and delegate roles — the ones
-// whose credentials must be reachable from the lead's box. Native roles run inside
-// the lead's own session, so they add nothing to the credential scope.
-func (p *Preset) RoleAgents() []string {
+// RunnableRoleAgents returns the distinct providers whose credentials the effective lead needs
+// for consult and delegate roles. A native role contributes only when it degrades to a consult.
+func (p *Preset) RunnableRoleAgents(lead string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, r := range p.Roles {
-		if r.Mode == ModeNative {
+		if r.Mode != ModeConsult && r.Mode != ModeDelegate && !(r.Mode == ModeNative && !nativeRoleUsable(&r, lead)) {
 			continue
 		}
 		for _, target := range r.TargetLadder() {

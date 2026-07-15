@@ -4,7 +4,7 @@ Usage: coop <command> [args]
 AGENTS
   coop <agent>[:model][@account]    a sandboxed agent (the target grammar)
   coop <preset>                     run a preset interactively (its lead leads)
-  coop fusion <gov> --peer <a>…     one leads, named peers advise
+  coop fusion <agent|preset>        one leads, council members advise
   coop acp <agent|fusion|preset>    serve as an editor agent (ACP; e.g. Zed)
   coop <agent> --peer <peer>…       a read-only second opinion, named peers
 
@@ -170,8 +170,8 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
   local logins (see coop credentials) — presets name models, not secrets.
   Cross-provider rungs rotate on the loop AND on ACP sessions (ACP re-creates the session on
-  the new provider and carries the thread best-effort as text); fusion refuses such a ladder
-  (one governor per council).
+  the new provider and carries the thread best-effort as text). A non-rotating terminal run,
+  including 'coop fusion <preset>', pins and reports the first rung.
 
   Run one by NAMING it in the who-runs slot:
     coop <name>
@@ -269,8 +269,10 @@ coop models [agent] — the model menu per agent.
 
 coop acp <agent|fusion|preset> — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp <agent>[:model][/effort][@account] | <preset>          [--peer <peer>…]
-         coop acp fusion <governor>[:model][/effort][@account] | <preset> [--peer <peer>…]
+  Usage: coop acp <agent>[:model][/effort][@account] [--peer <agent>...]
+         coop acp <preset> [--peer <agent>...]
+         coop acp fusion <agent>[:model][/effort][@account] --peer <agent>...
+         coop acp fusion <preset> [--peer <agent>...]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per agent or governor. A bare
@@ -287,7 +289,8 @@ coop acp <agent|fusion|preset> — serve as an ACP agent over stdio (for editors
   model, effort, account, and roles. Persisted Provider/Account sets while those controls
   are hidden are acknowledged and ignored. Selecting None returns the normal Provider and
   Account controls with the effective provider and Account set to Auto; select None first
-  whenever you want to choose a Provider or Account manually.
+  whenever you want to choose a Provider or Account manually. Fusion offers None only while
+  at least one explicit non-self peer would remain — a role-only council cannot become solo.
   In a plain session, an account or same-provider switch is transparent — the conversation is
   preserved (a shared, credential-independent session store). A PROVIDER switch (picking another
   signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
@@ -307,12 +310,15 @@ coop acp <agent|fusion|preset> — serve as an ACP agent over stdio (for editors
 
   --peer <peer>… lets the session ask NAMED peers for a read-only second opinion
   (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
-  from your editor.
+  from your editor. Under Fusion, an explicit peer equal to the active governor is removed
+  for that spawn; every preset lead provider is validated up front so a later rung cannot
+  collapse to an empty council.
 
-  To make provider switching near-instant, coop keeps a box warm per OTHER signed-in
+  To make plain provider switching near-instant, coop keeps a box warm per OTHER signed-in
   provider (spawned in the background at session start), so a switch pays only the ACP
-  replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable it (one
-  fewer idle box per signed-in provider) on a low-RAM machine.
+  replay, not a container + adapter cold-boot. Fusion skips these plain boxes: it has no
+  Provider dropdown and preset rungs carry exact targets. Set COOP_ACP_WARM=0 to disable
+  prewarming (one fewer idle box per signed-in provider) on a low-RAM machine.
 
   Picking up a rebuilt coop WITHOUT restarting your editor: send the running server
   SIGHUP — 'pkill -HUP -f "coop acp"'. It re-execs the freshly-installed binary in
@@ -327,9 +333,10 @@ coop acp <agent|fusion|preset> — serve as an ACP agent over stdio (for editors
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.
 
-coop fusion <governor> --peer <agent>… — one agent leads, named peers advise, it synthesizes.
+coop fusion <agent> --peer <agent>... — one agent leads, council members advise, it synthesizes.
 
-  Usage: coop fusion <governor>[:model][/effort][@account] | <preset> --peer <agent>… [args...]
+  Usage: coop fusion <agent>[:model][/effort][@account] --peer <agent>... [args...]
+         coop fusion <preset> [--peer <agent>...] [args...]
 
   The governor is a REQUIRED target — name it (or let a preset's lead govern); there is
   no implicit default. Its :model, /effort, and @account fold into this run; the peers keep
@@ -337,12 +344,17 @@ coop fusion <governor> --peer <agent>… — one agent leads, named peers advise
   coop <agent> --peer <peer>…
 
   --peer <agent> names a council member (repeatable, at least one required — or a
-  preset that supplies consult roles): coop fusion claude --peer codex:gpt-5.5 --peer gemini.
-  Each <peer> is a target; only the named peers' credentials mount. There is no implicit
-  "consult everyone signed in".
+  preset that supplies an effective consult role):
+  coop fusion claude --peer codex:gpt-5.5 --peer gemini.
+  Each explicit peer is a unique, signed-in provider target; the terminal governor cannot
+  also be its peer. Preset members are invoked by role name, so several roles may use one
+  provider (including the governor provider). A provider/role name collision is rejected.
+  There is no implicit "consult everyone signed in".
 
   A bare preset name in the governor slot loads an orchestration preset: its lead governs,
-  and its role routing rides along with the council directive ('coop help presets').
+  and its role routing rides along with the council directive ('coop help presets'). Terminal
+  Fusion is non-rotating: it pins and reports the preset's first lead rung. ACP Fusion keeps
+  the complete lead ladder and validates the effective council on every reachable provider.
 
   Like coop <agent>, it forwards extra args to the governor — the leading who-runs slot
   picks the governor (a target) or a preset; anything after passes through (or after a --).

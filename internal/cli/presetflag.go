@@ -60,18 +60,6 @@ func presetLeadAgent(p *preset.Preset, agent string, explicit bool) string {
 	return agent
 }
 
-// fusionLadderGuard rejects a cross-provider lead ladder on a fusion run: fusion runs ONE
-// governor for the whole council session, so a rung on another provider could never apply —
-// erroring beats silently ignoring the preset's declared fallback. (The loop embraces the same
-// ladder — rotation swaps the agent per rung.) Guarded only when the effective governor IS the
-// preset's lead; otherwise the ladder is inert for this run anyway.
-func fusionLadderGuard(p *preset.Preset, governor string) error {
-	if p != nil && governor == p.LeadAgent && p.CrossProvider() {
-		return fmt.Errorf("preset %s: lead.agent is a cross-provider ladder — fusion runs one governor for the whole council, so its fallback ladder must stay on %s; cross-provider fallback is a `coop loop` capability (make the ladder single-provider, or run the preset under the loop)", p.Name, p.LeadAgent)
-	}
-	return nil
-}
-
 // applyPreset seeds the run's model/credential selections from the preset lead, then
 // remembers the preset on the app so every RunSpec this run builds can carry it. Only the
 // LEAD's model/credentials are seeded into global provider state, and only when the effective
@@ -103,4 +91,20 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 		a.cfg.SetTargetEffort(lead, first.Effort)
 	}
 	a.preset = p
+}
+
+// applyPinnedPreset seeds a non-rotating preset run after validating the exact first account it
+// will use. Rotating supervisors expand the ladder without seeding it and pass one concrete target
+// to each inner child; a terminal single run has no such fallback.
+func (a *app) applyPinnedPreset(p *preset.Preset, lead string) error {
+	if p != nil && lead == p.LeadAgent && len(p.LeadLadder) > 0 {
+		first := p.LeadLadder[0]
+		if acct := first.Account(); acct != "" {
+			if err := a.selectRunProfile(lead, acct); err != nil {
+				return fmt.Errorf("preset %s first lead rung %s: %w", p.Name, first.String(), err)
+			}
+		}
+	}
+	a.applyPreset(p, lead)
+	return nil
 }

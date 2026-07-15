@@ -1,19 +1,23 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // The loop's closing banner must not claim "verified done" when the signoff reopened work — which it
@@ -698,6 +702,171 @@ func TestParseGovernor(t *testing.T) {
 				t.Errorf("rest = %v, want %v", rest, c.wantRest)
 			}
 		})
+	}
+}
+
+func TestCmdFusionCrossProviderPresetPinsFirstRungAndWiresRoleCouncil(t *testing.T) {
+	repo := t.TempDir()
+	presetDir := filepath.Join(repo, ".agent", "presets", "duo")
+	if err := os.MkdirAll(presetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte(`lead:
+  agent: [claude:one/high, codex:two/xhigh]
+roles:
+  critic:
+    mode: consult
+    agent: gemini
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configDir := t.TempDir()
+	cfg := &config.Config{
+		ConfigDir: configDir, RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
+		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
+	var code int
+	var runErr error
+	out := captureStderr(t, func() { code, runErr = a.cmdFusion([]string{"duo"}) })
+	if runErr != nil || code != 0 {
+		t.Fatalf("cmdFusion(duo) = (%d, %v), want success; stderr:\n%s", code, runErr, out)
+	}
+	for _, want := range []string{"pins", "claude:one/high", "no fallback rotation"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("terminal Fusion pin notice missing %q:\n%s", want, out)
+		}
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"COOP_CONSULT_CRITIC_TARGETS=gemini", ":/usr/local/bin/coop-consult:ro"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("runtime assembly missing %q:\n%s", want, args)
+		}
+	}
+}
+
+func fusionRecordingRuntime(t *testing.T, recorder string) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
+	t.Setenv("COOP_ACP_INNER", "1")
+	t.Setenv("COOP_ACP_PRESET", "")
+	t.Setenv("COOP_ACP_TARGET", "claude")
+
+	configDir := t.TempDir()
+	cfg := &config.Config{
+		ConfigDir: configDir, RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
+		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
+	code, err := a.cmdACP([]string{"fusion", "missing-positional-preset", "--peer", "gemini"})
+	if err != nil || code != 0 {
+		t.Fatalf("inner ACP clear = (%d, %v), want success without loading the positional preset", code, err)
+	}
+	if a.preset != nil {
+		t.Errorf("empty COOP_ACP_PRESET must clear positional preset, retained %+v", a.preset)
+	}
+}
+
+func TestACPPlainInnerTargetDoesNotBecomeFusion(t *testing.T) {
+	t.Setenv("COOP_ACP_INNER", "1")
+	t.Setenv("COOP_ACP_TARGET", "claude")
+
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
+		BaseImage: "test-base", ImageOverride: "test-image", Homes: false, Egress: "none",
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
+	code, err := a.cmdACP([]string{"claude"})
+	if err != nil || code != 0 {
+		t.Fatalf("plain inner ACP target = (%d, %v), want a non-Fusion run", code, err)
+	}
+}
+
+func TestACPFusionSupervisorDoesNotPinSkippedFirstAccount(t *testing.T) {
+	repo := t.TempDir()
+	presetDir := filepath.Join(repo, ".agent", "presets", "rotate")
+	if err := os.MkdirAll(presetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte(`lead:
+  agent: [claude@ghost, codex@work]
+roles:
+  critic:
+    mode: consult
+    agent: claude
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo}
+	signInCred(t, cfg, "claude", "default")
+	signInCred(t, cfg, "codex", "work")
+
+	called := false
+	a := &app{cfg: cfg, acpSupervise: func(_ []string, ctrl *acpControl) (int, error) {
+		called = true
+		target, presetName, ok := ctrl.spawnTarget()
+		if !ok || presetName != "rotate" || target.String() != "codex@work" {
+			t.Errorf("supervisor target = (%s, %q, %v), want codex@work + rotate", target.String(), presetName, ok)
+		}
+		return 0, nil
+	}}
+	code, err := a.cmdACP([]string{"fusion", "rotate"})
+	if err != nil || code != 0 || !called {
+		t.Fatalf("ACP Fusion skipped-first launch = (%d, %v, supervise=%v), want success", code, err, called)
+	}
+	if got := cfg.ActiveProfile("claude"); got != "default" {
+		t.Fatalf("outer ACP pinned skipped claude@ghost, active profile = %q", got)
+	}
+}
+
+func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
+	recorder := filepath.Join(t.TempDir(), "preset-env")
+	shim := filepath.Join(t.TempDir(), "inner")
+	script := "#!/bin/sh\nprintf 'set:%s' \"${COOP_ACP_PRESET-UNSET}\" > " + strconv.Quote(recorder) + "\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ctrl := newACPControl(cfg, "claude", "", "", t.TempDir(), acpSelection{}, nil, nil, true)
+	a := &app{cfg: cfg}
+	child, err := a.spawnBox(context.Background(), shim, nil, "test-supervisor", ctrl,
+		agents.Target{Provider: "claude"}, "", true, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if data, readErr := os.ReadFile(recorder); readErr == nil {
+			if got := string(data); got != "set:" {
+				t.Fatalf("COOP_ACP_PRESET handoff = %q, want present-but-empty", got)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("inner process did not record COOP_ACP_PRESET")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

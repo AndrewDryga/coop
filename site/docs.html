@@ -520,30 +520,30 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                 <section class="doc-section" id="fusion">
                     <h2>Fusion — a council of models</h2>
                     <p class="section-lead">
-                        For a genuinely hard call, don't bet the run on one
-                        model's blind spots. Let one model lead and the others
-                        weigh in.
+                        Don't bet the run on one model's blind spots. Let one
+                        model lead while a configured council weighs in before
+                        every response or task.
                     </p>
                     <p>
                         In <code>coop fusion</code>, one model is the
                         <em>governor</em>: it does the real work — edits, runs
-                        the gate, commits. The peers you name are consulted
-                        read-only and in parallel on the decisions that matter,
-                        and the governor synthesizes the strongest parts of all three.
+                        the gate, commits. Explicit peers and preset consult
+                        roles form a one-or-many-member council, consulted
+                        read-only and in parallel where practical. The governor
+                        synthesizes their strongest conclusions.
                         The combined answer reliably beats any single model
                         working alone.
                     </p>
                     <div class="why">
                         <span class="why-label"
-                            >Why it's not just three agents</span
+                            >Why it stays simple</span
                         >
                         <p>
                             There's no extra service or protocol — the leader
-                            simply asks its peers from its own shell, and only
-                            on hard questions (it's told to skip the council for
-                            trivial steps). Each consult is two quick read-only
-                            runs, so you spend the extra tokens exactly where a
-                            second opinion is worth it.
+                            simply asks each council member from its own shell
+                            before it answers or starts a task. Each consultation
+                            adds one read-only run per member, so cost scales with
+                            the council you configure.
                         </p>
                     </div>
                     <pre
@@ -1106,7 +1106,7 @@ roles:
     <span class="s">"coop · fusion"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"fusion"</span>, <span class="s">"claude:opus/xhigh"</span>] <span class="t">// a council; governor's model/effort ride the target</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"fusion"</span>, <span class="s">"claude:opus/xhigh"</span>, <span class="s">"--peer"</span>, <span class="s">"codex"</span>] <span class="t">// a council; governor's model/effort ride the target</span>
     }
   }
 }</pre>

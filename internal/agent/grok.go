@@ -136,6 +136,8 @@ func (grokAgent) EffortEnv() string { return "" }
 // for compatibility).
 func (grokAgent) InstructionFile() string { return "AGENTS.md" }
 
+func (grokAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagentSupport{} }
+
 func (grokAgent) AuthMarker() (file, envKey string) { return "auth.json", "XAI_API_KEY" }
 
 // CredentialEnvKeys is grok's only token env var (the OIDC/auth-provider vars configure a

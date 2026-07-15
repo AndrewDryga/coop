@@ -3,6 +3,8 @@ package preset
 import (
 	"fmt"
 	"strings"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 // LeadContract renders the generated routing block mounted ahead of the lead's own
@@ -12,13 +14,12 @@ import (
 // its role's contract) — they refine, never replace, the routing/safety text.
 //
 // lead is the EFFECTIVE lead agent (a loop work.agent ladder or an ACP cross-provider rung
-// may run a preset under a different provider than the preset's own lead). A native role is a
-// Claude subagent that runs inside the lead's own
-// session; under a non-Claude lead it can't, so it degrades to a read-only consult to its
+// may run a preset under a different provider than the preset's own lead). A native role runs
+// inside a capable lead's session; otherwise it degrades to a read-only consult on its configured
 // agent (same model + persona), invoked as `coop-consult <role>` (see roleContract).
 func LeadContract(p *Preset, lead string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Orchestration preset %q — you are the lead (%s)\n\n", p.Name, p.LeadAgent)
+	fmt.Fprintf(&b, "# Orchestration preset %q — you are the lead (%s)\n\n", p.Name, lead)
 	b.WriteString("You lead this session: you make the calls, do the final review, run the gate,\n")
 	b.WriteString("and make every commit. Route work to your roles by their \"use for\" hints —\n")
 	b.WriteString("spend yourself on judgment, not on work a role covers.\n")
@@ -31,11 +32,6 @@ func LeadContract(p *Preset, lead string) string {
 	}
 	return b.String()
 }
-
-// NativeRolesUsable reports whether the effective lead can host this preset's native roles
-// (Claude subagents run only inside a Claude lead's session). Used to gate the in-box
-// subagent generation and to warn when native roles are dropped for a non-Claude lead.
-func (p *Preset) NativeRolesUsable(lead string) bool { return lead == "claude" }
 
 // RoleContract renders one role's generated contract plus its appended Markdown —
 // the same text the lead sees for that role, reused as the delegate wrapper's
@@ -51,11 +47,11 @@ func roleContract(r *Role, lead string) string {
 	if model == "" {
 		model = "its default model"
 	}
-	// A native role can't run in-session under a non-Claude lead — it degrades to a read-only
-	// consult on its agent, rendered exactly like an explicit consult role (both are
+	// A native role degrades under a lead that cannot host it, rendered exactly like an explicit
+	// read-only consult role (both are
 	// role-addressed: `coop-consult <role>` carries the role's agent + model + persona).
 	mode := r.Mode
-	if mode == ModeNative && lead != "claude" {
+	if mode == ModeNative && !nativeRoleUsable(r, lead) {
 		mode = ModeConsult
 	}
 	switch mode {
@@ -91,11 +87,25 @@ func roleContract(r *Role, lead string) string {
 	// a generated native's prompt IS its subagent's system prompt (GeneratedSubagent), and a
 	// consult-wired role's prompt IS the peer's persona (ConsultBody, mounted in the box) —
 	// degraded natives included. A delegate or a referenced native appends here.
-	promptReachesRunner := r.Mode == ModeConsult || (r.Mode == ModeNative && (r.Subagent == "" || lead != "claude"))
+	promptReachesRunner := r.Mode == ModeConsult || (r.Mode == ModeNative && (r.Subagent == "" || !nativeRoleUsable(r, lead)))
 	if r.PromptText != "" && !promptReachesRunner {
 		b.WriteString("\n" + r.PromptText + "\n")
 	}
 	return b.String()
+}
+
+// nativeRoleUsable requires both halves of native execution: the effective lead must be the
+// role's configured provider, and that provider's adapter must own a complete native descriptor.
+func nativeRoleUsable(role *Role, lead string) bool {
+	if role.Mode != ModeNative || role.Agent != lead {
+		return false
+	}
+	ag, ok := agents.Get(lead)
+	if !ok {
+		return false
+	}
+	support := ag.NativeSubagents()
+	return support.HomeDir != "" && support.Render != nil
 }
 
 func roleRunner(r *Role, primaryModel string) string {

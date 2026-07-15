@@ -156,8 +156,10 @@ load_target() {
 
 resolve_defaults() {
 	peerkey=$(printf '%s' "$peer" | tr 'a-z-' 'A-Z_')
-	if [ -z "$model" ]; then eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"; fi
-	if [ -z "$effort" ]; then eval "effort=\${COOP_PEER_EFFORT_${peerkey}:-}"; fi
+	# Role targets already carry their provider default when Coop configured one. A remaining
+	# blank means that provider's own CLI default, never an unrelated ad-hoc peer override.
+	if [ -z "$role" ] && [ -z "$model" ]; then eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"; fi
+	if [ -z "$role" ] && [ -z "$effort" ]; then eval "effort=\${COOP_PEER_EFFORT_${peerkey}:-}"; fi
 }
 
 load_rung() {

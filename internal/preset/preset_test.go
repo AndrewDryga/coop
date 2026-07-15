@@ -82,11 +82,11 @@ func TestLoadFrontier(t *testing.T) {
 	if len(p.Roles) != 3 || p.Roles[0].Name != "critic" || p.Roles[1].Name != "fast" || p.Roles[2].Name != "thinker" {
 		t.Fatalf("roles = %+v", p.Roles)
 	}
-	if !p.HasConsult() || !p.HasDelegate() {
+	if len(p.ConsultRoles("claude")) == 0 || !p.HasDelegate() {
 		t.Error("frontier has a consult and a delegate role")
 	}
-	if got := p.RoleAgents(); len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
-		t.Errorf("RoleAgents = %v (native thinker must not add claude)", got)
+	if got := p.RunnableRoleAgents("claude"); len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
+		t.Errorf("RunnableRoleAgents = %v (native thinker must not add claude)", got)
 	}
 	th := p.Roles[2]
 	if th.Subagent != "deep-reasoner" || th.PromptText != "THINKER EXTRA" {
@@ -122,12 +122,12 @@ func TestLoadValidation(t *testing.T) {
 		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, "empty account"},
 		{"role model unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "malformed YAML"},
 		{"empty role ladder", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: []}}", nil, "empty list"},
-		{"native role ladder rejected", "lead: {agent: claude}\nroles: {r: {mode: native, agent: [claude:sonnet, claude:opus]}}", nil, "subagent frontmatter has no fallback hook"},
+		{"native role ladder rejected", "lead: {agent: claude}\nroles: {r: {mode: native, agent: [claude:sonnet, claude:opus]}}", nil, "native subagents have no fallback hook"},
 		{"role ladder map entry rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: [codex, {p: gemini}]}}", nil, "agent[1] must be a target"},
 		{"role agent map rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: {p: codex}}}", nil, "not a map"},
 		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
 		{"role credentials unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "malformed YAML"},
-		{"native is claude-only", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "agent must be claude"},
+		{"native needs a capable agent", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "supports in-session subagents"},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},
 		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, "only 'never' is supported"},
 		{"concurrent group rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, concurrent: \"group:a\"}}", nil, "only 'never' is supported"},
@@ -182,8 +182,8 @@ roles:
 	if got := r.TargetList(); got != strings.Join(want, " ") {
 		t.Errorf("TargetList = %q, want %q", got, strings.Join(want, " "))
 	}
-	if got := p.RoleAgents(); !slices.Equal(got, []string{"codex", "grok", "gemini"}) {
-		t.Errorf("RoleAgents = %v, want every fallback provider", got)
+	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex", "grok", "gemini"}) {
+		t.Errorf("RunnableRoleAgents = %v, want every fallback provider", got)
 	}
 }
 
@@ -207,26 +207,6 @@ func TestLoadCrossProviderLead(t *testing.T) {
 	}
 	if got := p.LeadLadder[1].String(); got != "codex:gpt-5.5@work" {
 		t.Errorf("rung 1 = %q, want codex:gpt-5.5@work", got)
-	}
-	if !p.CrossProvider() {
-		t.Error("CrossProvider() = false for a claude+codex ladder, want true")
-	}
-}
-
-// CrossProvider is false for a same-provider ladder (and the empty one) — the single-lead
-// surfaces (fusion, ACP) key their guard/filter off it.
-func TestCrossProviderSameProvider(t *testing.T) {
-	repo := writePreset(t, "same", "lead: {agent: [claude:fable, claude:opus@work]}\n", nil)
-	p, err := Load(repo, "", "same")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.CrossProvider() {
-		t.Error("CrossProvider() = true for an all-claude ladder, want false")
-	}
-	bare := writePreset(t, "bare", "lead: {agent: claude}\n", nil)
-	if p, err = Load(bare, "", "bare"); err != nil || p.CrossProvider() {
-		t.Errorf("bare lead: CrossProvider() = %v (%v), want false", p.CrossProvider(), err)
 	}
 }
 
@@ -337,7 +317,7 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("template lead ladder[%d] = %q, want %q", i, got, want)
 		}
 	}
-	if len(p.Roles) != 3 || !p.HasConsult() || !p.HasDelegate() {
+	if len(p.Roles) != 3 || len(p.ConsultRoles("claude")) == 0 || !p.HasDelegate() {
 		t.Errorf("template should carry all three role modes: %+v", p.Roles)
 	}
 	wantRoles := map[string]struct{ agent, model, effort string }{
@@ -403,26 +383,15 @@ func TestNativeSubagentGeneration(t *testing.T) {
 	}
 
 	p := &Preset{Roles: []Role{gen, ref, {Name: "fast", Mode: ModeDelegate, Agent: "gemini"}}}
-	if nr := p.GeneratedNativeRoles(); len(nr) != 1 || nr[0].Name != "thinker" {
+	if nr := p.GeneratedNativeRoles("claude"); len(nr) != 1 || nr[0].Name != "thinker" {
 		t.Fatalf("GeneratedNativeRoles = %+v, want only the generated native role", nr)
 	}
 
-	fn, content := GeneratedSubagent(&gen)
-	if fn != "coop-thinker.md" {
-		t.Errorf("filename = %q, want coop-thinker.md", fn)
+	if got := NativeDescription(&gen); got != "Use for: architecture, debugging." {
+		t.Errorf("native description = %q", got)
 	}
-	for _, want := range []string{"name: coop-thinker", "model: opus", "Use for: architecture, debugging.", "Think hard."} {
-		if !strings.Contains(content, want) {
-			t.Errorf("generated subagent missing %q:\n%s", want, content)
-		}
-	}
-	// No model on the role → no model line; no prompt → a default body.
-	_, bare := GeneratedSubagent(&Role{Name: "x", Mode: ModeNative, Agent: "claude"})
-	if strings.Contains(bare, "model:") {
-		t.Errorf("empty model should omit the frontmatter line:\n%s", bare)
-	}
-	if !strings.Contains(bare, "You are the x subagent") {
-		t.Errorf("empty prompt should get a default body:\n%s", bare)
+	if body := NativeBody(&Role{Name: "x", Mode: ModeNative, Agent: "claude"}); !strings.Contains(body, "You are the x subagent") {
+		t.Errorf("empty prompt should get a default body:\n%s", body)
 	}
 
 	// The lead contract invokes @coop-thinker (generated) and @deep-reasoner (referenced),
@@ -436,31 +405,19 @@ func TestNativeSubagentGeneration(t *testing.T) {
 	}
 }
 
-// DegradedNativeRoles are the native roles for a non-Claude lead (none for a Claude lead);
-// Consults are the explicit consult roles under any lead. Both wire role-addressed, and
-// ConsultBody is each one's persona: the native's NativeBody (prompt or a default), the
-// explicit consult's own prompt (or empty — no persona, the peer answers as itself).
+// ConsultRoles is the single lead-aware view of role-addressed read-only runners. ConsultBody is
+// each one's persona: a degraded native's NativeBody, or an explicit consult's own prompt.
 func TestConsultWiredRoles(t *testing.T) {
 	p := &Preset{Roles: []Role{
 		{Name: "thinker", Mode: ModeNative, Agent: "claude", Model: "opus", PromptText: "Think hard."},
 		{Name: "critic", Mode: ModeConsult, Agent: "codex", PromptText: "Be ruthless."},
 		{Name: "scout", Mode: ModeConsult, Agent: "codex"}, // two consult roles on ONE agent — distinct wirings
 	}}
-	if got := p.DegradedNativeRoles("claude"); got != nil {
-		t.Errorf("a Claude lead has no degraded native roles, got %+v", got)
-	}
-	got := p.DegradedNativeRoles("codex")
-	if len(got) != 1 || got[0].Name != "thinker" {
-		t.Fatalf("a codex lead should degrade the native thinker, got %+v", got)
-	}
-	if ConsultBody(&got[0]) != "Think hard." {
-		t.Errorf("a degraded native's persona is its prompt, got %q", ConsultBody(&got[0]))
-	}
 	if b := ConsultBody(&Role{Name: "x", Mode: ModeNative}); !strings.Contains(b, "You are the x subagent") {
 		t.Errorf("a promptless native should yield the default body, got %q", b)
 	}
-	// Explicit consult roles wire under EVERY lead, each with its own persona (or none).
-	cs := p.Consults()
+	// Explicit consult roles wire under a native-capable lead, each with its own persona (or none).
+	cs := p.ConsultRoles("claude")
 	if len(cs) != 2 || cs[0].Name != "critic" || cs[1].Name != "scout" {
 		t.Fatalf("Consults = %+v, want [critic scout]", cs)
 	}
@@ -469,6 +426,43 @@ func TestConsultWiredRoles(t *testing.T) {
 	}
 	if ConsultBody(&cs[1]) != "" {
 		t.Errorf("a promptless consult has no persona (the peer answers as itself), got %q", ConsultBody(&cs[1]))
+	}
+	// ConsultRoles is the effective, lead-aware list every caller uses for wrapper wiring:
+	// explicit consults under Claude; the same list plus degraded natives under another lead.
+	if got := p.ConsultRoles("claude"); len(got) != 2 || got[0].Name != "critic" || got[1].Name != "scout" {
+		t.Errorf("ConsultRoles(claude) = %+v, want [critic scout]", got)
+	}
+	if got := p.ConsultRoles("codex"); len(got) != 3 || got[0].Name != "thinker" || got[1].Name != "critic" || got[2].Name != "scout" {
+		t.Errorf("ConsultRoles(codex) = %+v, want preset-order [thinker critic scout]", got)
+	} else if ConsultBody(&got[0]) != "Think hard." {
+		t.Errorf("a degraded native's persona is its prompt, got %q", ConsultBody(&got[0]))
+	}
+	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex"}) {
+		t.Errorf("RunnableRoleAgents(claude) = %v, want [codex]", got)
+	}
+	if got := p.RunnableRoleAgents("codex"); !slices.Equal(got, []string{"claude", "codex"}) {
+		t.Errorf("RunnableRoleAgents(codex) = %v, want [claude codex]", got)
+	}
+}
+
+func TestNativeRoleRequiresMatchingCapableLead(t *testing.T) {
+	p := &Preset{Roles: []Role{{
+		Name: "foreign", Mode: ModeNative, Agent: "codex", Model: "gpt-5.6",
+		PromptText: "Review the boundary.",
+	}}}
+	if got := p.GeneratedNativeRoles("claude"); got != nil {
+		t.Fatalf("Claude lead generated a Codex-native role: %+v", got)
+	}
+	consults := p.ConsultRoles("claude")
+	if len(consults) != 1 || consults[0].Name != "foreign" {
+		t.Fatalf("mismatched native role did not degrade to consult: %+v", consults)
+	}
+	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex"}) {
+		t.Fatalf("degraded role credential scope = %v, want [codex]", got)
+	}
+	contract := LeadContract(p, "claude")
+	if !strings.Contains(contract, "coop-consult foreign --fresh") || strings.Contains(contract, "@coop-foreign") {
+		t.Fatalf("mismatched native role contract did not degrade:\n%s", contract)
 	}
 }
 

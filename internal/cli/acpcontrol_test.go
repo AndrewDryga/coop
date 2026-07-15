@@ -2079,6 +2079,10 @@ func TestACPProviderSelector(t *testing.T) {
 	c := newTestControl(t)
 	signInCred(t, c.cfg, "claude", "work")
 	signInCred(t, c.cfg, "codex", "work")
+	writeACPTestPreset(t, c.repo, "frontier", `lead: {agent: claude@work}
+roles:
+  critic: {mode: consult, agent: codex}
+`)
 
 	optValues := func(raw json.RawMessage) []string {
 		var opt struct {
@@ -2130,7 +2134,30 @@ func TestACPProviderSelector(t *testing.T) {
 	if handled, restart := set(coopProviderID, "codex"); !handled || restart {
 		t.Errorf("fusion provider set should be a refused ack, got handled=%v restart=%v", handled, restart)
 	}
+	// A role-only Fusion session cannot clear its preset: doing so would leave no council.
+	c.sel = acpSelection{Preset: "frontier"}
+	c.fusionPeers = nil
+	if opts := optValues(c.coopOptions()[0]); slices.Contains(opts, "none") {
+		t.Errorf("role-only Fusion preset options must not offer None: %v", opts)
+	}
+	if handled, restart := set(coopPresetID, "none"); !handled || restart || c.sel.Preset != "frontier" {
+		t.Errorf("role-only Fusion must refuse None: handled=%v restart=%v sel=%+v", handled, restart, c.sel)
+	}
+	// A non-self explicit peer makes None valid, but rotating onto that provider makes it self
+	// and removes None again.
+	c.fusionPeers = []string{"codex"}
+	c.lead = "claude"
+	if opts := optValues(c.coopOptions()[0]); !slices.Contains(opts, "none") {
+		t.Errorf("Fusion with an effective explicit peer must offer None: %v", opts)
+	}
+	c.lead = "codex"
+	if opts := optValues(c.coopOptions()[0]); slices.Contains(opts, "none") {
+		t.Errorf("after rotating onto the only peer, Fusion must remove None: %v", opts)
+	}
+	c.fusionPeers = nil
+	c.sel = acpSelection{}
 	c.fusion = false
+	c.lead = "claude"
 
 	// A bogus provider is refused — acked, no restart, selection unchanged.
 	if handled, restart := set("coop_provider", "bogus"); !handled || restart || c.sel.Provider == "bogus" {
@@ -2164,8 +2191,45 @@ func TestACPProviderSelector(t *testing.T) {
 	if _, restart := set("coop_account", "work"); restart || c.sel != (acpSelection{Preset: "frontier"}) {
 		t.Errorf("active account replay: restart=%v sel=%+v, want no-op", restart, c.sel)
 	}
-	if _, restart := set("coop_preset", "none"); !restart || c.sel != (acpSelection{Provider: "codex"}) {
-		t.Errorf("preset none: restart=%v sel=%+v, want effective codex + auto", restart, c.sel)
+	if _, restart := set("coop_preset", "none"); !restart || c.sel != (acpSelection{Provider: "claude"}) {
+		t.Errorf("preset none: restart=%v sel=%+v, want effective preset lead claude + auto", restart, c.sel)
+	}
+}
+
+func TestACPFusionFiltersAndRefusesInvalidPresetSelection(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	signInCred(t, cfg, "claude", "work")
+	signInCred(t, cfg, "codex", "work")
+	cfg.SetActiveProfile("claude", "work")
+	cfg.SetActiveProfile("codex", "work")
+	writeACPTestPreset(t, repo, "valid", `lead: {agent: claude@work}
+roles:
+  critic: {mode: consult, agent: codex}
+  scout: {mode: consult, agent: gemini}
+`)
+	writeACPTestPreset(t, repo, "collision", `lead: {agent: claude@work}
+roles:
+  codex: {mode: consult, agent: claude}
+`)
+	c := newACPControl(cfg, "claude", "", "", repo, acpSelection{Preset: "valid"}, []string{"collision", "valid"}, nil, true)
+	c.fusionPeers = []string{"codex"}
+
+	raw := string(c.coopOptions()[0])
+	if strings.Contains(raw, `"value":"collision"`) {
+		t.Fatalf("invalid Fusion preset must be absent from the toolbar:\n%s", raw)
+	}
+	if !strings.Contains(raw, `"value":"valid"`) || !strings.Contains(raw, "unavailable council roles: scout") {
+		t.Fatalf("valid preset and its unavailable-role warning must remain visible:\n%s", raw)
+	}
+
+	line := []byte(`{"jsonrpc":"2.0","id":"bad-preset","method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_preset","value":"collision"}}` + "\n")
+	handled, response, _, restart := c.fromEditor(line)
+	if !handled || restart || c.selection().Preset != "valid" {
+		t.Fatalf("invalid selection = handled %v restart %v selection %+v, want refusal + current child", handled, restart, c.selection())
+	}
+	if !strings.Contains(string(response), `"error"`) || !strings.Contains(string(response), "conflicts with preset role") {
+		t.Fatalf("invalid selection response must explain the council collision:\n%s", response)
 	}
 }
 

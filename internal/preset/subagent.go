@@ -11,29 +11,13 @@ func SubagentName(r *Role) string {
 	return "coop-" + r.Name
 }
 
-// GeneratedNativeRoles are the native roles coop generates a subagent for — those that DON'T
-// reference an existing one. A role with `subagent:` set is a reference, so it's excluded.
-// Used for the in-box subagent mount under a Claude lead.
-func (p *Preset) GeneratedNativeRoles() []Role {
+// GeneratedNativeRoles returns native roles the effective lead can host and Coop must generate.
+// A role targeting another provider degrades to consult; a role with `subagent:` is an existing
+// native reference, so neither belongs in the generated mount.
+func (p *Preset) GeneratedNativeRoles(lead string) []Role {
 	var out []Role
 	for _, r := range p.Roles {
-		if r.Mode == ModeNative && r.Subagent == "" {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// DegradedNativeRoles are the native roles that degrade to a read-only consult because the
-// effective lead can't host Claude subagents in-session (any native role when lead isn't
-// claude). Each is wired as `coop-consult <role>` carrying the role's agent + model + persona.
-func (p *Preset) DegradedNativeRoles(lead string) []Role {
-	if lead == "claude" {
-		return nil
-	}
-	var out []Role
-	for _, r := range p.Roles {
-		if r.Mode == ModeNative {
+		if nativeRoleUsable(&r, lead) && r.Subagent == "" {
 			out = append(out, r)
 		}
 	}
@@ -57,6 +41,15 @@ func NativeBody(r *Role) string {
 		" load-bearing reasoning, then concrete next steps. No preamble."
 }
 
+// NativeDescription is the provider-neutral summary a native-capable adapter renders into its
+// own subagent metadata. The adapter owns syntax; preset owns the role's meaning.
+func NativeDescription(r *Role) string {
+	if len(r.When) > 0 {
+		return "Use for: " + strings.Join(r.When, ", ") + "."
+	}
+	return "The " + r.Name + " subagent the lead delegates to."
+}
+
 // ConsultBody is the persona mounted for a consult-wired role — what the peer reads ahead of
 // the lead's question. An explicit consult role's persona is its own prompt (none → empty: no
 // persona file, the peer answers as itself); a degraded native always has one (NativeBody), so
@@ -66,30 +59,4 @@ func ConsultBody(r *Role) string {
 		return NativeBody(r)
 	}
 	return strings.TrimSpace(r.PromptText)
-}
-
-// GeneratedSubagent renders the Claude subagent file coop overlays into the box for a
-// generated native role: `coop-<role>.md`, with the role's model in the frontmatter (so a
-// native role's model finally takes effect), a `when:`-derived description (Claude uses it
-// for auto-delegation), and the role's prompt as the system prompt (a default if absent).
-// Only valid for a role GeneratedNativeRoles returned (native, no subagent).
-func GeneratedSubagent(r *Role) (filename, content string) {
-	name := "coop-" + r.Name
-	desc := "The " + r.Name + " subagent the lead delegates to."
-	if len(r.When) > 0 {
-		desc = "Use for: " + strings.Join(r.When, ", ") + "."
-	}
-	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString("name: " + name + "\n")
-	b.WriteString("description: " + desc + "\n")
-	if r.Model != "" {
-		b.WriteString("model: " + r.Model + "\n")
-	}
-	if r.Effort != "" {
-		b.WriteString("effort: " + r.Effort + "\n") // Claude subagent frontmatter: low/medium/high/xhigh/max
-	}
-	b.WriteString("---\n\n")
-	b.WriteString(NativeBody(r) + "\n")
-	return name + ".md", b.String()
 }

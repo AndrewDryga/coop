@@ -50,20 +50,6 @@ func TestValid(t *testing.T) {
 	}
 }
 
-func TestPeers(t *testing.T) {
-	cases := map[string][]string{
-		"codex":  {"claude", "gemini", "grok"},
-		"claude": {"codex", "gemini", "grok"},
-		"gemini": {"claude", "codex", "grok"},
-		"grok":   {"claude", "codex", "gemini"},
-	}
-	for governor, want := range cases {
-		if got := Peers(governor, allAgents); !slices.Equal(got, want) {
-			t.Errorf("Peers(%q) = %v, want %v", governor, got, want)
-		}
-	}
-}
-
 // Each adapter owns its read-only consult command; assert the exact flags — they're the
 // sandbox that keeps a consulted peer from editing files.
 func TestConsultCmds(t *testing.T) {
@@ -90,8 +76,8 @@ func TestConsultCmds(t *testing.T) {
 }
 
 func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
-	ins := Instruction("codex", Peers("codex", allAgents))
-	// Names both peers via the coop-consult wrapper.
+	ins := Instruction("codex", []string{"claude", "gemini", "grok"})
+	// Names every council member via the coop-consult wrapper.
 	for _, want := range []string{
 		"coop-consult claude --fresh",
 		"coop-consult gemini --fresh",
@@ -113,7 +99,7 @@ func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
 }
 
 func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
-	ins := Instruction("codex", Peers("codex", allAgents))
+	ins := Instruction("codex", []string{"claude", "gemini", "grok"})
 	// Peers are read-only advisors; the governor does the writing itself (concern 1:
 	// a write-task is not handed to a peer, it's split into consult + the governor's act).
 	for _, want := range []string{"READ-ONLY ADVISORS", ".agent/tasks/", "yourself"} {
@@ -126,7 +112,7 @@ func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
 	// the status line when a --continue falls back to fresh (concern 2: follow-up turns).
 	for _, want := range []string{
 		"--fresh", "--continue", "self-contained", "delta", "verbatim", "status line",
-		"not the peer reply", "session handle", "same session to terminal exit", "complete output",
+		"not the member reply", "session handle", "same session to terminal exit", "complete output",
 	} {
 		if !strings.Contains(ins, want) {
 			t.Errorf("instruction missing session-mode guidance %q", want)
@@ -179,6 +165,52 @@ func TestConsultWrapperCarriesModelOverrides(t *testing.T) {
 	}
 }
 
+func TestConsultRoleDoesNotInheritAdHocPeerModel(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsLog := filepath.Join(dir, "args")
+	codex := `#!/bin/sh
+printf '%s\n' "$@" > "$ARGS_LOG"
+printf '%s\n' \
+'{"type":"thread.started","thread_id":"role-thread"}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"ROLE_REPLY"}}' \
+'{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+`
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(codex), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "timeout"), []byte("#!/bin/sh\nshift 3\nexec \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	role := "model-isolation"
+	key := "MODEL_ISOLATION"
+	for _, suffix := range []string{"id", "rung", "context"} {
+		path := filepath.Join("/tmp", "coop-consult-"+key+"."+suffix)
+		_ = os.Remove(path)
+		defer os.Remove(path)
+	}
+	cmd := exec.Command(wrapper, role, "--fresh", "question")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"), "ARGS_LOG="+argsLog,
+		"COOP_PEERS=codex", "COOP_CONSULT_"+key+"_TARGETS=codex",
+		"COOP_PEER_MODEL_CODEX=raw-peer-model",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("role consult failed: %v\n%s", err, out)
+	}
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(args), "raw-peer-model") {
+		t.Fatalf("blank role target inherited an ad-hoc peer model:\n%s", args)
+	}
+}
+
 // TestConsultWrapperContinuityIsolated locks in the anti-bleed contract: consult continuity is
 // keyed to a coop-owned, per-target /tmp idfile — a namespace SEPARATE from the agents' real
 // session stores — so a peer consult can never be picked up as a normal `coop <agent>` session's
@@ -205,7 +237,7 @@ func TestConsultWrapperContinuityIsolated(t *testing.T) {
 
 func TestGovernorInstructionsPreservesBase(t *testing.T) {
 	base := "# Project rules\nAlways run the gate."
-	out := GovernorInstructions(base, "codex", allAgents)
+	out := GovernorInstructions(base, "codex", []string{"claude", "gemini", "grok"})
 	if !strings.Contains(out, base) {
 		t.Error("base instructions were dropped")
 	}
@@ -214,7 +246,7 @@ func TestGovernorInstructionsPreservesBase(t *testing.T) {
 		t.Errorf("expected fusion block before base: fusion@%d base@%d", i, j)
 	}
 	// Empty base → just the block, no trailing junk.
-	if out := GovernorInstructions("  \n ", "claude", allAgents); !strings.HasPrefix(out, "# Fusion mode") {
+	if out := GovernorInstructions("  \n ", "claude", []string{"codex", "gemini", "grok"}); !strings.HasPrefix(out, "# Fusion mode") {
 		t.Errorf("empty base should yield just the block, got prefix %q", out[:min(20, len(out))])
 	}
 }
@@ -222,12 +254,28 @@ func TestGovernorInstructionsPreservesBase(t *testing.T) {
 // box.Run passes [governor] + authenticated peers, so the directive must name only those — never an
 // unauthenticated peer the governor can't actually consult.
 func TestGovernorInstructionsNamesOnlyGivenPeers(t *testing.T) {
-	out := GovernorInstructions("base", "codex", []string{"codex", "claude"}) // gemini omitted (unauthed)
+	out := GovernorInstructions("base", "codex", []string{"claude"}) // gemini omitted (unauthed)
 	if !strings.Contains(out, "claude") {
 		t.Errorf("should name the authed peer claude:\n%s", out)
 	}
 	if strings.Contains(out, "gemini") {
 		t.Errorf("must NOT name the omitted (unauthenticated) peer gemini:\n%s", out)
+	}
+}
+
+func TestInstructionIsCountNeutralAndKeepsRoleNamedLikeGovernor(t *testing.T) {
+	for _, members := range [][]string{{"critic"}, {"claude", "critic", "gemini"}} {
+		out := GovernorInstructions("base", "claude", members)
+		lower := strings.ToLower(out)
+		if strings.Contains(lower, "both peer") || strings.Contains(lower, "both member") ||
+			(len(members) == 1 && (strings.Contains(lower, "members are") || strings.Contains(lower, "other peer"))) {
+			t.Errorf("instruction for %v assumes exactly two members:\n%s", members, out)
+		}
+		for _, member := range members {
+			if !strings.Contains(out, "coop-consult "+member+" --fresh") {
+				t.Errorf("instruction for %v dropped member %q:\n%s", members, member, out)
+			}
+		}
 	}
 }
 

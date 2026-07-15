@@ -144,7 +144,9 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	a.applyPreset(p, tool)
+	if err := a.applyPinnedPreset(p, tool); err != nil {
+		return 2, err
+	}
 	a.nudgeIfUnauthed(tool)
 	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
@@ -413,6 +415,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// coop's plain/preset toolbar selectors). The OUTER process validates the args (fail fast), then
 	// supervises; the INNER (COOP_ACP_INNER=1) runs the box.
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
+	innerProcess := os.Getenv("COOP_ACP_INNER") != ""
 	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err
@@ -424,6 +427,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	allPeers := slices.Clone(peers) // Re-evaluate self exclusion after every ACP provider rotation.
 	// The positional who-runs slot pins the session: a TARGET (provider[:model][/effort][@account],
 	// so an editor's agent_servers entry runs ["acp","claude:opus@work"]) OR a PRESET NAME (routing +
 	// role wiring; its lead is the agent — or governor, under fusion). Parsed BEFORE the inner
@@ -482,8 +486,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// target is the COMPLETE spawn intent — provider, model, account are taken from it verbatim
 	// (empty slots mean the provider's defaults), so a provider switch or a cross-provider preset
 	// rung fully replaces the launch identity instead of leaking the old lead's model/account.
-	if os.Getenv("COOP_ACP_INNER") != "" {
-		if ps := os.Getenv("COOP_ACP_PRESET"); ps != "" {
+	if innerProcess {
+		if ps, selected := os.LookupEnv("COOP_ACP_PRESET"); selected {
 			presetName = ps
 		}
 		if tv := os.Getenv("COOP_ACP_TARGET"); tv != "" {
@@ -492,7 +496,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 				return 2, fmt.Errorf("COOP_ACP_TARGET: %v", terr)
 			}
 			tool, toolSet = t.Provider, true
-			governor = t.Provider // under fusion the same switch retargets the governor
+			if isFusion {
+				governor = t.Provider // under Fusion the same switch retargets the governor
+			}
 			model, effort, profile = t.Model, t.Effort, t.Account()
 		}
 	}
@@ -500,6 +506,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	var council fusionCouncil
 	if isFusion {
 		governor = presetLeadAgent(p, governor, toolSet)
 		if governor == "" {
@@ -507,9 +514,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		if !fusion.Valid(governor, agents.Names()) {
 			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
-		}
-		if err := fusionLadderGuard(p, governor); err != nil {
-			return 2, err
 		}
 		tool = governor
 	} else {
@@ -530,10 +534,32 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if profile != "" && !slices.Contains(a.cfg.Profiles(tool), profile) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
+	if innerProcess {
+		a.applyPreset(p, tool)
+	} else {
+		// The supervisor owns a rotation, not the preset's declared first rung. Keep the config's
+		// credential truth intact while validating and expanding reachable targets; each inner
+		// child receives and applies the exact concrete target through COOP_ACP_TARGET.
+		a.preset = p
+	}
+	if isFusion {
+		var reachable []agents.Target
+		if p != nil {
+			reachable, err = expandLadder(a.cfg, p.LeadAgent, p.LeadLadder)
+			if err != nil {
+				return 2, err
+			}
+		}
+		council, err = resolveACPFusionCouncil(governor, peers, p, box.AuthedAgents(a.cfg), reachable)
+		if err != nil {
+			return 2, err
+		}
+		peers = council.Peers
+	}
 	// The outer process owns the editor stream via the proxy; it builds coop's control layer (the
 	// toolbar rewrite + preset/plain selectors) and re-execs `coop acp <inner>` (COOP_ACP_INNER
 	// set) to run the box, the current selection carried in the env. The inner falls through to box.Run.
-	if os.Getenv("COOP_ACP_INNER") == "" {
+	if !innerProcess {
 		repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
 		ctrlModel := model
 		if ctrlModel == "" {
@@ -559,9 +585,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 			sel.Provider = tool
 		}
 		ctrl := newACPControl(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, isFusion)
+		for _, peer := range allPeers {
+			ctrl.fusionPeers = append(ctrl.fusionPeers, peer.Provider)
+		}
+		if a.acpSupervise != nil {
+			return a.acpSupervise(inner, ctrl)
+		}
 		return a.cmdACPSupervise(inner, ctrl)
 	}
-	a.applyPreset(p, tool)
 	if err := a.applyOneOff(tool, model, profile, effort); err != nil {
 		return 2, err
 	}
@@ -589,7 +620,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
 		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
-		FusionGovernor: governor, ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
+		FusionGovernor: governor, FusionMembers: council.Members, ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
 		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
@@ -686,7 +717,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
 	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,
 	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
-	warm := os.Getenv("COOP_ACP_WARM") != "0"
+	warm := os.Getenv("COOP_ACP_WARM") != "0" && !ctrl.fusion
 	pool := newWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
 		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr)
 	})
@@ -814,7 +845,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 				ctrl.waitForReset(ctx, t.Provider, acct)
 			}
 		}
-		if psName != "" {
+		if ctrl != nil {
+			// Presence is the selection signal; an empty value explicitly clears a positional
+			// launch preset in the child instead of letting the original argv resurrect it.
 			env = append(env, "COOP_ACP_PRESET="+psName)
 		}
 		env = append(env, "COOP_ACP_TARGET="+t.String())
@@ -872,9 +905,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 // new agent is offered without editing the string. Sorted (agents.Names()), comma-separated.
 func agentChoices() string { return strings.Join(agents.Names(), ", ") }
 
-// cmdFusion runs a council: the governor agent (a leading `claude|codex|gemini`, else
+// cmdFusion runs a council: the governor agent (a leading provider target, else
 // COOP_FUSION_GOVERNOR) runs normally — it edits and does the real work — while a fusion
-// instruction injected into its instruction file tells it to consult its two peers
+// instruction injected into its instruction file tells it to consult every resolved member
 // read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
 // claude interactively; trailing `<args>` pass through to the governor.
 func (a *app) cmdFusion(args []string) (int, error) {
@@ -902,43 +935,41 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	// Fusion needs a council: at least one --peer, OR a preset that supplies consult roles.
-	// No implicit "consult everyone signed in" — the peers participate only when named.
-	if len(peers) == 0 && (p == nil || !p.HasConsult()) {
-		return 2, errors.New("fusion needs its council — name each peer: coop fusion <governor> --peer <agent> [--peer <agent> …]")
-	}
 	governor = presetLeadAgent(p, governor, govSet)
 	if governor == "" {
-		return 2, errors.New("coop fusion: name the governor — coop fusion <agent> --peer <agent>… (or a preset name, whose lead governs)")
+		return 2, errors.New("coop fusion: name the governor — coop fusion <agent> --peer <agent>... (or a preset name, whose lead governs)")
 	}
 	if !fusion.Valid(governor, agents.Names()) {
 		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
 	}
-	if err := fusionLadderGuard(p, governor); err != nil {
+	if err := a.applyPinnedPreset(p, governor); err != nil {
 		return 2, err
 	}
-	a.applyPreset(p, governor)
 	if err := a.applyOneOff(governor, model, profile, effort); err != nil {
 		return 2, err
 	}
+	council, err := resolveFusionCouncil(governor, peers, p, fusionRejectSelf, box.AuthedAgents(a.cfg))
+	if err != nil {
+		return 2, err
+	}
+	peers = council.Peers
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
 	}
 	// The governor's autonomous default command, plus any extra args you pass through.
 	cmd := append(append([]string{}, a.defaultCmd(governor)...), dropDashDash(rest)...)
-	council := make([]string, 0, len(peers))
-	for _, pt := range peers {
-		council = append(council, pt.String())
+	if p != nil && governor == p.LeadAgent && len(p.LeadLadder) > 1 {
+		ui.Info("fusion: preset %s pins this terminal session to first lead rung %s (no fallback rotation; use ACP or loop to rotate)", p.Name, p.LeadLadder[0].String())
 	}
-	desc := strings.Join(council, " + ")
-	if desc == "" {
-		desc = "the preset's roles"
+	if len(council.UnavailableRoles) > 0 {
+		ui.Warn("fusion: preset role(s) %s are unavailable because none of their providers has mounted credentials", strings.Join(council.UnavailableRoles, ", "))
 	}
-	ui.Info("fusion: %s governs; peers %s consulted read-only", governor, desc)
+	desc := strings.Join(council.Members, " + ")
+	ui.Info("fusion: %s governs; council %s (read-only)", governor, desc)
 	pre := gitOut(repo, "rev-parse", "HEAD")
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, Peers: peers, Preset: a.preset,
+		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, FusionMembers: council.Members, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	a.signOnBoxExit(repo, pre, false)
@@ -1799,7 +1830,7 @@ func loopWorkPrompt(repo string, queues []string, assignedID, agent string, peer
 func loopPeerCapabilities(agent string, peers []agents.Target, p *preset.Preset) string {
 	var consults, delegates []string
 	if p != nil {
-		for _, role := range append(p.Consults(), p.DegradedNativeRoles(agent)...) {
+		for _, role := range p.ConsultRoles(agent) {
 			consults = append(consults, role.Name)
 		}
 		for _, role := range p.Delegates() {

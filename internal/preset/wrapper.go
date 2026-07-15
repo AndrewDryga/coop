@@ -141,12 +141,6 @@ load_target() {
 	esac
 }
 
-resolve_defaults() {
-	peerkey=$(printf '%s' "$agent" | tr 'a-z-' 'A-Z_')
-	if [ -z "$model" ]; then eval "model=\${COOP_PEER_MODEL_${peerkey}:-}"; fi
-	if [ -z "$effort" ]; then eval "effort=\${COOP_PEER_EFFORT_${peerkey}:-}"; fi
-}
-
 snapshot_tree() {
 	tar --exclude='./.git' --exclude='./.git/*' -cf "$1" . 2>/dev/null
 }
@@ -195,7 +189,6 @@ index=0
 for target do
 	index=$((index + 1))
 	load_target "$target"
-	resolve_defaults
 	out=$attempt_dir/output-$index
 	status=$attempt_dir/status-$index
 	# The provider arm runs in a child so an adapter exit cannot skip recording

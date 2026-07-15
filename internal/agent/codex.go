@@ -123,6 +123,8 @@ func (codexAgent) EffortEnv() string { return "" }
 
 func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
+func (codexAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagentSupport{} }
+
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 
 // CredentialEnvKeys is Codex's only token env var.

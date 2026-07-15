@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -238,6 +239,36 @@ func TestEffortSelection(t *testing.T) {
 	// claude-agent-acp takes no flags, so claude's effort rides an env var instead.
 	if claude, _ := Get("claude"); claude.EffortEnv() != "CLAUDE_CODE_EFFORT_LEVEL" {
 		t.Errorf("claude EffortEnv = %q, want CLAUDE_CODE_EFFORT_LEVEL", claude.EffortEnv())
+	}
+}
+
+func TestNativeSubagentCapabilityIsAdapterOwned(t *testing.T) {
+	for name, want := range map[string]bool{"claude": true, "codex": false, "gemini": false, "grok": false} {
+		a, ok := Get(name)
+		if !ok {
+			t.Fatalf("agent %q not registered", name)
+		}
+		support := a.NativeSubagents()
+		if got := support.Render != nil; got != want {
+			t.Errorf("%s native renderer present = %v, want %v", name, got, want)
+		}
+		if want && support.HomeDir == "" {
+			t.Errorf("%s native support has no destination", name)
+		}
+	}
+	claude, _ := Get("claude")
+	support := claude.NativeSubagents()
+	name, content := support.Render(NativeSubagent{
+		Name: "coop-thinker", Description: "Use for: architecture.", Model: "opus",
+		Effort: "xhigh", Prompt: "Think hard.",
+	})
+	if name != "coop-thinker.md" || support.HomeDir != ".claude/agents" {
+		t.Errorf("Claude native destination = (%q, %q), want coop-thinker.md under .claude/agents", name, support.HomeDir)
+	}
+	for _, want := range []string{"name: coop-thinker", "description: Use for: architecture.", "model: opus", "effort: xhigh", "Think hard."} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Claude native rendering missing %q:\n%s", want, content)
+		}
 	}
 }
 

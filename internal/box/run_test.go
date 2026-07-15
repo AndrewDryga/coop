@@ -609,6 +609,108 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 }
 
+func TestFusionInstructionMountConsumesResolvedMembers(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+	p := &preset.Preset{Name: "council", LeadAgent: "codex", Roles: []preset.Role{
+		{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-role"},
+	}}
+	content, file, wired, ok := fusionInstructionMount(cfg, RunSpec{
+		Homes: true, FusionGovernor: "codex", FusionMembers: []string{"critic", "gemini"}, Preset: p,
+	})
+	if !ok || !wired || file != "AGENTS.md" {
+		t.Fatalf("fusionInstructionMount = (file=%q wired=%v ok=%v), want AGENTS.md/true/true", file, wired, ok)
+	}
+	for _, want := range []string{"coop-consult critic --fresh", "coop-consult gemini --fresh", "Orchestration preset"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("resolved Fusion instruction missing %q:\n%s", want, content)
+		}
+	}
+	if fusionAt, presetAt := strings.Index(content, "# Fusion mode"), strings.Index(content, "# Orchestration preset"); fusionAt < 0 || presetAt < 0 || fusionAt > presetAt {
+		t.Errorf("Fusion mandate must precede the preset's optional role guidance: fusion=%d preset=%d\n%s", fusionAt, presetAt, content)
+	}
+}
+
+func TestValidateFusionSpecRejectsSplitCouncilState(t *testing.T) {
+	valid := RunSpec{
+		Homes: true, FusionGovernor: "claude", FusionMembers: []string{"codex"},
+		Peers: []agents.Target{{Provider: "codex"}},
+	}
+	if err := validateFusionSpec(valid); err != nil {
+		t.Fatalf("valid Fusion spec rejected: %v", err)
+	}
+	cases := []struct {
+		name string
+		spec RunSpec
+		want string
+	}{
+		{"members without governor", RunSpec{FusionMembers: []string{"codex"}}, "require a governor"},
+		{"governor without homes", RunSpec{FusionGovernor: "claude", FusionMembers: []string{"codex"}}, "requires agent homes"},
+		{"governor without council", RunSpec{Homes: true, FusionGovernor: "claude"}, "no resolved council"},
+		{"peer omitted from members", RunSpec{Homes: true, FusionGovernor: "claude", FusionMembers: []string{"critic"}, Peers: []agents.Target{{Provider: "codex"}}}, "missing from"},
+		{"duplicate member", RunSpec{Homes: true, FusionGovernor: "claude", FusionMembers: []string{"critic", "critic"}}, "duplicate"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateFusionSpec(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateFusionSpec error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunFusionRoleOnlyMountsConsultWrapperAndRoleEnv(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node", Egress: "none"}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &preset.Preset{Name: "council", LeadAgent: "claude", Roles: []preset.Role{
+		{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-role"},
+	}}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true,
+		FusionGovernor: "claude", FusionMembers: []string{"critic"}, Preset: p,
+	})
+	if err != nil || code != 0 {
+		t.Fatalf("Run = (%d, %v), want success", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		":" + fusion.ConsultWrapperPath + ":ro",
+		"COOP_CONSULT_CRITIC_TARGETS=codex:gpt-role",
+		cfg.AgentDir("codex") + ":/home/node/.codex",
+	} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("role-only Fusion runtime args missing %q:\n%s", want, args)
+		}
+	}
+}
+
+func TestPresetRoleTargetDefaultsDoNotInheritRawPeerOverride(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	cfg.SetActiveModel("codex", "configured-default")
+	p := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeConsult, Agent: "codex"}}}
+	_, args, files, dirs := presetRoleMounts(cfg, RunSpec{
+		Homes: true, Preset: p, FusionGovernor: "claude", FusionMembers: []string{"codex", "thinker"},
+		Peers: []agents.Target{{Provider: "codex", Model: "raw-peer-model"}},
+	}, "/w")
+	defer func() {
+		for _, path := range files {
+			_ = os.Remove(path)
+		}
+		for _, path := range dirs {
+			_ = os.RemoveAll(path)
+		}
+	}()
+	if !containsSeq(args, []string{"-e", "COOP_CONSULT_THINKER_TARGETS=codex:configured-default"}) {
+		t.Errorf("role target must materialize its provider default, got %v", args)
+	}
+}
+
 // TestAgentBaseInstructions: the box env note is always present and comes first; the user's
 // shared INSTRUCTIONS.md, when present, follows it.
 func TestAgentBaseInstructions(t *testing.T) {
@@ -863,17 +965,23 @@ func TestGeneratedSubagentFiles(t *testing.T) {
 	p := &preset.Preset{Roles: []preset.Role{
 		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", When: []string{"architecture"}},
 		{Name: "critic", Mode: preset.ModeNative, Agent: "claude", Subagent: "deep-reasoner"},
+		{Name: "foreign", Mode: preset.ModeNative, Agent: "codex"},
 		{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"},
 	}}
-	got := generatedSubagentFiles(p)
+	claude, _ := agents.Get("claude")
+	support := claude.NativeSubagents()
+	got := generatedSubagentFiles(p, "claude", support)
 	if len(got) != 1 || got[0].name != "coop-thinker.md" {
 		t.Fatalf("want only coop-thinker.md, got %+v", got)
 	}
 	if !strings.Contains(got[0].content, "name: coop-thinker") || !strings.Contains(got[0].content, "model: claude-opus-4-8") {
 		t.Errorf("content missing frontmatter:\n%s", got[0].content)
 	}
-	if generatedSubagentFiles(nil) != nil {
+	if generatedSubagentFiles(nil, "claude", support) != nil {
 		t.Error("nil preset should yield no files")
+	}
+	if generatedSubagentFiles(p, "claude", agents.NativeSubagentSupport{}) != nil {
+		t.Error("unsupported adapter should yield no native files")
 	}
 }
 

@@ -379,6 +379,25 @@ func TestDelegateWrapperRunsRole(t *testing.T) {
 	}
 }
 
+func TestDelegateRoleDoesNotInheritAdHocPeerModel(t *testing.T) {
+	h := newDelegateHarness(t)
+	h.env = append(h.env,
+		"COOP_DELEGATE_FAST_TARGETS=codex",
+		"COOP_PEER_MODEL_CODEX=raw-peer-model",
+	)
+	h.stub("codex", "echo did-the-work")
+	if out, code := h.run("fast", "Implement the thing"); code != 0 {
+		t.Fatalf("exit = %d, want 0:\n%s", code, out)
+	}
+	argv, err := os.ReadFile(h.argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(argv), "raw-peer-model") {
+		t.Fatalf("blank delegate role inherited an ad-hoc peer model:\n%s", argv)
+	}
+}
+
 func TestDelegateWrapperRejectsRecursiveInvocationBeforeLock(t *testing.T) {
 	h := newDelegateHarness(t)
 	launched := filepath.Join(h.dir, "launched")

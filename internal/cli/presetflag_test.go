@@ -37,28 +37,6 @@ func TestPresetLeadAgent(t *testing.T) {
 	}
 }
 
-// fusionLadderGuard: a cross-provider lead ladder is rejected only when it would drive this
-// run's governor — fusion runs one governor for the whole council. Inert ladders (another
-// governor, no preset) and single-provider ladders pass.
-func TestFusionLadderGuard(t *testing.T) {
-	cross := &preset.Preset{
-		Name: "x", LeadAgent: "claude",
-		LeadLadder: []agents.Target{{Provider: "claude", Model: "opus"}, {Provider: "codex", Model: "gpt-5.5"}},
-	}
-	if err := fusionLadderGuard(cross, "claude"); err == nil || !strings.Contains(err.Error(), "cross-provider") {
-		t.Errorf("cross-provider ladder driving the governor: err = %v, want the cross-provider rejection", err)
-	}
-	if err := fusionLadderGuard(cross, "gemini"); err != nil {
-		t.Errorf("another governor (ladder inert): err = %v, want nil", err)
-	}
-	if err := fusionLadderGuard(cliFrontier(), "claude"); err != nil {
-		t.Errorf("single-provider ladder: err = %v, want nil", err)
-	}
-	if err := fusionLadderGuard(nil, "claude"); err != nil {
-		t.Errorf("no preset: err = %v, want nil", err)
-	}
-}
-
 // applyPreset seeds ONLY the lead's model/credentials into global config; explicit CLI flags
 // applied after still win. Role models stay OUT of global provider state (they ride each role's
 // wrapper target), so a native role never clobbers the lead and a consult/delegate role never
@@ -179,6 +157,21 @@ func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
 	}
 	if got := thinker.TargetList(); got != "codex:gpt-5.6-terra/xhigh" {
 		t.Errorf("thinker wrapper target = %q, want codex:gpt-5.6-terra/xhigh (consult stays on terra)", got)
+	}
+}
+
+func TestApplyPresetRejectsMissingPinnedFirstAccount(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	p := cliFrontier()
+	err := a.applyPinnedPreset(p, "claude")
+	if err == nil || !strings.Contains(err.Error(), "work") || !strings.Contains(err.Error(), "first lead rung") {
+		t.Fatalf("missing first account error = %v, want rung + account", err)
+	}
+	if a.preset != nil {
+		t.Error("a rejected preset must not be retained on the app")
+	}
+	if _, statErr := os.Stat(a.cfg.AgentProfileDir("claude", "work")); !os.IsNotExist(statErr) {
+		t.Errorf("missing account must not be materialized as a husk, stat err = %v", statErr)
 	}
 }
 
