@@ -48,7 +48,7 @@ think; you edit, gate, and commit.
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.
 - **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. The queue is for READY work — including a simple task you discovered and can state in a line; only the NOT-yet-ready (needs a spec, a decision, or real scoping) goes in the backlog (`coop backlog add`), never in `00_todo/`.
 - Claim a task with `coop tasks claim <id>` (moves it to `10_in_progress/`) BEFORE you start it.
-- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green and the change is committed (the task's own `log.md` carries the why). The folder move is local — the queue is gitignored working state, not part of the commit.
+- `coop tasks done <id>` (moves it to `99_done/`) only when the gate is green, the change is committed, and `state.md` has its final snapshot. The folder move is the final filesystem action; Coop atomically normalizes `Status` to `complete` and `Next action` to `none`, then removes `tmp/`. The queue is gitignored working state, not part of the commit.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, options, your recommendation). Never guess on a one-way door.
 - One task = one commit. Spot unrelated work? A simple, ready task → `coop tasks add` (the queue works it soon); a big or not-yet-ready one → `coop backlog add`. Either way, stay on the task you're on.
 - **Tag the commit with its task.** End the commit message with a `Coop-Task: <id>` trailer (the id is the task's folder name), so the host can bind the commit to its task — the linchpin for resuming correctly after a crash between commit and folder-move, and for reconciling the queue after a fork merge. A loop box gets this instruction in its prompt; on the host, add it yourself.
@@ -67,8 +67,9 @@ local (git-ignored) so it never creates commit noise or merge churn.
   lists and moves them.
 - `state.md` — a small, overwritten resume snapshot of the task in flight (status, what's
   done, the next action, traps), kept inside the in-progress task's own folder. The loop's
-  working agent refreshes it at each checkpoint (before a commit / pause) and once more as the
-  final step when the task is done, so the next iteration — a *different* agent resuming the same
+  working agent refreshes it at each checkpoint (before a commit / pause) and once more after the
+  final commit, before the folder move that completes the task. Coop then normalizes the two
+  lifecycle-owned fields, so the next iteration — a *different* agent resuming the same
   `10_in_progress/` task, or you after a review — resumes from the note instead of re-deriving it
   from the diff. Overwrite, not append (that's the task's `log.md`); never blanked by hand — it
   travels with the task to `99_done/`.

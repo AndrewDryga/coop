@@ -187,6 +187,10 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !fileExists(filepath.Join(root, stateDone, id, "artifacts", "evidence.txt")) {
 		t.Error("done must retain durable artifacts")
 	}
+	completedState := readFileString(filepath.Join(root, stateDone, id, "state.md"))
+	if !strings.Contains(completedState, "**Status:** complete") || !strings.Contains(completedState, "**Next action:** none") {
+		t.Errorf("done must finalize lifecycle-owned state fields:\n%s", completedState)
+	}
 
 	// Review reopens are ordinary non-done moves: scratch created for the next attempt survives
 	// the move, then the next successful completion removes it.
@@ -297,6 +301,113 @@ func TestTasksDoneSurfacesTmpCleanupFailure(t *testing.T) {
 	}
 	if pathExists(filepath.Join(root, stateDone, id, "tmp")) {
 		t.Error("retry did not clean tmp")
+	}
+}
+
+func TestNormalizeCompletedTaskStatePreservesAgentFields(t *testing.T) {
+	taskDir := t.TempDir()
+	statePath := filepath.Join(taskDir, "state.md")
+	original := "# State — useful title\n\nintro remains\n**Status:** ready to commit\n**Done so far:** implemented the denial path\n**Next action:** commit and archive\n**Traps:** preserve this warning\nfooter remains\n"
+	writeTaskFile(t, statePath, original)
+
+	if err := normalizeCompletedTaskState("task-id", taskDir); err != nil {
+		t.Fatal(err)
+	}
+	got := readFileString(statePath)
+	for _, want := range []string{
+		"# State — useful title", "intro remains", "**Status:** complete",
+		"**Done so far:** implemented the denial path", "**Next action:** none",
+		"**Traps:** preserve this warning", "footer remains",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("normalized state missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "ready to commit") || strings.Contains(got, "commit and archive") {
+		t.Errorf("normalized state retained stale lifecycle values:\n%s", got)
+	}
+	firstInfo, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := normalizeCompletedTaskState("task-id", taskDir); err != nil {
+		t.Fatal(err)
+	}
+	if second := readFileString(statePath); second != got {
+		t.Errorf("state finalization is not idempotent:\nfirst: %q\nsecond: %q", got, second)
+	}
+	secondInfo, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(firstInfo, secondInfo) {
+		t.Error("already-final state was rewritten instead of remaining a filesystem no-op")
+	}
+}
+
+func TestNormalizeCompletedTaskStateRepairsMissingAndMalformed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		done string
+		trap string
+	}{
+		{name: "missing", done: "—", trap: "—"},
+		{name: "duplicate lifecycle field", body: "**Status:** stale\n**Status:** also stale\n**Done so far:** retain me\n**Traps:** retain trap\n", done: "retain me", trap: "retain trap"},
+		{name: "missing summary field", body: "**Status:** stale\n**Next action:** archive\n**Traps:** retain trap\n", done: "—", trap: "retain trap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			taskDir := t.TempDir()
+			if tc.body != "" {
+				writeTaskFile(t, filepath.Join(taskDir, "state.md"), tc.body)
+			}
+			if err := normalizeCompletedTaskState("task-id", taskDir); err != nil {
+				t.Fatal(err)
+			}
+			got := readFileString(filepath.Join(taskDir, "state.md"))
+			for _, want := range []string{"# State — task-id", "**Status:** complete", "**Done so far:** " + tc.done, "**Next action:** none", "**Traps:** " + tc.trap} {
+				if !strings.Contains(got, want) {
+					t.Errorf("repaired state missing %q:\n%s", want, got)
+				}
+			}
+			if strings.Count(got, taskStateStatus) != 1 || strings.Count(got, taskStateNext) != 1 {
+				t.Errorf("repaired state is still structurally ambiguous:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestTasksDoneRetriesStateFinalizationFailure(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-state-fails"
+	taskDir := filepath.Join(root, stateInProgress, id)
+	writeTaskFile(t, filepath.Join(taskDir, "task.md"), "# state fails\n")
+	writeTaskFile(t, filepath.Join(taskDir, "tmp", "scratch"), "retain until state is safe\n")
+	if err := os.MkdirAll(filepath.Join(taskDir, "state.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done")
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "state finalization failed") ||
+		!strings.Contains(err.Error(), "retry: coop tasks done "+id) {
+		t.Fatalf("done state failure = (%d, %v), want loud retryable failure", code, err)
+	}
+	doneDir := filepath.Join(root, stateDone, id)
+	if !fileExists(filepath.Join(doneDir, "tmp", "scratch")) {
+		t.Fatal("state failure must retain tmp for diagnosis and retry")
+	}
+	if err := os.RemoveAll(filepath.Join(doneDir, "state.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
+		t.Fatalf("retry done after clearing state obstruction: code=%d err=%v", code, err)
+	}
+	if pathExists(filepath.Join(doneDir, "tmp")) {
+		t.Fatal("successful retry did not remove tmp")
+	}
+	state := readFileString(filepath.Join(doneDir, "state.md"))
+	if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
+		t.Errorf("successful retry did not create final state:\n%s", state)
 	}
 }
 

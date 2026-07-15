@@ -119,19 +119,17 @@ func finishedTasks(before, after map[string]string) []string {
 	return ids
 }
 
-// cleanupFinishedTaskTmp handles the loop's in-box completion path: the worker moved the folder, so
-// the host removes tmp before any between-task or signoff reviewer consumes a done task. It sweeps
-// EVERY done task, not just this iteration's delta: a completion whose cleanup failed earlier left
-// its folder in done with tmp intact, and delta-scoping would never retry it — a later `coop loop`
-// run sees no new done delta for it. removeTaskTmp is a no-op once tmp is gone, so re-scanning
-// already-clean done tasks is cheap. On the first error the loop stops before a reviewer sees stale tmp.
-func cleanupFinishedTaskTmp(hosts []string) error {
+// finalizeFinishedTasks handles the loop's in-box completion path: the worker moved the folder, so
+// the host normalizes state.md and removes tmp before any reviewer consumes a done task. It sweeps
+// EVERY done task, not just this iteration's delta: a completion whose finalization failed earlier
+// must be retried by a later run. Both operations are idempotent; the first error stops review.
+func finalizeFinishedTasks(hosts []string) error {
 	for _, host := range hosts {
 		for _, t := range readTaskTree(host) {
 			if t.State != stateDone {
 				continue
 			}
-			if err := cleanupCompletedTaskTmp(t.ID, t.Dir); err != nil {
+			if err := finalizeCompletedTask(t.ID, t.Dir); err != nil {
 				return err
 			}
 		}
@@ -445,7 +443,7 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName string) {
 				continue
 			}
 			doneDir := filepath.Join(host, stateDone, act.ID)
-			if err := cleanupCompletedTaskTmp(act.ID, doneDir); err != nil {
+			if err := finalizeCompletedTask(act.ID, doneDir); err != nil {
 				ui.Warn("reconcile: %v — fix the obstruction, then retry: coop tasks done %s", err, act.ID)
 				continue
 			}

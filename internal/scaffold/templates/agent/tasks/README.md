@@ -125,6 +125,11 @@ a few lines, and on resume read it first.
     **Next action:** add the table test for "" and "None", then update the README
     **Traps:** egress is read in TWO places (entrypoint + doctor) — keep them in sync
 
+After the final commit, refresh the same snapshot with `**Status:** complete` and
+`**Next action:** none`, preserving the useful summary and traps. Then move the folder to done as
+the final filesystem action. Coop enforces those two lifecycle values atomically at completion;
+missing or malformed snapshots are repaired to a minimal safe form.
+
 ---
 
 ## log.md — the working journal
@@ -219,8 +224,9 @@ retaining to `artifacts/` first. All three directories are git-ignored, so they 
 - One task = one outcome = one commit (the code change). The `99_done/` move itself is local — the queue is gitignored.
 - Claim with `coop tasks claim <id>` BEFORE you start.
 - Blocked? `coop tasks block <id>`, then fill in `50_blocked/<id>/decision.md`.
-- Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted; only its
-  disposable `tmp/` is removed. A cleanup failure fails completion loudly.
+- Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted; Coop
+  finalizes its lifecycle fields and removes only disposable `tmp/`. A state write or cleanup
+  failure fails completion loudly and an already-done retry finishes the work.
 - Pruning the archive is a manual, human step: `coop tasks rm --all-done` (or
   `coop tasks rm <id>` for one). The loop and `/sweep` never do this.
 - A todo task must NOT carry a `decision.md` (that means it's blocked); a blocked one MUST.

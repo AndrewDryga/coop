@@ -201,7 +201,7 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/", "into 50_blocked/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
-		"state.md", "resume note", "final step", "finished state",
+		"state.md", "resume note", "AFTER the commit", "final filesystem action", "Status to complete", "Next action to none",
 		"assigned task's tmp/ directory", "survives interruption and blocked transitions", "durable artifacts/ directory",
 		"Work exactly ONE task per run", "the loop's job, not yours",
 		// Reference the commit by its stable trailer, not its volatile SHA (coop re-signs on the host).
@@ -259,8 +259,10 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 		"docs/README/CHANGELOG",                     // 4. polished
 		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate
 		"tmp/ was disposable", "evidence that needed to survive completion belongs in artifacts/",
+		"ONLY defect, repair them in place in 99_done/", "do NOT reopen implementation work for metadata alone",
 		"MOVING its folder back to 10_in_progress/", // reopen by moving
-		"THE MOMENT you decide",                     // execute reopens immediately, never batched
+		"refreshing state.md to a reopened Status plus one concrete Next action",
+		"THE MOMENT you decide", // execute reopens immediately, never batched
 		"make no commits",
 	} {
 		if !strings.Contains(rev, want) {
@@ -269,7 +271,7 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	}
 	// The fixed context footer: the absolute queue path, AGENTS.md, and the reopen mechanic —
 	// including execute-immediately, so it binds even under a custom review.md override.
-	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed", "Execute every reopen IMMEDIATELY"} {
+	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed", "metadata-only", "refresh state.md", "Execute every substantive reopen IMMEDIATELY"} {
 		if !strings.Contains(rev, want) {
 			t.Errorf("review prompt footer missing %q:\n%s", want, rev)
 		}

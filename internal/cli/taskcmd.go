@@ -398,7 +398,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 	}
 	if t.State == newState {
 		if newState == stateDone {
-			if err := cleanupCompletedTaskTmp(t.ID, t.Dir); err != nil {
+			if err := finalizeCompletedTask(t.ID, t.Dir); err != nil {
 				return -1, fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
 			}
 		}
@@ -409,7 +409,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 		return -1, err
 	}
 	if newState == stateDone {
-		if err := cleanupCompletedTaskTmp(t.ID, filepath.Join(root, stateDone, t.ID)); err != nil {
+		if err := finalizeCompletedTask(t.ID, filepath.Join(root, stateDone, t.ID)); err != nil {
 			return -1, fmt.Errorf("%w — the task is in done; fix the obstruction, then retry: coop tasks done %s", err, t.ID)
 		}
 	}
@@ -601,7 +601,109 @@ func removeTaskTmp(taskDir string) error {
 // error. Production always uses removeTaskTmp.
 var taskTmpCleaner = removeTaskTmp
 
-func cleanupCompletedTaskTmp(id, taskDir string) error {
+const (
+	taskStateStatus = "**Status:**"
+	taskStateDone   = "**Done so far:**"
+	taskStateNext   = "**Next action:**"
+	taskStateTraps  = "**Traps:**"
+)
+
+// normalizeCompletedTaskState atomically replaces only Coop-owned lifecycle fields in a valid
+// state.md. Agent-authored summaries, traps, headings, and surrounding prose remain byte-for-byte
+// apart from those two lines. A missing or structurally ambiguous snapshot is rebuilt minimally;
+// unique Done/Traps values are retained when they can be recovered safely.
+func normalizeCompletedTaskState(id, taskDir string) error {
+	info, err := os.Lstat(taskDir)
+	if err != nil {
+		return fmt.Errorf("inspect task folder: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("refusing state finalization through non-directory task folder %q", taskDir)
+	}
+
+	statePath := filepath.Join(taskDir, "state.md")
+	body, err := os.ReadFile(statePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %q: %w", statePath, err)
+	}
+	lines := strings.Split(string(body), "\n")
+	status := labeledLineIndexes(lines, taskStateStatus)
+	done := labeledLineIndexes(lines, taskStateDone)
+	next := labeledLineIndexes(lines, taskStateNext)
+	traps := labeledLineIndexes(lines, taskStateTraps)
+	var out string
+	if err == nil && len(status) == 1 && len(done) == 1 && len(next) == 1 && len(traps) == 1 {
+		lines[status[0]] = taskStateStatus + " complete"
+		lines[next[0]] = taskStateNext + " none"
+		out = strings.Join(lines, "\n")
+	} else {
+		doneValue := uniqueLabeledValue(lines, taskStateDone, "—")
+		trapsValue := uniqueLabeledValue(lines, taskStateTraps, "—")
+		out = fmt.Sprintf("# State — %s\n\n%s complete\n%s %s\n%s none\n%s %s\n",
+			id, taskStateStatus, taskStateDone, doneValue, taskStateNext, taskStateTraps, trapsValue)
+	}
+	if err == nil && string(body) == out {
+		return nil
+	}
+	if err := atomicWriteTaskFile(statePath, []byte(out)); err != nil {
+		return fmt.Errorf("write %q: %w", statePath, err)
+	}
+	return nil
+}
+
+func labeledLineIndexes(lines []string, label string) []int {
+	var indexes []int
+	for i, line := range lines {
+		if strings.HasPrefix(line, label) {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+func uniqueLabeledValue(lines []string, label, fallback string) string {
+	indexes := labeledLineIndexes(lines, label)
+	if len(indexes) != 1 {
+		return fallback
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(lines[indexes[0]], label))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func atomicWriteTaskFile(path string, body []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// finalizeCompletedTask is the single post-move completion boundary. State comes first so a failed
+// metadata write retains tmp for diagnosis and retry; both operations are idempotent.
+func finalizeCompletedTask(id, taskDir string) error {
+	if err := normalizeCompletedTaskState(id, taskDir); err != nil {
+		return fmt.Errorf("task %s reached done, but its state finalization failed: %w", id, err)
+	}
 	if err := taskTmpCleaner(taskDir); err != nil {
 		return fmt.Errorf("task %s reached done, but its tmp cleanup failed: %w", id, err)
 	}

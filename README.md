@@ -997,9 +997,10 @@ state has acquirable work. Name the agent
 iteration command if you need something custom. When the queue empties, a fresh, **demanding
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
-the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping
-(every `99_done/` task has an implementing commit and a final `state.md`) — then it runs the
-repo's gate **once** across the whole repo and reopens anything short of "merge with no
+the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping.
+Coop atomically finalizes each completed `state.md` before review; a reviewer repairs a
+lifecycle-only metadata defect in place instead of reopening finished implementation work. It then
+runs the repo's gate **once** across the whole repo and reopens anything short of "merge with no
 changes". If the signoff reopened work, the loop drains and signs off **again** — repeating
 until a signoff reopens nothing (verified done) or it hits the round cap, at which point the
 task it keeps reopening is blocked for a human rather than reported as done. The cap

@@ -57,7 +57,8 @@ between:
       proves it, not at a claim in log.md.
     - The failure path is tested, not just the happy path.
     - The gate is green on the committed tree (`make check`), and `make align` leaves no diff.
-    - The commit says WHY, and state.md was refreshed as the final step.
+    - The commit says WHY. A lifecycle-only state.md mismatch is repaired in 99_done/ and does not
+      reopen implementation work; any substantive reopen gets a concrete resume state.
     Verdict: pass → append one line to the task's log.md ("audit: pass — <evidence>"). Fail →
     move the folder back to 10_in_progress/ and append the concrete gap (what to fix, where)
     to log.md. Never widen scope beyond the audited task.

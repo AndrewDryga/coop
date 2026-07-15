@@ -35,12 +35,13 @@ func TestFinishedTasksAndReconcileDecision(t *testing.T) {
 	}
 }
 
-func TestCleanupFinishedTaskTmp(t *testing.T) {
+func TestFinalizeFinishedTasks(t *testing.T) {
 	root := t.TempDir()
 	doneID := "2026-01-01-done"
 	strandedID := "2026-01-01-stranded" // a completion whose earlier tmp cleanup failed, now retried
 	liveID := "2026-01-02-live"
 	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "task.md"), "# done\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "state.md"), "# State — done\n\n**Status:** commit next\n**Done so far:** kept summary\n**Next action:** move to done\n**Traps:** kept trap\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "tmp", "scratch"), "remove\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, strandedID, "task.md"), "# stranded\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, strandedID, "tmp", "scratch"), "remove\n")
@@ -49,7 +50,7 @@ func TestCleanupFinishedTaskTmp(t *testing.T) {
 
 	// The loop sweeps EVERY done task, so a leftover tmp from a prior run's failed cleanup is
 	// reclaimed on a later run even though it is not part of any fresh done delta.
-	if err := cleanupFinishedTaskTmp([]string{root}); err != nil {
+	if err := finalizeFinishedTasks([]string{root}); err != nil {
 		t.Fatal(err)
 	}
 	if pathExists(filepath.Join(root, stateDone, doneID, "tmp")) {
@@ -61,12 +62,53 @@ func TestCleanupFinishedTaskTmp(t *testing.T) {
 	if !fileExists(filepath.Join(root, stateInProgress, liveID, "tmp", "scratch")) {
 		t.Error("cleanup touched an unfinished task's tmp")
 	}
+	for _, id := range []string{doneID, strandedID} {
+		state := readFileString(filepath.Join(root, stateDone, id, "state.md"))
+		if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
+			t.Errorf("done task %s was not finalized:\n%s", id, state)
+		}
+	}
+	state := readFileString(filepath.Join(root, stateDone, doneID, "state.md"))
+	if !strings.Contains(state, "**Done so far:** kept summary") || !strings.Contains(state, "**Traps:** kept trap") {
+		t.Errorf("finalization discarded agent-authored fields:\n%s", state)
+	}
 
 	oldCleaner := taskTmpCleaner
 	taskTmpCleaner = func(string) error { return errors.New("loop cleanup failed") }
 	t.Cleanup(func() { taskTmpCleaner = oldCleaner })
-	if err := cleanupFinishedTaskTmp([]string{root}); err == nil || !strings.Contains(err.Error(), "loop cleanup failed") {
+	if err := finalizeFinishedTasks([]string{root}); err == nil || !strings.Contains(err.Error(), "loop cleanup failed") {
 		t.Errorf("loop cleanup failure = %v, want propagated error", err)
+	}
+}
+
+func TestFinalizeFinishedTasksStateFailureIsRetryable(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-state-obstructed"
+	taskDir := filepath.Join(root, stateDone, id)
+	writeTaskFile(t, filepath.Join(taskDir, "task.md"), "# done\n")
+	writeTaskFile(t, filepath.Join(taskDir, "tmp", "scratch"), "retain\n")
+	if err := os.MkdirAll(filepath.Join(taskDir, "state.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := finalizeFinishedTasks([]string{root}); err == nil || !strings.Contains(err.Error(), "state finalization failed") {
+		t.Fatalf("loop finalization state failure = %v, want propagated error", err)
+	}
+	if !fileExists(filepath.Join(taskDir, "tmp", "scratch")) {
+		t.Fatal("loop state failure removed tmp before metadata was safe")
+	}
+	if err := os.RemoveAll(filepath.Join(taskDir, "state.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeFinishedTasks([]string{root}); err != nil {
+		t.Fatalf("loop finalization retry: %v", err)
+	}
+	if pathExists(filepath.Join(taskDir, "tmp")) {
+		t.Fatal("loop finalization retry left tmp")
+	}
+	state := readFileString(filepath.Join(taskDir, "state.md"))
+	if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
+		t.Errorf("loop finalization retry did not create safe state:\n%s", state)
 	}
 }
 
@@ -459,6 +501,12 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	}
 	if pathExists(filepath.Join(q, stateDone, "todo1", "tmp")) || pathExists(filepath.Join(q, stateDone, "wip1", "tmp")) {
 		t.Error("fork reconciliation must clean completed task tmp")
+	}
+	for _, id := range []string{"todo1", "wip1"} {
+		state := readFileString(filepath.Join(q, stateDone, id, "state.md"))
+		if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
+			t.Errorf("fork reconciliation did not finalize %s state:\n%s", id, state)
+		}
 	}
 	if !fileExists(filepath.Join(q, stateBlocked, "blk1", "tmp", "scratch")) {
 		t.Error("fork reconciliation must retain blocked task tmp")

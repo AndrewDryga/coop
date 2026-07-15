@@ -44,15 +44,16 @@ Build *to* them, then *check the diff against them*.
 4. **Self-review the diff** from every angle it touches — correctness, security /
    abuse path, UX, tests (including the failure path), docs, readability — against
    the house rules. Fix what you find; iterate until you'd defend it.
-5. **Commit** — one focused commit for this task; keep the task's `state.md` (resume
-   snapshot) and `log.md` (journal — the *what + why*) current.
-6. **Done** — if `coop` is on PATH, run `coop tasks done <id>`; otherwise move the task folder to
-   the existing `99_done/` directory yourself (the move ships in the
-   commit). A finished task is **moved**, never deleted — leave it in `99_done/`; never run
+5. **Commit** — one focused commit for this task; keep `log.md` (the *what + why*) current.
+6. **Final snapshot** — after the commit, refresh `state.md` in `10_in_progress/`: preserve the
+   useful summary and traps, set `Status` to `complete`, and set `Next action` to `none`.
+7. **Done** — as the final filesystem action, if `coop` is on PATH run `coop tasks done <id>`;
+   otherwise move the task folder to the existing `99_done/` directory yourself. A finished task
+   is **moved**, never deleted — leave it in `99_done/`; never run
    `coop tasks rm` (pruning the archive is the human's call). Blocked instead? Fill in
    `decision.md` (question · options · recommendation), then use `coop tasks block <id>` when
    available or move the folder to the existing `50_blocked/` directory yourself.
-7. Spot unrelated work? Use `coop backlog add` when available, or create a self-contained folder
+8. Spot unrelated work? Use `coop backlog add` when available, or create a self-contained folder
    under `.agent/tasks/xx_backlog/`, then return to the queue —
    don't derail the current task.
 

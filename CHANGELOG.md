@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Completed task snapshots are deterministic.** Every direct, loop, retry, and fork-reconciled
+  completion atomically sets `state.md` to `Status: complete` and `Next action: none` before review,
+  preserving useful summaries and traps before removing task-local `tmp/`. Metadata-only review
+  findings are repaired in place; substantive reopens receive a concrete resume state.
+
 - **Zsh no longer second-guesses valid Coop targets.** Sourcing the generated completion after
   `compinit` installs command-local `nocorrect` behavior for `coop`, preserving dynamic completion
   while leaving spelling correction enabled for every other command. Existing file-only installs
