@@ -39,10 +39,17 @@ docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make do
 align: ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
 	@python3 tools/align-comments.py --check
 
-casts: build ## Regenerate the site terminal casts (refuses a dirty/untagged ./coop; needs python3)
+casts: build ## Regenerate + safety-check site terminal casts (refuses a dirty/untagged ./coop; needs python3)
 	@python3 tools/gen_casts.py
+	@python3 tools/cast_hygiene.py site/casts
 
-check: lint test docs-check ## What CI runs: lint + unit tests + CLI-docs freshness
+casts-check: ## Validate published casts for private paths, credentials, and secret-shaped values
+	@python3 tools/cast_hygiene.py site/casts
+
+tools-test: ## Run standard-library tests for repository maintenance tools
+	@python3 -m unittest discover -s tools -p 'test_*.py'
+
+check: lint test docs-check casts-check tools-test ## What CI runs: lint + tests + docs/cast freshness
 
 acp-e2e: install ## ACP adapter e2e (needs Docker + a built box + signed-in providers)
 	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState)$$' -count=1 -v ./internal/acpproxy/
@@ -58,4 +65,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts check acp-e2e review-writes-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check acp-e2e review-writes-e2e clean help

@@ -22,6 +22,8 @@ import os
 import sys
 from pathlib import Path
 
+from cast_hygiene import validate_cast
+
 ROOT = Path(__file__).resolve().parent.parent
 CASTS = ROOT / "site" / "casts"
 CWD = "~/code/acme-api"
@@ -179,10 +181,16 @@ class Cast:
         if self.title:
             header["title"] = self.title
         path = CASTS / f"{self.name}.cast"
-        with path.open("w") as f:
+        pending = path.with_suffix(".cast.tmp")
+        with pending.open("w") as f:
             f.write(json.dumps(header) + "\n")
             for e in self.ev:
                 f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        try:
+            validate_cast(pending, root=ROOT)
+            os.replace(pending, path)
+        finally:
+            pending.unlink(missing_ok=True)
         print(f"wrote {path.relative_to(ROOT)}  ({len(self.ev)} events, {self.t:.1f}s)")
 
 
