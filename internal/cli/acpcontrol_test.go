@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,7 +25,7 @@ func newTestControl(t *testing.T) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", dir, acpSelection{}, []string{"frontier"}, nil, false)
+	return newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", dir, acpSelection{}, []string{"frontier"}, nil, false)
 }
 
 func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMessage) {
@@ -178,7 +179,7 @@ func newGeminiControl(t *testing.T, model string) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	return newACPControl(&config.Config{ConfigDir: dir}, "gemini", model, dir, acpSelection{}, []string{"frontier"}, nil, false)
+	return newACPControl(&config.Config{ConfigDir: dir}, "gemini", model, "", dir, acpSelection{}, []string{"frontier"}, nil, false)
 }
 
 // modelOption is the subset of a synthesized `model` configOption the tests assert on.
@@ -250,6 +251,7 @@ func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
 	}
 	// The adapter gets a session/set_model{sessionId, modelId}, not a set_config_option.
 	var inj struct {
+		ID     string `json:"id"`
 		Method string `json:"method"`
 		Params struct {
 			SessionID string `json:"sessionId"`
@@ -261,6 +263,10 @@ func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
 	}
 	if inj.Method != "session/set_model" || inj.Params.SessionID != "g1" || inj.Params.ModelID != "gemini-2.5-flash" {
 		t.Errorf("inject = %s, want session/set_model{g1, gemini-2.5-flash}", toAdapter)
+	}
+	c.injectedResponse(toAdapter, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{}}`, inj.ID)))
+	if len(c.nativePending) != 0 {
+		t.Fatalf("successful synthesized model set leaked pending request ids: %v", c.nativePending)
 	}
 	if c.model != "gemini-2.5-flash" {
 		t.Errorf("coop should remember the pick for the next swap, c.model = %q", c.model)
@@ -276,7 +282,14 @@ func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
 func TestACPControlGeminiModelSurvivesSwap(t *testing.T) {
 	c := newGeminiControl(t, "")
 	toEd(c, []byte(geminiSessionNew))
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	_, _, inject, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	var request struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(inject, &request); err != nil {
+		t.Fatal(err)
+	}
+	c.injectedResponse(inject, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{}}`, request.ID)))
 
 	msgs := c.sessionReady("g2") // a fresh session on the respawned box
 	var found bool
@@ -293,12 +306,33 @@ func TestACPControlGeminiModelSurvivesSwap(t *testing.T) {
 	}
 }
 
+func TestACPControlRejectedGeminiModelDoesNotPoisonRecreate(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	toEd(c, []byte(geminiSessionNew))
+	_, _, inject, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	var request struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(inject, &request); err != nil {
+		t.Fatal(err)
+	}
+	c.injectedResponse(inject, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"error":{"code":-32602,"message":"unsupported model"}}`, request.ID)))
+	if len(c.nativePending) != 0 {
+		t.Fatalf("rejected synthesized model set leaked pending request ids: %v", c.nativePending)
+	}
+	joined := string(bytes.Join(c.sessionReady("g2"), nil))
+	if c.model == "gemini-2.5-flash" || strings.Contains(joined, "gemini-2.5-flash") || !strings.Contains(joined, "gemini-2.5-pro") {
+		t.Fatalf("rejected Gemini model poisoned the recreate target: model=%q settings=%s", c.model, joined)
+	}
+}
+
 // TestACPControlGeminiPresetModelWins: on a preset the ladder owns the model — the synthesized dropdown
-// shows the box's current model (never coop's), a live pick is NOT remembered as coop's model, and
-// sessionReady forces nothing (so a respawn returns to the preset's rung).
+// stays hidden, a stale editor pick is ignored, and sessionReady re-applies the active rung through
+// Gemini's session/set_model method.
 func TestACPControlGeminiPresetHidesModel(t *testing.T) {
 	c := newGeminiControl(t, "gemini-2.5-pro")
 	c.sel = acpSelection{Preset: "frontier"}
+	c.target = agents.Target{Provider: "gemini", Model: "gemini-2.5-pro"}
 	out := toEd(c, []byte(geminiSessionNew))
 	ids, _ := configOptionIDs(t, out)
 	if slices.Contains(ids, "model") {
@@ -313,10 +347,9 @@ func TestACPControlGeminiPresetHidesModel(t *testing.T) {
 	if c.model == "gemini-2.5-flash" {
 		t.Error("a preset session must not overwrite coop's model with a live pick — the ladder owns it")
 	}
-	for _, m := range c.sessionReady("g1") {
-		if strings.Contains(string(m), `"session/set_model"`) {
-			t.Errorf("sessionReady must not force a model on a preset session: %s", m)
-		}
+	joined := string(bytes.Join(c.sessionReady("g1"), nil))
+	if !strings.Contains(joined, `"method":"session/set_model"`) || !strings.Contains(joined, `"modelId":"gemini-2.5-pro"`) {
+		t.Errorf("sessionReady must re-apply the active Gemini preset target: %s", joined)
 	}
 }
 
@@ -416,19 +449,21 @@ func TestACPControlSessionReady(t *testing.T) {
 	}
 }
 
-// TestACPControlPresetOwnsModel: on a PRESET selection the preset's lead ladder owns the model —
-// sessionReady must not force coop's launch-time model over it, and the toolbar rewrite must show the
-// box's currentValue instead of retargeting it.
-func TestACPControlPresetOwnsModel(t *testing.T) {
+// TestACPControlPresetForcesActiveTarget: the preset ladder owns the complete target. sessionReady
+// applies that rung's model then effort, never the launch-time model that predated the preset.
+func TestACPControlPresetForcesActiveTarget(t *testing.T) {
 	c := newTestControl(t) // model = opus[1m]
 	c.sel = acpSelection{Preset: "frontier"}
+	c.target = agents.Target{Provider: "claude", Model: "claude-fable-5", Effort: "xhigh"}
 
-	var joined string
-	for _, m := range c.sessionReady("s1") {
-		joined += string(m)
+	joined := string(bytes.Join(c.sessionReady("s1"), nil))
+	modelAt := strings.Index(joined, `"configId":"model"`)
+	effortAt := strings.Index(joined, `"configId":"effort"`)
+	if modelAt < 0 || effortAt <= modelAt || !strings.Contains(joined, `"value":"claude-fable-5"`) || !strings.Contains(joined, `"value":"xhigh"`) {
+		t.Errorf("sessionReady must force the active preset model then effort:\n%s", joined)
 	}
-	if strings.Contains(joined, `"configId":"model"`) {
-		t.Errorf("sessionReady must not force coop's model on a preset session:\n%s", joined)
+	if strings.Contains(joined, `"value":"opus[1m]"`) {
+		t.Errorf("sessionReady leaked the pre-preset launch model:\n%s", joined)
 	}
 
 	// On a preset the native dropdowns are hidden outright — the ladder and roles own them.
@@ -496,16 +531,67 @@ func TestACPControlPresetSwallowsNativeSet(t *testing.T) {
 // TestACPControlSessionReadyNonClaude: mode=bypassPermissions is a claude option, so a non-claude lead
 // must NOT get it (yolo comes from autoReply instead); coop's model set still goes out.
 func TestACPControlSessionReadyNonClaude(t *testing.T) {
-	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", t.TempDir(), acpSelection{}, nil, nil, false)
-	var joined string
-	for _, m := range c.sessionReady("s1") {
-		joined += string(m)
-	}
+	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), acpSelection{}, nil, nil, false)
+	c.target = agents.Target{Provider: "codex", Model: "gpt-5", Effort: "xhigh"}
+	joined := string(bytes.Join(c.sessionReady("s1"), nil))
 	if strings.Contains(joined, "bypassPermissions") {
 		t.Errorf("codex must not get claude's mode=bypassPermissions:\n%s", joined)
 	}
-	if !strings.Contains(joined, "gpt-5") {
-		t.Errorf("coop's model set should still go out for codex:\n%s", joined)
+	modelAt := strings.Index(joined, `"configId":"model"`)
+	effortAt := strings.Index(joined, `"configId":"reasoning_effort"`)
+	if modelAt < 0 || effortAt <= modelAt || !strings.Contains(joined, `"value":"gpt-5"`) || !strings.Contains(joined, `"value":"xhigh"`) {
+		t.Errorf("Codex target must apply model then reasoning effort:\n%s", joined)
+	}
+}
+
+func TestACPControlInjectedSettingFailureIsVisible(t *testing.T) {
+	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), acpSelection{}, nil, nil, false)
+	c.target = agents.Target{Provider: "codex", Model: "gpt-5"}
+	msg := c.sessionReady("s1")[0]
+	var request struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(msg, &request); err != nil || request.ID == "" {
+		t.Fatalf("decode injected request: %v (%s)", err, msg)
+	}
+	failed := []byte(`{"jsonrpc":"2.0","id":"` + request.ID + `","error":{"code":-32602,"message":"unsupported model"}}`)
+	notice := c.injectedResponse(msg, failed)
+	for _, want := range []string{"session/update", `"sessionId":"s1"`, "model=gpt-5", "unsupported model", "different target"} {
+		if !strings.Contains(string(notice), want) {
+			t.Errorf("visible setting failure missing %q: %s", want, notice)
+		}
+	}
+}
+
+func TestACPControlNativeTargetSelectionSurvivesRecreate(t *testing.T) {
+	c := newTestControl(t)
+	model := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"sonnet"}}` + "\n")
+	if handled, _, _, _ := c.fromEditor(model); handled {
+		t.Fatal("native model setting must still reach the adapter")
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"configOptions":[]}}`+"\n"))
+	effort := []byte(`{"jsonrpc":"2.0","id":2,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"effort","value":"high"}}` + "\n")
+	if handled, _, _, _ := c.fromEditor(effort); handled {
+		t.Fatal("native effort setting must still reach the adapter")
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":2,"result":{"configOptions":[]}}`+"\n"))
+	joined := string(bytes.Join(c.sessionReady("s1"), nil))
+	if !strings.Contains(joined, `"configId":"model","sessionId":"s1","value":"sonnet"`) ||
+		!strings.Contains(joined, `"configId":"effort","sessionId":"s1","value":"high"`) {
+		t.Fatalf("recreated session lost the native target:\n%s", joined)
+	}
+}
+
+func TestACPControlRejectedNativeTargetDoesNotPoisonRecreate(t *testing.T) {
+	c := newTestControl(t)
+	set := []byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"not-a-model"}}` + "\n")
+	if handled, _, _, _ := c.fromEditor(set); handled {
+		t.Fatal("native model setting must reach the adapter")
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32602,"message":"unsupported model"}}`+"\n"))
+	joined := string(bytes.Join(c.sessionReady("s1"), nil))
+	if strings.Contains(joined, "not-a-model") || !strings.Contains(joined, `"value":"opus[1m]"`) {
+		t.Fatalf("recreate target was poisoned by rejected native setting:\n%s", joined)
 	}
 }
 
@@ -940,7 +1026,7 @@ func presetControlFor(t *testing.T, lead string) *acpControl {
 			t.Fatal(err)
 		}
 	}
-	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", dir, acpSelection{}, []string{"frontier"}, nil, false)
+	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", "", dir, acpSelection{}, []string{"frontier"}, nil, false)
 	c.sel = acpSelection{Preset: "frontier"}
 	c.rotFor = c.sel
 	c.rot = newRotation([]agents.Target{
@@ -1230,6 +1316,19 @@ func TestACPSpawnTarget(t *testing.T) {
 	}
 }
 
+func TestACPSpawnTargetPreservesExplicitEffort(t *testing.T) {
+	dir := t.TempDir()
+	c := newACPControl(
+		&config.Config{ConfigDir: dir},
+		"codex", "gpt-5.6-sol", "xhigh", dir,
+		acpSelection{Provider: "codex"}, nil, nil, false,
+	)
+	target, presetName, ok := c.spawnTarget()
+	if !ok || presetName != "" || target.Provider != "codex" || target.Model != "gpt-5.6-sol" || target.Effort != "xhigh" {
+		t.Fatalf("explicit direct target = (%+v, %q, %v), want codex:gpt-5.6-sol/xhigh", target, presetName, ok)
+	}
+}
+
 // A preset selection spawns the ACTIVE rung as the full target — a cross-provider rung swaps
 // the lead. The rotation is pre-built (bypassing disk) exactly like presetControl does.
 func TestACPSpawnTargetCrossProviderRung(t *testing.T) {
@@ -1396,12 +1495,12 @@ func TestACPLeavingPresetKeepsEffectiveProvider(t *testing.T) {
 func TestACPSelectionNormalizesMixedState(t *testing.T) {
 	dir := t.TempDir()
 	mixed := acpSelection{Provider: "codex", Account: "work", Preset: "frontier"}
-	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", dir, mixed, []string{"frontier"}, nil, false)
+	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, mixed, []string{"frontier"}, nil, false)
 	if got := c.selection(); got != (acpSelection{Preset: "frontier"}) {
 		t.Fatalf("constructor normalized selection = %+v", got)
 	}
 
-	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", dir, acpSelection{}, []string{"frontier"}, nil, false)
+	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, acpSelection{}, []string{"frontier"}, nil, false)
 	c2.restore(ctrlSnapshot{Selection: mixed, Lead: "codex"})
 	if got := c2.selection(); got != (acpSelection{Preset: "frontier"}) {
 		t.Fatalf("restored normalized selection = %+v", got)
@@ -1788,13 +1887,15 @@ func coopIDs(opts []json.RawMessage) []string {
 // non-default lead/model/set-model, restore into a fresh controller, assert it comes back.
 func TestACPControlSnapshotRestore(t *testing.T) {
 	dir := t.TempDir()
-	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", dir, acpSelection{}, nil, nil, false)
+	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, acpSelection{}, nil, nil, false)
 	c.sel, c.lead, c.model, c.leadUsesSetModel = acpSelection{Provider: "codex"}, "codex", "gpt-5.6-sol", true
+	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"}
 	snap := c.snapshot()
 
-	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", dir, acpSelection{}, nil, nil, false)
+	c2 := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, acpSelection{}, nil, nil, false)
 	c2.restore(snap)
-	if c2.sel != (acpSelection{Provider: "codex"}) || c2.lead != "codex" || c2.model != "gpt-5.6-sol" || !c2.leadUsesSetModel {
-		t.Errorf("restore mismatch: sel=%+v lead=%q model=%q setModel=%v", c2.sel, c2.lead, c2.model, c2.leadUsesSetModel)
+	if c2.sel != (acpSelection{Provider: "codex"}) || c2.lead != "codex" || c2.model != "gpt-5.6-sol" ||
+		c2.target.Provider != "codex" || c2.target.Model != "gpt-5.6-sol" || c2.target.Effort != "xhigh" || !c2.leadUsesSetModel {
+		t.Errorf("restore mismatch: sel=%+v lead=%q model=%q target=%+v setModel=%v", c2.sel, c2.lead, c2.model, c2.target, c2.leadUsesSetModel)
 	}
 }

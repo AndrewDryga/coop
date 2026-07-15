@@ -526,14 +526,16 @@ func TestACPRateLimitSignalsPinned(t *testing.T) {
 	}
 }
 
-// TestACPSessionConfigAndBoxEnv pins the per-adapter session force-sets and box env:
-// claude forces bypassPermissions and carries its config-dir/env-scrub vars; the others
-// declare nothing. Every agent must answer without panicking (the box exports each
-// agent's BoxEnv unconditionally).
-func TestACPSessionConfigAndBoxEnv(t *testing.T) {
+// TestACPSessionSettingsAndBoxEnv pins each adapter's ordered target settings and box env.
+func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 	claude, _ := Get("claude")
-	if got := claude.ACPSessionConfig(); got["mode"] != "bypassPermissions" || len(got) != 1 {
-		t.Errorf("claude ACPSessionConfig = %v", got)
+	target := Target{Model: "model-x", Effort: "xhigh"}
+	if got := claude.ACPSessionSettings(target); !slices.Equal(got, []ACPSessionSetting{
+		{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"},
+		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x"},
+		{Method: ACPSetConfigOption, ConfigID: "effort", Value: "xhigh"},
+	}) {
+		t.Errorf("claude ACPSessionSettings = %v", got)
 	}
 	wantEnv := []string{"CLAUDE_CONFIG_DIR=/home/node/.claude", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0"}
 	if got := claude.BoxEnv("/home/node"); len(got) != 2 || got[0] != wantEnv[0] || got[1] != wantEnv[1] {
@@ -542,16 +544,26 @@ func TestACPSessionConfigAndBoxEnv(t *testing.T) {
 	// codex redirects its single-writer sqlite state OFF the shared home to a container-local
 	// path, so parallel codex boxes on one account don't collide on the state runtime.
 	codex, _ := Get("codex")
+	if got := codex.ACPSessionSettings(target); !slices.Equal(got, []ACPSessionSetting{
+		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x"},
+		{Method: ACPSetConfigOption, ConfigID: "reasoning_effort", Value: "xhigh"},
+	}) {
+		t.Errorf("codex ACPSessionSettings = %v", got)
+	}
 	if got := codex.BoxEnv("/home/node"); len(got) != 1 || got[0] != "CODEX_SQLITE_HOME=/home/node/.codex-state" {
 		t.Errorf("codex BoxEnv = %v, want [CODEX_SQLITE_HOME=/home/node/.codex-state]", got)
 	}
+	gemini, _ := Get("gemini")
+	if got := gemini.ACPSessionSettings(target); !slices.Equal(got, []ACPSessionSetting{{Method: ACPSetModel, Value: "model-x"}}) {
+		t.Errorf("gemini ACPSessionSettings = %v", got)
+	}
 	for _, n := range Names() {
 		a, _ := Get(n)
-		_ = a.ACPSessionConfig()
+		_ = a.ACPSessionSettings(target)
 		_ = a.BoxEnv("/home/node")
-		if n != "claude" {
-			if cfg := a.ACPSessionConfig(); len(cfg) != 0 {
-				t.Errorf("%s should force no session config, got %v", n, cfg)
+		if n == "grok" {
+			if settings := a.ACPSessionSettings(target); len(settings) != 0 {
+				t.Errorf("grok should force no session settings, got %v", settings)
 			}
 		}
 		if n != "claude" && n != "codex" {

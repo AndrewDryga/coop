@@ -223,9 +223,18 @@ func (codexAgent) ACPRateLimitSignals() []ACPSignal {
 	return []ACPSignal{{Value: "usageLimitExceeded"}}
 }
 
-// ACPSessionConfig: codex-acp exposes no config option coop must force (yolo is
-// enforced protocol-side by the controller's autoReply).
-func (codexAgent) ACPSessionConfig() map[string]string { return nil }
+// ACPSessionSettings uses codex-acp's native config IDs. Model MUST precede
+// reasoning_effort because a model change resets effort to that model's default.
+func (codexAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
+	var settings []ACPSessionSetting
+	if target.Model != "" {
+		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "model", Value: target.Model})
+	}
+	if target.Effort != "" {
+		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "reasoning_effort", Value: target.Effort})
+	}
+	return settings
+}
 
 // BoxEnv points codex's single-writer sqlite state (state_*.sqlite, logs_*, memories_*,
 // goals_* — the "state runtime") at a CONTAINER-LOCAL path off the shared ~/.codex bind

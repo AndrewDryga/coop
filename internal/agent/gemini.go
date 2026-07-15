@@ -178,8 +178,14 @@ func (geminiAgent) ACPRateLimitSignals() []ACPSignal {
 	return []ACPSignal{{Value: "RESOURCE_EXHAUSTED"}}
 }
 
-// ACPSessionConfig: gemini's adapter exposes no config option coop must force.
-func (geminiAgent) ACPSessionConfig() map[string]string { return nil }
+// ACPSessionSettings: Gemini changes models through session/set_model rather than
+// session/set_config_option. Its ACP command also carries the model at launch.
+func (geminiAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
+	if target.Model == "" {
+		return nil
+	}
+	return []ACPSessionSetting{{Method: ACPSetModel, Value: target.Model}}
+}
 
 // BoxEnv: gemini stores everything under its mounted ~/.gemini — nothing extra needed.
 func (geminiAgent) BoxEnv(string) []string { return nil }

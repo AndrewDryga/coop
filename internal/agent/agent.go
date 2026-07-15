@@ -30,6 +30,22 @@ type StreamSpec struct {
 	TrailingArgs int
 }
 
+// ACPSettingMethod is how an adapter changes one setting on an established session.
+type ACPSettingMethod uint8
+
+const (
+	ACPSetConfigOption ACPSettingMethod = iota
+	ACPSetModel
+)
+
+// ACPSessionSetting is one provider-owned, ordered setting Coop applies after every
+// session new/load/recreate. Order is significant when one setting resets another.
+type ACPSessionSetting struct {
+	Method   ACPSettingMethod
+	ConfigID string
+	Value    string
+}
+
 // Agent is everything coop needs to drive one coding agent. To add an agent, write a
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
@@ -124,11 +140,10 @@ type Agent interface {
 	// declared here: stopReason is the ACP-protocol stop-reason field and finishReason
 	// the common upstream-API leak, so no single adapter owns them.
 	ACPRateLimitSignals() []ACPSignal
-	// ACPSessionConfig are per-session config options coop force-sets on this agent's
-	// ACP adapter after a session is (re)established — what the adapter exposes as a
-	// config option that must follow coop's policy (claude's mode=bypassPermissions, so
-	// its toolbar reflects yolo). Re-applied on every restart; nil when nothing is forced.
-	ACPSessionConfig() map[string]string
+	// ACPSessionSettings are provider-owned, ordered settings Coop force-applies after a
+	// session is (re)established. The target is the complete active provider/model/effort
+	// intent. Re-applied on every restart; nil when the adapter uses launch args only.
+	ACPSessionSettings(Target) []ACPSessionSetting
 	// BoxEnv are env vars this agent's CLI needs inside the box (beyond ModelEnv and
 	// credentials), given the box home dir. Exported into every box — a var is inert
 	// where its agent isn't running — so a new agent's env needs no box.Run edit.

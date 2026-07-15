@@ -539,6 +539,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if ctrlModel == "" {
 			ctrlModel = a.cfg.ModelFor(tool)
 		}
+		ctrlEffort := effort
+		if ctrlEffort == "" {
+			ctrlEffort = a.cfg.EffortFor(tool)
+		}
 		// Ports the inner box will publish (.agent/project.yaml serve), reported to the editor once per
 		// session. Deterministic host ports (project.HostPort), so these match what box.Run binds. Only
 		// when egress is open — otherwise nothing publishes, so nothing to announce.
@@ -557,7 +561,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if toolSet {
 			sel.Provider = tool
 		}
-		ctrl := newACPControl(a.cfg, tool, ctrlModel, repo, sel, a.acpPresetNames(repo), serveURLs, isFusion)
+		ctrl := newACPControl(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, isFusion)
 		return a.cmdACPSupervise(inner, ctrl)
 	}
 	a.applyPreset(p, tool)
@@ -775,10 +779,10 @@ func cleanACPChildEnv(env []string) []string {
 }
 
 // bareProviderSwitch reports whether a spawn target is a plain provider switch at default
-// account/model — a bare Target{Provider} — the slow, common case the warm pool covers. An
-// account/model-pinned target or a preset spawns cold (rare; correctness is unaffected).
+// account/model/effort — a bare Target{Provider} — the slow, common case the warm pool covers. A
+// pinned target or preset spawns cold (rare; correctness is unaffected).
 func bareProviderSwitch(t agents.Target, psName string, ok bool) bool {
-	return ok && psName == "" && t.Model == "" && len(t.Accounts) == 0
+	return ok && psName == "" && t.Model == "" && t.Effort == "" && len(t.Accounts) == 0
 }
 
 // spawnBox execs a `coop acp` inner box for the given spawn target and wraps it as an acpproxy.Child

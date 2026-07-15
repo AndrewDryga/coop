@@ -233,10 +233,17 @@ func (claudeAgent) ACPRateLimitSignals() []ACPSignal {
 	return []ACPSignal{{Key: "errorKind", Value: "rate_limit"}}
 }
 
-// ACPSessionConfig: force bypassPermissions so claude's own toolbar reflects coop's
-// yolo (the box is the sandbox) and it skips the per-tool permission round-trips.
-func (claudeAgent) ACPSessionConfig() map[string]string {
-	return map[string]string{"mode": "bypassPermissions"}
+// ACPSessionSettings keeps Claude's live session aligned with Coop's target. Model
+// precedes effort because each model owns its available effort levels.
+func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
+	settings := []ACPSessionSetting{{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"}}
+	if target.Model != "" {
+		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "model", Value: target.Model})
+	}
+	if target.Effort != "" {
+		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "effort", Value: target.Effort})
+	}
+	return settings
 }
 
 // BoxEnv: point $CLAUDE_CONFIG_DIR at the mounted ~/.claude so account + onboarding

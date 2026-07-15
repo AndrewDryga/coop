@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 var coopE2EBinary string
@@ -171,6 +173,100 @@ func setLiveConfig(ctx context.Context, t *testing.T, client *acpClient, session
 	return liveConfigOptions(t, response)
 }
 
+func TestCodexTargetRolloutTruth(t *testing.T) {
+	const (
+		wantModel  = "gpt-5.6-sol"
+		wantEffort = "xhigh"
+	)
+	live := startLiveACP(t, "codex:"+wantModel+"/"+wantEffort)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.client.req(ctx, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	}); err != nil {
+		t.Fatalf("initialize Codex target E2E: %v\nstderr:\n%s", err, live.stderr.String())
+	}
+	response, err := live.client.req(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new Codex target E2E: %v\nstderr:\n%s", err, live.stderr.String())
+	}
+	sessionID := responseSessionID(response)
+	if sessionID == "" {
+		t.Fatalf("session/new returned no session id: %#v", response)
+	}
+	if _, err := live.client.req(ctx, "session/prompt", map[string]any{
+		"sessionId": sessionID,
+		"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only OK."}},
+	}); err != nil {
+		t.Fatalf("Codex target prompt: %v\nstderr:\n%s", err, live.stderr.String())
+	}
+
+	rollouts := filepath.Join(config.Load().ConfigDir, "codex", "acp-sessions", "sessions")
+	model, effort, err := waitForCodexRolloutTarget(ctx, rollouts, sessionID)
+	if err != nil {
+		t.Fatalf("read Codex rollout target for %s: %v", sessionID, err)
+	}
+	if model != wantModel || effort != wantEffort {
+		t.Fatalf("Codex rollout target = %s/%s, want %s/%s", model, effort, wantModel, wantEffort)
+	}
+}
+
+func waitForCodexRolloutTarget(ctx context.Context, root, sessionID string) (string, string, error) {
+	var lastErr error
+	for {
+		var model, effort string
+		walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() || !strings.Contains(info.Name(), sessionID) {
+				return err
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			decoder := json.NewDecoder(file)
+			for {
+				var record struct {
+					Type    string `json:"type"`
+					Payload struct {
+						Model  string `json:"model"`
+						Effort string `json:"effort"`
+					} `json:"payload"`
+				}
+				if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
+					break
+				} else if err != nil {
+					return err
+				}
+				if record.Type == "turn_context" {
+					model, effort = record.Payload.Model, record.Payload.Effort
+					return nil
+				}
+			}
+			return nil
+		})
+		if model != "" || effort != "" {
+			return model, effort, nil
+		}
+		if walkErr != nil {
+			lastErr = walkErr
+		}
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return "", "", fmt.Errorf("%w (last rollout read: %v)", ctx.Err(), lastErr)
+			}
+			return "", "", ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 // TestPresetOwnsSelectorState drives coop's real outer ACP control layer. A direct preset owns the
 // toolbar and ignores persisted plain selector writes; leaving it exposes the normal plain controls.
 func TestPresetOwnsSelectorState(t *testing.T) {
@@ -286,15 +382,19 @@ func TestSuperviseResume(t *testing.T) {
 	// The supervisor should respawn + re-auth; session/new must succeed again while the
 	// new box spins up.
 	resumed := false
+	var lastErr error
 	for i := 0; i < 20 && ctx.Err() == nil; i++ {
-		if err := newSession(ctx, c, cwd); err == nil {
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, 10*time.Second)
+		lastErr = newSession(attemptCtx, c, cwd)
+		cancelAttempt()
+		if lastErr == nil {
 			resumed = true
 			break
 		}
 		time.Sleep(3 * time.Second)
 	}
 	if !resumed {
-		t.Fatal("session/new never succeeded after supervisor reload (resume/auth broke)")
+		t.Fatalf("session/new never succeeded after supervisor reload (last error: %v)\nstderr:\n%s\nwire:\n%s", lastErr, live.stderr.String(), wireDump(c.transcript()))
 	}
 
 	// Cleanup closes stdin; the supervisor owns label-scoped box teardown.

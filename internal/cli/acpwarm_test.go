@@ -67,6 +67,7 @@ func TestBareProviderSwitch(t *testing.T) {
 	}{
 		{"account-pinned", agents.Target{Provider: "codex", Accounts: []string{"work"}}, "", true},
 		{"model-pinned", agents.Target{Provider: "codex", Model: "gpt-5.6-sol"}, "", true},
+		{"effort-pinned", agents.Target{Provider: "codex", Effort: "xhigh"}, "", true},
 		{"preset", agents.Target{Provider: "claude"}, "frontier", true},
 		{"no target", agents.Target{}, "", false},
 	} {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -19,6 +20,28 @@ type fakeChild struct {
 	inR, outR *io.PipeReader
 	inW, outW *io.PipeWriter
 }
+
+type blockingWriteCloser struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingWriteCloser) Write(p []byte) (int, error) {
+	select {
+	case <-w.entered:
+	default:
+		close(w.entered)
+	}
+	<-w.release
+	return len(p), nil
+}
+
+func (*blockingWriteCloser) Close() error { return nil }
+
+type failingWriteCloser struct{ err error }
+
+func (w failingWriteCloser) Write([]byte) (int, error) { return 0, w.err }
+func (failingWriteCloser) Close() error                { return nil }
 
 func newFakeChild() *fakeChild {
 	f := &fakeChild{}
@@ -120,6 +143,245 @@ func writeLine(t *testing.T, w io.Writer, s string) {
 	t.Helper()
 	if _, err := io.WriteString(w, s+"\n"); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+func writeLineAsync(w io.Writer, s string) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(w, s+"\n")
+		done <- err
+	}()
+	return done
+}
+
+func TestProxyTargetSettingsAreAcknowledgementGated(t *testing.T) {
+	modelID, effortID := InjectPrefix+"model", InjectPrefix+"effort"
+	h := newProxyHarness(t, 1, &Hooks{SessionReady: func(sid string) [][]byte {
+		return [][]byte{
+			[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`+"\n", modelID, sid)),
+			[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"effort","value":"xhigh"}}`+"\n", effortID, sid)),
+		}
+	}})
+	c := h.children[0]
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, h.childIn[0])
+	wrote := writeLineAsync(c.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	if line := readLine(t, h.childIn[0]); string(trimQuotes(parse(line).ID)) != modelID {
+		t.Fatalf("first target request = %s, want model", line)
+	}
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	if id := idStr(t, readLine(t, h.clientOut)); id != "2" {
+		t.Fatalf("session/new response id = %q", id)
+	}
+
+	// The editor can prompt as soon as it sees session/new, but the prompt must wait behind both
+	// setting acknowledgements. If it overtakes, the next child frame below exposes the regression.
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	writeLine(t, c.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"configOptions":[]}}`, modelID))
+	if line := readLine(t, h.childIn[0]); string(trimQuotes(parse(line).ID)) != effortID {
+		t.Fatalf("frame after model acknowledgement = %s, want effort before prompt", line)
+	}
+	writeLine(t, c.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"configOptions":[]}}`, effortID))
+	if line := readLine(t, h.childIn[0]); method(t, line) != "session/prompt" || idStr(t, line) != "3" {
+		t.Fatalf("frame after effort acknowledgement = %s, want held prompt", line)
+	}
+	writeLine(t, c.outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	readLine(t, h.clientOut)
+	_ = h.shutdown()
+}
+
+func TestProxyTargetSettingFailureBlocksPrompt(t *testing.T) {
+	modelID, effortID := InjectPrefix+"model", InjectPrefix+"effort"
+	hooks := &Hooks{
+		SessionReady: func(sid string) [][]byte {
+			return [][]byte{
+				[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"bad"}}`+"\n", modelID, sid)),
+				[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"effort","value":"xhigh"}}`+"\n", effortID, sid)),
+			}
+		},
+		InjectedResponse: func(request, response []byte) []byte {
+			if len(parse(response).Error) == 0 {
+				return nil
+			}
+			return sessionNoticeLine(sessionID(parse(request).Params), "target rejected")
+		},
+	}
+	h := newProxyHarness(t, 1, hooks)
+	c := h.children[0]
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, h.childIn[0])
+	wrote := writeLineAsync(c.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	readLine(t, h.childIn[0]) // model request
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	readLine(t, h.clientOut) // session/new response
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	writeLine(t, c.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"error":{"code":-32602,"message":"unsupported model"}}`, modelID))
+	first, second := readLine(t, h.clientOut), readLine(t, h.clientOut)
+	joined := string(first) + string(second)
+	if !strings.Contains(joined, "target rejected") || !strings.Contains(joined, `"sessionId":"S1"`) ||
+		!strings.Contains(joined, `"id":3`) || !strings.Contains(joined, "ACP target settings failed") {
+		t.Fatalf("setting notice and held-prompt failure were incomplete:\n%s", joined)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	if response := readLine(t, h.clientOut); idStr(t, response) != "4" || !strings.Contains(string(response), "unsupported model") {
+		t.Fatalf("future prompt must stay blocked after target failure: %s", response)
+	}
+	_ = h.shutdown()
+}
+
+func TestProxyTargetSettingTimeoutBlocksPrompt(t *testing.T) {
+	original := forceReplyTimeout
+	forceReplyTimeout = 50 * time.Millisecond
+	defer func() { forceReplyTimeout = original }()
+	id := InjectPrefix + "timeout"
+	h := newProxyHarness(t, 1, &Hooks{SessionReady: func(sid string) [][]byte {
+		return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`+"\n", id, sid))}
+	}})
+	c := h.children[0]
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, h.childIn[0])
+	wrote := writeLineAsync(c.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1"}}`)
+	readLine(t, h.childIn[0]) // setting request, intentionally never answered
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	readLine(t, h.clientOut)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	if response := readLine(t, h.clientOut); idStr(t, response) != "3" || !strings.Contains(string(response), "timed out") {
+		t.Fatalf("timed-out setting did not fail the held prompt: %s", response)
+	}
+	_ = h.shutdown()
+}
+
+func TestProxyTargetSettingWriteFailureBlocksPrompt(t *testing.T) {
+	var out bytes.Buffer
+	id := InjectPrefix + "write"
+	p := &proxy{
+		out:   &out,
+		child: &Child{In: failingWriteCloser{err: errors.New("closed input")}},
+		hooks: &Hooks{SessionReady: func(sid string) [][]byte {
+			return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`, id, sid))}
+		}},
+		sessions:    map[string]*sess{"S1": {adapterID: "S1"}},
+		byAdapter:   map[string]string{},
+		newReqs:     map[string]json.RawMessage{},
+		loadReqs:    map[string]string{},
+		pending:     map[string]bool{},
+		injected:    map[string][]byte{},
+		forceByID:   map[string]*forceChain{},
+		forceBySess: map[string]*forceChain{},
+		forceFailed: map[string]string{},
+	}
+	p.forceSession("S1")
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}` + "\n"))
+	if got := out.String(); !strings.Contains(got, `"id":4`) || !strings.Contains(got, "write failed: closed input") {
+		t.Fatalf("setting write failure did not block the prompt: %s", got)
+	}
+}
+
+func TestProxyReplayPublishesChildWithTargetGate(t *testing.T) {
+	var out bytes.Buffer
+	writer := &blockingWriteCloser{entered: make(chan struct{}), release: make(chan struct{})}
+	c := &Child{In: writer, Stop: func() {}}
+	id := InjectPrefix + "replay"
+	p := &proxy{
+		out:         &out,
+		child:       &Child{In: failingWriteCloser{err: errors.New("old")}},
+		sessions:    map[string]*sess{"S1": {adapterID: "N2"}},
+		byAdapter:   map[string]string{"N2": "S1"},
+		newReqs:     map[string]json.RawMessage{},
+		loadReqs:    map[string]string{},
+		pending:     map[string]bool{},
+		injected:    map[string][]byte{},
+		forceByID:   map[string]*forceChain{},
+		forceBySess: map[string]*forceChain{},
+		forceFailed: map[string]string{},
+	}
+	request := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":"N2","configId":"model","value":"m"}}`+"\n", id))
+	done := make(chan struct{})
+	go func() {
+		p.swapChild(c, nil, map[string][][]byte{"N2": {request}})
+		close(done)
+	}()
+	<-writer.entered // child is published and its first setting write is blocked
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}` + "\n"))
+	p.mu.Lock()
+	held := len(p.forceBySess["N2"].held)
+	p.mu.Unlock()
+	if held != 1 {
+		t.Fatalf("prompt raced replay publication instead of entering the preinstalled gate (held=%d)", held)
+	}
+	close(writer.release)
+	<-done
+	p.resetForceState()
+}
+
+func TestProxyInjectedFailureNoticeRemapsAdapterSession(t *testing.T) {
+	var out bytes.Buffer
+	id := InjectPrefix + "remap"
+	request := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":"N2","configId":"model","value":"bad"}}`, id))
+	p := &proxy{
+		out:         &out,
+		hooks:       &Hooks{InjectedResponse: func([]byte, []byte) []byte { return sessionNoticeLine("N2", "rejected") }},
+		sessions:    map[string]*sess{"S1": {adapterID: "N2"}},
+		byAdapter:   map[string]string{"N2": "S1"},
+		injected:    map[string][]byte{id: request},
+		forceByID:   map[string]*forceChain{},
+		forceBySess: map[string]*forceChain{},
+		forceFailed: map[string]string{},
+	}
+	p.handleInjectedResponse([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"error":{"code":-32602,"message":"bad"}}`, id)))
+	if got := out.String(); !strings.Contains(got, `"sessionId":"S1"`) || strings.Contains(got, `"sessionId":"N2"`) {
+		t.Fatalf("injected failure notice was not remapped to the editor session: %s", got)
+	}
+	before := out.Len()
+	p.handleInjectedResponse([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"error":{"code":-32602,"message":"late"}}`, id)))
+	if out.Len() != before {
+		t.Fatalf("stale injected response produced a second notice: %s", out.String()[before:])
+	}
+}
+
+func TestProxySessionLoadAppliesTargetBeforeReturning(t *testing.T) {
+	id := InjectPrefix + "load-model"
+	h := newProxyHarness(t, 1, &Hooks{SessionReady: func(sid string) [][]byte {
+		return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`+"\n", id, sid))}
+	}})
+	c := h.children[0]
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":7,"method":"session/load","params":{"cwd":"/w","sessionId":"S1"}}`)
+	readLine(t, h.childIn[0])
+	wrote := writeLineAsync(c.outW, `{"jsonrpc":"2.0","id":7,"result":{"configOptions":[]}}`)
+	if setting := readLine(t, h.childIn[0]); string(trimQuotes(parse(setting).ID)) != id || !strings.Contains(string(setting), `"sessionId":"S1"`) {
+		t.Fatalf("session/load target setting = %s", setting)
+	}
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	if response := readLine(t, h.clientOut); idStr(t, response) != "7" {
+		t.Fatalf("session/load response = %s", response)
+	}
+	writeLine(t, c.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{}}`, id))
+	_ = h.shutdown()
+}
+
+func TestProxyRejectsRequestsDuringReloadHandoff(t *testing.T) {
+	var out bytes.Buffer
+	p := &proxy{
+		out:      &out,
+		pending:  map[string]bool{"9": true},
+		newReqs:  map[string]json.RawMessage{"9": json.RawMessage(`{"cwd":"/w"}`)},
+		loadReqs: map[string]string{},
+	}
+	p.beginReload()
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":10,"method":"session/new","params":{"cwd":"/w"}}` + "\n"))
+	if got := out.String(); !strings.Contains(got, `"id":9`) || !strings.Contains(got, `"id":10`) || strings.Count(got, "agent restarted, please retry") != 2 {
+		t.Fatalf("request raced with reload without a retry response: %s", got)
 	}
 }
 
@@ -708,7 +970,7 @@ func TestSwapChildPublishesAndFailsAtomically(t *testing.T) {
 	}
 	fc := newFakeChild()
 	c := fc.child()
-	p.swapChild(c, nil)
+	p.swapChild(c, nil, nil)
 
 	if p.child != c {
 		t.Error("swapChild did not publish the new child as live")

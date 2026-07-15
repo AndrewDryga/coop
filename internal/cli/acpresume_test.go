@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 // TestACPResumeStateRoundTrip: the SIGHUP handoff JSON-round-trips through a 0600 temp file that's
@@ -15,7 +16,13 @@ func TestACPResumeStateRoundTrip(t *testing.T) {
 			Setup:    [][]byte{[]byte(`{"method":"initialize"}`)},
 			Sessions: []acpproxy.SessionSnap{{EditorID: "S1", Turned: true}},
 		},
-		Ctrl: ctrlSnapshot{Selection: acpSelection{Provider: "codex"}, Lead: "codex", Model: "m", LeadUsesSetModel: true},
+		Ctrl: ctrlSnapshot{
+			Selection:        acpSelection{Provider: "codex"},
+			Lead:             "codex",
+			Model:            "m",
+			Target:           agents.Target{Provider: "codex", Model: "m", Effort: "xhigh"},
+			LeadUsesSetModel: true,
+		},
 	}
 	path, err := writeResumeState(st)
 	if err != nil {
@@ -28,7 +35,7 @@ func TestACPResumeStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Ctrl.Lead != "codex" || !got.Ctrl.LeadUsesSetModel || got.Ctrl.Selection.Provider != "codex" {
+	if got.Ctrl.Lead != "codex" || got.Ctrl.Target.Effort != "xhigh" || !got.Ctrl.LeadUsesSetModel || got.Ctrl.Selection.Provider != "codex" {
 		t.Errorf("ctrl round-trip mismatch: %+v", got.Ctrl)
 	}
 	if len(got.Proxy.Sessions) != 1 || got.Proxy.Sessions[0].EditorID != "S1" || !got.Proxy.Sessions[0].Turned {

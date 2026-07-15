@@ -52,10 +52,10 @@ tools-test: ## Run standard-library tests for repository maintenance tools
 check: lint test docs-check casts-check tools-test ## What CI runs: lint + tests + docs/cast freshness
 
 acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
-	@go test -run '^TestScriptedACPDriver$$' -count=1 -v ./internal/acpproxy/
+	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/
 
 acp-e2e: ## Real ACP adapter e2e (isolated binary; needs Docker + a built box + signed-in providers)
-	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState)$$' -count=1 -v ./internal/acpproxy/
+	@go test -tags acpe2e -run 'Test(SuperviseResume|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState|CodexTargetRolloutTruth)$$' -count=1 -v ./internal/acpproxy/
 
 review-writes-e2e: ## Review write-policy e2e (needs Docker; pulls a small test image once)
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21

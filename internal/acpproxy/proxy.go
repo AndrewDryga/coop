@@ -58,6 +58,13 @@ type Hooks struct {
 	// their responses are swallowed (the editor never sent them). Injected requests must use IDs from
 	// InjectPrefix so the proxy can recognize and swallow their responses.
 	SessionReady func(sessionID string) [][]byte
+	// InjectedResponse observes a response together with the synthetic request that caused it before
+	// the proxy swallows the response. It may return an editor-facing notification, used to surface a
+	// rejected target setting instead of silently running the wrong model or effort.
+	InjectedResponse func(request, response []byte) []byte
+	// ChildReset tells the control layer that the current child generation ended, so request-scoped
+	// state that cannot survive a restart can be discarded.
+	ChildReset func()
 	// FromEditor inspects an editor→agent line before it's forwarded. handled=true → the proxy does
 	// NOT forward the original line to the adapter (coop handled it); resp (if non-nil) is written back
 	// to the editor; toAdapter (if non-nil) is written to the current adapter INSTEAD of the original
@@ -116,6 +123,7 @@ const (
 var (
 	replayStartupGrace = 5 * time.Minute
 	replayIdleTimeout  = 60 * time.Second
+	forceReplyTimeout  = 30 * time.Second
 )
 
 // errReplayTimeout means a restarted child stopped responding during replay (a hang, not a
@@ -167,12 +175,17 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 // byte-identical to the pre-reload Run.
 func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks, opts RunOpts) error {
 	p := &proxy{
-		out:       clientOut,
-		hooks:     hooks,
-		sessions:  map[string]*sess{},
-		byAdapter: map[string]string{},
-		newReqs:   map[string]json.RawMessage{},
-		pending:   map[string]bool{},
+		out:         clientOut,
+		hooks:       hooks,
+		sessions:    map[string]*sess{},
+		byAdapter:   map[string]string{},
+		newReqs:     map[string]json.RawMessage{},
+		loadReqs:    map[string]string{},
+		pending:     map[string]bool{},
+		injected:    map[string][]byte{},
+		forceByID:   map[string]*forceChain{},
+		forceBySess: map[string]*forceChain{},
+		forceFailed: map[string]string{},
 	}
 	// Resume: seed the restored session state before the first child, then replay onto it below.
 	if opts.Resume != nil {
@@ -230,13 +243,11 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	// Reload (SIGHUP re-exec): a receive on opts.Reload snapshots + stops the child so pumpChild
 	// unblocks, and the loop returns a reloadError carrying the snapshot. A nil channel never fires,
 	// so a normal run is unaffected.
-	var reloading atomic.Bool
 	if opts.Reload != nil {
 		go func() {
 			select {
 			case <-opts.Reload:
-				reloading.Store(true)
-				p.shutdownChild()
+				p.beginReload()
 			case <-ctx.Done():
 			}
 		}()
@@ -246,9 +257,10 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	for {
 		start := time.Now()
 		p.pumpChild(reader) // returns when this child's Out closes
+		p.resetForceState()
 		// A reload was requested: hand the snapshot back to the caller (which re-execs the binary),
 		// NOT counting it as a failure and NOT failing pending — the editor's transport survives.
-		if reloading.Load() {
+		if p.reloading.Load() {
 			snap := p.snapshot()
 			child.Stop()
 			return &reloadError{Snap: snap}
@@ -284,7 +296,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		if err != nil {
 			// A SIGHUP racing a failed respawn: re-exec (carry the sessions forward) rather than exit
 			// on the editor — the reload is the intent, the respawn failure is incidental.
-			if reloading.Load() {
+			if p.reloading.Load() {
 				return &reloadError{Snap: p.snapshot()}
 			}
 			p.failAllPending()
@@ -296,7 +308,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		// editor isn't frozen waiting — better a clean "server exited" than an infinite hang.
 		if err := p.replay(next, nr); err != nil {
 			next.Stop()
-			if reloading.Load() { // same race, one step later — prefer the reload over a give-up
+			if p.reloading.Load() { // same race, one step later — prefer the reload over a give-up
 				return &reloadError{Snap: p.snapshot()}
 			}
 			p.failAllPending()
@@ -317,6 +329,18 @@ type sess struct {
 	// transcript exists and it can be session/load-ed back after a restart; false = re-create instead
 }
 
+// forceChain serializes provider-owned session settings. JSON-RPC requests may execute
+// concurrently, so writing model then effort is insufficient when changing model resets effort;
+// the next request is written only after the prior response succeeds. Prompts wait behind the chain.
+type forceChain struct {
+	session  string
+	requests [][]byte
+	next     int
+	activeID string
+	held     [][]byte
+	timer    *time.Timer
+}
+
 type proxy struct {
 	out io.Writer
 
@@ -327,10 +351,16 @@ type proxy struct {
 	sessions     map[string]*sess           // editor sessionId -> session state
 	byAdapter    map[string]string          // adapter sessionId -> editor sessionId, only for re-created (diverged) sessions
 	newReqs      map[string]json.RawMessage // pending session/new request id -> its params
+	loadReqs     map[string]string          // pending session/load request id -> requested session id
 	pending      map[string]bool            // editor request id -> awaiting a response
+	injected     map[string][]byte          // synthetic request id -> request, for response diagnostics
+	forceByID    map[string]*forceChain     // active setting request id -> its ordered chain
+	forceBySess  map[string]*forceChain     // adapter session id -> active setting chain
+	forceFailed  map[string]string          // adapter session id -> setting failure; prompts fail loudly
 
 	hooks       *Hooks      // coop's control layer (nil → pure pass-through)
 	intentional atomic.Bool // set before a coop-driven restart so the loop doesn't count it as a failure
+	reloading   atomic.Bool // reject requests after the reload boundary instead of losing them to exec
 }
 
 // Snapshot is the proxy's re-establishable session state, carried across a supervisor re-exec (a
@@ -393,11 +423,41 @@ func (p *proxy) shutdownChild() {
 	}
 }
 
+// beginReload closes request admission and fails every already-admitted request under the same
+// lock, then stops the child. Nothing can cross the snapshot/exec boundary without a response.
+func (p *proxy) beginReload() {
+	p.mu.Lock()
+	p.reloading.Store(true)
+	ids := make([]string, 0, len(p.pending))
+	for id := range p.pending {
+		ids = append(ids, id)
+		delete(p.newReqs, id)
+		delete(p.loadReqs, id)
+	}
+	p.pending = map[string]bool{}
+	c := p.child
+	p.mu.Unlock()
+	for _, id := range ids {
+		_, _ = p.out.Write(errorResponse(id))
+	}
+	if c != nil {
+		c.Stop()
+	}
+}
+
 // fromClient records replay-relevant state, then forwards the line to the current
 // child. A write to a momentarily-dead child during a swap is dropped; that request
 // is covered by failAllPending on the swap.
 func (p *proxy) fromClient(line []byte) {
 	traceLine("editor→box", line)
+	original := parse(line)
+	if p.reloading.Load() && original.isRequest() {
+		_, _ = p.out.Write(errorResponse(string(original.ID)))
+		return
+	}
+	if p.gatePrompt(line) {
+		return
+	}
 	// coop's control layer gets first look: it may handle an editor request itself (a coop-owned
 	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
 	// to the editor directly, and optionally restarting the box on a new credential/preset.
@@ -405,21 +465,27 @@ func (p *proxy) fromClient(line []byte) {
 		handled, resp, toAdapter, restart := p.hooks.FromEditor(line)
 		if handled {
 			Trace("coop handled the editor line itself (restart=%v)", restart)
-			if len(resp) > 0 {
-				traceLine("box→editor(coop)", resp)
-				_, _ = p.out.Write(resp)
-			}
 			// A translated adapter request (e.g. a synthesized model set → session/set_model). Write it
 			// to the CURRENT child; a write to a momentarily-dead child during a swap is dropped, exactly
 			// like fromClient's forward.
 			if len(toAdapter) > 0 {
 				p.mu.Lock()
+				if p.reloading.Load() {
+					p.mu.Unlock()
+					_, _ = p.out.Write(errorResponse(string(original.ID)))
+					return
+				}
 				c := p.child
+				p.trackInjectedLocked(toAdapter)
 				p.mu.Unlock()
 				if c != nil {
 					traceLine("editor→box(coop)", toAdapter)
 					_, _ = c.In.Write(toAdapter)
 				}
+			}
+			if len(resp) > 0 {
+				traceLine("box→editor(coop)", resp)
+				_, _ = p.out.Write(resp)
 			}
 			if restart {
 				p.triggerRestart()
@@ -437,6 +503,11 @@ func (p *proxy) fromClient(line []byte) {
 	h := parse(line)
 	sid := sessionID(h.Params) // the editor's session id, "" for non-session methods
 	p.mu.Lock()
+	if p.reloading.Load() && h.isRequest() {
+		p.mu.Unlock()
+		_, _ = p.out.Write(errorResponse(string(h.ID)))
+		return
+	}
 	if h.isRequest() {
 		switch h.Method {
 		case "initialize", "authenticate":
@@ -450,6 +521,7 @@ func (p *proxy) fromClient(line []byte) {
 			// A resumed session already has a transcript, so it's reloadable from the start.
 			if sid != "" {
 				p.sessions[sid] = &sess{params: h.Params, adapterID: sid, turned: true}
+				p.loadReqs[string(h.ID)] = sid
 			}
 		case "session/prompt":
 			// The first prompt starts a turn → a transcript now exists, so a restart can
@@ -505,17 +577,20 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 		if h.isResponse() {
 			// Swallow responses to coop's injected force-sets — the editor never sent them.
 			if strings.HasPrefix(string(trimQuotes(h.ID)), InjectPrefix) {
+				p.handleInjectedResponse(line)
 				return nil
 			}
 			id := string(h.ID)
 			p.mu.Lock()
 			newParams, wasNew := p.newReqs[id]
+			loadSID, wasLoad := p.loadReqs[id]
 			if wasNew {
 				delete(p.newReqs, id)
 				if sid := sessionID(h.Result); sid != "" {
 					p.sessions[sid] = &sess{params: newParams, adapterID: sid}
 				}
 			}
+			delete(p.loadReqs, id)
 			delete(p.pending, id)
 			p.mu.Unlock()
 			// A fresh session/new just completed: force coop's per-session state (yolo, model) on the
@@ -524,6 +599,9 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 				if sid := sessionID(h.Result); sid != "" {
 					p.forceSession(sid)
 				}
+			}
+			if wasLoad && (len(h.Error) == 0 || string(h.Error) == "null") {
+				p.forceSession(loadSID)
 			}
 		}
 		out, restart := line, false
@@ -543,20 +621,202 @@ func (p *proxy) pumpChild(br *bufio.Reader) {
 	})
 }
 
-// forceSession injects coop's per-session force-sets (yolo mode, coop's model) to the CURRENT
-// adapter after a session is established. Their responses are swallowed in pumpChild (InjectPrefix).
+// forceSession starts an acknowledgement-gated settings chain for one established session. The
+// chain is serialized because model changes can reset effort, and prompts wait until it completes.
 func (p *proxy) forceSession(sid string) {
 	if p.hooks == nil || p.hooks.SessionReady == nil {
 		return
 	}
+	requests := p.hooks.SessionReady(sid)
 	p.mu.Lock()
-	c := p.child
+	msg, c, held := p.installForceLocked(sid, requests)
 	p.mu.Unlock()
-	if c == nil {
+	for _, prompt := range held {
+		p.fromClient(prompt)
+	}
+	p.writeForce(c, msg)
+}
+
+// installForceLocked installs a gate before any setting is written. p.mu must be held; callers may
+// therefore install replay gates atomically with publishing the new child.
+func (p *proxy) installForceLocked(sid string, requests [][]byte) (msg []byte, c *Child, held [][]byte) {
+	delete(p.forceFailed, sid)
+	if old := p.forceBySess[sid]; old != nil {
+		if old.timer != nil {
+			old.timer.Stop()
+		}
+		delete(p.forceByID, old.activeID)
+		delete(p.injected, old.activeID)
+		held = append(held, old.held...)
+	}
+	if len(requests) == 0 {
+		delete(p.forceBySess, sid)
+		return nil, p.child, held
+	}
+	chain := &forceChain{session: sid, requests: requests, held: held}
+	p.forceBySess[sid] = chain
+	msg, c = p.nextForceLocked(chain)
+	return msg, c, nil
+}
+
+// gatePrompt holds an editor prompt while its adapter session is still applying target settings,
+// or rejects it after a setting failure. Held prompts have not entered normal bookkeeping yet.
+func (p *proxy) gatePrompt(line []byte) bool {
+	h := parse(line)
+	if h.Method != "session/prompt" || len(h.ID) == 0 {
+		return false
+	}
+	editorID := sessionID(h.Params)
+	if editorID == "" {
+		return false
+	}
+	p.mu.Lock()
+	adapterID := editorID
+	if s := p.sessions[editorID]; s != nil && s.adapterID != "" {
+		adapterID = s.adapterID
+	}
+	if chain := p.forceBySess[adapterID]; chain != nil {
+		chain.held = append(chain.held, clone(line))
+		p.mu.Unlock()
+		Trace("holding prompt for session %s until ACP target settings apply", editorID)
+		return true
+	}
+	failure := p.forceFailed[adapterID]
+	p.mu.Unlock()
+	if failure == "" {
+		return false
+	}
+	_, _ = p.out.Write(targetErrorResponse(string(h.ID), failure))
+	return true
+}
+
+// nextForceLocked registers and returns the next request in chain. p.mu must be held.
+func (p *proxy) nextForceLocked(chain *forceChain) ([]byte, *Child) {
+	if chain.next >= len(chain.requests) {
+		return nil, p.child
+	}
+	msg := chain.requests[chain.next]
+	chain.next++
+	id := string(trimQuotes(parse(msg).ID))
+	chain.activeID = id
+	p.forceByID[id] = chain
+	p.injected[id] = clone(msg)
+	timeout := forceReplyTimeout
+	chain.timer = time.AfterFunc(timeout, func() {
+		p.failForceRequest(id, fmt.Sprintf("timed out after %s", timeout))
+	})
+	return msg, p.child
+}
+
+func (p *proxy) writeForce(c *Child, msg []byte) {
+	if len(msg) == 0 {
 		return
 	}
-	for _, m := range p.hooks.SessionReady(sid) {
-		_, _ = c.In.Write(m)
+	id := string(trimQuotes(parse(msg).ID))
+	if c == nil {
+		p.failForceRequest(id, "adapter is unavailable")
+		return
+	}
+	if _, err := c.In.Write(msg); err != nil {
+		p.failForceRequest(id, "write failed: "+err.Error())
+	}
+}
+
+func (p *proxy) failForceRequest(id, detail string) {
+	line, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": -32001, "message": "ACP target setting " + detail},
+	})
+	p.handleInjectedResponse(append(line, '\n'))
+}
+
+// trackInjectedLocked remembers a translated synthetic request so a rejected response can identify
+// the setting that failed. p.mu must be held.
+func (p *proxy) trackInjectedLocked(line []byte) {
+	h := parse(line)
+	id := string(trimQuotes(h.ID))
+	if strings.HasPrefix(id, InjectPrefix) {
+		p.injected[id] = clone(line)
+	}
+}
+
+// handleInjectedResponse advances a settings chain only after success. A failure leaves the session
+// blocked and fails held/future prompts loudly; a successful final response releases held prompts.
+func (p *proxy) handleInjectedResponse(line []byte) {
+	h := parse(line)
+	id := string(trimQuotes(h.ID))
+	p.mu.Lock()
+	request := p.injected[id]
+	delete(p.injected, id)
+	chain := p.forceByID[id]
+	delete(p.forceByID, id)
+	var next []byte
+	var c *Child
+	var held [][]byte
+	failure := ""
+	if chain != nil && chain.activeID == id {
+		if chain.timer != nil {
+			chain.timer.Stop()
+			chain.timer = nil
+		}
+		chain.activeID = ""
+		if len(h.Error) > 0 && string(h.Error) != "null" {
+			failure = errorMessage(h.Error)
+			p.forceFailed[chain.session] = failure
+			delete(p.forceBySess, chain.session)
+			held = append(held, chain.held...)
+		} else if chain.next < len(chain.requests) {
+			next, c = p.nextForceLocked(chain)
+		} else {
+			delete(p.forceBySess, chain.session)
+			held = append(held, chain.held...)
+		}
+	}
+	p.mu.Unlock()
+
+	if len(request) > 0 && p.hooks != nil && p.hooks.InjectedResponse != nil {
+		if notice := p.hooks.InjectedResponse(request, line); len(notice) > 0 {
+			notice = p.remapToEditor(notice)
+			_, _ = p.out.Write(notice)
+		}
+	}
+	if failure != "" {
+		for _, prompt := range held {
+			_, _ = p.out.Write(targetErrorResponse(string(parse(prompt).ID), failure))
+		}
+		return
+	}
+	if len(next) > 0 {
+		p.writeForce(c, next)
+		return
+	}
+	for _, prompt := range held {
+		p.fromClient(prompt)
+	}
+}
+
+// resetForceState drops one child's synthetic request state. Prompts held behind a child that died
+// receive the normal retry error rather than hanging outside pending bookkeeping.
+func (p *proxy) resetForceState() {
+	p.mu.Lock()
+	var held [][]byte
+	for _, chain := range p.forceBySess {
+		if chain.timer != nil {
+			chain.timer.Stop()
+		}
+		held = append(held, chain.held...)
+	}
+	p.injected = map[string][]byte{}
+	p.forceByID = map[string]*forceChain{}
+	p.forceBySess = map[string]*forceChain{}
+	p.forceFailed = map[string]string{}
+	p.mu.Unlock()
+	if p.hooks != nil && p.hooks.ChildReset != nil {
+		p.hooks.ChildReset()
+	}
+	for _, prompt := range held {
+		_, _ = p.out.Write(errorResponse(string(parse(prompt).ID)))
 	}
 }
 
@@ -685,6 +945,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 		options  json.RawMessage
 	}
 	var configUpdates []configUpdate
+	ready := map[string]bool{} // editor sessions successfully established on this child
 	// A session whose re-create FAILED is dead on the new box — collect it and tell the thread
 	// after the swap (sessionNoticeLine), so the failure is visible where the user is looking.
 	type replayFailure struct {
@@ -715,6 +976,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 						// translate from here on. If even session/new failed, the box is broken.
 						if newID := sessionID(h.Result); newID != "" {
 							p.remapSession(eid, newID)
+							ready[eid] = true
 							configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
 							// A TURNED session landed here only because its conversation didn't carry —
 							// tell coop, so it can inject its best-effort history preamble.
@@ -735,6 +997,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 							Trace("replay: session %s did NOT reload — re-creating: %s", eid, h.Error)
 							recreate = append(recreate, eid)
 						} else {
+							ready[eid] = true
 							configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result)})
 						}
 					}
@@ -774,22 +1037,6 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 			return err
 		}
 	}
-	// Re-force coop's per-session state (yolo, model) on the restarted box for each restored session,
-	// keyed by its CURRENT box id (a re-created session now lives under a new one). The fresh adapter
-	// reset it; responses are swallowed in pumpChild (InjectPrefix).
-	if p.hooks != nil && p.hooks.SessionReady != nil {
-		p.mu.Lock()
-		aids := make([]string, 0, len(p.sessions))
-		for _, s := range p.sessions {
-			aids = append(aids, s.adapterID)
-		}
-		p.mu.Unlock()
-		for _, aid := range aids {
-			for _, m := range p.hooks.SessionReady(aid) {
-				_, _ = c.In.Write(m)
-			}
-		}
-	}
 	// A session may have a prompt to re-send transparently — a turn that failed on the old box (a
 	// rate-limit rotation/wait) or was in flight when a manual switch killed it. Collect the resends
 	// BEFORE the swap so swapChild can spare their still-pending request ids from the fail: a
@@ -814,7 +1061,21 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 			}
 		}
 	}
-	p.swapChild(c, keep)
+	forces := map[string][][]byte{}
+	if p.hooks != nil && p.hooks.SessionReady != nil {
+		for eid := range ready {
+			p.mu.Lock()
+			aid := ""
+			if s := p.sessions[eid]; s != nil {
+				aid = s.adapterID
+			}
+			p.mu.Unlock()
+			if aid != "" {
+				forces[aid] = p.hooks.SessionReady(aid)
+			}
+		}
+	}
+	p.swapChild(c, keep, forces)
 	// Tell the editor what the restarted box's sessions ACTUALLY look like (the model in force after a
 	// credential/preset switch, say) — it never saw the load/new results. Synthesized on the editor
 	// side of the boundary with the editor's ids, and run through ToEditor so coop's toolbar rewrite
@@ -865,7 +1126,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 // switch): they get the resend's real response instead of an error, so the editor's turn completes
 // on the new box. The resend re-registers them as pending via fromClient right after the swap —
 // before the new child's pump starts, so no response can race the gap.
-func (p *proxy) swapChild(c *Child, keep map[string]bool) {
+func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]byte) {
 	p.mu.Lock()
 	ids := make([]string, 0, len(p.pending))
 	for id := range p.pending {
@@ -874,9 +1135,19 @@ func (p *proxy) swapChild(c *Child, keep map[string]bool) {
 		}
 		ids = append(ids, id)
 		delete(p.newReqs, id) // a session/new in flight at the swap never gets a response
+		delete(p.loadReqs, id)
 	}
 	p.pending = map[string]bool{}
 	p.child = c
+	var forceWrites [][]byte
+	var released [][]byte
+	for sid, requests := range forces {
+		msg, _, held := p.installForceLocked(sid, requests)
+		if len(msg) > 0 {
+			forceWrites = append(forceWrites, msg)
+		}
+		released = append(released, held...)
+	}
 	down := p.shuttingDown
 	p.mu.Unlock()
 	// The editor disconnected while replay was in flight: shutdownChild already stopped the OLD child,
@@ -887,6 +1158,14 @@ func (p *proxy) swapChild(c *Child, keep map[string]bool) {
 	}
 	for _, id := range ids {
 		_, _ = p.out.Write(errorResponse(id))
+	}
+	if !down {
+		for _, msg := range forceWrites {
+			p.writeForce(c, msg)
+		}
+		for _, prompt := range released {
+			p.fromClient(prompt)
+		}
 	}
 }
 
@@ -921,6 +1200,7 @@ func (p *proxy) failAllPending() {
 		// A session/new in flight when the child died will never get a response — drop its
 		// newReqs entry too, or it leaks (and could wrongly bind a sessionId on a stale id).
 		delete(p.newReqs, id)
+		delete(p.loadReqs, id)
 	}
 	p.pending = map[string]bool{}
 	p.mu.Unlock()
@@ -1114,6 +1394,11 @@ func loadRequest(id, sid string, params json.RawMessage) []byte {
 
 func errorResponse(id string) []byte {
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"coop: agent restarted, please retry"}}` + "\n")
+}
+
+func targetErrorResponse(id, detail string) []byte {
+	message, _ := json.Marshal("coop: ACP target settings failed: " + detail + "; switch the target or retry the session")
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32001,"message":` + string(message) + `}}` + "\n")
 }
 
 func trimQuotes(raw json.RawMessage) []byte {
