@@ -77,6 +77,10 @@ type Hooks struct {
 	// normal path — same bookkeeping, pending tracking, and response routing as the original line —
 	// so it must keep the editor's request id (e.g. a history preamble prepended to a prompt).
 	FromEditor func(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool)
+	// PromptForwarded observes a session/prompt only after it has cleared target-setting gating and
+	// reload admission and entered pending bookkeeping. synthetic distinguishes a replay resume from
+	// a real editor prompt. It is the safe point for request correlation and assistant-turn ownership.
+	PromptForwarded func(line []byte, synthetic bool)
 	// AutoReply lets coop answer an agent→editor REQUEST itself instead of bothering the editor — the
 	// yolo mechanism: coop approves every session/request_permission (the box is the sandbox) so no
 	// provider ever shows a permission prompt, uniformly, whatever each adapter's own settings are.
@@ -85,10 +89,10 @@ type Hooks struct {
 	AutoReply func(line []byte) (reply []byte, forward bool)
 	// ResumePrompt is called once per live session right after a restart's replay re-establishes it, so
 	// coop can transparently re-send a prompt that failed on the old box (the turn that tripped a
-	// rate-limit rotation / wait). A non-nil return is fed through the normal editor→box path — remapped
-	// to the box id, registered as pending, its response forwarded to the editor — so the turn the
-	// editor still shows as running completes on the new box. Return nil for a session with nothing to
-	// resume. The returned line MUST carry the editor's session id (like a real editor prompt).
+	// rate-limit rotation / wait). A non-nil return is fed through the common box path — remapped to
+	// the box id, registered as pending, and its response forwarded to the editor — but is NOT passed
+	// through FromEditor again: it is synthetic traffic, not a second user prompt. Return nil for a
+	// session with nothing to resume. The returned line MUST carry the editor's session id.
 	ResumePrompt func(sessionID string) []byte
 	// SessionRecreated is called (before ResumePrompt) when a session that HAD a conversation could
 	// not be reloaded after a restart and was re-created fresh instead — a provider switch (the new
@@ -337,8 +341,23 @@ type forceChain struct {
 	requests [][]byte
 	next     int
 	activeID string
-	held     [][]byte
+	held     []clientLine
 	timer    *time.Timer
+}
+
+type clientOrigin uint8
+
+const (
+	originEditor clientOrigin = iota
+	originSynthetic
+)
+
+// clientLine retains whether a prompt really came from the editor while it waits behind a target
+// settings chain. Releasing a synthetic resume through FromEditor would record it as a second user
+// message and recursively wrap its already-carried context.
+type clientLine struct {
+	line   []byte
+	origin clientOrigin
 }
 
 type proxy struct {
@@ -449,19 +468,30 @@ func (p *proxy) beginReload() {
 // child. A write to a momentarily-dead child during a swap is dropped; that request
 // is covered by failAllPending on the swap.
 func (p *proxy) fromClient(line []byte) {
-	traceLine("editor→box", line)
+	p.forwardClient(line, originEditor)
+}
+
+// forwardClient is the common editor/synthetic request path. Synthetic replay resumes deliberately
+// skip Hooks.FromEditor, but retain every protocol responsibility below it: settings gating, session
+// id remapping, pending tracking, reload admission, and child delivery.
+func (p *proxy) forwardClient(line []byte, origin clientOrigin) {
+	if origin == originEditor {
+		traceLine("editor→box", line)
+	} else {
+		traceLine("coop→box(resume)", line)
+	}
 	original := parse(line)
 	if p.reloading.Load() && original.isRequest() {
 		_, _ = p.out.Write(errorResponse(string(original.ID)))
 		return
 	}
-	if p.gatePrompt(line) {
+	if p.gatePrompt(line, origin) {
 		return
 	}
 	// coop's control layer gets first look: it may handle an editor request itself (a coop-owned
 	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
 	// to the editor directly, and optionally restarting the box on a new credential/preset.
-	if p.hooks != nil && p.hooks.FromEditor != nil {
+	if origin == originEditor && p.hooks != nil && p.hooks.FromEditor != nil {
 		handled, resp, toAdapter, restart := p.hooks.FromEditor(line)
 		if handled {
 			Trace("coop handled the editor line itself (restart=%v)", restart)
@@ -531,6 +561,9 @@ func (p *proxy) fromClient(line []byte) {
 			}
 		}
 		p.pending[string(h.ID)] = true
+	}
+	if h.Method == "session/prompt" && p.hooks != nil && p.hooks.PromptForwarded != nil {
+		p.hooks.PromptForwarded(line, origin == originSynthetic)
 	}
 	// Translate the editor's session id to the box's, if this session was re-created under a new one
 	// (turn-less at a restart). Normal case: adapterID == sid, so no rewrite.
@@ -632,14 +665,14 @@ func (p *proxy) forceSession(sid string) {
 	msg, c, held := p.installForceLocked(sid, requests)
 	p.mu.Unlock()
 	for _, prompt := range held {
-		p.fromClient(prompt)
+		p.forwardClient(prompt.line, prompt.origin)
 	}
 	p.writeForce(c, msg)
 }
 
 // installForceLocked installs a gate before any setting is written. p.mu must be held; callers may
 // therefore install replay gates atomically with publishing the new child.
-func (p *proxy) installForceLocked(sid string, requests [][]byte) (msg []byte, c *Child, held [][]byte) {
+func (p *proxy) installForceLocked(sid string, requests [][]byte) (msg []byte, c *Child, held []clientLine) {
 	delete(p.forceFailed, sid)
 	if old := p.forceBySess[sid]; old != nil {
 		if old.timer != nil {
@@ -661,7 +694,7 @@ func (p *proxy) installForceLocked(sid string, requests [][]byte) (msg []byte, c
 
 // gatePrompt holds an editor prompt while its adapter session is still applying target settings,
 // or rejects it after a setting failure. Held prompts have not entered normal bookkeeping yet.
-func (p *proxy) gatePrompt(line []byte) bool {
+func (p *proxy) gatePrompt(line []byte, origin clientOrigin) bool {
 	h := parse(line)
 	if h.Method != "session/prompt" || len(h.ID) == 0 {
 		return false
@@ -676,7 +709,7 @@ func (p *proxy) gatePrompt(line []byte) bool {
 		adapterID = s.adapterID
 	}
 	if chain := p.forceBySess[adapterID]; chain != nil {
-		chain.held = append(chain.held, clone(line))
+		chain.held = append(chain.held, clientLine{line: clone(line), origin: origin})
 		p.mu.Unlock()
 		Trace("holding prompt for session %s until ACP target settings apply", editorID)
 		return true
@@ -753,7 +786,7 @@ func (p *proxy) handleInjectedResponse(line []byte) {
 	delete(p.forceByID, id)
 	var next []byte
 	var c *Child
-	var held [][]byte
+	var held []clientLine
 	failure := ""
 	if chain != nil && chain.activeID == id {
 		if chain.timer != nil {
@@ -783,7 +816,7 @@ func (p *proxy) handleInjectedResponse(line []byte) {
 	}
 	if failure != "" {
 		for _, prompt := range held {
-			_, _ = p.out.Write(targetErrorResponse(string(parse(prompt).ID), failure))
+			_, _ = p.out.Write(targetErrorResponse(string(parse(prompt.line).ID), failure))
 		}
 		return
 	}
@@ -792,7 +825,7 @@ func (p *proxy) handleInjectedResponse(line []byte) {
 		return
 	}
 	for _, prompt := range held {
-		p.fromClient(prompt)
+		p.forwardClient(prompt.line, prompt.origin)
 	}
 }
 
@@ -800,7 +833,7 @@ func (p *proxy) handleInjectedResponse(line []byte) {
 // receive the normal retry error rather than hanging outside pending bookkeeping.
 func (p *proxy) resetForceState() {
 	p.mu.Lock()
-	var held [][]byte
+	var held []clientLine
 	for _, chain := range p.forceBySess {
 		if chain.timer != nil {
 			chain.timer.Stop()
@@ -816,7 +849,7 @@ func (p *proxy) resetForceState() {
 		p.hooks.ChildReset()
 	}
 	for _, prompt := range held {
-		_, _ = p.out.Write(errorResponse(string(parse(prompt).ID)))
+		_, _ = p.out.Write(errorResponse(string(parse(prompt.line).ID)))
 	}
 }
 
@@ -1108,7 +1141,7 @@ func (p *proxy) replay(c *Child, br *bufio.Reader) error {
 	// as pending, and its response reaches the editor, completing the turn the editor still shows
 	// as running.
 	for _, line := range resumes {
-		p.fromClient(line)
+		p.forwardClient(line, originSynthetic)
 	}
 	return nil
 }
@@ -1140,7 +1173,7 @@ func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]
 	p.pending = map[string]bool{}
 	p.child = c
 	var forceWrites [][]byte
-	var released [][]byte
+	var released []clientLine
 	for sid, requests := range forces {
 		msg, _, held := p.installForceLocked(sid, requests)
 		if len(msg) > 0 {
@@ -1164,7 +1197,7 @@ func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]
 			p.writeForce(c, msg)
 		}
 		for _, prompt := range released {
-			p.fromClient(prompt)
+			p.forwardClient(prompt.line, prompt.origin)
 		}
 	}
 }

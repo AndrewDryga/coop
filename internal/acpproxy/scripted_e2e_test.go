@@ -168,6 +168,131 @@ func TestScriptedACPPresetTarget(t *testing.T) {
 	}
 }
 
+func TestScriptedACPCarryAcrossProviderSwitches(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "claude": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
+      {"method":"session/new","result":{"sessionId":"S1","configOptions":[]}},
+      {"method":"session/set_config_option","result":{"configOptions":[]}},
+      {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"claude answer"}}}}],"result":{"stopReason":"end_turn"}}
+    ]],
+    "codex": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
+      {"method":"session/load","error":{"code":-32001,"message":"unknown foreign session"}},
+      {"method":"session/new","result":{"sessionId":"C2","configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"ready","options":[]}]}},
+      {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"C2","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"codex answer"}}}}],"result":{"stopReason":"end_turn"}}
+    ]],
+    "grok": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
+      {"method":"session/load","error":{"code":-32001,"message":"unknown foreign session"}},
+      {"method":"session/new","result":{"sessionId":"G3","configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"ready","options":[]}]}},
+      {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"G3","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"grok answer"}}}}],"result":{"stopReason":"end_turn"}}
+    ]]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude", "codex", "grok")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	sid := responseSessionID(response)
+	if sid != "S1" {
+		t.Fatalf("session/new id = %q, want S1", sid)
+	}
+	promptScripted(t, ctx, proc, sid, "first question", "claude answer")
+	switchScriptedProvider(t, ctx, proc, sid, "codex")
+	promptScripted(t, ctx, proc, sid, "second question", "codex answer")
+	switchScriptedProvider(t, ctx, proc, sid, "grok")
+	promptScripted(t, ctx, proc, sid, "third question", "grok answer")
+
+	assertCarryWire := func(provider string, wants []string) {
+		t.Helper()
+		wire, err := os.ReadFile(filepath.Join(tmp, "fixture-state", provider+"-0", "wire.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(wire)
+		if got := strings.Count(text, "[coop] This thread continues"); got != 1 {
+			t.Errorf("%s wire has %d carry wrappers, want one:\n%s", provider, got, wire)
+		}
+		for _, want := range wants {
+			if got := strings.Count(text, want); got != 1 {
+				t.Errorf("%s wire contains %q %d times, want once:\n%s", provider, want, got, wire)
+			}
+		}
+	}
+	assertCarryWire("codex", []string{"first question", "claude answer", "second question", "[provider] claude"})
+	assertCarryWire("grok", []string{"first question", "claude answer", "second question", "codex answer", "third question", "[provider] claude", "[provider] codex"})
+
+	for _, frame := range proc.client.transcript() {
+		if frame.Msg["method"] == "session/update" && strings.Contains(string(frame.Raw), "[coop] This thread continues") {
+			t.Errorf("synthetic carry leaked to the editor in session/update:\n%s", frame.Raw)
+		}
+	}
+}
+
+func promptScripted(t *testing.T, ctx context.Context, proc *scriptedACP, sid, prompt, answer string) {
+	t.Helper()
+	mark := proc.client.mark()
+	if _, err := proc.client.req(ctx, "session/prompt", map[string]any{
+		"sessionId": sid,
+		"prompt":    []any{map[string]any{"type": "text", "text": prompt}},
+	}); err != nil {
+		t.Fatalf("session/prompt %q: %v\nstderr:\n%s\nwire:\n%s", prompt, err, proc.stderr.String(), wireDump(proc.client.transcript()))
+	}
+	event, _, err := proc.client.event(ctx, mark, "session/update")
+	if err != nil || !strings.Contains(string(event.Raw), answer) {
+		t.Fatalf("prompt %q event = %s, %v\nwire:\n%s", prompt, event.Raw, err, wireDump(proc.client.transcript()))
+	}
+}
+
+func switchScriptedProvider(t *testing.T, ctx context.Context, proc *scriptedACP, sid, provider string) {
+	t.Helper()
+	mark := proc.client.mark()
+	if _, err := proc.client.req(ctx, "session/set_config_option", map[string]any{
+		"sessionId": sid,
+		"configId":  "coop_provider",
+		"value":     provider,
+	}); err != nil {
+		t.Fatalf("switch to %s: %v\nstderr:\n%s", provider, err, proc.stderr.String())
+	}
+	for {
+		event, next, err := proc.client.event(ctx, mark, "session/update")
+		if err != nil {
+			t.Fatalf("await %s replay: %v\nstderr:\n%s\nwire:\n%s", provider, err, proc.stderr.String(), wireDump(proc.client.transcript()))
+		}
+		mark = next
+		if strings.Contains(string(event.Raw), `"sessionUpdate":"config_option_update"`) {
+			return
+		}
+	}
+}
+
 func buildTestBinary(t *testing.T, root, output, pkg string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "-trimpath", "-o", output, pkg)

@@ -124,7 +124,7 @@ type acpControl struct {
 	promptSession map[string]string // in-flight session/prompt: request id -> editor sessionId
 	lastPrompt    map[string][]byte // editor sessionId -> its latest prompt line (what to resend)
 	resend        map[string]bool   // editor sessionId -> re-send the last prompt after the next restart
-	heldChunk     map[string][]byte // editor sessionId -> a buffered rate-limit notice awaiting the turn's outcome
+	heldChunk     map[string][]byte // editor sessionId -> buffered limit/auth notice awaiting the turn's outcome
 	waits         map[string]int    // editor sessionId -> CONSECUTIVE all-limited waits (see maxACPLimitWaits)
 
 	serveURLs []string        // published-port lines to show the editor (e.g. "box :5173 → http://localhost:24187")
@@ -139,22 +139,23 @@ type acpControl struct {
 	carryBytes   int                          // per-session history budget (COOP_ACP_CARRY_TOKENS × ~4 bytes/token)
 	history      map[string]*sessHistory      // editor sessionId -> its budgeted conversation history
 	turnText     map[string][]byte            // editor sessionId -> the in-progress assistant turn's narrative (tail-bounded)
+	turnProvider map[string]string            // editor sessionId -> provider that produced the in-progress assistant turn
+	turnActive   map[string]bool              // editor sessionId -> a prompt cleared proxy admission on the live child
 	toolTitle    map[string]map[string]string // editor sessionId -> toolCallId -> title (until its terminal update)
 	needPreamble map[string]bool              // editor sessionId -> wrap the next outgoing prompt with the history
 }
 
-// sessHistory is one session's carried conversation: (user, assistant) texts in order, plus the
-// provider it ran on (for the preamble's "carried from X" label — last writer wins across a
-// switch chain). size tracks the entries' total bytes for the eviction cap; evicted notes that
-// older context was dropped, so the preamble says so instead of implying completeness.
+// sessHistory is one session's carried conversation. Each entry owns its provider provenance because
+// the selected provider can change before an in-flight response finishes. size tracks the entries'
+// total bytes for the eviction cap; evicted notes that older context was dropped, so the preamble says
+// so instead of implying completeness.
 type sessHistory struct {
-	lead    string
 	entries []histEntry
 	size    int
 	evicted bool
 }
 
-type histEntry struct{ role, text string }
+type histEntry struct{ provider, role, text string }
 
 type nativeTargetChange struct {
 	field string
@@ -190,6 +191,8 @@ func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acp
 		carryBytes:    cfg.ACPCarryBytes(),
 		history:       map[string]*sessHistory{},
 		turnText:      map[string][]byte{},
+		turnProvider:  map[string]string{},
+		turnActive:    map[string]bool{},
 		toolTitle:     map[string]map[string]string{},
 		needPreamble:  map[string]bool{},
 	}
@@ -203,6 +206,7 @@ func (c *acpControl) hooks() *acpproxy.Hooks {
 		InjectedResponse: c.injectedResponse,
 		ChildReset:       c.childReset,
 		FromEditor:       c.fromEditor,
+		PromptForwarded:  c.promptForwarded,
 		AutoReply:        c.autoReply,
 		ResumePrompt:     c.resumePrompt,
 		SessionRecreated: c.sessionRecreated,
@@ -236,14 +240,19 @@ func (c *acpControl) resumePrompt(session string) []byte {
 	}
 	delete(c.resend, session)
 	prompt := c.lastPrompt[session]
+	if len(prompt) == 0 {
+		return nil
+	}
+	// Preserve visible partial output from the old provider before rendering context for a replacement
+	// provider. Request correlation starts later, at PromptForwarded, only if target setup succeeds.
+	c.closeProviderTurnLocked(session, c.lead)
 	// The restart that triggered this resend may have re-created the session (a cross-provider
 	// rotation): the resent prompt is then the first into a fresh thread, so it carries the
 	// history preamble — same one-shot flag the editor's-next-prompt path consumes.
 	if c.needPreamble[session] && len(prompt) > 0 {
 		delete(c.needPreamble, session)
-		if pre := c.preambleLocked(session); pre != "" {
+		if pre := c.preambleLocked(session, promptText(prompt) != ""); pre != "" {
 			prompt = wrapPromptLine(prompt, pre)
-			c.lastPrompt[session] = prompt
 		}
 	}
 	return prompt
@@ -431,18 +440,17 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 	if rewritten, rotated := c.maybeRotate(line); rotated {
 		return rewritten, true
 	}
-	// The carried-history capture: assistant chunks accumulate, a prompt's terminal response
-	// flushes the turn. After maybeRotate (a rate-limited turn resends — don't flush its partial),
-	// before chunkGate (which forgets the terminal's prompt→session mapping).
-	c.captureTurn(line)
 	// Buffer a rate-limit notice chunk until the turn's outcome is known — suppressed if the turn then
 	// rate-limits (a seamless resend), flushed otherwise. This never drops a legit chunk that merely
 	// mentions "rate limit"/"quota"/429, because a chunk is only dropped when a rate-limit error follows.
 	if hold, flush := c.chunkGate(line); hold {
 		return nil, false
 	} else if flush != nil {
+		c.captureTurnFrames(flush)
+		c.captureTurn(line)
 		out = append(flush, c.rewriteToEditor(line)...)
 	} else {
+		c.captureTurn(line)
 		out = c.rewriteToEditor(line)
 	}
 	// Announce this repo's published ports once, when a session is established (its session/new result).
@@ -478,6 +486,21 @@ func (c *acpControl) commitNativeTarget(line []byte) {
 func (c *acpControl) childReset() {
 	c.mu.Lock()
 	c.nativePending = map[string]nativeTargetChange{}
+	for session, provider := range c.turnProvider {
+		if c.resend[session] {
+			continue // an intentional retry owns this partial and resumes it on the replacement child
+		}
+		if len(c.turnText[session]) > 0 {
+			c.appendHistoryLocked(session, provider, "assistant", string(c.turnText[session]))
+		}
+		delete(c.turnText, session)
+		delete(c.turnProvider, session)
+		delete(c.toolTitle, session)
+		delete(c.heldChunk, session)
+		delete(c.waits, session)
+	}
+	c.promptSession = map[string]string{}
+	c.turnActive = map[string]bool{}
 	c.mu.Unlock()
 }
 
@@ -656,6 +679,7 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 	canResend := session != "" && c.lastPrompt[session] != nil
 	if session != "" {
 		delete(c.heldChunk, session)
+		delete(c.turnActive, session)
 	}
 	c.mu.Unlock()
 
@@ -820,12 +844,11 @@ func formatWait(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d", d/time.Minute, (d%time.Minute)/time.Second)
 }
 
-// chunkGate decides whether to buffer a rate-limit notice chunk (hold) or flush a previously buffered
-// one (flush). A held notice is dropped by maybeRotate when the rate-limit error follows; it's flushed
-// only when the turn produces REAL content or completes — NOT on a bookkeeping notification. That last
-// point matters: the adapter emits a usage_update BETWEEN the notice chunk and the error, and flushing
-// on it leaked the notice before maybeRotate could drop it (the reported "message wasn't suppressed").
-// A single-rung preset (no failover to hide the notice behind) is skipped, so its limit message shows.
+// chunkGate buffers a limit/auth notice chunk until the turn reveals whether it is duplicate error UI
+// or real content. A limit notice is dropped by maybeRotate when transparent resend follows; an auth
+// notice is dropped when its terminal auth error follows. Otherwise the notice is flushed when the turn
+// produces real content or completes — never on an intermediate bookkeeping notification. A single-rung
+// preset (no failover to hide a limit notice behind) still shows its limit message immediately.
 func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 	// Holding applies only when a rotation could seamlessly resend (a credential session, or a
 	// preset with a rotating ladder). The TERMINAL bookkeeping below runs for every selection kind
@@ -839,37 +862,78 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 		}
 	}
 	if s, text, ok := agentChunk(line); ok {
+		if authenticationRequired(text) {
+			c.mu.Lock()
+			active := c.turnActive[s]
+			if active {
+				c.heldChunk[s] = append(c.heldChunk[s], line...)
+			}
+			c.mu.Unlock()
+			if active {
+				return true, nil
+			}
+		}
 		if !gated {
 			return false, nil
 		}
 		if hint := detectLimit(text, time.Now()); hint.limited && !hint.outputLimited {
 			c.mu.Lock()
-			c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
+			active := c.turnActive[s]
+			if active {
+				c.heldChunk[s] = append(c.heldChunk[s], line...) // copies line's bytes; safe to keep
+			}
 			c.mu.Unlock()
-			return true, nil
+			if active {
+				return true, nil
+			}
+			return false, nil
 		}
 		// A real (non-limit) content chunk in the same turn: the notice was a genuine warning the turn
 		// spoke around, so flush it just ahead of the content.
 		return false, c.takeHeld(s)
 	}
-	// A prompt's TERMINAL response — result or error — flushes any held notice for its session. (A
+	// A prompt's TERMINAL response — result or error — releases any held notice for its session. (A
 	// rate-limit error is intercepted by maybeRotate before chunkGate, so an error here is a non-limit
-	// failure; without flushing on it the notice would be orphaned and the tracking would leak.) Any
-	// OTHER notification (usage_update, tool calls, …) leaves the buffer intact — see the doc above.
+	// failure; without releasing on it the notice would be orphaned and the tracking would leak.) The
+	// mapping is cleared by captureTurn after the released chunks are captured. Any OTHER notification
+	// (usage_update, tool calls, …) leaves the buffer intact — see the doc above.
 	if id := terminalResponseID(line); id != "" {
 		c.mu.Lock()
 		s := c.promptSession[id]
-		delete(c.promptSession, id) // the prompt completed (or failed) — stop tracking it
-		delete(c.waits, s)          // a finished turn breaks the consecutive-wait chain
 		c.mu.Unlock()
 		if s != "" {
+			if authenticationError(line) {
+				c.takeHeld(s) // the terminal error is the editor-visible verdict; drop its duplicate chunk
+				return false, nil
+			}
 			return false, c.takeHeld(s)
 		}
 	}
 	return false, nil
 }
 
-// takeHeld returns and clears a session's buffered rate-limit notice (empty when none).
+func authenticationRequired(text string) bool {
+	compact := compactJSONName(text)
+	return strings.Contains(compact, "authenticationrequired") ||
+		strings.Contains(compact, "notauthenticated") ||
+		strings.Contains(compact, "signinrequired")
+}
+
+func authenticationError(line []byte) bool {
+	var h struct {
+		Error any `json:"error"`
+	}
+	if json.Unmarshal(line, &h) != nil || h.Error == nil {
+		return false
+	}
+	found := false
+	walkJSONStrings(h.Error, "", func(_, value string) {
+		found = found || authenticationRequired(value)
+	})
+	return found
+}
+
+// takeHeld returns and clears a session's buffered limit/auth notice (empty when none).
 func (c *acpControl) takeHeld(s string) []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -919,9 +983,10 @@ func agentChunk(line []byte) (session, text string, ok bool) {
 
 // captureTurn accumulates the assistant side of the carried history: message chunks and
 // one-line tool narration build the in-progress turn's narrative (tail-bounded), and a
-// prompt's terminal response flushes it as one history entry. Runs AFTER maybeRotate, so a
-// rate-limited turn doesn't flush — its partial narrative stays buffered and completes when
-// the transparent resend re-runs the turn.
+// prompt's terminal response flushes it as one history entry. Runs AFTER maybeRotate and chunkGate,
+// so a suppressed rate-limit notice is never captured; a held warning that proved legitimate is
+// captured only when chunkGate releases it. A rate-limited turn's real partial narrative stays
+// buffered and completes when the transparent resend re-runs the turn.
 func (c *acpControl) captureTurn(line []byte) {
 	if s, text, ok := agentChunk(line); ok {
 		c.appendTurn(s, text)
@@ -937,13 +1002,68 @@ func (c *acpControl) captureTurn(line []byte) {
 		c.mu.Lock()
 		if s := c.promptSession[id]; s != "" {
 			if len(c.turnText[s]) > 0 {
-				c.appendHistoryLocked(s, "assistant", string(c.turnText[s]))
+				c.appendHistoryLocked(s, c.turnProvider[s], "assistant", string(c.turnText[s]))
 			}
 			delete(c.turnText, s)
+			delete(c.turnProvider, s)
+			delete(c.turnActive, s)
 			delete(c.toolTitle, s) // any tool call without a terminal update dies with its turn
+			delete(c.waits, s)     // a finished turn breaks the consecutive-wait chain
 		}
+		delete(c.promptSession, id)
 		c.mu.Unlock()
 	}
+}
+
+// captureTurnFrames captures newline-delimited frames released by chunkGate. ACP uses one JSON object
+// per line; blank lines are ignored. Keeping this parser here ensures multiple held warning chunks are
+// all represented if the turn continues normally.
+func (c *acpControl) captureTurnFrames(lines []byte) {
+	for _, line := range bytes.Split(lines, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) > 0 {
+			c.captureTurn(line)
+		}
+	}
+}
+
+// closeProviderTurnLocked preserves already-visible partial output when a replacement provider takes
+// over an in-flight turn. Called with c.mu held.
+func (c *acpControl) closeProviderTurnLocked(session, provider string) {
+	previous := c.turnProvider[session]
+	if previous != "" && previous != provider {
+		if len(c.turnText[session]) > 0 {
+			c.appendHistoryLocked(session, previous, "assistant", string(c.turnText[session]))
+		}
+		delete(c.turnText, session)
+		delete(c.toolTitle, session)
+	}
+}
+
+// beginTurnLocked attributes subsequent assistant output to an admitted prompt's provider.
+func (c *acpControl) beginTurnLocked(session, provider string) {
+	c.closeProviderTurnLocked(session, provider)
+	c.turnProvider[session] = provider
+}
+
+// promptForwarded runs at the proxy's post-gate admission boundary for both real editor prompts and
+// synthetic resends. FromEditor owns raw user/history mutation; this hook owns only in-flight request
+// correlation and assistant provenance, so a rejected target-setting chain cannot create phantom state.
+func (c *acpControl) promptForwarded(line []byte, _ bool) {
+	var h struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &h) != nil || h.Method != "session/prompt" || len(h.ID) == 0 || h.Params.SessionID == "" {
+		return
+	}
+	c.mu.Lock()
+	c.promptSession[string(h.ID)] = h.Params.SessionID
+	c.beginTurnLocked(h.Params.SessionID, c.lead)
+	c.turnActive[h.Params.SessionID] = true
+	c.mu.Unlock()
 }
 
 // appendTurn adds text to a session's in-progress turn narrative, keeping the TAIL when it
@@ -951,6 +1071,9 @@ func (c *acpControl) captureTurn(line []byte) {
 func (c *acpControl) appendTurn(session, text string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.turnActive[session] {
+		return // startup/auth/status output outside an admitted prompt is not conversation history
+	}
 	buf := append(c.turnText[session], text...)
 	if len(buf) > historyEntryBytes {
 		buf = buf[len(buf)-historyEntryBytes:]
@@ -990,6 +1113,9 @@ func (c *acpControl) toolNarration(line []byte) (session, narration string, ok b
 	s := m.Params.SessionID
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.turnActive[s] {
+		return s, "", true // tool/status chatter outside an admitted prompt is not conversation history
+	}
 	if u.Title != "" {
 		if c.toolTitle[s] == nil {
 			c.toolTitle[s] = map[string]string{}
@@ -1017,10 +1143,9 @@ func (c *acpControl) toolNarration(line []byte) (session, narration string, ok b
 }
 
 // appendHistoryLocked adds one carried-history entry (text already bounded by the caller for
-// assistant turns; user prompts are head-bounded here), stamps the session's current lead as the
-// history's origin, and evicts the oldest entries past the session budget — remembering that it
-// did, so the preamble can say "earlier context omitted". Called with c.mu held.
-func (c *acpControl) appendHistoryLocked(session, role, text string) {
+// assistant turns; user prompts are head-bounded here), retaining the provider that actually owned
+// the turn, and evicts the oldest entries past the session budget. Called with c.mu held.
+func (c *acpControl) appendHistoryLocked(session, provider, role, text string) {
 	if len(text) > historyEntryBytes {
 		text = text[:historyEntryBytes] // the HEAD — a long user prompt leads with the ask
 	}
@@ -1029,8 +1154,7 @@ func (c *acpControl) appendHistoryLocked(session, role, text string) {
 		h = &sessHistory{}
 		c.history[session] = h
 	}
-	h.lead = c.lead
-	h.entries = append(h.entries, histEntry{role: role, text: text})
+	h.entries = append(h.entries, histEntry{provider: provider, role: role, text: text})
 	h.size += len(text)
 	for h.size > c.carryBytes && len(h.entries) > 1 {
 		h.size -= len(h.entries[0].text)
@@ -1040,31 +1164,55 @@ func (c *acpControl) appendHistoryLocked(session, role, text string) {
 }
 
 // preambleLocked renders a session's carried history as the plain-text context block prepended
-// to the first prompt after a re-create — labeled and honest about its fidelity. A trailing USER
-// entry is dropped: it is the very message being (re)sent, so it must not appear twice. Returns
-// "" when there's nothing worth carrying. Called with c.mu held.
-func (c *acpControl) preambleLocked(session string) string {
+// to the first prompt after a re-create — labeled and honest about its fidelity. When omitCurrentUser
+// is true, the latest USER entry is omitted wherever it sits: it is the message being (re)sent, and
+// a provider switch can append visible partial assistant output after it. Called with c.mu held.
+func (c *acpControl) preambleLocked(session string, omitCurrentUser bool) string {
 	h := c.history[session]
 	if h == nil {
 		return ""
 	}
-	entries := h.entries
-	if n := len(entries); n > 0 && entries[n-1].role == "user" {
-		entries = entries[:n-1]
+	omitUser := -1
+	if omitCurrentUser {
+		for i := len(h.entries) - 1; i >= 0; i-- {
+			if h.entries[i].role == "user" {
+				omitUser = i
+				break
+			}
+		}
+	}
+	entries := make([]histEntry, 0, len(h.entries))
+	for i, e := range h.entries {
+		if i != omitUser {
+			entries = append(entries, e)
+		}
 	}
 	if len(entries) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	origin := h.lead
-	if origin == "" {
-		origin = "the previous session"
+	providers := make([]string, 0, len(entries))
+	lastProvider := ""
+	for _, e := range entries {
+		if e.provider != "" && e.provider != lastProvider {
+			providers = append(providers, e.provider)
+			lastProvider = e.provider
+		}
+	}
+	origin := "the previous session"
+	if len(providers) > 0 {
+		origin = strings.Join(providers, ", then ")
 	}
 	fmt.Fprintf(&b, "[coop] This thread continues a conversation carried over from %s — the session was re-created (provider switch or lost transcript). The context below is best-effort: message text plus one-line tool narration; tool payloads/results are not included, so re-read anything you need to rely on. Continue the conversation naturally.\n\n--- conversation so far ---\n", origin)
 	if h.evicted {
 		b.WriteString("(…earlier context omitted — the carried history hit its budget…)\n\n")
 	}
+	lastProvider = ""
 	for _, e := range entries {
+		if e.provider != "" && e.provider != lastProvider {
+			fmt.Fprintf(&b, "[provider] %s\n\n", e.provider)
+			lastProvider = e.provider
+		}
 		fmt.Fprintf(&b, "[%s] %s\n\n", e.role, e.text)
 	}
 	b.WriteString("--- end of carried context ---")
@@ -1772,21 +1920,21 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// preamble (the proxy forwards the rewrite through the normal path, editor id intact).
 	if h.Method == "session/prompt" && h.Params.SessionID != "" && len(h.ID) > 0 {
 		sid := h.Params.SessionID
-		clone := append([]byte(nil), line...)
+		raw := append([]byte(nil), line...)
 		var wrapped []byte
 		c.mu.Lock()
-		c.promptSession[string(h.ID)] = sid
-		if text := promptText(line); text != "" {
-			c.appendHistoryLocked(sid, "user", text)
+		c.closeProviderTurnLocked(sid, c.lead)
+		text := promptText(line)
+		if text != "" {
+			c.appendHistoryLocked(sid, c.lead, "user", text)
 		}
 		if c.needPreamble[sid] {
 			delete(c.needPreamble, sid)
-			if pre := c.preambleLocked(sid); pre != "" {
-				wrapped = wrapPromptLine(clone, pre)
-				clone = wrapped // a resend of THIS turn must carry the context too
+			if pre := c.preambleLocked(sid, text != ""); pre != "" {
+				wrapped = wrapPromptLine(raw, pre)
 			}
 		}
-		c.lastPrompt[sid] = clone
+		c.lastPrompt[sid] = raw
 		c.mu.Unlock()
 		return false, nil, wrapped, false
 	}
@@ -1849,6 +1997,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 				continue
 			}
 			c.resend[sid] = true
+			delete(c.turnActive, sid)
 			delete(c.heldChunk, sid) // a buffered limit notice dies with the old box
 			delete(c.waits, sid)     // a manual switch breaks the consecutive-wait chain
 			acpproxy.Trace("switch to %+v: re-sending the in-flight prompt %s for session %s after the swap", next, id, sid)

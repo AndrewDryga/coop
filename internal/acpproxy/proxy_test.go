@@ -241,9 +241,13 @@ func TestProxyTargetSettingTimeoutBlocksPrompt(t *testing.T) {
 	forceReplyTimeout = 50 * time.Millisecond
 	defer func() { forceReplyTimeout = original }()
 	id := InjectPrefix + "timeout"
-	h := newProxyHarness(t, 1, &Hooks{SessionReady: func(sid string) [][]byte {
-		return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`+"\n", id, sid))}
-	}})
+	forwarded := 0
+	h := newProxyHarness(t, 1, &Hooks{
+		SessionReady: func(sid string) [][]byte {
+			return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`+"\n", id, sid))}
+		},
+		PromptForwarded: func([]byte, bool) { forwarded++ },
+	})
 	c := h.children[0]
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
 	readLine(t, h.childIn[0])
@@ -256,6 +260,9 @@ func TestProxyTargetSettingTimeoutBlocksPrompt(t *testing.T) {
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
 	if response := readLine(t, h.clientOut); idStr(t, response) != "3" || !strings.Contains(string(response), "timed out") {
 		t.Fatalf("timed-out setting did not fail the held prompt: %s", response)
+	}
+	if forwarded != 0 {
+		t.Fatalf("timed-out held prompt was admitted %d times, want zero", forwarded)
 	}
 	_ = h.shutdown()
 }
@@ -489,13 +496,36 @@ func idStr(t *testing.T, line []byte) string {
 // response reaches the editor, completing the turn transparently (coop's rate-limit auto-resend).
 func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	resumed := false
-	hooks := &Hooks{ResumePrompt: func(sid string) []byte {
-		if sid == "S1" && !resumed {
-			resumed = true
-			return []byte(`{"jsonrpc":"2.0","id":"resume-9","method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"again"}]}}` + "\n")
-		}
-		return nil
-	}}
+	editorPrompts := 0
+	forwardedPrompts := 0
+	readyCalls := 0
+	hooks := &Hooks{
+		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
+			if parse(line).Method == "session/prompt" {
+				editorPrompts++
+			}
+			return false, nil, nil, false
+		},
+		PromptForwarded: func(line []byte, _ bool) {
+			if parse(line).Method == "session/prompt" {
+				forwardedPrompts++
+			}
+		},
+		SessionReady: func(string) [][]byte {
+			readyCalls++
+			if readyCalls == 2 {
+				return [][]byte{[]byte(`{"jsonrpc":"2.0","id":"coop-inject-resume-setting","method":"session/set_config_option","params":{"sessionId":"S1","configId":"model","value":"target"}}` + "\n")}
+			}
+			return nil
+		},
+		ResumePrompt: func(sid string) []byte {
+			if sid == "S1" && !resumed {
+				resumed = true
+				return []byte(`{"jsonrpc":"2.0","id":"resume-9","method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"again"}]}}` + "\n")
+			}
+			return nil
+		},
+	}
 	h := newProxyHarness(t, 2, hooks)
 	c1, c2 := h.children[0], h.children[1]
 	clientInW, clientOut := h.clientIn, h.clientOut
@@ -523,6 +553,18 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 		t.Fatalf("expected in-flight id 3 failed on swap, got %q", id)
 	}
 
+	// The replay installs target settings before publishing the child. The synthetic resume is held
+	// behind that chain and has neither re-entered FromEditor nor been admitted as pending yet.
+	settingLine := readLine(t, childIn2)
+	setting := parse(settingLine)
+	if setting.Method != "session/set_config_option" || string(trimQuotes(setting.ID)) != "coop-inject-resume-setting" {
+		t.Fatalf("frame before resume = %s, want target setting", settingLine)
+	}
+	if editorPrompts != 1 || forwardedPrompts != 1 {
+		t.Fatalf("before setting ack: FromEditor=%d admitted=%d, want 1/1", editorPrompts, forwardedPrompts)
+	}
+	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":"coop-inject-resume-setting","result":{}}`)
+
 	// After the swap, ResumePrompt fires: the prompt is re-injected to the new box.
 	fr := parse(readLine(t, childIn2))
 	if fr.Method != "session/prompt" {
@@ -533,6 +575,12 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	}
 	if string(trimQuotes(fr.ID)) != "resume-9" {
 		t.Fatalf("resumed prompt id = %s, want resume-9", fr.ID)
+	}
+	if editorPrompts != 1 {
+		t.Fatalf("FromEditor saw %d prompts, want only the real editor prompt", editorPrompts)
+	}
+	if forwardedPrompts != 2 {
+		t.Fatalf("admitted prompts = %d, want real + synthetic after setting success", forwardedPrompts)
 	}
 
 	// Its response reaches the editor — the turn completes.

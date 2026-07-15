@@ -50,6 +50,20 @@ func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMes
 // toEd is the toEditor output bytes only (dropping the restart flag) — most tests just check the line.
 func toEd(c *acpControl, line []byte) []byte { out, _ := c.toEditor(line); return out }
 
+// fromEditorPrompt models the proxy boundary: FromEditor may rewrite the raw prompt, then the common
+// forwarding path admits that frame only after target gating and records request/provider ownership.
+func fromEditorPrompt(c *acpControl, line []byte) (handled bool, resp, toAdapter []byte, restart bool) {
+	handled, resp, toAdapter, restart = c.fromEditor(line)
+	if !handled && !restart {
+		forwarded := line
+		if len(toAdapter) > 0 {
+			forwarded = toAdapter
+		}
+		c.promptForwarded(forwarded, false)
+	}
+	return handled, resp, toAdapter, restart
+}
+
 // TestACPControlRewrite: coop's toolbar rewrite on a session/new result — drop mode+agent+modes,
 // keep model/effort/fast (with the model defaulted to coop's), prepend coop's dropdowns, keep sessionId.
 func TestACPControlRewrite(t *testing.T) {
@@ -686,7 +700,7 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	c.sel = acpSelection{Account: "personal"}
 
 	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	if handled, _, _, _ := c.fromEditor(prompt); handled {
+	if handled, _, _, _ := fromEditorPrompt(c, prompt); handled {
 		t.Fatal("a session/prompt must pass through (handled=false)")
 	}
 	if c.lastPrompt["S"] == nil || c.promptSession[`"p1"`] != "S" {
@@ -729,7 +743,7 @@ func TestACPControlResendOnManualSwitch(t *testing.T) {
 	c.sel = acpSelection{Account: "personal"}
 
 	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 
 	sw := []byte(`{"jsonrpc":"2.0","id":"s1","method":"session/set_config_option","params":{"sessionId":"S","configId":"coop_account","value":"work"}}` + "\n")
 	handled, _, _, restart := c.fromEditor(sw)
@@ -751,7 +765,7 @@ func TestACPControlNoResendForCompletedTurn(t *testing.T) {
 	c.accounts = []string{"personal", "work"}
 	c.sel = acpSelection{Account: "personal"}
 
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n"))
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}`+"\n"))
 	c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","result":{"stopReason":"end_turn"}}` + "\n"))
 
 	sw := []byte(`{"jsonrpc":"2.0","id":"s1","method":"session/set_config_option","params":{"sessionId":"S","configId":"coop_account","value":"work"}}` + "\n")
@@ -772,7 +786,7 @@ func TestACPControlSuppressesLimitChunk(t *testing.T) {
 	c := newTestControl(t)
 	c.accounts = []string{"personal", "work"}
 	c.sel = acpSelection{Account: "personal"}
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S"}}` + "\n"))
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"continue"}]}}`+"\n"))
 
 	chunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"You've hit your session limit"}}}}` + "\n")
 	if out, _ := c.toEditor(chunk); out != nil {
@@ -781,6 +795,12 @@ func TestACPControlSuppressesLimitChunk(t *testing.T) {
 	if _, restart := c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","error":{"message":"You've hit your session limit"}}` + "\n")); !restart {
 		t.Fatal("the error must rotate")
 	}
+	// Model the proxy's restart path: the synthetic resend starts the replacement turn.
+	resumed := c.resumePrompt("S")
+	if len(resumed) == 0 {
+		t.Fatal("rate-limit rotation did not arm a resend")
+	}
+	c.promptForwarded(resumed, true)
 	// A later normal chunk for S must not carry the dropped notice.
 	upd := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}` + "\n")
 	out, _ := c.toEditor(upd)
@@ -790,6 +810,13 @@ func TestACPControlSuppressesLimitChunk(t *testing.T) {
 	if !strings.Contains(string(out), "hello") {
 		t.Errorf("the normal update must pass through, got: %s", out)
 	}
+	c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","result":{"stopReason":"end_turn"}}` + "\n"))
+	c.mu.Lock()
+	pre := c.preambleLocked("S", false)
+	c.mu.Unlock()
+	if strings.Contains(pre, "session limit") {
+		t.Errorf("the suppressed notice must not enter carried history:\n%s", pre)
+	}
 }
 
 // TestACPControlFlushesHeldChunkOnContinue: a chunk that merely MENTIONS a limit (no error follows) is
@@ -798,6 +825,7 @@ func TestACPControlFlushesHeldChunkOnContinue(t *testing.T) {
 	c := newTestControl(t)
 	c.accounts = []string{"personal", "work"}
 	c.sel = acpSelection{Account: "personal"}
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"explain limits"}]}}`+"\n"))
 
 	chunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a 429 rate limit means"}}}}` + "\n")
 	if out, _ := c.toEditor(chunk); out != nil {
@@ -811,6 +839,99 @@ func TestACPControlFlushesHeldChunkOnContinue(t *testing.T) {
 	if strings.Count(string(out), "\n") != 2 {
 		t.Errorf("expected two newline-delimited frames, got: %s", out)
 	}
+	c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","result":{"stopReason":"end_turn"}}` + "\n"))
+	c.mu.Lock()
+	h := c.history["S"]
+	c.mu.Unlock()
+	if h == nil || len(h.entries) != 2 || strings.Count(h.entries[1].text, "429 rate limit means") != 1 || strings.Count(h.entries[1].text, "too many requests") != 1 {
+		t.Errorf("released warning should be captured exactly once, history=%+v", h)
+	}
+}
+
+func TestACPHistoryIgnoresPrePromptStatus(t *testing.T) {
+	c := newTestControl(t)
+	startup := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}` + "\n")
+	if out, restart := c.toEditor(startup); restart || !bytes.Contains(out, []byte("Authentication required")) {
+		t.Fatalf("pre-prompt status should remain editor-visible, out=%s restart=%v", out, restart)
+	}
+	c.sel = acpSelection{Account: "personal"}
+	limitStatus := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"You've hit your session limit"}}}}` + "\n")
+	if out, restart := c.toEditor(limitStatus); restart || !bytes.Contains(out, []byte("session limit")) {
+		t.Fatalf("pre-prompt limit status should not be buffered, out=%s restart=%v", out, restart)
+	}
+	if held := c.takeHeld("S"); held != nil {
+		t.Fatalf("pre-prompt limit status leaked into the hold buffer: %s", held)
+	}
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}`+"\n"))
+	c.toEditor([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"real answer"}}}}` + "\n"))
+	c.toEditor([]byte(`{"jsonrpc":"2.0","id":"p1","result":{"stopReason":"end_turn"}}` + "\n"))
+	c.mu.Lock()
+	h := c.history["S"]
+	c.mu.Unlock()
+	if h == nil || len(h.entries) != 2 || strings.Contains(h.entries[1].text, "Authentication required") || h.entries[1].text != "real answer" {
+		t.Errorf("pre-prompt status contaminated history: %+v", h)
+	}
+}
+
+func TestACPChildResetClosesOnlyUnresumedPartial(t *testing.T) {
+	partial := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old partial"}}}}` + "\n")
+	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"first"}]}}` + "\n")
+
+	t.Run("unexpected crash closes partial", func(t *testing.T) {
+		c := newTestControl(t)
+		fromEditorPrompt(c, prompt)
+		toEd(c, partial)
+		c.childReset()
+		fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p2","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"second"}]}}`+"\n"))
+		toEd(c, []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"new answer"}}}}`+"\n"))
+		toEd(c, []byte(`{"jsonrpc":"2.0","id":"p2","result":{"stopReason":"end_turn"}}`+"\n"))
+		c.mu.Lock()
+		h := c.history["S"]
+		c.mu.Unlock()
+		if h == nil || len(h.entries) != 4 || h.entries[1].text != "old partial" || h.entries[3].text != "new answer" {
+			t.Fatalf("crash mixed old and new assistant turns: %+v", h)
+		}
+	})
+
+	t.Run("armed resend preserves partial", func(t *testing.T) {
+		c := newTestControl(t)
+		fromEditorPrompt(c, prompt)
+		toEd(c, partial)
+		c.mu.Lock()
+		c.resend["S"] = true
+		c.mu.Unlock()
+		c.childReset()
+		resumed := c.resumePrompt("S")
+		c.promptForwarded(resumed, true)
+		toEd(c, []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" then done"}}}}`+"\n"))
+		toEd(c, []byte(`{"jsonrpc":"2.0","id":"p1","result":{"stopReason":"end_turn"}}`+"\n"))
+		c.mu.Lock()
+		h := c.history["S"]
+		c.mu.Unlock()
+		if h == nil || len(h.entries) != 2 || h.entries[1].text != "old partial then done" {
+			t.Fatalf("armed resend did not preserve its partial: %+v", h)
+		}
+	})
+}
+
+func TestACPControlSuppressesAuthenticationChunkFromCarry(t *testing.T) {
+	c := newTestControl(t)
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}`+"\n"))
+	authChunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}` + "\n")
+	if out, restart := c.toEditor(authChunk); out != nil || restart {
+		t.Fatalf("auth chunk should wait for the terminal outcome, out=%s restart=%v", out, restart)
+	}
+	authError := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32000,"message":"Authentication required"}}` + "\n")
+	out, restart := c.toEditor(authError)
+	if restart || !bytes.Contains(out, []byte(`"error"`)) || bytes.Contains(out, []byte(`session/update`)) {
+		t.Fatalf("terminal auth error should remain without duplicate chunk, out=%s restart=%v", out, restart)
+	}
+	c.mu.Lock()
+	pre := c.preambleLocked("S", false)
+	c.mu.Unlock()
+	if strings.Contains(pre, "Authentication required") {
+		t.Errorf("suppressed auth chunk entered carried history:\n%s", pre)
+	}
 }
 
 // TestACPControlWaitsForReset: with no free account, coop points at the nearest reset, tells the editor
@@ -819,7 +940,7 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	c := newTestControl(t)
 	c.accounts = []string{"personal"} // single account → nowhere to rotate
 	c.sel = acpSelection{Account: "personal"}
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S"}}` + "\n"))
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S"}}`+"\n"))
 
 	epoch := time.Now().Add(time.Hour).Unix()
 	limitErr := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"p1","error":{"message":"Claude AI usage limit reached|%d"}}`, epoch) + "\n")
@@ -859,7 +980,7 @@ func presetControl(t *testing.T) *acpControl {
 	// Drive a real session/prompt so promptSession (keyed by the raw id) + lastPrompt are captured the
 	// way the wire does — the error below correlates back to it for the transparent re-send.
 	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 	return c
 }
 
@@ -1034,7 +1155,7 @@ func presetControlFor(t *testing.T, lead string) *acpControl {
 		{Provider: lead, Model: "m2", Accounts: []string{"personal"}},
 	})
 	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 	return c
 }
 
@@ -1188,13 +1309,13 @@ func TestACPFailoverGiveUpCap(t *testing.T) {
 	}
 	// All rungs limited now: exactly maxACPLimitWaits silent waits are allowed…
 	for i := 1; i <= maxACPLimitWaits; i++ {
-		c.fromEditor(prompt)
+		fromEditorPrompt(c, prompt)
 		if _, restart := c.toEditor(errLine); !restart {
 			t.Fatalf("wait %d/%d should still be a silent wait", i, maxACPLimitWaits)
 		}
 	}
 	// …then the chain is over: the raw error reaches the editor (no restart).
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 	out, restart := c.toEditor(errLine)
 	if restart {
 		t.Fatalf("wait %d should give up, not restart again", maxACPLimitWaits+1)
@@ -1203,7 +1324,7 @@ func TestACPFailoverGiveUpCap(t *testing.T) {
 		t.Fatalf("the real limit error should be forwarded, got: %s", out)
 	}
 	// The give-up cleared the chain — the next limit starts a fresh cycle (a wait again).
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 	if _, restart := c.toEditor(errLine); !restart {
 		t.Fatal("after a give-up, a new limit starts a fresh wait chain")
 	}
@@ -1216,7 +1337,7 @@ func TestACPHeldChunkFlushedOnErrorResponse(t *testing.T) {
 	c := newTestControl(t)
 	c.sel = acpSelection{Account: "personal"}
 	prompt := []byte(`{"jsonrpc":"2.0","id":"req1","method":"session/prompt","params":{"sessionId":"sess1","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 
 	warn := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"you are approaching your rate limit"}}}}` + "\n")
 	if out, restart := c.toEditor(warn); out != nil || restart {
@@ -1636,7 +1757,7 @@ func TestACPProviderSelector(t *testing.T) {
 func TestACPHistoryCapture(t *testing.T) {
 	c := newTestControl(t)
 	prompt := []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"what is two plus two?"}]}}` + "\n")
-	c.fromEditor(prompt)
+	fromEditorPrompt(c, prompt)
 	for _, chunk := range []string{"it is ", "four."} {
 		line := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` + chunk + `"}}}}` + "\n")
 		c.captureTurn(line)
@@ -1655,8 +1776,8 @@ func TestACPHistoryCapture(t *testing.T) {
 	if h.entries[1].role != "assistant" || h.entries[1].text != "it is four." {
 		t.Errorf("assistant entry = %+v", h.entries[1])
 	}
-	if h.lead != "claude" {
-		t.Errorf("history origin = %q, want the lead it ran on", h.lead)
+	if h.entries[0].provider != "claude" || h.entries[1].provider != "claude" {
+		t.Errorf("history providers = %q/%q, want claude", h.entries[0].provider, h.entries[1].provider)
 	}
 }
 
@@ -1670,7 +1791,7 @@ func TestACPHistoryBounds(t *testing.T) {
 	c.mu.Unlock()
 	// Feed one oversized turn through the chunk path.
 	line := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` + long + `"}}}}` + "\n")
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"go"}]}}` + "\n"))
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"go"}]}}`+"\n"))
 	c.captureTurn(line)
 	c.captureTurn([]byte(`{"jsonrpc":"2.0","id":"r1","result":{}}` + "\n"))
 	c.mu.Lock()
@@ -1684,7 +1805,7 @@ func TestACPHistoryBounds(t *testing.T) {
 	c.mu.Lock()
 	c.carryBytes = 8 << 10 // shrink the budget so the test doesn't shovel megabytes
 	for i := 0; i < 40; i++ {
-		c.appendHistoryLocked("s2", "user", strings.Repeat("y", 1024)+itoa(i))
+		c.appendHistoryLocked("s2", "claude", "user", strings.Repeat("y", 1024)+itoa(i))
 	}
 	h := c.history["s2"]
 	if h.size > c.carryBytes+historyEntryBytes {
@@ -1696,8 +1817,8 @@ func TestACPHistoryBounds(t *testing.T) {
 	if !h.evicted {
 		t.Error("eviction must be remembered for the preamble's omission marker")
 	}
-	c.appendHistoryLocked("s2", "assistant", "latest answer") // trailing user entry would be dropped from the preamble
-	pre := c.preambleLocked("s2")
+	c.appendHistoryLocked("s2", "claude", "assistant", "latest answer") // trailing user entry would be dropped from the preamble
+	pre := c.preambleLocked("s2", true)
 	c.mu.Unlock()
 	if !strings.Contains(pre, "earlier context omitted") {
 		t.Errorf("preamble must name the omission after eviction:\n%s", pre[:200])
@@ -1710,13 +1831,13 @@ func TestACPPreambleOnNextPrompt(t *testing.T) {
 	c := newTestControl(t)
 	// Prior conversation, recorded while the session ran on claude.
 	c.mu.Lock()
-	c.appendHistoryLocked("s1", "user", "explain the bug")
-	c.appendHistoryLocked("s1", "assistant", "it is a race in the loop")
+	c.appendHistoryLocked("s1", "claude", "user", "explain the bug")
+	c.appendHistoryLocked("s1", "claude", "assistant", "it is a race in the loop")
 	c.mu.Unlock()
 	c.sessionRecreated("s1")
 
 	prompt := []byte(`{"jsonrpc":"2.0","id":"r9","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"now fix it"}]}}` + "\n")
-	handled, _, toAdapter, restart := c.fromEditor(prompt)
+	handled, _, toAdapter, restart := fromEditorPrompt(c, prompt)
 	if handled || restart {
 		t.Fatalf("a prompt rewrite must not be handled/restart (got %v/%v)", handled, restart)
 	}
@@ -1732,15 +1853,29 @@ func TestACPPreambleOnNextPrompt(t *testing.T) {
 	if strings.Count(s, "now fix it") != 1 {
 		t.Errorf("the outgoing prompt must not be duplicated into its own preamble:\n%s", s)
 	}
+	if got := string(c.lastPrompt["s1"]); got != string(prompt) {
+		t.Errorf("stored prompt must stay byte-identical to editor input\ngot:  %s\nwant: %s", got, prompt)
+	}
 	// One-shot: the following prompt goes through untouched.
 	prompt2 := []byte(`{"jsonrpc":"2.0","id":"r10","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"thanks"}]}}` + "\n")
-	if _, _, toAdapter2, _ := c.fromEditor(prompt2); toAdapter2 != nil {
+	if _, _, toAdapter2, _ := fromEditorPrompt(c, prompt2); toAdapter2 != nil {
 		t.Errorf("second prompt after the re-create must pass through, got rewrite: %s", toAdapter2)
 	}
 	// A session that never re-created is never wrapped.
 	other := []byte(`{"jsonrpc":"2.0","id":"r11","method":"session/prompt","params":{"sessionId":"s2","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
-	if _, _, toAdapter3, _ := c.fromEditor(other); toAdapter3 != nil {
+	if _, _, toAdapter3, _ := fromEditorPrompt(c, other); toAdapter3 != nil {
 		t.Errorf("an intact session must not be wrapped, got: %s", toAdapter3)
+	}
+	// A non-text prompt has no current user history entry to omit; prior text must remain intact.
+	c3 := newTestControl(t)
+	c3.mu.Lock()
+	c3.appendHistoryLocked("s3", "claude", "user", "prior text question")
+	c3.appendHistoryLocked("s3", "claude", "assistant", "prior answer")
+	c3.mu.Unlock()
+	c3.sessionRecreated("s3")
+	nonText := []byte(`{"jsonrpc":"2.0","id":"r12","method":"session/prompt","params":{"sessionId":"s3","prompt":[{"type":"image","data":"AA==","mimeType":"image/png"}]}}` + "\n")
+	if _, _, rewritten, _ := fromEditorPrompt(c3, nonText); !strings.Contains(string(rewritten), "prior text question") {
+		t.Errorf("non-text prompt dropped prior user context: %s", rewritten)
 	}
 }
 
@@ -1749,9 +1884,9 @@ func TestACPPreambleOnNextPrompt(t *testing.T) {
 func TestACPPreambleOnResend(t *testing.T) {
 	c := newTestControl(t)
 	prompt := []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"summarize the incident"}]}}` + "\n")
-	c.fromEditor(prompt) // records lastPrompt + the user history entry
+	fromEditorPrompt(c, prompt) // records lastPrompt + the user history entry
 	c.mu.Lock()
-	c.appendHistoryLocked("s1", "assistant", "half an answer before the limit")
+	c.appendHistoryLocked("s1", "claude", "assistant", "half an answer before the limit")
 	c.resend["s1"] = true
 	c.mu.Unlock()
 	c.sessionRecreated("s1")
@@ -1765,9 +1900,12 @@ func TestACPPreambleOnResend(t *testing.T) {
 	if c.resumePrompt("s1") != nil {
 		t.Error("resend is one-shot")
 	}
+	if got := string(c.lastPrompt["s1"]); got != string(prompt) {
+		t.Errorf("resend must not replace the raw stored prompt\ngot:  %s\nwant: %s", got, prompt)
+	}
 	// Without a re-create, a resend stays byte-identical to the original prompt.
 	c2 := newTestControl(t)
-	c2.fromEditor(prompt)
+	fromEditorPrompt(c2, prompt)
 	c2.mu.Lock()
 	c2.resend["s1"] = true
 	c2.mu.Unlock()
@@ -1776,11 +1914,146 @@ func TestACPPreambleOnResend(t *testing.T) {
 	}
 }
 
+func TestACPPreambleCrossProviderPartialDoesNotDuplicatePrompt(t *testing.T) {
+	c := newTestControl(t)
+	prompt := []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"diagnose once"}]}}` + "\n")
+	fromEditorPrompt(c, prompt)
+	toEd(c, []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"claude partial"}}}}`+"\n"))
+	c.mu.Lock()
+	c.retargetLocked("codex")
+	c.resend["s1"] = true
+	c.mu.Unlock()
+	c.sessionRecreated("s1")
+
+	resumed := c.resumePrompt("s1")
+	text := string(resumed)
+	for _, want := range []string{"diagnose once", "claude partial"} {
+		if got := strings.Count(text, want); got != 1 {
+			t.Errorf("resumed cross-provider prompt contains %q %d times, want once:\n%s", want, got, text)
+		}
+	}
+	if got := strings.Count(text, "[coop] This thread continues"); got != 1 {
+		t.Errorf("resumed prompt has %d carry wrappers, want one:\n%s", got, text)
+	}
+	if got := string(c.lastPrompt["s1"]); got != string(prompt) {
+		t.Errorf("cross-provider resume replaced raw lastPrompt\ngot:  %s\nwant: %s", got, prompt)
+	}
+
+	c.promptForwarded(resumed, true)
+	toEd(c, []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"codex completion"}}}}`+"\n"))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":"r1","result":{"stopReason":"end_turn"}}`+"\n"))
+	c.mu.Lock()
+	h := c.history["s1"]
+	c.mu.Unlock()
+	wantProviders := []string{"claude", "claude", "codex"}
+	if h == nil || len(h.entries) != len(wantProviders) {
+		t.Fatalf("cross-provider partial history = %+v", h)
+	}
+	for i, want := range wantProviders {
+		if h.entries[i].provider != want {
+			t.Errorf("entry %d provider = %q, want %q", i, h.entries[i].provider, want)
+		}
+	}
+}
+
+func TestACPPreamblePreservesRepeatedProviderTransitions(t *testing.T) {
+	c := newTestControl(t)
+	c.mu.Lock()
+	for _, entry := range []histEntry{
+		{provider: "claude", role: "user", text: "u1"},
+		{provider: "claude", role: "assistant", text: "a1"},
+		{provider: "codex", role: "user", text: "u2"},
+		{provider: "codex", role: "assistant", text: "a2"},
+		{provider: "claude", role: "user", text: "u3"},
+		{provider: "claude", role: "assistant", text: "a3"},
+		{provider: "grok", role: "user", text: "current"},
+	} {
+		c.appendHistoryLocked("s1", entry.provider, entry.role, entry.text)
+	}
+	pre := c.preambleLocked("s1", true)
+	c.mu.Unlock()
+	if !strings.Contains(pre, "carried over from claude, then codex, then claude") {
+		t.Errorf("repeated provider transition missing from header:\n%s", pre)
+	}
+	if got := strings.Count(pre, "[provider] claude"); got != 2 {
+		t.Errorf("claude transition groups = %d, want two:\n%s", got, pre)
+	}
+	if strings.Contains(pre, "current") {
+		t.Errorf("current prompt must be omitted from carried context:\n%s", pre)
+	}
+}
+
+// Two provider switches preserve each real turn exactly once and label it with the provider that
+// actually produced it. Carry wrappers sent to adapters are never stored as editor prompts/history,
+// so the second re-create cannot recursively embed the first wrapper.
+func TestACPPreambleAcrossTwoProviderSwitches(t *testing.T) {
+	c := newTestControl(t)
+	turn := func(id, question, answer string) []byte {
+		prompt := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":%q}]}}`, id, question) + "\n")
+		_, _, rewritten, restart := fromEditorPrompt(c, prompt)
+		if restart {
+			t.Fatalf("prompt %s unexpectedly requested restart", id)
+		}
+		toEd(c, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":%q}}}}`, answer)+"\n"))
+		toEd(c, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"stopReason":"end_turn"}}`, id)+"\n"))
+		return rewritten
+	}
+
+	if rewritten := turn("r1", "first question", "claude answer"); rewritten != nil {
+		t.Fatalf("initial provider prompt should not carry context: %s", rewritten)
+	}
+	c.mu.Lock()
+	c.retargetLocked("codex")
+	c.mu.Unlock()
+	c.sessionRecreated("s1")
+	second := turn("r2", "second question", "codex answer")
+	if !strings.Contains(string(second), "claude answer") {
+		t.Fatalf("first switch did not carry the claude turn: %s", second)
+	}
+
+	c.mu.Lock()
+	c.retargetLocked("grok")
+	c.mu.Unlock()
+	c.sessionRecreated("s1")
+	thirdPrompt := []byte(`{"jsonrpc":"2.0","id":"r3","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"third question"}]}}` + "\n")
+	_, _, third, _ := fromEditorPrompt(c, thirdPrompt)
+	carried := string(third)
+	for _, text := range []string{"first question", "claude answer", "second question", "codex answer", "third question"} {
+		if got := strings.Count(carried, text); got != 1 {
+			t.Errorf("%q occurs %d times in second carry, want exactly once:\n%s", text, got, carried)
+		}
+	}
+	if got := strings.Count(carried, "[coop] This thread continues"); got != 1 {
+		t.Errorf("carry wrapper occurs %d times, want one:\n%s", got, carried)
+	}
+	for _, provider := range []string{"[provider] claude", "[provider] codex"} {
+		if !strings.Contains(carried, provider) {
+			t.Errorf("second carry missing source %q:\n%s", provider, carried)
+		}
+	}
+	if got := string(c.lastPrompt["s1"]); got != string(thirdPrompt) {
+		t.Errorf("stored third prompt is not raw\ngot:  %s\nwant: %s", got, thirdPrompt)
+	}
+
+	c.mu.Lock()
+	h := c.history["s1"]
+	c.mu.Unlock()
+	wantProviders := []string{"claude", "claude", "codex", "codex", "grok"}
+	if h == nil || len(h.entries) != len(wantProviders) {
+		t.Fatalf("history = %+v, want %d real entries", h, len(wantProviders))
+	}
+	for i, want := range wantProviders {
+		if h.entries[i].provider != want {
+			t.Errorf("history entry %d provider = %q, want %q", i, h.entries[i].provider, want)
+		}
+	}
+}
+
 // Tool calls ride the carried history as one-line narration — title remembered from the
 // initial tool_call, the line emitted on its terminal update, payloads never included.
 func TestACPHistoryToolNarration(t *testing.T) {
 	c := newTestControl(t)
-	c.fromEditor([]byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"fix the bug"}]}}` + "\n"))
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"r1","method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"fix the bug"}]}}`+"\n"))
 	feed := func(l string) { c.captureTurn([]byte(l + "\n")) }
 	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read main.go","kind":"read","status":"pending"}}}`)
 	feed(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"looking…"}}}}`)
