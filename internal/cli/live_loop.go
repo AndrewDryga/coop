@@ -39,7 +39,7 @@ func newLoopBar(region *ui.Region, start time.Time, c taskCounts, activity strin
 func (b *loopBar) line() string {
 	return fmt.Sprintf("%s %s %s %s",
 		ui.SpinFrame(b.spin),
-		ui.ProgressBarStates(b.c.Done, b.c.Blocked, b.c.total(), 20),
+		ui.ProgressBarStates(b.c.Done, b.c.Doing, b.c.Blocked, b.c.total(), 20),
 		progressLine(b.c, b.activity),
 		ui.Dim(elapsed(b.start)))
 }

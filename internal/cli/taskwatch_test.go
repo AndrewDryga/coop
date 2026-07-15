@@ -22,6 +22,15 @@ func TestSourceLineShowsBlocked(t *testing.T) {
 	}
 }
 
+func TestTaskWatchBarsShowTinyActiveShare(t *testing.T) {
+	c := taskCounts{Todo: 99, Doing: 1}
+	for _, line := range []string{tasksProgressLine(ui.Palette{}, c), sourceLine(ui.Palette{}, "api", 3, c)} {
+		if !strings.Contains(line, "█") {
+			t.Errorf("task-watch overall and source bars should keep a visible active cell: %q", line)
+		}
+	}
+}
+
 func merge(items []taskItem) []mergedTask {
 	out := make([]mergedTask, len(items))
 	for i, t := range items {

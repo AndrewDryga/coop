@@ -127,48 +127,57 @@ func TestProgressBar(t *testing.T) {
 }
 
 func TestProgressBarStates(t *testing.T) {
-	// Colors off under `go test` — done (cyan) and blocked (red) both render as plain █, so assert the
-	// cell layout: done + blocked fill, the rest is empty.
+	// Colors are off under `go test`, so every state segment renders as plain █. Assert the total
+	// filled-cell layout here; the protected-segment test below distinguishes colors with sentinels.
 	for _, c := range []struct {
-		done, blocked, total, w int
-		want                    string
+		done, doing, blocked, total, w int
+		want                           string
 	}{
-		{0, 0, 0, 4, "[░░░░]"},        // no tasks → empty
-		{2, 0, 4, 4, "[██░░]"},        // half done, none blocked
-		{2, 2, 4, 4, "[████]"},        // 2 done + 2 blocked → full
-		{0, 4, 4, 4, "[████]"},        // all blocked → full
-		{5, 5, 10, 4, "[████]"},       // done+blocked can't exceed the width
-		{2, 0, 4, 10, "[█████░░░░░]"}, // 2/4 done scaled to width 10
+		{0, 0, 0, 0, 4, "[░░░░]"},        // no tasks → empty
+		{2, 0, 0, 4, 4, "[██░░]"},        // half done
+		{0, 2, 0, 4, 4, "[██░░]"},        // half in progress
+		{2, 1, 1, 4, 4, "[████]"},        // all non-todo states fill
+		{5, 1, 5, 10, 4, "[████]"},       // segments cannot exceed the width
+		{2, 0, 0, 4, 10, "[█████░░░░░]"}, // 2/4 done scaled to width 10
 	} {
-		if got := ProgressBarStates(c.done, c.blocked, c.total, c.w); got != c.want {
-			t.Errorf("ProgressBarStates(d=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.blocked, c.total, c.w, got, c.want)
+		if got := ProgressBarStates(c.done, c.doing, c.blocked, c.total, c.w); got != c.want {
+			t.Errorf("ProgressBarStates(d=%d,a=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.doing, c.blocked, c.total, c.w, got, c.want)
 		}
 	}
 }
 
-func TestProgressBarStatesBlockedNeverHidden(t *testing.T) {
-	// Colors are off under `go test`, so done (cyan) and blocked (red) both render as plain █ — a
-	// rounded-away blocker would be invisible in the string. Force sentinels so the two segments are
-	// distinct, then prove a non-zero blocked count always keeps at least one red cell.
-	saved := [3]string{cCyan, cRed, cReset}
-	cCyan, cRed, cReset = "<c>", "<r>", "</>"
-	defer func() { cCyan, cRed, cReset = saved[0], saved[1], saved[2] }()
+func TestProgressBarStatesLiveSegmentsNeverHidden(t *testing.T) {
+	// Force sentinels so the state segments stay distinguishable without a TTY.
+	saved := [4]string{cCyan, cYellow, cRed, cReset}
+	cCyan, cYellow, cRed, cReset = "<c>", "<y>", "<r>", "</>"
+	defer func() { cCyan, cYellow, cRed, cReset = saved[0], saved[1], saved[2], saved[3] }()
 
-	seg := func(cyan, red, empty int) string {
-		return "[" + Cyan(strings.Repeat("█", cyan)) + Red(strings.Repeat("█", red)) + strings.Repeat("░", empty) + "]"
+	seg := func(cyan, yellow, red, empty int) string {
+		return "[" + Cyan(strings.Repeat("█", cyan)) + Yellow(strings.Repeat("█", yellow)) + Red(strings.Repeat("█", red)) + strings.Repeat("░", empty) + "]"
 	}
 	for _, c := range []struct {
-		done, blocked, total, w int
-		want                    string
+		done, doing, blocked, total, w int
+		want                           string
 	}{
-		// 57/58 done, 1 blocked, w14 — the real board line: done alone rounds up to a full bar, but
-		// the blocker steals one cell from done (13 cyan + 1 red, no empty) instead of vanishing.
-		{57, 1, 58, 14, seg(13, 1, 0)},
-		// A blocker that rounds to zero far from full still surfaces one red cell, out of the empties.
-		{40, 1, 100, 14, seg(6, 1, 7)},
+		// The reported 24 done / 1 active / 1 todo queue keeps one yellow cell.
+		{24, 1, 0, 26, 22, seg(20, 1, 0, 1)},
+		// A tiny active share that rounds to zero still surfaces one yellow cell.
+		{40, 1, 0, 100, 14, seg(6, 1, 0, 7)},
+		// A lone blocker still steals one cell from a near-complete done segment.
+		{57, 0, 1, 58, 14, seg(13, 0, 1, 0)},
+		// Both protected states remain visible; done yields the rounding overflow.
+		{57, 1, 1, 59, 14, seg(12, 1, 1, 0)},
+		// A dominant blocked share still reserves yellow before proportional allocation.
+		{0, 1, 99, 100, 14, seg(0, 1, 13, 0)},
+		// A dominant active share likewise cannot hide a real blocker.
+		{0, 99, 1, 100, 14, seg(0, 13, 1, 0)},
+		// One cell can show active work when no blocker competes for it.
+		{0, 1, 0, 2, 1, seg(0, 1, 0, 0)},
+		// A one-cell bar cannot show both; preserve the existing blocker priority.
+		{0, 1, 1, 2, 1, seg(0, 0, 1, 0)},
 	} {
-		if got := ProgressBarStates(c.done, c.blocked, c.total, c.w); got != c.want {
-			t.Errorf("ProgressBarStates(d=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.blocked, c.total, c.w, got, c.want)
+		if got := ProgressBarStates(c.done, c.doing, c.blocked, c.total, c.w); got != c.want {
+			t.Errorf("ProgressBarStates(d=%d,a=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.doing, c.blocked, c.total, c.w, got, c.want)
 		}
 	}
 }

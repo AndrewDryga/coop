@@ -169,14 +169,14 @@ func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin int) []str
 // tasksProgressLine is the overall header: the merged progress bar and the per-state counts (each in
 // the state's color). No status glyph — the bar and counts already convey state.
 func tasksProgressLine(p ui.Palette, c taskCounts) string {
-	return fmt.Sprintf("%s  %s", ui.ProgressBarStates(c.Done, c.Blocked, c.total(), 22), tasksCountSummary(p, c))
+	return fmt.Sprintf("%s  %s", ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.total(), 22), tasksCountSummary(p, c))
 }
 
 // sourceLine is one source's compact breakdown — its label (queue path or fork name), a small bar
-// (done cyan, blocked red), done/total, and the blocked count when any — so several queues/forks each
-// fit on one line under the overall header and a parked queue is visible at a glance.
+// (done cyan, in-progress yellow, blocked red), done/total, and the blocked count when any — so
+// several queues/forks each fit on one line under the overall header and live/parked work is visible.
 func sourceLine(p ui.Palette, label string, w int, c taskCounts) string {
-	line := fmt.Sprintf("  %s  %s  %s/%d", p.Bold(padRight(label, w)), ui.ProgressBarStates(c.Done, c.Blocked, c.total(), 14), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
+	line := fmt.Sprintf("  %s  %s  %s/%d", p.Bold(padRight(label, w)), ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.total(), 14), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
 	if c.Blocked > 0 {
 		line += p.Dim(" · ") + p.Red(fmt.Sprintf("%d blocked", c.Blocked))
 	}

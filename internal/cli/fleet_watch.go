@@ -146,7 +146,7 @@ func fleetSettled(rows []fleetRow) bool {
 // fleetDashboard renders the watch view: a header, one row per fork, and a global progress bar.
 // Pure (it takes the already-gathered rows) so it unit-tests without a real fleet.
 func fleetDashboard(name string, rows []fleetRow, spin int) []string {
-	var running, blocked, done, total int
+	var running, doing, blocked, done, total int
 	var totalCost float64
 	// Size the done/total column to the widest count actually present (min "0/0"), so every count
 	// sits one space off its bar and the column that follows still lines up — instead of a fixed
@@ -156,6 +156,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 		if r.running {
 			running++
 		}
+		doing += r.counts.Doing
 		blocked += r.counts.Blocked
 		done += r.counts.Done
 		total += r.counts.total()
@@ -170,7 +171,7 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
 	bar := fmt.Sprintf("%s %s %s tasks · %d running · %s blocked",
-		stateGlyph(running > 0, done, total, spin), ui.ProgressBarStates(done, blocked, total, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
+		stateGlyph(running > 0, done, total, spin), ui.ProgressBarStates(done, doing, blocked, total, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
 	if totalCost > 0 {
 		bar += fmt.Sprintf(" · $%.2f", totalCost)
 	}
@@ -232,7 +233,7 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 		doing = truncate(r.active, 32)
 	}
 	line := fmt.Sprintf("%s %s %-*s %s %-*s  %s",
-		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBarStates(r.counts.Done, r.counts.Blocked, total, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
+		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBarStates(r.counts.Done, r.counts.Doing, r.counts.Blocked, total, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
 	if r.cost > 0 {
 		line += "  " + ui.Dim(fmt.Sprintf("$%.2f", r.cost))
 	}

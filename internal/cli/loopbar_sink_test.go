@@ -66,6 +66,13 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 	}
 }
 
+func TestLoopBarShowsTinyActiveShare(t *testing.T) {
+	bar := newLoopBar(nil, time.Now(), taskCounts{Todo: 99, Doing: 1}, "demo")
+	if line := bar.line(); !strings.Contains(line, "█") {
+		t.Errorf("loop bar should keep a visible active cell: %q", line)
+	}
+}
+
 func TestLoopBarActivityDoesNotFollowQueueSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

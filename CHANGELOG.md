@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Non-zero in-progress work now keeps at least one yellow cell in loop, fleet, and task-watch
+  progress bars, while blocked work retains its existing one-red-cell minimum.
+
 - **Loop status stays on the work actually running.** Sticky bars keep their assigned task through
   folder moves, while between, protected, signoff, and verify passes name their own stage and review
   subject instead of drifting to the next queue item. Provider closing lines now label compact token

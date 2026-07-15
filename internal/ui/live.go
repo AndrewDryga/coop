@@ -198,12 +198,11 @@ func ProgressBar(frac float64, width int) string {
 	return "[" + Cyan(strings.Repeat("█", filled)) + strings.Repeat("░", width-filled) + "]"
 }
 
-// ProgressBarStates is ProgressBar with a blocked segment: `done` cells filled (cyan), then `blocked`
-// cells in red, then the rest (todo + in-progress) empty — all out of total. A glance shows both how
-// far along AND how much is parked on a decision. A non-zero blocked count always claims at least one
-// cell, stolen from done if need be: a lone blocker must never round away and let a near-complete bar
-// read as all-done — that would hide the very issue a human still has to clear.
-func ProgressBarStates(done, blocked, total, width int) string {
+// ProgressBarStates renders done (cyan), in-progress (yellow), blocked (red), then todo (empty).
+// Non-zero in-progress and blocked counts each claim at least one cell when the width permits; done
+// yields overflow to both. On a bar too narrow for both protected segments, blocked wins because a
+// hidden decision would make an unfinished queue look actionable or complete.
+func ProgressBarStates(done, doing, blocked, total, width int) string {
 	if width < 0 {
 		width = 0
 	}
@@ -216,18 +215,33 @@ func ProgressBarStates(done, blocked, total, width int) string {
 		}
 		return int(float64(n)/float64(total)*float64(width) + 0.5)
 	}
-	b := cells(blocked)
-	if blocked > 0 && b == 0 {
-		b = 1 // floor a real blocker at one visible cell, never round it away
+	bMin := 0
+	if blocked > 0 && width > 0 {
+		bMin = 1
 	}
-	if b > width {
-		b = width
+	aMin := 0
+	if doing > 0 && width-bMin > 0 {
+		aMin = 1 // reserve both protected states before proportional rounding
+	}
+	b := cells(blocked)
+	if b < bMin {
+		b = bMin
+	}
+	if b > width-aMin {
+		b = width - aMin
+	}
+	a := cells(doing)
+	if a < aMin {
+		a = aMin
+	}
+	if a > width-b {
+		a = width - b
 	}
 	d := cells(done)
-	if d+b > width {
-		d = width - b // done yields the overflow to the blocker, not the reverse
+	if d+a+b > width {
+		d = width - a - b // completed work yields to live/blocked state, not the reverse
 	}
-	return "[" + Cyan(strings.Repeat("█", d)) + Red(strings.Repeat("█", b)) + strings.Repeat("░", width-d-b) + "]"
+	return "[" + Cyan(strings.Repeat("█", d)) + Yellow(strings.Repeat("█", a)) + Red(strings.Repeat("█", b)) + strings.Repeat("░", width-d-a-b) + "]"
 }
 
 // clip truncates s to at most n visible columns, counting runes but not ANSI SGR escapes, and
