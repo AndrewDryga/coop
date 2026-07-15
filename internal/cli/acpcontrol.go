@@ -84,35 +84,36 @@ func normalizeACPSelection(sel acpSelection) acpSelection {
 // handles their changes by restarting the box on the selected identity. The conversation survives
 // because the transcript sits on a shared, credential-independent store.
 type acpControl struct {
-	cfg     *config.Config // for expanding a selected preset's model ladder into rotation targets
-	repo    string         // repo root, to load a preset selected from the toolbar
-	lead    string         // the CURRENT lead agent — re-derived on a provider switch (see retarget)
-	model   string         // coop's resolved model for the lead ("" → leave the adapter's default)
-	target  agents.Target  // complete active box/session intent, including preset model + effort
-	creds   []string       // the lead's credentials (accounts), in order
-	presets []string       // the repo's presets, in order
-	fusion  bool           // a fusion governor session — the selector offers no provider switch
+	cfg          *config.Config              // for expanding a selected preset's model ladder into rotation targets
+	repo         string                      // repo root, to load a preset selected from the toolbar
+	lead         string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
+	model        string                      // coop's resolved model for the lead ("" → leave the adapter's default)
+	target       agents.Target               // complete active box/session intent, including preset model + effort
+	plainTargets map[string]targetPreference // provider -> last accepted plain model/effort choice
+	creds        []string                    // the lead's credentials (accounts), in order
+	presets      []string                    // the repo's presets, in order
+	fusion       bool                        // a fusion governor session — the selector offers no provider switch
 
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
 	mu          sync.Mutex
-	sel         acpSelection               // tagged plain lead or preset-owned selection
-	autoAccount string                     // concrete account behind Account=Auto after a recovery rotation
-	authFailed  map[string]bool            // provider@account failures already tried in automatic mode
-	cached      map[string]json.RawMessage // sessionId -> the rewritten configOptions array (for set responses)
-
-	// nativesStale marks the cached NATIVE options (model/effort/fast) as belonging to a
-	// PREVIOUS lead after a provider switch: a refresh drops them instead of echoing the old
-	// provider's model menu. Cleared when the new box's real options land (rewriteConfigOptions).
-	nativesStale bool
+	sel         acpSelection                 // tagged plain lead or preset-owned selection
+	autoAccount string                       // concrete account behind Account=Auto after a recovery rotation
+	authFailed  map[string]bool              // provider@account failures already tried in automatic mode
+	cached      map[string]json.RawMessage   // sessionId -> the rewritten configOptions array (for set responses)
+	nativeCache map[string]nativeOptionCache // sessionId -> provider-owned raw options/models truth
 	// leadUsesSetModel latches true once a session/new result proves this lead exposes its models via a
-	// `models` field with no native `model` configOption (gemini), so coop synthesized the dropdown. It
+	// `models` field with no native `model` configOption, so coop synthesized the dropdown. It
 	// then routes an editor `model` set to session/set_model (fromEditor) and re-applies the chosen model
-	// after a box swap (sessionReady). Stays false for adapters with a native model option (claude, codex).
+	// after a box swap (sessionReady). Stays false for adapters with a native model config option.
 	leadUsesSetModel bool
-	limited          map[string]time.Time // account -> when its rate limit resets (skip until then)
+	limited          map[string]time.Time // provider@account -> when its rate limit resets (skip until then)
 	nextID           int
-	nativePending    map[string]nativeTargetChange // editor request id -> target change awaiting adapter success
+	nativePending    map[string]nativeTargetChange // request id -> target change awaiting adapter success
+	nativeLatest     map[string]uint64             // provider+field -> newest request sequence
+	nativeAccepted   map[string]uint64             // provider+field -> newest accepted request sequence
+	nativeSequence   uint64
+	recreate         map[string]bool // sessionId -> next replay must create fresh instead of loading
 
 	// Preset rate-limit failover: a preset session rotates the lead's model ladder (fable→opus→…),
 	// unlike a credential session (which rotates accounts on one model). rot is the active preset's
@@ -145,6 +146,7 @@ type acpControl struct {
 	turnActive   map[string]bool              // editor sessionId -> a prompt cleared proxy admission on the live child
 	toolTitle    map[string]map[string]string // editor sessionId -> toolCallId -> title (until its terminal update)
 	needPreamble map[string]bool              // editor sessionId -> wrap the next outgoing prompt with the history
+	echoPreamble map[string]string            // editor sessionId -> exact injected carry block to remove from provider user echoes
 }
 
 // sessHistory is one session's carried conversation. Each entry owns its provider provenance because
@@ -160,8 +162,23 @@ type sessHistory struct {
 type histEntry struct{ provider, role, text string }
 
 type nativeTargetChange struct {
-	field string
-	value string
+	field      string
+	value      string
+	provider   string
+	session    string
+	sequence   uint64
+	translated bool
+}
+
+type nativeOptionCache struct {
+	Provider string          `json:"provider"`
+	Options  json.RawMessage `json:"options"`
+	Models   json.RawMessage `json:"models,omitempty"`
+}
+
+type targetPreference struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // historyEntryBytes caps one entry's text. A user prompt keeps its HEAD (the ask leads); an
@@ -178,50 +195,59 @@ func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acp
 	return &acpControl{
 		cfg: cfg, repo: repo, fusion: fusion,
 		lead: lead, model: model, target: target, creds: cfg.Profiles(lead), presets: presets,
-		accounts:      accountsFor(cfg, lead),
-		sel:           sel,
-		authFailed:    map[string]bool{},
-		cached:        map[string]json.RawMessage{},
-		limited:       map[string]time.Time{},
-		nativePending: map[string]nativeTargetChange{},
-		promptSession: map[string]string{},
-		lastPrompt:    map[string][]byte{},
-		resend:        map[string]bool{},
-		heldChunk:     map[string][]byte{},
-		waits:         map[string]int{},
-		serveURLs:     serveURLs,
-		reported:      map[string]bool{},
-		carryBytes:    cfg.ACPCarryBytes(),
-		history:       map[string]*sessHistory{},
-		turnText:      map[string][]byte{},
-		turnProvider:  map[string]string{},
-		turnActive:    map[string]bool{},
-		toolTitle:     map[string]map[string]string{},
-		needPreamble:  map[string]bool{},
+		plainTargets:   map[string]targetPreference{lead: {Model: model, Effort: effort}},
+		accounts:       accountsFor(cfg, lead),
+		sel:            sel,
+		authFailed:     map[string]bool{},
+		cached:         map[string]json.RawMessage{},
+		nativeCache:    map[string]nativeOptionCache{},
+		limited:        map[string]time.Time{},
+		nativePending:  map[string]nativeTargetChange{},
+		nativeLatest:   map[string]uint64{},
+		nativeAccepted: map[string]uint64{},
+		recreate:       map[string]bool{},
+		promptSession:  map[string]string{},
+		lastPrompt:     map[string][]byte{},
+		resend:         map[string]bool{},
+		heldChunk:      map[string][]byte{},
+		waits:          map[string]int{},
+		serveURLs:      serveURLs,
+		reported:       map[string]bool{},
+		carryBytes:     cfg.ACPCarryBytes(),
+		history:        map[string]*sessHistory{},
+		turnText:       map[string][]byte{},
+		turnProvider:   map[string]string{},
+		turnActive:     map[string]bool{},
+		toolTitle:      map[string]map[string]string{},
+		needPreamble:   map[string]bool{},
+		echoPreamble:   map[string]string{},
 	}
 }
 
 // hooks wires the controller into the acpproxy.
 func (c *acpControl) hooks() *acpproxy.Hooks {
 	return &acpproxy.Hooks{
-		ToEditor:         c.toEditor,
-		ReplayFailure:    c.maybeRecoverAuthentication,
-		SessionReady:     c.sessionReady,
-		InjectedResponse: c.injectedResponse,
-		ChildReset:       c.childReset,
-		FromEditor:       c.fromEditor,
-		PromptForwarded:  c.promptForwarded,
-		AutoReply:        c.autoReply,
-		ResumePrompt:     c.resumePrompt,
-		SessionRecreated: c.sessionRecreated,
-		SessionClosed:    c.sessionClosed,
-		SessionEnded:     c.sessionEnded,
+		ToEditor:              c.toEditor,
+		ReplayFailure:         c.maybeRecoverAuthentication,
+		SessionReady:          c.sessionReady,
+		InjectedResponse:      c.injectedResponse,
+		ChildReset:            c.childReset,
+		FromEditor:            c.fromEditor,
+		PromptForwarded:       c.promptForwarded,
+		AutoReply:             c.autoReply,
+		ResumePrompt:          c.resumePrompt,
+		ShouldRecreateSession: c.shouldRecreateSession,
+		SessionRecreated:      c.sessionRecreated,
+		SessionClosed:         c.sessionClosed,
+		SessionEnded:          c.sessionEnded,
 	}
 }
 
 func (c *acpControl) clearSessionActive(session string) {
 	c.mu.Lock()
 	delete(c.cached, session)
+	delete(c.nativeCache, session)
+	delete(c.recreate, session)
 	delete(c.lastPrompt, session)
 	delete(c.resend, session)
 	delete(c.heldChunk, session)
@@ -231,6 +257,7 @@ func (c *acpControl) clearSessionActive(session string) {
 	delete(c.turnProvider, session)
 	delete(c.turnActive, session)
 	delete(c.toolTitle, session)
+	delete(c.echoPreamble, session)
 	for id, sid := range c.promptSession {
 		if sid == session {
 			delete(c.promptSession, id)
@@ -257,7 +284,14 @@ func (c *acpControl) sessionEnded(session string) {
 func (c *acpControl) sessionRecreated(session string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	delete(c.recreate, session)
 	c.needPreamble[session] = true
+}
+
+func (c *acpControl) shouldRecreateSession(session string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recreate[session]
 }
 
 // resumePrompt returns the prompt to transparently re-send for a session once its box is back after a
@@ -304,8 +338,8 @@ func (c *acpControl) selection() acpSelection {
 	return c.sel
 }
 
-// currentModel is coop's chosen model for the lead. Read under the lock because a set of coop's
-// synthesized model dropdown (gemini) mutates it from the editor goroutine while the box→editor
+// currentModel is coop's chosen model for the lead. Read under the lock because a set of Coop's
+// synthesized models-field dropdown mutates it from the editor goroutine while the box→editor
 // goroutine reads it to render the toolbar.
 func (c *acpControl) currentModel() string {
 	c.mu.Lock()
@@ -381,14 +415,18 @@ func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool)
 		}
 		// Retarget before resolving Auto: autoAccount and accounts belong to the provider that will
 		// actually spawn. Resolving first can leak claude@work into a Codex switch.
-		providerChanged := provider != c.lead
 		c.retargetLocked(provider)
-		// A plain account switch carries Coop's model/effort pick. A provider switch resolves
-		// the new provider's own defaults because the previous provider's values are meaningless.
-		model, effort := c.model, c.target.Effort
-		if providerChanged {
-			model, effort = c.cfg.ModelFor(provider), c.cfg.EffortFor(provider)
+		// Each provider retains its own last accepted plain target. Switching providers changes the
+		// capability namespace without discarding the choice to restore when the user switches back.
+		// Read it even when provider == c.lead: leaving a preset on its effective provider is a
+		// same-provider transition, but its ladder target must not leak into the plain selection.
+		pref, ok := c.plainTargets[provider]
+		if !ok {
+			pref = targetPreference{Model: c.cfg.ModelFor(provider), Effort: c.cfg.EffortFor(provider)}
+			c.plainTargets[provider] = pref
 		}
+		c.model = pref.Model
+		model, effort := pref.Model, pref.Effort
 		t = agents.Target{Provider: provider, Model: model, Effort: effort}
 		account := sel.Account
 		if account == "" {
@@ -415,9 +453,9 @@ func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool)
 
 // retargetLocked re-derives the per-lead state when the next spawn's provider differs from the
 // current lead: the selector's credential list, the auto-rotation accounts, and the set-model
-// latch all belong to the NEW lead, and coop's remembered model pick dies (its id is the old
-// provider's). Rate-limit cooldowns keyed by account name are left alone — stale entries for the
-// old lead expire on their own. Called with c.mu held.
+// latch all belong to the NEW lead. Provider-scoped target choices and cooldowns stay available so
+// switching away and back restores the user's last accepted model/effort without retrying a cooling
+// login. Called with c.mu held.
 func (c *acpControl) retargetLocked(provider string) {
 	if provider == "" || provider == c.lead {
 		return
@@ -426,21 +464,25 @@ func (c *acpControl) retargetLocked(provider string) {
 	c.creds = c.cfg.Profiles(provider)
 	c.accounts = accountsFor(c.cfg, provider)
 	c.autoAccount = ""
-	c.model = ""
-	c.target = agents.Target{Provider: provider, Model: c.cfg.ModelFor(provider), Effort: c.cfg.EffortFor(provider)}
+	if c.plainTargets == nil {
+		c.plainTargets = map[string]targetPreference{}
+	}
+	pref, ok := c.plainTargets[provider]
+	if !ok {
+		pref = targetPreference{Model: c.cfg.ModelFor(provider), Effort: c.cfg.EffortFor(provider)}
+		c.plainTargets[provider] = pref
+	}
+	c.model = pref.Model
+	c.target = agents.Target{Provider: provider, Model: pref.Model, Effort: pref.Effort}
 	c.leadUsesSetModel = false
-	// The cached NATIVE options (model/effort/fast) still describe the OLD lead — serving them
-	// would show the previous provider's model menu on the new one. Stale until the new box's
-	// session/new truth flows through rewriteConfigOptions.
-	c.nativesStale = true
 }
 
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
 // wait-for-reset path pointed at a still-cooling account only starts once it's usable. A no-op for an
 // account that isn't limited — the common case, including a normal rotation to a free account.
-func (c *acpControl) waitForReset(ctx context.Context, cred string) {
+func (c *acpControl) waitForReset(ctx context.Context, provider, cred string) {
 	c.mu.Lock()
-	until := c.limited[cred]
+	until := c.limited[accountLimitKey(provider, cred)]
 	c.mu.Unlock()
 	sleepUntilReset(ctx, until, "credential "+cred)
 }
@@ -485,7 +527,16 @@ func sleepUntilReset(ctx context.Context, until time.Time, label string) {
 // dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
 // watches for authentication/rate-limit errors and auto-rotates when possible (restart=true).
 func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
-	c.commitNativeTarget(line)
+	targetResult := c.commitNativeTarget(line)
+	if targetResult.tracked && targetResult.change.translated {
+		return c.translatedModelResponse(line, targetResult), targetResult.restart
+	}
+	if filtered, matched := c.filterPreambleEcho(line); matched {
+		if len(filtered) == 0 {
+			return nil, false
+		}
+		line = filtered
+	}
 	// Authentication failure is target health, not an adapter-owned editor flow: Coop credentials are
 	// mounted before launch. Rotate a plain automatic account, or keep a preset/pin exact and replace
 	// the generic error with its login command. This also drops a duplicate auth-required chunk.
@@ -579,7 +630,7 @@ func (c *acpControl) maybeRecoverAuthentication(line []byte) (out []byte, restar
 			if account == currentAccount || c.authFailed[loginTarget(provider, account)] {
 				continue
 			}
-			until := c.limited[account]
+			until := c.limited[accountLimitKey(provider, account)]
 			if !until.After(now) {
 				next = account
 				break
@@ -663,32 +714,131 @@ func hideAuthenticationMethods(line []byte) []byte {
 	return append(encoded, '\n')
 }
 
-func (c *acpControl) commitNativeTarget(line []byte) {
+type nativeTargetResult struct {
+	change   nativeTargetChange
+	tracked  bool
+	latest   bool
+	success  bool
+	accepted string
+	restart  bool
+}
+
+func nativeTargetKey(provider, field string) string { return provider + "\x00" + field }
+
+// armPromptResendsLocked keeps already-admitted turns alive across an intentional child replacement.
+// Called with c.mu held.
+func (c *acpControl) armPromptResendsLocked(reason string) {
+	for id, sid := range c.promptSession {
+		if c.lastPrompt[sid] == nil {
+			continue
+		}
+		c.resend[sid] = true
+		delete(c.turnActive, sid)
+		delete(c.heldChunk, sid)
+		delete(c.waits, sid)
+		acpproxy.Trace("%s: re-sending the in-flight prompt %s for session %s after the swap", reason, id, sid)
+	}
+}
+
+func (c *acpControl) registerNativeTarget(id, field, value, session string, translated bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.nativeSequence++
+	change := nativeTargetChange{
+		field: field, value: value, provider: c.lead, session: session,
+		sequence: c.nativeSequence, translated: translated,
+	}
+	c.nativePending[id] = change
+	c.nativeLatest[nativeTargetKey(change.provider, change.field)] = change.sequence
+}
+
+func (c *acpControl) commitNativeTarget(line []byte) nativeTargetResult {
 	var response struct {
 		ID    json.RawMessage `json:"id"`
 		Error json.RawMessage `json:"error"`
 	}
 	if json.Unmarshal(line, &response) != nil || len(response.ID) == 0 {
-		return
+		return nativeTargetResult{}
 	}
 	c.mu.Lock()
 	change, ok := c.nativePending[string(response.ID)]
 	delete(c.nativePending, string(response.ID))
-	if ok && (len(response.Error) == 0 || string(response.Error) == "null") {
-		switch change.field {
-		case "model":
-			c.model = change.value
-			c.target.Model = change.value
-		case "effort":
-			c.target.Effort = change.value
+	result := nativeTargetResult{change: change, tracked: ok}
+	if ok {
+		key := nativeTargetKey(change.provider, change.field)
+		result.latest = c.nativeLatest[key] == change.sequence
+		if result.latest {
+			delete(c.nativeLatest, key)
+		}
+		hasError := len(response.Error) > 0 && string(response.Error) != "null"
+		activeProvider := normalizeACPSelection(c.sel).Preset == "" && c.lead == change.provider && c.target.Provider == change.provider
+		newerPending := c.hasNewerNativeTargetLocked(key, change.sequence)
+		sequenceCanWin := result.latest || (!newerPending && change.sequence > c.nativeAccepted[key])
+		restartRequired := sequenceCanWin && activeProvider && change.translated && hasError && modelRestartSuggested(response.Error)
+		result.success = !hasError || restartRequired
+		if c.plainTargets == nil {
+			c.plainTargets = map[string]targetPreference{}
+		}
+		pref := c.plainTargets[change.provider]
+		if result.success && change.sequence > c.nativeAccepted[key] {
+			c.nativeAccepted[key] = change.sequence
+			switch change.field {
+			case "model":
+				pref.Model = change.value
+			case "effort":
+				pref.Effort = change.value
+			}
+			c.plainTargets[change.provider] = pref
+		}
+		effective := result.latest || (result.success && !newerPending && c.nativeAccepted[key] == change.sequence)
+		if effective && activeProvider {
+			switch change.field {
+			case "model":
+				c.model = pref.Model
+				c.target.Model = pref.Model
+			case "effort":
+				c.target.Effort = pref.Effort
+			}
+		}
+		result.restart = restartRequired
+		if result.restart {
+			if c.recreate == nil {
+				c.recreate = map[string]bool{}
+			}
+			// The selected launch model owns the replacement child, so every active session on
+			// that child must move to a fresh native session, not only the toolbar that changed it.
+			for session := range c.nativeCache {
+				c.recreate[session] = true
+			}
+			c.recreate[change.session] = true
+			c.armPromptResendsLocked("model migration to " + change.value)
+		}
+		if change.field == "model" {
+			result.accepted = pref.Model
+		} else {
+			result.accepted = pref.Effort
 		}
 	}
 	c.mu.Unlock()
+	return result
+}
+
+// hasNewerNativeTargetLocked reports whether an unresolved request for key must still get the last
+// word. Responses can arrive in either order, so the latest request may reject before an older valid
+// choice succeeds. Called with c.mu held after the current response was removed from nativePending.
+func (c *acpControl) hasNewerNativeTargetLocked(key string, sequence uint64) bool {
+	for _, pending := range c.nativePending {
+		if pending.sequence > sequence && nativeTargetKey(pending.provider, pending.field) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *acpControl) childReset() {
 	c.mu.Lock()
 	c.nativePending = map[string]nativeTargetChange{}
+	c.nativeLatest = map[string]uint64{}
 	for session, provider := range c.turnProvider {
 		if c.resend[session] {
 			continue // an intentional retry owns this partial and resumes it on the replacement child
@@ -704,6 +854,7 @@ func (c *acpControl) childReset() {
 	}
 	c.promptSession = map[string]string{}
 	c.turnActive = map[string]bool{}
+	c.echoPreamble = map[string]string{}
 	c.mu.Unlock()
 }
 
@@ -754,7 +905,7 @@ func (c *acpControl) serveNoticeFor(line []byte) []byte {
 // rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a
 // session/new|load|resume result or a config_option_update) it drops the mode+subagent dropdowns and the
 // modes mirror, defaults the model to coop's, and prepends coop's selector. On a session result that
-// carries NO configOptions (the gemini/codex adapters, unlike claude-agent-acp) it still injects coop's
+// carries NO configOptions (an adapter may expose only `models`, or neither) it still injects Coop's
 // selector, so the credential/preset switcher appears for every agent. Other lines pass through.
 func (c *acpControl) rewriteToEditor(line []byte) []byte {
 	// Fast path: only session/new|load|resume results (a result WITH a sessionId) and config_option_update
@@ -788,15 +939,15 @@ func (c *acpControl) rewriteToEditor(line []byte) []byte {
 			changed = true
 		}
 		if _, hasCO := inner["configOptions"]; hasCO {
-			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid)
+			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid, false)
 			changed = true
 		} else if key == "result" && sid != "" {
-			// A session/new|load|resume RESULT with no configOptions — the gemini adapter doesn't emit the
-			// claude-agent-acp toolbar. coop still owns the toolbar, so synthesize one from an empty set
+			// A session/new|load|resume result with no configOptions. Coop still owns the toolbar, so
+			// synthesize one from an empty set
 			// (rewriteConfigOptions prepends coop's selectors, plus a model select when the result carries a
 			// `models` field); without this the credential/preset switcher never appears for those agents
-			// (the reported "gemini shows no dropdowns at all").
-			inner["configOptions"] = c.rewriteConfigOptions(json.RawMessage("[]"), inner["models"], sid)
+			// (the original missing-toolbar failure).
+			inner["configOptions"] = c.rewriteConfigOptions(json.RawMessage("[]"), inner["models"], sid, false)
 			changed = true
 		} else if rewrote := c.rewriteUpdateConfigOptions(inner["update"], sid); rewrote != nil {
 			inner["update"] = rewrote
@@ -831,9 +982,12 @@ func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid stri
 	if _, ok := u["configOptions"]; !ok {
 		return nil
 	}
-	// A config_option_update carries only the option array — no models field — so pass nil; the model
-	// select, if any, was already synthesized at session/new and rides in the cached set.
-	u["configOptions"] = c.rewriteConfigOptions(u["configOptions"], nil, sid)
+	var replay bool
+	_ = json.Unmarshal(u["coopReplay"], &replay)
+	models := u["models"]
+	delete(u, "coopReplay") // proxy-private replay metadata must not cross the editor boundary
+	delete(u, "models")
+	u["configOptions"] = c.rewriteConfigOptions(u["configOptions"], models, sid, replay)
 	nb, err := json.Marshal(u)
 	if err != nil {
 		return nil
@@ -855,9 +1009,6 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return nil, false
 	}
 	sel := c.selection()
-	if sel.Account == "" && sel.Preset == "" {
-		return nil, false
-	}
 	var h struct {
 		ID    json.RawMessage `json:"id"`
 		Error json.RawMessage `json:"error"`
@@ -866,7 +1017,17 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return nil, false
 	}
 	now := time.Now()
-	hint := acpErrorLimitHint(h.Error, now, acpRateSignals(c.lead))
+	c.mu.Lock()
+	provider := c.lead
+	currentAccount := sel.Account
+	if currentAccount == "" {
+		currentAccount = c.autoAccount
+		if currentAccount == "" && len(c.accounts) > 0 {
+			currentAccount = c.accounts[0]
+		}
+	}
+	c.mu.Unlock()
+	hint := acpErrorLimitHint(h.Error, now, acpRateSignals(provider))
 	if !hint.limited || hint.outputLimited {
 		return nil, false
 	}
@@ -892,28 +1053,32 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return c.rotatePreset(session, canResend, until, now)
 	}
 
-	next := c.nextAccount(sel.Account, until, now)
+	next := c.nextAccount(provider, currentAccount, until, now)
 	if next != "" {
 		c.clearWait(session) // a free rotation breaks the consecutive-wait chain
 		c.mu.Lock()
-		c.sel.Account = next
+		if sel.Account == "" {
+			c.autoAccount = next
+		} else {
+			c.sel.Account = next
+		}
 		if canResend {
 			c.resend[session] = true
 		}
 		c.mu.Unlock()
 		if canResend {
-			acpproxy.Trace("rate limit on %s: rotating to %s + auto-resending", sel.Account, next)
+			acpproxy.Trace("rate limit on %s@%s: rotating to %s + auto-resending", provider, currentAccount, next)
 			// Swallow the error, move the toolbar dropdown to the new credential, restart on it, and
 			// re-send after replay — the config_option_update is the only thing the editor sees.
 			return c.configOptionUpdate(session), true
 		}
 		// Couldn't identify the prompt — fall back to switching + asking the user to resend.
-		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", sel.Account, next)), true
+		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", currentAccount, next)), true
 	}
 
 	// Nothing free right now: wait for the nearest reset, then re-send on that account. Needs a known
 	// reset and a captured prompt; otherwise forward the error so the user can wait/retry themselves.
-	acct, at := c.nearestReset()
+	acct, at := c.nearestReset(provider)
 	if acct == "" || !canResend {
 		return nil, false
 	}
@@ -924,7 +1089,11 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return nil, false
 	}
 	c.mu.Lock()
-	c.sel.Account = acct
+	if sel.Account == "" {
+		c.autoAccount = acct
+	} else {
+		c.sel.Account = acct
+	}
 	c.resend[session] = true
 	c.mu.Unlock()
 	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
@@ -974,9 +1143,6 @@ func (c *acpControl) rotatePreset(session string, canResend bool, until, now tim
 // auto-switch coop made (a rate-limit rotation/wait), just as a manual switch's ack does. Falls back
 // to just coop's selectors if this session's options weren't cached.
 func (c *acpControl) configOptionUpdate(session string) []byte {
-	c.mu.Lock()
-	cached := c.cached[session]
-	c.mu.Unlock()
 	upd := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "session/update",
@@ -984,7 +1150,7 @@ func (c *acpControl) configOptionUpdate(session string) []byte {
 			"sessionId": session,
 			"update": map[string]any{
 				"sessionUpdate": "config_option_update",
-				"configOptions": json.RawMessage(c.refreshSetup(cached)),
+				"configOptions": json.RawMessage(c.refreshSetup(session)),
 			},
 		},
 	}
@@ -994,11 +1160,11 @@ func (c *acpControl) configOptionUpdate(session string) []byte {
 
 // nearestReset returns the signed-in account whose rate limit resets soonest (and when), or "" if none
 // are marked limited. Used when no account is free right now: coop waits for this one, then re-sends.
-func (c *acpControl) nearestReset() (account string, at time.Time) {
+func (c *acpControl) nearestReset(provider string) (account string, at time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, a := range c.accounts {
-		t, ok := c.limited[a]
+		t, ok := c.limited[accountLimitKey(provider, a)]
 		if !ok {
 			continue
 		}
@@ -1057,7 +1223,11 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 	// preset with a rotating ladder). The TERMINAL bookkeeping below runs for every selection kind
 	// — a provider-only session must still forget completed prompts, or the map leaks.
 	gated := false
-	if sel := c.selection(); sel.Account != "" && sel.Preset == "" {
+	sel := c.selection()
+	c.mu.Lock()
+	hasAccounts := len(c.accounts) > 0
+	c.mu.Unlock()
+	if sel.Preset == "" && (sel.Account != "" || hasAccounts) {
 		gated = true
 	} else if sel.Preset != "" {
 		if rot := c.presetRotation(); rot != nil && rot.rotates() {
@@ -1218,7 +1388,8 @@ func (c *acpControl) captureTurn(line []byte) {
 			delete(c.turnProvider, s)
 			delete(c.turnActive, s)
 			delete(c.toolTitle, s) // any tool call without a terminal update dies with its turn
-			delete(c.waits, s)     // a finished turn breaks the consecutive-wait chain
+			delete(c.echoPreamble, s)
+			delete(c.waits, s) // a finished turn breaks the consecutive-wait chain
 		}
 		delete(c.promptSession, id)
 		c.mu.Unlock()
@@ -1275,9 +1446,58 @@ func (c *acpControl) promptForwarded(line []byte, synthetic bool) {
 		delete(c.needPreamble, h.Params.SessionID)
 	}
 	c.promptSession[string(h.ID)] = h.Params.SessionID
+	if preamble := carriedPreamble(line); preamble != "" {
+		c.echoPreamble[h.Params.SessionID] = preamble
+	}
 	c.beginTurnLocked(h.Params.SessionID, c.lead)
 	c.turnActive[h.Params.SessionID] = true
 	c.mu.Unlock()
+}
+
+// filterPreambleEcho removes only the exact carry block Coop injected into an admitted prompt. Some
+// adapters echo prompt content as user_message_chunk; forwarding that block makes the editor render a
+// giant synthetic user bubble. Any real user text before or after the exact block is preserved.
+func (c *acpControl) filterPreambleEcho(line []byte) ([]byte, bool) {
+	if !bytes.Contains(line, []byte("user_message_chunk")) {
+		return line, false
+	}
+	var message map[string]json.RawMessage
+	var params map[string]json.RawMessage
+	var update map[string]json.RawMessage
+	var content map[string]json.RawMessage
+	if json.Unmarshal(line, &message) != nil || json.Unmarshal(message["params"], &params) != nil ||
+		json.Unmarshal(params["update"], &update) != nil || json.Unmarshal(update["content"], &content) != nil {
+		return line, false
+	}
+	var method, session, kind, text string
+	_ = json.Unmarshal(message["method"], &method)
+	_ = json.Unmarshal(params["sessionId"], &session)
+	_ = json.Unmarshal(update["sessionUpdate"], &kind)
+	_ = json.Unmarshal(content["text"], &text)
+	if method != "session/update" || kind != "user_message_chunk" || session == "" || text == "" {
+		return line, false
+	}
+	c.mu.Lock()
+	preamble := c.echoPreamble[session]
+	if preamble == "" || !strings.Contains(text, preamble) {
+		c.mu.Unlock()
+		return line, false
+	}
+	delete(c.echoPreamble, session)
+	c.mu.Unlock()
+	text = strings.Replace(text, preamble, "", 1)
+	if text == "" {
+		return nil, true
+	}
+	content["text"], _ = json.Marshal(text)
+	update["content"], _ = json.Marshal(content)
+	params["update"], _ = json.Marshal(update)
+	message["params"], _ = json.Marshal(params)
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return line, false
+	}
+	return append(encoded, '\n'), true
 }
 
 // appendTurn adds text to a session's in-progress turn narrative, keeping the TAIL when it
@@ -1492,6 +1712,27 @@ func wrapPromptLine(line []byte, preamble string) []byte {
 	return append(out, '\n')
 }
 
+// carriedPreamble returns Coop's injected first text block from an admitted prompt. Matching the full
+// labeled block, rather than a marker or provider name, keeps user-authored chunks untouched.
+func carriedPreamble(line []byte) string {
+	var message struct {
+		Params struct {
+			Prompt []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"prompt"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &message) != nil || len(message.Params.Prompt) == 0 {
+		return ""
+	}
+	first := message.Params.Prompt[0]
+	if first.Type != "text" || !strings.HasPrefix(first.Text, "[coop] This thread continues") {
+		return ""
+	}
+	return first.Text
+}
+
 // terminalResponseID returns the request id of a TERMINAL response — one carrying a result
 // or an error. A request/notification that merely mentions "error" in its params has no
 // top-level error member, so it returns "".
@@ -1603,12 +1844,17 @@ func compactJSONName(s string) string {
 	return s
 }
 
+// accountLimitKey keeps equal profile names on different providers from sharing cooldown state.
+func accountLimitKey(provider, account string) string {
+	return loginTarget(provider, account)
+}
+
 // nextAccount marks cur rate-limited until `until`, then returns the next signed-in account (cyclic
 // from cur) whose own limit has expired, or "" when there's no other free account right now.
-func (c *acpControl) nextAccount(cur string, until, now time.Time) string {
+func (c *acpControl) nextAccount(provider, cur string, until, now time.Time) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.limited[cur] = until
+	c.limited[accountLimitKey(provider, cur)] = until
 	n := len(c.accounts)
 	start := -1
 	for i, a := range c.accounts {
@@ -1622,7 +1868,7 @@ func (c *acpControl) nextAccount(cur string, until, now time.Time) string {
 		if cand == cur {
 			continue
 		}
-		if t, ok := c.limited[cand]; !ok || !t.After(now) {
+		if t, ok := c.limited[accountLimitKey(provider, cand)]; !ok || !t.After(now) {
 			return cand
 		}
 	}
@@ -1646,12 +1892,29 @@ type permOption struct {
 // the adapter's offered values), prepends coop's selectors, and caches the result
 // per session so a set_config_option response can echo the full set. Native options pass through as
 // raw JSON so any fields coop doesn't model survive. When the adapter emits its models in a `models`
-// field instead of a native `model` configOption (gemini) and no `model` option is present, coop
+// field instead of a native `model` configOption and no `model` option is present, Coop
 // synthesizes one from that field so the editor renders a coop-owned model dropdown.
-func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid string) json.RawMessage {
+func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid string, replay bool) json.RawMessage {
 	var arr []json.RawMessage
 	if json.Unmarshal(raw, &arr) != nil {
 		return raw
+	}
+	provider := c.leadProvider()
+	if sid != "" {
+		c.mu.Lock()
+		native := c.nativeCache[sid]
+		if replay && len(arr) == 0 && len(models) == 0 && native.Provider == provider {
+			raw = append(json.RawMessage(nil), native.Options...)
+			models = append(json.RawMessage(nil), native.Models...)
+			_ = json.Unmarshal(raw, &arr)
+		} else {
+			c.nativeCache[sid] = nativeOptionCache{
+				Provider: provider,
+				Options:  append(json.RawMessage(nil), raw...),
+				Models:   append(json.RawMessage(nil), models...),
+			}
+		}
+		c.mu.Unlock()
 	}
 	// On a PRESET the preset's lead ladder owns the model — show the box's truth, never coop's
 	// launch-time model over it.
@@ -1683,12 +1946,12 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 		}
 		out = append(out, item)
 	}
-	// gemini-shape: no native model option, but a models field carrying the choices. Synthesize coop's
+	// ACP models shape: no native model option, but a models field carrying the choices. Synthesize coop's
 	// own `model` select and latch the lead so fromEditor/sessionReady route via session/set_model.
 	if !hasModel && sel.Preset == "" {
 		if synth := c.synthModelOption(models, sel.Preset, model); synth != nil {
 			out = append(out, synth)
-			c.cacheModels(parseGeminiModels(models)) // free refresh of `coop models` for gemini
+			c.cacheModels(parseGeminiModels(models)) // free refresh from the generic ACP `models` shape
 			c.mu.Lock()
 			c.leadUsesSetModel = true
 			c.mu.Unlock()
@@ -1699,7 +1962,6 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 		return raw
 	}
 	c.mu.Lock()
-	c.nativesStale = false // real box truth: the natives in the cache describe the CURRENT lead again
 	if sid != "" {
 		c.cached[sid] = b
 	}
@@ -1708,7 +1970,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 }
 
 // cacheModels writes the lead's models to its per-agent cache during a normal ACP session —
-// the free, opportunistic refresh that keeps `coop models` live for claude/gemini at zero
+// the free, opportunistic refresh that keeps `coop models` live from native options/models at zero
 // extra cost (the session/new models are already parsed here). Best-effort: an empty list or
 // a write error is ignored, so the plain `coop models` just falls back to the static list.
 func (c *acpControl) cacheModels(models []modelInfo) {
@@ -1724,6 +1986,14 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	sel = normalizeACPSelection(sel)
 	c.sel = sel
 	c.mu.Unlock()
+	var presetTarget agents.Target
+	if sel.Preset != "" {
+		if rot := c.presetRotation(); rot != nil {
+			c.mu.Lock()
+			presetTarget = rot.active()
+			c.mu.Unlock()
+		}
+	}
 	var out []json.RawMessage
 	ps := "none"
 	if sel.Preset != "" {
@@ -1732,7 +2002,15 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	popts := make([]acpOption, 0, len(c.presets)+1)
 	popts = append(popts, acpOption{Value: "none", Name: "None", Description: "No preset — the plain lead"})
 	for _, p := range c.presets {
-		popts = append(popts, acpOption{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"})
+		option := acpOption{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"}
+		if p == sel.Preset && presetTarget.Provider != "" {
+			option.Name += " · " + displayName(presetTarget.Provider)
+			if presetTarget.Model != "" {
+				option.Name += " · " + presetTarget.Model
+			}
+			option.Description = "Active target: " + presetTarget.String()
+		}
+		popts = append(popts, option)
 	}
 	out = append(out, marshalSelect(coopPresetID, "Preset",
 		"Orchestration recipe — its ladder owns provider, model, effort, account, and roles", ps, popts))
@@ -1845,22 +2123,35 @@ func (c *acpControl) presetLead(name, fallback string) string {
 // re-exec (creds/presets/accounts re-derive from cfg/repo at construction; retargetLocked recomputes
 // per-lead state). Carried through a SIGHUP reload so the toolbar/lead/model survive the binary swap.
 type ctrlSnapshot struct {
-	Selection        acpSelection    `json:"selection"`
-	AutoAccount      string          `json:"auto_account,omitempty"`
-	AuthFailed       map[string]bool `json:"auth_failed,omitempty"`
-	Lead             string          `json:"lead"`
-	Model            string          `json:"model"`
-	Target           agents.Target   `json:"target"`
-	LeadUsesSetModel bool            `json:"lead_uses_set_model"`
+	Selection        acpSelection                 `json:"selection"`
+	AutoAccount      string                       `json:"auto_account,omitempty"`
+	AuthFailed       map[string]bool              `json:"auth_failed,omitempty"`
+	Limited          map[string]time.Time         `json:"limited,omitempty"`
+	RotationLimited  map[string]time.Time         `json:"rotation_limited,omitempty"`
+	PlainTargets     map[string]targetPreference  `json:"plain_targets,omitempty"`
+	Cached           map[string]json.RawMessage   `json:"cached_options,omitempty"`
+	NativeCache      map[string]nativeOptionCache `json:"native_options,omitempty"`
+	Recreate         map[string]bool              `json:"recreate_sessions,omitempty"`
+	Lead             string                       `json:"lead"`
+	Model            string                       `json:"model"`
+	Target           agents.Target                `json:"target"`
+	LeadUsesSetModel bool                         `json:"lead_uses_set_model"`
 }
 
 // snapshot captures the selection state under the lock.
 func (c *acpControl) snapshot() ctrlSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var rotationLimited map[string]time.Time
+	if c.rot != nil {
+		rotationLimited = cloneStringTimeMap(c.rot.limited)
+	}
 	return ctrlSnapshot{
 		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: cloneStringBoolMap(c.authFailed),
-		Lead: c.lead, Model: c.model, Target: c.target, LeadUsesSetModel: c.leadUsesSetModel,
+		Limited: cloneStringTimeMap(c.limited), RotationLimited: rotationLimited,
+		PlainTargets: cloneTargetPreferences(c.plainTargets), Cached: cloneRawMessageMap(c.cached), NativeCache: cloneNativeOptionCache(c.nativeCache),
+		Recreate: cloneStringBoolMap(c.recreate),
+		Lead:     c.lead, Model: c.model, Target: c.target, LeadUsesSetModel: c.leadUsesSetModel,
 	}
 }
 
@@ -1870,15 +2161,58 @@ func (c *acpControl) snapshot() ctrlSnapshot {
 func (c *acpControl) restore(s ctrlSnapshot) {
 	s.Selection = normalizeACPSelection(s.Selection)
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.retargetLocked(s.Lead)
 	if s.Target.Provider == "" {
 		s.Target = agents.Target{Provider: s.Lead, Model: s.Model, Effort: c.cfg.EffortFor(s.Lead)}
 	}
 	c.lead, c.sel, c.autoAccount, c.model, c.target, c.leadUsesSetModel = s.Lead, s.Selection, s.AutoAccount, s.Model, s.Target, s.LeadUsesSetModel
+	c.plainTargets = cloneTargetPreferences(s.PlainTargets)
+	if c.plainTargets == nil {
+		c.plainTargets = map[string]targetPreference{}
+	}
+	if _, ok := c.plainTargets[s.Lead]; !ok {
+		c.plainTargets[s.Lead] = targetPreference{Model: s.Model, Effort: s.Target.Effort}
+	}
+	c.cached = cloneRawMessageMap(s.Cached)
+	if c.cached == nil {
+		c.cached = map[string]json.RawMessage{}
+	}
+	c.nativeCache = cloneNativeOptionCache(s.NativeCache)
+	if c.nativeCache == nil {
+		c.nativeCache = map[string]nativeOptionCache{}
+	}
+	c.recreate = cloneStringBoolMap(s.Recreate)
+	if c.recreate == nil {
+		c.recreate = map[string]bool{}
+	}
 	c.authFailed = cloneStringBoolMap(s.AuthFailed)
 	if c.authFailed == nil {
 		c.authFailed = map[string]bool{}
+	}
+	c.limited = cloneStringTimeMap(s.Limited)
+	if c.limited == nil {
+		c.limited = map[string]time.Time{}
+	}
+	c.mu.Unlock()
+
+	// A preset rotation is rebuilt after re-exec. Resume on the exact target that was active at the
+	// snapshot instead of silently resetting to rung zero; if the preset changed and no longer contains
+	// that target, its new first rung remains authoritative.
+	if s.Selection.Preset != "" {
+		if rot := c.presetRotation(); rot != nil {
+			c.mu.Lock()
+			rot.limited = cloneStringTimeMap(s.RotationLimited)
+			if rot.limited == nil {
+				rot.limited = map[string]time.Time{}
+			}
+			for i, target := range rot.targets {
+				if target.String() == s.Target.String() {
+					rot.idx = i
+					break
+				}
+			}
+			c.mu.Unlock()
+		}
 	}
 }
 
@@ -1888,6 +2222,52 @@ func cloneStringBoolMap(src map[string]bool) map[string]bool {
 	}
 	dst := make(map[string]bool, len(src))
 	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func cloneStringTimeMap(src map[string]time.Time) map[string]time.Time {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]time.Time, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func cloneTargetPreferences(src map[string]targetPreference) map[string]targetPreference {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]targetPreference, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func cloneRawMessageMap(src map[string]json.RawMessage) map[string]json.RawMessage {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]json.RawMessage, len(src))
+	for key, value := range src {
+		dst[key] = append(json.RawMessage(nil), value...)
+	}
+	return dst
+}
+
+func cloneNativeOptionCache(src map[string]nativeOptionCache) map[string]nativeOptionCache {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]nativeOptionCache, len(src))
+	for key, value := range src {
+		value.Options = append(json.RawMessage(nil), value.Options...)
+		value.Models = append(json.RawMessage(nil), value.Models...)
 		dst[key] = value
 	}
 	return dst
@@ -1914,8 +2294,8 @@ func (c *acpControl) spawnableProviders(lead string) []string {
 	return out
 }
 
-// synthModelOption builds a coop-owned `model` select from an adapter's session/new `models` field
-// (gemini: {availableModels:[{modelId,name,description?}], currentModelId}). Returns nil when the field
+// synthModelOption builds a Coop-owned `model` select from an adapter's session/new `models` field
+// ({availableModels:[{modelId,name,description?}], currentModelId}). Returns nil when the field
 // is absent or carries no models. The current value shows coop's chosen model on a credential session
 // (so the pick survives a box swap once sessionReady re-applies it); on a preset the box's own current
 // model wins, since the preset ladder owns it.
@@ -2059,8 +2439,8 @@ func (c *acpControl) setConfig(sid, id, value string) []byte {
 	return append(b, '\n')
 }
 
-// setModel builds a session/set_model request to the adapter (the ACP model-switch method gemini
-// exposes: params {sessionId, modelId}), with an InjectPrefix id so the proxy swallows its response.
+// setModel builds the ACP session/set_model request ({sessionId, modelId}) used by adapters that
+// expose a `models` result instead of a native model config option. InjectPrefix hides forced replies.
 func (c *acpControl) setModel(sid, model string) []byte {
 	c.mu.Lock()
 	c.nextID++
@@ -2079,7 +2459,6 @@ func (c *acpControl) setModel(sid, model string) []byte {
 // injectedResponse surfaces a rejected provider setting in the affected editor session. Successful
 // force-sets stay invisible; a failure cannot silently leave the adapter on the wrong target.
 func (c *acpControl) injectedResponse(request, response []byte) []byte {
-	c.commitNativeTarget(response)
 	var req struct {
 		Params struct {
 			SessionID string `json:"sessionId"`
@@ -2132,9 +2511,10 @@ func sessionMessage(sid, text string) []byte {
 // fromEditor intercepts the editor's set of coop's own selector: it updates the selection and asks
 // the proxy to restart the box on the new plain lead or preset, replying to the editor itself (the
 // adapter never sees coop-owned selectors). Provider/Account writes during a preset are acknowledged as no-ops.
-// It also translates a set of coop's SYNTHESIZED model dropdown
-// (gemini) into the adapter's session/set_model. Native option sets (a real adapter model/effort/fast
-// option) return handled=false so they pass through to the adapter unchanged.
+// It also translates a set of coop's SYNTHESIZED model dropdown into the adapter's session/set_model.
+// The translated request keeps the editor's request id and follows the normal proxy path, so success
+// is not acknowledged until the provider accepts it. Native option sets (a real adapter
+// model/effort/fast option) return handled=false so they pass through to the adapter unchanged.
 func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool) {
 	var h struct {
 		ID     json.RawMessage `json:"id"`
@@ -2185,8 +2565,8 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 		if sel := c.selection(); sel.Preset != "" {
 			return true, c.ackOptions(h.ID, h.Params.SessionID), nil, false
 		}
-		// A synthesized Gemini model is committed from the injected session/set_model response below,
-		// not the editor request (which Coop answers immediately and the adapter never sees).
+		// A synthesized model is committed from the translated session/set_model response below,
+		// not from the editor request itself.
 		if h.Params.ConfigID == "model" {
 			c.mu.Lock()
 			synth := c.leadUsesSetModel
@@ -2195,17 +2575,15 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 				return c.setModelFromEditor(h.ID, h.Params.SessionID, h.Params.Value)
 			}
 		}
-		change := nativeTargetChange{value: h.Params.Value}
+		field := ""
 		switch h.Params.ConfigID {
 		case "model":
-			change.field = "model"
+			field = "model"
 		case "effort", "reasoning_effort":
-			change.field = "effort"
+			field = "effort"
 		}
-		if change.field != "" && len(h.ID) > 0 {
-			c.mu.Lock()
-			c.nativePending[string(h.ID)] = change
-			c.mu.Unlock()
+		if field != "" && len(h.ID) > 0 {
+			c.registerNativeTarget(string(h.ID), field, h.Params.Value, h.Params.SessionID, false)
 		}
 	}
 	next, recognized := c.selectorSelection(h.Params.ConfigID, h.Params.Value)
@@ -2238,16 +2616,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 		c.mu.Lock()
 		// The restart kills any in-flight turn mid-stream. Arm the same transparent resend a
 		// rate-limit rotation uses so the turn completes on the new selected target.
-		for id, sid := range c.promptSession {
-			if c.lastPrompt[sid] == nil {
-				continue
-			}
-			c.resend[sid] = true
-			delete(c.turnActive, sid)
-			delete(c.heldChunk, sid) // a buffered limit notice dies with the old box
-			delete(c.waits, sid)     // a manual switch breaks the consecutive-wait chain
-			acpproxy.Trace("switch to %+v: re-sending the in-flight prompt %s for session %s after the swap", next, id, sid)
-		}
+		c.armPromptResendsLocked(fmt.Sprintf("switch to %+v", next))
 		c.mu.Unlock()
 	}
 	// Ack with the full option set, the coop dropdowns showing the CURRENT value. The cache was
@@ -2293,15 +2662,7 @@ func rpcErrorResponse(id json.RawMessage, code int, message string) []byte {
 // refreshed option set (fresh coop dropdowns, natives per the current selection), re-cached so
 // the next refresh starts from what the editor now shows.
 func (c *acpControl) ackOptions(id json.RawMessage, sid string) []byte {
-	c.mu.Lock()
-	cached := c.cached[sid]
-	c.mu.Unlock()
-	refreshed := c.refreshSetup(cached)
-	if len(refreshed) > 0 && sid != "" {
-		c.mu.Lock()
-		c.cached[sid] = refreshed
-		c.mu.Unlock()
-	}
+	refreshed := c.refreshSetup(sid)
 	result := map[string]json.RawMessage{}
 	if len(refreshed) > 0 {
 		result["configOptions"] = refreshed
@@ -2311,46 +2672,93 @@ func (c *acpControl) ackOptions(id json.RawMessage, sid string) []byte {
 	return append(b, '\n')
 }
 
-// setModelFromEditor handles a set of coop's synthesized model dropdown: it emits session/set_model
-// for the live switch, records the pick only after adapter success, and optimistically acks the editor
-// with the refreshed option set. No box restart — this is a live switch.
+// setModelFromEditor handles a set of coop's synthesized model dropdown: it rewrites the request to
+// session/set_model while retaining the editor's id. The normal proxy response path therefore records
+// and acknowledges the pick only after adapter success. No box restart — this is a live switch.
 func (c *acpControl) setModelFromEditor(id json.RawMessage, sid, value string) (bool, []byte, []byte, bool) {
-	sel := c.selection()
-	c.mu.Lock()
-	cached := c.cached[sid]
-	c.mu.Unlock()
-	refreshed := c.refreshModelAck(cached, value)
-	if len(refreshed) > 0 && sid != "" {
-		c.mu.Lock()
-		c.cached[sid] = refreshed
-		c.mu.Unlock()
+	if len(id) == 0 || sid == "" || value == "" {
+		return true, rpcErrorResponse(id, -32602, "session/set_config_option requires a session and model"), nil, false
 	}
-	result := map[string]json.RawMessage{}
-	if len(refreshed) > 0 {
-		result["configOptions"] = refreshed
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "session/set_model",
+		"params":  map[string]any{"sessionId": sid, "modelId": value},
 	}
-	ack := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
-	b, _ := json.Marshal(ack)
-	var inject []byte
-	if sid != "" && value != "" {
-		inject = c.setModel(sid, value)
-		var request struct {
-			ID json.RawMessage `json:"id"`
+	encoded, _ := json.Marshal(request)
+	c.registerNativeTarget(string(id), "model", value, sid, true)
+	return false, nil, append(encoded, '\n'), false
+}
+
+// translatedModelResponse converts a provider's session/set_model response back into the response
+// shape expected for the editor's original session/set_config_option request. Provider errors remain
+// errors; successful replies carry the full refreshed option set at the accepted model.
+func (c *acpControl) translatedModelResponse(line []byte, target nativeTargetResult) []byte {
+	var response map[string]json.RawMessage
+	if json.Unmarshal(line, &response) != nil {
+		return line
+	}
+	if target.success {
+		result := map[string]json.RawMessage{}
+		if refreshed := c.refreshModelAck(target.change.session, target.accepted); len(refreshed) > 0 {
+			result["configOptions"] = refreshed
 		}
-		if sel.Preset == "" && json.Unmarshal(inject, &request) == nil && len(request.ID) > 0 {
-			c.mu.Lock()
-			c.nativePending[string(request.ID)] = nativeTargetChange{field: "model", value: value}
-			c.mu.Unlock()
+		encoded, _ := json.Marshal(result)
+		response["result"] = encoded
+		delete(response, "error")
+	} else if rawError := response["error"]; len(rawError) > 0 && string(rawError) != "null" {
+		var rpcError map[string]json.RawMessage
+		if json.Unmarshal(rawError, &rpcError) == nil {
+			var detail string
+			_ = json.Unmarshal(rpcError["message"], &detail)
+			detail = strings.TrimSpace(detail)
+			if detail == "" {
+				detail = strings.TrimSpace(string(rawError))
+			}
+			message := fmt.Sprintf("Model %s was rejected: %s.", target.change.value, detail)
+			if target.accepted != "" {
+				message += " Restored " + target.accepted + "."
+			}
+			rpcError["message"], _ = json.Marshal(message)
+			response["error"], _ = json.Marshal(rpcError)
 		}
 	}
-	return true, append(b, '\n'), inject, false
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return line
+	}
+	return append(encoded, '\n')
+}
+
+// modelRestartSuggested recognizes an adapter's structured statement that a valid model requires a
+// fresh session (for example, Grok models backed by a different agent type). Free-form error prose is
+// deliberately insufficient: both the incompatibility code and recovery suggestion must be explicit.
+func modelRestartSuggested(raw json.RawMessage) bool {
+	incompatible, restart := false, false
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	walkJSONStrings(value, "", func(key, value string) {
+		switch compactJSONName(key) {
+		case "code":
+			incompatible = incompatible || compactJSONName(value) == "modelswitchincompatibleagent"
+		case "suggestion":
+			restart = restart || compactJSONName(value) == "startnewsession"
+		}
+	})
+	return incompatible && restart
 }
 
 // refreshModelAck rebuilds the cached option array with fresh coop dropdowns and the model
 // option's currentValue set to value — the ack a synthesized-model set echoes so the editor's
 // dropdown keeps the pick.
-func (c *acpControl) refreshModelAck(cached json.RawMessage, value string) json.RawMessage {
-	arr := c.refreshCoopOptions(cached)
+func (c *acpControl) refreshModelAck(sid, value string) json.RawMessage {
+	refreshed := c.refreshSetup(sid)
+	var arr []json.RawMessage
+	if json.Unmarshal(refreshed, &arr) != nil {
+		return refreshed
+	}
 	for i, it := range arr {
 		var head struct {
 			ID string `json:"id"`
@@ -2361,48 +2769,21 @@ func (c *acpControl) refreshModelAck(cached json.RawMessage, value string) json.
 	}
 	b, err := json.Marshal(arr)
 	if err != nil {
-		return cached
+		return refreshed
+	}
+	if sid != "" {
+		c.mu.Lock()
+		c.cached[sid] = b
+		c.mu.Unlock()
 	}
 	return b
 }
 
-// refreshSetup returns the cached configOptions array with coop's dropdowns rebuilt fresh
-// (currentValues = the effective selection). Falls back to just coop's dropdowns when there's
-// no cache yet.
-func (c *acpControl) refreshSetup(cached json.RawMessage) json.RawMessage {
-	b, err := json.Marshal(c.refreshCoopOptions(cached))
-	if err != nil {
-		return cached
-	}
-	return b
-}
-
-// refreshCoopOptions strips every coop-owned dropdown from a cached configOptions array and
-// prepends freshly-built ones — the single place the "coop dropdowns lead, natives follow" order
-// is enforced on a refresh. The natives are dropped too
-// on a preset (the preset owns them) and after a provider switch (they still describe the OLD
-// lead's model menu — nativesStale), so an ack never resurrects them from the cache before the
-// restart's box truth lands.
-func (c *acpControl) refreshCoopOptions(cached json.RawMessage) []json.RawMessage {
-	var arr []json.RawMessage
-	if len(cached) > 0 {
-		_ = json.Unmarshal(cached, &arr)
-	}
-	sel := c.selection()
-	c.mu.Lock()
-	stale := c.nativesStale
-	c.mu.Unlock()
-	out := c.coopOptions()
-	for _, it := range arr {
-		var head struct {
-			ID string `json:"id"`
-		}
-		if json.Unmarshal(it, &head) == nil && (coopOwnedIDs[head.ID] || sel.Preset != "" || stale) {
-			continue
-		}
-		out = append(out, it)
-	}
-	return out
+// refreshSetup re-renders from provider-tagged native truth. The replay flag permits an adapter that
+// omits metadata on session/load to reuse only the same provider's prior controls; a cross-provider
+// switch therefore cannot echo the source provider's model menu.
+func (c *acpControl) refreshSetup(sid string) json.RawMessage {
+	return c.rewriteConfigOptions(json.RawMessage("[]"), nil, sid, true)
 }
 
 // chooseAllow picks the "approve" option from a request_permission request. ACP kinds are

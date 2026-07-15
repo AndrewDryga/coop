@@ -66,9 +66,15 @@ func traceLog() io.Writer {
 	}
 	path := tracePath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755) // config dir normally exists; create it if not
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "coop acp: trace enabled but couldn't open %s: %v\n", path, err)
+		traceGaveUp = true
+		return nil
+	}
+	if err := f.Chmod(0o600); err != nil { // also tighten logs created by older Coop versions
+		_ = f.Close()
+		fmt.Fprintf(os.Stderr, "coop acp: trace enabled but couldn't secure %s: %v\n", path, err)
 		traceGaveUp = true
 		return nil
 	}
@@ -105,9 +111,15 @@ func rotateLocked() io.Writer {
 	path := f.Name()
 	_ = f.Close()
 	_ = os.Rename(path, path+".1")
-	nf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	nf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "coop acp: trace rotate failed: %v\n", err)
+		traceOut, traceGaveUp = nil, true
+		return nil
+	}
+	if err := nf.Chmod(0o600); err != nil {
+		_ = nf.Close()
+		fmt.Fprintf(os.Stderr, "coop acp: trace rotate couldn't secure %s: %v\n", path, err)
 		traceOut, traceGaveUp = nil, true
 		return nil
 	}
@@ -123,6 +135,16 @@ func pruneOldTraces(keep string) {
 		return
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "acp-trace-*.log"))
+	backups, _ := filepath.Glob(filepath.Join(dir, "acp-trace-*.log.1"))
+	for _, backup := range backups {
+		secureRetainedTrace(backup)
+		base := strings.TrimSuffix(backup, ".1")
+		if _, err := os.Stat(base); errors.Is(err, os.ErrNotExist) {
+			if pid := tracePID(backup); pid <= 0 || !pidAlive(pid) {
+				_ = os.Remove(backup)
+			}
+		}
+	}
 	type ent struct {
 		path string
 		mod  time.Time
@@ -130,6 +152,8 @@ func pruneOldTraces(keep string) {
 	}
 	var ents []ent
 	for _, m := range matches {
+		secureRetainedTrace(m)
+		secureRetainedTrace(m + ".1")
 		fi, err := os.Stat(m)
 		if err != nil {
 			continue
@@ -151,9 +175,18 @@ func pruneOldTraces(keep string) {
 	}
 }
 
+// secureRetainedTrace tightens traces written by older Coop versions. If an existing trace cannot
+// be secured, remove it: retaining a readable protocol transcript is worse than losing old debug data.
+func secureRetainedTrace(path string) {
+	if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = os.Remove(path)
+	}
+}
+
 // tracePID extracts <pid> from an acp-trace-<pid>.log path, or 0 if it doesn't parse.
 func tracePID(path string) int {
-	name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "acp-trace-"), ".log")
+	name := strings.TrimSuffix(filepath.Base(path), ".1")
+	name = strings.TrimSuffix(strings.TrimPrefix(name, "acp-trace-"), ".log")
 	n, err := strconv.Atoi(name)
 	if err != nil {
 		return 0

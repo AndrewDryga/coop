@@ -253,20 +253,20 @@ func TestACPControlSynthesizesGeminiModelDropdown(t *testing.T) {
 }
 
 // TestACPControlTranslatesGeminiModelSet: setting coop's synthesized model dropdown is translated into
-// the adapter's session/set_model (a live switch, no restart), acked to the editor with the new value,
-// and remembered as coop's model so it rides the next box swap.
+// the adapter's session/set_model (a live switch, no restart) using the editor's request id. The editor
+// is acknowledged only after provider success, then the accepted model rides the next box swap.
 func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
 	c := newGeminiControl(t, "")
 	toEd(c, []byte(geminiSessionNew)) // latch leadUsesSetModel + cache the option set
 
 	handled, resp, toAdapter, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
-	if !handled || restart {
-		t.Fatalf("a synthesized model set must be handled without a restart (handled=%v restart=%v)", handled, restart)
+	if handled || restart || len(resp) != 0 {
+		t.Fatalf("a synthesized model set must await the adapter (handled=%v restart=%v resp=%s)", handled, restart, resp)
 	}
 	// The adapter gets a session/set_model{sessionId, modelId}, not a set_config_option.
 	var inj struct {
-		ID     string `json:"id"`
-		Method string `json:"method"`
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
 		Params struct {
 			SessionID string `json:"sessionId"`
 			ModelID   string `json:"modelId"`
@@ -278,15 +278,21 @@ func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
 	if inj.Method != "session/set_model" || inj.Params.SessionID != "g1" || inj.Params.ModelID != "gemini-2.5-flash" {
 		t.Errorf("inject = %s, want session/set_model{g1, gemini-2.5-flash}", toAdapter)
 	}
-	c.injectedResponse(toAdapter, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{}}`, inj.ID)))
+	if string(inj.ID) != "9" {
+		t.Fatalf("translated request id = %s, want editor id 9", inj.ID)
+	}
+	if c.model == "gemini-2.5-flash" || strings.Contains(string(c.cached["g1"]), `"currentValue":"gemini-2.5-flash"`) {
+		t.Fatal("unaccepted model was committed or acknowledged before the provider response")
+	}
+	resp = toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"result":{}}`))
 	if len(c.nativePending) != 0 {
 		t.Fatalf("successful synthesized model set leaked pending request ids: %v", c.nativePending)
 	}
 	if c.model != "gemini-2.5-flash" {
 		t.Errorf("coop should remember the pick for the next swap, c.model = %q", c.model)
 	}
-	// The editor ack echoes the model option at its new value.
-	if !strings.Contains(string(resp), `"gemini-2.5-flash"`) {
+	// The translated provider response becomes the editor ack and echoes the full option set.
+	if !strings.Contains(string(resp), `"id":9`) || !strings.Contains(string(resp), `"currentValue":"gemini-2.5-flash"`) {
 		t.Errorf("editor ack should show the new model value:\n%s", resp)
 	}
 }
@@ -296,14 +302,8 @@ func TestACPControlTranslatesGeminiModelSet(t *testing.T) {
 func TestACPControlGeminiModelSurvivesSwap(t *testing.T) {
 	c := newGeminiControl(t, "")
 	toEd(c, []byte(geminiSessionNew))
-	_, _, inject, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
-	var request struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(inject, &request); err != nil {
-		t.Fatal(err)
-	}
-	c.injectedResponse(inject, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{}}`, request.ID)))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"result":{}}`))
 
 	msgs := c.sessionReady("g2") // a fresh session on the respawned box
 	var found bool
@@ -323,20 +323,145 @@ func TestACPControlGeminiModelSurvivesSwap(t *testing.T) {
 func TestACPControlRejectedGeminiModelDoesNotPoisonRecreate(t *testing.T) {
 	c := newGeminiControl(t, "gemini-2.5-pro")
 	toEd(c, []byte(geminiSessionNew))
-	_, _, inject, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
-	var request struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(inject, &request); err != nil {
-		t.Fatal(err)
-	}
-	c.injectedResponse(inject, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"error":{"code":-32602,"message":"unsupported model"}}`, request.ID)))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	rollback := toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32602,"message":"unsupported model"}}`))
 	if len(c.nativePending) != 0 {
 		t.Fatalf("rejected synthesized model set leaked pending request ids: %v", c.nativePending)
+	}
+	if !strings.Contains(string(rollback), `"id":9`) ||
+		!strings.Contains(string(rollback), "Model gemini-2.5-flash was rejected: unsupported model. Restored gemini-2.5-pro.") ||
+		strings.Contains(string(rollback), `"result"`) ||
+		strings.Contains(string(rollback), "different target") {
+		t.Fatalf("rejected Gemini model did not remain a visible failed request:\n%s", rollback)
 	}
 	joined := string(bytes.Join(c.sessionReady("g2"), nil))
 	if c.model == "gemini-2.5-flash" || strings.Contains(joined, "gemini-2.5-flash") || !strings.Contains(joined, "gemini-2.5-pro") {
 		t.Fatalf("rejected Gemini model poisoned the recreate target: model=%q settings=%s", c.model, joined)
+	}
+}
+
+func TestACPControlModelAgentMigrationRestartsAndRecreatesEverySession(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	toEd(c, []byte(geminiSessionNew))
+	toEd(c, []byte(strings.Replace(geminiSessionNew, `"sessionId":"g1"`, `"sessionId":"g2"`, 1)))
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":77,"method":"session/prompt","params":{"sessionId":"g2","prompt":[{"type":"text","text":"still working"}]}}`))
+
+	handled, _, translated, _ := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	if handled || !strings.Contains(string(translated), `"method":"session/set_model"`) {
+		t.Fatalf("model request was not translated through the provider: handled=%v request=%s", handled, translated)
+	}
+	response := []byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32600,"message":"agent type mismatch","data":{"code":"MODEL_SWITCH_INCOMPATIBLE_AGENT","suggestion":"start_new_session"}}}`)
+	out, restart := c.toEditor(response)
+	if !restart || strings.Contains(string(out), `"error"`) || !strings.Contains(string(out), `"currentValue":"gemini-2.5-flash"`) {
+		t.Fatalf("structured new-session recovery = restart %v response %s, want successful model ack", restart, out)
+	}
+	if c.model != "gemini-2.5-flash" || c.target.Model != "gemini-2.5-flash" {
+		t.Fatalf("migration target was not committed: model=%q target=%+v", c.model, c.target)
+	}
+	for _, sid := range []string{"g1", "g2"} {
+		if !c.shouldRecreateSession(sid) {
+			t.Errorf("active session %s was not marked for fresh native recreation", sid)
+		}
+	}
+	if !c.resend["g2"] {
+		t.Error("in-flight prompt on another session was not armed for transparent resend")
+	}
+
+	snapshot := c.snapshot()
+	restored := newGeminiControl(t, "gemini-2.5-pro")
+	restored.restore(snapshot)
+	if !restored.shouldRecreateSession("g1") || !restored.shouldRecreateSession("g2") {
+		t.Fatalf("snapshot lost forced recreation intent: %v", restored.recreate)
+	}
+	c.sessionRecreated("g1")
+	if c.shouldRecreateSession("g1") || !c.needPreamble["g1"] {
+		t.Fatalf("successful recreation did not consume intent and arm carry: recreate=%v preamble=%v", c.recreate, c.needPreamble)
+	}
+	c.sessionClosed("g2")
+	if c.shouldRecreateSession("g2") {
+		t.Fatal("closing a session retained stale recreation intent")
+	}
+}
+
+func TestACPControlModelAgentMigrationRequiresExactLatestSignal(t *testing.T) {
+	t.Run("near miss remains rejection", func(t *testing.T) {
+		c := newGeminiControl(t, "gemini-2.5-pro")
+		toEd(c, []byte(geminiSessionNew))
+		_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+		out, restart := c.toEditor([]byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32600,"message":"agent type mismatch","data":{"code":"MODEL_SWITCH_INCOMPATIBLE_AGENT","suggestion":"retry"}}}`))
+		if restart || !strings.Contains(string(out), `"error"`) || c.model != "gemini-2.5-pro" {
+			t.Fatalf("near-miss signal changed target: restart=%v model=%q response=%s", restart, c.model, out)
+		}
+	})
+
+	t.Run("superseded response cannot restart", func(t *testing.T) {
+		c := newGeminiControl(t, "gemini-2.5-pro")
+		toEd(c, []byte(geminiSessionNew))
+		_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+		_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":10,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-3.5-pro"}}`))
+		toEd(c, []byte(`{"jsonrpc":"2.0","id":10,"result":{}}`))
+		out, restart := c.toEditor([]byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32600,"message":"agent type mismatch","data":{"code":"MODEL_SWITCH_INCOMPATIBLE_AGENT","suggestion":"start_new_session"}}}`))
+		if restart || !strings.Contains(string(out), `"error"`) || c.model != "gemini-3.5-pro" || len(c.recreate) != 0 {
+			t.Fatalf("stale migration response overrode latest target: restart=%v model=%q recreate=%v response=%s", restart, c.model, c.recreate, out)
+		}
+	})
+}
+
+func TestACPControlDelayedGeminiSuccessStaysWithOriginProvider(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	toEd(c, []byte(geminiSessionNew))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	signInCred(t, c.cfg, "codex", "default")
+	if handled, restart, _ := selectorSet(t, c, coopProviderID, "codex"); !handled || !restart {
+		t.Fatalf("provider switch = handled %v restart %v", handled, restart)
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"result":{}}`))
+	if c.lead != "codex" || c.target.Provider != "codex" || c.model == "gemini-2.5-flash" || c.target.Model == "gemini-2.5-flash" {
+		t.Fatalf("delayed Gemini response poisoned active target: lead=%q model=%q target=%+v", c.lead, c.model, c.target)
+	}
+	if got := c.plainTargets["gemini"].Model; got != "gemini-2.5-flash" {
+		t.Fatalf("accepted origin-provider preference = %q, want gemini-2.5-flash", got)
+	}
+}
+
+func TestACPControlChildResetDiscardsUnacceptedGeminiModel(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	toEd(c, []byte(geminiSessionNew))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	if got := string(c.cached["g1"]); !strings.Contains(got, `"currentValue":"gemini-2.5-pro"`) || strings.Contains(got, `"currentValue":"gemini-2.5-flash"`) {
+		t.Fatalf("unaccepted model changed the cached toolbar before reset: %s", got)
+	}
+	c.childReset()
+	if len(c.nativePending) != 0 || len(c.nativeLatest) != 0 {
+		t.Fatalf("child reset retained unresolved target changes: pending=%v latest=%v", c.nativePending, c.nativeLatest)
+	}
+	if got := string(c.cached["g1"]); !strings.Contains(got, `"currentValue":"gemini-2.5-pro"`) || strings.Contains(got, `"currentValue":"gemini-2.5-flash"`) {
+		t.Fatalf("child reset changed the last accepted model: %s", got)
+	}
+}
+
+func TestACPControlGeminiModelResponsesUseRequestOrder(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	toEd(c, []byte(geminiSessionNew))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":10,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-3.5-pro"}}`))
+	// The newest response wins even when it arrives first; the older late success is stale.
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":10,"result":{}}`))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"result":{}}`))
+	if c.model != "gemini-3.5-pro" || c.plainTargets["gemini"].Model != "gemini-3.5-pro" {
+		t.Fatalf("reversed responses selected model=%q preference=%+v, want newest gemini-3.5-pro", c.model, c.plainTargets["gemini"])
+	}
+}
+
+func TestACPControlGeminiLatestFailureRestoresEarlierAcceptedChange(t *testing.T) {
+	c := newGeminiControl(t, "gemini-2.5-pro")
+	toEd(c, []byte(geminiSessionNew))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-2.5-flash"}}`))
+	_, _, _, _ = c.fromEditor([]byte(`{"jsonrpc":"2.0","id":10,"method":"session/set_config_option","params":{"sessionId":"g1","configId":"model","value":"gemini-3.5-pro"}}`))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"result":{}}`))
+	rollback := toEd(c, []byte(`{"jsonrpc":"2.0","id":10,"error":{"code":-32602,"message":"unsupported model"}}`))
+	if c.model != "gemini-2.5-flash" || !strings.Contains(string(rollback), "Restored gemini-2.5-flash") {
+		t.Fatalf("latest rejection did not restore earlier accepted change: model=%q\n%s", c.model, rollback)
 	}
 }
 
@@ -609,6 +734,74 @@ func TestACPControlRejectedNativeTargetDoesNotPoisonRecreate(t *testing.T) {
 	}
 }
 
+func TestACPControlOlderAcceptedTargetWinsAfterNewerRejectsFirst(t *testing.T) {
+	c := newTestControl(t)
+	first := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"sonnet"}}` + "\n")
+	second := []byte(`{"jsonrpc":"2.0","id":2,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"opus"}}` + "\n")
+	c.fromEditor(first)
+	c.fromEditor(second)
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"unsupported"}}`+"\n"))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"configOptions":[]}}`+"\n"))
+	if c.model != "sonnet" || c.target.Model != "sonnet" {
+		t.Fatalf("older accepted response did not become effective after newer rejection: model=%q target=%+v", c.model, c.target)
+	}
+	if replay := string(bytes.Join(c.sessionReady("s1"), nil)); !strings.Contains(replay, `"value":"sonnet"`) {
+		t.Fatalf("effective accepted model was not replayable: %s", replay)
+	}
+}
+
+func TestACPControlLocalTargetRejectionClearsReusedRequestID(t *testing.T) {
+	c := newACPControl(&config.Config{ConfigDir: t.TempDir()}, "grok", "grok-4.5", "high", t.TempDir(), acpSelection{}, nil, nil, false)
+	c.leadUsesSetModel = true
+	c.cached["s1"] = json.RawMessage(`[{"id":"model","currentValue":"grok-4.5"}]`)
+	set := []byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"grok-composer-2.5-fast"}}` + "\n")
+	if handled, _, rewritten, _ := c.fromEditor(set); handled || len(rewritten) == 0 {
+		t.Fatalf("synthesized model was not registered for provider forwarding: handled=%v request=%s", handled, rewritten)
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32002,"message":"session unavailable"}}`+"\n"))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"result":{}}`+"\n")) // legal id reuse by an unrelated later request
+	if c.model != "grok-4.5" || c.target.Model != "grok-4.5" || len(c.nativePending) != 0 {
+		t.Fatalf("locally rejected target survived id reuse: model=%q target=%+v pending=%v", c.model, c.target, c.nativePending)
+	}
+}
+
+func TestACPControlFiltersOnlyExactCarriedPromptEcho(t *testing.T) {
+	c := newTestControl(t)
+	c.mu.Lock()
+	c.appendHistoryLocked("s1", "claude", "user", "earlier question")
+	c.appendHistoryLocked("s1", "claude", "assistant", "earlier answer")
+	c.mu.Unlock()
+	c.sessionRecreated("s1")
+	prompt := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"real follow-up"}]}}` + "\n")
+	_, _, rewritten, _ := fromEditorPrompt(c, prompt)
+	preamble := carriedPreamble(rewritten)
+	if preamble == "" {
+		t.Fatal("rewritten prompt has no carried preamble")
+	}
+	echo := func(text string) []byte {
+		encoded, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+			"sessionId": "s1", "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": text}},
+		}})
+		return append(encoded, '\n')
+	}
+	if out := toEd(c, echo(preamble)); len(out) != 0 {
+		t.Fatalf("exact synthetic echo reached editor: %s", out)
+	}
+
+	// Re-admit the same wrapped prompt to model an adapter that concatenates content blocks. The
+	// exact synthetic substring is removed while both surrounding user-authored fragments survive.
+	c.promptForwarded(rewritten, false)
+	out := string(toEd(c, echo("before "+preamble+" after")))
+	if strings.Contains(out, "[coop] This thread continues") || !strings.Contains(out, "before  after") {
+		t.Fatalf("combined echo filtering changed real user text or leaked carry: %s", out)
+	}
+	c.promptForwarded(rewritten, false)
+	ordinary := string(toEd(c, echo("user-authored [coop] words")))
+	if !strings.Contains(ordinary, "user-authored [coop] words") {
+		t.Fatalf("ordinary user chunk was filtered: %s", ordinary)
+	}
+}
+
 // TestACPControlAutoReply: coop approves every session/request_permission by selecting the adapter's
 // allow option (preferring a lasting allow), replying to the adapter and NOT forwarding to the editor;
 // any other agent→editor request passes through untouched.
@@ -736,6 +929,48 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	c.promptForwarded(resumed, true)
 	if got := c.resumePrompt("S"); got != nil {
 		t.Errorf("admitted resume must be consumed, got: %s", got)
+	}
+}
+
+func TestACPControlAutomaticAccountRateLimitKeepsPolicy(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"personal", "work"}
+	c.autoAccount = "personal"
+	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	fromEditorPrompt(c, prompt)
+
+	limitErr := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32603,"message":"provider declined","data":{"errorKind":"rate_limit"}}}` + "\n")
+	out, restart := c.toEditor(limitErr)
+	if !restart {
+		t.Fatal("an automatic account must rotate and retry after a rate limit")
+	}
+	if sel := c.selection(); sel.Account != "" {
+		t.Fatalf("automatic policy became pinned: %+v", sel)
+	}
+	if c.autoAccount != "work" {
+		t.Fatalf("concrete automatic account = %q, want work", c.autoAccount)
+	}
+	if !bytes.Contains(out, []byte(`"id":"coop_account"`)) || !bytes.Contains(out, []byte(`"currentValue":"auto"`)) {
+		t.Fatalf("toolbar must remain on Auto after physical rotation: %s", out)
+	}
+	if _, ok := c.limited[accountLimitKey("claude", "personal")]; !ok {
+		t.Fatal("the limited provider/account was not recorded")
+	}
+	if !c.resend["S"] {
+		t.Fatal("automatic rate-limit recovery did not arm the prompt resend")
+	}
+}
+
+func TestACPControlCooldownsAreProviderScoped(t *testing.T) {
+	c := newTestControl(t)
+	c.accounts = []string{"default", "work"}
+	c.limited[accountLimitKey("claude", "default")] = time.Now().Add(time.Hour)
+
+	if account, _ := c.nearestReset("codex"); account != "" {
+		t.Fatalf("Codex inherited Claude's cooldown for the same account name: %q", account)
+	}
+	if next := c.nextAccount("codex", "work", time.Now().Add(time.Hour), time.Now()); next != "default" {
+		t.Fatalf("Codex should see its default account as free, next = %q", next)
 	}
 }
 
@@ -1028,7 +1263,7 @@ func TestACPControlAuthenticationAutoSkipsRateLimitedFallback(t *testing.T) {
 	c := newTestControl(t)
 	c.accounts = []string{"personal", "work", "backup"}
 	c.autoAccount = "personal"
-	c.limited["work"] = time.Now().Add(time.Hour)
+	c.limited[accountLimitKey("claude", "work")] = time.Now().Add(time.Hour)
 	authError := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"Authentication required"}}` + "\n")
 	out, restart := c.toEditor(authError)
 	if !restart || !bytes.Contains(out, []byte("switched to claude@backup")) {
@@ -1065,7 +1300,7 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	if !c.resend["S"] {
 		t.Error("session must be flagged for resend after the wait")
 	}
-	if _, ok := c.limited["personal"]; !ok {
+	if _, ok := c.limited[accountLimitKey("claude", "personal")]; !ok {
 		t.Error("personal must be marked limited so the factory waits")
 	}
 }
@@ -1115,6 +1350,11 @@ func TestACPControlPresetLadderFailover(t *testing.T) {
 	}
 	if !strings.Contains(s, "config_option_update") || !strings.Contains(s, `"currentValue":"frontier"`) {
 		t.Errorf("expected a config_option_update keeping the Preset dropdown on the preset:\n%s", s)
+	}
+	c.presets = []string{"frontier"}
+	if got := string(c.coopOptions()[0]); !strings.Contains(got, `"name":"frontier · Claude Code · claude-opus-4-8"`) ||
+		!strings.Contains(got, `"description":"Active target: claude:claude-opus-4-8@personal"`) {
+		t.Errorf("preset selector does not expose the effective rung:\n%s", got)
 	}
 }
 
@@ -1220,23 +1460,23 @@ func TestWaitForReset(t *testing.T) {
 	c := newTestControl(t)
 
 	start := time.Now()
-	c.waitForReset(context.Background(), "personal")
+	c.waitForReset(context.Background(), "claude", "personal")
 	if time.Since(start) > 100*time.Millisecond {
 		t.Error("waitForReset must be a no-op for an unlimited credential")
 	}
 
-	c.limited["personal"] = time.Now().Add(60 * time.Millisecond)
+	c.limited[accountLimitKey("claude", "personal")] = time.Now().Add(60 * time.Millisecond)
 	start = time.Now()
-	c.waitForReset(context.Background(), "personal")
+	c.waitForReset(context.Background(), "claude", "personal")
 	if d := time.Since(start); d < 40*time.Millisecond {
 		t.Errorf("waitForReset returned too early (%s) — it must wait for the reset", d)
 	}
 
-	c.limited["personal"] = time.Now().Add(10 * time.Second)
+	c.limited[accountLimitKey("claude", "personal")] = time.Now().Add(10 * time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start = time.Now()
-	c.waitForReset(ctx, "personal")
+	c.waitForReset(ctx, "claude", "personal")
 	if d := time.Since(start); d > 100*time.Millisecond {
 		t.Errorf("waitForReset must abort on ctx cancel, took %s", d)
 	}
@@ -1748,6 +1988,46 @@ func TestACPLeavingPresetKeepsEffectiveProvider(t *testing.T) {
 	}
 	if got := string(c.coopOptions()[2]); !strings.Contains(got, `"value":"codex-only"`) {
 		t.Fatalf("plain account options after leaving did not retarget to codex: %s", got)
+	}
+}
+
+func TestACPLeavingPresetRestoresSameProviderPlainTargetAndControls(t *testing.T) {
+	c := newTestControl(t)
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"opus[1m]","options":[{"value":"opus[1m]","name":"Opus"},{"value":"sonnet","name":"Sonnet"}]},{"id":"effort","type":"select","currentValue":"high","options":[{"value":"high","name":"High"},{"value":"xhigh","name":"Extra high"}]}]}}`+"\n"))
+	c.plainTargets["claude"] = targetPreference{Model: "sonnet", Effort: "high"}
+	c.sel = acpSelection{Preset: "frontier"}
+	c.model = "claude-fable-5"
+	c.target = agents.Target{Provider: "claude", Model: "claude-fable-5", Effort: "xhigh"}
+
+	// A same-provider preset replay may omit metadata. It must render only the preset selector without
+	// destroying the separately cached native truth needed when the user leaves the preset.
+	if got := string(c.rewriteConfigOptions(json.RawMessage(`[]`), nil, "s", true)); strings.Contains(got, `"id":"model"`) {
+		t.Fatalf("preset replay exposed native controls: %s", got)
+	}
+	handled, restart, ids := selectorSet(t, c, coopPresetID, "none")
+	if !handled || !restart || !slices.Contains(ids, "model") || !slices.Contains(ids, "effort") {
+		t.Fatalf("leaving same-provider preset = handled %v restart %v controls %v", handled, restart, ids)
+	}
+	target, presetName, ok := c.spawnTarget()
+	if !ok || presetName != "" || target.Provider != "claude" || target.Model != "sonnet" || target.Effort != "high" {
+		t.Fatalf("plain target after preset = (%+v, %q, %v), want claude:sonnet/high", target, presetName, ok)
+	}
+}
+
+func TestACPReplayNativeCacheIsProviderScopedPerSession(t *testing.T) {
+	c := newTestControl(t)
+	for _, sid := range []string{"s1", "s2"} {
+		toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"`+sid+`","configOptions":[{"id":"model","type":"select","currentValue":"opus[1m]","options":[{"value":"opus[1m]","name":"Opus"}]}]}}`+"\n"))
+	}
+	signInCred(t, c.cfg, "codex", "default")
+	if handled, restart, _ := selectorSet(t, c, coopProviderID, "codex"); !handled || !restart {
+		t.Fatalf("provider switch = handled %v restart %v", handled, restart)
+	}
+	for _, sid := range []string{"s1", "s2"} {
+		got := string(c.rewriteConfigOptions(json.RawMessage(`[]`), nil, sid, true))
+		if strings.Contains(got, `"id":"model"`) || strings.Contains(got, "opus[1m]") {
+			t.Fatalf("session %s replay resurrected Claude controls on Codex: %s", sid, got)
+		}
 	}
 }
 
@@ -2305,6 +2585,16 @@ func TestACPControlSnapshotRestore(t *testing.T) {
 	c := newACPControl(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, acpSelection{}, nil, nil, false)
 	c.sel, c.lead, c.model, c.leadUsesSetModel = acpSelection{Provider: "codex"}, "codex", "gpt-5.6-sol", true
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"}
+	c.plainTargets = map[string]targetPreference{
+		"claude": {Model: "opus", Effort: "high"},
+		"codex":  {Model: "gpt-5.6-sol", Effort: "xhigh"},
+	}
+	c.cached["s1"] = json.RawMessage(`[{"id":"model","type":"select","currentValue":"gpt-5.6-sol","options":[{"value":"gpt-5.6-sol","name":"Sol"}]}]`)
+	c.nativeCache["s1"] = nativeOptionCache{
+		Provider: "codex",
+		Options:  json.RawMessage(`[{"id":"model","type":"select","currentValue":"gpt-5.6-sol","options":[{"value":"gpt-5.6-sol","name":"Sol"}]}]`),
+	}
+	c.recreate["s1"] = true
 	c.autoAccount = "work"
 	c.authFailed = map[string]bool{"codex@default": true}
 	snap := c.snapshot()
@@ -2313,9 +2603,47 @@ func TestACPControlSnapshotRestore(t *testing.T) {
 	c2.restore(snap)
 	if c2.sel != (acpSelection{Provider: "codex"}) || c2.lead != "codex" || c2.model != "gpt-5.6-sol" ||
 		c2.target.Provider != "codex" || c2.target.Model != "gpt-5.6-sol" || c2.target.Effort != "xhigh" || !c2.leadUsesSetModel ||
-		c2.autoAccount != "work" || !c2.authFailed["codex@default"] {
+		c2.autoAccount != "work" || !c2.authFailed["codex@default"] ||
+		c2.plainTargets["claude"] != (targetPreference{Model: "opus", Effort: "high"}) {
 		t.Errorf("restore mismatch: sel=%+v lead=%q model=%q target=%+v setModel=%v auto=%q failed=%v",
 			c2.sel, c2.lead, c2.model, c2.target, c2.leadUsesSetModel, c2.autoAccount, c2.authFailed)
+	}
+	if got := string(c2.rewriteConfigOptions(json.RawMessage(`[]`), nil, "s1", true)); !strings.Contains(got, `"id":"model"`) ||
+		!strings.Contains(got, `"currentValue":"gpt-5.6-sol"`) {
+		t.Errorf("same-provider replay did not restore cached model options: %s", got)
+	}
+	if !c2.shouldRecreateSession("s1") {
+		t.Error("snapshot restore lost forced session recreation intent")
+	}
+}
+
+func TestACPControlSnapshotRestoreKeepsPresetRung(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	signInCred(t, cfg, "claude", "default")
+	signInCred(t, cfg, "codex", "default")
+	writeACPTestPreset(t, repo, "frontier", "lead:\n  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]\n")
+
+	c := newACPControl(cfg, "codex", "gpt-5.6-sol", "xhigh", repo, acpSelection{Preset: "frontier"}, []string{"frontier"}, nil, false)
+	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"default"}}
+	rot := c.presetRotation()
+	rot.idx = 1
+	limitedUntil := time.Now().Add(time.Hour).Round(time.Second)
+	rot.limited[rot.targets[0].String()] = limitedUntil
+	c.limited[accountLimitKey("claude", "default")] = limitedUntil
+	snapshot := c.snapshot()
+
+	restored := newACPControl(cfg, "claude", "claude-fable-5", "xhigh", repo, acpSelection{}, []string{"frontier"}, nil, false)
+	restored.restore(snapshot)
+	target, presetName, ok := restored.spawnTarget()
+	if !ok || presetName != "frontier" || target.String() != "codex:gpt-5.6-sol/xhigh@default" {
+		t.Fatalf("restored preset target = (%q, %q, %v), want Codex/Sol rung", target, presetName, ok)
+	}
+	if got := restored.rot.limited[rot.targets[0].String()]; !got.Equal(limitedUntil) {
+		t.Fatalf("restored Frontier cooldown = %s, want %s", got, limitedUntil)
+	}
+	if got := restored.limited[accountLimitKey("claude", "default")]; !got.Equal(limitedUntil) {
+		t.Fatalf("restored account cooldown = %s, want %s", got, limitedUntil)
 	}
 }
 

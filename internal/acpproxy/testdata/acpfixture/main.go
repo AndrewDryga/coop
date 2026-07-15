@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -17,15 +18,19 @@ type plan struct {
 }
 
 type step struct {
-	Method string            `json:"method"`
-	Result json.RawMessage   `json:"result,omitempty"`
-	Error  json.RawMessage   `json:"error,omitempty"`
-	Events []json.RawMessage `json:"events,omitempty"`
+	Method        string            `json:"method"`
+	Params        json.RawMessage   `json:"params,omitempty"`
+	Result        json.RawMessage   `json:"result,omitempty"`
+	Error         json.RawMessage   `json:"error,omitempty"`
+	Events        []json.RawMessage `json:"events,omitempty"`
+	EchoPrompt    bool              `json:"echo_prompt,omitempty"`
+	DeferResponse bool              `json:"defer_response,omitempty"`
 }
 
 type request struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 }
 
 func main() {
@@ -171,10 +176,25 @@ func serveProvider(provider string) error {
 		if req.Method != expected.Method {
 			return fmt.Errorf("step %d method = %q, want %q", i+1, req.Method, expected.Method)
 		}
+		if len(expected.Params) > 0 && !sameJSON(req.Params, expected.Params) {
+			return fmt.Errorf("step %d %s params = %s, want %s", i+1, req.Method, req.Params, expected.Params)
+		}
+		if expected.EchoPrompt {
+			echo, err := promptEcho(req.Params)
+			if err != nil {
+				return fmt.Errorf("step %d echo prompt: %w", i+1, err)
+			}
+			if err := emit(transcript, echo); err != nil {
+				return err
+			}
+		}
 		for _, event := range expected.Events {
 			if err := emit(transcript, event); err != nil {
 				return err
 			}
+		}
+		if expected.DeferResponse {
+			continue // the supervisor will replace this generation; retain the request in flight
 		}
 		response := map[string]any{"jsonrpc": "2.0", "id": req.ID}
 		if len(expected.Error) > 0 {
@@ -198,6 +218,36 @@ func serveProvider(provider string) error {
 		return fmt.Errorf("unexpected frame after script: %s", line)
 	}
 	return scanner.Err()
+}
+
+func promptEcho(raw json.RawMessage) ([]byte, error) {
+	var params struct {
+		SessionID string `json:"sessionId"`
+		Prompt    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"prompt"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, err
+	}
+	var text strings.Builder
+	for _, block := range params.Prompt {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	return json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "method": "session/update",
+		"params": map[string]any{"sessionId": params.SessionID, "update": map[string]any{
+			"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": text.String()},
+		}},
+	})
+}
+
+func sameJSON(left, right []byte) bool {
+	var l, r any
+	return json.Unmarshal(left, &l) == nil && json.Unmarshal(right, &r) == nil && reflect.DeepEqual(l, r)
 }
 
 func claimGeneration(provider string) (int, *os.File, error) {

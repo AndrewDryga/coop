@@ -20,6 +20,7 @@ import (
 type fakeChild struct {
 	inR, outR *io.PipeReader
 	inW, outW *io.PipeWriter
+	provider  string
 }
 
 type blockingWriteCloser struct {
@@ -44,6 +45,10 @@ type failingWriteCloser struct{ err error }
 func (w failingWriteCloser) Write([]byte) (int, error) { return 0, w.err }
 func (failingWriteCloser) Close() error                { return nil }
 
+type recordingWriteCloser struct{ bytes.Buffer }
+
+func (*recordingWriteCloser) Close() error { return nil }
+
 func newFakeChild() *fakeChild {
 	f := &fakeChild{}
 	f.inR, f.inW = io.Pipe()
@@ -52,7 +57,7 @@ func newFakeChild() *fakeChild {
 }
 
 func (f *fakeChild) child() *Child {
-	return &Child{In: f.inW, Out: f.outR, Stop: func() { f.outW.Close(); f.inR.Close() }}
+	return &Child{In: f.inW, Out: f.outR, Provider: f.provider, Stop: func() { f.outW.Close(); f.inR.Close() }}
 }
 
 // proxyHarness wires a full Run around in-memory pipes — the prologue every restart-flavored
@@ -69,7 +74,7 @@ type proxyHarness struct {
 	t         *testing.T
 }
 
-func newProxyHarness(t *testing.T, n int, hooks *Hooks) *proxyHarness {
+func newProxyHarness(t *testing.T, n int, hooks *Hooks, providers ...string) *proxyHarness {
 	t.Helper()
 	clientInR, clientInW := io.Pipe()
 	clientOutR, clientOutW := io.Pipe()
@@ -77,6 +82,9 @@ func newProxyHarness(t *testing.T, n int, hooks *Hooks) *proxyHarness {
 	queue := make(chan *fakeChild, n)
 	for i := 0; i < n; i++ {
 		c := newFakeChild()
+		if i < len(providers) {
+			c.provider = providers[i]
+		}
 		h.children = append(h.children, c)
 		h.childIn = append(h.childIn, bufio.NewReader(c.inR))
 		queue <- c
@@ -474,6 +482,9 @@ func TestProxyPassthroughAndReplayOnRestart(t *testing.T) {
 	if id := idStr(t, errLine); id != "4" || !strings.Contains(string(errLine), `"error"`) {
 		t.Fatalf("expected error response for id 4, got %s", errLine)
 	}
+	if update := readLine(t, clientOut); !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) {
+		t.Fatalf("post-swap frame = %s, want replay config update", update)
+	}
 
 	// Forwarding resumed: a new request reaches child2.
 	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{}}`)
@@ -758,36 +769,34 @@ func idStr(t *testing.T, line []byte) string {
 // ResumePrompt is fed through the client path — reaching the new box remapped + tracked — and its
 // response reaches the editor, completing the turn transparently (coop's rate-limit auto-resend).
 func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
-	resumed := false
-	editorPrompts := 0
-	forwardedPrompts := 0
-	readyCalls := 0
+	var editorPrompts atomic.Int32
+	var forwardedPrompts atomic.Int32
+	var readyCalls atomic.Int32
+	var resumeCalls atomic.Int32
 	resumeAdmitted := make(chan struct{})
 	hooks := &Hooks{
 		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
 			if parse(line).Method == "session/prompt" {
-				editorPrompts++
+				editorPrompts.Add(1)
 			}
 			return false, nil, nil, false
 		},
 		PromptForwarded: func(line []byte, _ bool) {
 			if parse(line).Method == "session/prompt" {
-				forwardedPrompts++
-				if forwardedPrompts == 2 {
+				if forwardedPrompts.Add(1) == 2 {
 					close(resumeAdmitted)
 				}
 			}
 		},
 		SessionReady: func(sid string) [][]byte {
-			readyCalls++
-			if readyCalls == 2 {
+			if readyCalls.Add(1) == 2 {
 				return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"coop-inject-resume-setting","method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"target"}}`+"\n", sid))}
 			}
 			return nil
 		},
 		ResumePrompt: func(sid string) []byte {
-			if sid == "S1" && !resumed {
-				resumed = true
+			if sid == "S1" {
+				resumeCalls.Add(1)
 				return []byte(`{"jsonrpc":"2.0","id":"resume-9","method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"again"}]}}` + "\n")
 			}
 			return nil
@@ -832,8 +841,12 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	if setting.Method != "session/set_config_option" || string(trimQuotes(setting.ID)) != "coop-inject-resume-setting" {
 		t.Fatalf("frame before resume = %s, want target setting", settingLine)
 	}
-	if editorPrompts != 1 || forwardedPrompts != 1 {
-		t.Fatalf("before setting ack: FromEditor=%d admitted=%d, want 1/1", editorPrompts, forwardedPrompts)
+	if editorPrompts.Load() != 1 || forwardedPrompts.Load() != 1 {
+		t.Fatalf("before setting ack: FromEditor=%d admitted=%d, want 1/1", editorPrompts.Load(), forwardedPrompts.Load())
+	}
+	// Replay publishes toolbar truth before it starts pumping setting responses from the replacement.
+	if update := readLine(t, clientOut); !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) {
+		t.Fatalf("frame before setting response = %s, want replay config update", update)
 	}
 	writeLine(t, c2.outW, `{"jsonrpc":"2.0","id":"coop-inject-resume-setting","result":{}}`)
 
@@ -848,16 +861,19 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	if string(trimQuotes(fr.ID)) != "resume-9" {
 		t.Fatalf("resumed prompt id = %s, want resume-9", fr.ID)
 	}
-	if editorPrompts != 1 {
-		t.Fatalf("FromEditor saw %d prompts, want only the real editor prompt", editorPrompts)
+	if editorPrompts.Load() != 1 {
+		t.Fatalf("FromEditor saw %d prompts, want only the real editor prompt", editorPrompts.Load())
 	}
 	select {
 	case <-resumeAdmitted:
 	case <-time.After(time.Second):
 		t.Fatal("synthetic prompt was written but never admitted")
 	}
-	if forwardedPrompts != 2 {
-		t.Fatalf("admitted prompts = %d, want real + synthetic after setting success", forwardedPrompts)
+	if forwardedPrompts.Load() != 2 {
+		t.Fatalf("admitted prompts = %d, want real + synthetic after setting success", forwardedPrompts.Load())
+	}
+	if resumeCalls.Load() != 2 {
+		t.Fatalf("ResumePrompt calls = %d, want reservation + final construction", resumeCalls.Load())
 	}
 
 	// Its response reaches the editor — the turn completes.
@@ -870,16 +886,78 @@ func TestProxyResumePromptReinjectsAfterRestart(t *testing.T) {
 	h.shutdown()
 }
 
+func TestProxyBuildsCrossProviderResumeAfterSessionRecreated(t *testing.T) {
+	var recreated atomic.Bool
+	var resumeCalls atomic.Int32
+	hooks := &Hooks{
+		ResumePrompt: func(sid string) []byte {
+			if sid != "S1" {
+				return nil
+			}
+			resumeCalls.Add(1)
+			text := "before-carry"
+			if recreated.Load() {
+				text = "with-carry"
+			}
+			return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":%q}]}}`+"\n", text))
+		},
+		SessionRecreated: func(sid string) {
+			if sid == "S1" {
+				recreated.Store(true)
+			}
+		},
+	}
+	h := newProxyHarness(t, 2, hooks, "claude", "codex")
+	h.initialize(0)
+	h.newSession(0, "S1")
+
+	// Establish a transcript, then leave the next turn in flight when the provider changes.
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	readLine(t, h.clientOut)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	readLine(t, h.childIn[0])
+	h.children[0].outW.Close()
+
+	for i := 0; i < 2; i++ {
+		frame := parse(readLine(t, h.childIn[1]))
+		switch frame.Method {
+		case "initialize":
+			writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{}}`)
+		case "session/new":
+			writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{"sessionId":"C2"}}`)
+		default:
+			t.Fatalf("cross-provider replay frame = %q", frame.Method)
+		}
+	}
+	if update := readLine(t, h.clientOut); !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) {
+		t.Fatalf("post-replay frame = %s, want config update", update)
+	}
+	resumed := readLine(t, h.childIn[1])
+	if !strings.Contains(string(resumed), "with-carry") || strings.Contains(string(resumed), "before-carry") || sessionID(parse(resumed).Params) != "C2" {
+		t.Fatalf("cross-provider resend was built before carry or not remapped: %s", resumed)
+	}
+	if resumeCalls.Load() != 2 || !recreated.Load() {
+		t.Fatalf("resume ordering = calls %d recreated %v, want reservation then post-recreate build", resumeCalls.Load(), recreated.Load())
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}`)
+	if id := idStr(t, readLine(t, h.clientOut)); id != "4" {
+		t.Fatalf("resumed response id = %q, want 4", id)
+	}
+	h.shutdown()
+}
+
 // TestProxyResumeSparesInFlightPrompt: a prompt still awaiting its response when a manual
 // credential/preset switch restarts the box is NOT failed with "agent restarted" — the resume
 // re-sends the ORIGINAL line, so the keep-set spares its id at the swap and the new box's answer
 // completes the editor's original request. A pending request with no resend still fails fast.
 func TestProxyResumeSparesInFlightPrompt(t *testing.T) {
 	prompt := `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`
-	resumed := false
+	var resumeCalls atomic.Int32
 	hooks := &Hooks{ResumePrompt: func(sid string) []byte {
-		if sid == "S1" && !resumed {
-			resumed = true
+		if sid == "S1" {
+			resumeCalls.Add(1)
 			return []byte(prompt + "\n")
 		}
 		return nil
@@ -913,6 +991,9 @@ func TestProxyResumeSparesInFlightPrompt(t *testing.T) {
 	if id := idStr(t, readLine(t, h.clientOut)); id != "4" {
 		t.Fatalf("expected only the non-resumed id 4 failed on swap, got %q", id)
 	}
+	if update := readLine(t, h.clientOut); !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) {
+		t.Fatalf("post-swap frame = %s, want replay config update", update)
+	}
 
 	// The resend reaches the new box under the editor's original id.
 	fr := parse(readLine(t, h.childIn[1]))
@@ -921,6 +1002,9 @@ func TestProxyResumeSparesInFlightPrompt(t *testing.T) {
 	}
 	if sid := sessionID(fr.Params); sid != "S1b" {
 		t.Fatalf("resumed prompt sessionId = %q, want fresh native S1b", sid)
+	}
+	if resumeCalls.Load() != 2 {
+		t.Fatalf("ResumePrompt calls = %d, want reservation + final construction", resumeCalls.Load())
 	}
 
 	// Its response completes the editor's original request — no -32000 ever sent for id 3.
@@ -973,6 +1057,9 @@ func TestProxyReplayDropsHistoryRestream(t *testing.T) {
 	if id := idStr(t, errLine); id != "4" || strings.Contains(string(errLine), "replayed-history") {
 		t.Fatalf("first post-swap frame must be the failed id 4, got: %s", errLine)
 	}
+	if update := readLine(t, clientOut); !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) || strings.Contains(string(update), "replayed-history") {
+		t.Fatalf("second post-swap frame must be the replay config update, got: %s", update)
+	}
 
 	// A LIVE update after the swap still flows — proving the stream is open and only the
 	// replay-time re-stream was dropped.
@@ -989,10 +1076,13 @@ func TestProxyReplayDropsHistoryRestream(t *testing.T) {
 // proxy forwards its configOptions as a config_option_update — through ToEditor, so coop's toolbar
 // rewrite applies — bringing the toolbar up to the restarted box's truth (e.g. a preset's model).
 func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
-	sawUpdate := false
+	var sawUpdate, sawModels atomic.Bool
 	hooks := &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
 		if bytes.Contains(line, []byte("config_option_update")) {
-			sawUpdate = true // coop's rewrite gets its look at the synthesized update
+			sawUpdate.Store(true) // coop's rewrite gets its look at the synthesized update
+			if bytes.Contains(line, []byte(`"currentModelId":"gemini-2.5-pro"`)) && bytes.Contains(line, []byte(`"coopReplay":true`)) {
+				sawModels.Store(true)
+			}
 		}
 		return line, false
 	}}
@@ -1017,7 +1107,7 @@ func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
 	for {
 		h := parse(readLine(t, childIn2))
 		if h.Method == "session/load" {
-			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","currentValue":"claude-fable-5"}]}}`, string(h.ID)))
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","currentValue":"claude-fable-5"}],"models":{"currentModelId":"gemini-2.5-pro","availableModels":[{"modelId":"gemini-2.5-pro","name":"Gemini 2.5 Pro"}]}}}`, string(h.ID)))
 			break
 		}
 		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(h.ID)))
@@ -1031,11 +1121,61 @@ func TestProxyReplayForwardsConfigUpdate(t *testing.T) {
 	if !strings.Contains(string(upd), "config_option_update") || !strings.Contains(string(upd), "claude-fable-5") {
 		t.Fatalf("expected a config_option_update with the box's model, got %s", upd)
 	}
+	if strings.Contains(string(upd), "coopReplay") || strings.Contains(string(upd), "currentModelId") {
+		t.Fatalf("proxy-private replay metadata leaked to the editor: %s", upd)
+	}
 	if sid := sessionID(parse(upd).Params); sid != "S1" {
 		t.Fatalf("config update sessionId = %q, want S1", sid)
 	}
-	if !sawUpdate {
+	if !sawUpdate.Load() || !sawModels.Load() {
 		t.Error("the synthesized update must pass through ToEditor (coop's toolbar rewrite)")
+	}
+
+	h.shutdown()
+}
+
+func TestProxyReplayForwardsConfigUpdateWhenAdapterOmitsOptions(t *testing.T) {
+	var sawUpdate atomic.Bool
+	hooks := &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
+		if bytes.Contains(line, []byte("config_option_update")) {
+			sawUpdate.Store(true)
+		}
+		return line, false
+	}}
+	h := newProxyHarness(t, 2, hooks)
+	c1, c2 := h.children[0], h.children[1]
+	clientInW, clientOut := h.clientIn, h.clientOut
+	childIn1, childIn2 := h.childIn[0], h.childIn[1]
+
+	h.initialize(0)
+	h.newSession(0, "S1")
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1"}}`)
+	readLine(t, childIn1)
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	readLine(t, clientOut)
+
+	// Grok-shaped replay: session/load succeeds but omits configOptions. Coop still needs a
+	// post-replay toolbar refresh and a deterministic replay-complete notification.
+	c1.outW.Close()
+	for {
+		request := parse(readLine(t, childIn2))
+		if request.Method == "session/load" {
+			writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(request.ID)))
+			break
+		}
+		writeLine(t, c2.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{}}`, string(request.ID)))
+	}
+
+	update := readLine(t, clientOut)
+	if !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) ||
+		!strings.Contains(string(update), `"configOptions":[]`) {
+		t.Fatalf("replay without native options did not publish an empty config update: %s", update)
+	}
+	if sid := sessionID(parse(update).Params); sid != "S1" {
+		t.Fatalf("config update sessionId = %q, want S1", sid)
+	}
+	if !sawUpdate.Load() {
+		t.Error("the empty synthesized update must pass through ToEditor")
 	}
 
 	h.shutdown()
@@ -1186,6 +1326,49 @@ func TestProxyReplayRecreatesFailedLoad(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "did not reload") {
 		t.Errorf("second restart must not attempt (and fail) a load, got: %q", buf.String())
+	}
+}
+
+func TestProxyReplayForceRecreatesSameProviderSession(t *testing.T) {
+	for _, turned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("turned=%v", turned), func(t *testing.T) {
+			var recreated []string
+			p := &proxy{
+				out: io.Discard,
+				sessions: map[string]*sess{"S1": {
+					params: json.RawMessage(`{"cwd":"/w","mcpServers":[]}`), adapterID: "OLD", provider: "grok", turned: turned,
+				}},
+				byAdapter:   map[string]string{"OLD": "S1"},
+				sessionReqs: map[string]sessionRequest{},
+				pending:     map[string]bool{},
+				hooks: &Hooks{
+					ShouldRecreateSession: func(sid string) bool { return sid == "S1" },
+					SessionRecreated:      func(sid string) { recreated = append(recreated, sid) },
+				},
+			}
+			fc := newFakeChild()
+			child := fc.child()
+			child.Provider = "grok"
+			br := bufio.NewReader(fc.outR)
+			go func() {
+				r := bufio.NewReader(fc.inR)
+				line, _ := r.ReadBytes('\n')
+				h := parse(line)
+				if h.Method != "session/new" || strings.Contains(string(line), "OLD") {
+					t.Errorf("forced replay sent %s, want session/new without the old native id", line)
+				}
+				writeLine(t, fc.outW, `{"jsonrpc":"2.0","id":`+string(h.ID)+`,"result":{"sessionId":"NEW"}}`)
+			}()
+			if err := p.replay(child, br); err != nil {
+				t.Fatalf("replay returned %v", err)
+			}
+			if s := p.sessions["S1"]; s == nil || s.adapterID != "NEW" || s.provider != "grok" {
+				t.Fatalf("stable editor session was not rebound to fresh native id: %+v", s)
+			}
+			if !slices.Equal(recreated, []string{"S1"}) {
+				t.Fatalf("SessionRecreated = %v, want [S1]", recreated)
+			}
+		})
 	}
 }
 
@@ -1429,9 +1612,67 @@ func TestFailAllPendingClearsSessionReqs(t *testing.T) {
 	}
 }
 
-func TestSwapChildDropsStagedMutationForKeptResumeID(t *testing.T) {
+func TestFailAllPendingFailsRestartHeldPrompts(t *testing.T) {
+	var out bytes.Buffer
+	p := &proxy{
+		out:        &out,
+		restarting: true,
+		restartHeld: map[string]clientLine{"S1": {
+			line: []byte(`{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}` + "\n"),
+		}},
+		restartHeldLen: 1,
+		pending:        map[string]bool{},
+		sessionReqs:    map[string]sessionRequest{},
+		setupReqs:      map[string]setupRequest{},
+	}
+	p.failAllPending()
+	response := parse(out.Bytes())
+	if string(response.ID) != "8" || len(response.Error) == 0 {
+		t.Fatalf("held prompt failure = %s, want JSON-RPC error for id 8", out.String())
+	}
+	if p.restarting || len(p.restartHeld) != 0 {
+		t.Fatalf("failed replacement retained restart admission state: restarting=%v held=%d", p.restarting, len(p.restartHeld))
+	}
+}
+
+func TestProxyRestartPromptQueueRejectsDuplicateAndOversize(t *testing.T) {
+	var out bytes.Buffer
+	p := &proxy{
+		out:         &out,
+		restarting:  true,
+		restartHeld: map[string]clientLine{},
+		sessions: map[string]*sess{
+			"S1": {adapterID: "S1"},
+			"S2": {adapterID: "S2"},
+		},
+		unavailable: map[string]bool{},
+	}
+	first := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}` + "\n")
+	p.forwardClient(first, originEditor)
+	if len(p.restartHeld) != 1 || out.Len() != 0 {
+		t.Fatalf("first restart prompt was not held: held=%d out=%s", len(p.restartHeld), out.String())
+	}
+	p.forwardClient([]byte(`{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`+"\n"), originEditor)
+	if response := parse(out.Bytes()); string(response.ID) != "2" || len(response.Error) == 0 {
+		t.Fatalf("duplicate restart prompt response = %s, want error for id 2", out.String())
+	}
+
+	out.Reset()
+	largeText := strings.Repeat("x", maxRestartHeldBytes)
+	large := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S2","prompt":[{"type":"text","text":"%s"}]}}`+"\n", largeText))
+	p.forwardClient(large, originEditor)
+	if response := parse(out.Bytes()); string(response.ID) != "3" || len(response.Error) == 0 {
+		t.Fatalf("oversize restart prompt response id/error = %s", out.String())
+	}
+	if len(p.restartHeld) != 1 {
+		t.Fatalf("rejected restart prompts changed queue size to %d, want 1", len(p.restartHeld))
+	}
+}
+
+func TestSwapChildRebindsStagedMutationForKeptResumeID(t *testing.T) {
 	p := &proxy{
 		out:         io.Discard,
+		generation:  1,
 		sessions:    map[string]*sess{},
 		byAdapter:   map[string]string{},
 		sessionReqs: map[string]sessionRequest{`"7"`: {method: "session/prompt", editorID: "S1", generation: 1}},
@@ -1439,8 +1680,9 @@ func TestSwapChildDropsStagedMutationForKeptResumeID(t *testing.T) {
 	}
 	fc := newFakeChild()
 	p.swapChild(fc.child(), map[string]bool{`"7"`: true}, nil, nil)
-	if len(p.sessionReqs) != 0 || len(p.pending) != 0 {
-		t.Fatalf("kept resume retained old-generation mutation: requests=%v pending=%v", p.sessionReqs, p.pending)
+	request, retained := p.sessionReqs[`"7"`]
+	if !retained || !p.pending[`"7"`] || request.method != "session/prompt" || request.editorID != "S1" || request.generation != 2 {
+		t.Fatalf("kept resume was not rebound to the new generation: request=%+v pending=%v", request, p.pending)
 	}
 }
 
@@ -1639,6 +1881,480 @@ func TestProxyRecreatesTurnlessSession(t *testing.T) {
 	}
 
 	h.shutdown()
+}
+
+// TestProxyHoldsPromptWhileIntentionalRestartReplays: the controller acknowledges a provider
+// switch before the replacement child has completed its handshake. A prompt sent immediately after
+// that acknowledgement must wait for replay and reach the replacement, not observe the deliberate
+// child-less interval as a session failure.
+func TestProxyHoldsPromptWhileIntentionalRestartReplays(t *testing.T) {
+	orig1, orig2 := replayStartupGrace, replayIdleTimeout
+	replayStartupGrace, replayIdleTimeout = 2*time.Second, 2*time.Second
+	defer func() { replayStartupGrace, replayIdleTimeout = orig1, orig2 }()
+
+	var recreated atomic.Bool
+	var promptSawRecreated atomic.Bool
+	hooks := &Hooks{
+		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
+			frame := parse(line)
+			if bytes.Contains(line, []byte("__switch__")) {
+				return true, successResponse(string(frame.ID)), nil, true
+			}
+			if frame.Method == "session/prompt" && string(frame.ID) == "5" {
+				promptSawRecreated.Store(recreated.Load())
+			}
+			return false, nil, nil, false
+		},
+		SessionRecreated: func(string) { recreated.Store(true) },
+	}
+	h := newProxyHarness(t, 2, hooks, "claude", "codex")
+	h.initialize(0)
+	h.newSession(0, "S1")
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	readLine(t, h.clientOut)
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/set_config_option","params":{"sessionId":"S1","configId":"__switch__"}}`)
+	if id := idStr(t, readLine(t, h.clientOut)); id != "4" {
+		t.Fatalf("switch response id = %q, want 4", id)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+
+	for i := 0; i < 2; i++ {
+		frame := parse(readLine(t, h.childIn[1]))
+		switch frame.Method {
+		case "initialize":
+			writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{}}`)
+		case "session/new":
+			writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{"sessionId":"S2"}}`)
+		default:
+			t.Fatalf("replay frame = %q, want initialize/session/new", frame.Method)
+		}
+	}
+
+	if update := readLine(t, h.clientOut); !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) {
+		t.Fatalf("post-replay frame = %s, want config update before held prompt", update)
+	}
+	prompt := parse(readLine(t, h.childIn[1]))
+	if prompt.Method != "session/prompt" || sessionID(prompt.Params) != "S2" {
+		t.Fatalf("held prompt reached replacement as method=%q session=%q, want session/prompt on S2", prompt.Method, sessionID(prompt.Params))
+	}
+	if !promptSawRecreated.Load() {
+		t.Fatal("held prompt was re-admitted before SessionRecreated armed cross-provider carry")
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":5,"result":{"stopReason":"end_turn"}}`)
+	if id := idStr(t, readLine(t, h.clientOut)); id != "5" {
+		t.Fatalf("held prompt response id = %q, want 5", id)
+	}
+	h.shutdown()
+}
+
+func TestProxyDeleteDuringReplayCancelsRestartHeldPrompt(t *testing.T) {
+	var replayReady, recreated, replayConfig atomic.Int32
+	hooks := &Hooks{
+		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
+			if bytes.Contains(line, []byte("__switch__")) {
+				return true, successResponse(string(parse(line).ID)), nil, true
+			}
+			return false, nil, nil, false
+		},
+		SessionReady: func(string) [][]byte {
+			replayReady.Add(1)
+			return nil
+		},
+		SessionRecreated: func(string) { recreated.Add(1) },
+		ToEditor: func(line []byte) ([]byte, bool) {
+			if bytes.Contains(line, []byte("config_option_update")) {
+				replayConfig.Add(1)
+			}
+			return line, false
+		},
+	}
+	h := newProxyHarness(t, 2, hooks)
+	h.initialize(0)
+	h.newSession(0, "S1")
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/set_config_option","params":{"sessionId":"S1","configId":"__switch__"}}`)
+	readLine(t, h.clientOut)
+	init := parse(readLine(t, h.childIn[1]))
+	if init.Method != "initialize" {
+		t.Fatalf("first replay frame = %q, want initialize", init.Method)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":5,"method":"session/delete","params":{"sessionId":"S1"}}`)
+	cancelled := readLine(t, h.clientOut)
+	if id := idStr(t, cancelled); id != "4" || !strings.Contains(string(cancelled), "thread was deleted") || !strings.Contains(string(cancelled), "start a new thread") {
+		t.Fatalf("cancelled held prompt response id = %q, want 4", id)
+	}
+	if id := idStr(t, readLine(t, h.clientOut)); id != "5" {
+		t.Fatalf("local delete response id = %q, want 5", id)
+	}
+
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(init.ID)+`,"result":{}}`)
+	frame := parse(readLine(t, h.childIn[1]))
+	if frame.Method != "session/new" {
+		t.Fatalf("replay frame after delete = %q, want session/new", frame.Method)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{"sessionId":"S2"}}`)
+	cleanupLine := readLine(t, h.childIn[1])
+	cleanup := parse(cleanupLine)
+	if cleanup.Method != "session/delete" || sessionID(cleanup.Params) != "S2" || !strings.HasPrefix(string(trimQuotes(cleanup.ID)), InjectPrefix+"replay-cleanup-") {
+		t.Fatalf("stale replay cleanup = %s, want injected session/delete for S2", cleanupLine)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(cleanup.ID)+`,"result":{}}`)
+	if replayReady.Load() != 1 || recreated.Load() != 0 || replayConfig.Load() != 0 {
+		t.Fatalf("deleted replay published stale hooks: ready=%d recreated=%d config=%d", replayReady.Load(), recreated.Load(), replayConfig.Load())
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":6,"method":"session/new","params":{"cwd":"/w"}}`)
+	if frame := parse(readLine(t, h.childIn[1])); frame.Method != "session/new" || string(frame.ID) != "6" {
+		t.Fatalf("post-delete frame = method %q id %s, want fresh session/new id 6", frame.Method, frame.ID)
+	}
+	h.shutdown()
+}
+
+func TestProxyCloseDuringReplayDoesNotReopenSession(t *testing.T) {
+	var ready, recreated, replayConfig atomic.Int32
+	hooks := &Hooks{
+		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
+			if bytes.Contains(line, []byte("__switch__")) {
+				return true, successResponse(string(parse(line).ID)), nil, true
+			}
+			return false, nil, nil, false
+		},
+		SessionReady: func(string) [][]byte {
+			ready.Add(1)
+			return nil
+		},
+		SessionRecreated: func(string) { recreated.Add(1) },
+		ToEditor: func(line []byte) ([]byte, bool) {
+			if bytes.Contains(line, []byte("config_option_update")) {
+				replayConfig.Add(1)
+			}
+			return line, false
+		},
+	}
+	h := newProxyHarness(t, 2, hooks)
+	h.initialize(0)
+	h.newSession(0, "S1")
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/set_config_option","params":{"sessionId":"S1","configId":"__switch__"}}`)
+	readLine(t, h.clientOut)
+	init := parse(readLine(t, h.childIn[1]))
+	if init.Method != "initialize" {
+		t.Fatalf("first replay frame = %q, want initialize", init.Method)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":5,"method":"session/close","params":{"sessionId":"S1"}}`)
+	cancelled := readLine(t, h.clientOut)
+	if id := idStr(t, cancelled); id != "4" || !strings.Contains(string(cancelled), "thread was closed") || !strings.Contains(string(cancelled), "resume the thread") {
+		t.Fatalf("closed prompt response = %s", cancelled)
+	}
+	if id := idStr(t, readLine(t, h.clientOut)); id != "5" {
+		t.Fatalf("local close response id = %q, want 5", id)
+	}
+
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(init.ID)+`,"result":{}}`)
+	frame := parse(readLine(t, h.childIn[1]))
+	if frame.Method != "session/new" {
+		t.Fatalf("replay frame after close = %q, want session/new", frame.Method)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{"sessionId":"S2"}}`)
+	cleanupLine := readLine(t, h.childIn[1])
+	cleanup := parse(cleanupLine)
+	if cleanup.Method != "session/close" || sessionID(cleanup.Params) != "S2" || !strings.HasPrefix(string(trimQuotes(cleanup.ID)), InjectPrefix+"replay-cleanup-") {
+		t.Fatalf("stale replay cleanup = %s, want injected session/close for S2", cleanupLine)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(cleanup.ID)+`,"result":{}}`)
+	if ready.Load() != 1 || recreated.Load() != 0 || replayConfig.Load() != 0 {
+		t.Fatalf("closed replay published stale hooks: ready=%d recreated=%d config=%d", ready.Load(), recreated.Load(), replayConfig.Load())
+	}
+
+	// Closed identity remains durable but inactive: a fresh thread works and no stale S1 binding was
+	// resurrected by the candidate's successful session/new response.
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":6,"method":"session/new","params":{"cwd":"/w"}}`)
+	if frame := parse(readLine(t, h.childIn[1])); frame.Method != "session/new" || string(frame.ID) != "6" {
+		t.Fatalf("post-close frame = method %q id %s, want fresh session/new id 6", frame.Method, frame.ID)
+	}
+	h.shutdown()
+}
+
+func TestProxyLifecycleDuringPublishedReplayCleansCurrentNativeSession(t *testing.T) {
+	for _, method := range []string{"session/close", "session/delete"} {
+		t.Run(method, func(t *testing.T) {
+			recreated := make(chan struct{})
+			release := make(chan struct{})
+			var resumePending atomic.Bool
+			resumePending.Store(true)
+			var editorOut bytes.Buffer
+			p := &proxy{
+				out: &editorOut,
+				hooks: &Hooks{
+					ShouldRecreateSession: func(string) bool { return true },
+					ResumePrompt: func(sid string) []byte {
+						if sid == "E1" && resumePending.Load() {
+							return []byte(`{"jsonrpc":"2.0","id":6,"method":"session/prompt","params":{"sessionId":"E1","prompt":[]}}` + "\n")
+						}
+						return nil
+					},
+					SessionClosed: func(string) { resumePending.Store(false) },
+					SessionEnded:  func(string) { resumePending.Store(false) },
+					SessionRecreated: func(string) {
+						close(recreated)
+						<-release
+					},
+				},
+				sessions:  map[string]*sess{"E1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "OLD", provider: "grok", turned: true}},
+				byAdapter: map[string]string{}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+				retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+				injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+				restarting: true, restartHeld: map[string]clientLine{},
+			}
+			fake := newFakeChild()
+			child := fake.child()
+			child.Provider = "grok"
+			cleanup := make(chan header, 1)
+			go func() {
+				r := bufio.NewReader(fake.inR)
+				request := parse(readLine(t, r))
+				writeLine(t, fake.outW, `{"jsonrpc":"2.0","id":`+string(request.ID)+`,"result":{"sessionId":"NEW"}}`)
+				cleanup <- parse(readLine(t, r))
+			}()
+			done := make(chan error, 1)
+			go func() { done <- p.replayAt(child, bufio.NewReader(fake.outR), 0) }()
+			<-recreated // candidate is authoritative, but prompt admission is still closed
+			p.forwardClientControlled([]byte(`{"jsonrpc":"2.0","id":7,"method":"`+method+`","params":{"sessionId":"E1"}}`+"\n"), originEditor, true)
+			output := editorOut.String()
+			if !strings.Contains(output, `"id":6`) || !strings.Contains(output, "thread was ") {
+				t.Fatalf("consumed-error resend was not answered during %s: %s", method, output)
+			}
+			if !strings.Contains(output, `"id":7`) {
+				t.Fatalf("local %s response missing: %s", method, output)
+			}
+			got := <-cleanup
+			if got.Method != method || sessionID(got.Params) != "NEW" {
+				t.Fatalf("cleanup = method %q session %q, want %s NEW", got.Method, sessionID(got.Params), method)
+			}
+			if remapped := p.remapToEditor([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"NEW"}}` + "\n")); len(remapped) != 0 {
+				t.Fatalf("late native update survived %s: %s", method, remapped)
+			}
+			close(release)
+			if err := <-done; err != nil {
+				t.Fatalf("replay after %s: %v", method, err)
+			}
+			if method == "session/close" {
+				if s := p.sessions["E1"]; s == nil || !s.closed {
+					t.Fatalf("close did not retain inactive durable identity: %+v", s)
+				}
+			} else if p.sessions["E1"] != nil {
+				t.Fatalf("delete retained session: %+v", p.sessions["E1"])
+			}
+			child.Stop()
+		})
+	}
+}
+
+func TestProxyPublishedReplayLifecycleCleanupIDsAreUnique(t *testing.T) {
+	fake := newFakeChild()
+	child := fake.child()
+	child.Provider = "grok"
+	p := &proxy{
+		out: io.Discard, child: child, generation: 3, restartEpoch: 9, restarting: true,
+		sessions: map[string]*sess{
+			"E1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "NATIVE", provider: "grok", turned: true},
+		},
+		byAdapter: map[string]string{"NATIVE": "E1"}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+		retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+		injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+		restartHeld: map[string]clientLine{},
+	}
+	reader := bufio.NewReader(fake.inR)
+	cleanups := make(chan header, 3)
+	go func() {
+		for range 3 {
+			cleanups <- parse(readLine(t, reader))
+		}
+	}()
+	var ids []string
+	for i, method := range []string{"session/close", "session/close", "session/delete"} {
+		requestID := 10 + i
+		p.forwardClientControlled([]byte(fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":%d,"method":%q,"params":{"sessionId":"E1"}}`+"\n",
+			requestID, method,
+		)), originEditor, true)
+		cleanup := <-cleanups
+		if cleanup.Method != method || sessionID(cleanup.Params) != "NATIVE" {
+			t.Fatalf("cleanup %d = method %q session %q", i, cleanup.Method, sessionID(cleanup.Params))
+		}
+		ids = append(ids, string(cleanup.ID))
+	}
+	if ids[0] == ids[1] || ids[0] == ids[2] || ids[1] == ids[2] {
+		t.Fatalf("published replay lifecycle cleanup ids collided: %v", ids)
+	}
+	child.Stop()
+}
+
+func TestProxyRejectsDuplicateNativeSessionID(t *testing.T) {
+	h := newProxyHarness(t, 1, nil, "claude")
+	h.initialize(0)
+	h.newSession(0, "S1")
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/new","params":{"cwd":"/other"}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":3,"result":{"sessionId":"S1"}}`)
+	if response := readLine(t, h.clientOut); !strings.Contains(string(response), "duplicate session id S1") {
+		t.Fatalf("duplicate native id response = %s", response)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	if forwarded := parse(readLine(t, h.childIn[0])); forwarded.Method != "session/prompt" || sessionID(forwarded.Params) != "S1" {
+		t.Fatalf("established session was displaced by duplicate id: %+v", forwarded)
+	}
+	h.shutdown()
+}
+
+func TestProxyReplayRejectsDuplicateNativeBindingsAtomically(t *testing.T) {
+	p := &proxy{
+		out: io.Discard,
+		sessions: map[string]*sess{
+			"E1": {params: json.RawMessage(`{"cwd":"/a"}`), adapterID: "OLD1", provider: "claude"},
+			"E2": {params: json.RawMessage(`{"cwd":"/b"}`), adapterID: "OLD2", provider: "claude"},
+		},
+		byAdapter: map[string]string{}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+		retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+		injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+	}
+	fake := newFakeChild()
+	child := fake.child()
+	child.Provider = "grok"
+	go func() {
+		r := bufio.NewReader(fake.inR)
+		for range 2 {
+			request := parse(readLine(t, r))
+			writeLine(t, fake.outW, `{"jsonrpc":"2.0","id":`+string(request.ID)+`,"result":{"sessionId":"DUP"}}`)
+		}
+	}()
+	err := p.replayAt(child, bufio.NewReader(fake.outR), 0)
+	if err == nil || !strings.Contains(err.Error(), `duplicate native session id "DUP"`) {
+		t.Fatalf("duplicate replay bindings error = %v", err)
+	}
+	if p.sessions["E1"].adapterID != "OLD1" || p.sessions["E2"].adapterID != "OLD2" || len(p.byAdapter) != 0 {
+		t.Fatalf("duplicate replay partially published: sessions=%+v byAdapter=%v", p.sessions, p.byAdapter)
+	}
+	child.Stop()
+}
+
+func TestProxyLoadAndResumeRejectNativeIDOwnedByAnotherEditor(t *testing.T) {
+	for _, method := range []string{"session/load", "session/resume"} {
+		t.Run(method, func(t *testing.T) {
+			childInput := &recordingWriteCloser{}
+			child := &Child{In: childInput, Out: strings.NewReader(""), Stop: func() {}, Provider: "claude"}
+			var out bytes.Buffer
+			p := &proxy{
+				out: &out, child: child,
+				sessions: map[string]*sess{
+					"E1": {params: json.RawMessage(`{"cwd":"/one"}`), adapterID: "NATIVE", provider: "claude", turned: true},
+				},
+				byAdapter: map[string]string{"NATIVE": "E1"}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+				retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+				injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+			}
+			p.forwardClientControlled([]byte(fmt.Sprintf(
+				`{"jsonrpc":"2.0","id":7,"method":%q,"params":{"sessionId":"NATIVE","cwd":"/two"}}`+"\n",
+				method,
+			)), originEditor, true)
+			if !strings.Contains(out.String(), "duplicate session id NATIVE") {
+				t.Fatalf("%s collision response = %s", method, out.String())
+			}
+			if childInput.Len() != 0 {
+				t.Fatalf("%s alias reached adapter before rejection: %s", method, childInput.String())
+			}
+			if p.sessions["E1"].adapterID != "NATIVE" || p.byAdapter["NATIVE"] != "E1" || p.sessions["NATIVE"] != nil {
+				t.Fatalf("%s collision displaced owner: sessions=%+v byAdapter=%v", method, p.sessions, p.byAdapter)
+			}
+			child.Stop()
+		})
+	}
+}
+
+func TestProxyReplayRejectsNativeIDReassignedBetweenActiveSessions(t *testing.T) {
+	p := &proxy{
+		out: io.Discard,
+		sessions: map[string]*sess{
+			"E1": {params: json.RawMessage(`{"cwd":"/one"}`), adapterID: "N1", provider: "claude", turned: true},
+			"E2": {params: json.RawMessage(`{"cwd":"/two"}`), adapterID: "N2", provider: "claude", turned: true},
+		},
+		byAdapter: map[string]string{"N1": "E1", "N2": "E2"}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+		retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+		injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+	}
+	fake := newFakeChild()
+	child := fake.child()
+	child.Provider = "grok"
+	go func() {
+		reader := bufio.NewReader(fake.inR)
+		for _, nativeID := range []string{"N2", "N3"} {
+			request := parse(readLine(t, reader))
+			writeLine(t, fake.outW, `{"jsonrpc":"2.0","id":`+string(request.ID)+`,"result":{"sessionId":"`+nativeID+`"}}`)
+		}
+	}()
+	err := p.replayAt(child, bufio.NewReader(fake.outR), 0)
+	if err == nil || !strings.Contains(err.Error(), `native session id "N2"`) || !strings.Contains(err.Error(), `retained editor session "E2"`) {
+		t.Fatalf("active native-id reassignment error = %v", err)
+	}
+	if p.sessions["E1"].adapterID != "N1" || p.sessions["E2"].adapterID != "N2" || p.byAdapter["N1"] != "E1" || p.byAdapter["N2"] != "E2" {
+		t.Fatalf("active reassignment partially published: sessions=%+v byAdapter=%v", p.sessions, p.byAdapter)
+	}
+	child.Stop()
+}
+
+func TestProxyReplayRejectsNativeIDRetainedByClosedSession(t *testing.T) {
+	p := &proxy{
+		out: io.Discard,
+		sessions: map[string]*sess{
+			"E1": {params: json.RawMessage(`{"cwd":"/active"}`), adapterID: "OLD", provider: "claude", turned: true},
+			"E2": {params: json.RawMessage(`{"cwd":"/closed"}`), adapterID: "RETAINED", provider: "grok", turned: true, closed: true},
+		},
+		byAdapter: map[string]string{"RETAINED": "E2"}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+		retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+		injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+	}
+	fake := newFakeChild()
+	child := fake.child()
+	child.Provider = "grok"
+	go func() {
+		request := parse(readLine(t, bufio.NewReader(fake.inR)))
+		writeLine(t, fake.outW, `{"jsonrpc":"2.0","id":`+string(request.ID)+`,"result":{"sessionId":"RETAINED"}}`)
+	}()
+	err := p.replayAt(child, bufio.NewReader(fake.outR), 0)
+	if err == nil || !strings.Contains(err.Error(), `collides with retained editor session "E2"`) {
+		t.Fatalf("retained replay collision error = %v", err)
+	}
+	if p.sessions["E1"].adapterID != "OLD" || p.sessions["E2"].adapterID != "RETAINED" || p.byAdapter["RETAINED"] != "E2" {
+		t.Fatalf("retained collision partially published: sessions=%+v byAdapter=%v", p.sessions, p.byAdapter)
+	}
+	child.Stop()
+}
+
+func TestProxyLocalSessionRejectionRunsControllerResponseHook(t *testing.T) {
+	called := 0
+	fake := newFakeChild()
+	child := fake.child()
+	child.Provider = "codex"
+	var out bytes.Buffer
+	p := &proxy{
+		out: &out, child: child,
+		hooks:     &Hooks{ToEditor: func(line []byte) ([]byte, bool) { called++; return line, false }},
+		sessions:  map[string]*sess{"S1": {adapterID: "CLAUDE-NATIVE", provider: "claude"}},
+		byAdapter: map[string]string{"CLAUDE-NATIVE": "S1"}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{},
+		retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+		injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+		restartHeld: map[string]clientLine{},
+	}
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"S1","configId":"model","value":"x"}}` + "\n"))
+	if called != 1 || !strings.Contains(out.String(), "not available on provider codex") {
+		t.Fatalf("local rejection bypassed controller hook: called=%d out=%s", called, out.String())
+	}
+	child.Stop()
 }
 
 // TestProxyDisconnectDuringReplayReturnsCleanly: if the editor disconnects WHILE a restart's replay

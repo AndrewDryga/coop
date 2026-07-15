@@ -1,6 +1,7 @@
 package acpproxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,47 @@ func TestTraceWritesWhenEnabled(t *testing.T) {
 	for _, want := range []string{"editor→box", "session/new", "restart requested"} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("trace missing %q:\n%s", want, b)
+		}
+	}
+}
+
+func TestTraceTightensSensitiveLogPermissions(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("COOP_ACP_TRACE", "1")
+	resetTrace(t)
+	cdir := filepath.Join(dir, "coop")
+	if err := os.MkdirAll(cdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", os.Getpid()))
+	if err := os.WriteFile(path, []byte("old sensitive trace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil { // ignore a restrictive test-process umask
+		t.Fatal(err)
+	}
+	legacy := []string{
+		path + ".1",
+		filepath.Join(cdir, "acp-trace-2000000001.log"),
+		filepath.Join(cdir, "acp-trace-2000000001.log.1"),
+	}
+	for _, retained := range legacy {
+		if err := os.WriteFile(retained, []byte("older sensitive trace\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(retained, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Trace("new sensitive trace")
+	for _, secured := range append([]string{path}, legacy...) {
+		info, err := os.Stat(secured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("trace %s permissions = %04o, want 0600", filepath.Base(secured), got)
 		}
 	}
 }
@@ -136,12 +178,19 @@ func TestTracePrunesOldFiles(t *testing.T) {
 		mt := base.Add(time.Duration(i) * time.Minute)
 		os.Chtimes(p, mt, mt)
 	}
+	orphan := filepath.Join(cdir, "acp-trace-2000000099.log.1")
+	if err := os.WriteFile(orphan, []byte("orphaned sensitive trace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	old := traceKeepFiles
 	traceKeepFiles = 3
 	defer func() { traceKeepFiles = old }()
 	resetTrace(t)
 
 	Trace("hi") // opens our log and prunes
+	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("orphan trace backup survived prune: %v", err)
+	}
 
 	if _, err := os.Stat(filepath.Join(cdir, fmt.Sprintf("acp-trace-%d.log", os.Getpid()))); err != nil {
 		t.Fatalf("our own log was removed: %v", err)

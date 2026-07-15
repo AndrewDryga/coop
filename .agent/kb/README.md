@@ -50,6 +50,9 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-preset-owns-toolbar](acp-preset-owns-toolbar.md) — active ACP presets own the whole lead target and refuse stale Provider/Account editor replays
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state
+- [acp-replay-publication](acp-replay-publication.md) — publish replacement native bindings atomically before releasing held editor work
+- [acp-target-commit](acp-target-commit.md) — commit model/effort truth from the effective provider response, including Grok migrations
+- [acp-carry-echo](acp-carry-echo.md) — inject best-effort context once and hide only its exact provider echo from the editor
 - [review-task-only-mounts](review-task-only-mounts.md) — review boxes bind the repo read-only, then remount validated task-queue descendants writable; their order is the isolation boundary
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue

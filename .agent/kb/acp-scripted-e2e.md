@@ -1,48 +1,27 @@
 ---
 name: acp-scripted-e2e
-description: ACP can be tested through the real supervisor and box command path with a scripted COOP_RUNTIME, without Zed, Docker, or credentials
+description: ACP state machines are exhaustive in the scripted runtime; real adapters get an isolated conformance layer
 subsystem: acp
-sources: [internal/acpproxy/scripted_e2e_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/acpproxy/proxy.go, internal/cli/acpcontrol.go, internal/runtime/runtime.go]
-updated: 2026-07-14
+sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/testdata/acpfixture/main.go]
+updated: 2026-07-15
 ---
 
-`COOP_RUNTIME` is the production seam for deterministic ACP process tests. The fixture answers the
-runtime probes, then executes a scripted provider on the inherited stdio when Coop invokes `run`.
-That keeps the built outer supervisor, inner re-exec, box argument assembly, ACP controller, and
-proxy on the real path while isolating HOME, config, repo state, and provider transcripts.
+`COOP_RUNTIME` lets process tests drive the built outer supervisor, inner re-exec, controller,
+proxy, target resolution, and stdio while a semantic JSON fixture owns provider replies. The
+scripted matrix covers every directed provider pair and deterministic model, limit, replay, and
+failure orderings (`internal/acpproxy/scripted_matrix_e2e_test.go:41`,
+`internal/acpproxy/scripted_matrix_e2e_test.go:111`). Run it with `make acp-scripted-e2e`; it does
+not require provider credentials (`Makefile:54`).
 
-Use `make acp-scripted-e2e` for the deterministic process test included by `make check`. Use
-`make acp-e2e` only for the opt-in real-adapter conformance layer; it builds a temporary Coop binary
-and must never install over the user's binary or infer ownership by diffing global containers.
+`make acp-e2e` is the smaller installed-adapter contract. It uses credential-only profile overlays,
+an isolated config/XDG environment, and a disposable writable repo, then proves live
+prompt/model/SIGHUP behavior and cross-provider carry (`internal/acpproxy/e2e_test.go:37`,
+`internal/acpproxy/e2e_test.go:126`, `internal/acpproxy/e2e_test.go:756`,
+`internal/acpproxy/e2e_test.go:876`). Never induce real quota exhaustion there; provider fault
+injection belongs in the scripted layer.
 
-Provider-switch carry is asserted from both sides of this harness. The editor drives two real
-`coop_provider` config changes and waits for replayed `config_option_update`; provider transcripts
-prove each raw user/assistant turn enters the next fresh session once, while the editor transcript
-proves Coop's synthetic `[coop]` preamble never leaks back as a `session/update`. Synthetic resends
-share proxy remapping and pending bookkeeping but bypass the editor-origin hook, including when held
-behind the target-settings gate.
-
-Session identity is a three-part contract: the editor-facing id remains stable, while each native id
-is tagged with the provider that minted it. The scripted lifecycle test creates multiple sessions,
-closes/deletes all but one, SIGHUPs the real supervisor, and proves the same provider loads only the
-still-active native id (a closed identity remains explicitly resumable but is not auto-replayed). It
-then switches providers and proves the replacement receives one direct `session/new` and no foreign
-`session/load`. Proxy-level tests cover response-gated mutations and late output from retired child
-generations because those byte orderings need controlled pipes.
-
-The same harness owns authentication and replacement regressions. Each fixture generation records
-its resolved `COOP_ACP_TARGET` beside the wire log, so an auth-required prompt can prove the live
-replacement moved from Auto's default account to `@work`, not merely that another process started.
-Every child transcript must begin with `initialize` and carry no editor-origin `authenticate` or
-`logout`. A Grok-to-Claude switch followed by SIGHUP proves both cross-provider recreation and
-same-provider reload without restarting Zed. A separate SIGHUP case makes the first restored child
-return `auth_required` from `session/load`, then proves Auto selects `@work`, preserves the native
-session id, completes reload on the next child, and does not leak the intermediate error to the editor.
+Related: [[acp-replay-publication]], [[acp-target-commit]], [[acp-carry-echo]].
 
 ## Changelog
-- 2026-07-14 - added target identity evidence, automatic auth recovery, fresh-handshake assertions,
-  and Grok-to-Claude plus SIGHUP coverage
-- 2026-07-14 - added same-provider native restore, close/delete lifecycle handling,
-  cross-provider identity, and retired-generation coverage
-- 2026-07-14 - added the two-switch carry contract and editor/adapter transcript assertions
+- 2026-07-15 - split test-boundary fact from replay, target, and carry contracts; verified matrix and live drivers
 - 2026-07-14 - created after replacing manual Zed reproduction with the scripted runtime driver

@@ -811,7 +811,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			if psName != "" {
 				ctrl.waitForPresetRung(ctx)
 			} else if acct := t.Account(); acct != "" {
-				ctrl.waitForReset(ctx, acct)
+				ctrl.waitForReset(ctx, t.Provider, acct)
 			}
 		}
 		if psName != "" {

@@ -163,8 +163,9 @@ func (grokAgent) EnsureDefaults(*config.Config, string) {}
 // rotates on the cross-provider output-token axis. Add the marker once observed.
 func (grokAgent) ACPRateLimitSignals() []ACPSignal { return nil }
 
-// ACPSessionSettings: Grok carries model and effort in the `grok agent ... stdio`
-// launch command and exposes no equivalent session setting.
+// ACPSessionSettings: Grok carries Coop's restart target in the `grok agent ... stdio` launch
+// command. Its adapter exposes models through session/new and session/set_model; a cross-agent
+// selection asks for a fresh session, which the ACP controller handles by restarting at this target.
 func (grokAgent) ACPSessionSettings(Target) []ACPSessionSetting { return nil }
 
 // BoxEnv: grok reads its config + auth from ~/.grok by default, which is where coop mounts
