@@ -331,6 +331,13 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if m := untrailered(repo, duplicateHead, validHead, []string{"task-42"}); len(m) != 0 {
 		t.Errorf("single exact trailer should bind fresh work: %v", m)
 	}
+	// Two individually valid commits for one task are still ambiguous: one task must bind to one
+	// commit in the iteration range, not merely find at least one matching trailer somewhere in it.
+	git("commit", "-q", "--allow-empty", "-m", "second valid binding\n\nCoop-Task: task-42")
+	twoBindingsHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := untrailered(repo, duplicateHead, twoBindingsHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("multiple matching commits must fail closed, got %v", m)
+	}
 	// landedTasks sees the trailer across all history.
 	if !landedTasks(repo)["task-42"] {
 		t.Error("landedTasks should include task-42")
@@ -355,7 +362,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"completion rejected", "exact, unique Coop-Task trailer", "git commit --amend --no-edit --trailer", id} {
+	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --no-edit --trailer", "rewrite or squash", id} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("rejection log missing %q:\n%s", want, log)
 		}
@@ -365,7 +372,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if rejectErr == nil {
 		t.Fatal("unbindable completion must stop the controller")
 	}
-	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --no-edit --trailer", id} {
+	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --no-edit --trailer", "rewrite/squash", id} {
 		if !strings.Contains(rejectErr.Error(), want) {
 			t.Errorf("controller error missing %q: %v", want, rejectErr)
 		}

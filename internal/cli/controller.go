@@ -176,7 +176,7 @@ func untrailered(repo, base, head string, finished []string) []string {
 	}
 	var missing []string
 	for _, id := range finished {
-		if len(commitsForTask(repo, search, id)) == 0 {
+		if len(commitsForTask(repo, search, id)) != 1 {
 			missing = append(missing, id)
 		}
 	}
@@ -202,7 +202,7 @@ func restoreUnbindableCompletions(hosts, ids []string) error {
 						break
 					}
 				}
-				note := fmt.Sprintf("completion rejected: no exact, unique %s trailer in the iteration's commit range; amend the completing commit with `git commit --amend --no-edit --trailer %q`, then re-run `coop loop`", coopTaskTrailer, coopTaskTrailer+": "+id)
+				note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range; if missing, add it with `git commit --amend --no-edit --trailer %q`; if duplicated, rewrite or squash the range down to one binding; then re-run `coop loop`", coopTaskTrailer, coopTaskTrailer+": "+id)
 				if err := appendTaskLogStrict(filepath.Join(host, stateInProgress, id), note); err != nil {
 					restoreErrs = append(restoreErrs, fmt.Errorf("record rejection for task %s: %w", id, err))
 				}
@@ -224,7 +224,7 @@ func unbindableCompletionError(ids []string, restoreErr error) error {
 	for _, id := range ids {
 		commands = append(commands, fmt.Sprintf("git commit --amend --no-edit --trailer %q", coopTaskTrailer+": "+id))
 	}
-	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — amend the completing commit (%s), then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
+	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — add a missing trailer (%s), or rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
