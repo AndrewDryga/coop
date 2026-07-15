@@ -22,6 +22,16 @@ proves Coop's synthetic `[coop]` preamble never leaks back as a `session/update`
 share proxy remapping and pending bookkeeping but bypass the editor-origin hook, including when held
 behind the target-settings gate.
 
+Session identity is a three-part contract: the editor-facing id remains stable, while each native id
+is tagged with the provider that minted it. The scripted lifecycle test creates multiple sessions,
+closes/deletes all but one, SIGHUPs the real supervisor, and proves the same provider loads only the
+still-active native id (a closed identity remains explicitly resumable but is not auto-replayed). It
+then switches providers and proves the replacement receives one direct `session/new` and no foreign
+`session/load`. Proxy-level tests cover response-gated mutations and late output from retired child
+generations because those byte orderings need controlled pipes.
+
 ## Changelog
+- 2026-07-14 - added same-provider native restore, close/delete lifecycle handling,
+  cross-provider identity, and retired-generation coverage
 - 2026-07-14 - added the two-switch carry contract and editor/adapter transcript assertions
 - 2026-07-14 - created after replacing manual Zed reproduction with the scripted runtime driver

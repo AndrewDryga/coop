@@ -726,11 +726,16 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	if !c.resend["S"] {
 		t.Error("session S must be flagged for resend")
 	}
-	if got := c.resumePrompt("S"); string(got) != string(prompt) {
+	resumed := c.resumePrompt("S")
+	if got := resumed; string(got) != string(prompt) {
 		t.Errorf("resumePrompt should return the captured prompt, got: %s", got)
 	}
+	if got := c.resumePrompt("S"); string(got) != string(prompt) {
+		t.Errorf("unadmitted resume must remain retryable, got: %s", got)
+	}
+	c.promptForwarded(resumed, true)
 	if got := c.resumePrompt("S"); got != nil {
-		t.Errorf("resumePrompt must be one-shot, second call got: %s", got)
+		t.Errorf("admitted resume must be consumed, got: %s", got)
 	}
 }
 
@@ -1897,8 +1902,12 @@ func TestACPPreambleOnResend(t *testing.T) {
 			t.Errorf("resent prompt missing %q:\n%s", want, out)
 		}
 	}
+	if retry := string(c.resumePrompt("s1")); retry != out {
+		t.Error("unadmitted resend did not remain retryable")
+	}
+	c.promptForwarded([]byte(out), true)
 	if c.resumePrompt("s1") != nil {
-		t.Error("resend is one-shot")
+		t.Error("admitted resend was not consumed")
 	}
 	if got := string(c.lastPrompt["s1"]); got != string(prompt) {
 		t.Errorf("resend must not replace the raw stored prompt\ngot:  %s\nwant: %s", got, prompt)
@@ -2170,5 +2179,60 @@ func TestACPControlSnapshotRestore(t *testing.T) {
 	if c2.sel != (acpSelection{Provider: "codex"}) || c2.lead != "codex" || c2.model != "gpt-5.6-sol" ||
 		c2.target.Provider != "codex" || c2.target.Model != "gpt-5.6-sol" || c2.target.Effort != "xhigh" || !c2.leadUsesSetModel {
 		t.Errorf("restore mismatch: sel=%+v lead=%q model=%q target=%+v setModel=%v", c2.sel, c2.lead, c2.model, c2.target, c2.leadUsesSetModel)
+	}
+}
+
+func TestACPControlSessionClosedPreservesDurableCarry(t *testing.T) {
+	c := newTestControl(t)
+	const sid = "S1"
+	history := &sessHistory{entries: []histEntry{{role: "user", text: "x"}}}
+	c.cached[sid] = json.RawMessage(`[]`)
+	c.lastPrompt[sid] = []byte("prompt")
+	c.resend[sid] = true
+	c.heldChunk[sid] = []byte("held")
+	c.waits[sid] = 1
+	c.reported[sid] = true
+	c.history[sid] = history
+	c.turnText[sid] = []byte("turn")
+	c.turnProvider[sid] = "claude"
+	c.turnActive[sid] = true
+	c.toolTitle[sid] = map[string]string{"tool": "title"}
+	c.needPreamble[sid] = true
+	c.promptSession["request"] = sid
+
+	c.sessionClosed(sid)
+	if c.cached[sid] != nil || c.lastPrompt[sid] != nil || c.resend[sid] || c.heldChunk[sid] != nil ||
+		c.waits[sid] != 0 || c.reported[sid] || c.turnText[sid] != nil || c.turnProvider[sid] != "" ||
+		c.turnActive[sid] || c.toolTitle[sid] != nil || c.promptSession["request"] != "" {
+		t.Fatalf("closed session retained active controller state: %+v", c)
+	}
+	if c.history[sid] != history || !c.needPreamble[sid] {
+		t.Fatalf("closed session lost durable carry state: history=%+v needPreamble=%v", c.history[sid], c.needPreamble[sid])
+	}
+}
+
+func TestACPControlSessionEndedClearsPerSessionState(t *testing.T) {
+	c := newTestControl(t)
+	const sid = "S1"
+	c.cached[sid] = json.RawMessage(`[]`)
+	c.lastPrompt[sid] = []byte("prompt")
+	c.resend[sid] = true
+	c.heldChunk[sid] = []byte("held")
+	c.waits[sid] = 1
+	c.reported[sid] = true
+	c.history[sid] = &sessHistory{entries: []histEntry{{role: "user", text: "x"}}}
+	c.turnText[sid] = []byte("turn")
+	c.turnProvider[sid] = "claude"
+	c.turnActive[sid] = true
+	c.toolTitle[sid] = map[string]string{"tool": "title"}
+	c.needPreamble[sid] = true
+	c.promptSession["request"] = sid
+
+	c.sessionEnded(sid)
+	if c.cached[sid] != nil || c.lastPrompt[sid] != nil || c.resend[sid] || c.heldChunk[sid] != nil ||
+		c.waits[sid] != 0 || c.reported[sid] || c.history[sid] != nil || c.turnText[sid] != nil ||
+		c.turnProvider[sid] != "" || c.turnActive[sid] || c.toolTitle[sid] != nil || c.needPreamble[sid] ||
+		c.promptSession["request"] != "" {
+		t.Fatalf("closed session retained controller state: %+v", c)
 	}
 }

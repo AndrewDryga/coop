@@ -789,6 +789,10 @@ func bareProviderSwitch(t agents.Target, psName string, ok bool) bool {
 // — the ONE spawn path for the live factory, warm-pool prewarm, and short-lived model probe, so each
 // gets the same credentials, process isolation, and teardown.
 func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID string, ctrl *acpControl, t agents.Target, psName string, hasTarget bool, stderr io.Writer) (*acpproxy.Child, error) {
+	provider := t.Provider
+	if provider == "" && ctrl != nil {
+		provider = ctrl.leadProvider()
+	}
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -860,7 +864,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			os.RemoveAll(cidDir)
 		}
 	}
-	return &acpproxy.Child{In: inW, Out: outR, Stop: stop}, nil
+	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, Provider: provider}, nil
 }
 
 // agentChoices lists the registered agents for a "use one of …" error, from the registry so a

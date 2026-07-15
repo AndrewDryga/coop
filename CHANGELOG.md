@@ -42,6 +42,13 @@
   selecting None returns the effective provider with Account set to Auto without restoring old
   plain values.
 
+- **ACP provider switches keep editor threads stable without crossing native session IDs.** Coop
+  now persists each editor/native/provider identity, loads native history only on the provider that
+  owns it, and creates directly on another provider. Failed load/prompt responses no longer create
+  phantom replay state; close deactivates a thread while retaining its resumable identity, delete
+  removes its identity and carry caches, and stale output from a retired child is dropped before it
+  can mutate or duplicate the live thread.
+
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **Review receipts are bound to exact task deltas.** Between and signoff reviews now report an

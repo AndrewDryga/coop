@@ -194,13 +194,11 @@ func TestScriptedACPCarryAcrossProviderSwitches(t *testing.T) {
     ]],
     "codex": [[
       {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
-      {"method":"session/load","error":{"code":-32001,"message":"unknown foreign session"}},
       {"method":"session/new","result":{"sessionId":"C2","configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"ready","options":[]}]}},
       {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"C2","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"codex answer"}}}}],"result":{"stopReason":"end_turn"}}
     ]],
     "grok": [[
       {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
-      {"method":"session/load","error":{"code":-32001,"message":"unknown foreign session"}},
       {"method":"session/new","result":{"sessionId":"G3","configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"ready","options":[]}]}},
       {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"G3","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"grok answer"}}}}],"result":{"stopReason":"end_turn"}}
     ]]
@@ -237,6 +235,9 @@ func TestScriptedACPCarryAcrossProviderSwitches(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(wire)
+		if strings.Contains(text, `"method":"session/load"`) {
+			t.Errorf("%s received a foreign session/load instead of a direct session/new:\n%s", provider, wire)
+		}
 		if got := strings.Count(text, "[coop] This thread continues"); got != 1 {
 			t.Errorf("%s wire has %d carry wrappers, want one:\n%s", provider, got, wire)
 		}
@@ -253,6 +254,117 @@ func TestScriptedACPCarryAcrossProviderSwitches(t *testing.T) {
 		if frame.Msg["method"] == "session/update" && strings.Contains(string(frame.Raw), "[coop] This thread continues") {
 			t.Errorf("synthetic carry leaked to the editor in session/update:\n%s", frame.Raw)
 		}
+	}
+}
+
+func TestScriptedACPSessionIdentityLifecycle(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "claude": [
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}},
+        {"method":"session/new","result":{"sessionId":"A1","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/new","result":{"sessionId":"A2","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/new","result":{"sessionId":"A3","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/prompt","result":{"stopReason":"end_turn"}},
+        {"method":"session/close","result":{}},
+        {"method":"session/delete","result":{}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}},
+        {"method":"session/load","result":{"configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"reloaded","options":[]}]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}}
+      ]
+    ],
+    "codex": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}},
+      {"method":"session/new","result":{"sessionId":"C3","configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"recreated","options":[]}]}}
+    ]]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude", "codex")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	newSession := func(cwd string) string {
+		t.Helper()
+		response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}})
+		if err != nil {
+			t.Fatalf("session/new %s: %v\nstderr:\n%s", cwd, err, proc.stderr.String())
+		}
+		return responseSessionID(response)
+	}
+	closedID := newSession(filepath.Join(repo, "closed"))
+	deletedID := newSession(filepath.Join(repo, "deleted"))
+	liveID := newSession(filepath.Join(repo, "live"))
+	if closedID != "A1" || deletedID != "A2" || liveID != "A3" {
+		t.Fatalf("fixture session ids = %q/%q/%q, want A1/A2/A3", closedID, deletedID, liveID)
+	}
+	if _, err := proc.client.req(ctx, "session/prompt", map[string]any{"sessionId": liveID, "prompt": []any{}}); err != nil {
+		t.Fatalf("establish live transcript: %v", err)
+	}
+	if _, err := proc.client.req(ctx, "session/close", map[string]any{"sessionId": closedID}); err != nil {
+		t.Fatalf("session/close: %v", err)
+	}
+	if _, err := proc.client.req(ctx, "session/delete", map[string]any{"sessionId": deletedID}); err != nil {
+		t.Fatalf("session/delete: %v", err)
+	}
+
+	mark := proc.client.mark()
+	if err := proc.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("SIGHUP scripted supervisor: %v", err)
+	}
+	for {
+		event, next, err := proc.client.event(ctx, mark, "session/update")
+		if err != nil {
+			t.Fatalf("await same-provider reload: %v\nstderr:\n%s\nwire:\n%s", err, proc.stderr.String(), wireDump(proc.client.transcript()))
+		}
+		mark = next
+		if strings.Contains(string(event.Raw), `"currentValue":"reloaded"`) {
+			break
+		}
+	}
+	reloadWire, err := os.ReadFile(filepath.Join(tmp, "fixture-state", "claude-1", "wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadText := string(reloadWire)
+	if strings.Count(reloadText, `"method":"session/load"`) != 1 || !strings.Contains(reloadText, `"sessionId":"A3"`) ||
+		strings.Contains(reloadText, `"sessionId":"A1"`) || strings.Contains(reloadText, `"sessionId":"A2"`) {
+		t.Fatalf("same-provider reload did not preserve only live native A3:\n%s", reloadWire)
+	}
+
+	switchScriptedProvider(t, ctx, proc, liveID, "codex")
+	codexWire, err := os.ReadFile(filepath.Join(tmp, "fixture-state", "codex-0", "wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexText := string(codexWire)
+	if strings.Contains(codexText, `"method":"session/load"`) || strings.Count(codexText, `"method":"session/new"`) != 1 ||
+		strings.Contains(codexText, `"sessionId":"A3"`) {
+		t.Fatalf("cross-provider replay probed Claude identity instead of creating once:\n%s", codexWire)
 	}
 }
 

@@ -210,7 +210,41 @@ func (c *acpControl) hooks() *acpproxy.Hooks {
 		AutoReply:        c.autoReply,
 		ResumePrompt:     c.resumePrompt,
 		SessionRecreated: c.sessionRecreated,
+		SessionClosed:    c.sessionClosed,
+		SessionEnded:     c.sessionEnded,
 	}
+}
+
+func (c *acpControl) clearSessionActive(session string) {
+	c.mu.Lock()
+	delete(c.cached, session)
+	delete(c.lastPrompt, session)
+	delete(c.resend, session)
+	delete(c.heldChunk, session)
+	delete(c.waits, session)
+	delete(c.reported, session)
+	delete(c.turnText, session)
+	delete(c.turnProvider, session)
+	delete(c.turnActive, session)
+	delete(c.toolTitle, session)
+	for id, sid := range c.promptSession {
+		if sid == session {
+			delete(c.promptSession, id)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (c *acpControl) sessionClosed(session string) {
+	c.clearSessionActive(session)
+}
+
+func (c *acpControl) sessionEnded(session string) {
+	c.clearSessionActive(session)
+	c.mu.Lock()
+	delete(c.history, session)
+	delete(c.needPreamble, session)
+	c.mu.Unlock()
 }
 
 // sessionRecreated marks a session whose conversation did not carry across a restart (the proxy
@@ -223,7 +257,8 @@ func (c *acpControl) sessionRecreated(session string) {
 }
 
 // resumePrompt returns the prompt to transparently re-send for a session once its box is back after a
-// rate-limit rotation/wait, or nil. One-shot: the flag is cleared so a later restart doesn't re-send.
+// rate-limit rotation/wait, or nil. This is deliberately a non-destructive peek: PromptForwarded
+// consumes the flags only after the proxy writes the synthetic prompt to the still-current child.
 //
 // Known, accepted artifact (v3 waiver): the box that died on the limit usually persisted this prompt
 // as a dangling user turn in the adapter's OWN session transcript before erroring, so after the
@@ -238,19 +273,18 @@ func (c *acpControl) resumePrompt(session string) []byte {
 	if !c.resend[session] {
 		return nil
 	}
-	delete(c.resend, session)
 	prompt := c.lastPrompt[session]
 	if len(prompt) == 0 {
 		return nil
 	}
-	// Preserve visible partial output from the old provider before rendering context for a replacement
-	// provider. Request correlation starts later, at PromptForwarded, only if target setup succeeds.
+	// Preserve visible partial output before rendering context for a replacement provider. This
+	// history mutation is intentionally durable across a superseded candidate; only the resend and
+	// preamble flags wait for confirmed prompt admission.
 	c.closeProviderTurnLocked(session, c.lead)
 	// The restart that triggered this resend may have re-created the session (a cross-provider
 	// rotation): the resent prompt is then the first into a fresh thread, so it carries the
-	// history preamble — same one-shot flag the editor's-next-prompt path consumes.
+	// history preamble. Do not consume the flag until PromptForwarded confirms admission.
 	if c.needPreamble[session] && len(prompt) > 0 {
-		delete(c.needPreamble, session)
 		if pre := c.preambleLocked(session, promptText(prompt) != ""); pre != "" {
 			prompt = wrapPromptLine(prompt, pre)
 		}
@@ -1048,7 +1082,7 @@ func (c *acpControl) beginTurnLocked(session, provider string) {
 // promptForwarded runs at the proxy's post-gate admission boundary for both real editor prompts and
 // synthetic resends. FromEditor owns raw user/history mutation; this hook owns only in-flight request
 // correlation and assistant provenance, so a rejected target-setting chain cannot create phantom state.
-func (c *acpControl) promptForwarded(line []byte, _ bool) {
+func (c *acpControl) promptForwarded(line []byte, synthetic bool) {
 	var h struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -1060,6 +1094,10 @@ func (c *acpControl) promptForwarded(line []byte, _ bool) {
 		return
 	}
 	c.mu.Lock()
+	if synthetic {
+		delete(c.resend, h.Params.SessionID)
+		delete(c.needPreamble, h.Params.SessionID)
+	}
 	c.promptSession[string(h.ID)] = h.Params.SessionID
 	c.beginTurnLocked(h.Params.SessionID, c.lead)
 	c.turnActive[h.Params.SessionID] = true
