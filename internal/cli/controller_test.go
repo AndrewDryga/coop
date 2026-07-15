@@ -173,8 +173,9 @@ func TestAssignLoopTaskEmptyIsNoOp(t *testing.T) {
 	}
 }
 
-// TestCommitsForTaskAndUntrailered drives the real git trailer read: fresh and historical exact
-// trailers bind their task, while absent, different-id, and substring trailers do not.
+// TestCommitsForTaskAndUntrailered drives the real git trailer parser. Fresh work binds only in its
+// commit range; historical fallback is limited to unchanged-HEAD reconciliation; malformed,
+// duplicate, different-id, and substring values fail closed.
 func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -183,12 +184,14 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	env := append(os.Environ(),
 		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
 		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
-	git := func(args ...string) {
+	git := func(args ...string) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir, cmd.Env = repo, env
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
+		return strings.TrimSpace(string(out))
 	}
 	git("init", "-q")
 	git("config", "user.email", "t@t")
@@ -219,9 +222,80 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if m := untrailered(repo, head, head, []string{"task-4", "task"}); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
 		t.Errorf("different ids and substrings must remain untrailered, got %v", m)
 	}
+	if m := untrailered(repo, "", head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("unknown iteration base must fail closed, got %v", m)
+	}
+	if m := untrailered(repo, head, "", []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("unknown iteration head must fail closed, got %v", m)
+	}
+
+	// Once HEAD changes, an older valid trailer cannot bless fresh unbound work.
+	git("commit", "-q", "--allow-empty", "-m", "fresh rework without a trailer")
+	unboundHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := untrailered(repo, head, unboundHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("historical-only binding after fresh work = %v, want [task-42]", m)
+	}
+
+	// A trailer-like line outside Git's final contiguous trailer block is not a trailer.
+	git("commit", "-q", "--allow-empty", "-m", "malformed\n\nCoop-Task: task-42\n\nCo-authored-by: T <t@t>")
+	malformedHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := untrailered(repo, unboundHead, malformedHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("malformed trailer binding = %v, want [task-42]", m)
+	}
+
+	// Multiple Coop-Task values are ambiguous even when both values happen to match.
+	git("commit", "-q", "--allow-empty", "-m", "duplicate\n\nCoop-Task: task-42\nCoop-Task: task-42")
+	duplicateHead := gitOut(repo, "rev-parse", "HEAD")
+	if c := commitsForTask(repo, malformedHead+".."+duplicateHead, "task-42"); len(c) != 0 {
+		t.Errorf("duplicate trailers must not bind, got commits %v", c)
+	}
+	if m := untrailered(repo, malformedHead, duplicateHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("duplicate trailer binding = %v, want [task-42]", m)
+	}
+
+	git("commit", "-q", "--allow-empty", "-m", "valid again\n\nCoop-Task: task-42")
+	validHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := untrailered(repo, duplicateHead, validHead, []string{"task-42"}); len(m) != 0 {
+		t.Errorf("single exact trailer should bind fresh work: %v", m)
+	}
 	// landedTasks sees the trailer across all history.
 	if !landedTasks(repo)["task-42"] {
 		t.Error("landedTasks should include task-42")
+	}
+}
+
+func TestRestoreUnbindableCompletions(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-unbound"
+	doneDir := filepath.Join(root, stateDone, id)
+	writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Unbound\n")
+	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
+
+	if err := restoreUnbindableCompletions([]string{root}, []string{id}); err != nil {
+		t.Fatalf("restoreUnbindableCompletions: %v", err)
+	}
+	inProgressDir := filepath.Join(root, stateInProgress, id)
+	if !pathExists(inProgressDir) || pathExists(doneDir) {
+		t.Fatalf("rejected completion was not restored: in_progress=%v done=%v", pathExists(inProgressDir), pathExists(doneDir))
+	}
+	log, err := os.ReadFile(filepath.Join(inProgressDir, "log.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"completion rejected", "exact, unique Coop-Task trailer", "git commit --amend --no-edit --trailer", id} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("rejection log missing %q:\n%s", want, log)
+		}
+	}
+
+	rejectErr := unbindableCompletionError([]string{id}, nil)
+	if rejectErr == nil {
+		t.Fatal("unbindable completion must stop the controller")
+	}
+	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --no-edit --trailer", id} {
+		if !strings.Contains(rejectErr.Error(), want) {
+			t.Errorf("controller error missing %q: %v", want, rejectErr)
+		}
 	}
 }
 

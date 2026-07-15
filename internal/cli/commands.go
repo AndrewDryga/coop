@@ -2291,13 +2291,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				break
 			}
 			action, wait, resetAt := decideIteration(code, err, out, time.Now(), &fails, &waits, &retries)
-			// Attempt evidence: the tasks this iteration moved to done, and any it finished with NO
-			// exact Coop-Task commit in its HEAD range or reachable history — unbindable, so warn.
+			// Completion integrity is a hard boundary. Fresh work must bind inside this iteration's
+			// commit range; only a no-HEAD-change folder repair may use reachable history. Reject and
+			// restore before signing or review so neither can bless unbindable work.
 			finished := finishedTasks(snapBefore, queueSnapshot(hosts))
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
 			missing := untrailered(repo, iterHead, headAfter, finished)
 			if len(missing) > 0 {
-				ui.Warn("task(s) %s finished with no matching Coop-Task commit — the harness can't bind them to a commit (the commit needs a `Coop-Task: <id>` trailer)", strings.Join(missing, ", "))
+				restoreErr := restoreUnbindableCompletions(hosts, missing)
+				return 1, unbindableCompletionError(missing, restoreErr)
 			}
 			// Verifier trust boundary (first step): a task that edited a gate-defining file could be
 			// passing by WEAKENING its own checker. Detect it host-side and warn; the review footer and

@@ -19,18 +19,21 @@ import (
 // between commit and folder-move was ambiguous.
 const coopTaskTrailer = "Coop-Task"
 
-// commitsForTask returns the short shas whose Coop-Task trailer equals id. rangeExpr limits the
-// search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history. The trailer value is a
-// single-line id, so a tab-split off %h is robust.
+// commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
+// the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history. Git joins duplicate
+// values with the explicit unit separator, so a duplicate trailer fails closed instead of looking
+// like a valid first line followed by unrelated output.
 func commitsForTask(repo, rangeExpr, id string) []string {
-	args := []string{"log", "--format=%h%x09%(trailers:key=" + coopTaskTrailer + ",valueonly)"}
+	const trailerSep = "\x1f"
+	args := []string{"log", "--format=%h%x09%(trailers:key=" + coopTaskTrailer + ",valueonly,separator=%x1f)"}
 	if rangeExpr != "" {
 		args = append(args, rangeExpr)
 	}
 	var shas []string
 	for _, line := range strings.Split(gitOut(repo, args...), "\n") {
 		sha, val, ok := strings.Cut(line, "\t")
-		if ok && strings.TrimSpace(val) == id {
+		values := strings.Split(val, trailerSep)
+		if ok && len(values) == 1 && strings.TrimSpace(values[0]) == id {
 			shas = append(shas, sha)
 		}
 	}
@@ -162,22 +165,72 @@ func reopenedBySignoff(before, after map[string]string) []string {
 	return ids
 }
 
-// untrailered returns the finished ids with NO matching Coop-Task commit. Prefer the iteration's
-// range for fresh work, but fall back to reachable history for a case-(a) resume that only finishes
-// the folder move after its exact trailer commit already landed.
+// untrailered returns finished ids with no exact, unique Coop-Task binding. A changed HEAD must bind
+// in this iteration's range; historical fallback is reserved for case-(a) resume where HEAD did not
+// move and the iteration only repaired the folder state after an earlier commit landed.
 func untrailered(repo, base, head string, finished []string) []string {
-	rng := ""
-	if base != "" && head != "" && base != head {
-		rng = base + ".." + head
+	if base == "" || head == "" {
+		return slices.Clone(finished)
+	}
+	search := ""
+	if base != head {
+		search = base + ".." + head
 	}
 	var missing []string
 	for _, id := range finished {
-		inRange := rng != "" && len(commitsForTask(repo, rng, id)) > 0
-		if !inRange && len(commitsForTask(repo, "", id)) == 0 {
+		if len(commitsForTask(repo, search, id)) == 0 {
 			missing = append(missing, id)
 		}
 	}
 	return missing
+}
+
+// restoreUnbindableCompletions moves rejected completions back to in_progress and records why. The
+// move is the safety boundary: even if writing the recovery note fails, another loop cannot treat
+// the task as accepted done work. Every requested id must be found in done/ or already restored.
+func restoreUnbindableCompletions(hosts, ids []string) error {
+	var restoreErrs []error
+	for _, id := range ids {
+		found := false
+		for _, host := range hosts {
+			for _, task := range readTaskTree(host) {
+				if task.ID != id || (task.State != stateDone && task.State != stateInProgress) {
+					continue
+				}
+				found = true
+				if task.State == stateDone {
+					if err := moveTaskDir(host, task, stateInProgress); err != nil {
+						restoreErrs = append(restoreErrs, fmt.Errorf("restore task %s: %w", id, err))
+						break
+					}
+				}
+				note := fmt.Sprintf("completion rejected: no exact, unique %s trailer in the iteration's commit range; amend the completing commit with `git commit --amend --no-edit --trailer %q`, then re-run `coop loop`", coopTaskTrailer, coopTaskTrailer+": "+id)
+				if err := appendTaskLogStrict(filepath.Join(host, stateInProgress, id), note); err != nil {
+					restoreErrs = append(restoreErrs, fmt.Errorf("record rejection for task %s: %w", id, err))
+				}
+				break
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restore task %s: task is not in done or in_progress", id))
+		}
+	}
+	return errors.Join(restoreErrs...)
+}
+
+func unbindableCompletionError(ids []string, restoreErr error) error {
+	commands := make([]string, 0, len(ids))
+	for _, id := range ids {
+		commands = append(commands, fmt.Sprintf("git commit --amend --no-edit --trailer %q", coopTaskTrailer+": "+id))
+	}
+	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — amend the completing commit (%s), then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
+	if restoreErr != nil {
+		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
+	}
+	return errors.New(msg)
 }
 
 // resumeLine is the informed-resume hint for an in_progress task that ALREADY has a commit carrying
@@ -411,12 +464,19 @@ func unblockResolved(hosts []string) []string {
 	return ids
 }
 
-// appendTaskLog appends a one-line note to a task folder's log.md, best-effort.
-func appendTaskLog(taskDir, note string) {
+func appendTaskLogStrict(taskDir, note string) error {
 	f, err := os.OpenFile(filepath.Join(taskDir, "log.md"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
-	defer f.Close()
-	_, _ = f.WriteString("\n- " + note + "\n")
+	if _, err := f.WriteString("\n- " + note + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// appendTaskLog appends a one-line note to a task folder's log.md, best-effort.
+func appendTaskLog(taskDir, note string) {
+	_ = appendTaskLogStrict(taskDir, note)
 }
