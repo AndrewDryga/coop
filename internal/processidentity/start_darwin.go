@@ -1,6 +1,6 @@
 //go:build darwin
 
-package cli
+package processidentity
 
 import (
 	"fmt"
@@ -8,9 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// platformProcStartToken uses Darwin's kernel process start timeval, preserving microseconds and
-// avoiding formatted ps output whose identity changes with timezone and locale.
-func platformProcStartToken(pid int) string {
+func platformStartToken(pid int) string {
 	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil || int(kp.Proc.P_pid) != pid {
 		return ""

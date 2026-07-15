@@ -1513,6 +1513,7 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 make build                 # build ./coop
 make check                 # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
 make provider-scripted-e2e # strict fake-runtime direct-process matrix for all four providers
+make provider-live-e2e-all # one read-only real prompt per registered provider (opt-in)
 make doctor                # the integration check — proves isolation, needs a runtime
 ```
 
@@ -1535,3 +1536,100 @@ and free-form label/provider values are represented by deterministic digests, so
 remain testable without persisting their contents. A new adapter automatically enters the
 registry-generated matrix; add only its expected argv and credential assertions in the tagged test.
 The runtime/provider fixture itself stays registry-neutral.
+
+The opt-in live layer checks compatibility with the provider CLIs currently installed in the box:
+
+```bash
+make provider-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
+make provider-live-e2e COOP_LIVE_TARGETS='claude:opus/high@personal'
+make provider-live-e2e-all
+make provider-live-e2e-all COOP_LIVE_TARGETS='claude@backup,codex,gemini,grok'
+```
+
+An explicit target list uses Coop's normal `provider[:model][/effort][@account]` grammar and permits
+a provider-local skip only when the runtime, image, CLI, or selected credential is missing, or a
+projected OAuth access token cannot outlive the run. A host-bound credential such as Gemini's
+encrypted OAuth keychain reports `credential_not_portable`; use a `GEMINI_API_KEY` selection (or
+Vertex express-mode `GOOGLE_API_KEY`) for live compatibility. `all`
+is registry-generated strict mode: every registered provider must be attempted and pass. The strict
+target also accepts a complete registry-ordered explicit list when compatibility should exercise
+specific configured credentials rather than marked defaults. Once a marker prompt starts, auth
+errors, rate limits, timeouts, nonzero exits, wrong output, repository or
+source-credential changes, and incomplete cleanup are failures; the suite never retries or induces
+quota exhaustion. The run emits exactly one `COOP_PROVIDER_LIVE_SUMMARY` JSON line with installed
+CLI versions and per-provider attempted/passed/skipped/failed state. Failures also retain only
+redacted diagnostics: phase, exit code, timeout/truncation flags, and provider-owned
+authentication/rate-limit/process classification. Raw provider output is never retained.
+Version evidence is reduced to a provider-labelled semver token; paths, environment echoes, control
+text, and other free-form `--version` output are rejected. Final verification has a fixed precedence:
+incomplete runtime cleanup, changed source credentials, and a changed repository override the child
+result in that order, so a provider failure cannot hide a broken isolation boundary.
+For host-side failures, `detail_code` separates credential projection, permissions, file type,
+size/path/replacement, repository setup/snapshot, child-result, and runtime-cleanup failures.
+Credential detail codes call for repairing or re-authenticating the selected credential; repository
+or child/cleanup codes indicate the local runtime/test harness and are safe to attach to a bug report.
+
+Each provider gets a fresh committed README-only repository mounted read-only, an isolated
+HOME/XDG/config tree, no project/global instructions or MCP settings, open egress, bounded output,
+and a hard deadline. Claude, Codex, and Grok auth files are projected to access-token-only forms;
+refresh tokens never enter the isolated tree. Gemini's host-bound keychain is fingerprinted but
+never copied. Only the exact selected Gemini env key is preserved, and only selected
+adapter-declared artifacts and explicit credential-env assignments enter new `0600` inodes.
+Sessions, hooks, histories, unrelated settings, alternate keys, and other accounts stay in the
+source vault. Source credentials (including inode identity) and Git HEAD/status/refs/reflogs/tree
+are compared afterward. The tagged live helper validates an inherited private control descriptor,
+then lets the runtime inherit the helper's harness-owned process group; default Coop builds retain
+the normal separate runtime group. On timeout, the projected credential path is atomically revoked
+before the first process signal. Child and parent share one random private tombstone path, so parent
+teardown can retry a child-side deletion failure and reports a persistent failure as incomplete
+cleanup; the runtime CLI never inherits that path. The harness waits for the whole group to disappear before
+Docker/Podman boxes are reaped by cidfile and every runtime polls the unique label across running
+and stopped state through a quiet grace window. The control descriptor is close-on-exec and its
+environment key is stripped before the runtime starts. These
+targets are deliberately outside `make check` because each attempted provider consumes one real
+model request. Deterministic argv, policy, error, rate-limit, and cancellation coverage remains in
+`make provider-scripted-e2e`; `make check` also runs the no-credential tagged process-control denial
+suite.
+
+The scrubbed child retains only the selected runtime's connection/storage capability. Explicit
+Docker connection variables are copied directly; otherwise the parent resolves the active Docker
+context to its endpoint and TLS material. Podman is reduced to the selected connection URI/identity
+plus storage settings. Behavior-bearing Docker/Podman config files and connection selectors are
+never forwarded, so they cannot inject proxies, hooks, or credential helpers into the isolated
+runtime command. These values are available only to the host runtime command and are never rendered
+into container args or the stable summary. The child's `HOME` and XDG roots remain disposable;
+Apple `container` needs no inherited connection environment.
+
+`make acp-e2e` applies the same credential and runtime boundary to the installed-adapter ACP suite.
+Each scenario stages the marked default for a bare target and every explicitly named account in its
+direct target or loaded preset ladder. It copies Frontier through a bounded regular-file-only
+transaction and gives the process a unique cleanup label. The isolated binary is built with the
+test-only `cooplivetest` tag. Every inner generation blocks behind a pipe gate until a resident PGID
+leader has durably published its UID, harness cleanup nonce, group id, and stable Linux/Darwin start
+token in a private bounded registry. The recorded nonce is the harness's cleanup label, not Coop's
+separate internal generation label. The leader stays resident if the inner Coop exits, so a delayed
+runtime cannot escape group ownership. SIGHUP revalidates the outer control descriptor and carries
+it only across the supervisor's immediate self-exec; provider/runtime child execs cannot inherit it.
+Publication is serialized and reserves a bounded registry slot before releasing a generation.
+Teardown revokes the projected credential tree first, stops and awaits the outer supervisor,
+revalidates each identity immediately before TERM/KILL, waits for every generation group to
+disappear, and only then removes CIDs and labels. Stale or unverifiable records never authorize a
+signal to another process or allow cleanup to declare a quiet success. The Make target is strict:
+any missing, host-bound, or near-expiry prerequisite fails instead of allowing an all-skipped run to
+look green.
+Run the deterministic `make acp-scripted-e2e` matrix for injected rate limits, malformed output,
+fallback orderings, and other fault cases that should not consume live provider requests.
+
+OAuth file copies carry no refresh authority and are attempted only when their access token remains
+valid beyond the hard deadline. Standard mode still reports `credential_refresh_required` before
+the prompt when the projected token is expired or near expiry; strict mode fails without starting
+that provider. The version-only box still runs for such preflight skips, so the summary distinguishes
+installed-CLI compatibility from credential readiness.
+
+A new provider is selected by `all` automatically after it registers. `Agent.LiveCredentials` is a
+compiler-required part of every adapter: it declares exact artifact projectors, portability, and
+redacted auth-error signals. The registry-generic `TestMetadata` enforces unique safe basenames,
+exactly one primary artifact, a projector for every artifact, a portability callback, and safe
+signals; adding a provider-specific metadata row is not required. Missing or invalid projection and
+unknown portability fail as `unsafe_credential` before any model request. There is no raw-file or
+permissive fallback.

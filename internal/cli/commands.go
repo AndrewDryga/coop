@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -767,7 +768,13 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		if werr != nil {
 			return 1, fmt.Errorf("acp reload: %w", werr)
 		}
+		restoreControl, perr := prepareACPReload()
+		if perr != nil {
+			os.Remove(path)
+			return 1, fmt.Errorf("acp reload: %w", perr)
+		}
 		if xerr := syscall.Exec(self, os.Args, append(os.Environ(), "COOP_ACP_RESUME_STATE="+path)); xerr != nil {
+			restoreControl()
 			os.Remove(path)
 			return 1, fmt.Errorf("acp reload: exec %s: %w", self, xerr)
 		}
@@ -799,7 +806,8 @@ func cleanACPChildEnv(env []string) []string {
 	for _, item := range env {
 		key, _, _ := strings.Cut(item, "=")
 		switch key {
-		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE":
+		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE",
+			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
 			continue
 		}
 		out = append(out, item)
@@ -867,7 +875,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
 	// `docker run` grandchild; killing the whole group (-pgid) reaches the run client too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
+	if err := startACPProcess(cmd, superID); err != nil {
 		inR.Close()
 		inW.Close()
 		outR.Close()
@@ -881,25 +889,39 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	outW.Close() // ...and the write end; outR sees EOF when the child exits
 	pid := cmd.Process.Pid
 	go func() { _ = cmd.Wait() }()
+	var stopOnce sync.Once
 	stop := func() {
-		// Kill the whole process group and close its pipes first, so cleanup cannot wait forever behind
-		// a wedged run client. Then remove ONLY this generation's box by cidfile under a fresh bound —
-		// no label sweep here: every generation shares this supervisor's id.
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		inW.Close()
-		outR.Close()
-		if cidPath != "" {
-			if cid, rerr := os.ReadFile(cidPath); rerr == nil {
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
-				_ = a.rt.RemoveContainerContext(cleanupCtx, strings.TrimSpace(string(cid)))
-				cancel()
+		stopOnce.Do(func() {
+			// Kill and await the generation group before its cid cleanup. In tagged live binaries the
+			// group leader is a resident gate wrapper, so a runtime cannot outlive this identity.
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			inW.Close()
+			outR.Close()
+			waitACPProcessGroupGone(pid, acpCleanupTimeout)
+			if cidPath != "" {
+				if cid, rerr := os.ReadFile(cidPath); rerr == nil {
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+					_ = a.rt.RemoveContainerContext(cleanupCtx, strings.TrimSpace(string(cid)))
+					cancel()
+				}
 			}
-		}
-		if cidDir != "" {
-			os.RemoveAll(cidDir)
-		}
+			if cidDir != "" {
+				os.RemoveAll(cidDir)
+			}
+		})
 	}
 	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, Provider: provider, Account: account}, nil
+}
+
+func waitACPProcessGroupGone(pgid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH)
 }
 
 // agentChoices lists the registered agents for a "use one of …" error, from the registry so a

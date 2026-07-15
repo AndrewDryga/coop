@@ -313,6 +313,43 @@ func TestEnvKeysOutsideScopeMarkerBackedDefaultWinsMatrix(t *testing.T) {
 	}
 }
 
+func TestEnvKeysOutsideScopeHonorsGeminiAPIKeySelection(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	if err := cfg.SetDefaultProfile("gemini", "work"); err != nil {
+		t.Fatal(err)
+	}
+	dir := cfg.AgentProfileDir("gemini", "work")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gemini-credentials.json"), []byte("stale-keychain"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"gemini-api-key"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	drop := envKeysOutsideScope(cfg, []string{"gemini"})
+	if drop["GEMINI_API_KEY"] || !drop["GOOGLE_API_KEY"] {
+		t.Errorf("Gemini API-key selection authority = %v, want only GEMINI_API_KEY", drop)
+	}
+	if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"vertex-ai"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	drop = envKeysOutsideScope(cfg, []string{"gemini"})
+	if !drop["GEMINI_API_KEY"] || drop["GOOGLE_API_KEY"] {
+		t.Errorf("Gemini Vertex selection authority = %v, want only GOOGLE_API_KEY", drop)
+	}
+	if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		if drop := envKeysOutsideScope(cfg, []string{"gemini"}); !drop[key] {
+			t.Errorf("Gemini OAuth selection kept provider-wide %s: %v", key, drop)
+		}
+	}
+}
+
 // TestWriteFilteredEnvFile: dropped keys vanish (both KEY=val AND a bare KEY, which
 // docker imports from the ambient env), everything else (the in-scope key, a non-agent
 // runtime var, a bare non-credential flag, a comment) is preserved verbatim.

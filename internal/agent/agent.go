@@ -5,8 +5,12 @@
 package agent
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -95,6 +99,36 @@ type NativeSubagentSupport struct {
 	Render  func(NativeSubagent) (filename, content string)
 }
 
+// CredentialArtifact is one adapter-owned file that can be copied into an isolated credential
+// home. Name is a single basename. Primary marks the AuthMarker file; every other artifact is an
+// optional refresh companion or selector. Project is required: it synthesizes an auth-only
+// representation and returns nil data when the source contains no portable credential state.
+type CredentialArtifact struct {
+	Name    string
+	Primary bool
+	Project func([]byte) ([]byte, error)
+}
+
+// LiveCredentialSpec is the complete adapter-owned boundary for opt-in live compatibility tests.
+// Portability inspects only the isolated projected profile, never the source credential.
+type LiveCredentialSpec struct {
+	Artifacts   []CredentialArtifact
+	Portability func(profileDir string, deadline time.Time) CredentialPortability
+	AuthSignals []string
+}
+
+// CredentialPortability says whether an isolated file credential can be used without carrying
+// refresh authority. NotPortable covers host-bound keychains; RefreshRequired covers a portable
+// access-token shape whose current token will not outlive the requested deadline.
+type CredentialPortability uint8
+
+const (
+	CredentialUnknown CredentialPortability = iota
+	CredentialPortable
+	CredentialRefreshRequired
+	CredentialNotPortable
+)
+
 // Agent is everything coop needs to drive one coding agent. To add an agent, write a
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
@@ -154,6 +188,14 @@ type Agent interface {
 	// out-of-scope agent's keys, so a peer's alternate token can't leak into a box that
 	// isn't authorized for it.
 	CredentialEnvKeys() []string
+	// ActiveCredentialEnvKeys returns the exact env-key authority for one selected account. A
+	// nonempty result means those keys, not a stale marker, define presence and execution authority.
+	// The caller reports marker presence; adapters decide precedence once from it and their selector.
+	ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string
+	// LiveCredentials declares the access-only credential projection and redacted compatibility
+	// diagnostics for this adapter. It is consumed only by opt-in live tests, but compiler-required
+	// so a registered provider cannot silently evade the registry-generated suite.
+	LiveCredentials() LiveCredentialSpec
 	// Models is a short, curated list of model names this agent's CLI accepts — the menu
 	// `coop models` shows. Illustrative, not authoritative: model ids churn faster than
 	// coop releases, so ANY id the CLI accepts works with --model; coop never validates
@@ -218,6 +260,71 @@ type Agent interface {
 	// InstallScript is a non-npm box-image install command (e.g. an install-script
 	// download); "" means this agent installs via Packages() on the npm layer.
 	InstallScript() string
+}
+
+// projectJSONLeaf emits one scalar nested field and drops sibling auth settings.
+func projectJSONLeaf(data []byte, outer, inner, leaf string) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("decode credential selector: %w", err)
+	}
+	outerData, ok := root[outer]
+	if !ok {
+		return nil, nil
+	}
+	var middle map[string]json.RawMessage
+	if err := json.Unmarshal(outerData, &middle); err != nil {
+		return nil, fmt.Errorf("decode credential selector: %w", err)
+	}
+	innerData, ok := middle[inner]
+	if !ok {
+		return nil, nil
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(innerData, &nested); err != nil {
+		return nil, fmt.Errorf("decode credential selector: %w", err)
+	}
+	value, ok := nested[leaf]
+	if !ok {
+		return nil, nil
+	}
+	projected, err := json.Marshal(map[string]map[string]map[string]json.RawMessage{
+		outer: {inner: {leaf: value}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode credential selector: %w", err)
+	}
+	return append(projected, '\n'), nil
+}
+
+func jwtExpiresAfter(token string, deadline time.Time) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		ExpiresAt int64 `json:"exp"`
+	}
+	return json.Unmarshal(payload, &claims) == nil && claims.ExpiresAt > 0 &&
+		time.Unix(claims.ExpiresAt, 0).After(deadline)
+}
+
+// ClassifyCLIError returns a redacted diagnostic class without retaining provider output.
+func ClassifyCLIError(spec LiveCredentialSpec, output string) string {
+	lower := strings.ToLower(output)
+	if CLIRateLimited(lower) {
+		return "rate_limit"
+	}
+	for _, signal := range spec.AuthSignals {
+		if signal != "" && strings.Contains(lower, signal) {
+			return "authentication"
+		}
+	}
+	return "process"
 }
 
 // withModel applies a resolved model to cmd. A configured model outranks a model baked into

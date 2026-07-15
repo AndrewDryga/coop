@@ -90,14 +90,18 @@ func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
 			continue
 		}
 		active := cfg.ActiveProfile(name)
-		if in[name] && active == cfg.DefaultProfileOf(name) &&
-			!profileMarkerPresent(ag, cfg.AgentProfileDir(name, active)) {
-			continue
-		}
+		profileDir := cfg.AgentProfileDir(name, active)
 		for _, envKey := range ag.CredentialEnvKeys() {
 			if envKey != "" {
 				drop[envKey] = true
 			}
+		}
+		if !in[name] || active != cfg.DefaultProfileOf(name) {
+			continue
+		}
+		keep := ag.ActiveCredentialEnvKeys(profileDir, profileMarkerPresent(ag, profileDir))
+		for _, envKey := range keep {
+			delete(drop, envKey)
 		}
 	}
 	return drop

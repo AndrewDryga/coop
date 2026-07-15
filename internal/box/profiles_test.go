@@ -121,6 +121,49 @@ func TestProfileAuthedCredentialMatrix(t *testing.T) {
 	}
 }
 
+func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
+	tests := []struct {
+		name       string
+		profile    string
+		selected   string
+		env        string
+		withMarker bool
+		want       bool
+	}{
+		{name: "Gemini key selected and present", profile: "default", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n", want: true},
+		{name: "Gemini key selected but only Vertex key present", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n", withMarker: true},
+		{name: "Vertex key selected and present", profile: "default", selected: "vertex-ai", env: "GOOGLE_API_KEY=token\n", want: true},
+		{name: "Vertex key selected but only Gemini key present", profile: "default", selected: "vertex-ai", env: "GEMINI_API_KEY=token\n", withMarker: true},
+		{name: "OAuth marker selected and present", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n", withMarker: true, want: true},
+		{name: "OAuth selected without marker", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n"},
+		{name: "named account cannot use provider env", profile: "work", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			profileDir := cfg.AgentProfileDir("gemini", tt.profile)
+			if err := os.MkdirAll(profileDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			settings := `{"security":{"auth":{"selectedType":"` + tt.selected + `"}}}`
+			if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte(settings), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tt.withMarker {
+				if err := os.WriteFile(filepath.Join(profileDir, "gemini-credentials.json"), []byte(`{"encrypted":"stale"}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(cfg.EnvFile(), []byte(tt.env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := ProfileAuthed(cfg, "gemini", tt.profile); got != tt.want {
+				t.Errorf("ProfileAuthed = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestProfileTokenMtime(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}

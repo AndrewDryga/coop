@@ -2,9 +2,12 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -142,6 +145,71 @@ func (claudeAgent) AuthMarker() (file, envKey string) {
 // the two alternates (a custom auth token and a headless OAuth token).
 func (claudeAgent) CredentialEnvKeys() []string {
 	return []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+}
+
+func (claudeAgent) LiveCredentials() LiveCredentialSpec {
+	return LiveCredentialSpec{
+		Artifacts: []CredentialArtifact{{
+			Name: ".credentials.json", Primary: true, Project: projectClaudeCredential,
+		}},
+		Portability: claudeCredentialPortability,
+		AuthSignals: []string{"not logged in", "invalid auth", "authentication_error", "please run /login"},
+	}
+}
+
+type claudeAccessCredential struct {
+	AccessToken string   `json:"accessToken"`
+	ExpiresAt   int64    `json:"expiresAt"`
+	Scopes      []string `json:"scopes"`
+}
+
+func decodeClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
+	var source struct {
+		OAuth *claudeAccessCredential `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &source); err != nil {
+		return claudeAccessCredential{}, fmt.Errorf("decode Claude credential: %w", err)
+	}
+	if source.OAuth == nil || source.OAuth.AccessToken == "" || source.OAuth.ExpiresAt <= 0 ||
+		!slices.Contains(source.OAuth.Scopes, "user:inference") {
+		return claudeAccessCredential{}, fmt.Errorf("claude credential has no access-only OAuth shape")
+	}
+	projected := *source.OAuth
+	projected.Scopes = []string{"user:inference"}
+	return projected, nil
+}
+
+func projectClaudeCredential(data []byte) ([]byte, error) {
+	projected, err := decodeClaudeAccessCredential(data)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(struct {
+		OAuth claudeAccessCredential `json:"claudeAiOauth"`
+	}{OAuth: projected})
+	if err != nil {
+		return nil, fmt.Errorf("encode Claude credential: %w", err)
+	}
+	return append(encoded, '\n'), nil
+}
+
+func (a claudeAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []string {
+	if markerPresent {
+		return nil
+	}
+	return a.CredentialEnvKeys()
+}
+
+func claudeCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
+	data, err := os.ReadFile(filepath.Join(profileDir, ".credentials.json"))
+	if err != nil {
+		return CredentialRefreshRequired
+	}
+	credentials, err := decodeClaudeAccessCredential(data)
+	if err == nil && time.UnixMilli(credentials.ExpiresAt).After(deadline) {
+		return CredentialPortable
+	}
+	return CredentialRefreshRequired
 }
 
 // MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).

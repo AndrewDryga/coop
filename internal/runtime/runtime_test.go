@@ -285,8 +285,8 @@ fi
 	}
 }
 
-// Apple container has no Docker-style `ps --filter`; list its running resources as JSON, then
-// match labels locally so one fork's stop cannot remove another fork's box.
+// Apple container has no Docker-style `ps --filter`; list all resources as JSON, then match labels
+// locally so stopped boxes are reaped without removing another fork's box.
 func TestRemoveByLabelAppleContainerExactMatch(t *testing.T) {
 	dir := t.TempDir()
 	runtimeCLI := filepath.Join(dir, "container")
@@ -294,7 +294,7 @@ func TestRemoveByLabelAppleContainerExactMatch(t *testing.T) {
 	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
 printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
 if [ "$1" = list ]; then
-	printf '%s\n' '[{"id":"box-perf","configuration":{"labels":{"coop.fork":"perf"}}},{"id":"box-other","configuration":{"labels":{"coop.fork":"other"}}}]'
+	printf '%s\n' '[{"id":"box-perf","status":"stopped","configuration":{"labels":{"coop.fork":"perf"}}},{"id":"box-other","configuration":{"labels":{"coop.fork":"other"}}}]'
 fi
 `), 0o755); err != nil {
 		t.Fatal(err)
@@ -312,8 +312,52 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "list --format json\nrm -f box-perf\n"; got != want {
+	if got, want := string(data), "list --format json --all\nrm -f box-perf\n"; got != want {
 		t.Errorf("Apple runtime calls = %q, want %q", got, want)
+	}
+}
+
+func TestRemoveByLabelIncludesStoppedContainers(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = ps ]; then echo stopped-box; fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	if n, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(context.Background(), "coop.sup", "live"); err != nil || n != 1 {
+		t.Fatalf("RemoveByLabel = (%d, %v), want (1, nil)", n, err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "ps -q -a --filter label=coop.sup=live\nrm -f stopped-box\n"; got != want {
+		t.Errorf("runtime calls = %q, want %q", got, want)
+	}
+}
+
+func TestAbsoluteRuntimePathsKeepDockerCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	docker := filepath.Join(dir, "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\n[ \"$1\" = info ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Name: docker}
+	if err := rt.EnsureDaemon(); err != nil {
+		t.Fatalf("absolute Docker daemon probe failed: %v", err)
+	}
+	if !rt.SupportsCIDFile() {
+		t.Fatal("absolute Docker path lost cidfile support")
+	}
+	if !(Runtime{Name: filepath.Join(dir, "podman")}).SupportsCIDFile() {
+		t.Fatal("absolute Podman path lost cidfile support")
+	}
+	if (Runtime{Name: filepath.Join(dir, "container")}).SupportsCIDFile() {
+		t.Fatal("Apple container path gained unsupported cidfile support")
 	}
 }
 
@@ -321,7 +365,7 @@ func TestRemoveByLabelPreservesRuntimeDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
 		name, failure, command, detail string
 	}{
-		{name: "query", failure: "ps", command: "ps -q --filter label=coop.fork=perf", detail: "daemon query broke"},
+		{name: "query", failure: "ps", command: "ps -q -a --filter label=coop.fork=perf", detail: "daemon query broke"},
 		{name: "remove", failure: "rm", command: "rm -f box-perf", detail: "container remove broke"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

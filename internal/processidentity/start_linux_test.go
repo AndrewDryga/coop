@@ -1,10 +1,10 @@
 //go:build linux
 
-package cli
+package processidentity
 
 import "testing"
 
-func TestLinuxProcStartTicks(t *testing.T) {
+func TestLinuxStartTicks(t *testing.T) {
 	valid := "123 (tricky ) command name) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 4242 20"
 	for _, tc := range []struct {
 		name string
@@ -18,9 +18,9 @@ func TestLinuxProcStartTicks(t *testing.T) {
 		{name: "nonnumeric start", stat: "123 (bad) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 nope 20", ok: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := linuxProcStartTicks([]byte(tc.stat))
+			got, ok := linuxStartTicks([]byte(tc.stat))
 			if got != tc.want || ok != tc.ok {
-				t.Fatalf("linuxProcStartTicks = (%q, %v), want (%q, %v)", got, ok, tc.want, tc.ok)
+				t.Fatalf("linuxStartTicks = (%q, %v), want (%q, %v)", got, ok, tc.want, tc.ok)
 			}
 		})
 	}

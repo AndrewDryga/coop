@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -34,9 +37,20 @@ func mustWrite(t *testing.T, path, body string) {
 	}
 }
 
+func mustLiveCredentials(t *testing.T, agent Agent) LiveCredentialSpec {
+	t.Helper()
+	return agent.LiveCredentials()
+}
+
 func TestRegistry(t *testing.T) {
-	if got := Names(); !slices.Equal(got, []string{"claude", "codex", "gemini", "grok"}) {
-		t.Errorf("Names() = %v, want [claude codex gemini grok]", got)
+	names := Names()
+	if !slices.IsSorted(names) {
+		t.Errorf("Names() = %v, want sorted registry order", names)
+	}
+	for _, name := range []string{"claude", "codex", "gemini", "grok"} {
+		if !slices.Contains(names, name) {
+			t.Errorf("Names() = %v, missing supported provider %s", names, name)
+		}
 	}
 	if !Valid("codex") || Valid("nope") {
 		t.Error("Valid: codex should be valid, nope should not")
@@ -57,8 +71,7 @@ func TestRegistry(t *testing.T) {
 	}
 	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
 	// binary, not npm, so it adds none).
-	if got := Packages(); len(got) != 5 ||
-		!slices.Contains(got, claudeCLIPackage) ||
+	if got := Packages(); !slices.Contains(got, claudeCLIPackage) ||
 		!slices.Contains(got, claudeACPPackage) ||
 		!slices.Contains(got, codexCLIPackage) ||
 		!slices.Contains(got, codexACPPackage) ||
@@ -483,52 +496,269 @@ func TestStartSessionAndPreset(t *testing.T) {
 }
 
 func TestMetadata(t *testing.T) {
-	cases := []struct {
-		name, instr, authFile, authEnv string
-		credentialEnvKeys              []string
-	}{
-		{"claude", "CLAUDE.md", ".credentials.json", "ANTHROPIC_API_KEY", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}},
-		{"codex", "AGENTS.md", "auth.json", "OPENAI_API_KEY", []string{"OPENAI_API_KEY"}},
-		{"gemini", "GEMINI.md", "gemini-credentials.json", "GEMINI_API_KEY", []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}},
-		{"grok", "AGENTS.md", "auth.json", "XAI_API_KEY", []string{"XAI_API_KEY"}},
-	}
-	names := Names()
-	if len(names) != len(cases) {
-		t.Fatalf("metadata table covers %d adapters, registry has %d: %v", len(cases), len(names), names)
-	}
 	owners := map[string]string{}
-	for i, c := range cases {
-		if names[i] != c.name {
-			t.Fatalf("metadata table[%d] = %q, registry = %q", i, c.name, names[i])
+	for _, name := range Names() {
+		a, _ := Get(name)
+		instruction := a.InstructionFile()
+		if instruction == "" || filepath.Base(instruction) != instruction || strings.ContainsAny(instruction, `/\\`) {
+			t.Errorf("%s InstructionFile = %q, want one safe basename", name, instruction)
 		}
-		a, _ := Get(c.name)
-		if a.InstructionFile() != c.instr {
-			t.Errorf("%s InstructionFile = %q, want %q", c.name, a.InstructionFile(), c.instr)
-		}
-		if f, e := a.AuthMarker(); f != c.authFile || e != c.authEnv {
-			t.Errorf("%s AuthMarker = (%q,%q), want (%q,%q)", c.name, f, e, c.authFile, c.authEnv)
-		}
-		if got := a.CredentialEnvKeys(); !slices.Equal(got, c.credentialEnvKeys) {
-			t.Errorf("%s CredentialEnvKeys = %v, want %v", c.name, got, c.credentialEnvKeys)
+		authFile, authEnv := a.AuthMarker()
+		if authFile == "" || filepath.Base(authFile) != authFile || strings.ContainsAny(authFile, `/\\`) || authEnv == "" {
+			t.Errorf("%s AuthMarker = (%q,%q), want a safe basename and env key", name, authFile, authEnv)
 		}
 		seen := map[string]bool{}
-		primaryCount := 0
+		primaryEnvCount := 0
 		for _, key := range a.CredentialEnvKeys() {
 			if key == "" || seen[key] {
-				t.Errorf("%s CredentialEnvKeys contains an empty or duplicate key %q", c.name, key)
+				t.Errorf("%s CredentialEnvKeys contains an empty or duplicate key %q", name, key)
 			}
 			seen[key] = true
 			if owner, exists := owners[key]; exists {
-				t.Errorf("credential key %q is owned by both %s and %s", key, owner, c.name)
+				t.Errorf("credential key %q is owned by both %s and %s", key, owner, name)
 			} else {
-				owners[key] = c.name
+				owners[key] = name
 			}
-			if key == c.authEnv {
-				primaryCount++
+			if key == authEnv {
+				primaryEnvCount++
 			}
 		}
-		if primaryCount != 1 {
-			t.Errorf("%s primary AuthMarker key %q appears %d times in CredentialEnvKeys", c.name, c.authEnv, primaryCount)
+		if primaryEnvCount != 1 {
+			t.Errorf("%s primary AuthMarker key %q appears %d times in CredentialEnvKeys", name, authEnv, primaryEnvCount)
+		}
+		live := a.LiveCredentials()
+		if live.Portability == nil {
+			t.Errorf("%s live credentials have no portability check", name)
+		}
+		if len(live.AuthSignals) == 0 {
+			t.Errorf("%s live credentials have no auth diagnostics", name)
+		}
+		artifactSeen := map[string]bool{}
+		primaryFiles := 0
+		for _, artifact := range live.Artifacts {
+			if artifact.Name == "" || filepath.Base(artifact.Name) != artifact.Name || strings.ContainsAny(artifact.Name, `/\\`) || artifactSeen[artifact.Name] {
+				t.Errorf("%s live credentials contain unsafe or duplicate basename %q", name, artifact.Name)
+			}
+			artifactSeen[artifact.Name] = true
+			if artifact.Project == nil {
+				t.Errorf("%s credential artifact %q has no safe projector", name, artifact.Name)
+			}
+			if artifact.Primary {
+				primaryFiles++
+				if artifact.Name != authFile {
+					t.Errorf("%s primary credential artifact = %q, want AuthMarker %q", name, artifact.Name, authFile)
+				}
+			}
+		}
+		if primaryFiles != 1 {
+			t.Errorf("%s has %d primary credential artifacts, want 1", name, primaryFiles)
+		}
+	}
+}
+
+func TestGeminiCredentialSelectorProjection(t *testing.T) {
+	gemini, _ := Get("gemini")
+	project := mustLiveCredentials(t, gemini).Artifacts[2].Project
+	got, err := project([]byte(`{"security":{"auth":{"selectedType":"oauth-personal","hidden":"drop"},"other":"drop"},"hooks":{"before":"drop"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"security":{"auth":{"selectedType":"oauth-personal"}}}` + "\n"; string(got) != want {
+		t.Errorf("projected settings = %s, want %s", got, want)
+	}
+	if got, err := project([]byte(`{"security":{}}`)); err != nil || got != nil {
+		t.Errorf("missing auth projection = %q, %v; want nil, nil", got, err)
+	}
+	if _, err := project([]byte(`{`)); err == nil {
+		t.Fatal("malformed settings projection succeeded")
+	}
+}
+
+func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
+	tests := []struct {
+		provider string
+		input    string
+		want     string
+	}{
+		{
+			provider: "claude",
+			input:    `{"TOP_UNKNOWN_CANARY":"drop","claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference","account:read"],"refreshToken":"REFRESH_CANARY","subscriptionType":"NESTED_CANARY","deep":{"refreshToken":"DEEP_CANARY"}}}`,
+			want:     `{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}` + "\n",
+		},
+		{
+			provider: "codex",
+			input:    `{"auth_mode":"chatgpt","OPENAI_API_KEY":"INACTIVE_CANARY","tokens":{"id_token":"identity","access_token":"access","refresh_token":"REFRESH_CANARY","account_id":"account","deep":{"refresh_token":"DEEP_CANARY"}},"last_refresh":"2026-07-15T00:00:00Z","TOP_UNKNOWN_CANARY":"drop"}`,
+			want:     `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"access","refresh_token":"","account_id":"account"},"last_refresh":"2026-07-15T00:00:00Z"}` + "\n",
+		},
+		{
+			provider: "grok",
+			input:    `{"issuer::one":{"key":"access-one","expires_at":"2999-01-01T00:00:00Z","refresh_token":"REFRESH_CANARY","profile":{"deep":"DEEP_CANARY"}},"issuer::two":{"key":"access-two","expires_at":"2999-02-01T00:00:00Z","TOP_UNKNOWN_CANARY":"drop"},"incomplete":{"key":"drop"}}`,
+			want:     `{"issuer::one":{"key":"access-one","expires_at":"2999-01-01T00:00:00Z"},"issuer::two":{"key":"access-two","expires_at":"2999-02-01T00:00:00Z"}}` + "\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			ag, _ := Get(tt.provider)
+			got, err := mustLiveCredentials(t, ag).Artifacts[0].Project([]byte(tt.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("projected credential = %s, want %s", got, tt.want)
+			}
+			for _, canary := range []string{"REFRESH_CANARY", "TOP_UNKNOWN_CANARY", "NESTED_CANARY", "DEEP_CANARY", "INACTIVE_CANARY"} {
+				if strings.Contains(string(got), canary) {
+					t.Fatalf("projected credential retained unknown authority %s: %s", canary, got)
+				}
+			}
+		})
+	}
+
+	codex, _ := Get("codex")
+	codexProject := mustLiveCredentials(t, codex).Artifacts[0].Project
+	got, err := codexProject([]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"api-access","tokens":{"id_token":"INACTIVE_CANARY","access_token":"INACTIVE_CANARY","refresh_token":"REFRESH_CANARY"},"last_refresh":"INACTIVE_CANARY"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"auth_mode":"apikey","OPENAI_API_KEY":"api-access"}` + "\n"; string(got) != want {
+		t.Fatalf("Codex API-key projection = %s, want %s", got, want)
+	}
+	for name, input := range map[string]string{
+		"unsupported mode":     `{"auth_mode":"other","OPENAI_API_KEY":"key"}`,
+		"missing id token":     `{"auth_mode":"chatgpt","tokens":{"access_token":"access"},"last_refresh":"now"}`,
+		"missing last refresh": `{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"access"}}`,
+	} {
+		t.Run("codex "+name, func(t *testing.T) {
+			if got, err := codexProject([]byte(input)); err == nil || got != nil {
+				t.Fatalf("projection = %q, %v; want fail closed", got, err)
+			}
+		})
+	}
+
+	claude, _ := Get("claude")
+	if got, err := mustLiveCredentials(t, claude).Artifacts[0].Project([]byte(`{"claudeAiOauth":{"accessToken":"access","expiresAt":7,"scopes":["account:read"]}}`)); err == nil || got != nil {
+		t.Fatalf("Claude projection without inference scope = %q, %v; want fail closed", got, err)
+	}
+
+	for _, provider := range []string{"claude", "codex", "grok"} {
+		ag, _ := Get(provider)
+		if got, err := mustLiveCredentials(t, ag).Artifacts[0].Project([]byte(`{}`)); err == nil || got != nil {
+			t.Errorf("%s empty credential projection = %q, %v; want a fail-closed error", provider, got, err)
+		}
+	}
+	grok, _ := Get("grok")
+	if got, err := mustLiveCredentials(t, grok).Artifacts[0].Project([]byte(`{"rootRefresh":"ROOT_CANARY","issuer::id":{"key":"access","expires_at":"2999-01-01T00:00:00Z"}}`)); err == nil || got != nil {
+		t.Errorf("Grok scalar root projection = %q, %v; want a fail-closed error", got, err)
+	}
+
+	gemini, _ := Get("gemini")
+	for _, artifact := range mustLiveCredentials(t, gemini).Artifacts[:2] {
+		if got, err := artifact.Project([]byte(`{"secret":"HOST_BOUND_CANARY"}`)); err != nil || got != nil {
+			t.Errorf("host-bound Gemini artifact %s projection = %q, %v; want nil", artifact.Name, got, err)
+		}
+	}
+}
+
+func TestGeminiCredentialEnvPrecedence(t *testing.T) {
+	gemini, _ := Get("gemini")
+	dir := t.TempDir()
+	for authType, wantKeys := range map[string][]string{
+		"gemini-api-key": {"GEMINI_API_KEY"},
+		"vertex-ai":      {"GOOGLE_API_KEY"},
+		"oauth-personal": nil,
+		"":               nil,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"`+authType+`"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := gemini.ActiveCredentialEnvKeys(dir, true); !slices.Equal(got, wantKeys) {
+			t.Errorf("selectedType %q env keys = %v, want %v", authType, got, wantKeys)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := gemini.ActiveCredentialEnvKeys(dir, true); got != nil {
+		t.Fatalf("malformed settings selected env keys %v", got)
+	}
+	if err := os.Remove(filepath.Join(dir, "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if got := gemini.ActiveCredentialEnvKeys(dir, true); got != nil {
+		t.Fatalf("marker without selector selected env keys %v", got)
+	}
+	if got := gemini.ActiveCredentialEnvKeys(dir, false); !slices.Equal(got, gemini.CredentialEnvKeys()) {
+		t.Fatalf("missing marker and selector env keys = %v, want %v", got, gemini.CredentialEnvKeys())
+	}
+}
+
+func TestPortableCredentialSafetyRequiresValidityBeyondDeadline(t *testing.T) {
+	root := t.TempDir()
+	deadline := time.Now().Add(time.Hour)
+	future := deadline.Add(time.Hour)
+	past := deadline.Add(-time.Minute)
+
+	claude, _ := Get("claude")
+	claudeLive := mustLiveCredentials(t, claude)
+	claudeDir := filepath.Join(root, "claude")
+	mustWrite(t, filepath.Join(claudeDir, ".credentials.json"), fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":"access","expiresAt":%d,"scopes":["user:inference"]}}`, future.UnixMilli()))
+	if got := claudeLive.Portability(claudeDir, deadline); got != CredentialPortable {
+		t.Fatal("unexpired Claude access token was not portable")
+	}
+	mustWrite(t, filepath.Join(claudeDir, ".credentials.json"), fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh","expiresAt":%d,"scopes":["user:inference"]}}`, past.UnixMilli()))
+	if got := claudeLive.Portability(claudeDir, deadline); got != CredentialRefreshRequired {
+		t.Fatal("expired Claude refresh credential was treated as safe to copy")
+	}
+
+	codex, _ := Get("codex")
+	codexLive := mustLiveCredentials(t, codex)
+	codexDir := filepath.Join(root, "codex")
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, future.Unix())))
+	mustWrite(t, filepath.Join(codexDir, "auth.json"), `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"x.`+payload+`.x"},"last_refresh":"2026-07-15T00:00:00Z"}`)
+	if got := codexLive.Portability(codexDir, deadline); got != CredentialPortable {
+		t.Fatal("unexpired Codex access token was not portable")
+	}
+
+	gemini, _ := Get("gemini")
+	if got := mustLiveCredentials(t, gemini).Portability(filepath.Join(root, "gemini"), deadline); got != CredentialNotPortable {
+		t.Fatal("host-bound Gemini file keychain was treated as portable")
+	}
+
+	grok, _ := Get("grok")
+	grokLive := mustLiveCredentials(t, grok)
+	grokDir := filepath.Join(root, "grok")
+	mustWrite(t, filepath.Join(grokDir, "auth.json"), fmt.Sprintf(
+		`{"issuer::id":{"key":"access","expires_at":%q}}`, future.Format(time.RFC3339Nano)))
+	if got := grokLive.Portability(grokDir, deadline); got != CredentialPortable {
+		t.Fatal("unexpired Grok access token was not portable")
+	}
+	mustWrite(t, filepath.Join(grokDir, "auth.json"), fmt.Sprintf(
+		`{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":%q}}`, past.Format(time.RFC3339Nano)))
+	if got := grokLive.Portability(grokDir, deadline); got != CredentialRefreshRequired {
+		t.Fatal("expired Grok refresh credential was treated as safe to copy")
+	}
+}
+
+func TestCLIErrorClassificationIsProviderOwnedAndRedacted(t *testing.T) {
+	cases := map[string]string{
+		"claude": "Not logged in",
+		"codex":  "Authentication required",
+		"gemini": "Manual authorization is required",
+		"grok":   "Not signed in",
+	}
+	for provider, output := range cases {
+		ag, _ := Get(provider)
+		live := mustLiveCredentials(t, ag)
+		if got := ClassifyCLIError(live, output); got != "authentication" {
+			t.Errorf("%s auth classification = %q", provider, got)
+		}
+		if got := ClassifyCLIError(live, "usage limit reached"); got != "rate_limit" {
+			t.Errorf("%s rate classification = %q", provider, got)
+		}
+		if got := ClassifyCLIError(live, "unknown failure"); got != "process" {
+			t.Errorf("%s generic classification = %q", provider, got)
 		}
 	}
 }

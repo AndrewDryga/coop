@@ -133,6 +133,105 @@ func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPEN
 // CredentialEnvKeys is Codex's only token env var.
 func (codexAgent) CredentialEnvKeys() []string { return []string{"OPENAI_API_KEY"} }
 
+func (codexAgent) LiveCredentials() LiveCredentialSpec {
+	return LiveCredentialSpec{
+		Artifacts: []CredentialArtifact{{
+			Name: "auth.json", Primary: true, Project: projectCodexCredential,
+		}},
+		Portability: codexCredentialPortability,
+		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key"},
+	}
+}
+
+type codexSourceCredential struct {
+	AuthMode     string             `json:"auth_mode"`
+	OpenAIAPIKey string             `json:"OPENAI_API_KEY"`
+	Tokens       *codexSourceTokens `json:"tokens"`
+	LastRefresh  string             `json:"last_refresh"`
+}
+
+type codexSourceTokens struct {
+	IDToken     string `json:"id_token"`
+	AccessToken string `json:"access_token"`
+	AccountID   string `json:"account_id"`
+}
+
+type codexAccessTokens struct {
+	IDToken      string `json:"id_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	AccountID    string `json:"account_id,omitempty"`
+}
+
+type codexAccessCredential struct {
+	AuthMode     string             `json:"auth_mode"`
+	OpenAIAPIKey string             `json:"OPENAI_API_KEY,omitempty"`
+	Tokens       *codexAccessTokens `json:"tokens,omitempty"`
+	LastRefresh  string             `json:"last_refresh,omitempty"`
+}
+
+func decodeCodexAccessCredential(data []byte) (codexAccessCredential, error) {
+	var source codexSourceCredential
+	if err := json.Unmarshal(data, &source); err != nil {
+		return codexAccessCredential{}, fmt.Errorf("decode Codex credential: %w", err)
+	}
+	switch source.AuthMode {
+	case "apikey":
+		if source.OpenAIAPIKey == "" {
+			return codexAccessCredential{}, fmt.Errorf("codex credential has no API-key auth shape")
+		}
+		return codexAccessCredential{AuthMode: source.AuthMode, OpenAIAPIKey: source.OpenAIAPIKey}, nil
+	case "chatgpt":
+		if source.Tokens == nil || source.Tokens.IDToken == "" || source.Tokens.AccessToken == "" || source.LastRefresh == "" {
+			return codexAccessCredential{}, fmt.Errorf("codex credential has no access-only ChatGPT shape")
+		}
+		return codexAccessCredential{
+			AuthMode: source.AuthMode,
+			Tokens: &codexAccessTokens{
+				IDToken: source.Tokens.IDToken, AccessToken: source.Tokens.AccessToken,
+				RefreshToken: "", AccountID: source.Tokens.AccountID,
+			},
+			LastRefresh: source.LastRefresh,
+		}, nil
+	default:
+		return codexAccessCredential{}, fmt.Errorf("codex credential has unsupported auth mode")
+	}
+}
+
+func projectCodexCredential(data []byte) ([]byte, error) {
+	projected, err := decodeCodexAccessCredential(data)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		return nil, fmt.Errorf("encode Codex credential: %w", err)
+	}
+	return append(encoded, '\n'), nil
+}
+
+func (a codexAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []string {
+	if markerPresent {
+		return nil
+	}
+	return a.CredentialEnvKeys()
+}
+
+func codexCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
+	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
+	if err != nil {
+		return CredentialRefreshRequired
+	}
+	credentials, err := decodeCodexAccessCredential(data)
+	if err != nil {
+		return CredentialRefreshRequired
+	}
+	if credentials.AuthMode == "apikey" || jwtExpiresAfter(credentials.Tokens.AccessToken, deadline) {
+		return CredentialPortable
+	}
+	return CredentialRefreshRequired
+}
+
 // MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
 func (codexAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))

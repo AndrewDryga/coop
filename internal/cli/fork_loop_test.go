@@ -250,7 +250,7 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "ps -q --filter label=coop.fork=perf\nrm -f box-perf\n"; got != want {
+	if got, want := string(data), "ps -q -a --filter label=coop.fork=perf\nrm -f box-perf\n"; got != want {
 		t.Errorf("crash cleanup calls = %q, want %q", got, want)
 	}
 	if pathExists(forkPid(repo, "perf")) {
@@ -375,7 +375,7 @@ while :; do sleep 10; done
 			}
 			got := string(data)
 			termAt := strings.Index(got, "worker:term\n")
-			psCall := "runtime:ps -q --filter label=coop.fork=perf\n"
+			psCall := "runtime:ps -q -a --filter label=coop.fork=perf\n"
 			psAt := strings.Index(got, psCall)
 			if termAt < 0 || psAt < 0 || termAt >= psAt {
 				t.Errorf("worker TERM must precede the exact-fork reap:\n%s", got)

@@ -17,6 +17,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -334,12 +335,12 @@ func clearForkPidIfMineUnlocked(repo, name string) {
 // procStartToken returns an opaque identity for pid that's fixed for the process's lifetime — its
 // numeric kernel start time. A pid reused by a later process reports a different token. Empty if
 // the platform cannot read it; callers then fall back to kill(0)-only liveness.
-var readProcStartToken = platformProcStartToken
+var readProcStartToken = processidentity.StartToken
 
 func procStartToken(pid int) string { return readProcStartToken(pid) }
 
 func stableProcToken(token string) bool {
-	return strings.HasPrefix(token, "linux-proc-v1:") || strings.HasPrefix(token, "darwin-kinfo-v1:")
+	return processidentity.Stable(token)
 }
 
 func forkWorkerRecovery(name string, pid int) string {

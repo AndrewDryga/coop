@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -116,6 +117,52 @@ func (geminiAgent) AuthMarker() (file, envKey string) {
 // and the GOOGLE_API_KEY it also honors.
 func (geminiAgent) CredentialEnvKeys() []string {
 	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
+}
+
+func (geminiAgent) LiveCredentials() LiveCredentialSpec {
+	return LiveCredentialSpec{
+		Artifacts: []CredentialArtifact{
+			// Gemini's keychain is encrypted from host identity and cannot be made portable. Retain
+			// it in the integrity allowlist, but return nil so it is never mounted in a live box.
+			{Name: "gemini-credentials.json", Primary: true, Project: func([]byte) ([]byte, error) { return nil, nil }},
+			{Name: "google_accounts.json", Project: func([]byte) ([]byte, error) { return nil, nil }},
+			{Name: "settings.json", Project: func(data []byte) ([]byte, error) {
+				return projectJSONLeaf(data, "security", "auth", "selectedType")
+			}},
+		},
+		Portability: func(string, time.Time) CredentialPortability { return CredentialNotPortable },
+		AuthSignals: []string{"manual authorization is required", "authentication required", "must specify the gemini_api_key"},
+	}
+}
+
+// ActiveCredentialEnvKeys grants exactly the key family selected in settings.json. Without a
+// marker or selector, Gemini may auto-detect either supported key; a marker without a selector is
+// file-backed and receives no env authority.
+func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string {
+	data, err := os.ReadFile(filepath.Join(profileDir, "settings.json"))
+	if err != nil {
+		if markerPresent {
+			return nil
+		}
+		return a.CredentialEnvKeys()
+	}
+	var settings struct {
+		Security struct {
+			Auth struct {
+				SelectedType string `json:"selectedType"`
+			} `json:"auth"`
+		} `json:"security"`
+	}
+	if json.Unmarshal(data, &settings) != nil {
+		return nil
+	}
+	switch settings.Security.Auth.SelectedType {
+	case "gemini-api-key":
+		return []string{"GEMINI_API_KEY"}
+	case "vertex-ai":
+		return []string{"GOOGLE_API_KEY"}
+	}
+	return nil
 }
 
 // MCP builds the settings mounted inside a gemini box: the host settings plus the

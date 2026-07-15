@@ -15,6 +15,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -1163,6 +1164,10 @@ func TestCleanACPChildEnv(t *testing.T) {
 		"COOP_ACP_SUPERVISOR=stale",
 		"COOP_ACP_CIDFILE=/tmp/stale",
 		"COOP_ACP_RESUME_STATE=/tmp/stale",
+		liveprocess.ControlFDEnv + "=3",
+		liveprocess.ProcessDirEnv + "=/tmp/stale-processes",
+		liveprocess.CleanupIDEnv + "=stale-cleanup",
+		liveprocess.RevokePathEnv + "=/tmp/.coop-live-revoked-00000000000000000000000000000000",
 		"COOP_ACP_TRACE=1",
 		"COOP_ACP_CARRY_TOKENS=123",
 	})
@@ -1172,7 +1177,11 @@ func TestCleanACPChildEnv(t *testing.T) {
 			t.Errorf("clean env dropped public setting %q: %v", want, got)
 		}
 	}
-	for _, removed := range []string{"COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE"} {
+	for _, removed := range []string{
+		"COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR",
+		"COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv,
+		liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv,
+	} {
 		if strings.Contains(joined, removed+"=") {
 			t.Errorf("clean env retained internal setting %q: %v", removed, got)
 		}

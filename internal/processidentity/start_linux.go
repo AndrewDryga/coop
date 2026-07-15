@@ -1,6 +1,6 @@
 //go:build linux
 
-package cli
+package processidentity
 
 import (
 	"fmt"
@@ -9,9 +9,7 @@ import (
 	"strings"
 )
 
-// platformProcStartToken uses /proc's clock-tick start time (field 22), a numeric process identity
-// with finer resolution than ps lstart and no timezone/locale dependence.
-func platformProcStartToken(pid int) string {
+func platformStartToken(pid int) string {
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil || strings.TrimSpace(string(boot)) == "" {
 		return ""
@@ -20,14 +18,14 @@ func platformProcStartToken(pid int) string {
 	if err != nil {
 		return ""
 	}
-	start, ok := linuxProcStartTicks(b)
+	start, ok := linuxStartTicks(b)
 	if !ok {
 		return ""
 	}
 	return "linux-proc-v1:" + strings.TrimSpace(string(boot)) + ":" + start
 }
 
-func linuxProcStartTicks(stat []byte) (string, bool) {
+func linuxStartTicks(stat []byte) (string, bool) {
 	// comm is parenthesized and may contain spaces or ')', so fields begin after the final ')'.
 	endComm := strings.LastIndexByte(string(stat), ')')
 	if endComm < 0 {

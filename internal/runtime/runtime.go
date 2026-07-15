@@ -67,10 +67,10 @@ func isKnownRuntime(name string) bool {
 // EnsureDaemon verifies the daemon is reachable. Only Docker exposes a daemon we
 // probe up front; container and podman are checked lazily by their commands.
 func (r Runtime) EnsureDaemon() error {
-	if r.Name != "docker" {
+	if filepath.Base(r.Name) != "docker" {
 		return nil
 	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
+	if err := exec.Command(r.Name, "info").Run(); err != nil {
 		return errors.New("docker is installed but its daemon isn't responding — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry")
 	}
 	return nil
@@ -125,7 +125,12 @@ func commandOutputError(err error, output []byte) error {
 func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = interruptibleProcessEnvironment()
+	processGroup, err := interruptibleProcessGroup()
+	if err != nil {
+		return -1, err
+	}
+	cmd.SysProcAttr = processGroup
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("%s: %w", r.Name, err)
 	}
@@ -133,8 +138,9 @@ func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, 
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-ctx.Done():
+		beforeErr := beforeInterruptibleCancel()
 		cleanupErr := killGroup(cmd.Process.Pid, done)
-		return -1, errors.Join(ctx.Err(), cleanupErr)
+		return -1, errors.Join(ctx.Err(), beforeErr, cleanupErr)
 	case err := <-done:
 		return exitCode(r.Name, err)
 	}
@@ -234,10 +240,17 @@ func (r Runtime) psIDs(filters ...string) []string {
 // psIDsContext is the error-reporting, cancelable form used when cleanup must not claim success
 // after a failed query. A real no-match is an empty slice with a nil error.
 func (r Runtime) psIDsContext(ctx context.Context, filters ...string) ([]string, error) {
+	return r.containerIDsContext(ctx, false, filters...)
+}
+
+func (r Runtime) containerIDsContext(ctx context.Context, all bool, filters ...string) ([]string, error) {
 	if filepath.Base(r.Name) == "container" {
-		return r.appleContainerIDsContext(ctx, filters...)
+		return r.appleContainerIDsContext(ctx, all, filters...)
 	}
 	args := []string{"ps", "-q"}
+	if all {
+		args = append(args, "-a")
+	}
 	for _, f := range filters {
 		args = append(args, "--filter", f)
 	}
@@ -254,9 +267,9 @@ func (r Runtime) psIDsContext(ctx context.Context, filters ...string) ([]string,
 }
 
 // appleContainerIDsContext applies Docker-style exact label filters to Apple container's JSON
-// listing. Its CLI has no `ps --filter`; `list` defaults to running containers, and the current
-// structured resource shape stores ids at the top level and labels under configuration.
-func (r Runtime) appleContainerIDsContext(ctx context.Context, filters ...string) ([]string, error) {
+// listing. Its CLI has no `ps --filter`; `list` defaults to running containers, `--all` includes
+// stopped resources, and the structured shape stores ids at the top level and labels under config.
+func (r Runtime) appleContainerIDsContext(ctx context.Context, all bool, filters ...string) ([]string, error) {
 	type item struct {
 		ID            string `json:"id"`
 		Configuration struct {
@@ -276,12 +289,16 @@ func (r Runtime) appleContainerIDsContext(ctx context.Context, filters ...string
 		}
 		labels[key] = value
 	}
-	out, err := contextCommand(ctx, r.Name, "list", "--format", "json").Output()
+	args := []string{"list", "--format", "json"}
+	if all {
+		args = append(args, "--all")
+	}
+	out, err := contextCommand(ctx, r.Name, args...).Output()
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("run: %s list --format json: %w", r.Name, commandOutputError(err, nil))
+		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
 	}
 	var items []item
 	if err := json.Unmarshal(out, &items); err != nil {
@@ -354,11 +371,11 @@ func (r Runtime) RemoveContainerContext(ctx context.Context, id string) error {
 	return nil
 }
 
-// RemoveByLabel force-removes (`rm -f`: stop then delete) every running container whose label
+// RemoveByLabel force-removes (`rm -f`: stop then delete) every container whose label
 // matches key=value. It distinguishes no-match from query/removal failure so a caller never reports
 // successful cleanup while a known container may remain. The caller owns the overall deadline.
 func (r Runtime) RemoveByLabel(ctx context.Context, key, value string) (int, error) {
-	ids, err := r.psIDsContext(ctx, "label="+key+"="+value)
+	ids, err := r.containerIDsContext(ctx, true, "label="+key+"="+value)
 	if err != nil {
 		return 0, fmt.Errorf("list matching containers: %w", err)
 	}
@@ -379,5 +396,6 @@ func (r Runtime) RemoveByLabel(ctx context.Context, key, value string) (int, err
 // SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and
 // podman do; Apple's `container` CLI differs, so the supervisor falls back to labels there.
 func (r Runtime) SupportsCIDFile() bool {
-	return r.Name == "docker" || r.Name == "podman"
+	name := filepath.Base(r.Name)
+	return name == "docker" || name == "podman"
 }

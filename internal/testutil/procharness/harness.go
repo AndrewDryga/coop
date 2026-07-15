@@ -200,12 +200,16 @@ func OpenRegularFile(root, path string, flag int) (*os.File, error) {
 
 // Command describes one managed external process.
 type Command struct {
-	Path      string
-	Args      []string
-	Dir       string
-	Env       []string
-	MaxOutput int
-	KillGrace time.Duration
+	Path       string
+	Args       []string
+	Dir        string
+	Env        []string
+	ExtraFiles []*os.File
+	MaxOutput  int
+	KillGrace  time.Duration
+	// BeforeCancel runs after the deadline is observed but before the first signal. Live tests use
+	// it to revoke projected credentials before any independently executing producer is stopped.
+	BeforeCancel func() error
 }
 
 // Result is the bounded output and terminal state of a managed process.
@@ -225,6 +229,7 @@ type Process struct {
 	done           <-chan error
 	stdout, stderr *boundedBuffer
 	grace          time.Duration
+	beforeCancel   func() error
 	waitOnce       sync.Once
 	result         Result
 }
@@ -245,6 +250,7 @@ func Start(spec Command) (*Process, error) {
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir, cmd.Env = spec.Dir, append([]string{}, spec.Env...)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.ExtraFiles = append([]*os.File(nil), spec.ExtraFiles...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = grace
 	if err := cmd.Start(); err != nil {
@@ -252,7 +258,10 @@ func Start(spec Command) (*Process, error) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	return &Process{cmd: cmd, done: done, stdout: stdout, stderr: stderr, grace: grace}, nil
+	return &Process{
+		cmd: cmd, done: done, stdout: stdout, stderr: stderr, grace: grace,
+		beforeCancel: spec.BeforeCancel,
+	}, nil
 }
 
 // PID returns the process-group leader's pid.
@@ -281,13 +290,21 @@ func (p *Process) wait(ctx context.Context) Result {
 	case err := <-p.done:
 		result.ExitCode, result.Err = processExit(err)
 		if processGroupAlive(result.PID) {
+			var beforeErr error
+			if p.beforeCancel != nil {
+				beforeErr = p.beforeCancel()
+			}
 			signalGroup(result.PID, syscall.SIGKILL)
 			cleanupErr := waitGroupGone(result.PID, 2*time.Second)
 			survivorErr := fmt.Errorf("process group %d survived leader exit", result.PID)
-			result.Err = errors.Join(result.Err, survivorErr, cleanupErr)
+			result.Err = errors.Join(result.Err, beforeErr, survivorErr, cleanupErr)
 		}
 	case <-ctx.Done():
-		result.Err = errors.Join(ctx.Err(), cancelProcessGroup(result.PID, p.done, p.grace))
+		var beforeErr error
+		if p.beforeCancel != nil {
+			beforeErr = p.beforeCancel()
+		}
+		result.Err = errors.Join(ctx.Err(), beforeErr, cancelProcessGroup(result.PID, p.done, p.grace))
 	}
 	return finishResult(result, p.stdout, p.stderr)
 }

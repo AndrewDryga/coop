@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -145,6 +148,86 @@ func (grokAgent) AuthMarker() (file, envKey string) { return "auth.json", "XAI_A
 // CredentialEnvKeys is grok's only token env var (the OIDC/auth-provider vars configure a
 // mechanism, not a token coop scopes).
 func (grokAgent) CredentialEnvKeys() []string { return []string{"XAI_API_KEY"} }
+
+func (grokAgent) LiveCredentials() LiveCredentialSpec {
+	return LiveCredentialSpec{
+		Artifacts: []CredentialArtifact{{
+			Name: "auth.json", Primary: true, Project: projectGrokCredential,
+		}},
+		Portability: grokCredentialPortability,
+		AuthSignals: []string{"not signed in", "authentication required", "unauthorized"},
+	}
+}
+
+type grokAccessCredential struct {
+	Key       string `json:"key"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, error) {
+	var source map[string]json.RawMessage
+	if err := json.Unmarshal(data, &source); err != nil {
+		return nil, fmt.Errorf("decode Grok credential: %w", err)
+	}
+	if len(source) == 0 {
+		return nil, fmt.Errorf("grok credential has no access-only auth shape")
+	}
+	projected := make(map[string]grokAccessCredential, len(source))
+	for key, raw := range source {
+		var entry grokAccessCredential
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil, fmt.Errorf("grok credential contains a non-object entry")
+		}
+		if entry.Key == "" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339Nano, entry.ExpiresAt); err != nil {
+			continue
+		}
+		projected[key] = entry
+	}
+	if len(projected) == 0 {
+		return nil, fmt.Errorf("grok credential has no access-only auth shape")
+	}
+	return projected, nil
+}
+
+func projectGrokCredential(data []byte) ([]byte, error) {
+	projected, err := decodeGrokAccessCredential(data)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		return nil, fmt.Errorf("encode Grok credential: %w", err)
+	}
+	return append(encoded, '\n'), nil
+}
+
+func (a grokAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []string {
+	if markerPresent {
+		return nil
+	}
+	return a.CredentialEnvKeys()
+}
+
+func grokCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
+	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
+	if err != nil {
+		return CredentialRefreshRequired
+	}
+	credentials, err := decodeGrokAccessCredential(data)
+	if err != nil {
+		return CredentialRefreshRequired
+	}
+	for _, credential := range credentials {
+		expiresAt, err := time.Parse(time.RFC3339Nano, credential.ExpiresAt)
+		if err == nil && credential.Key != "" && expiresAt.After(deadline) {
+			return CredentialPortable
+		}
+	}
+	return CredentialRefreshRequired
+}
 
 // MCP: grok reads [mcp_servers.*] TOML from ~/.grok/config.toml — the same schema codex
 // uses (artifacts/doc-05-configuration.md), so reuse the codex generator, preserving the

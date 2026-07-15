@@ -49,17 +49,29 @@ casts-check: ## Validate published casts for private paths, credentials, and sec
 tools-test: ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
-check: lint test provider-scripted-e2e docs-check casts-check tools-test ## What CI runs: lint + tests + deterministic provider process E2E + docs/cast freshness
+check: lint test provider-scripted-e2e live-process-control docs-check casts-check tools-test ## What CI runs: lint + tests + deterministic provider process E2E + docs/cast freshness
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
 	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -v ./internal/cli/
 
+live-process-control: ## Deterministic denial tests for tagged live-test process ownership
+	@go test -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible)' -count=1 ./internal/cli/ ./internal/runtime/
+	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/
+
+provider-live-e2e: ## Opt-in read-only upstream CLI probe (set COOP_LIVE_TARGETS=provider,...)
+	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: codex,gemini@work)'; exit 2; }
+	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
+
+provider-live-e2e-all: ## Strict read-only upstream CLI probe for every registered provider
+	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
+		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
+
 acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
 	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/
 
-acp-e2e: ## Real ACP adapter e2e (isolated binary; needs Docker + a built box + signed-in providers)
-	@go test -timeout 30m -tags acpe2e -run 'Test(LiveProviderConformance|LiveCrossProviderCarry|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState|CodexTargetRolloutTruth|FrontierStoredTargetTruth)$$' -count=1 -v ./internal/acpproxy/
+acp-e2e: ## Real ACP adapter e2e (isolated binary; needs a configured runtime, built box, and credentials)
+	@COOP_ACP_LIVE_REQUIRE_ALL=1 go test -timeout 30m -tags acpe2e -run 'Test(LiveProviderConformance|LiveCrossProviderCarry|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState|CodexTargetRolloutTruth|FrontierStoredTargetTruth)$$' -count=1 -v ./internal/acpproxy/
 
 review-writes-e2e: ## Review write-policy e2e (needs Docker; pulls a small test image once)
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21
@@ -72,4 +84,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e acp-scripted-e2e acp-e2e review-writes-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e clean help

@@ -116,6 +116,33 @@ func TestRunDeadlineReapsTheProcessGroup(t *testing.T) {
 	}
 }
 
+func TestRunDeadlineCallsBeforeCancelBeforeFirstSignal(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := filepath.Join(layout.State, "revoked")
+	observed := filepath.Join(layout.State, "observed")
+	script := fmt.Sprintf(
+		"trap 'test -e %s && printf revoked > %s; exit 0' TERM; while :; do sleep 0.01; done",
+		shellQuote(revoked), shellQuote(observed),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	result := Run(ctx, Command{
+		Path: "/bin/sh", Args: []string{"-c", script}, Dir: layout.Root,
+		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: time.Second, MaxOutput: 1024,
+		BeforeCancel: func() error { return os.WriteFile(revoked, nil, 0o600) },
+	})
+	if result.Err == nil {
+		t.Fatal("deadline unexpectedly succeeded")
+	}
+	data, err := os.ReadFile(observed)
+	if err != nil || string(data) != "revoked" {
+		t.Fatalf("signal observed before revocation: data=%q err=%v", data, err)
+	}
+}
+
 func TestStartSignalGroupAndWait(t *testing.T) {
 	layout, err := NewLayout(t.TempDir())
 	if err != nil {
@@ -209,14 +236,19 @@ func TestRunRejectsSuccessfulLeaderThatLeavesAChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	pidFile := filepath.Join(layout.State, "orphan-pid")
+	revoked := filepath.Join(layout.State, "orphan-revoked")
 	childScript := fmt.Sprintf("trap '' HUP TERM; echo $$ > %s; while :; do sleep 1; done", shellQuote(pidFile))
 	parentScript := fmt.Sprintf("/bin/sh -c %s & while [ ! -s %s ]; do sleep 0.01; done", shellQuote(childScript), shellQuote(pidFile))
 	result := Run(context.Background(), Command{
 		Path: "/bin/sh", Args: []string{"-c", parentScript}, Dir: layout.Root,
 		Env: []string{"PATH=/usr/bin:/bin"}, MaxOutput: 1024,
+		BeforeCancel: func() error { return os.WriteFile(revoked, nil, 0o600) },
 	})
 	if result.Err == nil || !strings.Contains(result.Err.Error(), "survived leader exit") {
 		t.Fatalf("Run orphan result = exit %d, err %v", result.ExitCode, result.Err)
+	}
+	if _, err := os.Stat(revoked); err != nil {
+		t.Fatalf("leader-exit cleanup did not run revocation callback: %v", err)
 	}
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
