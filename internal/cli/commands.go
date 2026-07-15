@@ -2062,6 +2062,15 @@ func loopInterruptInfo(msg string) {
 	ui.Info("%s", msg)
 }
 
+// oneTaskScope is the assignment filter for --once. Ordinary loops must always return an empty
+// scope so they continue draining the queue after the first task settles.
+func oneTaskScope(once bool, selectedID string) string {
+	if once {
+		return selectedID
+	}
+	return ""
+}
+
 // consult opts every iteration into the second-opinion directive: the box mounts the authed
 // peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
@@ -2264,10 +2273,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
 				break
 			}
-			if onceTaskID != "" {
-				state, ok := queueSnapshot(hosts)[onceTaskID]
+			if selectedID := oneTaskScope(once, onceTaskID); selectedID != "" {
+				state, ok := queueSnapshot(hosts)[selectedID]
 				if !ok {
-					return 1, fmt.Errorf("one-task run lost task %s from the queue — inspect `coop tasks` before retrying", onceTaskID)
+					return 1, fmt.Errorf("one-task run lost task %s from the queue — inspect `coop tasks` before retrying", selectedID)
 				}
 				if state == stateDone || state == stateBlocked {
 					onceTaskState = state
@@ -2282,7 +2291,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
 			assignment, assignErr := assignLoopTaskOnly(hosts, taskLeaseOwner{
 				RunID: a.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
-			}, onceTaskID)
+			}, oneTaskScope(once, onceTaskID))
 			if assignErr != nil {
 				return 1, assignErr
 			}
@@ -2296,7 +2305,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				break
 			}
 			c, assigned, lease := assignment.Counts, assignment.Task, assignment.Lease
-			if onceTaskID == "" {
+			if once && onceTaskID == "" {
 				onceTaskID = assigned.Item.ID
 			}
 			if lease.legacy {

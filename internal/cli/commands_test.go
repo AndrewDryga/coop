@@ -91,6 +91,16 @@ func TestLoopIntentionalAndInterruptedStopsAreDistinct(t *testing.T) {
 	}
 }
 
+func TestOneTaskScopeDoesNotPinOrdinaryLoop(t *testing.T) {
+	const selected = "2026-01-01-first"
+	if got := oneTaskScope(false, selected); got != "" {
+		t.Fatalf("ordinary loop scope = %q, want empty so another task can be assigned", got)
+	}
+	if got := oneTaskScope(true, selected); got != selected {
+		t.Fatalf("one-task scope = %q, want %q", got, selected)
+	}
+}
+
 // The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
 // read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fleet forks
 // unable to read their own queue (claude resolved it against cwd and was fine).
