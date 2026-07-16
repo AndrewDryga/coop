@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,12 +88,152 @@ func TestForkStopMessages(t *testing.T) {
 	if code, err := a.forkStop([]string{"ghost"}); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork") {
 		t.Errorf("forkStop(ghost) = (%d, %v), want (1, no such fork)", code, err)
 	}
-	// A fork that exists but has no running loop → "not running".
+	// Stopping an already-idle fork is idempotent.
 	if err := os.MkdirAll(forkWorkspace(repo, "idle"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.forkStop([]string{"idle"}); code != 1 || err == nil || !strings.Contains(err.Error(), "not running") {
-		t.Errorf("forkStop(idle) = (%d, %v), want (1, not running)", code, err)
+	if code, err := a.forkStop([]string{"idle"}); code != 0 || err != nil {
+		t.Errorf("forkStop(idle) = (%d, %v), want (0, nil)", code, err)
+	}
+}
+
+func TestDetachStartFailureReleasesReservation(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	name := "perf"
+	if err := os.MkdirAll(forkWorkspace(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(forkLog(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.detachForkLoop(repo, name, "codex", "", "", "", "", "", nil); code != -1 || err == nil {
+		t.Fatalf("detach with unwritable log target = (%d, %v), want startup failure", code, err)
+	}
+	if pathExists(forkPid(repo, name)) {
+		t.Fatal("failed detached start retained its reservation")
+	}
+}
+
+func TestForkStopKeepsLegacyContainerCleanupVisible(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(forkPid(repo, "perf"), []byte("2147483646\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkStop([]string{"perf"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "predates repository-scoped") || !strings.Contains(err.Error(), "coop.fork=perf") {
+		t.Fatalf("legacy cleanup stop = (%d, %v), want explicit manual recovery", code, err)
+	}
+	data, readErr := os.ReadFile(forkPid(repo, "perf"))
+	state, parseErr := parseForkWorkerState(string(data))
+	if readErr != nil || parseErr != nil || !state.legacy || !state.pending {
+		t.Fatalf("legacy cleanup state = %q, read %v parse %v state %+v; want retained legacy pending", data, readErr, parseErr, state)
+	}
+}
+
+func TestForkStopSignalsLiveLegacyWorkerWithoutScopedReap(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	events := filepath.Join(dir, "runtime-events")
+	runtimeCLI := filepath.Join(dir, "runtime")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_EVENTS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	ready := filepath.Join(dir, "ready")
+	worker := exec.Command("sh", "-c", `
+trap 'exit 0' TERM
+: > "$COOP_TEST_READY"
+while :; do sleep 10; done
+`)
+	worker.Env = append(os.Environ(), "COOP_TEST_READY="+ready)
+	worker.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = worker.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		_ = syscall.Kill(-worker.Process.Pid, syscall.SIGKILL)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("legacy worker %d did not exit", worker.Process.Pid)
+		}
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for !pathExists(ready) {
+		if time.Now().After(deadline) {
+			t.Fatal("legacy worker did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	token := procStartToken(worker.Process.Pid)
+	if !stableProcToken(token) {
+		t.Skip("stable process identity unavailable")
+	}
+	legacy := fmt.Sprintf("%d\n%s\n", worker.Process.Pid, token)
+	if err := os.WriteFile(forkPid(repo, "perf"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}, rtSet: true}
+	code, err := a.forkStop([]string{"perf"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "predates repository-scoped") {
+		t.Fatalf("stop live legacy worker = (%d, %v), want manual cleanup result", code, err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("legacy worker remained alive after stop")
+	}
+	if pathExists(events) {
+		data, _ := os.ReadFile(events)
+		t.Fatalf("legacy stop invoked unsafe scoped runtime cleanup: %s", data)
+	}
+	data, readErr := os.ReadFile(forkPid(repo, "perf"))
+	state, parseErr := parseForkWorkerState(string(data))
+	if readErr != nil || parseErr != nil || !state.legacy || !state.pending || state.pid != worker.Process.Pid {
+		t.Fatalf("live legacy cleanup state = %q, read %v parse %v state %+v", data, readErr, parseErr, state)
+	}
+}
+
+func TestForkStopFindsReservedLegacyNameWithoutWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	runtimeCLI := filepath.Join(dir, "runtime")
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkWorkerState(repo, "stop", forkWorkerState{pending: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if names := forkLifecycleNames(repo); !slices.Contains(names, "stop") {
+		t.Fatalf("lifecycle names = %v, want reserved legacy name", names)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}, rtSet: true}
+	if code, err := a.forkStop([]string{"stop"}); code != 0 || err != nil {
+		t.Fatalf("stop reserved legacy fork = (%d, %v), want success", code, err)
 	}
 }
 
@@ -228,7 +369,7 @@ func TestForkStopReapsBoxAfterWorkerCrash(t *testing.T) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(forkPid(repo, "perf"), []byte("2147483646\n"), 0o644); err != nil {
+	if err := writeForkWorkerState(repo, "perf", forkWorkerState{pending: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
@@ -250,7 +391,8 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "ps -q -a --filter label=coop.fork=perf\nrm -f box-perf\n"; got != want {
+	want := "ps -q -a --filter label=coop.fork-owner=" + forkContainerOwner(repo, "perf") + "\nrm -f box-perf\n"
+	if got := string(data); got != want {
 		t.Errorf("crash cleanup calls = %q, want %q", got, want)
 	}
 	if pathExists(forkPid(repo, "perf")) {
@@ -266,11 +408,9 @@ func TestForkStopReapsBoxAfterWorkerExit(t *testing.T) {
 		containerID string
 		failure     string
 		pending     bool
-		pidOnly     bool
 	}{
 		{name: "orphan present", containerID: "box-perf"},
 		{name: "already gone"},
-		{name: "pid-only fallback", pidOnly: true},
 		{name: "interrupted stop resumes live worker", containerID: "box-perf", pending: true},
 		{name: "query failure is retryable", containerID: "box-perf", failure: "ps"},
 		{name: "remove failure is not success", containerID: "box-perf", failure: "rm"},
@@ -341,12 +481,9 @@ while :; do sleep 10; done
 			if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			token := ""
-			if !tc.pidOnly {
-				token = procStartToken(pid)
-				if token == "" {
-					t.Fatal("could not read worker start identity")
-				}
+			token := procStartToken(pid)
+			if token == "" {
+				t.Fatal("could not read worker start identity")
 			}
 			pidState, err := (forkWorkerState{pid: pid, token: token, pending: tc.pending}).marshal()
 			if err != nil {
@@ -375,7 +512,7 @@ while :; do sleep 10; done
 			}
 			got := string(data)
 			termAt := strings.Index(got, "worker:term\n")
-			psCall := "runtime:ps -q -a --filter label=coop.fork=perf\n"
+			psCall := "runtime:ps -q -a --filter label=coop.fork-owner=" + forkContainerOwner(repo, "perf") + "\n"
 			psAt := strings.Index(got, psCall)
 			if termAt < 0 || psAt < 0 || termAt >= psAt {
 				t.Errorf("worker TERM must precede the exact-fork reap:\n%s", got)
@@ -449,12 +586,12 @@ func TestForkRunningPid(t *testing.T) {
 	if got := forkRunningPid(repo, "perf"); got != 0 {
 		t.Errorf("forkRunningPid(no file) = %d, want 0", got)
 	}
-	// A live pid (our own) → that pid.
+	// A legacy live pid without a stable token is not authoritative enough to call running.
 	if err := os.WriteFile(forkPid(repo, "perf"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := forkRunningPid(repo, "perf"); got != os.Getpid() {
-		t.Errorf("forkRunningPid(live) = %d, want %d", got, os.Getpid())
+	if got := forkRunningPid(repo, "perf"); got != 0 {
+		t.Errorf("forkRunningPid(pid-only live) = %d, want cleanup-pending 0", got)
 	}
 	token := procStartToken(os.Getpid())
 	if err := writeForkWorkerState(repo, "pending-live", forkWorkerState{pid: os.Getpid(), token: token, pending: true}); err != nil {
@@ -495,10 +632,12 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		want    forkWorkerState
 		wantErr bool
 	}{
-		{name: "running", raw: "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{pid: 42, token: "linux-proc-v1:boot:123"}},
-		{name: "legacy", raw: "42\nWed Jun 18 10:00:00 2026\n", want: forkWorkerState{pid: 42, token: "Wed Jun 18 10:00:00 2026"}},
-		{name: "bare pending", raw: forkReapPending, want: forkWorkerState{pending: true}},
-		{name: "identified pending", raw: forkReapPending + "42\ndarwin-kinfo-v1:1:2\n", want: forkWorkerState{pid: 42, token: "darwin-kinfo-v1:1:2", pending: true}},
+		{name: "owner scoped running", raw: forkOwnerStateV1 + "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{pid: 42, token: "linux-proc-v1:boot:123"}},
+		{name: "legacy running", raw: "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{pid: 42, token: "linux-proc-v1:boot:123", legacy: true}},
+		{name: "legacy token", raw: "42\nWed Jun 18 10:00:00 2026\n", want: forkWorkerState{pid: 42, token: "Wed Jun 18 10:00:00 2026", legacy: true}},
+		{name: "owner scoped pending", raw: forkOwnerStateV1 + forkReapPending, want: forkWorkerState{pending: true}},
+		{name: "legacy bare pending", raw: forkReapPending, want: forkWorkerState{pending: true, legacy: true}},
+		{name: "identified pending", raw: forkOwnerStateV1 + forkReapPending + "42\ndarwin-kinfo-v1:1:2\n", want: forkWorkerState{pid: 42, token: "darwin-kinfo-v1:1:2", pending: true}},
 		{name: "empty", wantErr: true},
 		{name: "pid zero", raw: "0\ntoken\n", wantErr: true},
 		{name: "pid one", raw: "1\ntoken\n", wantErr: true},
@@ -559,7 +698,7 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 	}
 }
 
-func TestWriteForkPidFallsBackToLivenessWithoutStableToken(t *testing.T) {
+func TestWriteForkPidRejectsMissingStableToken(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "proj")
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
@@ -568,22 +707,11 @@ func TestWriteForkPidFallsBackToLivenessWithoutStableToken(t *testing.T) {
 	readProcStartToken = func(int) string { return "" }
 	t.Cleanup(func() { readProcStartToken = oldRead })
 
-	if err := writeForkPid(repo, "live", os.Getpid()); err != nil {
-		t.Fatalf("writeForkPid without a stable token: %v", err)
+	if err := writeForkPid(repo, "live", os.Getpid()); err == nil || !strings.Contains(err.Error(), "no stable process identity") {
+		t.Fatalf("writeForkPid without a stable token = %v, want fail-closed error", err)
 	}
-	data, err := os.ReadFile(forkPid(repo, "live"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := parseForkWorkerState(string(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.pid != os.Getpid() || state.token != "" {
-		t.Fatalf("pid-only fallback state = %+v, want pid %d with no token", state, os.Getpid())
-	}
-	if got := forkProcessIdentity(state.pid, state.token); got != processIdentityMatch {
-		t.Fatalf("pid-only live identity = %v, want kill(0) match", got)
+	if pathExists(forkPid(repo, "live")) {
+		t.Fatal("failed identity publication left a pidfile")
 	}
 }
 
@@ -626,8 +754,11 @@ func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(forkWorkspace(repo, "perf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// A live pidfile (our own pid) stands in for a worker already looping this fork.
-	if err := os.WriteFile(forkPid(repo, "perf"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+	if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{}}
@@ -687,7 +818,7 @@ func TestClaimForkPid(t *testing.T) {
 	if !pathExists(forkPid(repo, "x")) {
 		t.Fatal("claim should create the pidfile")
 	}
-	// The placeholder is this (live) process's pid, so a second claim is refused — no double-start.
+	// A cleanup tombstone reserves the name without authorizing a signal, so a second claim is refused.
 	if err := claimForkPid(repo, "x"); err == nil {
 		t.Error("a second claim of a live fork must be refused")
 	}

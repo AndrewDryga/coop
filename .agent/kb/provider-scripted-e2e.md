@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/controller.go, internal/cli/fork.go, internal/cli/fork_merge.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/controller.go, internal/cli/fork.go, internal/cli/fork_loop.go, internal/cli/fork_fleet.go, internal/cli/fork_merge.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-07-16
 ---
 
@@ -33,12 +33,22 @@ participate, so native-ID attribution remains best-effort if one mutates the sam
 during a fresh run. Merge assertions use only the newly landed commit range so an older reused
 task trailer cannot settle unrelated current work.
 
+Detached coverage re-execs a representative real fork worker, rejects duplicate starts, and proves
+`fork ls`, non-TTY fleet watch, idempotent stop, confirmation-gated removal, and complete
+process/state cleanup. The registry-derived preset row supplies the all-provider proof: it
+rate-limits through all four providers before its terminal waiter, then exercises idempotent fleet
+up/down and confirmation-gated forced prune. The crash row runs the same fork name in
+two parent repositories, kills one worker, substitutes an unrelated reused PID, removes its
+workspace, and requires cleanup to select only the repo-scoped runtime owner. The fixture's
+test-only active-run records implement only exact label `ps` and force removal; stable kernel
+identity and process-group checks prevent the fixture from signaling an unrelated process.
+
 The registry-derived loop matrix runs the external `coop loop` binary once per provider against a
 closed fixture worker. It requires the host to claim and flock-lease the exact task before provider
 start, validates the canonical provider/model/account target in lease metadata and native argv,
 then requires one task-bound commit, final state/log, done move, host cleanup of task scratch, a
 clean worktree, and one exact work-stage telemetry row. The fixture accepts no command, arbitrary
-path, or shell fragment; its v5 attempts are only closed semantic lifecycle outcomes. Provider-native
+path, or shell fragment; its v6 attempts are only closed semantic lifecycle outcomes. Provider-native
 event schemas stay in adapter decoder tests, while `script(1)` gives focused recovery rows the real
 terminal boundary for streaming and two-stage Ctrl-C behavior.
 Unbound-completion denials also prove host recovery never follows provider-created task metadata
@@ -99,6 +109,7 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-16 - added detached fork, fleet rotation, crash, reused-pid, and repo-scoped cleanup coverage
 - 2026-07-16 - added fork session isolation and merge lifecycle process coverage
 - 2026-07-16 - moved authoritative leases to host-only state and scoped finalization to the assigned task
 - 2026-07-16 - added external recovery, rotation, PTY interruption/stream-bound, and telemetry outcome coverage

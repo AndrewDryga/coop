@@ -29,7 +29,8 @@ const (
 	LabelSupervised = "coop.supervised" // a supervised inner box (build/update restart it): =1
 	LabelOn         = "1"               //   (its value)
 	LabelSupervisor = "coop.sup"        // value=<supervisor id>, so a supervisor kills only its own
-	LabelFork       = "coop.fork"       // value=<fork name>, so `coop fork stop` tears it down
+	LabelFork       = "coop.fork"       // readable value=<fork name> for runtime diagnostics
+	LabelForkOwner  = "coop.fork-owner" // repo-scoped value, so stop never reaps another repo's namesake
 )
 
 // RunSpec describes a single container run.
@@ -63,9 +64,8 @@ type RunSpec struct {
 	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
-	ForkName string // non-empty for a detached fork loop's box: tags it coop.fork=<name> so
-	// `coop fork stop` can tear the container down by label after SIGKILL (else --rm never fires
-	// on a SIGKILL'd run client and the orphaned container keeps mutating the worktree)
+	ForkName  string    // non-empty for a detached fork loop's box: readable runtime label
+	ForkOwner string    // repo-scoped label used by `coop fork stop`; required with ForkName
 	RunID     string    // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
 	Batch     bool      // loop/doctor: no tty, stdin from /dev/null
 	Quiet     bool      // suppress the "shadowed N secret path(s)" line (doctor)
@@ -167,6 +167,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if err := validateFusionSpec(spec); err != nil {
 		return -1, err
+	}
+	if (spec.ForkName == "") != (spec.ForkOwner == "") {
+		return -1, errors.New("fork box requires both name and scoped owner")
 	}
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
@@ -1228,10 +1231,9 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		args = append(args, "--label", LabelSupervised+"="+LabelOn, "--label", LabelSupervisor+"="+spec.SupervisorID)
 	}
 	if spec.ForkName != "" {
-		// A detached fork loop's box: `coop fork stop` kills it by this label after SIGKILLing the
-		// worker, so a SIGKILL'd `docker run` client can't orphan a container that keeps writing the
-		// fork's worktree (the fork name has no whitespace/`=`, so it's a safe label value).
-		args = append(args, "--label", LabelFork+"="+spec.ForkName)
+		// Keep the human name inspectable, but reap by the repo-scoped owner. Fork names are local to
+		// a repo; using the readable label for cleanup would kill a namesake in another repository.
+		args = append(args, "--label", LabelFork+"="+spec.ForkName, "--label", LabelForkOwner+"="+spec.ForkOwner)
 	}
 	switch mode {
 	case ttyInteractive:

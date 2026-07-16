@@ -243,9 +243,12 @@ func fleetAbortErr(name string, err error, started int) error {
 }
 
 func (a *app) fleetUp(args []string) (int, error) {
-	prune, force, err := parseFleetActionFlags("up", args)
+	prune, force, yes, err := parseFleetActionFlags("up", args)
 	if err != nil {
 		return 2, err
+	}
+	if prune && !yes && !ui.IsTerminal(os.Stdin) {
+		return 2, errors.New("refusing to prune forks without confirmation — re-run with --yes (no terminal to prompt)")
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -285,8 +288,8 @@ func (a *app) fleetUp(args []string) (int, error) {
 	}
 	ui.OK("%s detached — coop fork ls · coop fork logs -f", ui.Count(started, "fork"))
 	if prune {
-		if err := a.pruneFleet(repo, force); err != nil {
-			return -1, err
+		if code, err := a.pruneFleet(repo, force, yes); err != nil {
+			return code, err
 		}
 	}
 	return 0, nil
@@ -309,9 +312,12 @@ func unsignedFleetAccounts(cfg *config.Config, fleet []fleetEntry) []string {
 }
 
 func (a *app) fleetDown(args []string) (int, error) {
-	prune, force, err := parseFleetActionFlags("down", args)
+	prune, force, yes, err := parseFleetActionFlags("down", args)
 	if err != nil {
 		return 2, err
+	}
+	if prune && !yes && !ui.IsTerminal(os.Stdin) {
+		return 2, errors.New("refusing to prune forks without confirmation — re-run with --yes (no terminal to prompt)")
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -345,36 +351,39 @@ func (a *app) fleetDown(args []string) (int, error) {
 	ui.OK("stopped %s", ui.Count(stopped, "fork"))
 	// `down` only stops forks listed in .agent/fleet — surface a running fork that isn't (removed
 	// from the file, or started by hand) rather than leave it silently running.
-	for _, n := range fleetOrphans(names, forkNames(repo)) {
+	for _, n := range fleetOrphans(names, forkLifecycleNames(repo)) {
 		if forkNeedsStop(repo, n) {
 			ui.Info("note: fork %s is running or awaiting cleanup but not in .agent/fleet.yaml — stop it with: coop fork stop %s", n, n)
 		}
 	}
 	if prune {
-		if err := a.pruneFleet(repo, force); err != nil {
-			return -1, err
+		if code, err := a.pruneFleet(repo, force, yes); err != nil {
+			return code, err
 		}
 	}
 	return 0, nil
 }
 
-// parseFleetActionFlags parses the optional --prune (and --force, which applies to that prune)
-// on `coop fleet up`/`down`. cmd is "up"/"down", for the usage message.
-func parseFleetActionFlags(cmd string, args []string) (prune, force bool, err error) {
+// parseFleetActionFlags parses optional prune flags on `coop fleet up`/`down`. --force overrides
+// the work guard; --yes confirms deletion; both apply only with --prune. cmd identifies the caller
+// for the usage message.
+func parseFleetActionFlags(cmd string, args []string) (prune, force, yes bool, err error) {
 	for _, x := range args {
 		switch x {
 		case "--prune":
 			prune = true
 		case "--force", "-f":
 			force = true
+		case "--yes", "-y":
+			yes = true
 		default:
-			return false, false, fmt.Errorf("coop fleet %s: unknown flag %q (usage: coop fleet %s [--prune [--force]])", cmd, x, cmd)
+			return false, false, false, fmt.Errorf("coop fleet %s: unknown flag %q (usage: coop fleet %s [--prune [--force] [--yes]])", cmd, x, cmd)
 		}
 	}
-	if force && !prune {
-		return false, false, fmt.Errorf("coop fleet %s: --force only applies with --prune", cmd)
+	if (force || yes) && !prune {
+		return false, false, false, fmt.Errorf("coop fleet %s: --force/--yes only apply with --prune", cmd)
 	}
-	return prune, force, nil
+	return prune, force, yes, nil
 }
 
 // fleetOrphans returns the forks not named in the fleet — the cleanup candidates for prune.
@@ -392,46 +401,56 @@ func fleetOrphans(fleetNames, forkNames []string) []string {
 	return orphans
 }
 
-// fleetPrune is `coop fleet prune [--force]` — the cleanup for after you edit .agent/fleet.
+// fleetPrune is `coop fleet prune [--force] [--yes]` — cleanup after editing .agent/fleet.
 func (a *app) fleetPrune(args []string) (int, error) {
-	force := false
+	force, yes := false, false
 	for _, x := range args {
 		switch x {
 		case "--force", "-f":
 			force = true
+		case "--yes", "-y":
+			yes = true
 		default:
-			return 2, fmt.Errorf("coop fleet prune: unknown flag %q (usage: coop fleet prune [--force])", x)
+			return 2, fmt.Errorf("coop fleet prune: unknown flag %q (usage: coop fleet prune [--force] [--yes])", x)
 		}
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	if err := a.pruneFleet(repo, force); err != nil {
-		return -1, err
-	}
-	return 0, nil
+	return a.pruneFleet(repo, force, yes)
 }
 
 // pruneFleet removes forks no longer listed in .agent/fleet.yaml. It honors the same guard as `coop
 // fork rm`: a fork with uncommitted or unmerged work is kept unless force, and a running fork is
 // always kept (stop it first), so the safe path can never silently drop an agent's work. Shared
 // by `coop fleet prune` and the --prune flag on `coop fleet up`/`down`.
-func (a *app) pruneFleet(repo string, force bool) error {
+func (a *app) pruneFleet(repo string, force, yes bool) (int, error) {
 	fleet, err := a.loadFleet(repo) // need the fleet file to know which forks to keep
 	if err != nil {
-		return err
+		return -1, err
 	}
 	names := make([]string, len(fleet))
 	for i, e := range fleet {
 		names[i] = e.name
 	}
-	orphans := fleetOrphans(names, forkNames(repo))
+	orphans := fleetOrphans(names, forkLifecycleNames(repo))
 	if len(orphans) == 0 {
 		ui.Note("nothing to prune — every fork is in .agent/fleet.yaml")
-		return nil
+		return 0, nil
 	}
-	removed, kept := 0, 0
+	kept := 0
+	type pruneCandidate struct {
+		name string
+		file *os.File
+		info os.FileInfo
+	}
+	var candidates []pruneCandidate
+	defer func() {
+		for _, candidate := range candidates {
+			_ = candidate.file.Close()
+		}
+	}()
 	for _, n := range orphans {
 		if forkNeedsStop(repo, n) {
 			ui.Warn("kept %s — still running or awaiting cleanup (coop fork stop %s first)", n, n)
@@ -439,16 +458,60 @@ func (a *app) pruneFleet(repo string, force bool) error {
 			continue
 		}
 		ws := forkWorkspace(repo, n)
+		handle, info, err := pinForkWorkspace(ws)
+		if err != nil {
+			ui.Warn("kept %s — workspace changed while selecting it for prune", n)
+			kept++
+			continue
+		}
 		if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
+			_ = handle.Close()
 			ui.Warn("kept %s — %s", n, err)
 			kept++
+			continue
+		}
+		candidates = append(candidates, pruneCandidate{name: n, file: handle, info: info})
+	}
+	if len(candidates) == 0 {
+		ui.OK("pruned 0 forks, kept %d", kept)
+		return 0, nil
+	}
+	candidateNames := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		candidateNames[i] = candidate.name
+	}
+	if err := destroyGate("delete pruned forks: "+strings.Join(candidateNames, ", "), yes); err != nil {
+		return 2, err
+	}
+	removed := 0
+	for _, candidate := range candidates {
+		n := candidate.name
+		unlock, err := lockForkState(repo, n)
+		if err != nil {
+			ui.Error("prune %s: lock state: %v", n, err)
+			kept++
+			continue
+		}
+		ws := forkWorkspace(repo, n)
+		if !samePinnedForkWorkspace(ws, candidate.info) || forkNeedsStop(repo, n) {
+			ui.Warn("kept %s — changed while awaiting confirmation", n)
+			kept++
+			unlock()
+			continue
+		}
+		if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
+			ui.Warn("kept %s — changed while awaiting confirmation: %s", n, err)
+			kept++
+			unlock()
 			continue
 		}
 		if err := destroyFork(repo, n); err != nil {
 			ui.Error("prune %s: %v", n, err)
 			kept++
+			unlock()
 			continue
 		}
+		unlock()
 		ui.OK("removed %s", n)
 		removed++
 	}
@@ -457,5 +520,5 @@ func (a *app) pruneFleet(repo string, force bool) error {
 	} else {
 		ui.OK("pruned %s", ui.Count(removed, "fork"))
 	}
-	return nil
+	return 0, nil
 }

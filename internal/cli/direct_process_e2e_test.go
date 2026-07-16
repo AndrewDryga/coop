@@ -293,6 +293,9 @@ func (s *directProcessSuite) run(t *testing.T, args []string, scenario any) (pro
 
 func (s *directProcessSuite) reset(t *testing.T, scenario any) {
 	t.Helper()
+	if err := os.RemoveAll(filepath.Join(s.layout.State, "runtime-containers")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.RemoveAll(filepath.Join(s.layout.Tmp, "coop-consult-state")); err != nil {
 		t.Fatal(err)
 	}

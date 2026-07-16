@@ -427,6 +427,18 @@ func TestParseForkCreateForce(t *testing.T) {
 	}
 }
 
+func TestParseForkCreateFreshConfirmation(t *testing.T) {
+	for _, flag := range []string{"--yes", "-y"} {
+		fa, err := parseForkCreate([]string{"myfork", "--fresh", flag})
+		if err != nil || !fa.fresh || !fa.yes {
+			t.Errorf("parseForkCreate(%s) = fa{fresh:%v yes:%v} err=%v, want fresh+yes", flag, fa.fresh, fa.yes, err)
+		}
+	}
+	if _, err := parseForkCreate([]string{"myfork", "--yes"}); err == nil || !strings.Contains(err.Error(), "only applies with --fresh") {
+		t.Fatalf("parseForkCreate(--yes without --fresh) = %v, want scoped-flag refusal", err)
+	}
+}
+
 // `coop fork rm` confirms before the unrecoverable delete: without --yes and no TTY it refuses and
 // keeps the fork; --yes deletes. (The unmerged/dirty guard is separate — see TestForkRmSafe.)
 func TestForkRmGate(t *testing.T) {
@@ -454,6 +466,146 @@ func TestForkRmGate(t *testing.T) {
 	}
 }
 
+func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkRm([]string{"perf", "--force"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("forced fork rm without confirmation = (%d, %v), want refusal naming --yes", code, err)
+	}
+	if !pathExists(ws) || forkRunningPid(repo, "perf") != os.Getpid() {
+		t.Fatal("unconfirmed forced fork rm stopped its worker or deleted the workspace")
+	}
+}
+
+type forkCommandResult struct {
+	code int
+	err  error
+}
+
+func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command func() (int, error), mutate func()) forkCommandResult {
+	t.Helper()
+	unlock, err := lockForkState(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
+
+	result := make(chan forkCommandResult, 1)
+	go func() {
+		code, err := command()
+		result <- forkCommandResult{code: code, err: err}
+	}()
+	select {
+	case got := <-result:
+		t.Fatalf("fork command bypassed lifecycle lock: (%d, %v)", got.code, got.err)
+	case <-time.After(80 * time.Millisecond):
+	}
+	mutate()
+	unlock()
+	locked = false
+	select {
+	case got := <-result:
+		return got
+	case <-time.After(2 * time.Second):
+		t.Fatal("fork command remained blocked after lifecycle unlock")
+		return forkCommandResult{}
+	}
+}
+
+func TestForkRmRechecksLifecycleAfterConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
+		return a.forkRm([]string{"race", "--yes"})
+	}, func() {
+		if err := os.WriteFile(forkPid(repo, "race"), []byte(forkReapPending), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "started while awaiting confirmation") {
+		t.Fatalf("fork rm after lifecycle change = (%d, %v), want retryable refusal", got.code, got.err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("fork rm deleted a workspace that became reserved while confirmation was open")
+	}
+}
+
+func TestForkRmRefusesReplacementAfterConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	marker := filepath.Join(ws, "replacement.txt")
+	got := runForkCommandAcrossLockedMutation(t, repo, "replacement", func() (int, error) {
+		return a.forkRm([]string{"replacement", "--force", "--yes"})
+	}, func() {
+		if err := os.RemoveAll(ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(ws, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("keep\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "was replaced") {
+		t.Fatalf("fork rm after replacement = (%d, %v), want replacement refusal", got.code, got.err)
+	}
+	if !pathExists(marker) {
+		t.Fatal("fork rm deleted the replacement workspace")
+	}
+}
+
+func TestForkRmRefusesSymlinkReplacementAfterConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	moved := ws + "-moved"
+	marker := filepath.Join(moved, "replacement.txt")
+	got := runForkCommandAcrossLockedMutation(t, repo, "replacement", func() (int, error) {
+		return a.forkRm([]string{"replacement", "--force", "--yes"})
+	}, func() {
+		if err := os.Rename(ws, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(moved, ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("keep\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "was replaced") {
+		t.Fatalf("fork rm after symlink replacement = (%d, %v), want replacement refusal", got.code, got.err)
+	}
+	if !pathExists(marker) {
+		t.Fatal("fork rm followed and deleted the symlink replacement")
+	}
+}
+
 // `coop fork <name> --fresh` refuses to recreate a fork with uncommitted work unless --force, and the
 // refusal happens BEFORE any image work — so the dirty work survives. (--fresh --force reclones, which
 // needs a runtime, so only the refusal path is exercised here.)
@@ -477,6 +629,120 @@ func TestForkFreshGuardsDirtyWork(t *testing.T) {
 	}
 	if !pathExists(filepath.Join(ws, "wip.txt")) {
 		t.Error("a refused --fresh must not have destroyed the dirty work")
+	}
+}
+
+func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkCreate([]string{"perf", "claude", "--fresh"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("fork --fresh without confirmation = (%d, %v), want refusal naming --yes", code, err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("unconfirmed --fresh deleted the fork")
+	}
+}
+
+func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkCreate([]string{"perf", "claude", "--fresh", "--force"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("forced --fresh without confirmation = (%d, %v), want refusal naming --yes", code, err)
+	}
+	if !pathExists(ws) || forkRunningPid(repo, "perf") != os.Getpid() {
+		t.Fatal("unconfirmed forced --fresh stopped its worker or deleted the workspace")
+	}
+}
+
+func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkWorkerState(repo, "perf", forkWorkerState{pending: true}); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.forkCreate([]string{"perf", "claude", "--fresh"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "awaiting cleanup") || !strings.Contains(err.Error(), "coop fork stop perf") {
+		t.Fatalf("fork --fresh with state-only cleanup = (%d, %v), want cleanup refusal", code, err)
+	}
+	if !pathExists(forkPid(repo, "perf")) || pathExists(forkWorkspace(repo, "perf")) {
+		t.Fatal("refused state-only --fresh changed lifecycle state")
+	}
+}
+
+func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
+	dir := t.TempDir()
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
+	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
+		return a.forkCreate([]string{"race", "claude", "--fresh", "--yes"})
+	}, func() {
+		if err := writeForkWorkerState(repo, "race", forkWorkerState{pending: true}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "entered cleanup") {
+		t.Fatalf("fork --fresh after lifecycle change = (%d, %v), want retryable refusal", got.code, got.err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("fork --fresh deleted a workspace that entered cleanup")
+	}
+}
+
+func TestForkFreshRefusesReplacementAfterConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
+	marker := filepath.Join(ws, "replacement.txt")
+	got := runForkCommandAcrossLockedMutation(t, repo, "replacement", func() (int, error) {
+		return a.forkCreate([]string{"replacement", "claude", "--fresh", "--force", "--yes"})
+	}, func() {
+		if err := os.RemoveAll(ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(ws, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("keep\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "was replaced") {
+		t.Fatalf("fork --fresh after replacement = (%d, %v), want replacement refusal", got.code, got.err)
+	}
+	if !pathExists(marker) {
+		t.Fatal("fork --fresh deleted the replacement workspace")
 	}
 }
 

@@ -95,12 +95,12 @@ coop fork — a throwaway clone handed to an agent; review and land it like a PR
 FLAGS (every short flag has a long form):
   -c, --continue  resume the prior session (the default on re-entry)
       --new       start a fresh agent session on re-entry
-      --fresh     recreate the fork from scratch (refuses unmerged/dirty without --force)
+      --fresh     recreate the fork from scratch (confirms; refuses unmerged/dirty without --force)
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
       --peer <agent>  with --loop, a peer iterations may consult read-only (repeatable)
   -f, --force     merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)
-  -y, --yes       merge/rm: skip the delete confirm (required without a TTY)
+  -y, --yes       merge/rm/--fresh: skip the delete confirm (required without a TTY)
   -f, --follow    logs: keep streaming new output
 
 REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
@@ -389,9 +389,10 @@ coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
                  done; Ctrl-C anytime). Task-centric view: coop tasks watch
   prune          remove forks no longer in the fleet file (kept: running, dirty, or
-                 unmerged — pass --force to remove those too)
+                 unmerged — pass --force to override that guard; deletion confirms)
 
-  up and down take --prune (with optional --force) to prune in the same step.
+  prune requires --yes without a TTY. up and down take --prune, with optional
+  --force and --yes, to prune in the same step. --force never skips confirmation.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
   loop) and agent: — the who-runs, either a TARGET (provider[:model][/effort][@account];

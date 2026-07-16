@@ -61,11 +61,40 @@ func forkWorkspace(repo, name string) string {
 	return filepath.Join(forkHome(repo), name)
 }
 
-// validForkName keeps a name to a single shell-inert path/branch segment. Fork names are passed as
-// argv at every subprocess boundary, but the narrow grammar is defense in depth for rendered
-// recovery commands and any future call site that accidentally crosses a shell.
-func validForkName(name string) bool {
-	if name == "" || forkReserved(name) {
+// pinForkWorkspace keeps the confirmed directory inode open through a destructive operation.
+// Lstat rejects a swapped symlink, while the open handle prevents unlink/recreate inode reuse.
+func pinForkWorkspace(path string) (*os.File, os.FileInfo, error) {
+	entry, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, errors.New("workspace is not a directory")
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := handle.Stat()
+	if err != nil || !os.SameFile(entry, info) {
+		_ = handle.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, errors.New("workspace changed while opening")
+	}
+	return handle, info, nil
+}
+
+func samePinnedForkWorkspace(path string, original os.FileInfo) bool {
+	current, err := os.Lstat(path)
+	return err == nil && current.IsDir() && current.Mode()&os.ModeSymlink == 0 && os.SameFile(original, current)
+}
+
+// validExistingForkName accepts path-safe references to existing forks, including names that became
+// reserved after creation. validForkName adds the creation-time reserved-word policy.
+func validExistingForkName(name string) bool {
+	if name == "" {
 		return false
 	}
 	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") ||
@@ -80,6 +109,10 @@ func validForkName(name string) bool {
 		return false
 	}
 	return true
+}
+
+func validForkName(name string) bool {
+	return !forkReserved(name) && validExistingForkName(name)
 }
 
 // forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
@@ -107,12 +140,12 @@ func forkHelpText(p ui.Palette) string {
 	flags := []struct{ flag, desc string }{
 		{"-c, --continue", "resume the prior session (the default on re-entry)"},
 		{"    --new", "start a fresh agent session on re-entry"},
-		{"    --fresh", "recreate the fork from scratch (refuses unmerged/dirty without --force)"},
+		{"    --fresh", "recreate the fork from scratch (confirms; refuses unmerged/dirty without --force)"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
 		{"    --peer <agent>", "with --loop, a peer iterations may consult read-only (repeatable)"},
 		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
-		{"-y, --yes", "merge/rm: skip the delete confirm (required without a TTY)"},
+		{"-y, --yes", "merge/rm/--fresh: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
 	}
 	pad := func(s string, w int) string {
@@ -207,6 +240,7 @@ type forkArgs struct {
 	agentSet   bool // an agent was given explicitly (vs defaulted / remembered from the fork)
 	fresh      bool
 	force      bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
+	yes        bool // -y/--yes: with --fresh, skip the destructive confirmation
 	cont       bool // -c/--continue: force-resume the prior session (now the default on re-entry)
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
@@ -254,6 +288,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.fresh = true
 		case x == "--force", x == "-f":
 			fa.force = true
+		case x == "--yes", x == "-y":
+			fa.yes = true
 		case x == "--continue", x == "-c":
 			fa.cont = true
 		case x == "--new":
@@ -300,6 +336,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	if fa.cont && fa.newSession {
 		return fa, errors.New("coop fork: --continue and --new are mutually exclusive")
+	}
+	if fa.yes && !fa.fresh {
+		return fa, errors.New("coop fork: --yes only applies with --fresh")
 	}
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
@@ -378,18 +417,37 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so
 	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
 	// BEFORE resolveImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
+	var originalHandle *os.File
+	var originalWS os.FileInfo
+	defer func() {
+		if originalHandle != nil {
+			_ = originalHandle.Close()
+		}
+	}()
 	if fa.fresh {
-		if pathExists(ws) {
-			if forkNeedsStop(repo, fa.name) {
-				if !fa.force {
-					return 1, fmt.Errorf("--fresh: fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or add --force to stop it automatically)", fa.name, fa.name)
-				}
-				if code, err := a.forkStop([]string{fa.name}); err != nil {
-					return code, err
-				}
+		if existed {
+			handle, info, openErr := pinForkWorkspace(ws)
+			if openErr != nil {
+				return -1, fmt.Errorf("open fork %s before recreation: %w", fa.name, openErr)
 			}
-			if err := forkRmSafe(forkUnmerged(repo, fa.name), gitDirty(ws), fa.force); err != nil {
+			originalHandle = handle
+			originalWS = info
+		}
+		needsStop := forkNeedsStop(repo, fa.name)
+		if needsStop && !fa.force {
+			return 1, fmt.Errorf("--fresh: fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or add --force to stop it automatically)", fa.name, fa.name)
+		}
+		if existed {
+			if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), fa.force); err != nil {
 				return 1, fmt.Errorf("--fresh: %w (add --force to recreate anyway)", err)
+			}
+			if err := destroyGate("delete fork "+fa.name+" before recreating it", fa.yes); err != nil {
+				return 2, err
+			}
+		}
+		if needsStop {
+			if code, err := a.forkStop([]string{fa.name}); err != nil {
+				return code, err
 			}
 		}
 	}
@@ -403,9 +461,40 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	if fa.fresh && pathExists(ws) {
-		if err := destroyFork(repo, fa.name); err != nil { // guard already passed above
-			return -1, err
+	if fa.fresh {
+		unlock, err := lockForkState(repo, fa.name)
+		if err != nil {
+			return -1, fmt.Errorf("lock fork %s state: %w", fa.name, err)
+		}
+		existsNow := pathExists(ws)
+		if existsNow != existed {
+			unlock()
+			return 1, fmt.Errorf("--fresh: fork %q changed while awaiting recreation", fa.name)
+		}
+		if existed {
+			if !samePinnedForkWorkspace(ws, originalWS) {
+				unlock()
+				return 1, fmt.Errorf("--fresh: fork %q was replaced while awaiting recreation", fa.name)
+			}
+		}
+		if forkNeedsStop(repo, fa.name) {
+			unlock()
+			return 1, fmt.Errorf("--fresh: fork %q started or entered cleanup while awaiting recreation — stop it first: coop fork stop %s", fa.name, fa.name)
+		}
+		if existed {
+			if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), fa.force); err != nil {
+				unlock()
+				return 1, fmt.Errorf("--fresh: fork %q changed while awaiting recreation: %w", fa.name, err)
+			}
+			if err := destroyFork(repo, fa.name); err != nil {
+				unlock()
+				return -1, err
+			}
+		}
+		unlock()
+		if originalHandle != nil {
+			_ = originalHandle.Close()
+			originalHandle = nil
 		}
 	}
 	if !pathExists(ws) {
@@ -785,6 +874,28 @@ func forkNames(repo string) []string {
 	return names
 }
 
+// forkLifecycleNames includes pidfile-only forks whose workspace was removed after a worker crash.
+// They remain visible until `coop fork stop` can finish exact-owner runtime cleanup.
+func forkLifecycleNames(repo string) []string {
+	seen := map[string]bool{}
+	for _, name := range forkNames(repo) {
+		seen[name] = true
+	}
+	entries, _ := os.ReadDir(forkStateDir(repo))
+	for _, entry := range entries {
+		name, ok := strings.CutSuffix(entry.Name(), ".pid")
+		if ok && !entry.IsDir() && validExistingForkName(name) {
+			seen[name] = true
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (a *app) forkLs(args []string) (int, error) {
 	if err := rejectArgs("fork ls", args); err != nil {
 		return 2, err // a stray token should fail, not be silently ignored
@@ -793,7 +904,7 @@ func (a *app) forkLs(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	names := forkNames(repo)
+	names := forkLifecycleNames(repo)
 	if len(names) == 0 {
 		ui.Note("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
@@ -963,7 +1074,7 @@ func (a *app) forkReview(args []string) (int, error) {
 	if name == "" {
 		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open] [--gate]")
 	}
-	if !validForkName(name) {
+	if !validExistingForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	if gate && open {
@@ -1093,7 +1204,7 @@ func (a *app) openInEditor(ws string) (int, error) {
 // session/load, which Zed drives); coop just exposes the fork, so its session history
 // is right there to load.
 func (a *app) forkACP(name string, rest []string) (int, error) {
-	if !validForkName(name) {
+	if !validExistingForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	peerVals, rest, err := extractPeer(rest)
@@ -1305,7 +1416,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	if name == "" {
 		return 2, errors.New("usage: coop fork rm <name> [--force] [--yes]")
 	}
-	if !validForkName(name) {
+	if !validExistingForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -1316,16 +1427,17 @@ func (a *app) forkRm(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
+	handle, originalWS, err := pinForkWorkspace(ws)
+	if err != nil {
+		return -1, fmt.Errorf("open fork %s before removal: %w", name, err)
+	}
+	defer handle.Close()
 	// A running loop has the worktree bind-mounted RW; deleting it would orphan the worker +
 	// container and strand the pidfile. Refuse (like merge/prune do) — or with --force, stop the
 	// loop first so its container is reaped before the worktree goes.
-	if len(runningForkNames(repo, []string{name})) > 0 {
-		if !force {
-			return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or use --force)", name, name)
-		}
-		if code, err := a.forkStop([]string{name}); err != nil {
-			return code, err
-		}
+	needsStop := forkNeedsStop(repo, name)
+	if needsStop && !force {
+		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or use --force)", name, name)
 	}
 	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
 		return 1, err
@@ -1334,6 +1446,30 @@ func (a *app) forkRm(args []string) (int, error) {
 	// from --force above, which overrides the unmerged/dirty guard, not this prompt.
 	if err := destroyGate("delete fork "+name, hasYes(args)); err != nil {
 		return 2, err
+	}
+	if needsStop {
+		if code, err := a.forkStop([]string{name}); err != nil {
+			return code, err
+		}
+	}
+	unlock, err := lockForkState(repo, name)
+	if err != nil {
+		return -1, fmt.Errorf("lock fork %s state: %w", name, err)
+	}
+	defer unlock()
+	// State may change while the confirmation prompt is open. Re-check under the same lock used by
+	// detached startup so a newly-starting worker cannot lose its workspace underneath it.
+	if !pathExists(ws) {
+		return 1, fmt.Errorf("fork %q changed while awaiting confirmation — it no longer exists", name)
+	}
+	if !samePinnedForkWorkspace(ws, originalWS) {
+		return 1, fmt.Errorf("fork %q was replaced while awaiting confirmation", name)
+	}
+	if forkNeedsStop(repo, name) {
+		return 1, fmt.Errorf("fork %q started while awaiting confirmation — stop it first: coop fork stop %s", name, name)
+	}
+	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
+		return 1, fmt.Errorf("fork %q changed while awaiting confirmation: %w", name, err)
 	}
 	if err := destroyFork(repo, name); err != nil {
 		return -1, err
@@ -1350,7 +1486,7 @@ func (a *app) forkPath(args []string) (int, error) {
 		return 2, errors.New("usage: coop fork path <name>")
 	}
 	name := args[0]
-	if !validForkName(name) {
+	if !validExistingForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -1373,7 +1509,7 @@ func (a *app) forkOpenEditor(args []string) (int, error) {
 		return 2, errors.New("usage: coop fork open <name>")
 	}
 	name := args[0]
-	if !validForkName(name) {
+	if !validExistingForkName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)

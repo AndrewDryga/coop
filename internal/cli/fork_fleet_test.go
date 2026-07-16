@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -319,25 +320,164 @@ func TestFleetDownPropagatesForkStopFailure(t *testing.T) {
 
 func TestParseFleetActionFlags(t *testing.T) {
 	cases := []struct {
-		args         []string
-		prune, force bool
-		err          bool
+		args              []string
+		prune, force, yes bool
+		err               bool
 	}{
-		{nil, false, false, false},
-		{[]string{"--prune"}, true, false, false},
-		{[]string{"--prune", "--force"}, true, true, false},
-		{[]string{"--prune", "-f"}, true, true, false},
-		{[]string{"--force"}, false, false, true}, // --force is meaningless without --prune
-		{[]string{"--bogus"}, false, false, true}, // unknown flag
+		{nil, false, false, false, false},
+		{[]string{"--prune"}, true, false, false, false},
+		{[]string{"--prune", "--force", "--yes"}, true, true, true, false},
+		{[]string{"--prune", "-f", "-y"}, true, true, true, false},
+		{[]string{"--force"}, false, false, false, true}, // prune flags are meaningless without --prune
+		{[]string{"--yes"}, false, false, false, true},
+		{[]string{"--bogus"}, false, false, false, true}, // unknown flag
 	}
 	for _, c := range cases {
-		prune, force, err := parseFleetActionFlags("up", c.args)
+		prune, force, yes, err := parseFleetActionFlags("up", c.args)
 		if (err != nil) != c.err {
 			t.Errorf("%v: err=%v, want err=%v", c.args, err, c.err)
 			continue
 		}
-		if err == nil && (prune != c.prune || force != c.force) {
-			t.Errorf("%v: prune=%v force=%v, want %v/%v", c.args, prune, force, c.prune, c.force)
+		if err == nil && (prune != c.prune || force != c.force || yes != c.yes) {
+			t.Errorf("%v: prune=%v force=%v yes=%v, want %v/%v/%v", c.args, prune, force, yes, c.prune, c.force, c.yes)
 		}
+	}
+}
+
+func TestFleetPruneConfirmationFailsBeforeUpOrDownWork(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	for _, tc := range []struct {
+		name string
+		fn   func([]string) (int, error)
+	}{{"up", a.fleetUp}, {"down", a.fleetDown}} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, err := tc.fn([]string{"--prune"})
+			if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+				t.Fatalf("fleet %s --prune = (%d, %v), want confirmation before fleet/config work", tc.name, code, err)
+			}
+		})
+	}
+}
+
+func TestFleetPruneSeparatesConfirmationFromForce(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+
+	clean, err := setupFork(repo, "clean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, err := a.fleetPrune(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") || !pathExists(clean) {
+		t.Fatalf("unconfirmed clean prune = (%d, %v), exists %v; want confirmation refusal", code, err, pathExists(clean))
+	}
+	if code, err := a.fleetPrune([]string{"--yes"}); code != 0 || err != nil || pathExists(clean) {
+		t.Fatalf("confirmed clean prune = (%d, %v), exists %v", code, err, pathExists(clean))
+	}
+
+	dirty, err := setupFork(repo, "dirty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirty, "uncommitted.txt"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := a.fleetPrune([]string{"--yes"}); code != 0 || err != nil || !pathExists(dirty) {
+		t.Fatalf("guarded dirty prune = (%d, %v), exists %v; want kept", code, err, pathExists(dirty))
+	}
+	if code, err := a.fleetPrune([]string{"--force"}); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") || !pathExists(dirty) {
+		t.Fatalf("forced but unconfirmed prune = (%d, %v), exists %v", code, err, pathExists(dirty))
+	}
+	if code, err := a.fleetPrune([]string{"--force", "--yes"}); code != 0 || err != nil || pathExists(dirty) {
+		t.Fatalf("forced and confirmed prune = (%d, %v), exists %v", code, err, pathExists(dirty))
+	}
+}
+
+func TestFleetPruneReportsStateOnlyOrphan(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkWorkerState(repo, "crashed", forkWorkerState{pending: true}); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	out := captureStderr(t, func() {
+		if code, err := a.fleetPrune([]string{"--yes"}); code != 0 || err != nil {
+			t.Fatalf("fleet prune state-only orphan = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "kept crashed") || !strings.Contains(out, "coop fork stop crashed") {
+		t.Fatalf("state-only orphan output = %q, want actionable cleanup warning", out)
+	}
+}
+
+func TestFleetPruneRefusesReplacementAfterConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := setupFork(repo, "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	unlock, err := lockForkState(repo, "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type pruneResult struct {
+		code int
+		err  error
+	}
+	result := make(chan pruneResult, 1)
+	go func() {
+		code, err := a.pruneFleet(repo, true, true)
+		result <- pruneResult{code, err}
+	}()
+	select {
+	case got := <-result:
+		unlock()
+		t.Fatalf("fleet prune bypassed lifecycle lock: (%d, %v)", got.code, got.err)
+	case <-time.After(80 * time.Millisecond):
+	}
+	if err := os.RemoveAll(ws); err != nil {
+		unlock()
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		unlock()
+		t.Fatal(err)
+	}
+	marker := filepath.Join(ws, "replacement.txt")
+	if err := os.WriteFile(marker, []byte("keep\n"), 0o644); err != nil {
+		unlock()
+		t.Fatal(err)
+	}
+	unlock()
+	select {
+	case got := <-result:
+		if got.code != 0 || got.err != nil {
+			t.Fatalf("fleet prune after replacement = (%d, %v), want safe kept result", got.code, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fleet prune remained blocked after lifecycle unlock")
+	}
+	if !pathExists(marker) {
+		t.Fatal("fleet prune deleted the replacement workspace")
 	}
 }

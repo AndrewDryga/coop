@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Detached forks and fleets now have crash-safe, repository-scoped cleanup.** Runtime boxes keep
+  a readable fork label but are reaped by a repo-scoped owner, so two repositories may use the same
+  fork name safely. Unverified and reused PID records report `cleanup` instead of running, missing
+  workspaces remain stoppable, stop/down are idempotent, and removal/prune re-check lifecycle state
+  under the fork lock after confirmation. `--fresh` now uses the same confirmation and locked
+  recheck, fleet prune requires `--yes` separately from `--force`, and upgraded legacy state stays
+  visible when its old container label cannot be reaped safely. Deterministic external-process
+  coverage drives all four providers, preset rotation,
+  duplicate starts, status/watch, worker crash, exact-label reap, reused PID refusal, cross-repo
+  isolation, confirmation, and complete process/state cleanup.
+
 - **Fork re-entry now keeps provider sessions isolated by account and workspace.** Claude,
   Gemini, and Grok persist one explicit session ID per fork/provider/account; Coop records the
   native ID Codex mints and resumes that exact interactive session. `--new` rotates the

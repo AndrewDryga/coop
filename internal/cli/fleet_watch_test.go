@@ -253,7 +253,7 @@ func TestFleetOrphans(t *testing.T) {
 
 func TestAgentBadge(t *testing.T) {
 	// Colors are off under `go test`, so the badge is just its letter.
-	for agent, want := range map[string]string{"claude": "c", "codex": "x", "gemini": "g", "": "?"} {
+	for agent, want := range map[string]string{"claude": "c", "codex": "x", "gemini": "g", "grok": "G", "": "?"} {
 		if got := agentBadge(agent); got != want {
 			t.Errorf("agentBadge(%q) = %q, want %q", agent, got, want)
 		}
@@ -321,6 +321,9 @@ func TestFleetSettled(t *testing.T) {
 	// One still running → not settled.
 	if fleetSettled([]fleetRow{{name: "a", running: true, counts: taskCounts{Todo: 3}}}) {
 		t.Error("a running fork → not settled")
+	}
+	if fleetSettled([]fleetRow{{name: "a", cleanup: true, ran: true, counts: taskCounts{Done: 3}}}) {
+		t.Error("a fork awaiting cleanup → not settled")
 	}
 	// A fork that hasn't seeded a queue and never ran (could be starting) → not settled.
 	if fleetSettled([]fleetRow{

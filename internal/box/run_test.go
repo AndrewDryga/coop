@@ -942,15 +942,17 @@ func TestBuildArgs(t *testing.T) {
 	// TestStageBuildContext; that path lives in Build, not baseBuildArgs.)
 }
 
-// A detached fork loop's box is labeled coop.fork=<name> so `coop fork stop` can reap it after
-// SIGKILL (preventing an orphaned container); a non-fork box has no such label.
+// A detached fork loop's box has a readable name and a repo-scoped owner used for cleanup.
 func TestAssembleArgsForkLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: "open"}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	with := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, ForkName: "perf"},
+	with := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, ForkName: "perf", ForkOwner: "v1-owner"},
 		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if !containsSeq(with, []string{"--label", "coop.fork=perf"}) {
 		t.Errorf("a fork-loop box must be labeled coop.fork=perf: %v", with)
+	}
+	if !containsSeq(with, []string{"--label", "coop.fork-owner=v1-owner"}) {
+		t.Errorf("a fork-loop box must carry its scoped cleanup owner: %v", with)
 	}
 	without := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true},
 		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")

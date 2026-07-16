@@ -546,9 +546,10 @@ var commandHelp = map[string]string{
   watch          live dashboard of every fork's progress (auto-exits when the fleet's
                  done; Ctrl-C anytime). Task-centric view: coop tasks watch
   prune          remove forks no longer in the fleet file (kept: running, dirty, or
-                 unmerged — pass --force to remove those too)
+                 unmerged — pass --force to override that guard; deletion confirms)
 
-  up and down take --prune (with optional --force) to prune in the same step.
+  prune requires --yes without a TTY. up and down take --prune, with optional
+  --force and --yes, to prune in the same step. --force never skips confirmation.
 
   .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
   loop) and agent: — the who-runs, either a TARGET (provider[:model][/effort][@account];

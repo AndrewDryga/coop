@@ -33,8 +33,10 @@ const (
 )
 
 type runtimeCommand struct {
-	Kind string
-	Run  runCommand
+	Kind    string
+	Run     runCommand
+	Filters map[string]string
+	IDs     []string
 }
 
 type runCommand struct {
@@ -217,7 +219,23 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 	case "version":
 		fmt.Println("coop-provider-fixture 1")
 		return nil
-	case "info", "inspect", "ps", "remove", "kill":
+	case "info", "inspect":
+		return nil
+	case "ps":
+		ids, err := matchingRuntimeContainers(root, parsed.Filters)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			fmt.Println(id)
+		}
+		return nil
+	case "remove", "kill":
+		for _, id := range parsed.IDs {
+			if err := removeRuntimeContainer(root, id); err != nil {
+				return err
+			}
+		}
 		return nil
 	case "run":
 		if activeScenario.Loop == nil && activeScenario.Provider != parsed.Run.Provider {
@@ -227,6 +245,13 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		traceRun := traceRunCommand(root, parsed.Run)
 		if err := record(root, trace, traceRecord{Source: "runtime", Event: "run", PID: os.Getpid(), Run: &traceRun}); err != nil {
 			return err
+		}
+		if hasRuntimeLabel(parsed.Run.Labels, "coop.fork-owner") {
+			containerID, err := registerRuntimeContainer(root, parsed.Run.Labels)
+			if err != nil {
+				return err
+			}
+			defer unregisterRuntimeContainer(root, containerID)
 		}
 		if activeScenario.Delegate != nil {
 			exitCode, runErr := serveDelegateRuntime(root, image, trace, scenarioPath, parsed.Run, activeScenario)
@@ -284,20 +309,22 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 		return runtimeCommand{Kind: "inspect"}, nil
 	}
 	if len(args) > 0 && args[0] == "ps" {
-		if err := parsePS(args[1:]); err != nil {
+		filters, err := parsePS(args[1:])
+		if err != nil {
 			return runtimeCommand{}, err
 		}
-		return runtimeCommand{Kind: "ps"}, nil
+		return runtimeCommand{Kind: "ps", Filters: filters}, nil
 	}
 	if len(args) > 1 && (args[0] == "rm" || args[0] == "kill") {
-		if err := parseRemoval(args); err != nil {
+		ids, err := parseRemoval(args)
+		if err != nil {
 			return runtimeCommand{}, err
 		}
 		kind := "remove"
 		if args[0] == "kill" {
 			kind = "kill"
 		}
-		return runtimeCommand{Kind: kind}, nil
+		return runtimeCommand{Kind: kind, IDs: ids}, nil
 	}
 	if len(args) == 0 || args[0] != "run" {
 		return runtimeCommand{}, fmt.Errorf("unsupported runtime command %q", strings.Join(args, " "))
@@ -667,32 +694,42 @@ func providerToken(command string) (string, error) {
 	return command, nil
 }
 
-func parsePS(args []string) error {
+func parsePS(args []string) (map[string]string, error) {
 	if len(args) == 0 || args[0] != "-q" {
-		return fmt.Errorf("unsupported ps arguments %q", args)
+		return nil, fmt.Errorf("unsupported ps arguments %q", args)
 	}
-	for i := 1; i < len(args); i += 2 {
+	filters := map[string]string{}
+	i := 1
+	if i < len(args) && args[i] == "-a" {
+		i++
+	}
+	for ; i < len(args); i += 2 {
 		if i+1 >= len(args) || args[i] != "--filter" || !strings.HasPrefix(args[i+1], "label=") {
-			return fmt.Errorf("unsupported ps arguments %q", args)
+			return nil, fmt.Errorf("unsupported ps arguments %q", args)
 		}
+		key, value, ok := strings.Cut(strings.TrimPrefix(args[i+1], "label="), "=")
+		if !ok || key == "" || value == "" || strings.ContainsAny(key+value, "\x00\r\n") {
+			return nil, fmt.Errorf("unsupported ps arguments %q", args)
+		}
+		filters[key] = value
 	}
-	return nil
+	return filters, nil
 }
 
-func parseRemoval(args []string) error {
+func parseRemoval(args []string) ([]string, error) {
 	start := 1
 	if args[0] == "rm" && len(args) > 1 && args[1] == "-f" {
 		start = 2
 	}
 	if start >= len(args) {
-		return fmt.Errorf("%s has no container id", args[0])
+		return nil, fmt.Errorf("%s has no container id", args[0])
 	}
 	for _, id := range args[start:] {
 		if id == "" || strings.HasPrefix(id, "-") || strings.ContainsAny(id, " \t\r\n") {
-			return fmt.Errorf("unsafe container id %q", id)
+			return nil, fmt.Errorf("unsafe container id %q", id)
 		}
 	}
-	return nil
+	return append([]string(nil), args[start:]...), nil
 }
 
 func serveProvider(root, trace, scenarioPath string, args []string) error {

@@ -12,6 +12,7 @@ import (
 type forkStatus struct {
 	Name, Agent, Branch, Updated, Active string
 	Running                              bool
+	Cleanup                              bool
 	Ins, Del                             int
 	Dirty                                bool
 	Counts                               taskCounts
@@ -28,13 +29,15 @@ func gatherForkStatus(repo, name string) forkStatus {
 	}
 	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
 	counts, active := queueCounts(wsTaskSource(ws))
+	running := forkRunningPid(repo, name) != 0
 	return forkStatus{
 		Name:    name,
 		Agent:   agent,
 		Branch:  forkBranch(ws),
 		Updated: forkUpdated(repo, ws),
 		Active:  active,
-		Running: forkRunningPid(repo, name) != 0,
+		Running: running,
+		Cleanup: !running && pathExists(forkPid(repo, name)),
 		Ins:     ins,
 		Del:     del,
 		Dirty:   gitDirty(ws),
@@ -46,6 +49,9 @@ func gatherForkStatus(repo, name string) forkStatus {
 func (s forkStatus) stateCell() string {
 	if s.Running {
 		return "running"
+	}
+	if s.Cleanup {
+		return "cleanup"
 	}
 	return "idle"
 }
@@ -99,7 +105,7 @@ func (s forkStatus) activeCell() string {
 // tailing N logs. It's the one-shot fallback for the live `coop fleet watch` board — printed when
 // there's no TTY to animate, or no forks to watch.
 func (a *app) fleetSnapshot(repo string) (int, error) {
-	names := forkNames(repo)
+	names := forkLifecycleNames(repo)
 	if len(names) == 0 {
 		// No forks — but in the single-loop workflow there's still a local queue to report.
 		// Show its progress instead of a bare "no forks", so the snapshot is useful either way.

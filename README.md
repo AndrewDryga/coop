@@ -352,8 +352,8 @@ session ID. A Codex process started outside Coop cannot join that lock, so do no
 the same account and cwd while a fresh fork session is being established.
 
 `--new` starts a new session for the selected provider/account while keeping the fork's files.
-`--fresh` recreates the whole fork but remembers its selected provider (and refuses to discard
-unmerged/dirty work without `--force`).
+`--fresh` recreates the whole fork but remembers its selected provider. It confirms before deletion
+(`--yes` is required without a TTY) and refuses to discard unmerged/dirty work without `--force`.
 
 ### Review — in your terminal or your IDE
 
@@ -1255,7 +1255,12 @@ forks:
 ```
 
 Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
-`coop fleet down` stops them. (The pre-v3 one-line `.agent/fleet` is not read — its
+`coop fleet down` stops them. A stale or crashed worker appears as `cleanup` until
+`coop fork stop <name>` reaps only that fork's containers, even if another repository uses the
+same fork name; stopping twice is safe.
+`coop fleet prune` confirms before deleting eligible forks (`--yes` confirms non-interactively;
+`--force` separately permits dirty or unmerged deletion), and `up`/`down --prune` use the same
+flags. (The pre-v3 one-line `.agent/fleet` is not read — its
 presence is an error until you translate it to YAML and delete it; see MIGRATING.md.) To bootstrap the file, `coop tasks
 split <n>` mechanically round-robins your `.agent/tasks/` todo folders into per-fork
 `.agent/tasks.slice<n>/` slices and writes a matching `.agent/fleet.yaml` with each

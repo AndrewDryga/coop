@@ -110,7 +110,7 @@ func TestParseRuntimeSupportsOnlyExplicitLifecycleProbes(t *testing.T) {
 		{[]string{"--version"}, "version"},
 		{[]string{"info"}, "info"},
 		{[]string{"image", "inspect", "fixture-image"}, "inspect"},
-		{[]string{"ps", "-q", "--filter", "label=coop=box"}, "ps"},
+		{[]string{"ps", "-q", "-a", "--filter", "label=coop=box"}, "ps"},
 		{[]string{"rm", "-f", "fixture-id"}, "remove"},
 		{[]string{"kill", "fixture-id"}, "kill"},
 	}
@@ -131,6 +131,67 @@ func TestParseRuntimeSupportsOnlyExplicitLifecycleProbes(t *testing.T) {
 		if _, err := parseRuntime(root, "fixture-image", args); err == nil {
 			t.Errorf("parseRuntime(%q) accepted unsupported lifecycle syntax", args)
 		}
+	}
+}
+
+func TestRuntimeLifecycleParsingPreservesExactSelectors(t *testing.T) {
+	root := canonicalTemp(t)
+	parsed, err := parseRuntime(root, "fixture-image", []string{
+		"ps", "-q", "-a",
+		"--filter", "label=coop.fork=perf",
+		"--filter", "label=coop.fork-owner=v1-owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"coop.fork": "perf", "coop.fork-owner": "v1-owner"}
+	if !reflect.DeepEqual(parsed.Filters, want) {
+		t.Fatalf("parsed exact label filters = %#v, want %#v", parsed.Filters, want)
+	}
+	removed, err := parseRuntime(root, "fixture-image", []string{"rm", "-f", "fixture-12", "fixture-34"})
+	if err != nil || !reflect.DeepEqual(removed.IDs, []string{"fixture-12", "fixture-34"}) {
+		t.Fatalf("parsed removal ids = %#v, %v", removed.IDs, err)
+	}
+}
+
+func TestRuntimeContainerRecordsMatchExactlyAndFailClosed(t *testing.T) {
+	root := canonicalTemp(t)
+	id, err := registerRuntimeContainer(root, []string{"coop.fork=perf", "coop.fork-owner=v1-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { unregisterRuntimeContainer(root, id) })
+
+	for _, tc := range []struct {
+		filters map[string]string
+		want    bool
+	}{
+		{map[string]string{"coop.fork": "perf"}, true},
+		{map[string]string{"coop.fork-owner": "v1-owner"}, true},
+		{map[string]string{"coop.fork": "per"}, false},
+		{map[string]string{"coop.fork-owner": "v1-other"}, false},
+	} {
+		got, err := matchingRuntimeContainers(root, tc.filters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (len(got) == 1 && got[0] == id) != tc.want {
+			t.Errorf("matchingRuntimeContainers(%v) = %v, want match %v", tc.filters, got, tc.want)
+		}
+	}
+	if err := removeRuntimeContainer(root, id); err == nil || !strings.Contains(err.Error(), "own process group") {
+		t.Fatalf("remove current fixture record = %v, want fail-closed own-group refusal", err)
+	}
+	if _, err := os.Stat(runtimeContainerPath(root, id)); err != nil {
+		t.Fatalf("refused removal deleted record: %v", err)
+	}
+
+	malformed := filepath.Join(runtimeContainerDir(root), "fixture-999999.json")
+	if err := os.WriteFile(malformed, []byte(`{"version":1,"id":"fixture-999999","pid":999999,"pgid":999999,"start_token":"bad","labels":{},"unknown":true}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := matchingRuntimeContainers(root, nil); err == nil {
+		t.Fatal("malformed runtime record was silently ignored")
 	}
 }
 

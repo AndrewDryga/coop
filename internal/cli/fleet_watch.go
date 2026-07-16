@@ -28,6 +28,7 @@ type fleetRow struct {
 	name    string
 	agent   string
 	running bool
+	cleanup bool
 	ran     bool // its loop produced log output — tells a stopped-incomplete fork from a never-started one
 	counts  taskCounts
 	active  string
@@ -38,10 +39,12 @@ type fleetRow struct {
 func gatherFleetRow(repo, name string) fleetRow {
 	ws := forkWorkspace(repo, name)
 	counts, active := queueCounts(wsTaskSource(ws))
+	running := forkRunningPid(repo, name) != 0
 	return fleetRow{
 		name:    name,
 		agent:   readForkAgent(ws),
-		running: forkRunningPid(repo, name) != 0,
+		running: running,
+		cleanup: !running && pathExists(forkPid(repo, name)),
 		ran:     forkRan(repo, name),
 		counts:  counts,
 		active:  active,
@@ -82,7 +85,7 @@ func (a *app) fleetWatch() (int, error) {
 	}
 	// No TTY to animate, or no forks to watch (a lone local loop) → the one-shot roll-up, which
 	// still reports the local queue. Keeps `coop fleet watch` pipe-safe and useful before a fleet.
-	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkNames(repo)) == 0 {
+	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkLifecycleNames(repo)) == 0 {
 		return a.fleetSnapshot(repo)
 	}
 
@@ -95,7 +98,7 @@ func (a *app) fleetWatch() (int, error) {
 	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn task-tree read
 	sawRunning := false           // seen any fork running? — so we don't auto-exit during the startup window
 	tick := func(spin int) ([]string, bool) {
-		names := forkNames(repo) // re-read so a fork added/removed mid-watch shows up
+		names := forkLifecycleNames(repo) // re-read so a fork added/removed mid-watch shows up
 		rows := make([]fleetRow, len(names))
 		next := make(map[string]fleetRow, len(names)) // rebuilt each tick so a removed fork's row drops out
 		running := 0
@@ -134,6 +137,9 @@ func fleetSettled(rows []fleetRow) bool {
 	}
 	for _, r := range rows {
 		if r.running {
+			return false
+		}
+		if r.cleanup {
 			return false
 		}
 		if r.counts.total() == 0 && !r.ran {
@@ -205,13 +211,15 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	allDone := total > 0 && r.counts.Done == total // "done" = every task in done/, not just "no todo/ left"
 	// stopped: the loop exited (not running) with tasks unfinished — it ran and quit at N/M. Distinct
 	// from a fork merely idle and never started (no log), which recedes below.
-	stopped := !r.running && !allDone && r.ran && total > 0
+	stopped := !r.running && !r.cleanup && !allDone && r.ran && total > 0
 	// blocked: unfinished, but nothing is actionable (no todo/ or in_progress/ task) — the remainder is
 	// all blocked/. taskTreeCounts returns active=="" for this exactly as it does for all-done, so it
 	// must NOT read as "done".
-	blocked := !allDone && !stopped && total > 0 && r.active == ""
+	blocked := !r.cleanup && !allDone && !stopped && total > 0 && r.active == ""
 	glyph := stateGlyph(r.running, r.counts.Done, total, spin)
 	switch {
+	case r.cleanup:
+		glyph = ui.Red(glyph)
 	case stopped:
 		glyph = ui.Yellow(glyph) // stopped-incomplete: a yellow mark vs a dim ‖ idle one
 	case blocked:
@@ -219,6 +227,8 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	}
 	var doing string // a terminal/non-actionable state wins; else the task it's on or will take next
 	switch {
+	case r.cleanup:
+		doing = ui.Red("cleanup")
 	case total == 0 && r.running:
 		doing = "starting" // loop is alive and still seeding its queue (the --tasks copy) — transient
 	case total == 0:
@@ -256,6 +266,8 @@ func agentBadge(agent string) string {
 		return ui.Green("x")
 	case "gemini":
 		return ui.Yellow("g")
+	case "grok":
+		return ui.Cyan("G")
 	case "":
 		return ui.Dim("?")
 	default:

@@ -62,7 +62,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 
 		// --fresh still remembers the provider before destroying the old workspace.
-		result, trace = runForkProcess(t, suite, []string{name, "--fresh", "--force"}, provider)
+		result, trace = runForkProcess(t, suite, []string{name, "--fresh", "--force", "--yes"}, provider)
 		freshID := readForkSession(ws, provider, account)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, "env-claude", "medium", freshID), "env-claude", "medium")
