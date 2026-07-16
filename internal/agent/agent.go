@@ -252,8 +252,10 @@ type Agent interface {
 	ConsultFresh() string
 	// ConsultResume is the shell body for resuming a consult by the wrapper's validated $id.
 	ConsultResume() string
-	// DelegateExec is the write-capable shell body for coop-delegate — run against
-	// $prompt and $model. The wrapper enforces commit:never and serialization around it.
+	// DelegateExec is the raw write-capable shell body for coop-delegate, using $prompt,
+	// $model, and $effort. It must be one simple command, without a pipeline or control operator,
+	// because the wrapper prefixes it with run_delegate to bound the whole provider process group.
+	// The wrapper also enforces commit:never and serialization.
 	DelegateExec() string
 	// ShellPrelude is optional helper-function shell the wrappers emit ONCE before the
 	// per-agent case (e.g. codex's output filter); "" for agents that need none.

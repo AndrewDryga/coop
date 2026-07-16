@@ -554,7 +554,8 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*
 	// env the wrapper resolves a role's target ladder/contract from — so the box needs no
 	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
-	if spec.Preset.HasDelegate() {
+	delegates := spec.Preset.Delegates()
+	if len(delegates) > 0 {
 		if p, err := writeTempFile(preset.DelegateWrapper()); err != nil {
 			ui.Info("delegate: skipped wrapper wiring: %v", err)
 		} else if err := os.Chmod(p, 0o755); err != nil {
@@ -562,7 +563,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 		} else {
 			tmpFiles = append(tmpFiles, p)
 			mounts = append(mounts, extraMount{p, preset.DelegateWrapperPath})
-			for _, role := range spec.Preset.Delegates() {
+			for _, role := range delegates {
 				key := preset.EnvKey(role.Name)
 				dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
 				if cp, err := writeTempFile(preset.RoleContract(&role)); err != nil {

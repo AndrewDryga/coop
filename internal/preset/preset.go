@@ -388,18 +388,6 @@ func promptText(dir, rel string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// HasDelegate reports whether any role is a write-capable delegate (mount coop-delegate).
-func (p *Preset) HasDelegate() bool { return p.hasMode(ModeDelegate) }
-
-func (p *Preset) hasMode(mode string) bool {
-	for _, r := range p.Roles {
-		if r.Mode == mode {
-			return true
-		}
-	}
-	return false
-}
-
 // Delegates returns the delegate roles, in name order.
 func (p *Preset) Delegates() []Role {
 	var out []Role

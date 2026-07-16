@@ -19,6 +19,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -66,30 +67,32 @@ type envTrace struct {
 }
 
 type traceRecord struct {
-	Version     int           `json:"version"`
-	Sequence    int           `json:"sequence"`
-	Source      string        `json:"source"`
-	Event       string        `json:"event"`
-	PID         int           `json:"pid"`
-	ParentPID   int           `json:"parent_pid,omitempty"`
-	Argv        []string      `json:"argv,omitempty"`
-	Cwd         string        `json:"cwd,omitempty"`
-	Run         *runCommand   `json:"run,omitempty"`
-	Environment []envTrace    `json:"environment,omitempty"`
-	ExitCode    *int          `json:"exit_code,omitempty"`
-	Signal      string        `json:"signal,omitempty"`
-	Consult     *consultTrace `json:"consult,omitempty"`
+	Version     int            `json:"version"`
+	Sequence    int            `json:"sequence"`
+	Source      string         `json:"source"`
+	Event       string         `json:"event"`
+	PID         int            `json:"pid"`
+	ParentPID   int            `json:"parent_pid,omitempty"`
+	Argv        []string       `json:"argv,omitempty"`
+	Cwd         string         `json:"cwd,omitempty"`
+	Run         *runCommand    `json:"run,omitempty"`
+	Environment []envTrace     `json:"environment,omitempty"`
+	ExitCode    *int           `json:"exit_code,omitempty"`
+	Signal      string         `json:"signal,omitempty"`
+	Consult     *consultTrace  `json:"consult,omitempty"`
+	Delegate    *delegateTrace `json:"delegate,omitempty"`
 }
 
 type scenario struct {
-	Version       int              `json:"version"`
-	Provider      string           `json:"provider"`
-	ProviderHomes []string         `json:"provider_homes,omitempty"`
-	Marker        string           `json:"marker"`
-	Output        *string          `json:"output,omitempty"`
-	Behavior      string           `json:"behavior,omitempty"`
-	ExitCode      int              `json:"exit_code"`
-	Consult       *consultScenario `json:"consult,omitempty"`
+	Version       int               `json:"version"`
+	Provider      string            `json:"provider"`
+	ProviderHomes []string          `json:"provider_homes,omitempty"`
+	Marker        string            `json:"marker"`
+	Output        *string           `json:"output,omitempty"`
+	Behavior      string            `json:"behavior,omitempty"`
+	ExitCode      int               `json:"exit_code"`
+	Consult       *consultScenario  `json:"consult,omitempty"`
+	Delegate      *delegateScenario `json:"delegate,omitempty"`
 }
 
 func main() {
@@ -97,9 +100,20 @@ func main() {
 	if err != nil {
 		fatalf("configuration: %v", err)
 	}
-	if alias := filepath.Base(os.Args[0]); alias == "timeout" {
+	alias := filepath.Base(os.Args[0])
+	if alias == "timeout" {
 		if err := serveTimeout(root, trace, scenarioPath, os.Args[1:]); err != nil {
 			exitFixtureAlias("timeout", err)
+		}
+		return
+	} else if alias == "flock" {
+		if err := serveFlock(root, trace, os.Args[1:]); err != nil {
+			exitFixtureAlias("flock", err)
+		}
+		return
+	} else if alias == "setsid" {
+		if err := serveSetsid(root, trace, os.Args[1:]); err != nil {
+			exitFixtureAlias("setsid", err)
 		}
 		return
 	} else if slices.Contains(agents.Names(), alias) {
@@ -177,7 +191,10 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		return errors.New("runtime invocation rejected")
 	}
 	if parsed.Kind == "run" {
-		if err := validateConsultMountCardinality(parsed.Run, activeScenario.Consult != nil); err != nil {
+		if err := validateWrapperMountCardinality(parsed.Run, fusion.ConsultWrapperPath, activeScenario.Consult != nil || (activeScenario.Delegate != nil && activeScenario.Delegate.Consult != nil)); err != nil {
+			return errors.New("runtime invocation rejected")
+		}
+		if err := validateWrapperMountCardinality(parsed.Run, preset.DelegateWrapperPath, activeScenario.Delegate != nil); err != nil {
 			return errors.New("runtime invocation rejected")
 		}
 	}
@@ -198,6 +215,14 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		traceRun := traceRunCommand(root, parsed.Run)
 		if err := record(root, trace, traceRecord{Source: "runtime", Event: "run", PID: os.Getpid(), Run: &traceRun}); err != nil {
 			return err
+		}
+		if activeScenario.Delegate != nil {
+			exitCode, runErr := serveDelegateRuntime(root, image, trace, scenarioPath, parsed.Run, activeScenario)
+			_ = record(root, trace, traceRecord{Source: "runtime", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode})
+			if runErr != nil {
+				return &fixtureExitError{Code: exitCode, Err: runErr}
+			}
+			return nil
 		}
 		if activeScenario.Consult != nil {
 			exitCode, runErr := serveConsultRuntime(root, image, trace, scenarioPath, parsed.Run, activeScenario)
@@ -461,6 +486,9 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 			continue
 		}
 		if provider, ok := credentialMountProvider(m.Target); ok && credentialSourceMatches(root, provider, m.Source) {
+			if !slices.Contains(providerHomes, provider) {
+				return fmt.Errorf("credential mount for %q is outside scenario provider_homes", provider)
+			}
 			if m.ReadOnly {
 				return fmt.Errorf("credential mount %q:%q must be writable", m.Source, m.Target)
 			}
@@ -471,6 +499,12 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 		if m.Target == fusion.ConsultWrapperPath {
 			if err := validateConsultWrapperMount(root, m); err != nil {
+				return err
+			}
+			continue
+		}
+		if m.Target == preset.DelegateWrapperPath {
+			if err := validateDelegateWrapperMount(root, m); err != nil {
 				return err
 			}
 			continue
@@ -501,7 +535,7 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 			return fmt.Errorf("decoy mount target %q is outside the repo", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-mcp-"):
-		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !consultPersonaTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.config/git/ignore" {
+		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.config/git/ignore" {
 			return fmt.Errorf("generated config mount target %q is outside the provider and git homes", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-githooks-"):
@@ -745,6 +779,18 @@ func readScenario(root, path string) (scenario, error) {
 		}
 		seenHomes[provider] = true
 	}
+	if s.Delegate != nil {
+		if s.Version != 3 {
+			return scenario{}, fmt.Errorf("delegate scenario version %d is unsupported", s.Version)
+		}
+		if s.Consult != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
+			return scenario{}, errors.New("delegate scenario cannot set consult or direct-provider result fields")
+		}
+		if err := validateDelegateScenario(s.Provider, seenHomes, *s.Delegate); err != nil {
+			return scenario{}, err
+		}
+		return s, nil
+	}
 	if s.Consult != nil {
 		if s.Version != 2 {
 			return scenario{}, fmt.Errorf("consult scenario version %d is unsupported", s.Version)
@@ -850,10 +896,13 @@ func traceEnvironment(env map[string]string) []envTrace {
 
 func traceableEnvValue(key string) bool {
 	switch key {
-	case "TZ", "TERM", "COOP_PRIMARY", "COOP_PEERS", "COOP_RUN_ID", "COOP_CONSULT_TIMEOUT", "FIXTURE_SAFE":
+	case "TZ", "TERM", "COOP_PRIMARY", "COOP_PEERS", "COOP_RUN_ID", "COOP_CONSULT_TIMEOUT", "COOP_DELEGATE_TIMEOUT", "COOP_DELEGATE_DEPTH", "FIXTURE_SAFE":
 		return true
 	}
 	if strings.HasPrefix(key, "COOP_CONSULT_") && strings.HasSuffix(key, "_TARGETS") {
+		return true
+	}
+	if strings.HasPrefix(key, "COOP_DELEGATE_") && strings.HasSuffix(key, "_TARGETS") {
 		return true
 	}
 	return strings.HasPrefix(key, "COOP_PEER_MODEL_") || strings.HasPrefix(key, "COOP_PEER_EFFORT_") ||

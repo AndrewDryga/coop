@@ -82,7 +82,7 @@ func TestLoadFrontier(t *testing.T) {
 	if len(p.Roles) != 3 || p.Roles[0].Name != "critic" || p.Roles[1].Name != "fast" || p.Roles[2].Name != "thinker" {
 		t.Fatalf("roles = %+v", p.Roles)
 	}
-	if len(p.ConsultRoles("claude")) == 0 || !p.HasDelegate() {
+	if len(p.ConsultRoles("claude")) == 0 || len(p.Delegates()) == 0 {
 		t.Error("frontier has a consult and a delegate role")
 	}
 	if got := p.RunnableRoleAgents("claude"); len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
@@ -317,7 +317,7 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("template lead ladder[%d] = %q, want %q", i, got, want)
 		}
 	}
-	if len(p.Roles) != 3 || len(p.ConsultRoles("claude")) == 0 || !p.HasDelegate() {
+	if len(p.Roles) != 3 || len(p.ConsultRoles("claude")) == 0 || len(p.Delegates()) == 0 {
 		t.Errorf("template should carry all three role modes: %+v", p.Roles)
 	}
 	wantRoles := map[string]struct{ agent, model, effort string }{

@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go]
+sources: [Makefile, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-07-15
 ---
 
@@ -19,6 +19,14 @@ The same target also crosses the full consult boundary: external CLI dispatch, `
 generated wrapper/persona mounts, scoped homes, native provider argv/output, continuation state,
 fallback, and telemetry. It covers every provider arm and all 12 ordered distinct fallback pairs;
 see [[provider-consult-e2e]] for the state and live-ring contracts.
+
+The delegate matrix crosses the corresponding write-capable boundary for all four provider arms
+and all 12 ordered distinct fallback pairs. It verifies the exact generated wrapper and one invoked
+role contract, scoped credential homes, native write-capable argv, depth, fallback, serialization,
+process cleanup, and preserved repository evidence. Safety cases cover tracked, staged, ignored,
+ref, commit, and commit-reset mutations, dirty baselines, timeout, recursion, unmounted targets, and
+a delegate calling its configured read-only consult. The single-role scenario shape is intentional;
+preset composition tests own interactions among multiple roles.
 
 The fixture is deliberately not a container emulator. It accepts only Coop's tested runtime verbs
 and flags, validates every host bind/env-file/workdir before invoking its own explicit provider mode,
@@ -38,6 +46,7 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-15 - added the mounted-wrapper delegate matrix and write-safety contract
 - 2026-07-15 - added the mounted-wrapper consult matrix and cross-linked its focused contract
 - 2026-07-15 - expanded to direct target/account/model/effort, failure, exit, and cancel behavior
 - 2026-07-15 - created with the strict all-provider direct-process harness

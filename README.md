@@ -745,13 +745,19 @@ safety/routing rules — and you edit or delete them freely.
 
 `coop-delegate` is the write-capable counterpart of the read-only `coop-consult`: the
 delegate may edit the shared worktree, runs are serialized, and it must **not** commit —
-the wrapper compares `HEAD` before and after and fails loud if the delegate committed.
+the wrapper verifies `HEAD`, refs, and reflogs before and after each attempt and fails loud
+without discarding the evidence if history changed. Fallback is allowed only after a proven
+rate limit from a clean worktree whose tracked, untracked, staged, and ignored state stayed
+unchanged. Prompt and output are bounded, each attempt has a timeout, and the provider process
+group is cleaned up before the serialization lock is released. The standard image supplies
+`flock`, `setsid`, and `timeout`; a custom image missing them fails closed.
 Write-capable delegation is one level deep: the child receives `COOP_DELEGATE_DEPTH=1`,
 and a nested `coop-delegate` fails before input, lock, or provider launch. A delegate may
 still call a configured read-only `coop-consult` for advice.
 The lead then reviews `git diff`, runs the gate, fixes or reverts what falls short, and
-makes the commit itself. That keeps one reviewer — your strongest model — accountable
-for everything that lands, while the cheap tokens do the typing.
+makes the commit itself. On refusal, inspect the commands named in the diagnostic: usually
+`git status --short`, `git diff`, and `git diff --cached`, plus `git log` and `git reflog`
+for history violations.
 
 ### Instructions, one source of truth
 

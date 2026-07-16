@@ -58,6 +58,7 @@ type directProcessSuite struct {
 	scenarioPath string
 	providers    []string
 	allCredKeys  []string
+	repoHead     string
 }
 
 func TestProviderScriptedDirectMatrix(t *testing.T) {
@@ -193,7 +194,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	fixtureBin := filepath.Join(layout.Bin, "providerfixture")
 	buildProcessBinary(t, moduleRoot, coopBin, ".")
 	buildProcessBinary(t, moduleRoot, fixtureBin, "./internal/cli/testdata/providerfixture")
-	for _, alias := range append(append([]string(nil), providers...), "timeout") {
+	for _, alias := range append(append([]string(nil), providers...), "timeout", "flock", "setsid") {
 		if err := os.Link(fixtureBin, filepath.Join(layout.Bin, alias)); err != nil {
 			t.Fatalf("create fixed provider fixture alias %s: %v", alias, err)
 		}
@@ -265,7 +266,13 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 		t.Fatal(err)
 	}
 	initProcessRepo(t, gitBin, layout.Repo, env)
-	return &directProcessSuite{layout: layout, coopBin: coopBin, env: env, scenarioPath: scenarioPath, providers: providers, allCredKeys: allCredKeys}
+	head := exec.Command(gitBin, "rev-parse", "HEAD")
+	head.Dir, head.Env = layout.Repo, env
+	headOut, err := head.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &directProcessSuite{layout: layout, coopBin: coopBin, env: env, scenarioPath: scenarioPath, providers: providers, allCredKeys: allCredKeys, repoHead: strings.TrimSpace(string(headOut))}
 }
 
 func (s *directProcessSuite) run(t *testing.T, args []string, scenario any) (procharness.Result, []*processTrace) {

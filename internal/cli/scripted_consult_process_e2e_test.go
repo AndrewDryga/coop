@@ -91,15 +91,15 @@ func TestProviderScriptedConsultDirectedFallbackPairs(t *testing.T) {
 			pairCount++
 			first, second := first, second
 			t.Run(first+"_to_"+second, func(t *testing.T) {
-				lead := consultPairLead(providers, first, second)
+				lead := providerPairLead(providers, first, second)
 				presetName := "pair-" + first + "-" + second
 				persona := suite.writeConsultPairPreset(t, presetName, lead, first, second)
 				baseline, err := liveprovider.SnapshotRepository(suite.layout)
 				if err != nil {
 					t.Fatal(err)
 				}
-				firstTarget := consultPairTarget(first)
-				secondTarget := consultPairTarget(second)
+				firstTarget := providerPairTarget(first)
+				secondTarget := providerPairTarget(second)
 				freshQuestion := "pair fresh question " + first + " " + second
 				continueQuestion := "pair follow-up " + first + " " + second
 				exhaustQuestion := "pair exhaustion " + first + " " + second
@@ -342,14 +342,14 @@ func TestProviderScriptedConsultConstructedPromptBound(t *testing.T) {
 
 func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 	suite := newDirectProcessSuite(t)
-	lead := consultPairLead(suite.providers, "codex", "gemini")
+	lead := providerPairLead(suite.providers, "codex", "gemini")
 	presetName := "consult-telemetry"
 	persona := suite.writeConsultPairPreset(t, presetName, lead, "codex", "gemini")
 	loopConfig := filepath.Join(suite.layout.Repo, ".agent", "loop.yaml")
 	if err := os.WriteFile(loopConfig, []byte("work:\n  command: [fixture-consult]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	codexTarget := consultPairTarget("codex")
+	codexTarget := providerPairTarget("codex")
 
 	cases := []struct {
 		name    string
@@ -516,7 +516,7 @@ func TestProviderScriptedConsultScopeFailures(t *testing.T) {
 		disableProcessCredential(t, suite, "gemini")
 		name := "missing-fallback"
 		persona := suite.writeConsultPairPreset(t, name, "claude", "codex", "gemini")
-		target := consultPairTarget("codex")
+		target := providerPairTarget("codex")
 		question := "available rung question"
 		scenario := consultProcessScenario("claude", suite.providers,
 			[]consultCallSpec{{Target: "advisor", Mode: "fresh", Prompt: question, ExitCode: 0}},
@@ -677,13 +677,13 @@ func lowerHexRunID(value string) bool {
 	return true
 }
 
-func consultPairLead(providers []string, first, second string) string {
+func providerPairLead(providers []string, first, second string) string {
 	for _, provider := range providers {
 		if provider != first && provider != second {
 			return provider
 		}
 	}
-	panic("directed consult pair has no distinct lead")
+	panic("provider pair has no distinct lead")
 }
 
 type consultTurn struct {
@@ -830,7 +830,7 @@ func assertConsultStateSecure(t *testing.T, suite *directProcessSuite, target st
 	}
 }
 
-func consultPairTarget(provider string) agents.Target {
+func providerPairTarget(provider string) agents.Target {
 	model := "fixture-" + provider + "-model"
 	raw := provider + ":" + model
 	if directProviderContracts[provider].supportsEffort {
@@ -850,7 +850,7 @@ func (s *directProcessSuite) writeConsultPairPreset(t *testing.T, name, lead, fi
 	if err := os.MkdirAll(roles, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	firstTarget, secondTarget := consultPairTarget(first), consultPairTarget(second)
+	firstTarget, secondTarget := providerPairTarget(first), providerPairTarget(second)
 	body := fmt.Sprintf("lead: {agent: %s}\nroles:\n  advisor:\n    mode: consult\n    agent: [%s, %s]\n    prompt: roles/advisor.md\n", lead, firstTarget.String(), secondTarget.String())
 	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)

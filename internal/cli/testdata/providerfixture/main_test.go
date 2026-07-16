@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -500,6 +501,110 @@ func TestValidateConsultWrapperMountRequiresExactPrivateGeneratedFile(t *testing
 	}
 	if err := validateConsultWrapperMount(root, m); err == nil {
 		t.Fatal("hardlinked consult wrapper accepted")
+	}
+}
+
+func TestReadDelegateScenarioAcceptsOnlyClosedV3Plans(t *testing.T) {
+	root := canonicalTemp(t)
+	path := filepath.Join(root, "scenario.json")
+	write := func(body string) error {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := readScenario(root, path)
+		return err
+	}
+	valid := `{"version":3,"provider":"claude","provider_homes":["claude","codex"],"delegate":{"contract":"closed contract","calls":[{"role":"worker","prompt":"question","exit_code":0}],"steps":[{"provider":"codex","result":"edit","prompt":"closed contract\n\n---\n\nYour task:\n\nquestion","model":"fixture-model","effort":"high"}]}}`
+	if err := write(valid); err != nil {
+		t.Fatalf("valid delegate scenario rejected: %v", err)
+	}
+	invalid := []string{
+		strings.Replace(valid, `"version":3`, `"version":2`, 1),
+		strings.Replace(valid, `"result":"edit"`, `"result":"command"`, 1),
+		strings.Replace(valid, `"provider_homes":["claude","codex"]`, `"provider_homes":["claude"]`, 1),
+		strings.Replace(valid, `"role":"worker"`, `"role":"../worker"`, 1),
+		strings.Replace(valid, `"delegate":{`, `"marker":"direct","delegate":{`, 1),
+		strings.Replace(valid, `"model":"fixture-model"`, `"model":"fixture-model","command":"sh -c id"`, 1),
+		strings.Replace(valid, `"result":"edit"`, `"result":"consult"`, 1),
+		strings.Replace(valid, `"steps":[`, `"consult":{"steps":[]},"steps":[`, 1),
+	}
+	for _, body := range invalid {
+		if err := write(body); err == nil {
+			t.Errorf("unsafe/open delegate scenario accepted:\n%s", body)
+		}
+	}
+}
+
+func TestParseDelegateInvocationPinsEveryAdapterGrammar(t *testing.T) {
+	cases := []struct {
+		provider string
+		args     []string
+		want     delegateInvocation
+	}{
+		{"claude", []string{"-p", "--dangerously-skip-permissions", "--model", "opus", "--effort", "high", "question"}, delegateInvocation{Prompt: "question", Model: "opus", Effort: "high"}},
+		{"codex", []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "codex-model", "-c", "model_reasoning_effort=high", "question"}, delegateInvocation{Prompt: "question", Model: "codex-model", Effort: "high"}},
+		{"gemini", []string{"--yolo", "--model", "flash", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "flash"}},
+		{"grok", []string{"--permission-mode", "bypassPermissions", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "grok-model", Effort: "xhigh"}},
+	}
+	for _, tc := range cases {
+		got, err := parseDelegateInvocation(tc.provider, tc.args)
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("parseDelegateInvocation(%s) = (%#v, %v), want %#v", tc.provider, got, err, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		provider string
+		args     []string
+	}{
+		{"claude", []string{"-p", "--model", "opus", "--dangerously-skip-permissions", "question"}},
+		{"codex", []string{"exec", "--model", "codex-model", "--dangerously-bypass-approvals-and-sandbox", "question"}},
+		{"gemini", []string{"--yolo", "-p", "question", "--model", "flash"}},
+		{"grok", []string{"--permission-mode", "plan", "-p", "question"}},
+	} {
+		if _, err := parseDelegateInvocation(tc.provider, tc.args); err == nil {
+			t.Errorf("parseDelegateInvocation(%s, %q) accepted reordered/read-only argv", tc.provider, tc.args)
+		}
+	}
+}
+
+func TestValidateDelegateWrapperMountRequiresExactPrivateGeneratedFile(t *testing.T) {
+	root := canonicalTemp(t)
+	tmp := filepath.Join(root, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmp, "coop-delegate-wrapper")
+	if err := os.WriteFile(path, []byte(preset.DelegateWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := mount{Source: path, Target: preset.DelegateWrapperPath, ReadOnly: true}
+	if err := validateDelegateWrapperMount(root, m); err != nil {
+		t.Fatalf("exact delegate wrapper rejected: %v", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDelegateWrapperMount(root, m); err == nil {
+		t.Fatal("non-executable-for-all delegate wrapper mode accepted")
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDelegateWrapperMount(root, m); err == nil {
+		t.Fatal("wrong delegate wrapper bytes accepted")
+	}
+	if err := os.WriteFile(path, []byte(preset.DelegateWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, filepath.Join(tmp, "delegate-second-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDelegateWrapperMount(root, m); err == nil {
+		t.Fatal("hardlinked delegate wrapper accepted")
 	}
 }
 

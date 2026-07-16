@@ -66,12 +66,16 @@ type consultCursor struct {
 }
 
 func validateConsultWrapperMount(root string, m mount) error {
-	if !m.ReadOnly || m.Named || m.Target != fusion.ConsultWrapperPath {
-		return errors.New("consult wrapper must be an exact read-only bind mount")
+	return validateGeneratedWrapperMount(root, m, fusion.ConsultWrapperPath, fusion.ConsultWrapper(), "consult")
+}
+
+func validateGeneratedWrapperMount(root string, m mount, target, want, label string) error {
+	if !m.ReadOnly || m.Named || m.Target != target {
+		return fmt.Errorf("%s wrapper must be an exact read-only bind mount", label)
 	}
 	f, err := procharness.OpenRegularFile(root, m.Source, os.O_RDONLY)
 	if err != nil {
-		return fmt.Errorf("consult wrapper source: %w", err)
+		return fmt.Errorf("%s wrapper source: %w", label, err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
@@ -79,39 +83,39 @@ func validateConsultWrapperMount(root string, m mount) error {
 		return err
 	}
 	if info.Mode().Perm() != 0o755 {
-		return fmt.Errorf("consult wrapper mode is %04o, want 0755", info.Mode().Perm())
+		return fmt.Errorf("%s wrapper mode is %04o, want 0755", label, info.Mode().Perm())
 	}
-	want := fusion.ConsultWrapper()
 	data, err := io.ReadAll(io.LimitReader(f, int64(len(want))+1))
 	if err != nil {
 		return err
 	}
 	if string(data) != want {
-		return errors.New("consult wrapper bytes do not match the generated wrapper")
+		return fmt.Errorf("%s wrapper bytes do not match the generated wrapper", label)
 	}
 	return nil
 }
 
-func validateConsultMountCardinality(run runCommand, consult bool) error {
+func validateWrapperMountCardinality(run runCommand, target string, wantMount bool) error {
 	count := 0
 	for _, m := range run.Mounts {
-		if m.Target == fusion.ConsultWrapperPath {
+		if m.Target == target {
 			count++
 		}
 	}
 	want := 0
-	if consult {
+	if wantMount {
 		want = 1
 	}
 	if count != want {
-		return fmt.Errorf("run has %d consult wrapper mounts, want %d", count, want)
+		return fmt.Errorf("run has %d wrapper mounts at %s, want %d", count, target, want)
 	}
 	return nil
 }
 
-func consultPersonaTarget(target string) bool {
+func peerContractTarget(target string) bool {
 	dir, base := filepath.Split(filepath.Clean(target))
-	if strings.TrimRight(dir, string(filepath.Separator)) != "/home/node/.coop/consult" || !strings.HasSuffix(base, ".md") {
+	contractDir := strings.TrimRight(dir, string(filepath.Separator))
+	if (contractDir != "/home/node/.coop/consult" && contractDir != "/home/node/.coop/delegate") || !strings.HasSuffix(base, ".md") {
 		return false
 	}
 	_, err := providerToken(strings.TrimSuffix(base, ".md"))
@@ -313,9 +317,16 @@ func serveConsultPeer(root, trace, scenarioPath, provider string, args []string)
 		return err
 	}
 	if s.Consult == nil {
-		return errors.New("provider alias requires a consult scenario")
+		if s.Delegate != nil {
+			return serveDelegatePeer(root, trace, provider, args, *s.Delegate)
+		}
+		return errors.New("provider alias requires a consult or delegate scenario")
 	}
-	stepIndex, step, invocation, err := consumeConsultStep(root, provider, args, s.Consult.Steps)
+	return serveConsultPeerPlan(root, trace, provider, args, s.Consult.Steps)
+}
+
+func serveConsultPeerPlan(root, trace, provider string, args []string, steps []consultStep) error {
+	stepIndex, step, invocation, err := consumeConsultStep(root, provider, args, steps)
 	if err != nil {
 		return err
 	}
@@ -695,7 +706,11 @@ func validateConsultScenario(lead string, homes map[string]bool, consult consult
 			return fmt.Errorf("consult call %d exit code %d is outside 0..255", i, call.ExitCode)
 		}
 	}
-	for i, step := range consult.Steps {
+	return validateConsultSteps(homes, consult.Steps)
+}
+
+func validateConsultSteps(homes map[string]bool, steps []consultStep) error {
+	for i, step := range steps {
 		if !slices.Contains(agents.Names(), step.Provider) {
 			return fmt.Errorf("consult step %d provider %q is not registered", i, step.Provider)
 		}

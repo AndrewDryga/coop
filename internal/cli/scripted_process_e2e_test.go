@@ -22,18 +22,19 @@ import (
 )
 
 type processTrace struct {
-	Version     int                  `json:"version"`
-	Sequence    int                  `json:"sequence"`
-	Source      string               `json:"source"`
-	Event       string               `json:"event"`
-	PID         int                  `json:"pid"`
-	Argv        []string             `json:"argv"`
-	Cwd         string               `json:"cwd"`
-	Run         *processRun          `json:"run"`
-	Environment []processEnv         `json:"environment"`
-	ExitCode    *int                 `json:"exit_code"`
-	Signal      string               `json:"signal"`
-	Consult     *processConsultTrace `json:"consult"`
+	Version     int                   `json:"version"`
+	Sequence    int                   `json:"sequence"`
+	Source      string                `json:"source"`
+	Event       string                `json:"event"`
+	PID         int                   `json:"pid"`
+	Argv        []string              `json:"argv"`
+	Cwd         string                `json:"cwd"`
+	Run         *processRun           `json:"run"`
+	Environment []processEnv          `json:"environment"`
+	ExitCode    *int                  `json:"exit_code"`
+	Signal      string                `json:"signal"`
+	Consult     *processConsultTrace  `json:"consult"`
+	Delegate    *processDelegateTrace `json:"delegate"`
 }
 
 type processConsultTrace struct {
@@ -45,6 +46,15 @@ type processConsultTrace struct {
 	Effort      string `json:"effort"`
 	SessionHash string `json:"session_hash"`
 	PromptHash  string `json:"prompt_hash"`
+}
+
+type processDelegateTrace struct {
+	Step       int    `json:"step"`
+	Provider   string `json:"provider"`
+	Result     string `json:"result"`
+	Model      string `json:"model"`
+	Effort     string `json:"effort"`
+	PromptHash string `json:"prompt_hash"`
 }
 
 type processRun struct {
@@ -248,7 +258,7 @@ func initProcessRepo(t *testing.T, gitBin, repo string, env []string) {
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("fixture\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/runs/\n.agent/tasks/\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/presets/\n.agent/runs/\n.agent/tasks/\n.delegate-ignored\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("add", "README.md", ".gitignore")

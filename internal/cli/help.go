@@ -519,8 +519,10 @@ var commandHelp = map[string]string{
   Native roles run inside the lead's session, so
   under a codex/gemini/grok lead they degrade to exactly such a consult (same model + persona),
   coop-consult <role> instead of @coop-<role>.
-  A delegate may edit the worktree but must not commit — coop-delegate fails loud if HEAD
-  moved — and the lead owns the diff review, the gate, and the commit. Write-capable
+  A delegate may edit the worktree but must not commit. coop-delegate verifies HEAD, refs,
+  reflogs, and the worktree before fallback; bounds prompt, output, and runtime; and fails
+  closed while preserving mutation evidence. The lead owns the diff review, gate, and commit.
+  Write-capable
   delegation is one level deep: a nested coop-delegate fails before lock/provider launch;
   configured read-only coop-consult remains available. Model ids: coop models.
   Scaffold one: coop presets init.
