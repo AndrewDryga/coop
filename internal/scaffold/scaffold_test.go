@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"encoding/json"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,6 +11,30 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 )
+
+func captureScaffoldStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	log, err := os.CreateTemp(t.TempDir(), "stderr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = log
+	defer func() {
+		os.Stderr = old
+		_ = log.Close()
+	}()
+	runErr := fn()
+	os.Stderr = old
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data), runErr
+}
 
 // The scaffolded asdf Dockerfile pins the agent npm packages in one ARG (it's a static embed,
 // unlike the generated base image). Guard that the ARG default stays EXACTLY agents.Packages()
@@ -136,9 +159,14 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 // TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
 // .claude/, rules), a project.yaml (the root's alone), nor the retired BACKLOG.md.
 func TestInitSubproject(t *testing.T) {
-	dir := t.TempDir()
-	if err := InitSubproject(dir); err != nil {
+	root := t.TempDir()
+	dir := filepath.Join(root, "member")
+	logged, err := captureScaffoldStderr(t, func() error { return InitSubproject(dir) })
+	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "wrote member/.agent/tasks/README.md"; !strings.Contains(logged, want) {
+		t.Errorf("member scaffold log = %q, want %q", logged, want)
 	}
 	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/tasks/README.md"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
@@ -185,8 +213,14 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	repo := t.TempDir()
-	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	logged, err := captureScaffoldStderr(t, func() error {
+		return Init(repo, "", nil, []string{"claude", "codex", "gemini"})
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "wrote .agent/tasks/README.md"; !strings.Contains(logged, want) {
+		t.Errorf("single-repo scaffold log = %q, want %q", logged, want)
 	}
 
 	// Core files exist with content.
@@ -530,21 +564,9 @@ func TestInitGitHooks(t *testing.T) {
 	}
 	captureInit := func(dir string) (string, error) {
 		t.Helper()
-		oldStderr := os.Stderr
-		readLog, writeLog, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		os.Stderr = writeLog
-		initErr := Init(dir, "", nil, []string{"claude", "codex", "gemini"})
-		_ = writeLog.Close()
-		os.Stderr = oldStderr
-		logged, err := io.ReadAll(readLog)
-		_ = readLog.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(logged), initErr
+		return captureScaffoldStderr(t, func() error {
+			return Init(dir, "", nil, []string{"claude", "codex", "gemini"})
+		})
 	}
 
 	// A fresh repo gets core.hooksPath pointed at the tracked, executable hook.
@@ -699,14 +721,9 @@ func TestInitIdempotent(t *testing.T) {
 	// Capture the re-run's log. An unchanged symlink must read as "kept existing", not the action
 	// verb "linked" (which looks like a rewrite on every subsequent init); and a kept skill must
 	// carry the same leading slash the added branch prints, so the wording can't flip run-to-run.
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	err := Init(repo, "", nil, []string{"claude", "codex", "gemini"})
-	_ = w.Close()
-	os.Stderr = old
-	logged, _ := io.ReadAll(r)
-	out := string(logged)
+	out, err := captureScaffoldStderr(t, func() error {
+		return Init(repo, "", nil, []string{"claude", "codex", "gemini"})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,8 @@ func InitSubproject(dir string) error {
 	if err := mkdirs(dirs...); err != nil {
 		return err
 	}
-	s := &scaffolder{repo: dir}
+	// Member progress is shown from the monorepo root, so repeated queue paths stay distinct.
+	s := &scaffolder{repo: filepath.Dir(dir)}
 	return s.writeIfAbsent(filepath.Join(dir, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644)
 }
 

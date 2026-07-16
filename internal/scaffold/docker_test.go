@@ -1,7 +1,6 @@
 package scaffold
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -53,14 +52,11 @@ func TestDetectDocker(t *testing.T) {
 
 func TestSuggestDocker(t *testing.T) {
 	capture := func(repo string) string {
-		old := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stderr = w
-		SuggestDocker(repo)
-		_ = w.Close()
-		os.Stderr = old
-		out, _ := io.ReadAll(r)
-		return string(out)
+		out, _ := captureScaffoldStderr(t, func() error {
+			SuggestDocker(repo)
+			return nil
+		})
+		return out
 	}
 
 	// A Dockerized repo with no Dockerfile.agent → a suggestion naming the agent layer + services.
