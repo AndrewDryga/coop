@@ -160,8 +160,16 @@ func (grokAgent) LiveCredentials() LiveCredentialSpec {
 }
 
 type grokAccessCredential struct {
-	Key       string `json:"key"`
-	ExpiresAt string `json:"expires_at"`
+	Key           string `json:"key"`
+	ExpiresAt     string `json:"expires_at"`
+	AuthMode      string `json:"auth_mode"`
+	OIDCIssuer    string `json:"oidc_issuer"`
+	OIDCClientID  string `json:"oidc_client_id"`
+	PrincipalID   string `json:"principal_id"`
+	PrincipalType string `json:"principal_type"`
+	UserID        string `json:"user_id"`
+	TeamID        string `json:"team_id"`
+	CreateTime    string `json:"create_time"`
 }
 
 func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, error) {
@@ -178,10 +186,15 @@ func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, e
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return nil, fmt.Errorf("grok credential contains a non-object entry")
 		}
-		if entry.Key == "" {
+		if entry.Key == "" || entry.AuthMode == "" || entry.OIDCIssuer == "" ||
+			entry.OIDCClientID == "" || entry.PrincipalID == "" || entry.PrincipalType == "" ||
+			entry.UserID == "" || entry.TeamID == "" {
 			continue
 		}
 		if _, err := time.Parse(time.RFC3339Nano, entry.ExpiresAt); err != nil {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339Nano, entry.CreateTime); err != nil {
 			continue
 		}
 		projected[key] = entry
@@ -222,7 +235,7 @@ func grokCredentialPortability(profileDir string, deadline time.Time) Credential
 	}
 	for _, credential := range credentials {
 		expiresAt, err := time.Parse(time.RFC3339Nano, credential.ExpiresAt)
-		if err == nil && credential.Key != "" && expiresAt.After(deadline) {
+		if err == nil && expiresAt.After(deadline) {
 			return CredentialPortable
 		}
 	}

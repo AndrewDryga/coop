@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -592,8 +593,8 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 		},
 		{
 			provider: "grok",
-			input:    `{"issuer::one":{"key":"access-one","expires_at":"2999-01-01T00:00:00Z","refresh_token":"REFRESH_CANARY","profile":{"deep":"DEEP_CANARY"}},"issuer::two":{"key":"access-two","expires_at":"2999-02-01T00:00:00Z","TOP_UNKNOWN_CANARY":"drop"},"incomplete":{"key":"drop"}}`,
-			want:     `{"issuer::one":{"key":"access-one","expires_at":"2999-01-01T00:00:00Z"},"issuer::two":{"key":"access-two","expires_at":"2999-02-01T00:00:00Z"}}` + "\n",
+			input:    `{"issuer::one":{"key":"access-one","expires_at":"2999-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer-one","oidc_client_id":"client-one","principal_id":"principal-one","principal_type":"user","user_id":"user-one","team_id":"team-one","create_time":"2026-07-16T01:00:00Z","refresh_token":"REFRESH_CANARY","email":"PRIVATE_CANARY","profile":{"deep":"DEEP_CANARY"}},"issuer::two":{"key":"access-two","expires_at":"2999-02-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer-two","oidc_client_id":"client-two","principal_id":"principal-two","principal_type":"user","user_id":"user-two","team_id":"team-two","create_time":"2026-07-16T02:00:00Z","coding_data_retention_opt_out":true,"TOP_UNKNOWN_CANARY":"drop"},"incomplete":{"key":"drop"}}`,
+			want:     `{"issuer::one":{"key":"access-one","expires_at":"2999-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer-one","oidc_client_id":"client-one","principal_id":"principal-one","principal_type":"user","user_id":"user-one","team_id":"team-one","create_time":"2026-07-16T01:00:00Z"},"issuer::two":{"key":"access-two","expires_at":"2999-02-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer-two","oidc_client_id":"client-two","principal_id":"principal-two","principal_type":"user","user_id":"user-two","team_id":"team-two","create_time":"2026-07-16T02:00:00Z"}}` + "\n",
 		},
 	}
 	for _, tt := range tests {
@@ -606,7 +607,7 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 			if string(got) != tt.want {
 				t.Fatalf("projected credential = %s, want %s", got, tt.want)
 			}
-			for _, canary := range []string{"REFRESH_CANARY", "TOP_UNKNOWN_CANARY", "NESTED_CANARY", "DEEP_CANARY", "INACTIVE_CANARY"} {
+			for _, canary := range []string{"REFRESH_CANARY", "TOP_UNKNOWN_CANARY", "NESTED_CANARY", "DEEP_CANARY", "INACTIVE_CANARY", "PRIVATE_CANARY"} {
 				if strings.Contains(string(got), canary) {
 					t.Fatalf("projected credential retained unknown authority %s: %s", canary, got)
 				}
@@ -647,8 +648,45 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 		}
 	}
 	grok, _ := Get("grok")
-	if got, err := mustLiveCredentials(t, grok).Artifacts[0].Project([]byte(`{"rootRefresh":"ROOT_CANARY","issuer::id":{"key":"access","expires_at":"2999-01-01T00:00:00Z"}}`)); err == nil || got != nil {
+	grokProject := mustLiveCredentials(t, grok).Artifacts[0].Project
+	if got, err := grokProject([]byte(`{"rootRefresh":"ROOT_CANARY","issuer::id":{"key":"access","expires_at":"2999-01-01T00:00:00Z"}}`)); err == nil || got != nil {
 		t.Errorf("Grok scalar root projection = %q, %v; want a fail-closed error", got, err)
+	}
+	validGrokEntry := map[string]string{
+		"key": "access", "expires_at": "2999-01-01T00:00:00Z", "auth_mode": "oauth",
+		"oidc_issuer": "issuer", "oidc_client_id": "client", "principal_id": "principal",
+		"principal_type": "user", "user_id": "user", "team_id": "team",
+		"create_time": "2026-07-16T01:00:00Z",
+	}
+	for _, missing := range []string{
+		"key", "expires_at", "auth_mode", "oidc_issuer", "oidc_client_id", "principal_id",
+		"principal_type", "user_id", "team_id", "create_time",
+	} {
+		t.Run("grok missing "+missing, func(t *testing.T) {
+			entry := make(map[string]string, len(validGrokEntry)-1)
+			for key, value := range validGrokEntry {
+				if key != missing {
+					entry[key] = value
+				}
+			}
+			input, err := json.Marshal(map[string]map[string]string{"issuer::id": entry})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := grokProject(input); err == nil || got != nil {
+				t.Fatalf("projection = %q, %v; want fail closed", got, err)
+			}
+		})
+	}
+	for name, input := range map[string]string{
+		"malformed expiry":      `{"issuer::id":{"key":"access","expires_at":"not-a-time","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`,
+		"malformed create time": `{"issuer::id":{"key":"access","expires_at":"2999-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"not-a-time"}}`,
+	} {
+		t.Run("grok "+name, func(t *testing.T) {
+			if got, err := grokProject([]byte(input)); err == nil || got != nil {
+				t.Fatalf("projection = %q, %v; want fail closed", got, err)
+			}
+		})
 	}
 
 	gemini, _ := Get("gemini")
@@ -730,12 +768,12 @@ func TestPortableCredentialSafetyRequiresValidityBeyondDeadline(t *testing.T) {
 	grokLive := mustLiveCredentials(t, grok)
 	grokDir := filepath.Join(root, "grok")
 	mustWrite(t, filepath.Join(grokDir, "auth.json"), fmt.Sprintf(
-		`{"issuer::id":{"key":"access","expires_at":%q}}`, future.Format(time.RFC3339Nano)))
+		`{"issuer::id":{"key":"access","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, future.Format(time.RFC3339Nano)))
 	if got := grokLive.Portability(grokDir, deadline); got != CredentialPortable {
 		t.Fatal("unexpired Grok access token was not portable")
 	}
 	mustWrite(t, filepath.Join(grokDir, "auth.json"), fmt.Sprintf(
-		`{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":%q}}`, past.Format(time.RFC3339Nano)))
+		`{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, past.Format(time.RFC3339Nano)))
 	if got := grokLive.Portability(grokDir, deadline); got != CredentialRefreshRequired {
 		t.Fatal("expired Grok refresh credential was treated as safe to copy")
 	}

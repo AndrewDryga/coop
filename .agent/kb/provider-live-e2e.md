@@ -2,8 +2,8 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with one isolated read-only marker request and stable pass/skip/fail evidence
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-07-15
+sources: [Makefile, internal/agent/agent.go, internal/agent/grok.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+updated: 2026-07-16
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -18,7 +18,9 @@ The parent reads resolved Coop config only to select credential inputs and the h
 capability. `internal/testutil/liveprovider` writes one selected account's adapter-declared auth
 artifacts into new `0600` single-link files. Claude retains only a scoped, unexpired inference
 access token; Codex retains exactly one API-key or ChatGPT access-token branch and represents the
-required refresh field as an empty string; Grok retains only complete access-key/expiry entries.
+required refresh field as an empty string. Grok retains an access key, expiry, and the current CLI's
+required auth-mode/OIDC/principal/user/team/create-time routing fields; it drops refresh authority
+and user-facing profile metadata. A key/expiry-only Grok record parses but is treated as logged out.
 Refresh authority never enters staging. Gemini's host-bound keychain is fingerprinted but not
 copied, and its settings projection contains only `security.auth.selectedType`. A Gemini API-key
 selection grants only `GEMINI_API_KEY`; Vertex express mode grants only `GOOGLE_API_KEY`. The helper
@@ -89,6 +91,7 @@ the selected env-backed API-key mode. The no-quota version probe still runs for 
 skips.
 
 ## Changelog
+- 2026-07-16 - retained Grok's required non-refresh routing record after live access-only compatibility proved the two-field projection unauthenticated
 - 2026-07-15 - made timeout credential revocation use a parent-known tombstone with retry and persistent-failure reporting
 - 2026-07-15 - bound records to the harness cleanup identity, preserved process control across ACP self-reload, and made admission/quiescence proof bounded and fail-closed
 - 2026-07-15 - gated tagged live processes behind authenticated control, stable PGID records, credential revocation, and process-first cleanup

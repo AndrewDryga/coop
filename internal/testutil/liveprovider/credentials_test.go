@@ -29,7 +29,7 @@ func TestPrepareCopiesOnlyAdapterCredentialArtifacts(t *testing.T) {
 		"gemini/profiles/default/gemini-credentials.json": `{"oauth":"gemini-secret"}`,
 		"gemini/profiles/default/google_accounts.json":    `{"active":"user"}`,
 		"gemini/profiles/default/settings.json":           `{"security":{"auth":{"selectedType":"gemini-api-key","hidden":"drop"},"other":"drop"},"hooks":{"before":"drop"}}`,
-		"grok/profiles/default/auth.json":                 `{"issuer::id":{"key":"grok-secret","refresh_token":"REFRESH_CANARY","expires_at":"2999-01-01T00:00:00Z"}}`,
+		"grok/profiles/default/auth.json":                 `{"issuer::id":{"key":"grok-secret","refresh_token":"REFRESH_CANARY","expires_at":"2999-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`,
 	}
 	for name, content := range files {
 		writeSource(t, filepath.Join(source, name), content, 0o600)
