@@ -722,7 +722,9 @@ one `(global)`. `coop presets init` scaffolds into the repo; author a global pre
 
 coop generates the lead's routing contract from the YAML — each role, when to use it,
 and its role-addressed invocation (`@coop-thinker`, `coop-consult critic --fresh "…"`, or a
-`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. A **native** role
+`coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. Required routing files,
+wrappers, and role prompts are assembled as one contract: if any cannot be created, coop exits
+before starting the provider instead of silently dropping a role. A **native** role
 generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
 `subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A **consult**
@@ -1433,7 +1435,7 @@ turn them off.
 | `COOP_PIDS` | `4096` | box pids-limit (fork-bomb cap); `0`/`unlimited`/empty turns it off |
 | `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |
-| `COOP_HOMES` | `1` | mount your per-agent home dirs (auth + settings) into the box; `COOP_HOMES=0` keeps them out, so an agent can't read your host agent configs |
+| `COOP_HOMES` | `1` | mount your per-agent home dirs (auth + settings) into the box; `0` keeps them out and therefore disables preset, consult, and Fusion runs because their routing contract cannot mount |
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read **in the box** — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |

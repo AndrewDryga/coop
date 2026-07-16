@@ -1,6 +1,7 @@
 package box
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -690,14 +691,136 @@ func TestRunFusionRoleOnlyMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	}
 }
 
+func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) {
+	sentinel := errors.New("fixture artifact failure")
+	consultPreset := func() *preset.Preset {
+		return &preset.Preset{Name: "consult", LeadAgent: "claude", Roles: []preset.Role{{
+			Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-role", PromptText: "consult-persona-sentinel",
+		}}}
+	}
+	delegatePreset := func() *preset.Preset {
+		return &preset.Preset{Name: "delegate", LeadAgent: "claude", Roles: []preset.Role{{
+			Name: "fast", Mode: preset.ModeDelegate, Agent: "codex", Model: "gpt-role", PromptText: "delegate-contract-sentinel",
+		}}}
+	}
+	nativePreset := func() *preset.Preset {
+		return &preset.Preset{Name: "native", LeadAgent: "claude", Roles: []preset.Role{{
+			Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-role", PromptText: "native-persona-sentinel",
+		}}}
+	}
+	normalSpec := func(p *preset.Preset) RunSpec {
+		return RunSpec{Image: "i", Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true, ConsultLead: "claude", Preset: p}
+	}
+	fusionSpec := func(p *preset.Preset) RunSpec {
+		spec := normalSpec(p)
+		spec.ConsultLead = ""
+		spec.FusionGovernor = "claude"
+		spec.FusionMembers = []string{"critic"}
+		return spec
+	}
+
+	tests := []struct {
+		name       string
+		spec       RunSpec
+		want       string
+		failWrite  func(string) bool
+		failChmod  bool
+		failAgents bool
+	}{
+		{"fusion instruction", fusionSpec(consultPreset()), "assemble fusion instruction", func(content string) bool { return strings.HasPrefix(content, "# Fusion mode") }, false, false},
+		{"preset instruction", normalSpec(consultPreset()), "assemble lead instruction", func(content string) bool { return strings.HasPrefix(content, "# Orchestration preset") }, false, false},
+		{"consult wrapper write", normalSpec(consultPreset()), "assemble consult wrapper", func(content string) bool { return content == fusion.ConsultWrapper() }, false, false},
+		{"consult wrapper chmod", normalSpec(consultPreset()), "make consult wrapper executable", nil, true, false},
+		{"delegate wrapper write", normalSpec(delegatePreset()), "assemble delegate wrapper", func(content string) bool { return content == preset.DelegateWrapper() }, false, false},
+		{"delegate wrapper chmod", normalSpec(delegatePreset()), "make delegate wrapper executable", nil, true, false},
+		{"delegate contract", normalSpec(delegatePreset()), `assemble delegate role "fast" contract`, func(content string) bool { return strings.HasPrefix(content, "## fast") }, false, false},
+		{"native role", normalSpec(nativePreset()), "assemble native roles for claude", nil, false, true},
+		{"consult persona", normalSpec(consultPreset()), `assemble consult role "critic" persona`, func(content string) bool { return content == "consult-persona-sentinel" }, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", AutoUp: false}
+			tc.spec.Repo = t.TempDir()
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			artifacts := defaultCompositionArtifactOps()
+			var created []string
+			artifacts.writeFile = func(content string) (string, error) {
+				if tc.failWrite != nil && tc.failWrite(content) {
+					return "", sentinel
+				}
+				path, err := writeTempFile(content)
+				if err == nil {
+					created = append(created, path)
+				}
+				return path, err
+			}
+			if tc.failChmod {
+				artifacts.chmod = func(string, os.FileMode) error { return sentinel }
+			}
+			if tc.failAgents {
+				artifacts.assembleAgentsDir = func([]genFile) (string, error) { return "", sentinel }
+			}
+
+			code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), tc.spec, artifacts)
+			if code != -1 || err == nil || !errors.Is(err, sentinel) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run = (%d, %v), want -1 with %q wrapping sentinel", code, err, tc.want)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("container run started despite assembly failure; recorder error = %v", statErr)
+			}
+			for _, path := range created {
+				if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+					t.Errorf("temporary composition artifact %s was not removed; stat error = %v", path, statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestRunDeclaredCompositionRequiresHomes(t *testing.T) {
+	tests := []struct {
+		name string
+		spec RunSpec
+		want string
+	}{
+		{
+			name: "preset",
+			spec: RunSpec{Preset: &preset.Preset{Name: "frontier"}, ConsultLead: "claude"},
+			want: `preset "frontier" requires agent homes`,
+		},
+		{
+			name: "explicit consult",
+			spec: RunSpec{ConsultLead: "claude", Peers: []agents.Target{{Provider: "codex"}}},
+			want: "consult requires agent homes",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.spec.Image = "i"
+			tc.spec.Repo = t.TempDir()
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			code, err := Run(&config.Config{ConfigDir: t.TempDir()}, recorderRuntime(t, recorder), tc.spec)
+			if code != -1 || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run = (%d, %v), want pre-runtime %q error", code, err, tc.want)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("container run started without required homes; recorder error = %v", statErr)
+			}
+		})
+	}
+}
+
 func TestPresetRoleTargetDefaultsDoNotInheritRawPeerOverride(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	cfg.SetActiveModel("codex", "configured-default")
 	p := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeConsult, Agent: "codex"}}}
-	_, args, files, dirs := presetRoleMounts(cfg, RunSpec{
+	_, args, files, dirs, err := presetRoleMounts(cfg, RunSpec{
 		Homes: true, Preset: p, FusionGovernor: "claude", FusionMembers: []string{"codex", "thinker"},
 		Peers: []agents.Target{{Provider: "codex", Model: "raw-peer-model"}},
-	}, "/w")
+	}, defaultCompositionArtifactOps())
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		for _, path := range files {
 			_ = os.Remove(path)
@@ -1014,7 +1137,10 @@ func TestPresetRoleMountsNativeTargetsUserAgents(t *testing.T) {
 	p := &preset.Preset{LeadAgent: "claude", Roles: []preset.Role{
 		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8"},
 	}}
-	mounts, _, _, tmpDirs := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir()}, "/w")
+	mounts, _, _, tmpDirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir()}, defaultCompositionArtifactOps())
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		for _, d := range tmpDirs {
 			os.RemoveAll(d)
@@ -1039,7 +1165,10 @@ func TestPresetRoleMountsRunID(t *testing.T) {
 		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8"},
 	}}
 	args := func(id string) []string {
-		_, a, _, dirs := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir(), RunID: id}, "/w")
+		_, a, _, dirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir(), RunID: id}, defaultCompositionArtifactOps())
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, d := range dirs {
 			os.RemoveAll(d)
 		}
@@ -1065,7 +1194,10 @@ func TestPresetRoleMountsExportsFallbackTargets(t *testing.T) {
 			{Provider: "codex", Model: "gpt-5.4-mini"},
 		}},
 	}}
-	_, args, tmpFiles, tmpDirs := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude"}, "/w")
+	_, args, tmpFiles, tmpDirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude"}, defaultCompositionArtifactOps())
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		for _, path := range tmpFiles {
 			os.Remove(path)

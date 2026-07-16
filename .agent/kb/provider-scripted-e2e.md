@@ -2,8 +2,8 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-07-15
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/delegate.go]
+updated: 2026-07-16
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -28,6 +28,22 @@ ref, commit, and commit-reset mutations, dirty baselines, timeout, recursion, un
 a delegate calling its configured read-only consult. The single-role scenario shape is intentional;
 preset composition tests own interactions among multiple roles.
 
+Preset/Fusion composition uses four dense registry-derived runs: every lead gets one mounted
+consult role on every provider, so the suite launches all 16 lead-provider x role-provider
+relationships while starting only four boxes. It proves distinct same-provider lead/role models,
+effective effort, exact ordered council labels, personas, wrapper cardinality, credential scope,
+and repository immutability. Focused rows cover explicit peers plus multiple roles on one provider,
+native-role degradation, terminal first-rung pinning, and missing role authentication. ACP's inner
+child has a separate assembly test proving the supervisor-selected preset and concrete target
+replace stale launch state; the ACP supervisor matrix remains the owner of migration and rate-limit
+rotation.
+
+Declared orchestration artifacts fail closed. A Fusion/preset lead instruction, consult/delegate
+wrapper, delegate contract, native-role directory, or nonempty consult persona that cannot be
+created returns before the box or provider starts; partial temp artifacts are removed. `internal/box`
+injects only these three filesystem operations in tests and leaves unrelated best-effort MCP,
+ordinary instruction, git, and skill wiring unchanged.
+
 The fixture is deliberately not a container emulator. It accepts only Coop's tested runtime verbs
 and flags, validates every host bind/env-file/workdir before invoking its own explicit provider mode,
 and writes a versioned 0600 JSONL trace. Unknown syntax, images, commands, symlinks, and root escapes
@@ -46,6 +62,7 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-16 - added the 16-relationship composition matrix and fail-closed artifact contract
 - 2026-07-15 - added the mounted-wrapper delegate matrix and write-safety contract
 - 2026-07-15 - added the mounted-wrapper consult matrix and cross-linked its focused contract
 - 2026-07-15 - expanded to direct target/account/model/effort, failure, exit, and cancel behavior

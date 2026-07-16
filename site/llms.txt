@@ -208,7 +208,9 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   coop generates the lead's routing contract from this — each role, when to use it, and
   its ROLE-ADDRESSED invocation (@coop-<role>, coop-consult <role>, coop-delegate <role>)
   — and mounts the wrappers. Markdown prompt files (roles/lead.md, roles/<name>.md)
-  append to the generated text, never replace it. A native role generates a coop-<role>
+  append to the generated text, never replace it. Required routing files, wrappers, and role
+  prompts assemble as one contract: any failure stops before the provider starts instead of
+  silently dropping a role. A native role generates a coop-<role>
   Claude subagent in the box from itself (its model + when + prompt) — never written to
   your repo; set subagent: <name> to reference an existing .claude/agents/ subagent
   instead. Consult/delegate ladders advance once per target only after a failed command

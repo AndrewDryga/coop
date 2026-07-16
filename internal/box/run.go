@@ -134,10 +134,37 @@ func instructionFile(name string) string {
 	return ""
 }
 
+type compositionArtifactOps struct {
+	writeFile         func(string) (string, error)
+	chmod             func(string, os.FileMode) error
+	assembleAgentsDir func([]genFile) (string, error)
+}
+
+func defaultCompositionArtifactOps() compositionArtifactOps {
+	return compositionArtifactOps{
+		writeFile: writeTempFile, chmod: os.Chmod, assembleAgentsDir: assembleAgentsDir,
+	}
+}
+
 // Run assembles and executes one container run, shadowing secrets and wiring up
 // agent homes + MCP. It returns the container's exit code (with a nil error when
 // the container merely exited non-zero); a non-nil error means it never started.
 func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
+	return runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
+}
+
+// runWithCompositionArtifacts keeps failure injection local to composition tests. Declared
+// orchestration files are part of the requested program, so any assembly error must surface before
+// the box and provider start.
+func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps) (int, error) {
+	if !spec.Homes && spec.FusionGovernor == "" {
+		if spec.Preset != nil {
+			return -1, fmt.Errorf("preset %q requires agent homes so its instructions, wrappers, and roles can mount", spec.Preset.Name)
+		}
+		if spec.ConsultLead != "" || len(spec.Peers) > 0 {
+			return -1, fmt.Errorf("consult requires agent homes so its instructions, wrapper, and peer credentials can mount")
+		}
+	}
 	if err := validateFusionSpec(spec); err != nil {
 		return -1, err
 	}
@@ -280,13 +307,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	consultWired := false // true once a fusion/consult directive is injected → mount coop-consult
 	if spec.Homes && spec.FusionGovernor != "" {
 		if content, file, wired, ok := fusionInstructionMount(cfg, spec); ok {
-			if p, err := writeTempFile(content); err != nil {
-				ui.Info("fusion: skipped instruction wiring: %v", err)
-			} else {
-				tmpFiles = append(tmpFiles, p)
-				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
-				consultWired = wired
+			p, err := artifacts.writeFile(content)
+			if err != nil {
+				return -1, fmt.Errorf("assemble fusion instruction for %s: %w", spec.FusionGovernor, err)
 			}
+			tmpFiles = append(tmpFiles, p)
+			fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
+			consultWired = wired
+		} else {
+			return -1, fmt.Errorf("assemble fusion instruction: provider %q has no instruction file", spec.FusionGovernor)
 		}
 	}
 
@@ -300,13 +329,15 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// when FusionGovernor is set, so the two never both apply.)
 	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
 		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers)); ok {
-			if p, err := writeTempFile(content); err != nil {
-				ui.Info("consult: skipped instruction wiring: %v", err)
-			} else {
-				tmpFiles = append(tmpFiles, p)
-				fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
-				consultWired = wired
+			p, err := artifacts.writeFile(content)
+			if err != nil {
+				return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 			}
+			tmpFiles = append(tmpFiles, p)
+			fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
+			consultWired = wired
+		} else {
+			return -1, fmt.Errorf("assemble lead instruction: provider %q has no instruction file", spec.ConsultLead)
 		}
 	}
 
@@ -314,20 +345,24 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	// --consult directive was injected, so the lead's `coop-consult <peer>` calls resolve.
 	// It carries the per-agent session-id mechanics for cross-turn continuity.
 	if consultWired {
-		if p, err := writeTempFile(fusion.ConsultWrapper()); err != nil {
-			ui.Info("consult: skipped wrapper wiring: %v", err)
-		} else if err := os.Chmod(p, 0o755); err != nil {
-			ui.Info("consult: skipped wrapper wiring: %v", err)
-		} else {
-			tmpFiles = append(tmpFiles, p)
-			fusionMounts = append(fusionMounts, extraMount{p, fusion.ConsultWrapperPath})
+		p, err := artifacts.writeFile(fusion.ConsultWrapper())
+		if err != nil {
+			return -1, fmt.Errorf("assemble consult wrapper: %w", err)
 		}
+		tmpFiles = append(tmpFiles, p)
+		if err := artifacts.chmod(p, 0o755); err != nil {
+			return -1, fmt.Errorf("make consult wrapper executable: %w", err)
+		}
+		fusionMounts = append(fusionMounts, extraMount{p, fusion.ConsultWrapperPath})
 	}
 
 	// Preset roles — the coop-delegate wrapper + delegate role env, generated native
 	// subagents, and each consult-wired role's persona + env — are wired in one
 	// place; fold what it produced into this run's mounts, args, and cleanup lists.
-	proleMounts, proleArgs, proleFiles, proleDirs := presetRoleMounts(cfg, spec, workdir)
+	proleMounts, proleArgs, proleFiles, proleDirs, err := presetRoleMounts(cfg, spec, artifacts)
+	if err != nil {
+		return -1, err
+	}
 	fusionMounts = append(fusionMounts, proleMounts...)
 	spec.ExtraArgs = append(spec.ExtraArgs, proleArgs...)
 	tmpFiles = append(tmpFiles, proleFiles...)
@@ -541,7 +576,18 @@ func projectPolicyRepo(spec RunSpec) string {
 // subagents under a capable lead (mounted at the adapter-owned user-level destination); and each
 // consult-wired role's persona + COOP_CONSULT_<ROLE>_* env (explicit consult roles plus natives
 // degraded under an incapable lead). A run with no preset (or homes off) returns all-nil.
-func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string) {
+func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string, err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, path := range tmpFiles {
+			_ = os.Remove(path)
+		}
+		for _, path := range tmpDirs {
+			_ = os.RemoveAll(path)
+		}
+	}()
 	if !spec.Homes || spec.Preset == nil {
 		return
 	}
@@ -556,25 +602,31 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
 	delegates := spec.Preset.Delegates()
 	if len(delegates) > 0 {
-		if p, err := writeTempFile(preset.DelegateWrapper()); err != nil {
-			ui.Info("delegate: skipped wrapper wiring: %v", err)
-		} else if err := os.Chmod(p, 0o755); err != nil {
-			ui.Info("delegate: skipped wrapper wiring: %v", err)
-		} else {
-			tmpFiles = append(tmpFiles, p)
-			mounts = append(mounts, extraMount{p, preset.DelegateWrapperPath})
-			for _, role := range delegates {
-				key := preset.EnvKey(role.Name)
-				dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
-				if cp, err := writeTempFile(preset.RoleContract(&role)); err != nil {
-					ui.Info("delegate: skipped %s contract: %v", role.Name, err)
-				} else {
-					tmpFiles = append(tmpFiles, cp)
-					mounts = append(mounts, extraMount{cp, dst})
-					extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst)
-				}
-				extraArgs = append(extraArgs, "-e", "COOP_DELEGATE_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role))
+		p, writeErr := artifacts.writeFile(preset.DelegateWrapper())
+		if writeErr != nil {
+			err = fmt.Errorf("assemble delegate wrapper: %w", writeErr)
+			return
+		}
+		tmpFiles = append(tmpFiles, p)
+		if chmodErr := artifacts.chmod(p, 0o755); chmodErr != nil {
+			err = fmt.Errorf("make delegate wrapper executable: %w", chmodErr)
+			return
+		}
+		mounts = append(mounts, extraMount{p, preset.DelegateWrapperPath})
+		for _, role := range delegates {
+			key := preset.EnvKey(role.Name)
+			dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
+			cp, writeErr := artifacts.writeFile(preset.RoleContract(&role))
+			if writeErr != nil {
+				err = fmt.Errorf("assemble delegate role %q contract: %w", role.Name, writeErr)
+				return
 			}
+			tmpFiles = append(tmpFiles, cp)
+			mounts = append(mounts, extraMount{cp, dst})
+			extraArgs = append(extraArgs,
+				"-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst,
+				"-e", "COOP_DELEGATE_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role),
+			)
 		}
 	}
 
@@ -590,13 +642,14 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 		// The adapter renders its native-role files and owns their in-home destination. They mount
 		// from a disposable read-only directory, separate from the repo's own live artifacts.
 		if gen := generatedSubagentFiles(spec.Preset, lead, support); len(gen) > 0 {
-			if dir, err := assembleAgentsDir(gen); err != nil {
-				ui.Info("preset: skipped native subagents: %v", err)
-			} else {
-				tmpDirs = append(tmpDirs, dir)
-				dst := strings.TrimRight(cfg.HomeInBox, "/") + "/" + strings.Trim(support.HomeDir, "/")
-				mounts = append(mounts, extraMount{dir, dst})
+			dir, assembleErr := artifacts.assembleAgentsDir(gen)
+			if assembleErr != nil {
+				err = fmt.Errorf("assemble native roles for %s: %w", lead, assembleErr)
+				return
 			}
+			tmpDirs = append(tmpDirs, dir)
+			dst := strings.TrimRight(cfg.HomeInBox, "/") + "/" + strings.Trim(support.HomeDir, "/")
+			mounts = append(mounts, extraMount{dir, dst})
 		}
 	}
 	// Consult-wired roles: persona at ~/.coop/consult/<role>.md + the COOP_CONSULT_<ROLE>_*
@@ -607,13 +660,14 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, workdir string) (mounts 
 		key := preset.EnvKey(role.Name)
 		if body := preset.ConsultBody(&role); body != "" {
 			dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
-			if cp, err := writeTempFile(body); err != nil {
-				ui.Info("consult: skipped %s persona: %v", role.Name, err)
-			} else {
-				tmpFiles = append(tmpFiles, cp)
-				mounts = append(mounts, extraMount{cp, dst})
-				extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
+			cp, writeErr := artifacts.writeFile(body)
+			if writeErr != nil {
+				err = fmt.Errorf("assemble consult role %q persona: %w", role.Name, writeErr)
+				return
 			}
+			tmpFiles = append(tmpFiles, cp)
+			mounts = append(mounts, extraMount{cp, dst})
+			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
 		}
 		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role))
 	}

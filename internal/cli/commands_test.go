@@ -787,6 +787,58 @@ func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
 	}
 }
 
+func TestACPInnerSelectedPresetAndTargetReplaceLaunchState(t *testing.T) {
+	t.Setenv("COOP_ACP_INNER", "1")
+	t.Setenv("COOP_ACP_PRESET", "selected")
+	t.Setenv("COOP_ACP_TARGET", "codex:acp-selected/high")
+
+	repo := t.TempDir()
+	presetDir := filepath.Join(repo, ".agent", "presets", "selected")
+	if err := os.MkdirAll(presetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte(`lead:
+  agent: [claude:stale-first/high, codex:acp-selected/high]
+roles:
+  critic:
+    mode: consult
+    agent: gemini:role-selected
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
+		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
+	}
+	for _, provider := range []string{"claude", "codex", "gemini"} {
+		signInCred(t, cfg, provider, "default")
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
+	code, err := a.cmdACP([]string{"fusion", "missing-positional-preset"})
+	if err != nil || code != 0 {
+		t.Fatalf("inner ACP selected migration = (%d, %v), want success", code, err)
+	}
+	if a.preset == nil || a.preset.Name != "selected" {
+		t.Fatalf("inner ACP loaded preset = %#v, want selected", a.preset)
+	}
+	if model, effort := cfg.ModelFor("codex"), cfg.EffortFor("codex"); model != "acp-selected" || effort != "high" {
+		t.Fatalf("inner ACP effective target = codex:%s/%s, want codex:acp-selected/high", model, effort)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"codex-acp", "COOP_CONSULT_CRITIC_TARGETS=gemini:role-selected", ":/usr/local/bin/coop-consult:ro"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("inner ACP selected assembly missing %q:\n%s", want, args)
+		}
+	}
+	if strings.Contains(string(args), "stale-first") {
+		t.Errorf("inner ACP assembly retained the old launch rung:\n%s", args)
+	}
+}
+
 func TestACPPlainInnerTargetDoesNotBecomeFusion(t *testing.T) {
 	t.Setenv("COOP_ACP_INNER", "1")
 	t.Setenv("COOP_ACP_TARGET", "claude")
