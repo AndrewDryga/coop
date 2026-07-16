@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,42 @@ func TestBuildFixtureWorldReadable(t *testing.T) {
 		t.Errorf("fixture symlink notes-link missing: %v", err)
 	} else if target != ".env" {
 		t.Errorf("notes-link -> %q, want .env (a symlink to a shadowed secret)", target)
+	}
+}
+
+func TestDoctorCredAndHomeProbeReportsConfigWritability(t *testing.T) {
+	probe := func(home string) string {
+		t.Helper()
+		cmd := exec.Command("sh")
+		cmd.Stdin = strings.NewReader(doctorCredAndHomeProbe(home))
+		cmd.Env = append(os.Environ(), "ANTHROPIC_API_KEY=fake", "OPENAI_API_KEY=", "GOOGLE_API_KEY=")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("probe failed: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+
+	writable := t.TempDir()
+	if got := probe(writable); !strings.Contains(got, "RESULT HOME writable") {
+		t.Fatalf("writable home result missing:\n%s", got)
+	}
+	blocked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(blocked, ".config"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := probe(blocked); !strings.Contains(got, "RESULT HOME blocked") {
+		t.Fatalf("blocked home result missing:\n%s", got)
+	}
+
+	var rep report
+	doctorCheckHome(&rep, "blocked", false)
+	if rep.pass != 0 || rep.fail != 0 {
+		t.Fatalf("Alpine fallback must skip home ownership, got %+v", rep)
+	}
+	doctorCheckHome(&rep, "writable", true)
+	doctorCheckHome(&rep, "blocked", true)
+	if rep.pass != 1 || rep.fail != 1 {
+		t.Fatalf("real-image home results = %+v, want one pass and one fail", rep)
 	}
 }

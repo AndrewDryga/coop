@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Box-generated Git mounts no longer make `~/.config` root-owned.** The co-author hook and global
+  ignore file now mount at direct home children, preserving Git behavior while allowing Chromium,
+  Playwright, and other tools to write their application config as the box's non-root user. Existing
+  stock `.githooks/prepare-commit-msg` shims are migrated by running `coop init` once; custom hooks
+  remain untouched.
+
 - **Credential discovery now follows each adapter's complete authentication contract.** Claude's
   alternate auth/OAuth tokens and Gemini's `GOOGLE_API_KEY` now drive credential listing, peer and
   Fusion availability, loop/fleet ladders, ACP defaults, and scoped role mounts just like primary

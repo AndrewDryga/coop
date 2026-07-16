@@ -405,19 +405,21 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if coAuthor != "" {
 			if dir, err := gitHookDir(); err == nil {
 				tmpDirs = append(tmpDirs, dir)
-				hooksPath = cfg.HomeInBox + "/.config/coop/git-hooks"
+				hooksPath = filepath.Join(cfg.HomeInBox, boxGitHooksName)
 				gitMounts = append(gitMounts, extraMount{dir, hooksPath})
 			}
 		}
-		if p, err := writeTempFile(gitConfigForBox(coAuthor, hooksPath)); err == nil {
-			tmpFiles = append(tmpFiles, p)
-			gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
-		}
+		excludesPath := ""
 		if gi := hostGlobalGitignore(); gi != "" {
 			if p, err := writeTempFile(gi); err == nil {
 				tmpFiles = append(tmpFiles, p)
-				gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.config/git/ignore"})
+				excludesPath = filepath.Join(cfg.HomeInBox, boxGitIgnoreName)
+				gitMounts = append(gitMounts, extraMount{p, excludesPath})
 			}
+		}
+		if p, err := writeTempFile(gitConfigForBox(coAuthor, hooksPath, excludesPath)); err == nil {
+			tmpFiles = append(tmpFiles, p)
+			gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
 		}
 	}
 

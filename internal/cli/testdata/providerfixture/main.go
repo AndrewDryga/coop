@@ -535,11 +535,11 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 			return fmt.Errorf("decoy mount target %q is outside the repo", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-mcp-"):
-		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.config/git/ignore" {
+		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" {
 			return fmt.Errorf("generated config mount target %q is outside the provider and git homes", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-githooks-"):
-		if m.Target != "/home/node/.config/coop/git-hooks" {
+		if m.Target != "/home/node/.coop-git-hooks" {
 			return fmt.Errorf("generated git hooks target %q is unexpected", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-agents-"):

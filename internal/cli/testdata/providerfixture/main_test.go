@@ -215,6 +215,49 @@ func TestParseRuntimeScopesGeneratedConfigsToScenarioProviderHomes(t *testing.T)
 	}
 }
 
+func TestParseRuntimeAcceptsOnlyCurrentGeneratedGitTargets(t *testing.T) {
+	root := canonicalTemp(t)
+	repo := filepath.Join(root, "repo")
+	tmp := filepath.Join(root, "tmp")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configSource := filepath.Join(tmp, "coop-mcp-git")
+	if err := os.WriteFile(configSource, []byte("fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hooksSource := filepath.Join(tmp, "coop-githooks-contract")
+	if err := os.Mkdir(hooksSource, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		source string
+		target string
+		wantOK bool
+	}{
+		{"current ignore", configSource, "/home/node/.coop-gitignore", true},
+		{"old nested ignore", configSource, "/home/node/.config/git/ignore", false},
+		{"current hooks", hooksSource, "/home/node/.coop-git-hooks", true},
+		{"old nested hooks", hooksSource, "/home/node/.config/coop/git-hooks", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{
+				"run", "-v", repo + ":/workspace", "-v", tc.source + ":" + tc.target + ":ro",
+				"-w", "/workspace", "fixture-image", "future-provider",
+			}
+			_, err := parseRuntime(root, "fixture-image", args, "future-provider")
+			if (err == nil) != tc.wantOK {
+				t.Fatalf("parseRuntime error = %v, want accepted %v", err, tc.wantOK)
+			}
+		})
+	}
+}
+
 func TestParseRuntimeRejectsDuplicateTTYSemantics(t *testing.T) {
 	root := canonicalTemp(t)
 	repo := filepath.Join(root, "repo")

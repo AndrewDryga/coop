@@ -127,3 +127,57 @@ func TestBuildGitConfig(t *testing.T) {
 		t.Error("buildGitConfig should omit [user] when no identity is set")
 	}
 }
+
+func TestGitConfigForBoxUsesDirectHomeMounts(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "system"))
+	gc := gitConfigForBox(
+		"coop (claude) <noreply@coop.dev>",
+		"/home/node/"+boxGitHooksName,
+		"/home/node/"+boxGitIgnoreName,
+	)
+	if strings.Count(gc, "[core]\n") != 1 {
+		t.Fatalf("git config must have one core block:\n%s", gc)
+	}
+	for _, want := range []string{
+		"hooksPath = /home/node/.coop-git-hooks",
+		"excludesFile = /home/node/.coop-gitignore",
+		"trailer = coop (claude) <noreply@coop.dev>",
+	} {
+		if !strings.Contains(gc, want) {
+			t.Errorf("git config missing %q:\n%s", want, gc)
+		}
+	}
+}
+
+func TestGitConfigForBoxPreservesGlobalIgnoreBehavior(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "empty-global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "empty-system"))
+	ignore := filepath.Join(t.TempDir(), boxGitIgnoreName)
+	if err := os.WriteFile(ignore, []byte("coop-generated.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte(gitConfigForBox("", "", ignore)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "coop-generated.txt"), []byte("ignored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("check-ignore", "--quiet", "coop-generated.txt")
+}

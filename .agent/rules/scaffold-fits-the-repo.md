@@ -13,7 +13,7 @@ runs in the box (toolchain provisioned) and silently skips on a host that lacks 
 
 **Preserve Git hook composition.** A repo-local `core.hooksPath` overrides the box's global path,
 so the tracked hook directory also carries `.githooks/prepare-commit-msg`: a no-op-on-host shim that
-chains `$HOME/.config/coop/git-hooks/prepare-commit-msg` inside a box. Never overwrite an existing
+chains `$HOME/.coop-git-hooks/prepare-commit-msg` inside a box. Never overwrite an existing
 hook or a custom hooksPath. When a repo uses another hooks directory, init must tell the user to
 copy or chain both tracked hooks there. When the active directory already owns a prepare hook, tell
 the user to add the Coop-hook call to it; forcing the box path would silently discard repo hooks.

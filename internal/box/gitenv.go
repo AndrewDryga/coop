@@ -33,6 +33,10 @@ git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $tr
 // The box has no ambient ~/.gitconfig of its own, so without this an agent would
 // commit with no author and ignore none of the user's global gitignore patterns. We
 // mount a curated global config + the user's global gitignore into every Homes run.
+const (
+	boxGitHooksName  = ".coop-git-hooks"
+	boxGitIgnoreName = ".coop-gitignore"
+)
 
 // hostGitGlobal reads a value from the host's GLOBAL git config (~/.gitconfig), or
 // "" if unset or git is unavailable.
@@ -62,13 +66,19 @@ func buildGitConfig(name, email string) string {
 	return b.String()
 }
 
-// gitConfigForBox is buildGitConfig with the host user's global identity, plus (when set) the coop
-// co-author trailer and the hooksPath that points git at the prepare-commit-msg hook applying it.
-func gitConfigForBox(coAuthor, hooksPath string) string {
+// gitConfigForBox is buildGitConfig with the host user's global identity, plus the optional coop
+// co-author hook, global ignore file, and trailer used inside the box.
+func gitConfigForBox(coAuthor, hooksPath, excludesPath string) string {
 	var b strings.Builder
 	b.WriteString(buildGitConfig(hostGitGlobal("user.name"), hostGitGlobal("user.email")))
-	if hooksPath != "" {
-		b.WriteString("[core]\n\thooksPath = " + hooksPath + "\n")
+	if hooksPath != "" || excludesPath != "" {
+		b.WriteString("[core]\n")
+		if hooksPath != "" {
+			b.WriteString("\thooksPath = " + hooksPath + "\n")
+		}
+		if excludesPath != "" {
+			b.WriteString("\texcludesFile = " + excludesPath + "\n")
+		}
 	}
 	if coAuthor != "" {
 		b.WriteString("[coop]\n\ttrailer = " + coAuthor + "\n")

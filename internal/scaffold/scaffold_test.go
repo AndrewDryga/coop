@@ -614,7 +614,7 @@ func TestInitGitHooks(t *testing.T) {
 	}
 	if logged, err := captureInit(repo); err != nil {
 		t.Fatal(err)
-	} else if strings.Contains(logged, "chain $HOME/.config/coop/git-hooks/prepare-commit-msg") {
+	} else if strings.Contains(logged, "chain $HOME/.coop-git-hooks/prepare-commit-msg") {
 		t.Errorf("stock prepare-commit-msg hook received custom-hook guidance:\n%s", logged)
 	}
 
@@ -652,7 +652,7 @@ func TestInitGitHooks(t *testing.T) {
 		t.Fatalf("host commit unexpectedly ran a box hook:\n%s", msg)
 	}
 
-	boxHook := filepath.Join(home, ".config", "coop", "git-hooks", "prepare-commit-msg")
+	boxHook := filepath.Join(home, ".coop-git-hooks", "prepare-commit-msg")
 	if err := os.MkdirAll(filepath.Dir(boxHook), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -668,6 +668,59 @@ func TestInitGitHooks(t *testing.T) {
 		t.Fatalf("repo-local prepare-commit-msg did not chain the box hook:\n%s", msg)
 	}
 
+	// Re-init upgrades only Coop's exact legacy shim; old projects keep box attribution after the
+	// runtime mount moves out of ~/.config. A project-owned hook remains protected below.
+	legacyRepo := t.TempDir()
+	gitInit(legacyRepo)
+	legacyPrepare := filepath.Join(legacyRepo, ".githooks", "prepare-commit-msg")
+	if err := os.MkdirAll(filepath.Dir(legacyPrepare), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPrepare, []byte(legacyPrepareCommitMsgChainHook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureInit(legacyRepo); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(legacyPrepare); err != nil || string(got) != prepareCommitMsgChainHook {
+		t.Fatalf("legacy prepare-commit-msg hook was not upgraded: %v\n%s", err, got)
+	}
+	if info, err := os.Stat(legacyPrepare); err != nil || info.Mode()&0o100 == 0 {
+		t.Fatalf("upgraded prepare-commit-msg hook is not executable: %v", err)
+	}
+
+	// A symlink is project-owned even when its target has the exact legacy bytes. Init must neither
+	// rewrite nor chmod a shared target outside the repository.
+	symlinkRepo := t.TempDir()
+	gitInit(symlinkRepo)
+	symlinkPrepare := filepath.Join(symlinkRepo, ".githooks", "prepare-commit-msg")
+	if err := os.MkdirAll(filepath.Dir(symlinkPrepare), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sharedHook := filepath.Join(t.TempDir(), "shared-prepare-commit-msg")
+	if err := os.WriteFile(sharedHook, []byte(legacyPrepareCommitMsgChainHook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sharedHook, symlinkPrepare); err != nil {
+		t.Fatal(err)
+	}
+	logged, err := captureInit(symlinkRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(symlinkPrepare); err != nil || target != sharedHook {
+		t.Fatalf("project-owned prepare hook symlink changed: target %q, err %v", target, err)
+	}
+	if got, err := os.ReadFile(sharedHook); err != nil || string(got) != legacyPrepareCommitMsgChainHook {
+		t.Fatalf("project-owned prepare hook target was rewritten: %v\n%s", err, got)
+	}
+	if info, err := os.Stat(sharedHook); err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("project-owned prepare hook target mode changed: %v, mode %v", err, info)
+	}
+	if want := "chain $HOME/.coop-git-hooks/prepare-commit-msg"; !strings.Contains(logged, want) {
+		t.Errorf("project-owned symlink guidance missing %q:\n%s", want, logged)
+	}
+
 	// A project-owned hook in the active scaffold directory is preserved with chaining guidance.
 	repo2 := t.TempDir()
 	gitInit(repo2)
@@ -679,7 +732,7 @@ func TestInitGitHooks(t *testing.T) {
 	if err := os.WriteFile(customPrepare, []byte(customHook), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	logged, err := captureInit(repo2)
+	logged, err = captureInit(repo2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +742,7 @@ func TestInitGitHooks(t *testing.T) {
 	if got, err := os.ReadFile(customPrepare); err != nil || string(got) != customHook {
 		t.Errorf("custom prepare-commit-msg hook was clobbered: %v\n%s", err, got)
 	}
-	if want := "chain $HOME/.config/coop/git-hooks/prepare-commit-msg"; !strings.Contains(logged, want) {
+	if want := "chain $HOME/.coop-git-hooks/prepare-commit-msg"; !strings.Contains(logged, want) {
 		t.Errorf("active custom hook guidance missing %q:\n%s", want, logged)
 	}
 
@@ -719,7 +772,7 @@ func TestInitGitHooks(t *testing.T) {
 	if want := ".githooks/pre-commit and .githooks/prepare-commit-msg"; !strings.Contains(logged, want) {
 		t.Errorf("custom hooksPath guidance missing %q:\n%s", want, logged)
 	}
-	if strings.Contains(logged, "chain $HOME/.config/coop/git-hooks/prepare-commit-msg") {
+	if strings.Contains(logged, "chain $HOME/.coop-git-hooks/prepare-commit-msg") {
 		t.Errorf("custom hooksPath received redundant inactive-hook guidance:\n%s", logged)
 	}
 }

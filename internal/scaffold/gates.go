@@ -171,6 +171,13 @@ staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
 // prepareCommitMsgChainHook lets a repo-local hooksPath retain the box's co-author hook. On the
 // host that hook is absent, so normal commits remain unchanged.
 const prepareCommitMsgChainHook = `#!/bin/sh
+hook="$HOME/.coop-git-hooks/prepare-commit-msg"
+[ -x "$hook" ] || exit 0
+exec "$hook" "$@"
+`
+
+// legacyPrepareCommitMsgChainHook is only a byte-exact re-init migration marker for the old path.
+const legacyPrepareCommitMsgChainHook = `#!/bin/sh
 hook="$HOME/.config/coop/git-hooks/prepare-commit-msg"
 [ -x "$hook" ] || exit 0
 exec "$hook" "$@"

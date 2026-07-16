@@ -225,6 +225,43 @@ func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 	}
 }
 
+func TestRunKeepsGeneratedGitMountsOutOfConfigHome(t *testing.T) {
+	repo := t.TempDir()
+	ignore := filepath.Join(t.TempDir(), "global-ignore")
+	if err := os.WriteFile(ignore, []byte(".DS_Store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[core]\n\texcludesFile = "+ignore+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "system"))
+
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Agent: "claude",
+		Homes: true, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	for _, target := range []string{"/home/node/.coop-git-hooks", "/home/node/.coop-gitignore"} {
+		if !strings.Contains(args, ":"+target+":ro") {
+			t.Errorf("generated Git mount %q missing from:\n%s", target, args)
+		}
+	}
+	if strings.Contains(args, ":/home/node/.config/") {
+		t.Fatalf("generated mount would make Docker create a root-owned config parent:\n%s", args)
+	}
+}
+
 func TestAssembleArgsMinimal(t *testing.T) {
 	cfg := &config.Config{
 		HomeInBox: "/home/node",

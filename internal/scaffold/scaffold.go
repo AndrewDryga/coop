@@ -298,12 +298,24 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		return err
 	}
 	preparePath := filepath.Join(s.repo, ".githooks", "prepare-commit-msg")
-	prepareExists, prepareIsStock := false, false
-	if _, err := os.Lstat(preparePath); err == nil {
+	prepareExists, prepareIsStock, prepareIsLegacy := false, false, false
+	if info, err := os.Lstat(preparePath); err == nil {
 		prepareExists = true
-		data, readErr := os.ReadFile(preparePath)
-		info, statErr := os.Stat(preparePath)
-		prepareIsStock = readErr == nil && statErr == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
+		if info.Mode().IsRegular() {
+			data, readErr := os.ReadFile(preparePath)
+			prepareIsStock = readErr == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
+			prepareIsLegacy = readErr == nil && string(data) == legacyPrepareCommitMsgChainHook
+		}
+	}
+	if prepareIsLegacy {
+		if err := os.WriteFile(preparePath, []byte(prepareCommitMsgChainHook), 0o755); err != nil {
+			return err
+		}
+		if err := os.Chmod(preparePath, 0o755); err != nil {
+			return err
+		}
+		prepareIsStock = true
+		ui.Detail("updated .githooks/prepare-commit-msg for the current coop box hook path")
 	}
 	if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
 		return err
@@ -327,7 +339,7 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		}
 		ui.Detail("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
 		if prepareExists && !prepareIsStock {
-			ui.Detail("kept existing .githooks/prepare-commit-msg; chain $HOME/.config/coop/git-hooks/prepare-commit-msg from it for coop box attribution")
+			ui.Detail("kept existing .githooks/prepare-commit-msg; chain $HOME/.coop-git-hooks/prepare-commit-msg from it for coop box attribution")
 		}
 	default:
 		ui.Detail("kept your core.hooksPath=%q; copy or chain .githooks/pre-commit and .githooks/prepare-commit-msg there", current)

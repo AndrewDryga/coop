@@ -133,11 +133,11 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	fmt.Printf("\n%s\n", ui.Bold("egress (fail-closed)"))
 	doctorCheckEgress(rep, a, fixture, img)
 
-	// --- credential scope ---
-	// A box scoped to one agent must see only that agent's credential home and API key, never a
-	// peer's — proving credentialScope + the env-file filtering (alias and bare keys included).
-	fmt.Printf("\n%s\n", ui.Bold("credential scope"))
-	doctorCheckCredScope(rep, a, fixture, img)
+	// --- credential and home scope ---
+	// A scoped agent box must preserve both the credential boundary and a writable application
+	// config home under the normal generated-mount composition.
+	fmt.Printf("\n%s\n", ui.Bold("credential and home scope"))
+	doctorCheckCredAndHomeScope(rep, a, fixture, img, usingReal)
 
 	// --- on the host: the clone handoff ---
 	fmt.Printf("\n%s\n", ui.Bold("on the host (the clone handoff)"))
@@ -305,9 +305,9 @@ func probeWhy(errOut string, runErr error) string {
 	return ": " + strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:])
 }
 
-// doctorCredProbe checks, inside a box scoped to claude, that only claude's credential home and
-// API key are visible — never a peer's. home is the box's home path (cfg.HomeInBox).
-func doctorCredProbe(home string) string {
+// doctorCredAndHomeProbe checks, inside a box scoped to claude, that only claude's credentials are
+// visible and the normal mount composition leaves its application config home writable.
+func doctorCredAndHomeProbe(home string) string {
 	return fmt.Sprintf(`#!/bin/sh
 [ -f "%[1]s/.claude/.credentials.json" ]         && echo "RESULT PASS the scoped agent's own credential home is mounted"  || echo "RESULT FAIL the scoped agent's credential home is missing"
 [ ! -e "%[1]s/.codex/auth.json" ]                && echo "RESULT PASS a peer agent's credential home is NOT mounted"      || echo "RESULT FAIL codex credentials leaked into a claude-scoped box"
@@ -315,15 +315,20 @@ func doctorCredProbe(home string) string {
 [ -n "$ANTHROPIC_API_KEY" ] && echo "RESULT PASS the scoped agent's API key is in the env"   || echo "RESULT FAIL the scoped agent's API key is missing from the env"
 [ -z "$OPENAI_API_KEY" ]    && echo "RESULT PASS a peer's API key is stripped from the env"   || echo "RESULT FAIL OPENAI_API_KEY (a peer's) leaked into a claude-scoped box"
 [ -z "$GOOGLE_API_KEY" ]    && echo "RESULT PASS a peer's alias key (bare) is stripped"       || echo "RESULT FAIL GOOGLE_API_KEY (a peer alias) leaked into a claude-scoped box"
+if mkdir -p "%[1]s/.config/coop-browser-probe" && : > "%[1]s/.config/coop-browser-probe/write"; then
+	rm -rf "%[1]s/.config/coop-browser-probe"
+	echo "RESULT HOME writable"
+else
+	echo "RESULT HOME blocked"
+fi
 `, home)
 }
 
-// doctorCheckCredScope proves the credential boundary: a box scoped to one agent sees only that
-// agent's credential home and API key, never a peer's. It seeds a throwaway config home with a
-// fake credential for every agent and an env file holding every agent's key (including a peer's
-// alias, given bare to also exercise docker's env-file import), runs a claude-scoped box, and
-// checks what's visible — exercising credentialScope, the home mounts, and writeFilteredEnvFile.
-func doctorCheckCredScope(rep *report, a *app, fixture, img string) {
+// doctorCheckCredAndHomeScope proves the credential boundary and writable config-home contract in
+// one normally composed box. It seeds a throwaway credential for every agent and an env file
+// holding every agent's key, then runs a claude-scoped probe that also creates state under
+// ~/.config — exercising credentialScope, generated home mounts, and writeFilteredEnvFile.
+func doctorCheckCredAndHomeScope(rep *report, a *app, fixture, img string, usingReal bool) {
 	cfgDir, err := os.MkdirTemp("", "coop-doctor-cred-")
 	if err != nil {
 		rep.no("could not stage the credential fixture" + probeWhy("", err))
@@ -355,7 +360,7 @@ func doctorCheckCredScope(rep *report, a *app, fixture, img string) {
 	// bare so the filter must drop a peer's alias AND a bare (env-imported) line.
 	_ = os.WriteFile(credCfg.EnvFile(), []byte("ANTHROPIC_API_KEY=hunter2\nOPENAI_API_KEY=hunter2\nGOOGLE_API_KEY\n"), 0o644)
 
-	probe, cleanup, err := writeProbeFile(doctorCredProbe(credCfg.HomeInBox))
+	probe, cleanup, err := writeProbeFile(doctorCredAndHomeProbe(credCfg.HomeInBox))
 	if err != nil {
 		rep.no("credential fixture" + probeWhy("", err))
 		return
@@ -373,7 +378,25 @@ func doctorCheckCredScope(rep *report, a *app, fixture, img string) {
 		return
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		recordResult(rep, line)
+		if strings.HasPrefix(line, "RESULT HOME ") {
+			doctorCheckHome(rep, strings.TrimPrefix(line, "RESULT HOME "), usingReal)
+		} else {
+			recordResult(rep, line)
+		}
+	}
+}
+
+// doctorCheckHome interprets the config-home write probe. The Alpine fallback runs as root, so it
+// cannot expose the ownership bug this check guards and must not report a false pass.
+func doctorCheckHome(rep *report, result string, usingReal bool) {
+	if !usingReal {
+		fmt.Printf("  %s box home .config ownership not checked (requires the real non-root image)\n", ui.Dim("·"))
+		return
+	}
+	if strings.TrimSpace(result) == "writable" {
+		rep.ok("the box home .config directory is writable")
+	} else {
+		rep.no("the box home .config directory is not writable")
 	}
 }
 

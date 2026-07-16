@@ -45,6 +45,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 ## Index
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
+- [box-home-nested-mounts](box-home-nested-mounts.md) — avoid bind targets that make Docker create missing application-owned home parents as root
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — claude "token expired" still works in-box via the refresh token
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — file, primary, alternate, and env-only credential truth converges in the box predicate
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state
