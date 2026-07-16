@@ -2,7 +2,8 @@
 
 // Opt-in upstream compatibility for the real provider CLIs. The parent copies only explicit
 // credentials into a temporary vault, then invokes the helper test in a clean process so ambient
-// provider or Coop settings cannot reach the box. Run with make provider-live-e2e[-all].
+// provider or Coop settings cannot reach the box. Run with make provider-live-e2e[-all] or
+// provider-loop-live-e2e[-all].
 package cli
 
 import (
@@ -27,14 +28,23 @@ import (
 )
 
 const (
+	liveWorkflowPrompt = "prompt"
+	liveWorkflowLoop   = "loop"
+
 	liveChildDeadline   = 6 * time.Minute
 	livePromptDeadline  = 3 * time.Minute
+	liveLoopDeadline    = 8 * time.Minute
+	liveLoopChildWindow = 10 * time.Minute
 	liveVersionDeadline = 45 * time.Second
 	liveCleanupDeadline = 30 * time.Second
 	liveOutputLimit     = 1 << 20
 )
 
 func TestProviderLiveCompatibility(t *testing.T) {
+	testProviderLiveCompatibility(t, liveWorkflowPrompt)
+}
+
+func testProviderLiveCompatibility(t *testing.T, workflow string) {
 	if os.Getenv("COOP_TEST_LIVE_CHILD") == "1" {
 		t.Skip("parent orchestration is disabled in the clean child")
 	}
@@ -49,11 +59,11 @@ func TestProviderLiveCompatibility(t *testing.T) {
 	realConfig := config.Load()
 	rt, err := runtime.Detect(realConfig.RuntimeName)
 	if err != nil {
-		emitLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
+		emitLiveSummary(t, workflow, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
 		return
 	}
 	if err := rt.EnsureDaemon(); err != nil {
-		emitLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
+		emitLiveSummary(t, workflow, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
 		return
 	}
 	connectionEnv, err := liveprovider.CaptureRuntimeConnectionEnv(rt.Name)
@@ -66,7 +76,7 @@ func TestProviderLiveCompatibility(t *testing.T) {
 				ErrorClass: "harness", DetailCode: "runtime_connection",
 			})
 		}
-		emitLiveSummary(t, strict, targets, results)
+		emitLiveSummary(t, workflow, strict, targets, results)
 		return
 	}
 	runtimeSettings := liveprovider.RuntimeSettings{
@@ -77,15 +87,15 @@ func TestProviderLiveCompatibility(t *testing.T) {
 	imageRoot := t.TempDir()
 	image := box.ImageForRepo(imageRoot, realConfig.BaseImage, realConfig.ImageOverride)
 	if !box.ImageExists(rt, image) {
-		emitLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingImage))
+		emitLiveSummary(t, workflow, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingImage))
 		return
 	}
 
 	results := make([]liveprovider.ProviderResult, 0, len(targets))
 	for _, target := range targets {
-		results = append(results, runProviderLiveCompatibility(t, realConfig, rt, runtimeSettings, target))
+		results = append(results, runProviderLiveCompatibility(t, realConfig, rt, runtimeSettings, target, workflow))
 	}
-	emitLiveSummary(t, strict, targets, results)
+	emitLiveSummary(t, workflow, strict, targets, results)
 }
 
 func skippedLiveResults(targets []agents.Target, reason string) []liveprovider.ProviderResult {
@@ -98,13 +108,18 @@ func skippedLiveResults(targets []agents.Target, reason string) []liveprovider.P
 	return results
 }
 
-func emitLiveSummary(t *testing.T, strict bool, targets []agents.Target, results []liveprovider.ProviderResult) {
+func emitLiveSummary(t *testing.T, workflow string, strict bool, targets []agents.Target, results []liveprovider.ProviderResult) {
 	t.Helper()
 	summary, err := liveprovider.NewSummary(strict, targets, results)
 	if err != nil {
 		t.Fatal(err)
 	}
-	line, err := summary.Line()
+	var line string
+	if workflow == liveWorkflowLoop {
+		line, err = summary.LoopLine()
+	} else {
+		line, err = summary.Line()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +135,7 @@ func runProviderLiveCompatibility(
 	rt runtime.Runtime,
 	runtimeSettings liveprovider.RuntimeSettings,
 	target agents.Target,
+	workflow string,
 ) liveprovider.ProviderResult {
 	t.Helper()
 	fail := func(attempted bool, reason string, detail ...string) liveprovider.ProviderResult {
@@ -140,9 +156,25 @@ func runProviderLiveCompatibility(
 	if err := liveprovider.InitRepository(layout); err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "repository_setup")
 	}
+	marker, err := liveIdentifier("COOP_LIVE_MARKER_")
+	if err != nil {
+		return fail(false, liveprovider.ReasonHarnessFailed, "identifier_generation")
+	}
+	if workflow == liveWorkflowLoop {
+		if err := prepareProviderLoopLiveRepository(layout, target, marker); err != nil {
+			return fail(false, liveprovider.ReasonHarnessFailed, "repository_setup")
+		}
+	}
 	before, err := liveprovider.SnapshotRepository(layout)
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "repository_snapshot")
+	}
+	var loopBefore providerLoopLiveBaseline
+	if workflow == liveWorkflowLoop {
+		loopBefore, err = snapshotProviderLoopLiveBaseline(layout, before)
+		if err != nil {
+			return fail(false, liveprovider.ReasonHarnessFailed, "repository_snapshot")
+		}
 	}
 	selection, err := liveprovider.SelectionForTarget(realConfig, target)
 	if err != nil {
@@ -170,10 +202,6 @@ func runProviderLiveCompatibility(
 		)
 	}
 
-	marker, err := liveIdentifier("COOP_LIVE_MARKER_")
-	if err != nil {
-		return fail(false, liveprovider.ReasonHarnessFailed, "identifier_generation")
-	}
 	supervisor, err := liveIdentifier("provider-live-")
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "identifier_generation")
@@ -194,7 +222,7 @@ func runProviderLiveCompatibility(
 		return fail(false, liveprovider.ReasonHarnessFailed, "credential_revocation")
 	}
 	env, err := liveprovider.ChildEnvironment(layout, liveprovider.ChildSpec{
-		Path: os.Getenv("PATH"), Target: target.String(), Marker: marker,
+		Path: os.Getenv("PATH"), Target: target.String(), Workflow: workflow, Marker: marker,
 		ResultFile: resultFile, AttemptFile: attemptFile, Supervisor: supervisor,
 		PreflightReason: preflightReason, CIDDir: cidDir,
 		ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
@@ -202,7 +230,11 @@ func runProviderLiveCompatibility(
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "child_environment")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), liveChildDeadline)
+	childDeadline := liveChildDeadline
+	if workflow == liveWorkflowLoop {
+		childDeadline = liveLoopChildWindow
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), childDeadline)
 	processResult := procharness.Run(ctx, procharness.Command{
 		Path: os.Args[0], Args: []string{"-test.run=^TestProviderLiveChild$", "-test.v=false"},
 		Dir: layout.Repo, Env: env, MaxOutput: liveOutputLimit, KillGrace: 3 * time.Second,
@@ -224,11 +256,17 @@ func runProviderLiveCompatibility(
 		RemoveByLabel:   rt.RemoveByLabel,
 	})
 	cancelCleanup()
-	after, snapshotErr := liveprovider.VerifyRepository(layout, before)
+	repositoryOK := false
+	if workflow == liveWorkflowLoop {
+		repositoryOK = verifyProviderLoopLiveRepository(layout, loopBefore, target, marker) == nil
+	} else {
+		after, snapshotErr := liveprovider.VerifyRepository(layout, before)
+		repositoryOK = snapshotErr == nil && before.Equal(after)
+	}
 	sourceErr := prepared.VerifySources()
 	return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{
 		CleanupFailed: cleanupErr != nil || revokeErr != nil, SourceChanged: sourceErr != nil,
-		RepositoryChanged: snapshotErr != nil || !before.Equal(after), AttemptedObserved: attempted,
+		RepositoryChanged: !repositoryOK, AttemptedObserved: attempted,
 	})
 }
 
@@ -254,16 +292,17 @@ func TestProviderLiveChild(t *testing.T) {
 	supervisor := os.Getenv("COOP_TEST_LIVE_SUPERVISOR")
 	preflightReason := os.Getenv("COOP_TEST_LIVE_PREFLIGHT")
 	cidDir := os.Getenv("COOP_TEST_LIVE_CID_DIR")
-	if marker == "" || resultFile == "" || attemptFile == "" || supervisor == "" || cidDir == "" {
+	workflow := os.Getenv("COOP_TEST_LIVE_WORKFLOW")
+	if marker == "" || resultFile == "" || attemptFile == "" || supervisor == "" || cidDir == "" || (workflow != liveWorkflowPrompt && workflow != liveWorkflowLoop) {
 		t.Fatal("incomplete live child control contract")
 	}
-	result := executeProviderLiveChild(target, marker, attemptFile, supervisor, preflightReason, cidDir)
+	result := executeProviderLiveChild(target, workflow, marker, attemptFile, supervisor, preflightReason, cidDir)
 	if err := writeLiveChildResult(resultFile, result); err != nil {
 		t.Fatal("write live child result")
 	}
 }
 
-func executeProviderLiveChild(target agents.Target, marker, attemptFile, supervisor, preflightReason, cidDir string) liveprovider.ProviderResult {
+func executeProviderLiveChild(target agents.Target, workflow, marker, attemptFile, supervisor, preflightReason, cidDir string) liveprovider.ProviderResult {
 	result := liveprovider.ProviderResult{Provider: target.Provider}
 	fail := func(attempted bool, reason, phase string, code int, timedOut, truncated bool, class string) liveprovider.ProviderResult {
 		result.Attempted, result.Passed = attempted, false
@@ -349,11 +388,21 @@ func executeProviderLiveChild(target agents.Target, marker, attemptFile, supervi
 	result.Attempted = true
 	stdout := liveprovider.NewBoundedBuffer(liveOutputLimit)
 	stderr := liveprovider.NewBoundedBuffer(liveOutputLimit)
-	promptCtx, cancelPrompt := context.WithTimeout(context.Background(), livePromptDeadline)
+	promptDeadline := livePromptDeadline
+	if workflow == liveWorkflowLoop {
+		promptDeadline = liveLoopDeadline
+	}
+	promptCtx, cancelPrompt := context.WithTimeout(context.Background(), promptDeadline)
+	prompt := "Respond with exactly " + marker + " and no other text."
+	repoReadOnly := true
+	if workflow == liveWorkflowLoop {
+		prompt = providerLoopLivePrompt(cfg.RepoOverride, target.Provider)
+		repoReadOnly = false
+	}
 	code, runErr = box.Run(cfg, rt, box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride,
-		Cmd:   ag.Headless(cfg, "Respond with exactly "+marker+" and no other text."),
-		Agent: target.Provider, Batch: true, RepoReadOnly: true, Quiet: true,
+		Cmd:   ag.Headless(cfg, prompt),
+		Agent: target.Provider, Batch: true, RepoReadOnly: repoReadOnly, Quiet: true,
 		Homes: true, Network: false, Cache: false, SupervisorID: supervisor,
 		Stdout: stdout, Stderr: stderr, Ctx: promptCtx,
 		ExtraArgs: liveCIDArgs(rt, cidDir, "prompt"),
@@ -371,7 +420,7 @@ func executeProviderLiveChild(target agents.Target, marker, attemptFile, supervi
 		}
 		return fail(true, liveprovider.ReasonPromptExit, "prompt", code, false, truncated, class)
 	}
-	if strings.TrimSpace(stdout.String()) != marker {
+	if workflow == liveWorkflowPrompt && strings.TrimSpace(stdout.String()) != marker {
 		return fail(true, liveprovider.ReasonMarkerMismatch, "prompt", code, false, false, "marker")
 	}
 	result.Passed, result.Status, result.ReasonCode = true, liveprovider.StatusPassed, ""

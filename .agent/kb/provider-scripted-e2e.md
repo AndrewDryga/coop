@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/delegate.go]
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-07-16
 ---
 
@@ -19,6 +19,17 @@ The same target also crosses the full consult boundary: external CLI dispatch, `
 generated wrapper/persona mounts, scoped homes, native provider argv/output, continuation state,
 fallback, and telemetry. It covers every provider arm and all 12 ordered distinct fallback pairs;
 see [[provider-consult-e2e]] for the state and live-ring contracts.
+
+The registry-derived loop matrix runs the external `coop loop` binary once per provider against a
+closed fixture worker. It requires the host to claim and flock-lease the exact task before provider
+start, validates the canonical provider/model/account target in lease metadata and native argv,
+then requires one task-bound commit, final state/log, done move, host cleanup of task scratch, a
+clean worktree, and one exact work-stage telemetry row. The fixture accepts no command, arbitrary
+path, or shell fragment; its v4 action is only this semantic lifecycle. Provider-native TTY event
+schemas stay in the adapter decoder tests, while this process matrix owns the non-TTY loop boundary.
+Unbound-completion denials also prove host recovery never follows provider-created task metadata
+links outside the repository. A finalization failure restores the task to in-progress, and the
+state-link case reruns the loop to repair the commit binding, clean scratch, and finish normally.
 
 The delegate matrix crosses the corresponding write-capable boundary for all four provider arms
 and all 12 ordered distinct fallback pairs. It verifies the exact generated wrapper and one invoked
@@ -62,6 +73,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-16 - made unbound recovery metadata root-bounded and no-follow
+- 2026-07-16 - added the complete four-provider loop claim, task, commit, cleanup, and telemetry lifecycle
 - 2026-07-16 - added the 16-relationship composition matrix and fail-closed artifact contract
 - 2026-07-15 - added the mounted-wrapper delegate matrix and write-safety contract
 - 2026-07-15 - added the mounted-wrapper consult matrix and cross-linked its focused contract

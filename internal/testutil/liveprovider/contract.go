@@ -27,6 +27,8 @@ import (
 const (
 	// SummaryPrefix makes the one machine-readable line easy to extract from verbose go test output.
 	SummaryPrefix = "COOP_PROVIDER_LIVE_SUMMARY "
+	// LoopSummaryPrefix keeps writable task-completion evidence distinct from a read-only marker probe.
+	LoopSummaryPrefix = "COOP_PROVIDER_LOOP_LIVE_SUMMARY "
 	// ConsultSummaryPrefix identifies the separate four-provider live consult result contract.
 	ConsultSummaryPrefix = "COOP_CONSULT_LIVE_SUMMARY "
 	// SupervisorLabelKey is the test-only label used to reap an ACP process even after its outer
@@ -294,11 +296,19 @@ func (s Summary) Success() bool {
 }
 
 func (s Summary) Line() (string, error) {
+	return s.line(SummaryPrefix)
+}
+
+func (s Summary) LoopLine() (string, error) {
+	return s.line(LoopSummaryPrefix)
+}
+
+func (s Summary) line(prefix string) (string, error) {
 	data, err := json.Marshal(s)
 	if err != nil {
 		return "", err
 	}
-	return SummaryPrefix + string(data), nil
+	return prefix + string(data), nil
 }
 
 // ValidateConsultTargets requires one concrete target for every registered provider.
@@ -605,6 +615,7 @@ func pathExists(path string) bool {
 type ChildSpec struct {
 	Path            string
 	Target          string
+	Workflow        string
 	Marker          string
 	ResultFile      string
 	AttemptFile     string
@@ -643,9 +654,17 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 	} else if spec.RevokePath != "" {
 		return nil, errors.New("live credential revocation path requires process control")
 	}
+	workflow := spec.Workflow
+	if workflow == "" {
+		workflow = "prompt"
+	}
+	if workflow != "prompt" && workflow != "loop" {
+		return nil, errors.New("invalid live child workflow")
+	}
 	for key, value := range map[string]string{
 		"COOP_TEST_LIVE_CHILD": "1", "COOP_TEST_LIVE_TARGET": spec.Target,
-		"COOP_TEST_LIVE_MARKER": spec.Marker, "COOP_TEST_LIVE_RESULT": spec.ResultFile,
+		"COOP_TEST_LIVE_WORKFLOW": workflow,
+		"COOP_TEST_LIVE_MARKER":   spec.Marker, "COOP_TEST_LIVE_RESULT": spec.ResultFile,
 		"COOP_TEST_LIVE_ATTEMPT":    spec.AttemptFile,
 		"COOP_TEST_LIVE_SUPERVISOR": spec.Supervisor,
 		"COOP_TEST_LIVE_PREFLIGHT":  spec.PreflightReason,

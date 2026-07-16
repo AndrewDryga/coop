@@ -56,7 +56,7 @@ provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or 
 	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -v ./internal/cli/
 
 live-process-control: ## Deterministic denial tests for tagged live-test process ownership
-	@go test -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract)' -count=1 ./internal/cli/ ./internal/runtime/
+	@go test -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract)' -count=1 ./internal/cli/ ./internal/runtime/
 	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/
 
 provider-live-e2e: ## Opt-in read-only upstream CLI probe (set COOP_LIVE_TARGETS=provider,...)
@@ -66,6 +66,14 @@ provider-live-e2e: ## Opt-in read-only upstream CLI probe (set COOP_LIVE_TARGETS
 provider-live-e2e-all: ## Strict read-only upstream CLI probe for every registered provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
 		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLiveCompatibility$$' -count=1 -v ./internal/cli/
+
+provider-loop-live-e2e: ## Opt-in one-attempt live provider task completion (set COOP_LIVE_TARGETS=provider,...)
+	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: codex,gemini@work)'; exit 2; }
+	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLoopLiveCompatibility$$' -count=1 -v ./internal/cli/
+
+provider-loop-live-e2e-all: ## Strict one-attempt task completion for every registered provider
+	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
+		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderLoopLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-consult-live-e2e: ## Opt-in four-provider real coop-consult probe (four peer CLI sessions)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (claude,codex,gemini,grok in that order)'; exit 2; }
@@ -92,4 +100,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e clean help

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Provider loop coverage now crosses the complete task lifecycle for every adapter.** The
+  deterministic external-process matrix proves claim and lease ownership, native provider argv,
+  task state, exact `Coop-Task` binding, done reconciliation, cleanup, and effective telemetry for
+  Claude, Codex, Gemini, and Grok. A separate opt-in live target gives each selected provider one
+  writable model attempt to complete an exact disposable task under the existing isolated
+  credential, deadline, and cleanup contract. Rejected unbound completions now return to
+  in-progress with a concrete recovery state instead of retaining a stale complete snapshot;
+  recovery metadata reads and appends refuse provider-created symlinks, hardlinks, and special files,
+  and failed completion finalization restores the task to the actionable queue before returning.
+
 - **Box-generated Git mounts no longer make `~/.config` root-owned.** The co-author hook and global
   ignore file now mount at direct home children, preserving Git behavior while allowing Chromium,
   Playwright, and other tools to write their application config as the box's non-root user. Existing

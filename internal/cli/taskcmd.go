@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -608,21 +609,22 @@ const (
 	taskStateTraps  = "**Traps:**"
 )
 
-// normalizeCompletedTaskState atomically replaces only Coop-owned lifecycle fields in a valid
-// state.md. Agent-authored summaries, traps, headings, and surrounding prose remain byte-for-byte
-// apart from those two lines. A missing or structurally ambiguous snapshot is rebuilt minimally;
-// unique Done/Traps values are retained when they can be recovered safely.
 func normalizeCompletedTaskState(id, taskDir string) error {
-	info, err := os.Lstat(taskDir)
+	return normalizeTaskState(id, taskDir, "complete", "none", "—", "—")
+}
+
+// normalizeTaskState atomically replaces only Coop-owned lifecycle fields in a valid state.md.
+// Agent-authored summaries, traps, headings, and surrounding prose remain byte-for-byte apart
+// from those two lines. Missing or ambiguous snapshots retain unique Done/Traps values when safe.
+func normalizeTaskState(id, taskDir, statusValue, nextValue, doneFallback, trapsFallback string) error {
+	root, err := openTaskMetadataRoot(taskDir)
 	if err != nil {
-		return fmt.Errorf("inspect task folder: %w", err)
+		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("refusing state finalization through non-directory task folder %q", taskDir)
-	}
+	defer root.Close()
 
 	statePath := filepath.Join(taskDir, "state.md")
-	body, err := os.ReadFile(statePath)
+	body, err := readTaskMetadataFile(root, "state.md")
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %q: %w", statePath, err)
 	}
@@ -633,19 +635,19 @@ func normalizeCompletedTaskState(id, taskDir string) error {
 	traps := labeledLineIndexes(lines, taskStateTraps)
 	var out string
 	if err == nil && len(status) == 1 && len(done) == 1 && len(next) == 1 && len(traps) == 1 {
-		lines[status[0]] = taskStateStatus + " complete"
-		lines[next[0]] = taskStateNext + " none"
+		lines[status[0]] = taskStateStatus + " " + statusValue
+		lines[next[0]] = taskStateNext + " " + nextValue
 		out = strings.Join(lines, "\n")
 	} else {
-		doneValue := uniqueLabeledValue(lines, taskStateDone, "—")
-		trapsValue := uniqueLabeledValue(lines, taskStateTraps, "—")
-		out = fmt.Sprintf("# State — %s\n\n%s complete\n%s %s\n%s none\n%s %s\n",
-			id, taskStateStatus, taskStateDone, doneValue, taskStateNext, taskStateTraps, trapsValue)
+		doneValue := uniqueLabeledValue(lines, taskStateDone, doneFallback)
+		trapsValue := uniqueLabeledValue(lines, taskStateTraps, trapsFallback)
+		out = fmt.Sprintf("# State — %s\n\n%s %s\n%s %s\n%s %s\n%s %s\n",
+			id, taskStateStatus, statusValue, taskStateDone, doneValue, taskStateNext, nextValue, taskStateTraps, trapsValue)
 	}
 	if err == nil && string(body) == out {
 		return nil
 	}
-	if err := atomicWriteTaskFile(statePath, []byte(out)); err != nil {
+	if err := atomicWriteTaskFile(root, "state.md", []byte(out)); err != nil {
 		return fmt.Errorf("write %q: %w", statePath, err)
 	}
 	return nil
@@ -673,13 +675,90 @@ func uniqueLabeledValue(lines []string, label, fallback string) string {
 	return value
 }
 
-func atomicWriteTaskFile(path string, body []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+const taskMetadataFileLimit = 1 << 20
+
+func openTaskMetadataRoot(taskDir string) (*os.Root, error) {
+	before, err := os.Lstat(taskDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect task folder: %w", err)
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+		return nil, fmt.Errorf("refusing task metadata access through non-directory task folder %q", taskDir)
+	}
+	root, err := os.OpenRoot(taskDir)
+	if err != nil {
+		return nil, fmt.Errorf("open task folder: %w", err)
+	}
+	after, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, after) {
+		root.Close()
+		if err != nil {
+			return nil, fmt.Errorf("reinspect task folder: %w", err)
+		}
+		return nil, fmt.Errorf("task folder %q changed while opening", taskDir)
+	}
+	return root, nil
+}
+
+func readTaskMetadataFile(root *os.Root, name string) ([]byte, error) {
+	before, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTaskMetadataFile(name, before); err != nil {
+		return nil, err
+	}
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(before, after) {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("task metadata file %q changed while opening", name)
+	}
+	if err := validateTaskMetadataFile(name, after); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, taskMetadataFileLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > taskMetadataFileLimit {
+		return nil, fmt.Errorf("task metadata file %q exceeds %d bytes", name, taskMetadataFileLimit)
+	}
+	return data, nil
+}
+
+func validateTaskMetadataFile(name string, info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
+		return fmt.Errorf("task metadata file %q is not a single-link regular file", name)
+	}
+	if info.Size() < 0 || info.Size() > taskMetadataFileLimit {
+		return fmt.Errorf("task metadata file %q exceeds %d bytes", name, taskMetadataFileLimit)
+	}
+	return nil
+}
+
+func atomicWriteTaskFile(root *os.Root, name string, body []byte) error {
+	var f *os.File
+	var tmp string
+	var err error
+	for attempt := 0; attempt < 100; attempt++ {
+		tmp = fmt.Sprintf(".%s-%d-%d-%d", name, os.Getpid(), time.Now().UnixNano(), attempt)
+		f, err = root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		if err == nil || !errors.Is(err, os.ErrExist) {
+			break
+		}
+	}
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
+	defer root.Remove(tmp)
 	if err := f.Chmod(0o644); err != nil {
 		_ = f.Close()
 		return err
@@ -695,7 +774,7 @@ func atomicWriteTaskFile(path string, body []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return root.Rename(tmp, name)
 }
 
 // finalizeCompletedTask is the single post-move completion boundary. State comes first so a failed

@@ -1547,8 +1547,9 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```bash
 make build                         # build ./coop
 make check                         # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
-make provider-scripted-e2e         # strict fake-runtime direct-process matrix for all four providers
+make provider-scripted-e2e         # deterministic all-provider process matrix
 make provider-live-e2e-all         # one read-only real prompt per registered provider (opt-in)
+make provider-loop-live-e2e-all    # one writable real task completion per provider (opt-in)
 make provider-consult-live-e2e-all # four real cross-provider coop-consult edges, no lead calls (opt-in)
 make doctor                        # the integration check — proves isolation, needs a runtime
 ```
@@ -1585,6 +1586,8 @@ make provider-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
 make provider-live-e2e COOP_LIVE_TARGETS='claude:opus/high@personal'
 make provider-live-e2e-all
 make provider-live-e2e-all COOP_LIVE_TARGETS='claude@backup,codex,gemini,grok'
+make provider-loop-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
+make provider-loop-live-e2e-all
 make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'
 make provider-consult-live-e2e-all
 ```
@@ -1612,8 +1615,19 @@ size/path/replacement, repository setup/snapshot, child-result, and runtime-clea
 Credential detail codes call for repairing or re-authenticating the selected credential; repository
 or child/cleanup codes indicate the local runtime/test harness and are safe to attach to a bug report.
 
-Each provider gets a fresh committed repository mounted read-only, an isolated
-HOME/XDG/config tree, no project/global instructions or MCP settings, open egress, bounded output,
+The separate loop live target reuses the same target parsing, projected credentials, version
+admission, hard deadline, revocation, cleanup, and redacted summary. It does not run the loop
+controller: the blocking scripted matrix already proves that exact external CLI, lease, task,
+commit, reconciliation, and telemetry path without quota. Instead, the live harness pre-claims one
+mechanical disposable task and gives the selected provider exactly one writable `Headless` call
+with the real loop work prompt. A pass requires one commit with the exact task trailer, only the
+requested marker file, a clean tree, final task state/log, and the sole task moved to done. Extra
+tracked or ignored files, changed task instructions, scratch retention, or an incomplete move fail
+repository verification. Use `provider-loop-live-e2e-all` only for explicit release acceptance:
+it starts one real headless session per admitted provider and remains outside `make check`.
+
+For the read-only marker target, each provider gets a fresh committed repository mounted read-only,
+an isolated HOME/XDG/config tree, no project/global instructions or MCP settings, open egress, bounded output,
 and a hard deadline. Claude, Codex, and Grok auth files are projected to access-token-only forms;
 refresh tokens never enter the isolated tree. Gemini's host-bound keychain is fingerprinted but
 never copied. Only the exact selected Gemini env key is preserved, and only selected

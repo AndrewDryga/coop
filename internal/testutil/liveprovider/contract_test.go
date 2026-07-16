@@ -72,6 +72,10 @@ func TestSummaryContract(t *testing.T) {
 	if err != nil || !strings.HasPrefix(line, SummaryPrefix+`{"schema":1`) || strings.Count(line, "\n") != 0 {
 		t.Errorf("summary line = %q, %v", line, err)
 	}
+	loopLine, err := standard.LoopLine()
+	if err != nil || !strings.HasPrefix(loopLine, LoopSummaryPrefix+`{"schema":1`) || strings.Count(loopLine, "\n") != 0 {
+		t.Errorf("loop summary line = %q, %v", loopLine, err)
+	}
 
 	failed, err := NewSummary(false, requested[:1], []ProviderResult{{
 		Provider: "claude", Attempted: true, Status: StatusFailed, ReasonCode: ReasonPromptExit,
@@ -210,6 +214,7 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 		"COOP_CONFIG_DIR=" + layout.Config, "COOP_EGRESS=open", "COOP_HOMES=1",
 		"COOP_MCP_FILE=" + filepath.Join(layout.Config, "missing-mcp.json"),
 		"COOP_RUNTIME=docker", "COOP_IMAGE=image", "COOP_TEST_LIVE_TARGET=codex@work",
+		"COOP_TEST_LIVE_WORKFLOW=prompt",
 		liveprocess.ControlFDEnv + "=3", liveprocess.RevokePathEnv + "=" + revokePath,
 		"GIT_CONFIG_GLOBAL=" + layout.GitConfig, "HOME=" + layout.Home,
 		"XDG_CONFIG_HOME=" + layout.XDGConfig, "DOCKER_HOST=unix:///safe/runtime.sock",
@@ -228,6 +233,9 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	}
 	if _, err := ChildEnvironment(layout, ChildSpec{Path: "bad\x00path"}); err == nil {
 		t.Fatal("NUL environment value was accepted")
+	}
+	if _, err := ChildEnvironment(layout, ChildSpec{Workflow: "unknown"}); err == nil {
+		t.Fatal("unknown live child workflow accepted")
 	}
 	if _, err := ChildEnvironment(layout, ChildSpec{ControlFD: 3}); err == nil {
 		t.Fatal("process control without a retryable revocation path was accepted")

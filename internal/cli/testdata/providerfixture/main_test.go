@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -433,6 +434,88 @@ func TestReadScenarioAcceptsOnlyClosedBoundedBehavior(t *testing.T) {
 	oversized := `{"version":1,"provider":"future-provider"}` + strings.Repeat(" ", 64<<10)
 	if err := write(oversized); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized scenario error = %v, want explicit size rejection", err)
+	}
+}
+
+func TestReadLoopScenarioAcceptsOnlyClosedV4Action(t *testing.T) {
+	root := canonicalTemp(t)
+	path := filepath.Join(root, "scenario.json")
+	write := func(body string) error {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := readScenario(root, path)
+		return err
+	}
+	valid := `{"version":4,"provider":"codex","provider_homes":["codex"],"loop":{"task_id":"loop-task-codex","target":"codex:loop-model@work"}}`
+	if err := write(valid); err != nil {
+		t.Fatalf("valid loop scenario rejected: %v", err)
+	}
+	for _, outcome := range []string{"unbound", "unbound-log-symlink", "unbound-state-symlink", "repair-binding"} {
+		body := strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex:loop-model@work","outcome":"`+outcome+`"`, 1)
+		if err := write(body); err != nil {
+			t.Fatalf("closed loop outcome %q rejected: %v", outcome, err)
+		}
+	}
+	for _, body := range []string{
+		strings.Replace(valid, `"version":4`, `"version":1`, 1),
+		strings.Replace(valid, `"task_id":"loop-task-codex"`, `"task_id":"../escape"`, 1),
+		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"claude:loop-model@work"`, 1),
+		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex@work,personal"`, 1),
+		strings.TrimSuffix(valid, "}") + `,"command":"sh -c id"}`,
+		strings.TrimSuffix(valid, "}") + `,"marker":"mixed"}`,
+		strings.TrimSuffix(valid, "}") + `,"consult":{"calls":[],"steps":[]}}`,
+		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex:loop-model@work","outcome":"shell"`, 1),
+	} {
+		if err := write(body); err == nil {
+			t.Errorf("unsafe/open loop scenario accepted:\n%s", body)
+		}
+	}
+}
+
+func TestVerifyLoopLeaseRejectsUnheldAndMismatchedMetadata(t *testing.T) {
+	root := canonicalTemp(t)
+	task := filepath.Join(root, "task")
+	tmp := filepath.Join(task, "tmp")
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(tmp, "lease.lock")
+	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta := loopLeaseMetadata{
+		Version: 1, RunID: "run", ControllerPID: os.Getpid(), Provider: "codex",
+		Target: "codex:model@work", AcquiredAt: time.Now(), HeartbeatAt: time.Now(),
+	}
+	writeMeta := func() {
+		t.Helper()
+		data, err := json.Marshal(meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, "lease.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeMeta()
+	if err := verifyLoopLease(root, task, "codex", meta.Target); err == nil {
+		t.Fatal("unheld loop lease accepted")
+	}
+	lock, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	meta.Provider = "claude"
+	writeMeta()
+	if err := verifyLoopLease(root, task, "codex", "codex:model@work"); err == nil {
+		t.Fatal("mismatched loop lease metadata accepted")
 	}
 }
 

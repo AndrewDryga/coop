@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -121,8 +122,8 @@ func finishedTasks(before, after map[string]string) []string {
 
 // finalizeFinishedTasks handles the loop's in-box completion path: the worker moved the folder, so
 // the host normalizes state.md and removes tmp before any reviewer consumes a done task. It sweeps
-// EVERY done task, not just this iteration's delta: a completion whose finalization failed earlier
-// must be retried by a later run. Both operations are idempotent; the first error stops review.
+// EVERY done task, not just this iteration's delta. A task whose metadata cannot be finalized moves
+// back to in_progress before the error returns, so a drained queue cannot strand rejected work.
 func finalizeFinishedTasks(hosts []string) error {
 	for _, host := range hosts {
 		for _, t := range readTaskTree(host) {
@@ -130,7 +131,22 @@ func finalizeFinishedTasks(hosts []string) error {
 				continue
 			}
 			if err := finalizeCompletedTask(t.ID, t.Dir); err != nil {
-				return err
+				if restoreErr := moveTaskDir(host, t, stateInProgress); restoreErr != nil {
+					return errors.Join(err, fmt.Errorf("restore task %s after finalization failure: %w", t.ID, restoreErr))
+				}
+				restored := filepath.Join(host, stateInProgress, t.ID)
+				recoveryErr := normalizeTaskState(
+					t.ID,
+					restored,
+					"in progress — finalization failed",
+					"fix the task metadata or cleanup obstruction, then re-run `coop loop`",
+					"completion finalization failed",
+					"the task must finalize safely before completion is accepted",
+				)
+				if recoveryErr != nil {
+					recoveryErr = fmt.Errorf("refresh restored task %s: %w", t.ID, recoveryErr)
+				}
+				return errors.Join(err, recoveryErr)
 			}
 		}
 	}
@@ -206,6 +222,9 @@ func restoreUnbindableCompletions(hosts, ids []string) error {
 				if err := appendTaskLogStrict(filepath.Join(host, stateInProgress, id), note); err != nil {
 					restoreErrs = append(restoreErrs, fmt.Errorf("record rejection for task %s: %w", id, err))
 				}
+				if err := normalizeRejectedTaskState(id, filepath.Join(host, stateInProgress, id)); err != nil {
+					restoreErrs = append(restoreErrs, fmt.Errorf("refresh rejected task %s: %w", id, err))
+				}
 				break
 			}
 			if found {
@@ -217,6 +236,17 @@ func restoreUnbindableCompletions(hosts, ids []string) error {
 		}
 	}
 	return errors.Join(restoreErrs...)
+}
+
+func normalizeRejectedTaskState(id, taskDir string) error {
+	return normalizeTaskState(
+		id,
+		taskDir,
+		"in progress — completion rejected",
+		"repair the commit binding, then re-run `coop loop`",
+		"completion was rejected as unbindable",
+		"the task needs exactly one matching Coop-Task trailer",
+	)
 }
 
 func unbindableCompletionError(ids []string, restoreErr error) error {
@@ -477,11 +507,42 @@ func unblockResolved(hosts []string) []string {
 }
 
 func appendTaskLogStrict(taskDir, note string) error {
-	f, err := os.OpenFile(filepath.Join(taskDir, "log.md"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	root, err := openTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString("\n- " + note + "\n"); err != nil {
+	defer root.Close()
+	before, statErr := root.Lstat("log.md")
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	if statErr == nil {
+		if err := validateTaskMetadataFile("log.md", before); err != nil {
+			return err
+		}
+	}
+	f, err := root.OpenFile("log.md", os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return err
+	}
+	after, err := f.Stat()
+	if err != nil || (statErr == nil && !os.SameFile(before, after)) {
+		_ = f.Close()
+		if err != nil {
+			return err
+		}
+		return errors.New("task log changed while opening")
+	}
+	if err := validateTaskMetadataFile("log.md", after); err != nil {
+		_ = f.Close()
+		return err
+	}
+	line := "\n- " + note + "\n"
+	if after.Size()+int64(len(line)) > taskMetadataFileLimit {
+		_ = f.Close()
+		return fmt.Errorf("task metadata file %q exceeds %d bytes", "log.md", taskMetadataFileLimit)
+	}
+	if _, err := f.WriteString(line); err != nil {
 		_ = f.Close()
 		return err
 	}

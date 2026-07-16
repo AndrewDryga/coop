@@ -73,11 +73,31 @@ func TestFinalizeFinishedTasks(t *testing.T) {
 		t.Errorf("finalization discarded agent-authored fields:\n%s", state)
 	}
 
+}
+
+func TestFinalizeFinishedTasksCleanupFailureRestoresActionableState(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-cleanup-obstructed"
+	doneDir := filepath.Join(root, stateDone, id)
+	writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# done\n")
+	writeTaskFile(t, filepath.Join(doneDir, "state.md"), "# State\n\n**Status:** complete\n**Done so far:** implementation complete\n**Next action:** none\n**Traps:** cleanup must succeed\n")
+	writeTaskFile(t, filepath.Join(doneDir, "tmp", "scratch"), "retain\n")
 	oldCleaner := taskTmpCleaner
 	taskTmpCleaner = func(string) error { return errors.New("loop cleanup failed") }
 	t.Cleanup(func() { taskTmpCleaner = oldCleaner })
+
 	if err := finalizeFinishedTasks([]string{root}); err == nil || !strings.Contains(err.Error(), "loop cleanup failed") {
-		t.Errorf("loop cleanup failure = %v, want propagated error", err)
+		t.Fatalf("loop cleanup failure = %v, want propagated error", err)
+	}
+	restored := filepath.Join(root, stateInProgress, id)
+	if !fileExists(filepath.Join(restored, "tmp", "scratch")) {
+		t.Fatal("cleanup failure did not restore the task with diagnostic scratch")
+	}
+	state := readFileString(filepath.Join(restored, "state.md"))
+	for _, want := range []string{"**Status:** in progress — finalization failed", "**Done so far:** implementation complete", "**Next action:** fix the task metadata or cleanup obstruction", "**Traps:** cleanup must succeed"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("restored cleanup state missing %q:\n%s", want, state)
+		}
 	}
 }
 
@@ -94,19 +114,24 @@ func TestFinalizeFinishedTasksStateFailureIsRetryable(t *testing.T) {
 	if err := finalizeFinishedTasks([]string{root}); err == nil || !strings.Contains(err.Error(), "state finalization failed") {
 		t.Fatalf("loop finalization state failure = %v, want propagated error", err)
 	}
+	taskDir = filepath.Join(root, stateInProgress, id)
 	if !fileExists(filepath.Join(taskDir, "tmp", "scratch")) {
-		t.Fatal("loop state failure removed tmp before metadata was safe")
+		t.Fatal("loop state failure did not restore the actionable task with its tmp")
 	}
 	if err := os.RemoveAll(filepath.Join(taskDir, "state.md")); err != nil {
+		t.Fatal(err)
+	}
+	doneDir := filepath.Join(root, stateDone, id)
+	if err := os.Rename(taskDir, doneDir); err != nil {
 		t.Fatal(err)
 	}
 	if err := finalizeFinishedTasks([]string{root}); err != nil {
 		t.Fatalf("loop finalization retry: %v", err)
 	}
-	if pathExists(filepath.Join(taskDir, "tmp")) {
+	if pathExists(filepath.Join(doneDir, "tmp")) {
 		t.Fatal("loop finalization retry left tmp")
 	}
-	state := readFileString(filepath.Join(taskDir, "state.md"))
+	state := readFileString(filepath.Join(doneDir, "state.md"))
 	if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
 		t.Errorf("loop finalization retry did not create safe state:\n%s", state)
 	}
@@ -367,6 +392,15 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 			t.Errorf("rejection log missing %q:\n%s", want, log)
 		}
 	}
+	state, err := os.ReadFile(filepath.Join(inProgressDir, "state.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"**Status:** in progress", "completion rejected", "**Next action:** repair the commit binding"} {
+		if !strings.Contains(string(state), want) {
+			t.Errorf("rejection state missing %q:\n%s", want, state)
+		}
+	}
 
 	rejectErr := unbindableCompletionError([]string{id}, nil)
 	if rejectErr == nil {
@@ -376,6 +410,25 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 		if !strings.Contains(rejectErr.Error(), want) {
 			t.Errorf("controller error missing %q: %v", want, rejectErr)
 		}
+	}
+}
+
+func TestAppendTaskLogStrictRejectsSymlinkedLog(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside-log")
+	want := "outside log sentinel\n"
+	if err := os.WriteFile(outside, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	taskDir := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(taskDir, "log.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendTaskLogStrict(taskDir, "must stay contained"); err == nil || !strings.Contains(err.Error(), "single-link regular file") {
+		t.Fatalf("symlinked log error = %v", err)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != want {
+		t.Fatalf("outside log changed to %q, %v", data, err)
 	}
 }
 

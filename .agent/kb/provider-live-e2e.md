@@ -1,8 +1,8 @@
 ---
 name: provider-live-e2e
-description: Probe installed upstream CLIs with one isolated read-only marker request and stable pass/skip/fail evidence
+description: Probe installed upstream CLIs with isolated one-attempt read-only and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/grok.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+sources: [Makefile, internal/agent/agent.go, internal/agent/grok.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
 updated: 2026-07-16
 ---
 
@@ -13,6 +13,19 @@ token that cannot outlive the run. The latter expands `all` from `agents.Names()
 also accepts a complete registry-ordered explicit target list for account selection, and succeeds
 only when every registered provider was attempted once and passed. Anything after the marker
 command starts is a failure, including quota/auth errors; there are no retries.
+
+`make provider-loop-live-e2e COOP_LIVE_TARGETS='...'` and its strict `-all` form reuse that same
+admission and evidence contract for one writable task-completion attempt. The deterministic suite
+already owns the real external loop controller, lease, reconciliation, and telemetry path. The
+live child therefore makes one direct adapter `Headless` call with the production loop work prompt
+against one pre-claimed mechanical task, avoiding the controller's ordinary paid retries. Success
+requires the exact marker file and sole task-bound commit, unchanged task instructions, clean Git
+state, final state/log, no scratch, no extra ignored files, and the task in done. It emits the same
+path/account/token-free `COOP_PROVIDER_LOOP_LIVE_SUMMARY` and remains opt-in because each admitted
+provider starts one headless session. Before any post-provider Git command, the verifier walks the
+entire Git administrative tree without following links; it then requires the exact commit-message
+file, raw reflog append, and an index structurally equal to a canonical index rebuilt from `HEAD`
+apart from cross-mount stat fields, so ignored Git metadata cannot hide provider output.
 
 The parent reads resolved Coop config only to select credential inputs and the host-runtime
 capability. `internal/testutil/liveprovider` writes one selected account's adapter-declared auth
@@ -91,6 +104,7 @@ the selected env-backed API-key mode. The no-quota version probe still runs for 
 skips.
 
 ## Changelog
+- 2026-07-16 - added the single-attempt writable task-completion workflow and exact repository verifier
 - 2026-07-16 - retained Grok's required non-refresh routing record after live access-only compatibility proved the two-field projection unauthenticated
 - 2026-07-15 - made timeout credential revocation use a parent-known tombstone with retry and persistent-failure reporting
 - 2026-07-15 - bound records to the harness cleanup identity, preserved process control across ACP self-reload, and made admission/quiescence proof bounded and fail-closed

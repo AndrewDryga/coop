@@ -377,6 +377,22 @@ func TestNormalizeCompletedTaskStateRepairsMissingAndMalformed(t *testing.T) {
 	}
 }
 
+func TestNormalizeCompletedTaskStateRejectsSymlinkedState(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside-state")
+	want := "outside state sentinel\n"
+	writeTaskFile(t, outside, want)
+	taskDir := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(taskDir, "state.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := normalizeCompletedTaskState("task-id", taskDir); err == nil || !strings.Contains(err.Error(), "single-link regular file") {
+		t.Fatalf("symlinked state error = %v", err)
+	}
+	if got := readFileString(outside); got != want {
+		t.Fatalf("outside state changed to %q", got)
+	}
+}
+
 func TestTasksDoneRetriesStateFinalizationFailure(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-state-fails"

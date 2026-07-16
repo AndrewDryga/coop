@@ -93,6 +93,7 @@ type scenario struct {
 	ExitCode      int               `json:"exit_code"`
 	Consult       *consultScenario  `json:"consult,omitempty"`
 	Delegate      *delegateScenario `json:"delegate,omitempty"`
+	Loop          *loopScenario     `json:"loop,omitempty"`
 }
 
 func main() {
@@ -706,6 +707,14 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 	if err := record(root, trace, traceRecord{Source: "provider", Event: "start", PID: os.Getpid(), ParentPID: os.Getppid(), Argv: traceProviderArgv(providerArgv), Cwd: traceContainerPath(root, cwd), Environment: traceEnvironment(environmentMap(os.Environ()))}); err != nil {
 		return err
 	}
+	if s.Loop != nil {
+		if err := serveLoopWorker(root, provider, *s.Loop); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "fixture-loop-complete-"+provider)
+		exitCode := 0
+		return record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode})
+	}
 	if s.Output != nil {
 		fmt.Fprint(os.Stdout, *s.Output)
 	} else {
@@ -778,6 +787,18 @@ func readScenario(root, path string) (scenario, error) {
 			return scenario{}, fmt.Errorf("scenario provider home %q is duplicated", provider)
 		}
 		seenHomes[provider] = true
+	}
+	if s.Loop != nil {
+		if s.Version != 4 {
+			return scenario{}, fmt.Errorf("loop scenario version %d is unsupported", s.Version)
+		}
+		if s.Consult != nil || s.Delegate != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
+			return scenario{}, errors.New("loop scenario cannot set consult, delegate, or direct-provider result fields")
+		}
+		if err := validateLoopScenario(s.Provider, *s.Loop); err != nil {
+			return scenario{}, err
+		}
+		return s, nil
 	}
 	if s.Delegate != nil {
 		if s.Version != 3 {
