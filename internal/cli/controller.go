@@ -47,7 +47,7 @@ func commitsForTask(repo, rangeExpr, id string) []string {
 var gateGuardGlobs = []string{
 	"Makefile", "makefile", "GNUmakefile",
 	".agent/project.yaml", ".agent/loop.yaml",
-	".agent/skills/sweep/",
+	".agent/skills/sweep/", "queue-guard.sh",
 	".claude/hooks/", ".claude/settings.json", ".claude/settings.local.json",
 	".github/workflows/",
 }
@@ -92,7 +92,7 @@ func protectedGateChanges(repo, base, head string) []string {
 	if base == "" || head == "" || base == head {
 		return nil
 	}
-	return protectedGateFiles(strings.Split(gitOut(repo, "diff", "--name-only", base+".."+head), "\n"))
+	return protectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"))
 }
 
 // queueSnapshot maps task id → state across the hosts, for diffing what an iteration moved.

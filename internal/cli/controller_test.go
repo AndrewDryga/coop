@@ -382,6 +382,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 func TestIsGateGuardPath(t *testing.T) {
 	guarded := []string{"Makefile", "sub/Makefile", ".agent/project.yaml", ".agent/loop.yaml",
 		".agent/skills/sweep/SKILL.md", ".agent/skills/sweep/queue-guard.sh",
+		".claude/skills/workflow-sweep/queue-guard.sh",
 		".claude/settings.json", ".claude/hooks/commit-gate.sh", ".github/workflows/ci.yml"}
 	for _, f := range guarded {
 		if !isGateGuardPath(f) {
@@ -389,7 +390,8 @@ func TestIsGateGuardPath(t *testing.T) {
 		}
 	}
 	// Ordinary source and test files are NOT gate-defining — only the checker's own definition is.
-	for _, f := range []string{"internal/cli/sign.go", "internal/cli/sign_test.go", "README.md", "docs/cli.md"} {
+	for _, f := range []string{"internal/cli/sign.go", "internal/cli/sign_test.go", "README.md", "docs/cli.md",
+		".claude/skills/workflow-sweep/helper.sh", ".claude/skills/workflow-sweep/queue-guard.sh.bak"} {
 		if isGateGuardPath(f) {
 			t.Errorf("%q should NOT be gate-defining (only the gate's own definition is)", f)
 		}
@@ -422,6 +424,7 @@ func TestProtectedGateChanges(t *testing.T) {
 	git("config", "user.email", "t@t")
 	git("config", "user.name", "T")
 	write("code.go", "package x")
+	write(".claude/skills/workflow-sweep/queue-guard.sh", "#!/bin/sh\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "base")
 	base := gitOut(repo, "rev-parse", "HEAD")
@@ -439,6 +442,22 @@ func TestProtectedGateChanges(t *testing.T) {
 	git("commit", "-q", "-m", "loosen the gate")
 	if hits := protectedGateChanges(repo, mid, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != "Makefile" {
 		t.Errorf("a Makefile change should be flagged, got %v", hits)
+	}
+	// Renaming a guard away must report the deleted protected path, not only its new name.
+	renameBase := gitOut(repo, "rev-parse", "HEAD")
+	git("mv", ".claude/skills/workflow-sweep/queue-guard.sh", ".claude/skills/workflow-sweep/disabled.sh")
+	git("commit", "-q", "-m", "disable the adopted guard")
+	if hits := protectedGateChanges(repo, renameBase, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
+		t.Errorf("renaming an adopted guard should flag its old path, got %v", hits)
+	}
+	// NUL-delimited names prevent Git from quoting paths before basename matching.
+	unicodeGuard := "\u00e9/queue-guard.sh"
+	unicodeBase := gitOut(repo, "rev-parse", "HEAD")
+	write(unicodeGuard, "#!/bin/sh\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "add guard below unicode directory")
+	if hits := protectedGateChanges(repo, unicodeBase, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != unicodeGuard {
+		t.Errorf("a protected basename below a unicode directory should be flagged, got %v", hits)
 	}
 }
 
