@@ -2,7 +2,7 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated one-attempt read-only and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/grok.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+sources: [Makefile, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
 updated: 2026-07-16
 ---
 
@@ -26,6 +26,18 @@ provider starts one headless session. Before any post-provider Git command, the 
 entire Git administrative tree without following links; it then requires the exact commit-message
 file, raw reflog append, and an index structurally equal to a canonical index rebuilt from `HEAD`
 apart from cross-mount stat fields, so ignored Git metadata cannot hide provider output.
+
+`make provider-resume-live-e2e COOP_LIVE_TARGETS='...'` spends two requests per admitted provider:
+one clean helper creates a marker-bearing native session, and a second provider request receives
+only its canonical ID and must return the prior assistant response without seeing the marker in its
+process environment or prompt. The helper retains the marker only as verifier state. Both use the same
+isolated history and read-only repository. Claude, Gemini, and Grok exercise their normal exact
+adapter lookup; Codex discovers `thread.started.thread_id` from bounded JSON and uses native
+`codex exec resume <id> --json`. The private ID handoff is bounded/no-follow and every stage gets
+separate process/container cleanup. The strict `-all` form fails on any skip and there are no retries.
+The cleanup supervisor label does not imply ACP behavior: `ShareACPSessions` is set only by the ACP
+launch path, so supervised prompt/loop/consult/resume probes keep native history in their selected
+profile instead of shadowing it with the credential-independent ACP store.
 
 The parent reads resolved Coop config only to select credential inputs and the host-runtime
 capability. `internal/testutil/liveprovider` writes one selected account's adapter-declared auth
@@ -104,6 +116,8 @@ the selected env-backed API-key mode. The no-quota version probe still runs for 
 skips.
 
 ## Changelog
+- 2026-07-16 - separated supervision from ACP transcript sharing after live resume exposed the shadow mount
+- 2026-07-16 - added two-process exact native-session continuity with a private bounded ID handoff
 - 2026-07-16 - added the single-attempt writable task-completion workflow and exact repository verifier
 - 2026-07-16 - retained Grok's required non-refresh routing record after live access-only compatibility proved the two-field projection unauthenticated
 - 2026-07-15 - made timeout credential revocation use a parent-known tombstone with retry and persistent-failure reporting

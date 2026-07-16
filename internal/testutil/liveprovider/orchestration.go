@@ -14,6 +14,8 @@ import (
 
 const childResultLimit int64 = 16 << 10
 
+const sessionIDLimit int64 = 64
+
 // ReadChildResult accepts exactly one bounded, root-owned result and validates it through the same
 // summary contract used for persisted evidence.
 func ReadChildResult(root, path, expectedProvider string) (ProviderResult, error) {
@@ -46,6 +48,29 @@ func ReadChildResult(root, path, expectedProvider string) (ProviderResult, error
 		return ProviderResult{}, errors.New("live child result violates summary contract")
 	}
 	return result, nil
+}
+
+// ReadSessionID accepts one private, bounded provider session identifier written by the fresh
+// helper. Provider-owned history is never searched by the parent live harness.
+func ReadSessionID(root, path string) (string, error) {
+	file, err := procharness.OpenRegularFile(root, path, os.O_RDONLY)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() == 0 || info.Size() > sessionIDLimit {
+		return "", errors.New("live session id is empty, oversized, or unreadable")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, sessionIDLimit+1))
+	if err != nil {
+		return "", errors.New("read live session id")
+	}
+	id := string(data)
+	if !agents.ValidSessionID(id) {
+		return "", errors.New("invalid live session id")
+	}
+	return id, nil
 }
 
 // ReadConsultChildSummary accepts one bounded, closed-schema provider-ring result and recomputes its totals.

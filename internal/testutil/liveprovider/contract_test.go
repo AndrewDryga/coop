@@ -76,6 +76,10 @@ func TestSummaryContract(t *testing.T) {
 	if err != nil || !strings.HasPrefix(loopLine, LoopSummaryPrefix+`{"schema":1`) || strings.Count(loopLine, "\n") != 0 {
 		t.Errorf("loop summary line = %q, %v", loopLine, err)
 	}
+	resumeLine, err := standard.ResumeLine()
+	if err != nil || !strings.HasPrefix(resumeLine, ResumeSummaryPrefix+`{"schema":1`) || strings.Count(resumeLine, "\n") != 0 {
+		t.Errorf("resume summary line = %q, %v", resumeLine, err)
+	}
 
 	failed, err := NewSummary(false, requested[:1], []ProviderResult{{
 		Provider: "claude", Attempted: true, Status: StatusFailed, ReasonCode: ReasonPromptExit,
@@ -236,6 +240,35 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	}
 	if _, err := ChildEnvironment(layout, ChildSpec{Workflow: "unknown"}); err == nil {
 		t.Fatal("unknown live child workflow accepted")
+	}
+	resumeID := "018f6352-6281-7ae1-a1d5-07c3399de43d"
+	sessionFile := filepath.Join(layout.State, "provider-session-id")
+	resumeEnv, err := ChildEnvironment(layout, ChildSpec{
+		Path: "/safe/bin", Target: "codex", Workflow: "resume", Stage: "resume",
+		SessionID: resumeID, SessionFile: sessionFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumeJoined := strings.Join(resumeEnv, "\n")
+	for _, required := range []string{
+		"COOP_TEST_LIVE_WORKFLOW=resume", "COOP_TEST_LIVE_STAGE=resume",
+		"COOP_TEST_LIVE_SESSION_ID=" + resumeID, "COOP_TEST_LIVE_SESSION_FILE=" + sessionFile,
+	} {
+		if !strings.Contains(resumeJoined, required) {
+			t.Errorf("resume child environment missing %q", required)
+		}
+	}
+	for _, invalid := range []ChildSpec{
+		{Workflow: "resume", Stage: "unknown", SessionFile: sessionFile},
+		{Workflow: "resume", Stage: "fresh", SessionFile: filepath.Join(layout.State, "other")},
+		{Workflow: "resume", Stage: "resume", SessionFile: sessionFile},
+		{Workflow: "resume", Stage: "resume", SessionID: "not-a-session", SessionFile: sessionFile},
+		{Workflow: "prompt", Stage: "fresh", SessionFile: sessionFile},
+	} {
+		if _, err := ChildEnvironment(layout, invalid); err == nil {
+			t.Errorf("invalid resume child contract accepted: %+v", invalid)
+		}
 	}
 	if _, err := ChildEnvironment(layout, ChildSpec{ControlFD: 3}); err == nil {
 		t.Fatal("process control without a retryable revocation path was accepted")

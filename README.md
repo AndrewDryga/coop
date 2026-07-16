@@ -1572,6 +1572,7 @@ make build                               # build ./coop
 make check                               # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
 make provider-scripted-e2e               # deterministic all-provider process matrix
 make provider-live-e2e-all               # one read-only real prompt per registered provider (opt-in)
+make provider-resume-live-e2e-all        # two-process native session continuity per provider (opt-in)
 make provider-loop-live-e2e-all          # one writable real task completion per provider (opt-in)
 make provider-consult-live-e2e-all       # four real cross-provider coop-consult edges, no lead calls (opt-in)
 make doctor                              # the integration check — proves isolation, needs a runtime
@@ -1608,6 +1609,13 @@ events and two-stage Ctrl-C telemetry without a production test switch. Terminal
 classified separately from assistant narration; exact rate/auth phrases inside ordinary task prose
 therefore cannot rotate or stop the loop.
 
+Provider session lookup also has a generated large-history regression matrix under a disposable
+config root. It covers every registered adapter's exact hit, full miss, wrong cwd and ID, malformed
+history, alternate-account isolation, and repeated descriptor closure. Its benchmark reports lookup
+time and allocations without imposing machine-sensitive thresholds. Current Gemini buckets use
+their bounded `.project_root` ownership marker to skip foreign histories; markerless legacy buckets
+retain bounded metadata fallback. No secondary session index or cache is maintained.
+
 The same process fixture drives work, between-task audit, signoff, and verify as distinct stages,
 including stage-local provider rotation, review reopens, retry and round caps, and the final queue
 exit. Review boxes are checked against their real mount policy: the repository is read-only while
@@ -1625,6 +1633,8 @@ make provider-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
 make provider-live-e2e COOP_LIVE_TARGETS='claude:opus/high@personal'
 make provider-live-e2e-all
 make provider-live-e2e-all COOP_LIVE_TARGETS='claude@backup,codex,gemini,grok'
+make provider-resume-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
+make provider-resume-live-e2e-all
 make provider-loop-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
 make provider-loop-live-e2e-all
 make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'
@@ -1686,6 +1696,22 @@ targets are deliberately outside `make check` because each attempted provider co
 model request. Deterministic argv, policy, error, rate-limit, and cancellation coverage remains in
 `make provider-scripted-e2e`; `make check` also runs the no-credential tagged process-control denial
 suite.
+
+The separate resume live target keeps that same read-only repository, projected credential,
+deadline, revocation, source-fingerprint, and cleanup boundary for two helper OS processes. The
+first request contains a random token and creates one provider-native session in the disposable
+home. Its exact canonical session ID crosses the process boundary through one bounded private file;
+the second provider request receives only that ID and asks for the preceding assistant response
+without repeating it. The helper retains the marker only as verifier state; it is not forwarded to
+the provider process, its environment, or its prompt. Claude,
+Gemini, and Grok use their caller-pinned IDs and production exact-history lookup. Codex records the
+`thread.started` ID from its bounded native JSON stream and invokes `codex exec resume <id>` in the
+second process. A pass therefore proves current native headless continuity plus the deterministic
+interactive lookup contract; it does not automate a TUI. The run emits one redacted
+`COOP_PROVIDER_RESUME_LIVE_SUMMARY` line. Each admitted provider consumes exactly two real requests,
+there are no retries, and the strict `-all` target fails on any prerequisite skip.
+The supervisor label used for bounded cleanup is independent from ACP transcript sharing; only an
+actual ACP launch mounts the credential-independent ACP session directories.
 
 The separate consult live ring exercises one registry-derived edge into each provider. The child
 invokes the mounted `coop-consult` wrapper directly, so no lead model is called. A complete run

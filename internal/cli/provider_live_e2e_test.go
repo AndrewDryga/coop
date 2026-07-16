@@ -30,6 +30,9 @@ import (
 const (
 	liveWorkflowPrompt = "prompt"
 	liveWorkflowLoop   = "loop"
+	liveWorkflowResume = "resume"
+	liveResumeFresh    = "fresh"
+	liveResumeContinue = "resume"
 
 	liveChildDeadline   = 6 * time.Minute
 	livePromptDeadline  = 3 * time.Minute
@@ -42,6 +45,10 @@ const (
 
 func TestProviderLiveCompatibility(t *testing.T) {
 	testProviderLiveCompatibility(t, liveWorkflowPrompt)
+}
+
+func TestProviderResumeLiveCompatibility(t *testing.T) {
+	testProviderLiveCompatibility(t, liveWorkflowResume)
 }
 
 func testProviderLiveCompatibility(t *testing.T, workflow string) {
@@ -93,7 +100,11 @@ func testProviderLiveCompatibility(t *testing.T, workflow string) {
 
 	results := make([]liveprovider.ProviderResult, 0, len(targets))
 	for _, target := range targets {
-		results = append(results, runProviderLiveCompatibility(t, realConfig, rt, runtimeSettings, target, workflow))
+		if workflow == liveWorkflowResume {
+			results = append(results, runProviderResumeLiveCompatibility(t, realConfig, rt, runtimeSettings, target))
+		} else {
+			results = append(results, runProviderLiveCompatibility(t, realConfig, rt, runtimeSettings, target, workflow))
+		}
 	}
 	emitLiveSummary(t, workflow, strict, targets, results)
 }
@@ -117,6 +128,8 @@ func emitLiveSummary(t *testing.T, workflow string, strict bool, targets []agent
 	var line string
 	if workflow == liveWorkflowLoop {
 		line, err = summary.LoopLine()
+	} else if workflow == liveWorkflowResume {
+		line, err = summary.ResumeLine()
 	} else {
 		line, err = summary.Line()
 	}
@@ -293,16 +306,21 @@ func TestProviderLiveChild(t *testing.T) {
 	preflightReason := os.Getenv("COOP_TEST_LIVE_PREFLIGHT")
 	cidDir := os.Getenv("COOP_TEST_LIVE_CID_DIR")
 	workflow := os.Getenv("COOP_TEST_LIVE_WORKFLOW")
-	if marker == "" || resultFile == "" || attemptFile == "" || supervisor == "" || cidDir == "" || (workflow != liveWorkflowPrompt && workflow != liveWorkflowLoop) {
+	stage := os.Getenv("COOP_TEST_LIVE_STAGE")
+	sessionID := os.Getenv("COOP_TEST_LIVE_SESSION_ID")
+	sessionFile := os.Getenv("COOP_TEST_LIVE_SESSION_FILE")
+	if marker == "" || resultFile == "" || attemptFile == "" || supervisor == "" || cidDir == "" ||
+		(workflow != liveWorkflowPrompt && workflow != liveWorkflowLoop && workflow != liveWorkflowResume) ||
+		(workflow == liveWorkflowResume && (sessionFile == "" || (stage != liveResumeFresh && stage != liveResumeContinue))) {
 		t.Fatal("incomplete live child control contract")
 	}
-	result := executeProviderLiveChild(target, workflow, marker, attemptFile, supervisor, preflightReason, cidDir)
+	result := executeProviderLiveChild(target, workflow, stage, sessionID, sessionFile, marker, attemptFile, supervisor, preflightReason, cidDir)
 	if err := writeLiveChildResult(resultFile, result); err != nil {
 		t.Fatal("write live child result")
 	}
 }
 
-func executeProviderLiveChild(target agents.Target, workflow, marker, attemptFile, supervisor, preflightReason, cidDir string) liveprovider.ProviderResult {
+func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, sessionFile, marker, attemptFile, supervisor, preflightReason, cidDir string) liveprovider.ProviderResult {
 	result := liveprovider.ProviderResult{Provider: target.Provider}
 	fail := func(attempted bool, reason, phase string, code int, timedOut, truncated bool, class string) liveprovider.ProviderResult {
 		result.Attempted, result.Passed = attempted, false
@@ -310,6 +328,11 @@ func executeProviderLiveChild(target agents.Target, workflow, marker, attemptFil
 		result.Phase, result.ExitCode = phase, code
 		result.TimedOut, result.Truncated, result.ErrorClass = timedOut, truncated, class
 		return result
+	}
+	harnessFail := func(attempted bool, detail string) liveprovider.ProviderResult {
+		failed := fail(attempted, liveprovider.ReasonHarnessFailed, "harness", 0, false, false, "harness")
+		failed.DetailCode = detail
+		return failed
 	}
 	skip := func(reason string) liveprovider.ProviderResult {
 		result.Status, result.ReasonCode = liveprovider.StatusSkipped, reason
@@ -395,13 +418,29 @@ func executeProviderLiveChild(target agents.Target, workflow, marker, attemptFil
 	promptCtx, cancelPrompt := context.WithTimeout(context.Background(), promptDeadline)
 	prompt := "Respond with exactly " + marker + " and no other text."
 	repoReadOnly := true
-	if workflow == liveWorkflowLoop {
+	var command []string
+	switch workflow {
+	case liveWorkflowLoop:
 		prompt = providerLoopLivePrompt(cfg.RepoOverride, target.Provider)
 		repoReadOnly = false
+		command = ag.Headless(cfg, prompt)
+	case liveWorkflowResume:
+		if stage == liveResumeContinue {
+			prompt = "Respond with exactly the text of your immediately preceding assistant response and no other text."
+		}
+		var ok bool
+		command, ok = providerResumeLiveCommand(ag, cfg, stage, sessionID, prompt)
+		if !ok {
+			failed := fail(true, liveprovider.ReasonPromptExit, "prompt", 0, false, false, "session_missing")
+			failed.DetailCode = "session_lookup"
+			return failed
+		}
+	default:
+		command = ag.Headless(cfg, prompt)
 	}
 	code, runErr = box.Run(cfg, rt, box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride,
-		Cmd:   ag.Headless(cfg, prompt),
+		Cmd:   command,
 		Agent: target.Provider, Batch: true, RepoReadOnly: repoReadOnly, Quiet: true,
 		Homes: true, Network: false, Cache: false, SupervisorID: supervisor,
 		Stdout: stdout, Stderr: stderr, Ctx: promptCtx,
@@ -422,6 +461,22 @@ func executeProviderLiveChild(target agents.Target, workflow, marker, attemptFil
 	}
 	if workflow == liveWorkflowPrompt && strings.TrimSpace(stdout.String()) != marker {
 		return fail(true, liveprovider.ReasonMarkerMismatch, "prompt", code, false, false, "marker")
+	}
+	if workflow == liveWorkflowResume {
+		resolvedID, reply, err := providerResumeLiveOutput(ag, sessionID, stdout.String())
+		if err != nil {
+			failed := fail(true, liveprovider.ReasonPromptExit, "prompt", code, false, false, "provider_stream")
+			failed.DetailCode = "session_stream"
+			return failed
+		}
+		if reply != marker {
+			return fail(true, liveprovider.ReasonMarkerMismatch, "prompt", code, false, false, "marker")
+		}
+		if stage == liveResumeFresh {
+			if err := writeLiveSessionID(sessionFile, resolvedID); err != nil {
+				return harnessFail(true, "session_id")
+			}
+		}
 	}
 	result.Passed, result.Status, result.ReasonCode = true, liveprovider.StatusPassed, ""
 	return result

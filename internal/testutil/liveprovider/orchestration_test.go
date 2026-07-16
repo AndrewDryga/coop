@@ -156,6 +156,54 @@ func TestReadChildResultRejectsUnsafeOrInconsistentFiles(t *testing.T) {
 	}
 }
 
+func TestReadSessionIDAcceptsOnlyPrivateCanonicalUUID(t *testing.T) {
+	const valid = "018f6352-6281-7ae1-a1d5-07c3399de43d"
+	tests := []struct {
+		name, content string
+		link          string
+		want          bool
+	}{
+		{name: "valid", content: valid, want: true},
+		{name: "newline", content: valid + "\n"},
+		{name: "invalid", content: "not-a-session"},
+		{name: "oversized", content: strings.Repeat("a", int(sessionIDLimit)+1)},
+		{name: "symlink", content: valid, link: "symlink"},
+		{name: "hardlink", content: valid, link: "hardlink"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			layout, err := procharness.NewLayout(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(layout.State, "session-id")
+			target := path
+			if tt.link != "" {
+				target = filepath.Join(layout.State, "session-target")
+			}
+			writeRawResult(t, target, []byte(tt.content))
+			switch tt.link {
+			case "symlink":
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			case "hardlink":
+				if err := os.Link(target, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := ReadSessionID(layout.Root, path)
+			if tt.want {
+				if err != nil || got != valid {
+					t.Fatalf("ReadSessionID() = %q, %v", got, err)
+				}
+			} else if err == nil {
+				t.Fatalf("unsafe session id accepted: %q", got)
+			}
+		})
+	}
+}
+
 func TestReadChildResultAcceptsExactSizeLimitAndControlPresenceIsStrict(t *testing.T) {
 	layout, err := procharness.NewLayout(t.TempDir())
 	if err != nil {

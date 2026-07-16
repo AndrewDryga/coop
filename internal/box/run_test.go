@@ -1001,6 +1001,65 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	}
 }
 
+func TestAssembleArgsSharesSessionsOnlyForACP(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+	args := func(supervisor string, share bool) []string {
+		return assembleArgs(cfg, RunSpec{
+			Image: "i", Repo: "/r", Agent: "gemini", Homes: true,
+			SupervisorID: supervisor, ShareACPSessions: share,
+		}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	}
+	shared := acpSharedDir(cfg, "gemini") + "/tmp:/home/node/.gemini/tmp"
+	for _, tc := range []struct {
+		name       string
+		supervisor string
+		share      bool
+		want       bool
+	}{
+		{name: "plain", want: false},
+		{name: "supervised non-ACP", supervisor: "abc123", want: false},
+		{name: "unsupervised ACP", share: true, want: true},
+		{name: "supervised ACP", supervisor: "abc123", share: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := containsSeq(args(tc.supervisor, tc.share), []string{"-v", shared}); got != tc.want {
+				t.Fatalf("shared session mount present = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunPreparesSharedSessionsOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		supervisor string
+		share      bool
+	}{
+		{name: "plain"},
+		{name: "supervised non-ACP", supervisor: "abc123"},
+		{name: "unsupervised ACP", share: true},
+		{name: "supervised ACP", supervisor: "abc123", share: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{
+				Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "gemini",
+				Homes: true, Batch: true, Quiet: true, SupervisorID: tc.supervisor,
+				ShareACPSessions: tc.share,
+			}
+			if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+				t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+			}
+			shared := filepath.Join(acpSharedDir(cfg, "gemini"), "tmp")
+			if got := dirExists(shared); got != tc.share {
+				t.Fatalf("shared session directory exists = %v, want %v", got, tc.share)
+			}
+		})
+	}
+}
+
 func TestAssembleArgsEgress(t *testing.T) {
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	args := func(egress, networkName string) []string {

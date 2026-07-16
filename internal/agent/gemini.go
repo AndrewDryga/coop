@@ -65,8 +65,14 @@ func (a geminiAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) 
 	return a.Interactive(cfg), false
 }
 
+const (
+	geminiProjectRootLimit    = 4 << 10
+	geminiMetadataLimit       = 1 << 20
+	geminiLegacyMetadataLimit = 4 << 20
+)
+
 // geminiHasSession matches both the Coop-owned id and Gemini's native sha256(cwd) projectHash.
-// Bucket names have changed across releases, so scan them but never accept another cwd's session.
+// Current buckets carry a .project_root owner; markerless legacy buckets fall back to metadata.
 func geminiHasSession(cfg *config.Config, ws, id string) bool {
 	wantProject := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
 	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("gemini"), "tmp"))
@@ -82,6 +88,9 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 	_ = dir.Close()
 	for _, bucket := range buckets {
 		if !bucket.IsDir() || bucket.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		if bucketCWD := geminiBucketCWD(root, bucket.Name()); bucketCWD != "" && bucketCWD != ws {
 			continue
 		}
 		chats := filepath.Join(bucket.Name(), "chats")
@@ -105,7 +114,16 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 			if err != nil {
 				continue
 			}
-			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, 1<<20))
+			legacy := strings.HasSuffix(entry.Name(), ".json")
+			limit := int64(geminiMetadataLimit)
+			if legacy {
+				limit = geminiLegacyMetadataLimit
+				if info.Size() > limit {
+					_ = f.Close()
+					continue
+				}
+			}
+			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, limit), legacy)
 			_ = f.Close()
 			// Some whole-file legacy records omit projectHash. Accept those only from the old
 			// exact sha256(cwd) bucket; a slug without metadata cannot prove cwd safely.
@@ -117,39 +135,47 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 	return false
 }
 
-// geminiSessionMetadata reads only the two top-level keys needed for lookup. It works for the
-// first object in current JSONL and for legacy whole-file JSON without loading transcript arrays.
-func geminiSessionMetadata(r io.Reader) (sessionID, projectHash string) {
+// geminiBucketCWD reads Gemini's current bucket ownership marker. An absent or malformed marker
+// returns empty so older bucket schemes retain the metadata fallback above.
+func geminiBucketCWD(root *os.Root, bucket string) string {
+	path := filepath.Join(bucket, ".project_root")
+	info, err := root.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > geminiProjectRootLimit {
+		return ""
+	}
+	f, err := root.Open(path)
+	if err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(io.LimitReader(f, geminiProjectRootLimit+1))
+	_ = f.Close()
+	if err != nil || len(data) > geminiProjectRootLimit {
+		return ""
+	}
+	cwd := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(cwd) {
+		return ""
+	}
+	return cwd
+}
+
+// geminiSessionMetadata decodes only the two top-level keys needed for lookup. Callers cap the
+// complete record because encoding/json buffers one top-level value even when the target is narrow.
+func geminiSessionMetadata(r io.Reader, wholeRecord bool) (sessionID, projectHash string) {
 	dec := json.NewDecoder(r)
-	start, err := dec.Token()
-	if err != nil || start != json.Delim('{') {
+	var metadata struct {
+		SessionID   string `json:"sessionId"`
+		ProjectHash string `json:"projectHash"`
+	}
+	if err := dec.Decode(&metadata); err != nil {
 		return "", ""
 	}
-	for dec.More() {
-		key, err := dec.Token()
-		if err != nil {
+	if wholeRecord {
+		if _, err := dec.Token(); err != io.EOF {
 			return "", ""
 		}
-		switch key {
-		case "sessionId":
-			if err := dec.Decode(&sessionID); err != nil {
-				return "", ""
-			}
-		case "projectHash":
-			if err := dec.Decode(&projectHash); err != nil {
-				return "", ""
-			}
-		default:
-			var ignored json.RawMessage
-			if err := dec.Decode(&ignored); err != nil {
-				return "", ""
-			}
-		}
-		if sessionID != "" && projectHash != "" {
-			return sessionID, projectHash
-		}
 	}
-	return sessionID, projectHash
+	return metadata.SessionID, metadata.ProjectHash
 }
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }

@@ -660,7 +660,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
-		SupervisorID:   os.Getenv("COOP_ACP_SUPERVISOR"),
+		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), ShareACPSessions: true,
 		FusionGovernor: governor, FusionMembers: council.Members, ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
 		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,

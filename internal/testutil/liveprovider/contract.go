@@ -29,6 +29,8 @@ const (
 	SummaryPrefix = "COOP_PROVIDER_LIVE_SUMMARY "
 	// LoopSummaryPrefix keeps writable task-completion evidence distinct from a read-only marker probe.
 	LoopSummaryPrefix = "COOP_PROVIDER_LOOP_LIVE_SUMMARY "
+	// ResumeSummaryPrefix identifies the two-process native-session continuity probe.
+	ResumeSummaryPrefix = "COOP_PROVIDER_RESUME_LIVE_SUMMARY "
 	// ConsultSummaryPrefix identifies the separate four-provider live consult result contract.
 	ConsultSummaryPrefix = "COOP_CONSULT_LIVE_SUMMARY "
 	// SupervisorLabelKey is the test-only label used to reap an ACP process even after its outer
@@ -301,6 +303,10 @@ func (s Summary) Line() (string, error) {
 
 func (s Summary) LoopLine() (string, error) {
 	return s.line(LoopSummaryPrefix)
+}
+
+func (s Summary) ResumeLine() (string, error) {
+	return s.line(ResumeSummaryPrefix)
 }
 
 func (s Summary) line(prefix string) (string, error) {
@@ -616,6 +622,9 @@ type ChildSpec struct {
 	Path            string
 	Target          string
 	Workflow        string
+	Stage           string
+	SessionID       string
+	SessionFile     string
 	Marker          string
 	ResultFile      string
 	AttemptFile     string
@@ -658,13 +667,25 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 	if workflow == "" {
 		workflow = "prompt"
 	}
-	if workflow != "prompt" && workflow != "loop" {
+	if workflow != "prompt" && workflow != "loop" && workflow != "resume" {
 		return nil, errors.New("invalid live child workflow")
+	}
+	if workflow == "resume" {
+		if (spec.Stage != "fresh" && spec.Stage != "resume") ||
+			filepath.Clean(spec.SessionFile) != filepath.Join(layout.State, "provider-session-id") ||
+			(spec.SessionID != "" && !agents.ValidSessionID(spec.SessionID)) ||
+			(spec.Stage == "resume" && spec.SessionID == "") {
+			return nil, errors.New("invalid live resume child contract")
+		}
+	} else if spec.Stage != "" || spec.SessionID != "" || spec.SessionFile != "" {
+		return nil, errors.New("live resume authority granted to another workflow")
 	}
 	for key, value := range map[string]string{
 		"COOP_TEST_LIVE_CHILD": "1", "COOP_TEST_LIVE_TARGET": spec.Target,
 		"COOP_TEST_LIVE_WORKFLOW": workflow,
-		"COOP_TEST_LIVE_MARKER":   spec.Marker, "COOP_TEST_LIVE_RESULT": spec.ResultFile,
+		"COOP_TEST_LIVE_STAGE":    spec.Stage, "COOP_TEST_LIVE_SESSION_ID": spec.SessionID,
+		"COOP_TEST_LIVE_SESSION_FILE": spec.SessionFile,
+		"COOP_TEST_LIVE_MARKER":       spec.Marker, "COOP_TEST_LIVE_RESULT": spec.ResultFile,
 		"COOP_TEST_LIVE_ATTEMPT":    spec.AttemptFile,
 		"COOP_TEST_LIVE_SUPERVISOR": spec.Supervisor,
 		"COOP_TEST_LIVE_PREFLIGHT":  spec.PreflightReason,

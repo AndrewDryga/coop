@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Provider session lookup is bounded and tested against large native histories.** A generated
+  all-provider matrix now covers exact resume, full misses, wrong cwd and ID, malformed entries,
+  account isolation, descriptor closure, and diagnostic allocation/latency benchmarks. Gemini skips
+  current foreign buckets by their bounded `.project_root` marker and limits legacy whole-record
+  decoding to 4 MiB. A separate opt-in live target creates a session in one clean
+  helper process and resumes its exact native ID in a second, proving marker continuity while
+  retaining the existing read-only repository, access-only credential, source-integrity, and
+  process-cleanup boundary. Supervision and ACP transcript sharing are now separate box settings,
+  so a supervised non-ACP probe no longer shadows its provider profile's native session history.
+
 - **Detached forks and fleets now have crash-safe, repository-scoped cleanup.** Runtime boxes keep
   a readable fork label but are reaped by a repo-scoped owner, so two repositories may use the same
   fork name safely. Unverified and reused PID records report `cleanup` instead of running, missing

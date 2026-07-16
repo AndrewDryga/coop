@@ -843,15 +843,24 @@ func TestACPPlainInnerTargetDoesNotBecomeFusion(t *testing.T) {
 	t.Setenv("COOP_ACP_INNER", "1")
 	t.Setenv("COOP_ACP_TARGET", "claude")
 
+	configDir := t.TempDir()
 	cfg := &config.Config{
-		ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
-		BaseImage: "test-base", ImageOverride: "test-image", Homes: false, Egress: "none",
+		ConfigDir: configDir, RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
+		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
 	code, err := a.cmdACP([]string{"claude"})
 	if err != nil || code != 0 {
 		t.Fatalf("plain inner ACP target = (%d, %v), want a non-Fusion run", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(configDir, "claude", "acp-sessions", "projects") + ":/home/node/.claude/projects"
+	if !strings.Contains(string(args), shared) {
+		t.Fatalf("plain inner ACP did not request shared session history without a supervisor:\n%s", args)
 	}
 }
 

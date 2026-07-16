@@ -64,14 +64,15 @@ type RunSpec struct {
 	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
-	ForkName  string    // non-empty for a detached fork loop's box: readable runtime label
-	ForkOwner string    // repo-scoped label used by `coop fork stop`; required with ForkName
-	RunID     string    // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
-	Batch     bool      // loop/doctor: no tty, stdin from /dev/null
-	Quiet     bool      // suppress the "shadowed N secret path(s)" line (doctor)
-	Stdout    io.Writer // capture output (doctor); nil means inherit os.Stdout
-	Stderr    io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
-	ExtraArgs []string  // extra runtime args for this run (e.g. doctor's probe mount)
+	ShareACPSessions bool      // mount credential-independent ACP transcript dirs across account switches
+	ForkName         string    // non-empty for a detached fork loop's box: readable runtime label
+	ForkOwner        string    // repo-scoped label used by `coop fork stop`; required with ForkName
+	RunID            string    // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
+	Batch            bool      // loop/doctor: no tty, stdin from /dev/null
+	Quiet            bool      // suppress the "shadowed N secret path(s)" line (doctor)
+	Stdout           io.Writer // capture output (doctor); nil means inherit os.Stdout
+	Stderr           io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
+	ExtraArgs        []string  // extra runtime args for this run (e.g. doctor's probe mount)
 
 	// Ctx, when non-nil, makes the run cancelable: the container runs in its own process group
 	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets this so a second Ctrl-C
@@ -251,7 +252,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		ensureAgentHomes(cfg, spec, workdir)
 		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
 		// ensure that shared store exists before it's mounted.
-		if spec.SupervisorID != "" {
+		if spec.ShareACPSessions {
 			if ag, ok := agents.Get(acpPrimary(spec)); ok {
 				for _, name := range ag.ACPSessionDirs() {
 					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, acpPrimary(spec)), name), 0o700)
@@ -1266,10 +1267,10 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		for _, m := range synthMounts {
 			args = append(args, "-v", m.host+":"+m.box)
 		}
-		// An ACP box (always supervised) shares the LEAD's session transcripts across credentials, so
+		// An ACP box shares the LEAD's session transcripts across credentials, so
 		// switching account/preset mid-session doesn't lose the conversation — session/load still finds
 		// the transcript. The shared dir is credential-independent and shadows the profile's own copy.
-		if spec.SupervisorID != "" {
+		if spec.ShareACPSessions {
 			primary := acpPrimary(spec)
 			if ag, ok := agents.Get(primary); ok {
 				for _, name := range ag.ACPSessionDirs() {
