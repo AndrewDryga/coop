@@ -61,6 +61,25 @@ func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
 	}
 }
 
+// The profile drop-in belongs after the expensive toolchain layer: login shells keep the shims,
+// while editing this small layer does not rebuild every version pinned in .tool-versions.
+func TestAsdfDockerfileKeepsToolchainsOnLoginPath(t *testing.T) {
+	data, err := os.ReadFile("templates/dockerfile/asdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	const dropIn = `RUN printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
+	installAt := strings.Index(content, ` && MAKEFLAGS="-j$(nproc)" asdf install`)
+	rootAt := strings.LastIndex(content, "\nUSER root\n")
+	dropInAt := strings.Index(content, dropIn)
+	nodeAt := strings.LastIndex(content, "\nUSER node\n")
+	lastUserAt := strings.LastIndex(content, "\nUSER ")
+	if installAt < 0 || rootAt < installAt || dropInAt < rootAt || nodeAt < dropInAt || nodeAt != lastUserAt {
+		t.Errorf("asdf login-path drop-in must follow the install layer inside a root/node bracket:\n%s", content)
+	}
+}
+
 // TestGeneratedHooksShellcheckClean renders every commit gate coop writes into a user's repo —
 // the .githooks/pre-commit and .claude commit gate, for all detected langs and the neutral
 // fallback — and asserts shellcheck finds nothing. CI only shellchecks install.sh, so without

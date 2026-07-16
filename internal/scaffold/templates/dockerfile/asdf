@@ -47,4 +47,9 @@ RUN cd /home/node \
  && asdf reshim \
  && { command -v mix >/dev/null 2>&1 && mix local.hex --force && mix local.rebar --force || true; }
 
+# Debian login shells reset PATH, so restore the asdf shims after /etc/profile runs.
+USER root
+RUN printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh
+USER node
+
 WORKDIR /workspace
