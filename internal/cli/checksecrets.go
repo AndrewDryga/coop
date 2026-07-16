@@ -135,8 +135,8 @@ func candidateFiles(repo string, includeIgnored bool) ([]string, error) {
 		// Build the args through gitArgs so the hardening (-c core.fsmonitor=, core.hooksPath=/dev/null,
 		// …) applies: ls-files refreshes the index, which would otherwise EXECUTE a poisoned repo's
 		// core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box run can plant
-		// it. Keep the raw .Output() (not gitOut): gitOut trims and would eat the -z NUL separators, and
-		// we need to tell "git failed" (→ filesystem fallback) apart from "git succeeded, empty list".
+		// it. Keep the raw .Output() (not gitOut) so "git failed" (→ filesystem fallback) stays
+		// distinct from "git succeeded, empty list"; gitOut deliberately collapses both to "".
 		args := gitArgs(repo, []string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"})
 		if out, err := exec.Command("git", args...).Output(); err == nil {
 			var rels []string
