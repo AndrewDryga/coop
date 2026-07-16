@@ -22,17 +22,29 @@ import (
 )
 
 type processTrace struct {
-	Version     int          `json:"version"`
-	Sequence    int          `json:"sequence"`
-	Source      string       `json:"source"`
-	Event       string       `json:"event"`
-	PID         int          `json:"pid"`
-	Argv        []string     `json:"argv"`
-	Cwd         string       `json:"cwd"`
-	Run         *processRun  `json:"run"`
-	Environment []processEnv `json:"environment"`
-	ExitCode    *int         `json:"exit_code"`
-	Signal      string       `json:"signal"`
+	Version     int                  `json:"version"`
+	Sequence    int                  `json:"sequence"`
+	Source      string               `json:"source"`
+	Event       string               `json:"event"`
+	PID         int                  `json:"pid"`
+	Argv        []string             `json:"argv"`
+	Cwd         string               `json:"cwd"`
+	Run         *processRun          `json:"run"`
+	Environment []processEnv         `json:"environment"`
+	ExitCode    *int                 `json:"exit_code"`
+	Signal      string               `json:"signal"`
+	Consult     *processConsultTrace `json:"consult"`
+}
+
+type processConsultTrace struct {
+	Step        int    `json:"step"`
+	Provider    string `json:"provider"`
+	Delivery    string `json:"delivery"`
+	Result      string `json:"result"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	SessionHash string `json:"session_hash"`
+	PromptHash  string `json:"prompt_hash"`
 }
 
 type processRun struct {
@@ -236,7 +248,10 @@ func initProcessRepo(t *testing.T, gitBin, repo string, env []string) {
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("fixture\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run("add", "README.md")
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/runs/\n.agent/tasks/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README.md", ".gitignore")
 	run("commit", "-q", "-m", "fixture root")
 }
 

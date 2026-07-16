@@ -27,6 +27,8 @@ import (
 const (
 	// SummaryPrefix makes the one machine-readable line easy to extract from verbose go test output.
 	SummaryPrefix = "COOP_PROVIDER_LIVE_SUMMARY "
+	// ConsultSummaryPrefix identifies the separate four-provider live consult result contract.
+	ConsultSummaryPrefix = "COOP_CONSULT_LIVE_SUMMARY "
 	// SupervisorLabelKey is the test-only label used to reap an ACP process even after its outer
 	// supervisor is force-killed before normal cleanup.
 	SupervisorLabelKey = "coop.live-test"
@@ -50,18 +52,28 @@ const (
 	ReasonSourceChanged         = "source_changed"
 	ReasonCleanupFailed         = "cleanup_failed"
 	ReasonHarnessFailed         = "harness_failed"
+	ReasonRingPrerequisite      = "ring_prerequisite"
 )
 
 var allowedSkipReasons = map[string]bool{
 	ReasonMissingRuntime: true, ReasonMissingImage: true,
 	ReasonMissingCredential: true, ReasonCredentialRefresh: true,
-	ReasonCredentialNotPortable: true, ReasonMissingCLI: true,
+	ReasonCredentialNotPortable: true, ReasonMissingCLI: true, ReasonRingPrerequisite: true,
 }
 
 var allowedFailureReasons = map[string]bool{
 	ReasonUnsafeCredential: true, ReasonVersionProbe: true, ReasonPromptExit: true,
 	ReasonPromptTimeout: true, ReasonMarkerMismatch: true, ReasonRepositoryChanged: true,
 	ReasonSourceChanged: true, ReasonCleanupFailed: true, ReasonHarnessFailed: true,
+}
+
+var allowedPreflightReasons = map[string]bool{
+	ReasonMissingCredential: true, ReasonCredentialRefresh: true,
+	ReasonCredentialNotPortable: true,
+}
+
+func validPreflightReason(reason string) bool {
+	return reason == "" || allowedPreflightReasons[reason]
 }
 
 // ParseTargets resolves the explicit provider set for an opt-in live run. `all` is deliberately
@@ -134,6 +146,19 @@ type Summary struct {
 	Strict  bool             `json:"strict"`
 	Results []ProviderResult `json:"results"`
 	Totals  SummaryTotals    `json:"totals"`
+}
+
+type ConsultEdgeResult struct {
+	Lead string         `json:"lead"`
+	Peer ProviderResult `json:"peer"`
+}
+
+// ConsultSummary is the stable four-provider consult-ring compatibility result schema.
+type ConsultSummary struct {
+	Schema  int                 `json:"schema"`
+	Strict  bool                `json:"strict"`
+	Results []ConsultEdgeResult `json:"results"`
+	Totals  SummaryTotals       `json:"totals"`
 }
 
 func NewSummary(strict bool, requested []agents.Target, results []ProviderResult) (Summary, error) {
@@ -274,6 +299,72 @@ func (s Summary) Line() (string, error) {
 		return "", err
 	}
 	return SummaryPrefix + string(data), nil
+}
+
+// ValidateConsultTargets requires one concrete target for every registered provider.
+func ValidateConsultTargets(requested []agents.Target) error {
+	registry := agents.Names()
+	if len(requested) != len(registry) {
+		return errors.New("consult live ring requires the complete provider registry")
+	}
+	for i, provider := range registry {
+		if requested[i].Provider != provider || len(requested[i].Accounts) > 1 {
+			return errors.New("consult live ring requires registry-ordered provider targets")
+		}
+	}
+	return nil
+}
+
+func NewConsultSummary(strict bool, requested []agents.Target, results []ProviderResult) (ConsultSummary, error) {
+	if err := ValidateConsultTargets(requested); err != nil {
+		return ConsultSummary{}, err
+	}
+	if len(results) != len(requested) {
+		return ConsultSummary{}, fmt.Errorf("consult live result count %d does not match provider count %d", len(results), len(requested))
+	}
+	validated, err := NewSummary(false, requested, results)
+	if err != nil {
+		return ConsultSummary{}, err
+	}
+	edges := make([]ConsultEdgeResult, len(results))
+	for i, result := range results {
+		edges[i] = ConsultEdgeResult{
+			Lead: requested[(i+len(requested)-1)%len(requested)].Provider,
+			Peer: result,
+		}
+	}
+	return ConsultSummary{
+		Schema: 1, Strict: strict, Results: edges,
+		Totals: validated.Totals,
+	}, nil
+}
+
+func (s ConsultSummary) PeerResults() []ProviderResult {
+	results := make([]ProviderResult, len(s.Results))
+	for i, edge := range s.Results {
+		results[i] = edge.Peer
+	}
+	return results
+}
+
+func (s ConsultSummary) Success() bool {
+	if s.Totals.Failed != 0 {
+		return false
+	}
+	if !s.Strict {
+		return true
+	}
+	return s.Totals.Requested == len(agents.Names()) &&
+		s.Totals.Attempted == s.Totals.Requested &&
+		s.Totals.Passed == s.Totals.Requested && s.Totals.Skipped == 0
+}
+
+func (s ConsultSummary) Line() (string, error) {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return "", err
+	}
+	return ConsultSummaryPrefix + string(data), nil
 }
 
 // RuntimeSettings is the narrow host-runtime capability copied from the user's resolved Coop
@@ -525,14 +616,21 @@ type ChildSpec struct {
 	Runtime         RuntimeSettings
 }
 
+// ConsultChildSpec is the complete authority granted to the one clean four-provider live helper.
+type ConsultChildSpec struct {
+	Path, Marker, ResultFile, AttemptDir, Supervisor, CIDDir string
+	Targets                                                  []agents.Target
+	PreflightReasons                                         map[string]string
+	Strict                                                   bool
+	ControlFD                                                int
+	RevokePath                                               string
+	Runtime                                                  RuntimeSettings
+}
+
 // ChildEnvironment builds an allowlist-only environment. It never reads os.Environ; callers must
 // pass PATH and resolved runtime settings explicitly. Provider tokens live only in layout.Config/env.
 func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, error) {
-	if spec.PreflightReason != "" && !map[string]bool{
-		ReasonMissingCredential:     true,
-		ReasonCredentialRefresh:     true,
-		ReasonCredentialNotPortable: true,
-	}[spec.PreflightReason] {
+	if !validPreflightReason(spec.PreflightReason) {
 		return nil, errors.New("invalid live child preflight reason")
 	}
 	values := processEnvironmentValues(layout, spec.Path, spec.Runtime)
@@ -556,6 +654,65 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 		values[key] = value
 	}
 	return encodeEnvironment(values)
+}
+
+// ConsultChildEnvironment is allowlist-only and fixes every control path to the disposable layout.
+func ConsultChildEnvironment(layout procharness.Layout, spec ConsultChildSpec) ([]string, error) {
+	if err := ValidateConsultTargets(spec.Targets); err != nil {
+		return nil, err
+	}
+	if !liveprocess.ValidCleanupID(spec.Marker) || !liveprocess.ValidCleanupID(spec.Supervisor) {
+		return nil, errors.New("invalid consult live identifier")
+	}
+	if filepath.Clean(spec.ResultFile) != filepath.Join(layout.State, "consult-result.json") ||
+		filepath.Clean(spec.AttemptDir) != filepath.Join(layout.State, "consult-attempts") ||
+		filepath.Clean(spec.CIDDir) != filepath.Join(layout.State, "consult-cids") {
+		return nil, errors.New("invalid consult live control path")
+	}
+	if err := validatePrivateControlDir(layout.Root, spec.AttemptDir); err != nil {
+		return nil, errors.New("invalid consult live attempt directory")
+	}
+	if err := validatePrivateControlDir(layout.Root, spec.CIDDir); err != nil {
+		return nil, errors.New("invalid consult live cid directory")
+	}
+	if spec.ControlFD != 3 || !liveprocess.ValidRevocationPath(layout.Config, spec.RevokePath) {
+		return nil, errors.New("invalid consult live process control")
+	}
+	values := processEnvironmentValues(layout, spec.Path, spec.Runtime)
+	values[liveprocess.ControlFDEnv] = "3"
+	values[liveprocess.RevokePathEnv] = spec.RevokePath
+	values["COOP_TEST_CONSULT_LIVE_CHILD"] = "1"
+	values["COOP_TEST_CONSULT_LIVE_MARKER"] = spec.Marker
+	values["COOP_TEST_CONSULT_LIVE_RESULT"] = spec.ResultFile
+	values["COOP_TEST_CONSULT_LIVE_ATTEMPT_DIR"] = spec.AttemptDir
+	values["COOP_TEST_CONSULT_LIVE_SUPERVISOR"] = spec.Supervisor
+	values["COOP_TEST_CONSULT_LIVE_CID_DIR"] = spec.CIDDir
+	values["COOP_TEST_CONSULT_LIVE_STRICT"] = fmt.Sprintf("%t", spec.Strict)
+	targets := make([]string, 0, len(spec.Targets))
+	for _, target := range spec.Targets {
+		targets = append(targets, target.String())
+		reason := spec.PreflightReasons[target.Provider]
+		if !validPreflightReason(reason) {
+			return nil, errors.New("invalid consult live preflight reason")
+		}
+		values["COOP_TEST_CONSULT_LIVE_PREFLIGHT_"+strings.ToUpper(target.Provider)] = reason
+	}
+	for provider := range spec.PreflightReasons {
+		if !containsProvider(spec.Targets, provider) {
+			return nil, errors.New("unknown consult live preflight provider")
+		}
+	}
+	values["COOP_TEST_CONSULT_LIVE_TARGETS"] = strings.Join(targets, ",")
+	return encodeEnvironment(values)
+}
+
+func containsProvider(targets []agents.Target, provider string) bool {
+	for _, target := range targets {
+		if target.Provider == provider {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcessSpec is the authority granted to a live ACP supervisor. ProcessDir is a private,
@@ -772,17 +929,20 @@ type RepositorySnapshot struct {
 	Tree                       [32]byte
 }
 
-// InitRepository creates the clean committed repo used by one provider. Git config is isolated by
-// the process layout, so ambient aliases/hooks/signing cannot affect the fixture.
+// InitRepository creates the clean committed repo used by live provider tests. Git config is
+// isolated by the process layout, so ambient aliases/hooks/signing cannot affect the fixture.
 func InitRepository(layout procharness.Layout) error {
 	if err := os.WriteFile(filepath.Join(layout.Repo, "README.md"), []byte("# provider live compatibility\n"), 0o600); err != nil {
 		return fmt.Errorf("write live repository fixture: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.Repo, ".gitignore"), []byte(".agent/\n"), 0o600); err != nil {
+		return fmt.Errorf("write live repository ignore fixture: %w", err)
 	}
 	commands := [][]string{
 		{"init", "-q"},
 		{"config", "user.name", "Coop Live Test"},
 		{"config", "user.email", "coop-live@example.invalid"},
-		{"add", "README.md"},
+		{"add", "README.md", ".gitignore"},
 		{"commit", "-qm", "initial"},
 	}
 	for _, args := range commands {
@@ -795,6 +955,35 @@ func InitRepository(layout procharness.Layout) error {
 
 func SnapshotRepository(layout procharness.Layout) (RepositorySnapshot, error) {
 	var snapshot RepositorySnapshot
+	if err := snapshotRepositoryGit(layout, &snapshot); err != nil {
+		return RepositorySnapshot{}, err
+	}
+	tree, err := snapshotTree(layout.Repo)
+	if err != nil {
+		return RepositorySnapshot{}, err
+	}
+	snapshot.Tree = tree
+	return snapshot, nil
+}
+
+// VerifyRepository hashes the complete repository before invoking Git. A provider-controlled
+// local config or hook therefore cannot execute in the host-side semantic checks.
+func VerifyRepository(layout procharness.Layout, baseline RepositorySnapshot) (RepositorySnapshot, error) {
+	tree, err := snapshotTree(layout.Repo)
+	if err != nil {
+		return RepositorySnapshot{}, err
+	}
+	if tree != baseline.Tree {
+		return RepositorySnapshot{Tree: tree}, errors.New("live repository tree changed")
+	}
+	snapshot := RepositorySnapshot{Tree: tree}
+	if err := snapshotRepositoryGit(layout, &snapshot); err != nil {
+		return RepositorySnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func snapshotRepositoryGit(layout procharness.Layout, snapshot *RepositorySnapshot) error {
 	commands := []struct {
 		field *string
 		args  []string
@@ -807,16 +996,11 @@ func SnapshotRepository(layout procharness.Layout) (RepositorySnapshot, error) {
 	for _, command := range commands {
 		output, err := runGit(layout, command.args...)
 		if err != nil {
-			return RepositorySnapshot{}, err
+			return err
 		}
 		*command.field = string(output)
 	}
-	tree, err := snapshotTree(layout.Repo)
-	if err != nil {
-		return RepositorySnapshot{}, err
-	}
-	snapshot.Tree = tree
-	return snapshot, nil
+	return nil
 }
 
 func (s RepositorySnapshot) Equal(other RepositorySnapshot) bool { return s == other }
@@ -845,9 +1029,6 @@ func snapshotTree(root string) ([32]byte, error) {
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
-		}
-		if relative == ".git" {
-			return filepath.SkipDir
 		}
 		if relative == "." {
 			return nil

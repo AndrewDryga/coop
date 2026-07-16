@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -128,6 +129,60 @@ func TestSummaryContract(t *testing.T) {
 	}
 }
 
+func TestConsultSummaryContract(t *testing.T) {
+	targets, _, err := ParseTargets("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make([]ProviderResult, 0, len(targets))
+	for _, target := range targets {
+		provider := target.Provider
+		results = append(results, ProviderResult{
+			Provider: provider, CLIVersion: provider + "-cli 1.2.3",
+			Attempted: true, Passed: true, Status: StatusPassed,
+		})
+	}
+	strict, err := NewConsultSummary(true, targets, results)
+	if err != nil || !strict.Success() {
+		t.Fatalf("strict consult summary = %+v, %v", strict, err)
+	}
+	for i, edge := range strict.Results {
+		wantLead := targets[(i+len(targets)-1)%len(targets)].Provider
+		if edge.Lead != wantLead || edge.Peer != results[i] || edge.Lead == edge.Peer.Provider {
+			t.Fatalf("consult edge %d = %+v, want %s -> %s", i, edge, wantLead, results[i].Provider)
+		}
+	}
+	line, err := strict.Line()
+	if err != nil || !strings.HasPrefix(line, ConsultSummaryPrefix+`{"schema":1`) || strings.Count(line, "\n") != 0 {
+		t.Fatalf("consult summary line = %q, %v", line, err)
+	}
+
+	results[0] = ProviderResult{
+		Provider: results[0].Provider, CLIVersion: results[0].CLIVersion,
+		Status: StatusSkipped, ReasonCode: ReasonMissingCredential,
+	}
+	standard, err := NewConsultSummary(false, targets, results)
+	if err != nil || !standard.Success() {
+		t.Fatalf("standard consult summary rejected prerequisite skip: %+v, %v", standard, err)
+	}
+	strict, err = NewConsultSummary(true, targets, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strict.Success() {
+		t.Fatal("strict consult summary accepted a skip")
+	}
+
+	invalid := append([]ProviderResult(nil), results...)
+	invalid[0].Provider = "gemini"
+	if _, err := NewConsultSummary(false, targets, invalid); err == nil {
+		t.Fatal("consult summary accepted the wrong provider order")
+	}
+	if err := ValidateConsultTargets(targets[:len(targets)-1]); err == nil {
+		t.Fatal("consult probe accepted an incomplete target set")
+	}
+}
+
 func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "AMBIENT_TOKEN_CANARY")
 	t.Setenv("COOP_CLAUDE_CMD", "AMBIENT_CMD_CANARY")
@@ -186,6 +241,87 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 		Name: "docker", ConnectionEnv: map[string]string{"DOCKER_HOST": "bad\x00socket"},
 	}}); err == nil {
 		t.Fatal("NUL runtime connection value was accepted")
+	}
+}
+
+func TestConsultChildEnvironmentIsFixedAndAllowlistOnly(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "AMBIENT_TOKEN_CANARY")
+	t.Setenv("COOP_GROK_CMD", "AMBIENT_CMD_CANARY")
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attemptDir := filepath.Join(layout.State, "consult-attempts")
+	cidDir := filepath.Join(layout.State, "consult-cids")
+	for _, dir := range []string{attemptDir, cidDir} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, _, err := ParseTargets("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
+	spec := ConsultChildSpec{
+		Path: "/safe/bin", Marker: "CONSULT_MARKER_123", Targets: targets,
+		ResultFile: filepath.Join(layout.State, "consult-result.json"), AttemptDir: attemptDir,
+		Supervisor: "consult-live-123", CIDDir: cidDir, ControlFD: 3, RevokePath: revokePath,
+		PreflightReasons: map[string]string{"claude": ReasonCredentialRefresh},
+		Runtime: RuntimeSettings{
+			Name: "docker", ConnectionEnv: map[string]string{"DOCKER_HOST": "unix:///safe/runtime.sock"},
+		},
+	}
+	env, err := ConsultChildEnvironment(layout, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.IsSorted(env) {
+		t.Fatal("consult child environment is not deterministic")
+	}
+	joined := strings.Join(env, "\n")
+	for _, required := range []string{
+		"COOP_TEST_CONSULT_LIVE_CHILD=1",
+		"COOP_TEST_CONSULT_LIVE_TARGETS=claude,codex,gemini,grok",
+		"COOP_TEST_CONSULT_LIVE_PREFLIGHT_CLAUDE=" + ReasonCredentialRefresh,
+		liveprocess.ControlFDEnv + "=3", liveprocess.RevokePathEnv + "=" + revokePath,
+		"DOCKER_HOST=unix:///safe/runtime.sock",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Errorf("consult child environment missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"ANTHROPIC_API_KEY", "AMBIENT_TOKEN_CANARY", "COOP_GROK_CMD", "AMBIENT_CMD_CANARY"} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("consult child environment inherited %q", forbidden)
+		}
+	}
+
+	invalid := []ConsultChildSpec{
+		func() ConsultChildSpec { value := spec; value.Targets = targets[:3]; return value }(),
+		func() ConsultChildSpec { value := spec; value.Marker = "bad marker"; return value }(),
+		func() ConsultChildSpec { value := spec; value.Supervisor = "bad supervisor"; return value }(),
+		func() ConsultChildSpec {
+			value := spec
+			value.ResultFile = filepath.Join(layout.State, "other.json")
+			return value
+		}(),
+		func() ConsultChildSpec { value := spec; value.ControlFD = 0; return value }(),
+		func() ConsultChildSpec {
+			value := spec
+			value.PreflightReasons = map[string]string{"codex": ReasonPromptExit}
+			return value
+		}(),
+		func() ConsultChildSpec {
+			value := spec
+			value.PreflightReasons = map[string]string{"unknown": ReasonMissingCredential}
+			return value
+		}(),
+	}
+	for _, value := range invalid {
+		if _, err := ConsultChildEnvironment(layout, value); err == nil {
+			t.Errorf("invalid consult child contract was accepted: %+v", value)
+		}
 	}
 }
 
@@ -551,6 +687,33 @@ func TestRepositorySnapshotDetectsEveryMutationAxis(t *testing.T) {
 	again, err := SnapshotRepository(layout)
 	if err != nil || !baseline.Equal(again) {
 		t.Fatalf("stable snapshot changed: equal=%v err=%v", baseline.Equal(again), err)
+	}
+	gitDir := filepath.Join(layout.Repo, ".git")
+	gitConfig := filepath.Join(gitDir, "config")
+	gitConfigBefore, err := os.ReadFile(gitConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsmonitor := filepath.Join(gitDir, "coop-fsmonitor")
+	fsmonitorRan := filepath.Join(gitDir, "fsmonitor-ran")
+	if err := os.WriteFile(fsmonitor, []byte("#!/bin/sh\n: >\"$(dirname \"$0\")/fsmonitor-ran\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	poisonedConfig := append(gitConfigBefore, []byte("\n[core]\n\tfsmonitor = "+strconv.Quote(fsmonitor)+"\n")...)
+	if err := os.WriteFile(gitConfig, poisonedConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyRepository(layout, baseline); err == nil {
+		t.Fatal("Git administrative mutation was accepted")
+	}
+	if _, err := os.Lstat(fsmonitorRan); !os.IsNotExist(err) {
+		t.Fatalf("repository verification executed poisoned fsmonitor hook: %v", err)
+	}
+	if err := os.WriteFile(gitConfig, gitConfigBefore, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fsmonitor); err != nil {
+		t.Fatal(err)
 	}
 
 	readme := filepath.Join(layout.Repo, "README.md")

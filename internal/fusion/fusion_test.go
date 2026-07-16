@@ -1,12 +1,16 @@
 package fusion
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 )
@@ -113,10 +117,23 @@ func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
 	for _, want := range []string{
 		"--fresh", "--continue", "self-contained", "delta", "verbatim", "status line",
 		"not the member reply", "session handle", "same session to terminal exit", "complete output",
+		"FRESH from the saved transcript", "resend full context",
 	} {
 		if !strings.Contains(ins, want) {
 			t.Errorf("instruction missing session-mode guidance %q", want)
 		}
+	}
+}
+
+func TestInstructionKeepsPeerRepliesSeparateFromDiagnostics(t *testing.T) {
+	ins := Instruction("codex", []string{"claude"})
+	for _, want := range []string{"peer-claude.reply", "peer-claude.diagnostics", "claude reply", "claude diagnostics"} {
+		if !strings.Contains(ins, want) {
+			t.Errorf("parallel consult block missing %q:\n%s", want, ins)
+		}
+	}
+	if strings.Contains(ins, "2>&1") {
+		t.Fatalf("parallel consult block merges provider diagnostics into advisor replies:\n%s", ins)
 	}
 }
 
@@ -187,15 +204,10 @@ printf '%s\n' \
 	}
 	role := "model-isolation"
 	key := "MODEL_ISOLATION"
-	for _, suffix := range []string{"id", "rung", "context"} {
-		path := filepath.Join("/tmp", "coop-consult-"+key+"."+suffix)
-		_ = os.Remove(path)
-		defer os.Remove(path)
-	}
 	cmd := exec.Command(wrapper, role, "--fresh", "question")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		"PATH="+dir+":"+os.Getenv("PATH"), "ARGS_LOG="+argsLog,
+		"PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir, "ARGS_LOG="+argsLog,
 		"COOP_PEERS=codex", "COOP_CONSULT_"+key+"_TARGETS=codex",
 		"COOP_PEER_MODEL_CODEX=raw-peer-model",
 	)
@@ -212,14 +224,14 @@ printf '%s\n' \
 }
 
 // TestConsultWrapperContinuityIsolated locks in the anti-bleed contract: consult continuity is
-// keyed to a coop-owned, per-target /tmp idfile — a namespace SEPARATE from the agents' real
+// keyed to a coop-owned, per-target state file below TMPDIR — a namespace SEPARATE from the agents' real
 // session stores — so a peer consult can never be picked up as a normal `coop <agent>` session's
 // "latest". (The primary-side guard lives in each adapter's Resume/Interactive; this is the
-// consult side.) --fresh mints and writes the id; --continue reads it.
+// consult side.) --fresh stages a complete record; --continue validates and reads it.
 func TestConsultWrapperContinuityIsolated(t *testing.T) {
 	w := ConsultWrapper()
-	if !strings.Contains(w, `idfile="/tmp/coop-consult-${key}.id"`) {
-		t.Error("consult continuity must key a coop-owned per-target /tmp idfile, not an agent session store")
+	if !strings.Contains(w, `state_dir=${TMPDIR:-/tmp}/coop-consult-state`) || !strings.Contains(w, `statefile="$state_dir/${key}.state"`) {
+		t.Error("consult continuity must key coop-owned per-target state below TMPDIR, not an agent session store")
 	}
 	// It must never read or write the agents' own session stores — touching those is the bleed.
 	for _, store := range []string{".claude/projects", ".gemini/tmp", ".codex/sessions"} {
@@ -227,11 +239,260 @@ func TestConsultWrapperContinuityIsolated(t *testing.T) {
 			t.Errorf("the wrapper must not touch the agent session store %q — that reintroduces the bleed", store)
 		}
 	}
-	if !strings.Contains(w, `>"$idfile"`) {
-		t.Error("--fresh must write the minted id to the idfile")
+	if !strings.Contains(w, `>"$candidate_idfile"`) || !strings.Contains(w, `mv "$next_state" "$statefile"`) {
+		t.Error("--fresh must stage its id and atomically publish one complete record after a usable reply")
 	}
-	if !strings.Contains(w, `cat "$idfile"`) || !strings.Contains(w, `[ -f "$idfile" ]`) {
-		t.Error("--continue must read the stored id from the idfile")
+	if !strings.Contains(w, `state_file_safe "$statefile"`) || !strings.Contains(w, `resume_id=${id_line#id=}`) {
+		t.Error("--continue must validate and read the stored id from the continuation record")
+	}
+}
+
+func TestConsultWrapperInterruptedPublicationKeepsPriorRecord(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"claude":  "#!/bin/sh\ncase \" $* \" in *\" --resume \"*) echo SECOND_REPLY ;; *) echo FIRST_REPLY ;; esac\n",
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	role, key := "atomic-state", "ATOMIC_STATE"
+	baseEnv := append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+		"COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
+	run := func(mode, prompt string, env []string) ([]byte, error) {
+		cmd := exec.Command(wrapper, role, mode, prompt)
+		cmd.Env = env
+		return cmd.CombinedOutput()
+	}
+	if out, err := run("--fresh", "first", baseEnv); err != nil {
+		t.Fatalf("initial consult: %v\n%s", err, out)
+	}
+	statePath := filepath.Join(dir, "coop-consult-state", key+".state")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realMV, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, release := filepath.Join(dir, "publish-ready"), filepath.Join(dir, "publish-release")
+	mvShim := `#!/bin/sh
+dest=
+for arg do dest=$arg; done
+case "$dest" in *.state) : >"$READY"; while [ ! -e "$RELEASE" ]; do sleep 0.05; done ;; esac
+exec "$REAL_MV" "$@"
+`
+	mvPath := filepath.Join(dir, "mv")
+	if err := os.WriteFile(mvPath, []byte(mvShim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wrapper, role, "--continue", "second")
+	cmd.Env = append(baseEnv, "READY="+ready, "RELEASE="+release, "REAL_MV="+realMV)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			t.Fatal("continuation never reached its atomic publication")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got, err := os.ReadFile(statePath); err != nil || !bytes.Equal(got, before) {
+		t.Fatalf("record changed before atomic publication: %v\n%s", err, got)
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	_ = cmd.Wait()
+	if got, err := os.ReadFile(statePath); err != nil || !bytes.Equal(got, before) {
+		t.Fatalf("interrupted publication left a partial or mixed record: %v\n%s", err, got)
+	}
+	if err := os.Remove(mvPath); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run("--continue", "third", baseEnv); err != nil || !bytes.Contains(out, []byte("SECOND_REPLY")) {
+		t.Fatalf("prior record was not resumable after interruption: %v\n%s", err, out)
+	}
+}
+
+func TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	provider := `#!/bin/sh
+echo start >>"$CALLS"
+case " $* " in *FIRST*) : >"$READY"; while [ ! -e "$RELEASE" ]; do sleep 0.05; done ;; esac
+case " $* " in *CRASH*) : >"$CRASH_READY"; while [ ! -e "$CRASH_RELEASE" ]; do sleep 0.05; done ;; esac
+echo REPLY
+`
+	for name, body := range map[string]string{"claude": provider, "timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	role, key := "lock-test", "LOCK_TEST"
+	calls, ready, release := filepath.Join(dir, "calls"), filepath.Join(dir, "ready"), filepath.Join(dir, "release")
+	crashReady, crashRelease := filepath.Join(dir, "crash-ready"), filepath.Join(dir, "crash-release")
+	env := append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir, "CALLS="+calls, "READY="+ready, "RELEASE="+release,
+		"CRASH_READY="+crashReady, "CRASH_RELEASE="+crashRelease, "COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
+	first := exec.Command(wrapper, role, "--fresh", "FIRST")
+	first.Env = env
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = first.Process.Kill()
+			t.Fatal("first consult did not reach provider gate")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	second := exec.Command(wrapper, role, "--fresh", "SECOND")
+	second.Env = env
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if data, _ := os.ReadFile(calls); strings.Count(string(data), "start") != 1 {
+		t.Fatalf("second consult entered provider while the first held the lock: %q", data)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := exec.LookPath("flock"); err == nil {
+		crashed := exec.Command(wrapper, role, "--fresh", "CRASH")
+		crashed.Env = env
+		if err := crashed.Start(); err != nil {
+			t.Fatal(err)
+		}
+		waitForConsultTestFile(t, crashReady, crashed)
+		if err := crashed.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		_ = crashed.Wait()
+		recovered := exec.Command(wrapper, role, "--fresh", "RECOVERED")
+		recovered.Env = env
+		if out, err := recovered.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("REPLY")) {
+			t.Fatalf("kernel lock survived an unclean owner exit: %v\n%s", err, out)
+		}
+		_ = os.WriteFile(crashRelease, nil, 0o600)
+	} else {
+		t.Log("flock unavailable; serialization was exercised through the mkdir compatibility path")
+	}
+}
+
+func TestConsultWrapperLockBudgetCoversEveryAdmittedRung(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scripts := map[string]string{
+		"flock":   "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$FLOCK_ARGS\"\n",
+		"claude":  "#!/bin/sh\necho 'usage limit reached' >&2\nexit 9\n",
+		"gemini":  "#!/bin/sh\necho FALLBACK_REPLY\n",
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	}
+	for name, body := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flockArgs := filepath.Join(dir, "flock-args")
+	cmd := exec.Command(wrapper, "budget", "--fresh", "question")
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+		"FLOCK_ARGS="+flockArgs, "COOP_CONSULT_TIMEOUT=2", "COOP_PRIMARY=codex",
+		"COOP_PEERS=claude gemini", "COOP_CONSULT_BUDGET_TARGETS=claude:one gemini:two")
+	if out, err := cmd.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("FALLBACK_REPLY")) {
+		t.Fatalf("two-rung consult = %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(flockArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != "-w 79 8" {
+		t.Fatalf("two-rung lock args = %q, want %q", got, "-w 79 8")
+	}
+}
+
+func TestConsultWrapperRejectsHardlinkedContinuationLockBeforeDispatch(t *testing.T) {
+	dir := t.TempDir()
+	role, key := "hardlink-lock", "HARDLINK_LOCK"
+	stateDir := filepath.Join(dir, "coop-consult-state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside")
+	if err := os.WriteFile(outside, []byte("do not touch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(outside, filepath.Join(stateDir, key+".lock")); err != nil {
+		t.Fatal(err)
+	}
+	called := filepath.Join(dir, "called")
+	for name, body := range map[string]string{
+		"coop-consult": ConsultWrapper(),
+		"claude":       "#!/bin/sh\nprintf called >\"$CALLED\"\necho SHOULD_NOT_RUN\n",
+		"flock":        "#!/bin/sh\nexit 0\n",
+		"timeout":      "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command(filepath.Join(dir, "coop-consult"), role, "--fresh", "question")
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+		"CALLED="+called, "COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "continuation lock must have one hardlink") {
+		t.Fatalf("hardlinked lock was not rejected: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(called); !os.IsNotExist(err) {
+		t.Fatalf("provider dispatched through unsafe lock: %v", err)
+	}
+	if info, err := os.Stat(outside); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o644 {
+		t.Fatalf("wrapper changed hardlinked file mode to %o", info.Mode().Perm())
+	}
+}
+
+func waitForConsultTestFile(t *testing.T, path string, cmd *exec.Cmd) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("consult never reached provider gate %s", filepath.Base(path))
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -290,7 +551,7 @@ func TestLeadInstructions(t *testing.T) {
 	for _, want := range []string{
 		"second opinion", "coop-consult codex --fresh", "coop-consult gemini --fresh",
 		"not the peer reply", "session handle", "same session to terminal exit", "complete output",
-		"Default to --fresh", "BASE",
+		"Default to --fresh", "FRESH from the saved transcript", "resend full context", "BASE",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("LeadInstructions missing %q in:\n%s", want, out)
@@ -304,10 +565,13 @@ func TestLeadInstructions(t *testing.T) {
 	if strings.Contains(out, "never answer alone") {
 		t.Error("consult must stay optional, not the mandatory fusion directive")
 	}
+	if strings.Contains(out, "2>&1") {
+		t.Fatal("optional consult instructions merge provider diagnostics into advisor replies")
+	}
 }
 
 // coop-consult also resolves a preset ROLE (a consult role, or a native role degraded under
-// a non-Claude lead): COOP_CONSULT_<KEY>_{AGENT,MODEL,CONTRACT}, with the role's persona
+// a non-Claude lead): COOP_CONSULT_<KEY>_{TARGETS,CONTRACT}, with the role's persona
 // (contract) prepended so it answers AS that role.
 func TestConsultWrapperResolvesRoles(t *testing.T) {
 	for _, want := range []string{
@@ -369,13 +633,13 @@ func runConsultWrapperStub(t *testing.T, role, peer, providerBody, timeoutBody, 
 	if err := os.MkdirAll(filepath.Join(dir, ".agent", "runs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	key := strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
-	idfile := filepath.Join("/tmp", "coop-consult-"+key+".id")
-	for _, suffix := range []string{"id", "rung", "context"} {
-		path := filepath.Join("/tmp", "coop-consult-"+key+"."+suffix)
-		os.Remove(path)
-		defer os.Remove(path)
+	if runID != "" {
+		if err := os.WriteFile(filepath.Join(dir, ".agent", "runs", runID+".peers.jsonl"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	key := strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
+	statefile := filepath.Join(dir, "coop-consult-state", key+".state")
 	cmd := exec.Command(wrapper, role, "--fresh", "question")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
@@ -393,8 +657,9 @@ func runConsultWrapperStub(t *testing.T, role, peer, providerBody, timeoutBody, 
 		t.Fatalf("run wrapper: %v\n%s", err, out)
 	}
 	telemetry, _ := os.ReadFile(filepath.Join(dir, ".agent", "runs", runID+".peers.jsonl"))
-	_, idErr := os.Stat(idfile)
-	return string(out), code, strings.TrimSpace(string(telemetry)), idErr == nil
+	state, stateErr := os.ReadFile(statefile)
+	resumable := stateErr == nil && !bytes.Contains(state, []byte("\nid=\n"))
+	return string(out), code, strings.TrimSpace(string(telemetry)), resumable
 }
 
 func TestConsultWrapperCodexReplyContract(t *testing.T) {
@@ -423,9 +688,8 @@ exec "$@"`
 			body: `printf '%s\n' \
 '{"type":"thread.started","thread_id":"thread-2"}' \
 '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}'`,
-			wantCode:      1,
-			wantText:      "malformed output or no usable reply",
-			wantTelemetry: true,
+			wantCode: 1,
+			wantText: "malformed output or no usable reply",
 		},
 		{
 			name: "whitespace reply",
@@ -433,9 +697,8 @@ exec "$@"`
 '{"type":"thread.started","thread_id":"thread-3"}' \
 '{"type":"item.completed","item":{"type":"agent_message","text":"   "}}' \
 '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}'`,
-			wantCode:      1,
-			wantText:      "malformed output or no usable reply",
-			wantTelemetry: true,
+			wantCode: 1,
+			wantText: "malformed output or no usable reply",
 		},
 		{
 			name:     "malformed stream",
@@ -444,10 +707,30 @@ exec "$@"`
 			wantText: "malformed output or no usable reply",
 		},
 		{
-			name:     "provider failure",
-			body:     `printf '%s\n' '{"type":"turn.failed","error":{"message":"provider exploded"}}'; exit 7`,
+			name: "provider failure",
+			body: `printf '%s\n' \
+'{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}' \
+'{"type":"turn.failed","error":{"message":"provider exploded"}}'; exit 7`,
 			wantCode: 7,
 			wantText: "provider exploded",
+		},
+		{
+			name: "invalid thread id is not resumable",
+			body: `printf '%s\n' \
+'{"type":"thread.started","thread_id":null}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"VALID_REPLY"}}' \
+'{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}'`,
+			wantText:      "VALID_REPLY",
+			wantTelemetry: true,
+		},
+		{
+			name: "invalid usage is not telemetry",
+			body: `printf '%s\n' \
+'{"type":"thread.started","thread_id":"valid-thread"}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"VALID_REPLY"}}' \
+'{"type":"turn.completed","usage":{"input_tokens":-1,"output_tokens":1.5,"reasoning_output_tokens":1000000001}}'`,
+			wantText:      "VALID_REPLY",
+			wantResumable: true,
 		},
 	}
 	for _, tc := range cases {
@@ -460,7 +743,7 @@ exec "$@"`
 			if !strings.Contains(out, tc.wantText) {
 				t.Errorf("output missing %q:\n%s", tc.wantText, out)
 			}
-			if tc.wantCode == 1 && !strings.Contains(out, "rerun "+role+" with --fresh") {
+			if tc.wantCode == 1 && !strings.Contains(out, "coop-consult "+role+` --fresh "<full prompt>"`) {
 				t.Errorf("unusable reply lacks actionable retry guidance:\n%s", out)
 			}
 			if tc.wantTelemetry {
@@ -469,11 +752,33 @@ exec "$@"`
 						t.Errorf("telemetry missing %q: %q", want, telemetry)
 					}
 				}
+			} else if telemetry != "" {
+				t.Errorf("invalid or absent usage wrote telemetry: %q", telemetry)
 			}
 			if resumable != tc.wantResumable {
 				t.Errorf("resumable state = %v, want %v", resumable, tc.wantResumable)
 			}
 		})
+	}
+}
+
+func TestConsultWrapperCodexTelemetryWaitsForFullAttemptAcceptance(t *testing.T) {
+	const passTimeout = `shift 3
+exec "$@"`
+	body := fmt.Sprintf(`printf '%%s\n' \
+'{"type":"thread.started","thread_id":"thread-overflow"}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"VALID_REPLY"}}' \
+'{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}'
+dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X >&2`, consultStreamLimitBytes+1)
+	out, code, telemetry, resumable := runConsultWrapperStub(t, "codex-diagnostic-overflow", "codex", body, passTimeout, "overflow-run")
+	if code != 1 || !strings.Contains(out, "provider diagnostics exceeded") {
+		t.Fatalf("diagnostic overflow = exit %d:\n%s", code, out)
+	}
+	if telemetry != "" {
+		t.Fatalf("rejected attempt appended telemetry: %q", telemetry)
+	}
+	if resumable {
+		t.Fatal("rejected attempt retained resumable state")
 	}
 }
 
@@ -504,13 +809,8 @@ exec "$@"`)
 
 	role := "codex-unusable-resume"
 	key := strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
-	idfile := filepath.Join("/tmp", "coop-consult-"+key+".id")
-	rungfile := filepath.Join("/tmp", "coop-consult-"+key+".rung")
-	contextfile := filepath.Join("/tmp", "coop-consult-"+key+".context")
-	for _, path := range []string{idfile, rungfile, contextfile} {
-		os.Remove(path)
-		defer os.Remove(path)
-	}
+	stateDir := filepath.Join(dir, "coop-consult-state")
+	statefile := filepath.Join(stateDir, key+".state")
 	run := func(mode string) (string, int) {
 		t.Helper()
 		cmd := exec.Command(wrapper, role, mode, "question")
@@ -535,19 +835,16 @@ exec "$@"`)
 	if out, code := run("--fresh"); code != 0 || !strings.Contains(out, "FIRST_REPLY") {
 		t.Fatalf("fresh consult = exit %d:\n%s", code, out)
 	}
-	for _, path := range []string{idfile, rungfile} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("fresh consult did not create %s: %v", path, err)
-		}
+	if _, err := os.Stat(statefile); err != nil {
+		t.Fatalf("fresh consult did not create %s: %v", statefile, err)
 	}
 	out, code := run("--continue")
 	if code != 1 || !strings.Contains(out, "malformed output or no usable reply") {
 		t.Fatalf("unusable resume = exit %d:\n%s", code, out)
 	}
-	for _, path := range []string{idfile, rungfile} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("unusable resume left continuation state %s: %v", path, err)
-		}
+	state, err := os.ReadFile(statefile)
+	if err != nil || !bytes.Contains(state, []byte("\nid=\n\n")) || !bytes.Contains(state, []byte("target=codex:test\n")) {
+		t.Errorf("unusable resume did not atomically retain transcript/rung with an empty id: %v\n%s", err, state)
 	}
 }
 
@@ -584,13 +881,405 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 			if !strings.Contains(out, tc.wantText) {
 				t.Errorf("output missing %q:\n%s", tc.wantText, out)
 			}
-			if tc.wantCode == 1 && !strings.Contains(out, "rerun "+role+" with --fresh") {
+			if tc.wantCode == 1 && !strings.Contains(out, "coop-consult "+role+` --fresh "<full prompt>"`) {
 				t.Errorf("empty reply lacks actionable retry guidance:\n%s", out)
 			}
-			if tc.wantCode == 1 && resumable {
-				t.Error("an empty reply must not leave resumable state")
+			if resumable {
+				t.Error("an unusable or timed-out fresh reply must not leave resumable state")
 			}
 		})
+	}
+}
+
+func TestConsultWrapperPlainProviderFailureStateAndReplyStream(t *testing.T) {
+	const passTimeout = `shift 3
+exec "$@"`
+	for _, peer := range []string{"claude", "gemini", "grok"} {
+		peer := peer
+		t.Run(peer+" ordinary failure", func(t *testing.T) {
+			out, code, _, resumable := runConsultWrapperStub(t, "failure-"+peer, peer, `echo PROVIDER_DIAGNOSTIC >&2; exit 7`, passTimeout, "")
+			if code != 7 || !strings.Contains(out, "PROVIDER_DIAGNOSTIC") {
+				t.Fatalf("ordinary failure = exit %d:\n%s", code, out)
+			}
+			if resumable {
+				t.Error("failed fresh provider call left resumable state")
+			}
+		})
+		t.Run(peer+" stderr only success", func(t *testing.T) {
+			role := "stderr-only-" + peer
+			out, code, _, resumable := runConsultWrapperStub(t, role, peer, `echo PROVIDER_WARNING >&2`, passTimeout, "")
+			if code != 1 || !strings.Contains(out, "PROVIDER_WARNING") || !strings.Contains(out, "provider returned no usable reply") {
+				t.Fatalf("stderr-only success = exit %d:\n%s", code, out)
+			}
+			if resumable {
+				t.Error("stderr-only success became a resumable advisor reply")
+			}
+		})
+	}
+}
+
+func TestConsultWrapperFailedResumeRestartsFromTranscriptOnNextContinue(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "provider-state")
+	calls := filepath.Join(dir, "calls")
+	provider := `printf '%s\n' "$*" >>"$CALLS"
+case " $* " in
+*" --resume "*) echo SESSION_GONE >&2; exit 7 ;;
+esac
+if [ -f "$STATE" ]; then echo RECOVERED_REPLY; else : >"$STATE"; echo FIRST_REPLY; fi`
+	for name, body := range map[string]string{
+		"claude":  "#!/bin/sh\n" + provider + "\n",
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	role := "resume-recovery"
+	key := strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
+	stateDir := filepath.Join(dir, "coop-consult-state")
+	run := func(prompt string) (string, int) {
+		t.Helper()
+		cmd := exec.Command(wrapper, role, "--continue", prompt)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+			"STATE="+state, "CALLS="+calls, "COOP_PEERS=claude",
+			"COOP_CONSULT_"+key+"_TARGETS=claude:test",
+		)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(out), exit.ExitCode()
+		}
+		t.Fatalf("wrapper: %v\n%s", err, out)
+		return "", -1
+	}
+	defer os.RemoveAll(stateDir)
+	if out, code := run("FIRST_QUESTION"); code != 0 || !strings.Contains(out, "FIRST_REPLY") {
+		t.Fatalf("initial continue-without-id = exit %d:\n%s", code, out)
+	}
+	if out, code := run("SECOND_DELTA"); code != 7 || !strings.Contains(out, "SESSION_GONE") {
+		t.Fatalf("failed resume = exit %d:\n%s", code, out)
+	}
+	stateData, err := os.ReadFile(filepath.Join(stateDir, "RESUME_RECOVERY.state"))
+	if err != nil || !bytes.Contains(stateData, []byte("\nid=\n\n")) {
+		t.Fatalf("failed resume retained an uncertain id or lost recovery state: %v\n%s", err, stateData)
+	}
+	out, code := run("THIRD_DELTA")
+	if code != 0 || !strings.Contains(out, "RECOVERED_REPLY") {
+		t.Fatalf("next continue did not recover fresh = exit %d:\n%s", code, out)
+	}
+	gotCalls, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"saved transcript", "FIRST_QUESTION", "FIRST_REPLY", "THIRD_DELTA"} {
+		if !strings.Contains(string(gotCalls), want) {
+			t.Errorf("recovery prompt missing %q:\n%s", want, gotCalls)
+		}
+	}
+}
+
+func TestConsultWrapperDirectCodexTelemetryUsesProviderIdentity(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"codex": `#!/bin/sh
+printf '%s\n' \
+'{"type":"thread.started","thread_id":"thread-direct"}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"DIRECT_REPLY"}}' \
+'{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":2}}'
+`,
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".agent", "runs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agent", "runs", "direct-run.peers.jsonl"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wrapper, "codex", "--fresh", "question")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir, "COOP_PEERS=codex", "COOP_RUN_ID=direct-run")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("direct Codex consult: %v\n%s", err, out)
+	}
+	row, err := os.ReadFile(filepath.Join(dir, ".agent", "runs", "direct-run.peers.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(row), `"role":"codex"`) {
+		t.Fatalf("direct peer telemetry lost invocation identity: %s", row)
+	}
+}
+
+func TestConsultWrapperBoundsProviderOutputAndContinuation(t *testing.T) {
+	const passTimeout = `shift 3
+exec "$@"`
+	t.Run("reply overflow is terminal", func(t *testing.T) {
+		body := `dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' X`
+		out, code, _, resumable := runConsultWrapperStub(t, "reply-overflow", "claude", body, passTimeout, "")
+		if code != 1 || !strings.Contains(out, "reply exceeded 1048576 bytes") {
+			t.Fatalf("reply overflow = exit %d, bytes %d:\n%s", code, len(out), out)
+		}
+		if resumable {
+			t.Error("overflowed reply became resumable")
+		}
+		if len(out) > 64<<10 {
+			t.Fatalf("overflowed reply leaked its bounded spool to the caller: %d bytes", len(out))
+		}
+	})
+
+	t.Run("stdin prompt overflow fails before dispatch", func(t *testing.T) {
+		dir := t.TempDir()
+		wrapper := filepath.Join(dir, "coop-consult")
+		calls := filepath.Join(dir, "calls")
+		for name, body := range map[string]string{
+			"coop-consult": ConsultWrapper(),
+			"claude":       "#!/bin/sh\nprintf called >\"$CALLS\"\necho SHOULD_NOT_RUN\n",
+			"timeout":      "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+		} {
+			mode := os.FileMode(0o755)
+			if name == "coop-consult" {
+				body = ConsultWrapper()
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command(wrapper, "claude", "--fresh")
+		cmd.Stdin = strings.NewReader(strings.Repeat("Q", consultPromptLimitBytes+1))
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+			"CALLS="+calls, "COOP_PEERS=claude")
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "question exceeds 524288 bytes") {
+			t.Fatalf("oversized stdin prompt was not rejected: %v\n%s", err, out)
+		}
+		if _, err := os.Stat(calls); !os.IsNotExist(err) {
+			t.Fatalf("provider dispatched for oversized stdin prompt: %v", err)
+		}
+	})
+
+	t.Run("capture helper failure is terminal", func(t *testing.T) {
+		dir := t.TempDir()
+		wrapper := filepath.Join(dir, "coop-consult")
+		for name, body := range map[string]string{
+			"claude":  "#!/bin/sh\necho SHOULD_NOT_BE_ACCEPTED\n",
+			"dd":      "#!/bin/sh\nexit 70\n",
+			"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		role := "capture-failure"
+		cmd := exec.Command(wrapper, role, "--fresh", "question")
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+			"COOP_PEERS=claude", "COOP_CONSULT_CAPTURE_FAILURE_TARGETS=claude:test")
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "failed to capture provider output safely") {
+			t.Fatalf("capture failure was not terminal: %v\n%s", err, out)
+		}
+		stateDir := filepath.Join(dir, "coop-consult-state")
+		if _, err := os.Stat(filepath.Join(stateDir, "CAPTURE_FAILURE.state")); !os.IsNotExist(err) {
+			t.Errorf("capture failure retained continuation state: %v", err)
+		}
+	})
+
+	t.Run("transcript overflow delivers reply then clears continuity", func(t *testing.T) {
+		dir := t.TempDir()
+		wrapper := filepath.Join(dir, "coop-consult")
+		if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range map[string]string{
+			"claude":  "#!/bin/sh\ndd if=/dev/zero bs=270000 count=1 2>/dev/null | tr '\\000' Y\n",
+			"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		role := "context-overflow"
+		key := "CONTEXT_OVERFLOW"
+		run := func(mode, prompt string) (string, int) {
+			cmd := exec.Command(wrapper, role, mode, prompt)
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+				"COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				return string(out), 0
+			}
+			if exit, ok := err.(*exec.ExitError); ok {
+				return string(out), exit.ExitCode()
+			}
+			t.Fatalf("wrapper: %v", err)
+			return "", -1
+		}
+		if out, code := run("--fresh", "first"); code != 0 || len(out) < 270000 {
+			t.Fatalf("first bounded turn = exit %d, bytes %d", code, len(out))
+		}
+		out, code := run("--continue", "second")
+		if code != 0 || !strings.Contains(out, "reply delivered, but continuity exceeded 524288 bytes") {
+			t.Fatalf("context overflow = exit %d, bytes %d, tail %q", code, len(out), out[max(0, len(out)-256):])
+		}
+		stateDir := filepath.Join(dir, "coop-consult-state")
+		if _, err := os.Stat(filepath.Join(stateDir, key+".state")); !os.IsNotExist(err) {
+			t.Errorf("context overflow retained continuation state: %v", err)
+		}
+	})
+}
+
+func TestConsultWrapperRejectsUnsafeContinuationRecordBeforeDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func(t *testing.T, statefile string)
+		want string
+	}{
+		{
+			name: "symlink",
+			make: func(t *testing.T, statefile string) {
+				t.Helper()
+				target := filepath.Join(filepath.Dir(statefile), "outside")
+				if err := os.WriteFile(target, []byte("session"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, statefile); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "unsafe continuation state file",
+		},
+		{
+			name: "hardlink",
+			make: func(t *testing.T, statefile string) {
+				t.Helper()
+				if err := os.WriteFile(statefile, []byte("session"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Link(statefile, statefile+".other"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "must have one hardlink",
+		},
+		{
+			name: "permissive mode",
+			make: func(t *testing.T, statefile string) {
+				t.Helper()
+				if err := os.WriteFile(statefile, []byte("session"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "must be mode 0600",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			wrapper := filepath.Join(dir, "coop-consult")
+			calls := filepath.Join(dir, "calls")
+			for name, body := range map[string]string{
+				"claude":  "#!/bin/sh\nprintf called >\"$CALLS\"\n",
+				"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			stateDir := filepath.Join(dir, "coop-consult-state")
+			if err := os.Mkdir(stateDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tc.make(t, filepath.Join(stateDir, "UNSAFE_STATE.state"))
+			cmd := exec.Command(wrapper, "unsafe-state", "--continue", "question")
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+				"CALLS="+calls, "COOP_PEERS=claude", "COOP_CONSULT_UNSAFE_STATE_TARGETS=claude:test")
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), tc.want) {
+				t.Fatalf("unsafe %s state was not rejected: %v\n%s", tc.name, err, out)
+			}
+			if _, err := os.Stat(calls); !os.IsNotExist(err) {
+				t.Fatalf("provider dispatched with unsafe %s state: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestConsultWrapperLadderReorderInvalidatesNativeSession(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	calls := filepath.Join(dir, "calls")
+	for name, body := range map[string]string{
+		"claude": `#!/bin/sh
+echo "claude $*" >>"$CALLS"
+echo "usage limit reached" >&2
+exit 9
+`,
+		"gemini": `#!/bin/sh
+echo "gemini $*" >>"$CALLS"
+echo GEMINI_REPLY
+`,
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(ladder, mode string) (string, int) {
+		t.Helper()
+		cmd := exec.Command(wrapper, "reorder", mode, "question")
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+			"CALLS="+calls, "COOP_PRIMARY=codex", "COOP_PEERS=claude gemini", "COOP_CONSULT_REORDER_TARGETS="+ladder)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(out), exit.ExitCode()
+		}
+		t.Fatalf("wrapper: %v\n%s", err, out)
+		return "", -1
+	}
+	if out, code := run("claude:one gemini:two", "--fresh"); code != 0 || !strings.Contains(out, "GEMINI_REPLY") {
+		t.Fatalf("initial fallback = exit %d:\n%s", code, out)
+	}
+	if err := os.WriteFile(calls, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := run("gemini:two claude:one", "--continue")
+	if code != 0 || !strings.Contains(out, "started FRESH from the saved transcript") {
+		t.Fatalf("reordered ladder did not restart safely = exit %d:\n%s", code, out)
+	}
+	got, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "--resume") || strings.Contains(string(got), "claude ") ||
+		!strings.Contains(string(got), "gemini --approval-mode plan --session-id") || !strings.Contains(string(got), " -p ") {
+		t.Fatalf("reordered ladder reused the old rung identity:\n%s", got)
 	}
 }
 
@@ -616,12 +1305,6 @@ echo "gemini-answer"`)
 exec "$@"`)
 
 	role := "fallbacktest"
-	idfile := filepath.Join("/tmp", "coop-consult-"+strings.ToUpper(role)+".id")
-	rungfile := filepath.Join("/tmp", "coop-consult-"+strings.ToUpper(role)+".rung")
-	defer os.Remove(idfile)
-	defer os.Remove(rungfile)
-	os.Remove(idfile)
-	os.Remove(rungfile)
 	env := append(os.Environ(),
 		"PATH="+dir+":"+os.Getenv("PATH"),
 		"TMPDIR="+dir,
@@ -662,12 +1345,132 @@ exec "$@"`)
 		t.Fatal(err)
 	}
 	out, code = run("--continue", "delta")
-	if code != 0 || !strings.Contains(out, "continued on gemini:gemini-3.5-flash") {
+	if code != 0 || !strings.Contains(out, "resuming on gemini:gemini-3.5-flash") {
 		t.Fatalf("continue selected rung = (exit %d):\n%s", code, out)
 	}
 	continuedCalls, _ := os.ReadFile(calls)
 	if strings.Contains(string(continuedCalls), "claude ") || !strings.Contains(string(continuedCalls), "gemini --approval-mode plan --resume") {
 		t.Fatalf("continue must resume only the successful Gemini rung:\n%s", continuedCalls)
+	}
+}
+
+func TestConsultWrapperFailedFallbackResumeRestartsSameRung(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	calls := filepath.Join(dir, "calls")
+	for name, body := range map[string]string{
+		"claude": `#!/bin/sh
+echo "claude $*" >>"$CALLS"
+echo "usage limit reached" >&2
+exit 9
+`,
+		"gemini": `#!/bin/sh
+echo "gemini $*" >>"$CALLS"
+case " $* " in
+*" --resume "*) echo SESSION_GONE >&2; exit 7 ;;
+esac
+echo GEMINI_REPLY
+`,
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(mode, question string) (string, int) {
+		t.Helper()
+		cmd := exec.Command(wrapper, "fallback-recovery", mode, question)
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+			"CALLS="+calls, "COOP_PRIMARY=codex", "COOP_PEERS=claude gemini",
+			"COOP_CONSULT_FALLBACK_RECOVERY_TARGETS=claude:one gemini:two")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(out), exit.ExitCode()
+		}
+		t.Fatalf("wrapper: %v\n%s", err, out)
+		return "", -1
+	}
+	if out, code := run("--fresh", "first question"); code != 0 || !strings.Contains(out, "GEMINI_REPLY") {
+		t.Fatalf("initial fallback = exit %d:\n%s", code, out)
+	}
+	if err := os.WriteFile(calls, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := run("--continue", "second delta"); code != 7 || !strings.Contains(out, "SESSION_GONE") {
+		t.Fatalf("failed fallback resume = exit %d:\n%s", code, out)
+	}
+	if out, code := run("--continue", "third delta"); code != 0 || !strings.Contains(out, "started FRESH from the saved transcript") || !strings.Contains(out, "GEMINI_REPLY") {
+		t.Fatalf("next continue did not restart fallback rung = exit %d:\n%s", code, out)
+	}
+	got, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "claude ") || strings.Count(string(got), "gemini ") != 2 {
+		t.Fatalf("failed fallback resume returned to the wrong rung:\n%s", got)
+	}
+}
+
+func TestConsultWrapperRateLimitedResumePublishesSuccessfulFallback(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	calls := filepath.Join(dir, "calls")
+	scripts := map[string]string{
+		"claude": `#!/bin/sh
+echo "claude $*" >>"$CALLS"
+case " $* " in
+*" --resume "*) echo "usage limit reached" >&2; exit 9 ;;
+esac
+echo CLAUDE_REPLY
+`,
+		"gemini": `#!/bin/sh
+echo "gemini $*" >>"$CALLS"
+case " $* " in
+*" --resume "*) echo GEMINI_CONTINUED ;;
+*) echo GEMINI_FALLBACK ;;
+esac
+`,
+		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+	}
+	for name, body := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(mode, question string) (string, int) {
+		t.Helper()
+		cmd := exec.Command(wrapper, "resume-fallback", mode, question)
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+			"CALLS="+calls, "COOP_PRIMARY=codex", "COOP_PEERS=claude gemini",
+			"COOP_CONSULT_RESUME_FALLBACK_TARGETS=claude:one gemini:two")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(out), exit.ExitCode()
+		}
+		t.Fatalf("wrapper: %v\n%s", err, out)
+		return "", -1
+	}
+	if out, code := run("--fresh", "first"); code != 0 || !strings.Contains(out, "CLAUDE_REPLY") {
+		t.Fatalf("initial consult = exit %d:\n%s", code, out)
+	}
+	if out, code := run("--continue", "second"); code != 0 || !strings.Contains(out, "GEMINI_FALLBACK") ||
+		!strings.Contains(out, "uncertain native session cleared and saved transcript retained") || strings.Contains(out, "next coop-consult") {
+		t.Fatalf("resume fallback = exit %d:\n%s", code, out)
+	}
+	if out, code := run("--continue", "third"); code != 0 || !strings.Contains(out, "GEMINI_CONTINUED") {
+		t.Fatalf("fallback continuation = exit %d:\n%s", code, out)
 	}
 }
 
@@ -696,11 +1499,6 @@ exit 9`)
 echo FALLBACK_ANSWER`)
 	write("timeout", "shift 3\nexec \"$@\"")
 
-	for _, suffix := range []string{"id", "rung", "context"} {
-		path := filepath.Join("/tmp", "coop-consult-CONTEXTTEST."+suffix)
-		os.Remove(path)
-		defer os.Remove(path)
-	}
 	env := append(os.Environ(),
 		"PATH="+dir+":"+os.Getenv("PATH"),
 		"TMPDIR="+dir,
@@ -770,7 +1568,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 			geminiBody: `echo "gemini $*" >>"$CALLS"; echo "RESOURCE_EXHAUSTED" >&2; exit 8`,
 			wantCode:   8,
 			wantGemini: true,
-			wantText:   "exhausted all 2 target(s)",
+			wantText:   "exhausted all 2 targets",
 		},
 	}
 	for _, tc := range cases {
@@ -790,12 +1588,6 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 			write("timeout", "shift 3\nexec \"$@\"")
 			calls := filepath.Join(dir, "calls")
 			role := "decisiontest"
-			idfile := filepath.Join("/tmp", "coop-consult-DECISIONTEST.id")
-			rungfile := filepath.Join("/tmp", "coop-consult-DECISIONTEST.rung")
-			defer os.Remove(idfile)
-			defer os.Remove(rungfile)
-			os.Remove(idfile)
-			os.Remove(rungfile)
 			cmd := exec.Command(wrapper, role, "--fresh", "question")
 			cmd.Env = append(os.Environ(),
 				"PATH="+dir+":"+os.Getenv("PATH"),

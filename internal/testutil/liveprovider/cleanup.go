@@ -19,6 +19,7 @@ import (
 
 type SupervisorCleanupSpec struct {
 	Root, CIDDir, ProcessDir, Supervisor, LabelKey string
+	Phases                                         []string
 	OperationTimeout, ProcessGrace, QuietPeriod    time.Duration
 	PollInterval                                   time.Duration
 }
@@ -37,6 +38,7 @@ func CleanupSupervisor(ctx context.Context, spec SupervisorCleanupSpec, ops Supe
 		ops.RemoveContainer == nil || ops.RemoveByLabel == nil {
 		return errors.New("incomplete live supervisor cleanup contract")
 	}
+	phases, err := cleanupPhases(spec.Phases)
 	if spec.OperationTimeout <= 0 {
 		spec.OperationTimeout = 2 * time.Second
 	}
@@ -56,7 +58,7 @@ func CleanupSupervisor(ctx context.Context, spec SupervisorCleanupSpec, ops Supe
 		ops.Sleep = sleepContext
 	}
 
-	var result error
+	result := err
 	producersQuiesced := true
 	if spec.ProcessDir != "" {
 		var processErr error
@@ -64,7 +66,7 @@ func CleanupSupervisor(ctx context.Context, spec SupervisorCleanupSpec, ops Supe
 		result = errors.Join(result, processErr)
 	}
 
-	for _, phase := range []string{"version", "prompt"} {
+	for _, phase := range phases {
 		if id, ok := readContainerID(spec.Root, filepath.Join(spec.CIDDir, phase+".cid")); ok {
 			operationCtx, cancel := context.WithTimeout(ctx, spec.OperationTimeout)
 			_ = ops.RemoveContainer(operationCtx, id)
@@ -108,6 +110,37 @@ func CleanupSupervisor(ctx context.Context, spec SupervisorCleanupSpec, ops Supe
 			return errors.Join(result, err)
 		}
 	}
+}
+
+func cleanupPhases(phases []string) ([]string, error) {
+	if len(phases) == 0 {
+		return []string{"version", "prompt"}, nil
+	}
+	if len(phases) > 32 {
+		return nil, errors.New("too many live cleanup phases")
+	}
+	result := make([]string, 0, len(phases))
+	seen := map[string]bool{}
+	for _, phase := range phases {
+		if !validCleanupPhase(phase) || seen[phase] {
+			return nil, errors.New("invalid live cleanup phase")
+		}
+		seen[phase] = true
+		result = append(result, phase)
+	}
+	return result, nil
+}
+
+func validCleanupPhase(phase string) bool {
+	if phase == "" || len(phase) > 64 || phase[0] == '-' || phase[len(phase)-1] == '-' {
+		return false
+	}
+	for _, char := range phase {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func terminateRegisteredGroups(ctx context.Context, spec SupervisorCleanupSpec, ops SupervisorCleanupOps) (bool, error) {

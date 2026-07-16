@@ -2277,6 +2277,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	_, _ = rand.Read(ridb)
 	runid := hex.EncodeToString(ridb)
 	a.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
+	if len(peers) > 0 || a.preset != nil {
+		peerPath, peerErr := preparePeerRecordFile(repo, runid)
+		if peerErr != nil {
+			ui.Warn("telemetry: could not prepare peer usage for this run: %v", peerErr)
+		} else {
+			defer removeEmptyPeerRecordFile(peerPath)
+		}
+	}
 	a.streamSeq, a.streamOff = 0, false
 	// iterCmd builds one iteration's command: a raw work.command override if set,
 	// otherwise the chosen agent's headless form carrying the work/signoff prompt.

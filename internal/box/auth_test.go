@@ -145,6 +145,7 @@ func TestCredentialScope(t *testing.T) {
 	// (adds nothing to the scope), but degrades to a consult on claude under a codex lead —
 	// which then must mount claude's creds.
 	nativePreset := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeNative, Agent: "claude"}}}
+	sameProviderConsult := &preset.Preset{Roles: []preset.Role{{Name: "probe", Mode: preset.ModeConsult, Agent: "claude"}}}
 
 	cases := []struct {
 		name string
@@ -160,6 +161,7 @@ func TestCredentialScope(t *testing.T) {
 		{"consult names gemini", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Peers: peerTargets("gemini")}, []string{"claude", "gemini"}},
 		{"fusion names its council", RunSpec{Homes: true, Agent: "codex", FusionGovernor: "codex", Peers: peerTargets("claude", "gemini")}, []string{"codex", "claude", "gemini"}},
 		{"claude lead keeps native in-session", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: nativePreset}, []string{"claude"}},
+		{"same-provider consult mounts one credential", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: sameProviderConsult}, []string{"claude"}},
 		{"codex lead degrades native to a claude consult", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Preset: nativePreset}, []string{"codex", "claude"}},
 	}
 	for _, c := range cases {

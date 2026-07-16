@@ -88,10 +88,11 @@ ARG AGENT_PACKAGES="%s"
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
-      postgresql-client procps inotify-tools \
+      postgresql-client procps inotify-tools util-linux \
       python3 python-is-python3 python3-pip \
       ripgrep fd-find jq tree \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
+ && command -v flock >/dev/null \
  && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
  && ln -s "$(command -v pip3)" /usr/local/bin/pip \
  && npm install -g ${AGENT_PACKAGES} \

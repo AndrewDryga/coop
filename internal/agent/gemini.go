@@ -242,7 +242,7 @@ func (geminiAgent) BoxEnv(string) []string { return nil }
 func (geminiAgent) HomeFallbacks() []HomeFallback { return nil }
 
 func (geminiAgent) ConsultFresh() string {
-	return "printf '%s' \"$id\" >\"$idfile\"\n" +
+	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
 		`run gemini --approval-mode plan --session-id "$id" ${model:+--model "$model"} -p "$prompt"`
 }
 

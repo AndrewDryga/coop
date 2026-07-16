@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -388,6 +389,117 @@ func TestReadScenarioAcceptsOnlyClosedBoundedBehavior(t *testing.T) {
 	oversized := `{"version":1,"provider":"future-provider"}` + strings.Repeat(" ", 64<<10)
 	if err := write(oversized); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized scenario error = %v, want explicit size rejection", err)
+	}
+}
+
+func TestReadConsultScenarioAcceptsOnlyClosedV2Plans(t *testing.T) {
+	root := canonicalTemp(t)
+	path := filepath.Join(root, "scenario.json")
+	write := func(body string) error {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := readScenario(root, path)
+		return err
+	}
+	valid := `{"version":2,"provider":"claude","provider_homes":["claude","codex"],"consult":{"calls":[{"target":"codex","mode":"fresh","prompt":"question","exit_code":0}],"steps":[{"provider":"codex","delivery":"fresh","result":"usable","prompt":"question","reply":"answer","model":"fixture-model","effort":"high","usage_in":3,"usage_out":2}]}}`
+	if err := write(valid); err != nil {
+		t.Fatalf("valid consult scenario rejected: %v", err)
+	}
+	missingScope := `{"version":2,"provider":"claude","provider_homes":["claude"],"consult":{"calls":[{"target":"codex","mode":"fresh","prompt":"question","exit_code":2}],"steps":[]}}`
+	if err := write(missingScope); err != nil {
+		t.Fatalf("zero-dispatch consult scenario rejected: %v", err)
+	}
+
+	invalid := []string{
+		strings.Replace(valid, `"version":2`, `"version":1`, 1),
+		strings.Replace(valid, `"mode":"fresh"`, `"mode":"--fresh"`, 1),
+		strings.Replace(valid, `"result":"usable"`, `"result":"command"`, 1),
+		strings.Replace(valid, `"provider":"codex","delivery"`, `"provider":"claude","delivery"`, 1),
+		strings.Replace(valid, `"provider_homes":["claude","codex"]`, `"provider_homes":["claude"]`, 1),
+		strings.Replace(valid, `"reply":"answer"`, `"reply":""`, 1),
+		strings.Replace(valid, `"usage_in":3`, `"usage_in":-1`, 1),
+		strings.Replace(valid, `"consult":{`, `"marker":"direct","consult":{`, 1),
+		strings.Replace(valid, `"usage_out":2`, `"usage_out":2,"command":"sh -c id"`, 1),
+		strings.Replace(valid, `"consult":{`, `"consult":{"block_task":"../escape",`, 1),
+	}
+	for _, body := range invalid {
+		if err := write(body); err == nil {
+			t.Errorf("unsafe/open consult scenario accepted:\n%s", body)
+		}
+	}
+}
+
+func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
+	cases := []struct {
+		provider string
+		args     []string
+		want     consultInvocation
+	}{
+		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session-1", "--model", "opus", "--effort", "high", "question"}, consultInvocation{Delivery: "fresh", Session: "session-1", Model: "opus", Effort: "high", Prompt: "question"}},
+		{"gemini", []string{"--approval-mode", "plan", "--resume", "session-2", "--model", "flash", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-2", Model: "flash", Prompt: "follow-up"}},
+		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session-3", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-3", Model: "grok-model", Effort: "xhigh", Prompt: "question"}},
+		{"codex", []string{"exec", "resume", "session-4", "-c", "sandbox_mode=read-only", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-4", Model: "codex-model", Effort: "high", Prompt: "follow-up"}},
+	}
+	for _, tc := range cases {
+		got, err := parseConsultInvocation(tc.provider, tc.args)
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("parseConsultInvocation(%s) = (%#v, %v), want %#v", tc.provider, got, err, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		provider string
+		args     []string
+	}{
+		{"claude", []string{"-p", "--permission-mode", "plan", "--model", "opus", "--session-id", "session", "question"}},
+		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session", "question", "-p"}},
+		{"grok", []string{"--tools", "", "--session-id", "session", "-p", "question"}},
+		{"codex", []string{"exec", "resume", "session", "--json", "question", "-c", "sandbox_mode=read-only"}},
+	} {
+		if _, err := parseConsultInvocation(tc.provider, tc.args); err == nil {
+			t.Errorf("parseConsultInvocation(%s, %q) accepted reordered/unsafe argv", tc.provider, tc.args)
+		}
+	}
+}
+
+func TestValidateConsultWrapperMountRequiresExactPrivateGeneratedFile(t *testing.T) {
+	root := canonicalTemp(t)
+	tmp := filepath.Join(root, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmp, "coop-mcp-wrapper")
+	if err := os.WriteFile(path, []byte(fusion.ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := mount{Source: path, Target: fusion.ConsultWrapperPath, ReadOnly: true}
+	if err := validateConsultWrapperMount(root, m); err != nil {
+		t.Fatalf("exact consult wrapper rejected: %v", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateConsultWrapperMount(root, m); err == nil {
+		t.Fatal("non-executable-for-all consult wrapper mode accepted")
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateConsultWrapperMount(root, m); err == nil {
+		t.Fatal("wrong consult wrapper bytes accepted")
+	}
+	if err := os.WriteFile(path, []byte(fusion.ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, filepath.Join(tmp, "second-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateConsultWrapperMount(root, m); err == nil {
+		t.Fatal("hardlinked consult wrapper accepted")
 	}
 }
 

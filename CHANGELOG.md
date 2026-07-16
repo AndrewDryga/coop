@@ -43,9 +43,11 @@
   while leaving spelling correction enabled for every other command. Existing file-only installs
   need the new source line documented by `coop help completion`.
 
-- **Peer consult replies can no longer disappear behind a status line.** Generated lead guidance
-  requires polling a yielded consult session through terminal exit, while empty, malformed,
-  timed-out, and provider-failed replies now fail explicitly without losing peer telemetry.
+- **Peer consult replies and continuity now fail coherently.** Generated lead guidance keeps replies
+  separate from diagnostics and requires polling yielded sessions through terminal exit. Usable
+  replies atomically publish one bounded continuation record; failed resumes preserve the last
+  complete transcript for the next call, while empty, malformed, timed-out, oversized, and
+  provider-failed attempts stay terminal without publishing false continuity or telemetry.
 
 - **Final signoff receives bounded between-audit evidence.** Receipt-consistent ordinary and
   protected audits retain a compact per-task verdict, tested gate, and unresolved findings for the

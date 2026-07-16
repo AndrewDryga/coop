@@ -437,6 +437,13 @@ var commandHelp = map[string]string{
   provider (including the governor provider). A provider/role name collision is rejected.
   There is no implicit "consult everyone signed in".
 
+  coop-consult commits continuity only after a usable reply. A failed resume returns once,
+  clears the uncertain native id, and preserves the last complete transcript; the next
+  --continue restarts that successful rung fresh. Only a proven nonzero rate limit advances
+  a fallback ladder. Timeout, ordinary failure, or output overflow is terminal for that call.
+  Provider stderr is diagnostic only, never reply text. Reply/diagnostic streams are capped at
+  1 MiB each; input, constructed prompts, and saved transcripts are capped at 512 KiB each.
+
   A bare preset name in the governor slot loads an orchestration preset: its lead governs,
   and its role routing rides along with the council directive ('coop help presets'). Terminal
   Fusion is non-rotating: it pins and reports the preset's first lead rung. ACP Fusion keeps
@@ -502,7 +509,11 @@ var commandHelp = map[string]string{
   instead. Consult/delegate ladders advance once per target only after a failed command
   proves a rate limit; ordinary failures stay visible. A delegate advances only from a
   clean worktree when the limited rung left every file and Git history unchanged. A consult
-  remembers its successful rung and transcript for --continue. Providers without mounted
+  remembers its successful rung and transcript for --continue. It publishes a native session id
+  only after a usable reply. A failed resume returns once, clears that uncertain id, and preserves
+  the transcript so the next --continue starts the same rung fresh. Provider stderr is diagnostic,
+  not reply text. Reply/diagnostic streams are capped at 1 MiB each; input, constructed prompts,
+  and saved transcripts are capped at 512 KiB each. Providers without mounted
   credentials are skipped; every available rung's credential home is mounted in the lead box.
   The role's prompt (if any) is its persona.
   Native roles run inside the lead's session, so

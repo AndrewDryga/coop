@@ -35,17 +35,22 @@ func consultCall(peer string) string {
 	return fmt.Sprintf("coop-consult %s --fresh %s", peer, placeholder)
 }
 
-// consultBlock renders a copy-pasteable shell snippet that runs every peer
-// read-only and in parallel, then prints each answer under a header.
+// consultBlock renders a copy-pasteable shell snippet that runs every peer read-only and in
+// parallel, then prints replies and diagnostics on their original streams under distinct headers.
 func consultBlock(peers []string) string {
 	var b strings.Builder
+	b.WriteString("  (\n")
+	b.WriteString("    consult_tmp=$(mktemp -d) || exit 1\n")
+	b.WriteString("    trap 'rm -rf \"$consult_tmp\"' 0\n")
 	for _, p := range peers {
-		fmt.Fprintf(&b, "  ( %s ) >/tmp/peer-%s.txt 2>&1 &\n", consultCall(p), p)
+		fmt.Fprintf(&b, "    ( %s ) >\"$consult_tmp/peer-%s.reply\" 2>\"$consult_tmp/peer-%s.diagnostics\" &\n", consultCall(p), p, p)
 	}
-	b.WriteString("  wait\n")
+	b.WriteString("    wait\n")
 	for _, p := range peers {
-		fmt.Fprintf(&b, "  echo '----- %s -----'; cat /tmp/peer-%s.txt\n", p, p)
+		fmt.Fprintf(&b, "    echo '----- %s reply -----'; cat \"$consult_tmp/peer-%s.reply\"\n", p, p)
+		fmt.Fprintf(&b, "    if [ -s \"$consult_tmp/peer-%s.diagnostics\" ]; then echo '----- %s diagnostics -----' >&2; cat \"$consult_tmp/peer-%s.diagnostics\" >&2; fi\n", p, p, p)
 	}
+	b.WriteString("  )\n")
 	return b.String()
 }
 
@@ -114,8 +119,9 @@ Two rules that keep this honest:
   Anything that happened on your side since you last consulted it is invisible unless
   you put it in the delta.
 - Believe the status line, not your intent: each call prints "continued" or "fresh".
-  If you asked to --continue and it says it started FRESH (the session was lost), the
-  member has no memory this turn — resend the full context.
+  "FRESH from the saved transcript" means Coop already replayed the prior transcript plus
+  your delta; do not resend it. Plain "started FRESH, resend full context" means no transcript
+  was available, so the member has no memory and needs a full self-contained follow-up.
 
 ## 3. Synthesize, then act
 - Read every council member's answer in full before you respond.
@@ -162,17 +168,16 @@ The one-line status is session metadata, not the peer reply. If your shell or
 execution tool yields a session handle, retain it and
 poll that same session to terminal exit, accumulating and reading its complete output.
 Default to --fresh — each hard call is best judged independently. Use --continue only
-to drill deeper into the SAME call you already asked about, sending just what changed;
-if the status line says a --continue fell back to FRESH, give full context.
+to drill deeper into the SAME call you already asked about, sending just what changed.
+If it says "FRESH from the saved transcript", Coop already replayed that context; if it
+says plain "started FRESH, resend full context", give a full self-contained follow-up.
 
 Consulting more than one? Run them in parallel and read every reply:
 
-  ( <command A> ) >/tmp/a.txt 2>&1 &
-  ( <command B> ) >/tmp/b.txt 2>&1 &
-  wait; cat /tmp/a.txt /tmp/b.txt
+%s
 
 Weigh each answer against your own reasoning, then decide and act.
-`, strings.Join(peers, " and "), peerCmdList(peers))
+`, strings.Join(peers, " and "), peerCmdList(peers), consultBlock(peers))
 }
 
 // LeadInstructions is the instruction file mounted for a normal lead agent: the

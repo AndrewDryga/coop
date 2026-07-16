@@ -33,6 +33,65 @@ func TestReadChildResultAcceptsEveryConsistentStatus(t *testing.T) {
 	}
 }
 
+func TestReadConsultChildSummaryRevalidatesClosedSchema(t *testing.T) {
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, _, err := ParseTargets("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make([]ProviderResult, 0, len(targets))
+	for _, target := range targets {
+		results = append(results, ProviderResult{
+			Provider: target.Provider, Status: StatusSkipped, ReasonCode: ReasonRingPrerequisite,
+		})
+	}
+	summary, err := NewConsultSummary(false, targets, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(layout.State, "consult-result.json")
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRawResult(t, path, append(data, '\n'))
+	got, err := ReadConsultChildSummary(layout.Root, path, false, targets)
+	if err != nil || got.Totals != summary.Totals || len(got.Results) != len(summary.Results) {
+		t.Fatalf("ReadConsultChildSummary = %+v, %v", got, err)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	poisoned := summary
+	poisoned.Results = append([]ConsultEdgeResult(nil), summary.Results...)
+	poisoned.Results[0].Lead = targets[0].Provider
+	data, err = json.Marshal(poisoned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRawResult(t, path, append(data, '\n'))
+	if _, err := ReadConsultChildSummary(layout.Root, path, false, targets); err == nil {
+		t.Fatal("consult child accepted a self-edge lead")
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	summary.Totals.Passed++
+	data, err = json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRawResult(t, path, append(data, '\n'))
+	if _, err := ReadConsultChildSummary(layout.Root, path, false, targets); err == nil {
+		t.Fatal("consult child result with forged totals was accepted")
+	}
+}
+
 func TestReadChildResultRejectsUnsafeOrInconsistentFiles(t *testing.T) {
 	valid := ProviderResult{Provider: "codex", CLIVersion: "codex-cli 1.2.3", Attempted: true, Passed: true, Status: StatusPassed}
 	tests := []struct {

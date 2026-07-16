@@ -193,9 +193,22 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	fixtureBin := filepath.Join(layout.Bin, "providerfixture")
 	buildProcessBinary(t, moduleRoot, coopBin, ".")
 	buildProcessBinary(t, moduleRoot, fixtureBin, "./internal/cli/testdata/providerfixture")
+	for _, alias := range append(append([]string(nil), providers...), "timeout") {
+		if err := os.Link(fixtureBin, filepath.Join(layout.Bin, alias)); err != nil {
+			t.Fatalf("create fixed provider fixture alias %s: %v", alias, err)
+		}
+	}
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal("git is required for the scripted process suite")
+	}
+	jqBin, err := exec.LookPath("jq")
+	if err != nil {
+		t.Fatal("jq is required for the scripted consult process suite")
+	}
+	shBin, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal("sh is required for the scripted consult process suite")
 	}
 
 	var defaults, conf, envFile strings.Builder
@@ -231,6 +244,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	}
 	allCredKeys := sortedKeys(credentialSet)
 	envFile.WriteString("FIXTURE_SAFE=visible\n")
+	envFile.WriteString("COOP_CONSULT_TIMEOUT=2\n")
 	for _, key := range allCredKeys {
 		fmt.Fprintf(&envFile, "%s=must-be-stripped\n", key)
 	}
@@ -242,7 +256,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 		t.Fatal(err)
 	}
 	env, err := procharness.Environment(layout, map[string]string{
-		"PATH": controlledPath(layout.Bin, filepath.Dir(gitBin)), "COOP_RUNTIME": fixtureBin,
+		"PATH": controlledPath(layout.Bin, filepath.Dir(gitBin), filepath.Dir(jqBin), filepath.Dir(shBin)), "COOP_RUNTIME": fixtureBin,
 		"COOP_IMAGE": "fixture-image", "COOP_HOMES": "1", "COOP_PROVIDER_FIXTURE_ROOT": layout.Root,
 		"COOP_PROVIDER_FIXTURE_IMAGE": "fixture-image", "COOP_PROVIDER_FIXTURE_TRACE": layout.Trace,
 		"COOP_PROVIDER_FIXTURE_SCENARIO": scenarioPath,
@@ -254,7 +268,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	return &directProcessSuite{layout: layout, coopBin: coopBin, env: env, scenarioPath: scenarioPath, providers: providers, allCredKeys: allCredKeys}
 }
 
-func (s *directProcessSuite) run(t *testing.T, args []string, scenario map[string]any) (procharness.Result, []*processTrace) {
+func (s *directProcessSuite) run(t *testing.T, args []string, scenario any) (procharness.Result, []*processTrace) {
 	t.Helper()
 	s.reset(t, scenario)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -270,8 +284,11 @@ func (s *directProcessSuite) run(t *testing.T, args []string, scenario map[strin
 	return result, trace
 }
 
-func (s *directProcessSuite) reset(t *testing.T, scenario map[string]any) {
+func (s *directProcessSuite) reset(t *testing.T, scenario any) {
 	t.Helper()
+	if err := os.RemoveAll(filepath.Join(s.layout.Tmp, "coop-consult-state")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(s.layout.Trace, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

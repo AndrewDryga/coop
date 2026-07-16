@@ -2,10 +2,12 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -158,6 +160,86 @@ type peerRecord struct {
 	Model    string `json:"model"`
 	In       int    `json:"in"`
 	Out      int    `json:"out"`
+}
+
+// preparePeerRecordFile creates the one append target a consult wrapper may use for this run.
+// The host owns publication: the wrapper never creates or follows a repository-provided path.
+func preparePeerRecordFile(repo, run string) (path string, err error) {
+	if run == "" || strings.ContainsAny(run, "/\\\x00") {
+		return "", fmt.Errorf("invalid run id")
+	}
+	repoRoot, err := os.OpenRoot(repo)
+	if err != nil {
+		return "", err
+	}
+	defer repoRoot.Close()
+	agentInfo, err := repoRoot.Lstat(".agent")
+	if err != nil || !agentInfo.IsDir() || agentInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf(".agent is not a regular directory")
+	}
+	agentRoot, err := repoRoot.OpenRoot(".agent")
+	if err != nil {
+		return "", err
+	}
+	defer agentRoot.Close()
+	openedAgent, err := agentRoot.Stat(".")
+	if err != nil || !os.SameFile(agentInfo, openedAgent) {
+		return "", fmt.Errorf(".agent changed while opening")
+	}
+	if err := agentRoot.MkdirAll("runs", 0o755); err != nil {
+		return "", err
+	}
+	runsInfo, err := agentRoot.Lstat("runs")
+	if err != nil || !runsInfo.IsDir() || runsInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf(".agent/runs is not a regular directory")
+	}
+	runsRoot, err := agentRoot.OpenRoot("runs")
+	if err != nil {
+		return "", err
+	}
+	defer runsRoot.Close()
+	openedRuns, err := runsRoot.Stat(".")
+	if err != nil || !os.SameFile(runsInfo, openedRuns) {
+		return "", fmt.Errorf(".agent/runs changed while opening")
+	}
+	name := run + ".peers.jsonl"
+	f, err := runsRoot.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	remove := true
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if remove {
+			_ = runsRoot.Remove(name)
+		}
+	}()
+	if err = f.Chmod(0o600); err != nil {
+		return "", err
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return "", fmt.Errorf("peer usage target is not a private regular file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 {
+		return "", fmt.Errorf("peer usage target must have exactly one hardlink")
+	}
+	remove = false
+	return filepath.Join(repo, ".agent", "runs", name), nil
+}
+
+func removeEmptyPeerRecordFile(path string) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() != 0 {
+		return
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if ok && stat.Nlink == 1 {
+		_ = os.Remove(path)
+	}
 }
 
 // readPeerRecords reads a run's peer-usage rows from .agent/runs/<run>.peers.jsonl. Best-effort, same

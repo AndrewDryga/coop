@@ -71,6 +71,58 @@ func TestCleanupSupervisorRemovesCIDFilesAndWaitsForLateLabels(t *testing.T) {
 	}
 }
 
+func TestCleanupSupervisorAcceptsOnlyExplicitSafeCIDPhases(t *testing.T) {
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cidDir := filepath.Join(layout.State, "cids")
+	mustMkdir(t, cidDir)
+	writeRawResult(t, filepath.Join(cidDir, "version-claude.cid"), []byte("version_claude\n"))
+	writeRawResult(t, filepath.Join(cidDir, "edge-claude-codex.cid"), []byte("edge_codex\n"))
+	clock := &cleanupClock{now: time.Unix(1, 0)}
+	var ids []string
+	err = CleanupSupervisor(context.Background(), SupervisorCleanupSpec{
+		Root: layout.Root, CIDDir: cidDir, Supervisor: "supervisor", LabelKey: "label",
+		Phases:           []string{"version-claude", "edge-claude-codex"},
+		OperationTimeout: time.Second, QuietPeriod: time.Second, PollInterval: time.Second,
+	}, SupervisorCleanupOps{
+		RemoveContainer: func(_ context.Context, id string) error {
+			ids = append(ids, id)
+			return nil
+		},
+		RemoveByLabel: func(context.Context, string, string) (int, error) { return 0, nil },
+		Now:           clock.Now, Sleep: clock.Sleep,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ids, []string{"version_claude", "edge_codex"}) {
+		t.Fatalf("custom cid removals = %v", ids)
+	}
+
+	for _, phases := range [][]string{
+		{"version", "version"}, {"../prompt"}, {"Prompt"}, {"-prompt"}, {"prompt-"}, {""},
+	} {
+		labelCalls := 0
+		if err := CleanupSupervisor(context.Background(), SupervisorCleanupSpec{
+			Root: layout.Root, CIDDir: cidDir, Supervisor: "supervisor", LabelKey: "label", Phases: phases,
+			QuietPeriod: time.Millisecond, PollInterval: time.Millisecond,
+		}, SupervisorCleanupOps{
+			RemoveContainer: func(context.Context, string) error { return nil },
+			RemoveByLabel: func(context.Context, string, string) (int, error) {
+				labelCalls++
+				return 0, nil
+			},
+		}); err == nil {
+			t.Errorf("unsafe cleanup phases were accepted: %q", phases)
+		}
+		if labelCalls < 2 {
+			t.Errorf("unsafe phase contract skipped authoritative label cleanup: %q", phases)
+		}
+	}
+}
+
 func TestCleanupSupervisorRequiresSweepStartedAfterQuietPeriod(t *testing.T) {
 	layout, err := procharness.NewLayout(t.TempDir())
 	if err != nil {

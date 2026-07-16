@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -69,6 +70,43 @@ func TestAppendStageRecord(t *testing.T) {
 		if err := json.Unmarshal([]byte(l), &got); err != nil {
 			t.Errorf("row not valid JSON: %v\n%s", err, l)
 		}
+	}
+}
+
+func TestPreparePeerRecordFileIsPrivateAndFailClosed(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := preparePeerRecordFile(repo, "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 {
+		t.Fatalf("peer record target = mode %s stat %#v", info.Mode(), stat)
+	}
+	if _, err := preparePeerRecordFile(repo, "run1"); err == nil {
+		t.Fatal("existing peer record target was replaced")
+	}
+	removeEmptyPeerRecordFile(path)
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("empty peer record target survived cleanup: %v", err)
+	}
+
+	outside := t.TempDir()
+	if err := os.Remove(filepath.Join(repo, ".agent", "runs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, ".agent", "runs")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparePeerRecordFile(repo, "run2"); err == nil {
+		t.Fatal("symlinked peer record directory was accepted")
 	}
 }
 

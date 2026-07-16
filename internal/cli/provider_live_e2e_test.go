@@ -224,7 +224,7 @@ func runProviderLiveCompatibility(
 		RemoveByLabel:   rt.RemoveByLabel,
 	})
 	cancelCleanup()
-	after, snapshotErr := liveprovider.SnapshotRepository(layout)
+	after, snapshotErr := liveprovider.VerifyRepository(layout, before)
 	sourceErr := prepared.VerifySources()
 	return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{
 		CleanupFailed: cleanupErr != nil || revokeErr != nil, SourceChanged: sourceErr != nil,

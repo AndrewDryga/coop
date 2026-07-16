@@ -246,10 +246,11 @@ type Agent interface {
 	HomeFallbacks() []HomeFallback
 	// ConsultFresh is the shell body for a fresh read-only consult session in the
 	// coop-consult wrapper — run against the wrapper's variables $prompt, $id, $model
-	// (uniformly resolved) and $idfile, plus the run/new_id helpers. It analyses and
-	// reports; it never edits files.
+	// (uniformly resolved), and $candidate_idfile. A fresh arm records only its candidate;
+	// the wrapper publishes continuation state after a bounded usable reply. The arm also
+	// has the run/new_id helpers. It analyses and reports; it never edits files.
 	ConsultFresh() string
-	// ConsultResume is the shell body for resuming a consult by $id (read from $idfile).
+	// ConsultResume is the shell body for resuming a consult by the wrapper's validated $id.
 	ConsultResume() string
 	// DelegateExec is the write-capable shell body for coop-delegate — run against
 	// $prompt and $model. The wrapper enforces commit:never and serialization around it.

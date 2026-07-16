@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -45,6 +46,35 @@ func ReadChildResult(root, path, expectedProvider string) (ProviderResult, error
 		return ProviderResult{}, errors.New("live child result violates summary contract")
 	}
 	return result, nil
+}
+
+// ReadConsultChildSummary accepts one bounded, closed-schema provider-ring result and recomputes its totals.
+func ReadConsultChildSummary(root, path string, strict bool, targets []agents.Target) (ConsultSummary, error) {
+	file, err := procharness.OpenRegularFile(root, path, os.O_RDONLY)
+	if err != nil {
+		return ConsultSummary{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() == 0 || info.Size() > childResultLimit {
+		return ConsultSummary{}, errors.New("consult live child result is empty, oversized, or unreadable")
+	}
+	decoder := json.NewDecoder(io.LimitReader(file, childResultLimit+1))
+	decoder.DisallowUnknownFields()
+	var summary ConsultSummary
+	if err := decoder.Decode(&summary); err != nil {
+		return ConsultSummary{}, errors.New("decode consult live child result")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return ConsultSummary{}, errors.New("consult live child result has trailing data")
+	}
+	validated, err := NewConsultSummary(strict, targets, summary.PeerResults())
+	if err != nil || summary.Schema != validated.Schema || summary.Strict != validated.Strict ||
+		summary.Totals != validated.Totals || !slices.Equal(summary.Results, validated.Results) {
+		return ConsultSummary{}, errors.New("consult live child result violates summary contract")
+	}
+	return validated, nil
 }
 
 // ControlFilePresent reports only a regular, single-link control file below root as present.

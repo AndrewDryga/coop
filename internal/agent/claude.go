@@ -354,10 +354,10 @@ func (claudeAgent) HomeFallbacks() []HomeFallback {
 
 // coop-consult / coop-delegate shell — the wrapper generators concatenate these per-agent
 // arms (see internal/fusion/wrapper.go, internal/preset/wrapper.go). They run against the
-// wrapper's $prompt/$id/$model/$idfile and its run/new_id helpers.
+// wrapper's $prompt/$id/$model/$candidate_idfile and its run/new_id helpers.
 
 func (claudeAgent) ConsultFresh() string {
-	return "printf '%s' \"$id\" >\"$idfile\"\n" +
+	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
 		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
 }
 

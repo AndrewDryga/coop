@@ -77,6 +77,8 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		"chown node:node /home/node/.asdf /home/node/.cache",
 		// agent search/inspect tools, with fd symlinked from Debian's fdfind.
 		"ripgrep fd-find jq tree", `ln -s "$(command -v fdfind)" /usr/local/bin/fd`,
+		// coop-consult uses a kernel-held lock that must be present in the built image.
+		"inotify-tools util-linux", "command -v flock >/dev/null",
 		// bare python + pip so an agent reaching for them doesn't self-debug a missing tool.
 		"python3 python-is-python3 python3-pip", `ln -s "$(command -v pip3)" /usr/local/bin/pip`,
 		// Playwright's Chromium system libs baked in as root so a browser launches in the box.

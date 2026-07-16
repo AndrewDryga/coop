@@ -262,7 +262,7 @@ func (grokAgent) BoxEnv(string) []string { return nil }
 func (grokAgent) HomeFallbacks() []HomeFallback { return nil }
 
 func (grokAgent) ConsultFresh() string {
-	return "printf '%s' \"$id\" >\"$idfile\"\n" +
+	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
 		`run grok --tools "` + grokReadOnlyTools + `" --session-id "$id" ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 

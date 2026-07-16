@@ -48,8 +48,14 @@ func TestCodexConsultPreservesStructuredFailureEvents(t *testing.T) {
 		t.Fatal("codex adapter is not registered")
 	}
 	for name, body := range map[string]string{"fresh": a.ConsultFresh(), "resume": a.ConsultResume()} {
-		if !strings.Contains(body, `if [ "$st" -ne 0 ]; then printf '%s\n' "$out" >&2; fi`) {
-			t.Errorf("Codex %s consult drops raw failed JSON events needed for rate-limit classification:\n%s", name, body)
+		if !strings.Contains(body, "codex_run codex exec") {
+			t.Errorf("Codex %s consult bypasses the bounded shared result path:\n%s", name, body)
+		}
+	}
+	prelude := a.ShellPrelude()
+	for _, want := range []string{`start_capture "$codex_raw"`, `cat "$raw" >&2`} {
+		if !strings.Contains(prelude, want) {
+			t.Errorf("Codex consult drops bounded raw failure events needed for rate-limit classification; missing %q", want)
 		}
 	}
 }

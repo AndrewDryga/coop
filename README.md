@@ -727,8 +727,11 @@ generates its Claude subagent in the box — `coop-<role>`, from the role's mode
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
 `subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A **consult**
 role accepts one target or a fallback list. Its wrapper advances only after a failed command
-proves a rate limit; ordinary failures stay visible. Consult continuity follows the successful
-rung and replays its saved transcript if the next provider must start fresh. A delegate advances
+proves a rate limit; timeout, output overflow, and ordinary failures stay visible and never spend a
+second rung. Consult continuity follows the successful rung. A failed native resume returns that
+failure once, discards the uncertain session id, and preserves the last complete transcript; the
+next `--continue` starts that same rung fresh from the transcript instead of retrying a dead id or
+silently double-billing the failed call. A delegate advances
 only from a clean worktree when the limited rung changed neither files (ignored ones included)
 nor Git history. Providers without mounted credentials are skipped. Every available rung's
 credential home is mounted for the lead box. The role's prompt (if any) is the persona the peer adopts — so
@@ -861,10 +864,28 @@ composes a self-contained prompt rather than forwarding your message verbatim �
 follow-up like "fix the second one" means nothing to a peer that never saw the
 thread. `coop-consult` adds optional continuity: `--fresh` starts a new session,
 `--continue` resumes the peer's own prior consult so a follow-up can send just the
-delta instead of re-pasting context (it prints whether it continued or fell back to
-fresh, so the leader knows when to resend). It hides the per-agent session-id
+delta instead of re-pasting context. It distinguishes a transcript-backed fresh recovery, where
+the leader sends only the delta, from a plain fresh start, where the leader must resend full
+context. A fresh session becomes resumable only after a usable
+reply. A failed resume is not retried in the same call: Coop clears the uncertain native id, keeps
+the last complete transcript, and the next `--continue` restarts that successful rung fresh with
+the transcript plus the new delta. Only a proven nonzero rate limit advances a fallback ladder;
+timeouts, ordinary failures, and output overflow are terminal for that call. It hides the per-agent session-id
 mechanics — claude/gemini start under a generated id, codex's is captured from its
-JSON stream. The leader then merges the strongest parts, resolves disagreements by
+JSON stream. Provider stdout and diagnostics are captured separately: stderr is shown as a
+diagnostic but never accepted or persisted as the advisor reply. Native reply and diagnostic
+streams are capped at 1 MiB each; stdin, constructed prompts, and saved transcripts are capped at
+512 KiB each. Overflow never triggers fallback or persists a partial reply. If a valid reply would
+overflow the saved transcript, Coop returns the reply and drops continuity, so the next call must
+use `--fresh`. Continuation is one versioned record replaced atomically after a usable reply. A
+second consult for the same target waits on a kernel-held lock that the Coop image releases even
+after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback.
+
+Inside `coop loop`, Codex is currently the only consult arm with structured token usage. At most one
+bounded row per successful Codex consult is appended to the active run's private ignored
+`.agent/runs/<run>.peers.jsonl`; an empty file is removed. Claude, Gemini, and Grok plain-output
+arms do not fabricate token counts, and failed or usage-less Codex replies append nothing. The
+leader then merges the strongest parts, resolves disagreements by
 verification, and proceeds. Because the instruction lands only on the leader, the
 members it spawns read their normal instructions and never recurse into a council of
 their own. Each consultation adds one read-only run per member, so account for the full
@@ -1510,11 +1531,12 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 
 ```bash
-make build                 # build ./coop
-make check                 # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
-make provider-scripted-e2e # strict fake-runtime direct-process matrix for all four providers
-make provider-live-e2e-all # one read-only real prompt per registered provider (opt-in)
-make doctor                # the integration check — proves isolation, needs a runtime
+make build                         # build ./coop
+make check                         # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
+make provider-scripted-e2e         # strict fake-runtime direct-process matrix for all four providers
+make provider-live-e2e-all         # one read-only real prompt per registered provider (opt-in)
+make provider-consult-live-e2e-all # four real cross-provider coop-consult edges, no lead calls (opt-in)
+make doctor                        # the integration check — proves isolation, needs a runtime
 ```
 
 `.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
@@ -1528,14 +1550,19 @@ The scripted provider target builds fresh Coop and fixture binaries under a disp
 from an allowlist-only environment, and checks the real CLI/box/runtime command boundary for every
 registered provider. It covers bare and pinned accounts, model/effort precedence and exact native
 argv/env, forwarded args, fail-fast target validation, output passthrough, exit propagation, and
-ready-synchronized foreground-group cancellation. Its fake runtime validates and records mounts,
+ready-synchronized foreground-group cancellation. It also invokes the exact generated
+`coop-consult` mount for all four provider arms and every one of the 12 directed distinct fallback
+pairs, including continuation, failed-resume recovery, rate-limit decisions, telemetry, scope
+denials, output bounds, and cleanup. Its fake runtime validates and records mounts,
 env files, workdir, image, and provider argv, but it is not a container sandbox; `coop doctor` and
 `make review-writes-e2e` own that proof. On failure, rerun the printed provider subtest with `-v`; its diagnostic includes the
 size-bounded JSONL trace. Host paths are fixture-relative, environment values are default-redacted,
 and free-form label/provider values are represented by deterministic digests, so exact contracts
 remain testable without persisting their contents. A new adapter automatically enters the
 registry-generated matrix; add only its expected argv and credential assertions in the tagged test.
-The runtime/provider fixture itself stays registry-neutral.
+The runtime fixture stays registry-neutral. Its provider mode is a deliberately independent oracle:
+it enumerates each registered provider's native argv/output shape, and a completeness test fails
+when a new adapter has no oracle arm.
 
 The opt-in live layer checks compatibility with the provider CLIs currently installed in the box:
 
@@ -1544,6 +1571,8 @@ make provider-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
 make provider-live-e2e COOP_LIVE_TARGETS='claude:opus/high@personal'
 make provider-live-e2e-all
 make provider-live-e2e-all COOP_LIVE_TARGETS='claude@backup,codex,gemini,grok'
+make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'
+make provider-consult-live-e2e-all
 ```
 
 An explicit target list uses Coop's normal `provider[:model][/effort][@account]` grammar and permits
@@ -1569,15 +1598,15 @@ size/path/replacement, repository setup/snapshot, child-result, and runtime-clea
 Credential detail codes call for repairing or re-authenticating the selected credential; repository
 or child/cleanup codes indicate the local runtime/test harness and are safe to attach to a bug report.
 
-Each provider gets a fresh committed README-only repository mounted read-only, an isolated
+Each provider gets a fresh committed repository mounted read-only, an isolated
 HOME/XDG/config tree, no project/global instructions or MCP settings, open egress, bounded output,
 and a hard deadline. Claude, Codex, and Grok auth files are projected to access-token-only forms;
 refresh tokens never enter the isolated tree. Gemini's host-bound keychain is fingerprinted but
 never copied. Only the exact selected Gemini env key is preserved, and only selected
 adapter-declared artifacts and explicit credential-env assignments enter new `0600` inodes.
 Sessions, hooks, histories, unrelated settings, alternate keys, and other accounts stay in the
-source vault. Source credentials (including inode identity) and Git HEAD/status/refs/reflogs/tree
-are compared afterward. The tagged live helper validates an inherited private control descriptor,
+source vault. Source credentials (including inode identity), complete repository bytes/modes, and
+Git HEAD/status/refs/reflogs are compared afterward. The tagged live helper validates an inherited private control descriptor,
 then lets the runtime inherit the helper's harness-owned process group; default Coop builds retain
 the normal separate runtime group. On timeout, the projected credential path is atomically revoked
 before the first process signal. Child and parent share one random private tombstone path, so parent
@@ -1590,6 +1619,25 @@ targets are deliberately outside `make check` because each attempted provider co
 model request. Deterministic argv, policy, error, rate-limit, and cancellation coverage remains in
 `make provider-scripted-e2e`; `make check` also runs the no-credential tagged process-control denial
 suite.
+
+The separate consult live ring exercises one registry-derived edge into each provider. The child
+invokes the mounted `coop-consult` wrapper directly, so no lead model is called. A complete run
+starts four peer CLI sessions; provider tool round-trips can consume more than one upstream turn
+per session. Each edge proves real lead-plus-peer credential scope and wrapper wiring; all 12
+ordered fallback pairs and their policy remain deterministic. All four
+projected credentials and CLI versions must be ready before the first
+request; otherwise permissive mode emits safe `ring_prerequisite`/credential skips and admits zero
+calls. The strict `-all` target fails unless every edge was attempted and passed. Each fresh-only
+edge mounts exactly its lead and peer credentials, runs once without retry in the same clean writable
+disposable repository, and asks the peer
+to attempt tracked, untracked, and ignored writes. A pass requires the exact fresh-session status,
+the unique final marker, unchanged complete repository bytes/modes and HEAD/status/refs/reflogs, unchanged
+source credentials, revoked projected credentials, and per-edge quiescent CID/label/process
+cleanup before the next session starts. It emits exactly one
+redacted `COOP_CONSULT_LIVE_SUMMARY` JSON line; raw provider output, paths, target accounts, and
+credential material are never retained. This live ring proves current cross-provider fresh CLI compatibility;
+resume, cross-provider scope, rate-limit, and failure behavior stays in the deterministic matrix so validation never
+induces quota exhaustion.
 
 The scrubbed child retains only the selected runtime's connection/storage capability. Explicit
 Docker connection variables are copied directly; otherwise the parent resolves the active Docker

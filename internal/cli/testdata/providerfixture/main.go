@@ -12,14 +12,24 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
-const traceVersion = 1
+const (
+	traceVersion           = 1
+	maxConsultCalls        = 4
+	maxConsultSteps        = 16
+	consultOverflowBytes   = (1 << 20) + 1
+	largeConsultReplyBytes = 270000
+	consultCursorFileName  = "consult-cursor.json"
+)
 
 type runtimeCommand struct {
 	Kind string
@@ -56,34 +66,47 @@ type envTrace struct {
 }
 
 type traceRecord struct {
-	Version     int         `json:"version"`
-	Sequence    int         `json:"sequence"`
-	Source      string      `json:"source"`
-	Event       string      `json:"event"`
-	PID         int         `json:"pid"`
-	ParentPID   int         `json:"parent_pid,omitempty"`
-	Argv        []string    `json:"argv,omitempty"`
-	Cwd         string      `json:"cwd,omitempty"`
-	Run         *runCommand `json:"run,omitempty"`
-	Environment []envTrace  `json:"environment,omitempty"`
-	ExitCode    *int        `json:"exit_code,omitempty"`
-	Signal      string      `json:"signal,omitempty"`
+	Version     int           `json:"version"`
+	Sequence    int           `json:"sequence"`
+	Source      string        `json:"source"`
+	Event       string        `json:"event"`
+	PID         int           `json:"pid"`
+	ParentPID   int           `json:"parent_pid,omitempty"`
+	Argv        []string      `json:"argv,omitempty"`
+	Cwd         string        `json:"cwd,omitempty"`
+	Run         *runCommand   `json:"run,omitempty"`
+	Environment []envTrace    `json:"environment,omitempty"`
+	ExitCode    *int          `json:"exit_code,omitempty"`
+	Signal      string        `json:"signal,omitempty"`
+	Consult     *consultTrace `json:"consult,omitempty"`
 }
 
 type scenario struct {
-	Version       int      `json:"version"`
-	Provider      string   `json:"provider"`
-	ProviderHomes []string `json:"provider_homes,omitempty"`
-	Marker        string   `json:"marker"`
-	Output        *string  `json:"output,omitempty"`
-	Behavior      string   `json:"behavior,omitempty"`
-	ExitCode      int      `json:"exit_code"`
+	Version       int              `json:"version"`
+	Provider      string           `json:"provider"`
+	ProviderHomes []string         `json:"provider_homes,omitempty"`
+	Marker        string           `json:"marker"`
+	Output        *string          `json:"output,omitempty"`
+	Behavior      string           `json:"behavior,omitempty"`
+	ExitCode      int              `json:"exit_code"`
+	Consult       *consultScenario `json:"consult,omitempty"`
 }
 
 func main() {
 	root, image, trace, scenarioPath, err := fixtureConfig()
 	if err != nil {
 		fatalf("configuration: %v", err)
+	}
+	if alias := filepath.Base(os.Args[0]); alias == "timeout" {
+		if err := serveTimeout(root, trace, scenarioPath, os.Args[1:]); err != nil {
+			exitFixtureAlias("timeout", err)
+		}
+		return
+	} else if slices.Contains(agents.Names(), alias) {
+		if err := serveConsultPeer(root, trace, scenarioPath, alias, os.Args[1:]); err != nil {
+			exitFixtureAlias("consult peer", err)
+		}
+		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "provider" {
 		if err := serveProvider(root, trace, scenarioPath, os.Args[2:]); err != nil {
@@ -153,6 +176,11 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 	if err != nil {
 		return errors.New("runtime invocation rejected")
 	}
+	if parsed.Kind == "run" {
+		if err := validateConsultMountCardinality(parsed.Run, activeScenario.Consult != nil); err != nil {
+			return errors.New("runtime invocation rejected")
+		}
+	}
 	if err := record(root, trace, traceRecord{Source: "runtime", Event: "invoke", PID: os.Getpid(), ParentPID: os.Getppid(), Argv: traceRuntimeArgv(root, image, args)}); err != nil {
 		return err
 	}
@@ -170,6 +198,14 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		traceRun := traceRunCommand(root, parsed.Run)
 		if err := record(root, trace, traceRecord{Source: "runtime", Event: "run", PID: os.Getpid(), Run: &traceRun}); err != nil {
 			return err
+		}
+		if activeScenario.Consult != nil {
+			exitCode, runErr := serveConsultRuntime(root, image, trace, scenarioPath, parsed.Run, activeScenario)
+			_ = record(root, trace, traceRecord{Source: "runtime", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode})
+			if runErr != nil {
+				return &fixtureExitError{Code: exitCode, Err: runErr}
+			}
+			return nil
 		}
 		self, err := os.Executable()
 		if err != nil {
@@ -433,6 +469,12 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		if !m.ReadOnly {
 			return fmt.Errorf("unexpected writable mount %q:%q", m.Source, m.Target)
 		}
+		if m.Target == fusion.ConsultWrapperPath {
+			if err := validateConsultWrapperMount(root, m); err != nil {
+				return err
+			}
+			continue
+		}
 		if !pathAtOrBelow(run.Workdir, m.Target) && !pathAtOrBelow("/home/node", m.Target) {
 			return fmt.Errorf("read-only mount target %q is outside the repo and fixture home", m.Target)
 		}
@@ -459,7 +501,7 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 			return fmt.Errorf("decoy mount target %q is outside the repo", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-mcp-"):
-		if !scenarioProviderHomeTarget(m.Target, providerHomes) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.config/git/ignore" {
+		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !consultPersonaTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.config/git/ignore" {
 			return fmt.Errorf("generated config mount target %q is outside the provider and git homes", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-githooks-"):
@@ -690,9 +732,6 @@ func readScenario(root, path string) (scenario, error) {
 		}
 		return scenario{}, err
 	}
-	if s.Version != 1 {
-		return scenario{}, fmt.Errorf("scenario version %d is unsupported", s.Version)
-	}
 	if _, err := providerToken(s.Provider); err != nil {
 		return scenario{}, err
 	}
@@ -705,6 +744,21 @@ func readScenario(root, path string) (scenario, error) {
 			return scenario{}, fmt.Errorf("scenario provider home %q is duplicated", provider)
 		}
 		seenHomes[provider] = true
+	}
+	if s.Consult != nil {
+		if s.Version != 2 {
+			return scenario{}, fmt.Errorf("consult scenario version %d is unsupported", s.Version)
+		}
+		if s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
+			return scenario{}, errors.New("consult scenario cannot set direct-provider result fields")
+		}
+		if err := validateConsultScenario(s.Provider, seenHomes, *s.Consult); err != nil {
+			return scenario{}, err
+		}
+		return s, nil
+	}
+	if s.Version != 1 {
+		return scenario{}, fmt.Errorf("direct scenario version %d is unsupported", s.Version)
 	}
 	if s.ExitCode < 0 || s.ExitCode > 255 {
 		return scenario{}, fmt.Errorf("scenario exit code %d is outside 0..255", s.ExitCode)
@@ -746,6 +800,9 @@ func validateScenarioText(label, value string) error {
 
 func providerEnvironment(root, image, trace, scenarioPath string, values map[string]string) []string {
 	values = cloneMap(values)
+	values["HOME"] = filepath.Join(root, "home")
+	values["PATH"] = os.Getenv("PATH")
+	values["TMPDIR"] = filepath.Join(root, "tmp")
 	values["COOP_PROVIDER_FIXTURE_ROOT"] = root
 	values["COOP_PROVIDER_FIXTURE_IMAGE"] = image
 	values["COOP_PROVIDER_FIXTURE_TRACE"] = trace
@@ -794,6 +851,9 @@ func traceEnvironment(env map[string]string) []envTrace {
 func traceableEnvValue(key string) bool {
 	switch key {
 	case "TZ", "TERM", "COOP_PRIMARY", "COOP_PEERS", "COOP_RUN_ID", "COOP_CONSULT_TIMEOUT", "FIXTURE_SAFE":
+		return true
+	}
+	if strings.HasPrefix(key, "COOP_CONSULT_") && strings.HasSuffix(key, "_TARGETS") {
 		return true
 	}
 	return strings.HasPrefix(key, "COOP_PEER_MODEL_") || strings.HasPrefix(key, "COOP_PEER_EFFORT_") ||
@@ -1085,4 +1145,13 @@ func record(root, path string, entry traceRecord) error {
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "providerfixture: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+func exitFixtureAlias(label string, err error) {
+	var status *fixtureExitError
+	if errors.As(err, &status) && status.Code >= 1 && status.Code <= 255 {
+		fmt.Fprintf(os.Stderr, "providerfixture: %s: %v\n", label, err)
+		os.Exit(status.Code)
+	}
+	fatalf("%s: %v", label, err)
 }
