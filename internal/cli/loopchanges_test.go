@@ -195,6 +195,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 		t.Skip("git not available")
 	}
 	repo := initRepo(t)
+	git(t, repo, "config", "core.quotePath", "true") // old newline output must quote UTF-8 paths
 	base := gitOut(repo, "rev-parse", "HEAD")
 	commit := func(path, body, msg string) {
 		full := filepath.Join(repo, path)
@@ -210,6 +211,8 @@ func TestLoopChangesFromGit(t *testing.T) {
 	commit("internal/box/run.go", "package box\n", "box: a\n\nCoop-Task: task-a")
 	commit("internal/box/image.go", "package box\n", "box: b\n\nCoop-Task: task-a")
 	commit("internal/cli/x.go", "package cli\n", "cli: c\n\nCoop-Task: task-b")
+	commit("révision/notes.md", "review notes\n", "review area\n\nCoop-Task: task-b")
+	commit(" affected/notes.md", "spaced notes\n", "spaced area\n\nCoop-Task: task-b")
 	commit("README.md", "changed\n", "docs tweak, no trailer")
 
 	cs := loopChanges(repo, base, gitOut(repo, "rev-parse", "HEAD"))
@@ -225,7 +228,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	if len(cs.misc) != 1 || !strings.Contains(cs.misc[0].subject, "docs tweak") {
 		t.Errorf("misc (want the untrailered tweak) = %+v", cs.misc)
 	}
-	if !slices.Equal(cs.subsystems, []string{"(root)", "internal/box", "internal/cli"}) {
+	if !slices.Equal(cs.subsystems, []string{" affected", "(root)", "internal/box", "internal/cli", "révision"}) {
 		t.Errorf("subsystems = %v", cs.subsystems)
 	}
 	if head := gitOut(repo, "rev-parse", "HEAD"); !loopChanges(repo, head, head).empty() {

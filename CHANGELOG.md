@@ -83,7 +83,8 @@
   review's done-to-actionable folder delta and named subjects, so unrelated actionable work cannot
   distort health, telemetry, round outcomes, or receipt validation; malformed and count-only legacy
   receipts fail closed. Per-commit protected-file attribution now reads NUL-delimited Git paths, so
-  non-ASCII directories cannot hide gate edits from a task-specific review.
+  non-ASCII directories cannot hide gate edits from a task-specific review. Aggregate affected-area
+  names use the same exact-path handling instead of Git's quoted display form.
 
 ## 5.3.0
 

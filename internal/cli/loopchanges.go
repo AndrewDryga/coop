@@ -289,7 +289,7 @@ func parseLoopCommits(logOut string) (order []string, byTask map[string][]commit
 func subsystemsOf(files []string) []string {
 	seen := map[string]bool{}
 	for _, f := range files {
-		if f = strings.TrimSpace(f); f == "" {
+		if f == "" {
 			continue
 		}
 		parts := strings.Split(f, "/")
@@ -333,7 +333,22 @@ func loopChanges(repo, base, head string) loopChangeSet {
 
 // rangeFiles lists every file changed across a commit range.
 func rangeFiles(repo, rng string) []string {
-	return splitLines(gitOut(repo, "diff", "--name-only", rng))
+	return gitNULPaths(repo, "diff", "--name-only", "-z", rng)
+}
+
+// gitNULPaths reads exact paths from a hardened Git command, failing soft like gitOut.
+func gitNULPaths(repo string, args ...string) []string {
+	out, err := exec.Command("git", gitArgs(repo, args)...).Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, path := range strings.Split(string(out), "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 // commitFiles is the union of files a set of commits touched (sorted, deduped) — each commit's tree
@@ -341,14 +356,8 @@ func rangeFiles(repo, rng string) []string {
 func commitFiles(repo string, commits []commitInfo) []string {
 	seen := map[string]bool{}
 	for _, c := range commits {
-		// NUL output preserves every valid path byte; raw Output avoids gitOut's whitespace trim.
-		args := gitArgs(repo, []string{"diff-tree", "--no-commit-id", "--name-only", "-z", "-r", c.sha})
-		if out, err := exec.Command("git", args...).Output(); err == nil {
-			for _, f := range strings.Split(string(out), "\x00") {
-				if f != "" {
-					seen[f] = true
-				}
-			}
+		for _, f := range gitNULPaths(repo, "diff-tree", "--no-commit-id", "--name-only", "-z", "-r", c.sha) {
+			seen[f] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -356,16 +365,6 @@ func commitFiles(repo string, commits []commitInfo) []string {
 		out = append(out, f)
 	}
 	sort.Strings(out)
-	return out
-}
-
-func splitLines(s string) []string {
-	var out []string
-	for _, l := range strings.Split(s, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
-		}
-	}
 	return out
 }
 
