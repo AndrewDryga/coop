@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +27,7 @@ import (
 type stageRecord struct {
 	Run         string   `json:"run"`
 	Stage       string   `json:"stage"`    // preflight | work | between | signoff
+	Outcome     string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted
 	Provider    string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
 	Model       string   `json:"model,omitempty"`
 	Effort      string   `json:"effort,omitempty"`
@@ -48,10 +53,11 @@ type stageRecord struct {
 
 // buildStageRecord assembles a record from a stage's EFFECTIVE target (the post-rotation Target, so
 // the row shows what ran, not what was configured) and its outcome. Pure — unit-tested.
-func buildStageRecord(run, stage, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, untrailered, gateFiles []string) stageRecord {
+func buildStageRecord(run, stage, outcome, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, untrailered, gateFiles []string) stageRecord {
 	return stageRecord{
 		Run:         run,
 		Stage:       stage,
+		Outcome:     outcome,
 		Provider:    tgt.Provider,
 		Model:       tgt.Model,
 		Effort:      tgt.Effort,
@@ -76,29 +82,100 @@ func buildStageRecord(run, stage, coopVer string, tgt agents.Target, start, end 
 // appendStageRecord appends one record to .agent/runs/<run>.jsonl under repo. Best-effort: the
 // error is returned only so the caller can warn once — it must never fail a loop iteration.
 func appendStageRecord(repo, run string, rec stageRecord) error {
-	dir := filepath.Join(repo, ".agent", "runs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if !safeRunID(run) {
+		return fmt.Errorf("invalid run id")
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, run+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	runsRoot, err := openRunsRoot(repo, true)
+	if err != nil {
+		return err
+	}
+	defer runsRoot.Close()
+	f, err := runsRoot.OpenFile(run+".jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("stage telemetry target is not a regular file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 {
+		return fmt.Errorf("stage telemetry target must have exactly one hardlink")
+	}
 	_, err = f.Write(append(line, '\n'))
 	return err
+}
+
+func safeRunID(run string) bool {
+	return run != "" && !strings.ContainsAny(run, "/\\\x00")
+}
+
+// openRunsRoot opens the host-owned telemetry directory without following repository-provided
+// links. Every host writer uses this boundary before publishing run state.
+func openRunsRoot(repo string, create bool) (*os.Root, error) {
+	repoRoot, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer repoRoot.Close()
+	agentInfo, err := repoRoot.Lstat(".agent")
+	if errors.Is(err, os.ErrNotExist) {
+		if !create {
+			return nil, err
+		}
+		if err := repoRoot.MkdirAll(".agent", 0o755); err != nil {
+			return nil, err
+		}
+		agentInfo, err = repoRoot.Lstat(".agent")
+	}
+	if err != nil || !agentInfo.IsDir() || agentInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf(".agent is not a regular directory")
+	}
+	agentRoot, err := repoRoot.OpenRoot(".agent")
+	if err != nil {
+		return nil, err
+	}
+	defer agentRoot.Close()
+	openedAgent, err := agentRoot.Stat(".")
+	if err != nil || !os.SameFile(agentInfo, openedAgent) {
+		return nil, fmt.Errorf(".agent changed while opening")
+	}
+	runsInfo, err := agentRoot.Lstat("runs")
+	if errors.Is(err, os.ErrNotExist) {
+		if !create {
+			return nil, err
+		}
+		if err := agentRoot.MkdirAll("runs", 0o755); err != nil {
+			return nil, err
+		}
+		runsInfo, err = agentRoot.Lstat("runs")
+	}
+	if err != nil || !runsInfo.IsDir() || runsInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf(".agent/runs is not a regular directory")
+	}
+	runsRoot, err := agentRoot.OpenRoot("runs")
+	if err != nil {
+		return nil, err
+	}
+	openedRuns, err := runsRoot.Stat(".")
+	if err != nil || !os.SameFile(runsInfo, openedRuns) {
+		runsRoot.Close()
+		return nil, fmt.Errorf(".agent/runs changed while opening")
+	}
+	return runsRoot, nil
 }
 
 // recordStage builds and appends a stage record, stamping end-time, HEAD-after, and the queue
 // counts at emit time. Best-effort — a write failure is warned once and swallowed, so telemetry can
 // never break the run it observes.
-func (a *app) recordStage(repo, run, stage string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, untrailered, gateFiles []string, res *iterResult) {
+func (a *app) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, untrailered, gateFiles []string, res *iterResult) {
 	cnt, _ := queueProgress(hosts)
-	rec := buildStageRecord(run, stage, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, untrailered, gateFiles)
+	rec := buildStageRecord(run, stage, outcome, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, untrailered, gateFiles)
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok
 	}
@@ -133,17 +210,20 @@ type modelSpend struct {
 // missing/unreadable file or a malformed line yields what parsed, never an error — the closing
 // summary that reads this must never break the run's end.
 func readStageRecords(repo, run string) []stageRecord {
-	data, err := os.ReadFile(filepath.Join(repo, ".agent", "runs", run+".jsonl"))
+	data, err := readRunFile(repo, run+".jsonl")
 	if err != nil {
 		return nil
 	}
 	var recs []stageRecord
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(nil, maxRunTelemetryLineBytes)
+	for len(recs) < maxRunTelemetryRows && scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
 		var r stageRecord
-		if json.Unmarshal([]byte(line), &r) == nil {
+		if json.Unmarshal(line, &r) == nil {
 			recs = append(recs, r)
 		}
 	}
@@ -165,43 +245,14 @@ type peerRecord struct {
 // preparePeerRecordFile creates the one append target a consult wrapper may use for this run.
 // The host owns publication: the wrapper never creates or follows a repository-provided path.
 func preparePeerRecordFile(repo, run string) (path string, err error) {
-	if run == "" || strings.ContainsAny(run, "/\\\x00") {
+	if !safeRunID(run) {
 		return "", fmt.Errorf("invalid run id")
 	}
-	repoRoot, err := os.OpenRoot(repo)
-	if err != nil {
-		return "", err
-	}
-	defer repoRoot.Close()
-	agentInfo, err := repoRoot.Lstat(".agent")
-	if err != nil || !agentInfo.IsDir() || agentInfo.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf(".agent is not a regular directory")
-	}
-	agentRoot, err := repoRoot.OpenRoot(".agent")
-	if err != nil {
-		return "", err
-	}
-	defer agentRoot.Close()
-	openedAgent, err := agentRoot.Stat(".")
-	if err != nil || !os.SameFile(agentInfo, openedAgent) {
-		return "", fmt.Errorf(".agent changed while opening")
-	}
-	if err := agentRoot.MkdirAll("runs", 0o755); err != nil {
-		return "", err
-	}
-	runsInfo, err := agentRoot.Lstat("runs")
-	if err != nil || !runsInfo.IsDir() || runsInfo.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf(".agent/runs is not a regular directory")
-	}
-	runsRoot, err := agentRoot.OpenRoot("runs")
+	runsRoot, err := openRunsRoot(repo, true)
 	if err != nil {
 		return "", err
 	}
 	defer runsRoot.Close()
-	openedRuns, err := runsRoot.Stat(".")
-	if err != nil || !os.SameFile(runsInfo, openedRuns) {
-		return "", fmt.Errorf(".agent/runs changed while opening")
-	}
 	name := run + ".peers.jsonl"
 	f, err := runsRoot.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -245,17 +296,20 @@ func removeEmptyPeerRecordFile(path string) {
 // readPeerRecords reads a run's peer-usage rows from .agent/runs/<run>.peers.jsonl. Best-effort, same
 // contract as readStageRecords: a missing/unreadable file or a bad line yields what parsed.
 func readPeerRecords(repo, run string) []peerRecord {
-	data, err := os.ReadFile(filepath.Join(repo, ".agent", "runs", run+".peers.jsonl"))
+	data, err := readRunFile(repo, run+".peers.jsonl")
 	if err != nil {
 		return nil
 	}
 	var recs []peerRecord
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(nil, maxRunTelemetryLineBytes)
+	for len(recs) < maxRunTelemetryRows && scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
 		var r peerRecord
-		if json.Unmarshal([]byte(line), &r) == nil {
+		if json.Unmarshal(line, &r) == nil {
 			recs = append(recs, r)
 		}
 	}
@@ -266,8 +320,18 @@ func readPeerRecords(repo, run string) []peerRecord {
 // *.peers.jsonl) into one runCost — a fork/clone's total spend across all its loop runs, for the
 // fleet board and fork review/merge. Best-effort: no runs dir → a zero runCost.
 func costForRepo(repo string) runCost {
-	entries, err := os.ReadDir(filepath.Join(repo, ".agent", "runs"))
+	runsRoot, err := openRunsRoot(repo, false)
 	if err != nil {
+		return runCost{byTask: map[string]stageCost{}}
+	}
+	defer runsRoot.Close()
+	dir, err := runsRoot.Open(".")
+	if err != nil {
+		return runCost{byTask: map[string]stageCost{}}
+	}
+	entries, err := dir.ReadDir(maxRunTelemetryFiles + 1)
+	_ = dir.Close()
+	if err != nil || len(entries) > maxRunTelemetryFiles {
 		return runCost{byTask: map[string]stageCost{}}
 	}
 	var stages []stageRecord
@@ -281,6 +345,45 @@ func costForRepo(repo string) runCost {
 		}
 	}
 	return costFromRecords(stages, peers)
+}
+
+const (
+	maxRunTelemetryBytes     = 8 << 20
+	maxRunTelemetryLineBytes = 1 << 20
+	maxRunTelemetryRows      = 4096
+	maxRunTelemetryFiles     = 4096
+)
+
+func readRunFile(repo, name string) ([]byte, error) {
+	if !strings.HasSuffix(name, ".jsonl") || strings.ContainsAny(name, "/\\\x00") {
+		return nil, fmt.Errorf("invalid run telemetry name")
+	}
+	runsRoot, err := openRunsRoot(repo, false)
+	if err != nil {
+		return nil, err
+	}
+	defer runsRoot.Close()
+	f, err := runsRoot.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxRunTelemetryBytes {
+		return nil, fmt.Errorf("run telemetry target is not a bounded regular file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 {
+		return nil, fmt.Errorf("run telemetry target must have exactly one hardlink")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxRunTelemetryBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read bounded run telemetry: %w", err)
+	}
+	if len(data) > maxRunTelemetryBytes {
+		return nil, fmt.Errorf("run telemetry exceeded the size limit")
+	}
+	return data, nil
 }
 
 // costFromRecords aggregates telemetry into a runCost: every stage's cost/tokens sum into the total,

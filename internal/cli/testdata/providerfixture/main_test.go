@@ -437,7 +437,7 @@ func TestReadScenarioAcceptsOnlyClosedBoundedBehavior(t *testing.T) {
 	}
 }
 
-func TestReadLoopScenarioAcceptsOnlyClosedV4Action(t *testing.T) {
+func TestReadLoopScenarioAcceptsOnlyClosedV5Attempts(t *testing.T) {
 	root := canonicalTemp(t)
 	path := filepath.Join(root, "scenario.json")
 	write := func(body string) error {
@@ -448,25 +448,27 @@ func TestReadLoopScenarioAcceptsOnlyClosedV4Action(t *testing.T) {
 		_, err := readScenario(root, path)
 		return err
 	}
-	valid := `{"version":4,"provider":"codex","provider_homes":["codex"],"loop":{"task_id":"loop-task-codex","target":"codex:loop-model@work"}}`
+	valid := `{"version":5,"provider":"codex","provider_homes":["codex"],"loop":{"task_id":"loop-task-codex","attempts":[{"target":"codex:loop-model@work","result":"complete"}]}}`
 	if err := write(valid); err != nil {
 		t.Fatalf("valid loop scenario rejected: %v", err)
 	}
-	for _, outcome := range []string{"unbound", "unbound-log-symlink", "unbound-state-symlink", "repair-binding"} {
-		body := strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex:loop-model@work","outcome":"`+outcome+`"`, 1)
+	for _, result := range []string{"complete-wait", "unbound", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "rate-limit", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
+		body := strings.Replace(valid, `"result":"complete"`, `"result":"`+result+`"`, 1)
 		if err := write(body); err != nil {
-			t.Fatalf("closed loop outcome %q rejected: %v", outcome, err)
+			t.Fatalf("closed loop result %q rejected: %v", result, err)
 		}
 	}
 	for _, body := range []string{
-		strings.Replace(valid, `"version":4`, `"version":1`, 1),
+		strings.Replace(valid, `"version":5`, `"version":4`, 1),
 		strings.Replace(valid, `"task_id":"loop-task-codex"`, `"task_id":"../escape"`, 1),
+		strings.Replace(valid, `"provider":"codex"`, `"provider":"claude"`, 1),
 		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"claude:loop-model@work"`, 1),
 		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex@work,personal"`, 1),
+		strings.Replace(valid, `"attempts":[{"target":"codex:loop-model@work","result":"complete"}]`, `"attempts":[]`, 1),
 		strings.TrimSuffix(valid, "}") + `,"command":"sh -c id"}`,
 		strings.TrimSuffix(valid, "}") + `,"marker":"mixed"}`,
 		strings.TrimSuffix(valid, "}") + `,"consult":{"calls":[],"steps":[]}}`,
-		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex:loop-model@work","outcome":"shell"`, 1),
+		strings.Replace(valid, `"result":"complete"`, `"result":"shell"`, 1),
 	} {
 		if err := write(body); err == nil {
 			t.Errorf("unsafe/open loop scenario accepted:\n%s", body)

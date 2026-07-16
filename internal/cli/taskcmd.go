@@ -708,7 +708,7 @@ func readTaskMetadataFile(root *os.Root, name string) ([]byte, error) {
 	if err := validateTaskMetadataFile(name, before); err != nil {
 		return nil, err
 	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -20,23 +21,66 @@ func (w bestEffortWriter) Write(p []byte) (int, error) {
 
 // openStreamTrace creates one raw/rendered pair. The caller owns close; a partial open is cleaned
 // up so a failed attempt never leaves a pair that looks complete.
-func openStreamTrace(dir string, seq int, agent string) (raw, rendered io.Writer, close func(), err error) {
+func openStreamTrace(repo, run string, seq int, agent string) (raw, rendered io.Writer, close func(), err error) {
 	noop := func() {}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if !safeRunID(run) {
+		return nil, nil, noop, fmt.Errorf("invalid run id")
+	}
+	runsRoot, err := openRunsRoot(repo, true)
+	if err != nil {
 		return nil, nil, noop, err
+	}
+	defer runsRoot.Close()
+	dir := run + ".streams"
+	info, err := runsRoot.Lstat(dir)
+	if os.IsNotExist(err) {
+		if err := runsRoot.MkdirAll(dir, 0o700); err != nil {
+			return nil, nil, noop, err
+		}
+		info, err = runsRoot.Lstat(dir)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, noop, fmt.Errorf("stream trace target is not a regular directory")
+	}
+	traceRoot, err := runsRoot.OpenRoot(dir)
+	if err != nil {
+		return nil, nil, noop, err
+	}
+	defer traceRoot.Close()
+	opened, err := traceRoot.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, nil, noop, fmt.Errorf("stream trace directory changed while opening")
 	}
 	base := fmt.Sprintf("%02d-%s", seq, agent)
-	rawPath := filepath.Join(dir, base+".jsonl")
-	outPath := filepath.Join(dir, base+".out")
-	rawFile, err := os.OpenFile(rawPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	rawName := base + ".jsonl"
+	outName := base + ".out"
+	rawFile, err := traceRoot.OpenFile(rawName, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, nil, noop, err
 	}
-	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	outFile, err := traceRoot.OpenFile(outName, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		_ = rawFile.Close()
-		_ = os.Remove(rawPath)
+		_ = traceRoot.Remove(rawName)
 		return nil, nil, noop, err
+	}
+	for name, file := range map[string]*os.File{rawName: rawFile, outName: outFile} {
+		info, statErr := file.Stat()
+		if statErr != nil {
+			_ = rawFile.Close()
+			_ = outFile.Close()
+			_ = traceRoot.Remove(rawName)
+			_ = traceRoot.Remove(outName)
+			return nil, nil, noop, fmt.Errorf("inspect stream trace file %s: %w", name, statErr)
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
+			_ = rawFile.Close()
+			_ = outFile.Close()
+			_ = traceRoot.Remove(rawName)
+			_ = traceRoot.Remove(outName)
+			return nil, nil, noop, fmt.Errorf("stream trace file %s is not a single-link regular file", name)
+		}
 	}
 	close = func() {
 		_ = rawFile.Close()
@@ -54,7 +98,7 @@ func (a *app) iterationStreamTrace(repo, agent string, streaming bool) (raw, ren
 	}
 	a.streamSeq++
 	dir := filepath.Join(repo, ".agent", "runs", a.runID+".streams")
-	raw, rendered, close, err := openStreamTrace(dir, a.streamSeq, agent)
+	raw, rendered, close, err := openStreamTrace(repo, a.runID, a.streamSeq, agent)
 	if err != nil {
 		a.streamOff = true
 		ui.Warn("stream trace disabled: could not create %s: %v", dir, err)

@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/controller.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-07-16
 ---
 
@@ -25,11 +25,24 @@ closed fixture worker. It requires the host to claim and flock-lease the exact t
 start, validates the canonical provider/model/account target in lease metadata and native argv,
 then requires one task-bound commit, final state/log, done move, host cleanup of task scratch, a
 clean worktree, and one exact work-stage telemetry row. The fixture accepts no command, arbitrary
-path, or shell fragment; its v4 action is only this semantic lifecycle. Provider-native TTY event
-schemas stay in the adapter decoder tests, while this process matrix owns the non-TTY loop boundary.
+path, or shell fragment; its v5 attempts are only closed semantic lifecycle outcomes. Provider-native
+event schemas stay in adapter decoder tests, while `script(1)` gives focused recovery rows the real
+terminal boundary for streaming and two-stage Ctrl-C behavior.
 Unbound-completion denials also prove host recovery never follows provider-created task metadata
 links outside the repository. A finalization failure restores the task to in-progress, and the
 state-link case reruns the loop to repair the commit binding, clean scratch, and finish normally.
+
+The recovery matrix drives the real external controller through authentication, provider and output
+limits, ordinary errors, exact diagnostic phrases in assistant prose, malformed/truncated streams,
+account/model cooling, all 12 directed rotations, all-limited waiting and process-group cancellation, and
+interruption/resume. The fixture records exactly one expected provider/target/result per attempt and
+never selects the successor. Exact wait arithmetic remains in injected-clock unit tests. Telemetry
+asserts a closed outcome per attempt, and completion reconciliation returns both bound and unbound
+crash-left work to the normal range-validated resume path after its lease is released. The task-local
+lock is compatibility evidence; the authoritative flock and active marker live in a host-only cache
+registry, so replacing provider-writable `tmp` cannot create a second owner. The controller stops
+heartbeat writes while retaining that flock, then validates and finalizes only its assigned queue root
+and task ID. Unit tests own oversized stream and stderr bounds.
 
 The delegate matrix crosses the corresponding write-capable boundary for all four provider arms
 and all 12 ordered distinct fallback pairs. It verifies the exact generated wrapper and one invoked
@@ -73,6 +86,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-16 - moved authoritative leases to host-only state and scoped finalization to the assigned task
+- 2026-07-16 - added external recovery, rotation, PTY interruption/stream-bound, and telemetry outcome coverage
 - 2026-07-16 - made unbound recovery metadata root-bounded and no-follow
 - 2026-07-16 - added the complete four-provider loop claim, task, commit, cleanup, and telemetry lifecycle
 - 2026-07-16 - added the 16-relationship composition matrix and fail-closed artifact contract

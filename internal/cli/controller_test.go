@@ -7,17 +7,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestFinishedTasksAndReconcileDecision(t *testing.T) {
-	before := map[string]string{"a": stateInProgress, "b": stateTodo, "c": stateDone}
-	after := map[string]string{"a": stateDone, "b": stateTodo, "c": stateDone}
-	if got := finishedTasks(before, after); len(got) != 1 || got[0] != "a" {
-		t.Errorf("finishedTasks = %v, want [a]", got)
-	}
 	// reconcileMerged: a landed todo/in_progress task moves; a landed blocked task is flagged (no
 	// move); an unlanded task is ignored entirely.
 	states := map[string]string{"todo1": stateTodo, "wip1": stateInProgress, "blk1": stateBlocked, "safe": stateTodo}
@@ -32,6 +28,88 @@ func TestFinishedTasksAndReconcileDecision(t *testing.T) {
 	}
 	if _, present := got["safe"]; present {
 		t.Error("an unlanded task must not be reconciled")
+	}
+}
+
+func TestAggregateDuplicateTaskIDs(t *testing.T) {
+	first, second := filepath.Join(t.TempDir(), "first"), filepath.Join(t.TempDir(), "second")
+	writeTaskFile(t, filepath.Join(first, stateTodo, "actionable", "task.md"), "# actionable\n")
+	writeTaskFile(t, filepath.Join(second, stateDone, "actionable", "task.md"), "# actionable archive\n")
+	for _, root := range []string{first, second} {
+		writeTaskFile(t, filepath.Join(root, stateBlocked, "blocked", "task.md"), "# blocked\n")
+		writeTaskFile(t, filepath.Join(root, stateBlocked, "blocked", "decision.md"), "# decision\n")
+		writeTaskFile(t, filepath.Join(root, stateDone, "archived", "task.md"), "# archived\n")
+	}
+	hosts := []string{first, second}
+	if got, want := aggregateDuplicateTaskIDs(hosts), []string{"actionable", "archived", "blocked"}; !slices.Equal(got, want) {
+		t.Fatalf("aggregate duplicate ids = %v, want %v", got, want)
+	}
+	if got, want := nonArchivedDuplicateTaskIDs(hosts), []string{"actionable", "blocked"}; !slices.Equal(got, want) {
+		t.Fatalf("non-archived duplicate ids = %v, want %v", got, want)
+	}
+}
+
+func TestCompletedAssignedTaskIgnoresUnrelatedHeldCompletion(t *testing.T) {
+	root := t.TempDir()
+	assigned := taskForLease(t, root, stateInProgress, "assigned")
+	unrelated := taskForLease(t, root, stateInProgress, "unrelated")
+	foreign, _, err := tryTaskLease(root, unrelated, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = foreign.release() })
+	for _, task := range []taskItem{assigned, unrelated} {
+		if err := moveTaskDir(root, task, stateDone); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, ok := completedAssignedTask(root, assigned.ID)
+	if !ok || got.Root != root || got.Item.ID != assigned.ID {
+		t.Fatalf("assigned completion = (%+v, %v)", got, ok)
+	}
+	if !pathExists(filepath.Join(root, stateDone, unrelated.ID, "tmp", leaseLockName)) {
+		t.Fatal("observing assigned completion touched the unrelated held task")
+	}
+}
+
+func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		crashDone bool
+	}{
+		{name: "already actionable"},
+		{name: "made actionable by crash recovery", crashDone: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			queues := []string{"queue-a", "queue-b"}
+			for _, queue := range queues {
+				state := stateTodo
+				if tc.crashDone {
+					state = stateDone
+				}
+				dir := filepath.Join(repo, queue, state, "same-id")
+				writeTaskFile(t, filepath.Join(dir, "task.md"), "# same id\n")
+				if tc.crashDone {
+					writeTaskFile(t, filepath.Join(dir, "log.md"), "# log\n")
+					writeTaskFile(t, filepath.Join(dir, "state.md"), "# state\n")
+					writeTaskFile(t, filepath.Join(dir, "tmp", leaseLockName), "")
+					writeTaskFile(t, filepath.Join(dir, "tmp", leaseMetadataName), "{}\n")
+				}
+			}
+			a := &app{cfg: &config.Config{}}
+			code, err := a.loop(repo, "missing-image", "codex", "", nil, queues, nil, nil, false, false, 0)
+			if code != 1 || err == nil || !strings.Contains(err.Error(), "same-id") || !strings.Contains(err.Error(), "multiple queues") {
+				t.Fatalf("duplicate loop = code %d err %v", code, err)
+			}
+			if tc.crashDone {
+				for _, queue := range queues {
+					if !pathExists(filepath.Join(repo, queue, stateInProgress, "same-id")) {
+						t.Fatalf("%s crash candidate was not restored before duplicate validation", queue)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -73,6 +151,155 @@ func TestFinalizeFinishedTasks(t *testing.T) {
 		t.Errorf("finalization discarded agent-authored fields:\n%s", state)
 	}
 
+}
+
+func TestReconcileInterruptedCompletions(t *testing.T) {
+	newRepo := func(t *testing.T) (string, func(...string)) {
+		t.Helper()
+		repo := t.TempDir()
+		git := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", args...)
+			cmd.Dir = repo
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		git("init", "-q")
+		git("config", "user.email", "t@t")
+		git("config", "user.name", "T")
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		return repo, git
+	}
+	seedDone := func(t *testing.T, repo, id string) string {
+		t.Helper()
+		dir := filepath.Join(repo, tasksRoot, stateDone, id)
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# task\n")
+		writeTaskFile(t, filepath.Join(dir, "log.md"), "# log\n")
+		writeTaskFile(t, filepath.Join(dir, "state.md"), "# state\n\n**Status:** in progress\n**Next action:** finish\n")
+		writeTaskFile(t, filepath.Join(dir, "tmp", "lease.lock"), "")
+		writeTaskFile(t, filepath.Join(dir, "tmp", "lease.json"), "{}\n")
+		return dir
+	}
+
+	t.Run("bound completion restores for range validation", func(t *testing.T) {
+		repo, git := newRepo(t)
+		id := "interrupted-bound"
+		seedDone(t, repo, id)
+		git("commit", "-q", "--allow-empty", "-m", "done\n\nCoop-Task: "+id)
+		if err := reconcileInterruptedCompletions([]string{filepath.Join(repo, tasksRoot)}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(repo, tasksRoot, stateInProgress, id)
+		state := readFileString(filepath.Join(dir, "state.md"))
+		if !strings.Contains(state, "**Status:** in progress") || !strings.Contains(state, "**Next action:** repair the commit binding") {
+			t.Fatalf("bound interrupted completion state:\n%s", state)
+		}
+	})
+
+	t.Run("unbound completion restores", func(t *testing.T) {
+		repo, _ := newRepo(t)
+		id := "interrupted-unbound"
+		seedDone(t, repo, id)
+		if err := reconcileInterruptedCompletions([]string{filepath.Join(repo, tasksRoot)}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(repo, tasksRoot, stateInProgress, id)
+		if !fileExists(filepath.Join(dir, "task.md")) || pathExists(filepath.Join(repo, tasksRoot, stateDone, id)) {
+			t.Fatal("unbound interrupted completion was not restored")
+		}
+	})
+
+	t.Run("ordinary archive is untouched", func(t *testing.T) {
+		repo, _ := newRepo(t)
+		id := "ordinary-archive"
+		dir := filepath.Join(repo, tasksRoot, stateDone, id)
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# task\n")
+		writeTaskFile(t, filepath.Join(dir, "tmp", "artifact"), "keep\n")
+		if err := reconcileInterruptedCompletions([]string{filepath.Join(repo, tasksRoot)}); err != nil {
+			t.Fatal(err)
+		}
+		if !fileExists(filepath.Join(dir, "tmp", "artifact")) {
+			t.Fatal("startup reconciliation touched an archive without lease metadata")
+		}
+	})
+
+	t.Run("duplicate ids restore the exact queue", func(t *testing.T) {
+		first, _ := newRepo(t)
+		second, _ := newRepo(t)
+		id := "same-id"
+		writeTaskFile(t, filepath.Join(first, tasksRoot, stateInProgress, id, "task.md"), "# active\n")
+		seedDone(t, second, id)
+		hosts := []string{filepath.Join(first, tasksRoot), filepath.Join(second, tasksRoot)}
+		if err := reconcileInterruptedCompletions(hosts); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(filepath.Join(second, tasksRoot, stateDone, id)) ||
+			!fileExists(filepath.Join(second, tasksRoot, stateInProgress, id, "task.md")) {
+			t.Fatal("startup reconciliation restored the same id from the wrong queue")
+		}
+	})
+
+	t.Run("active completion lease is untouched", func(t *testing.T) {
+		repo, _ := newRepo(t)
+		id := "active-completion"
+		dir := seedDone(t, repo, id)
+		lock, err := openLeaseLock(dir, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Fatal(err)
+		}
+		host := filepath.Join(repo, tasksRoot)
+		if err := reconcileInterruptedCompletions([]string{host}); err != nil {
+			t.Fatal(err)
+		}
+		if err := finalizeFinishedTasks([]string{host}); err != nil {
+			t.Fatal(err)
+		}
+		if !pathExists(filepath.Join(host, stateDone, id)) {
+			t.Fatal("startup reconciliation/finalization moved a completion while its lease was held")
+		}
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+			t.Fatal(err)
+		}
+		if err := reconcileInterruptedCompletions([]string{host}); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(filepath.Join(host, stateDone, id)) || !pathExists(filepath.Join(host, stateInProgress, id)) {
+			t.Fatal("released crash-left completion was not restored")
+		}
+	})
+
+	t.Run("recovery lock covers rename and bookkeeping window", func(t *testing.T) {
+		repo, _ := newRepo(t)
+		id := "serialized-recovery"
+		dir := seedDone(t, repo, id)
+		host := filepath.Join(repo, tasksRoot)
+		item := readTaskTree(host)[0]
+		lock, current, acquired, err := lockCrashCompletion(host, item)
+		if err != nil || !acquired {
+			t.Fatalf("lock crash completion = acquired %v, err %v", acquired, err)
+		}
+		if err := moveTaskDir(host, current, stateInProgress); err != nil {
+			_ = lock.release()
+			t.Fatal(err)
+		}
+		moved := readTaskTree(host)[0]
+		lease, observed, err := tryTaskLease(host, moved, testLeaseOwner())
+		if err != nil || lease != nil || observed.State != leaseBusy {
+			_ = lock.release()
+			t.Fatalf("contender during recovery = lease %v observed %+v err %v", lease, observed, err)
+		}
+		if err := lock.release(); err != nil {
+			t.Fatal(err)
+		}
+		if !fileExists(filepath.Join(dir, "tmp", leaseLockName)) && !fileExists(filepath.Join(moved.Dir, "tmp", leaseLockName)) {
+			t.Fatal("recovery lock inode disappeared")
+		}
+	})
 }
 
 func TestFinalizeFinishedTasksCleanupFailureRestoresActionableState(t *testing.T) {
@@ -159,7 +386,7 @@ func TestResumeLine(t *testing.T) {
 	// A landed commit → a line that names the sha and BOTH cases (finish-the-move vs reopened-rework),
 	// so it never falsely asserts the task is done.
 	l := resumeLine("my-task", []string{"abc123"})
-	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "finish the move"} {
+	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "Coop-Recovery", "finish the move"} {
 		if !strings.Contains(l, want) {
 			t.Errorf("resume line missing %q:\n%s", want, l)
 		}
@@ -272,8 +499,7 @@ func TestAssignLoopTaskOnlyNeverSwitchesTasks(t *testing.T) {
 }
 
 // TestCommitsForTaskAndUntrailered drives the real git trailer parser. Fresh work binds only in its
-// commit range; historical fallback is limited to unchanged-HEAD reconciliation; malformed,
-// duplicate, different-id, and substring values fail closed.
+// commit range; unchanged HEAD, malformed, duplicate, different-id, and substring values fail closed.
 func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -312,10 +538,17 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if m := untrailered(repo, base, head, []string{"task-42", "task-99"}); len(m) != 1 || m[0] != "task-99" {
 		t.Errorf("untrailered = %v, want [task-99]", m)
 	}
-	// A case-(a) resume may only move the folder after its trailer commit already landed, leaving
-	// HEAD unchanged. Reachable history still binds that completion, but only by exact trailer id.
-	if m := untrailered(repo, head, head, []string{"task-42"}); len(m) != 0 {
-		t.Errorf("historically trailered task-42 should bind without HEAD movement: %v", m)
+	bound := queuedTask{Root: "/first", Item: taskItem{ID: "task-42", State: stateDone}}
+	if unbindableQueuedCompletion(repo, base, head, bound) {
+		t.Error("valid assigned completion was rejected")
+	}
+	if !unbindableQueuedCompletion(repo, head, head, bound) {
+		t.Error("unchanged-HEAD assigned completion was accepted")
+	}
+	// No-HEAD-change work must fail closed even if an old exact trailer is reachable. Crash-left
+	// completion recovery restores the task and requires a new range-bound amend/recommit.
+	if m := untrailered(repo, head, head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("unchanged HEAD used historical task binding: %v", m)
 	}
 	if m := untrailered(repo, head, head, []string{"task-4", "task"}); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
 		t.Errorf("different ids and substrings must remain untrailered, got %v", m)
@@ -367,6 +600,10 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if !landedTasks(repo)["task-42"] {
 		t.Error("landedTasks should include task-42")
 	}
+	git("commit", "-q", "--allow-empty", "-m", "ambiguous landed\n\nCoop-Task: duplicate-landed\nCoop-Task: duplicate-landed")
+	if landedTasks(repo)["duplicate-landed"] {
+		t.Error("landedTasks accepted a commit with duplicate Coop-Task trailers")
+	}
 }
 
 func TestRestoreUnbindableCompletions(t *testing.T) {
@@ -376,8 +613,9 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Unbound\n")
 	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
 
-	if err := restoreUnbindableCompletions([]string{root}, []string{id}); err != nil {
-		t.Fatalf("restoreUnbindableCompletions: %v", err)
+	item := readTaskTree(root)[0]
+	if err := restoreQueuedCompletions([]queuedTask{{Root: root, Item: item}}); err != nil {
+		t.Fatalf("restoreQueuedCompletions: %v", err)
 	}
 	inProgressDir := filepath.Join(root, stateInProgress, id)
 	if !pathExists(inProgressDir) || pathExists(doneDir) {
@@ -542,6 +780,8 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 		}
 	}
 	q := filepath.Join(repo, tasksRoot)
+	q2Rel := filepath.Join(".agent", "other-tasks")
+	q2 := filepath.Join(repo, q2Rel)
 	writeTaskFile(t, filepath.Join(q, stateTodo, "todo1", "task.md"), "# todo1\n")
 	writeTaskFile(t, filepath.Join(q, stateTodo, "todo1", "tmp", "scratch"), "remove\n")
 	writeTaskFile(t, filepath.Join(q, stateInProgress, "wip1", "task.md"), "# wip1\n")
@@ -550,6 +790,8 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	writeTaskFile(t, filepath.Join(q, stateBlocked, "blk1", "decision.md"), "# blocked\n")
 	writeTaskFile(t, filepath.Join(q, stateBlocked, "blk1", "tmp", "scratch"), "retain\n")
 	writeTaskFile(t, filepath.Join(q, stateTodo, "safe", "task.md"), "# safe\n")
+	writeTaskFile(t, filepath.Join(q, stateTodo, "same-id", "task.md"), "# same root\n")
+	writeTaskFile(t, filepath.Join(q2, stateTodo, "same-id", "task.md"), "# same second queue\n")
 	git("init", "-q")
 	git("config", "user.email", "t@t")
 	git("config", "user.name", "T")
@@ -562,8 +804,9 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "todo1 work\n\nCoop-Task: todo1")
 	git("commit", "-q", "--allow-empty", "-m", "wip1 work\n\nCoop-Task: wip1")
 	git("commit", "-q", "--allow-empty", "-m", "blk1 work\n\nCoop-Task: blk1")
+	git("commit", "-q", "--allow-empty", "-m", "ambiguous work\n\nCoop-Task: same-id")
 
-	a := &app{cfg: &config.Config{}}
+	a := &app{cfg: &config.Config{TasksFiles: []string{tasksRoot, q2Rel}}}
 	a.reconcileQueueAfterMerge(repo, "fork1")
 
 	if !pathExists(filepath.Join(q, stateDone, "todo1")) || pathExists(filepath.Join(q, stateTodo, "todo1")) {
@@ -577,6 +820,9 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	}
 	if !pathExists(filepath.Join(q, stateTodo, "safe")) {
 		t.Error("an unlanded task must stay put")
+	}
+	if !pathExists(filepath.Join(q, stateTodo, "same-id")) || !pathExists(filepath.Join(q2, stateTodo, "same-id")) {
+		t.Error("an ambiguous landed id must be skipped in every queue")
 	}
 	if pathExists(filepath.Join(q, stateDone, "todo1", "tmp")) || pathExists(filepath.Join(q, stateDone, "wip1", "tmp")) {
 		t.Error("fork reconciliation must clean completed task tmp")

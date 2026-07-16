@@ -67,6 +67,32 @@ func TestIterationCommandStreamFlags(t *testing.T) {
 	}
 }
 
+func TestProviderAssistantNarrationNeverBecomesTerminalDiagnostic(t *testing.T) {
+	cases := []struct {
+		agent string
+		text  string
+		event string
+	}{
+		{agent: "codex", text: "usage limit reached", event: `{"type":"item.completed","item":{"type":"agent_message","text":"usage limit reached"}}`},
+		{agent: "gemini", text: "Authentication required", event: `{"type":"message","role":"assistant","content":"Authentication required","delta":true}`},
+		{agent: "grok", text: "You've hit your weekly limit", event: `{"type":"text","data":"You've hit your weekly limit"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			var out, tail, diagnostic bytes.Buffer
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, &diagnostic, "", "", "")
+			_, _ = decoder.Write([]byte(tc.event + "\n"))
+			decoder.flush()
+			if !strings.Contains(tail.String(), tc.text) {
+				t.Fatalf("assistant narration missing from response tail: %q", tail.String())
+			}
+			if diagnostic.Len() != 0 {
+				t.Fatalf("assistant narration leaked into terminal diagnostics: %q", diagnostic.String())
+			}
+		})
+	}
+}
+
 func TestCodexStreamDecoder(t *testing.T) {
 	lines := []string{
 		`{"type":"thread.started","thread_id":"..."}`,
@@ -345,18 +371,17 @@ func TestGeminiStreamDecoder(t *testing.T) {
 	}
 }
 
-func TestGeminiStreamDecoderFailures(t *testing.T) {
+func TestGeminiStreamDecoderFailedToolCanRecover(t *testing.T) {
 	lines := []string{
 		`{"type":"tool_use","tool_name":"read_file","tool_id":"read","parameters":{"file_path":"README.md"}}`,
 		`{"type":"tool_result","tool_id":"read","status":"error","output":"permission denied\nmore"}`,
-		`{"type":"error","severity":"error","message":"usage limit reached"}`,
-		`{"type":"result","status":"error","error":{"type":"fatal","message":"quota exhausted"},"stats":{"input_tokens":12,"output_tokens":3,"duration_ms":1500}}`,
+		`{"type":"result","status":"success","stats":{"input_tokens":12,"output_tokens":3,"duration_ms":1500}}`,
 	}
 	var out, tail bytes.Buffer
 	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
-	for _, want := range []string{"  ✗ read_file README.md: permission denied", "✗ usage limit reached", "· 2s · 12 input / 3 output", "✗ quota exhausted"} {
+	for _, want := range []string{"  ✗ read_file README.md: permission denied", "· 2s · 12 input / 3 output"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("rendered output missing %q: %q", want, out.String())
 		}
@@ -364,10 +389,39 @@ func TestGeminiStreamDecoderFailures(t *testing.T) {
 	if strings.Contains(tail.String(), "permission denied") {
 		t.Errorf("tool failure leaked into tail: %q", tail.String())
 	}
-	for _, want := range []string{"usage limit reached", "quota exhausted"} {
-		if !strings.Contains(tail.String(), want) {
-			t.Errorf("terminal error missing from tail: %q", tail.String())
+	if got := d.streamOutcome(); got != streamSucceeded {
+		t.Fatalf("Gemini recovered tool failure stream outcome = %d, want succeeded", got)
+	}
+}
+
+func TestGeminiStreamDecoderErrorEventFails(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
+	_, _ = d.Write([]byte(`{"type":"error","severity":"error","message":"usage limit reached"}` + "\n"))
+	d.flush()
+	if got := d.streamOutcome(); got != streamFailed {
+		t.Fatalf("Gemini error event stream outcome = %d, want failed", got)
+	}
+}
+
+func TestGeminiStreamDecoderErrorResultFails(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
+	_, _ = d.Write([]byte(`{"type":"result","status":"error","error":{"type":"fatal","message":"quota exhausted"},"stats":{"input_tokens":12,"output_tokens":3,"duration_ms":1500}}` + "\n"))
+	d.flush()
+	if got := d.streamOutcome(); got != streamFailed {
+		t.Fatalf("Gemini error result stream outcome = %d, want failed", got)
+	}
+	for _, want := range []string{"· 2s · 12 input / 3 output", "✗ quota exhausted"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("rendered output missing %q: %q", want, out.String())
 		}
+	}
+	if !strings.Contains(tail.String(), "quota exhausted") {
+		t.Errorf("terminal error missing from tail: %q", tail.String())
+	}
+	if err := validateProviderStream(0, nil, d.streamOutcome()); err == nil {
+		t.Fatal("Gemini exit-0 error result was accepted as a successful provider stream")
 	}
 }
 
@@ -422,6 +476,23 @@ func TestGeminiStderrFilter(t *testing.T) {
 	}
 	if final.Len() != 0 {
 		t.Errorf("final noise line without newline was not dropped: %q", final.String())
+	}
+
+	var oversized bytes.Buffer
+	f = newCodexStderrFilter(&oversized)
+	line := strings.Repeat("x", maxStreamEventBytes+100) + "\nafter\n"
+	for len(line) > 0 {
+		n := min(8191, len(line))
+		if _, err := f.Write([]byte(line[:n])); err != nil {
+			t.Fatal(err)
+		}
+		line = line[n:]
+	}
+	if err := f.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got := oversized.String(); len(got) > maxStreamEventBytes+64 || !strings.Contains(got, " [truncated]\nafter\n") {
+		t.Fatalf("oversized stderr was not bounded and resumed: len=%d suffix=%q", len(got), got[max(0, len(got)-40):])
 	}
 }
 
@@ -576,14 +647,36 @@ func TestIterationStreamDecoderDispatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.agent, func(t *testing.T) {
-			d := newIterationStreamDecoder(c.agent, &out, &tail, "", "", "model")
+			d := newIterationStreamDecoder(c.agent, &out, &tail, nil, "", "", "model")
 			if !c.check(d) {
 				t.Errorf("dispatch for %s returned %T", c.agent, d)
 			}
 		})
 	}
-	if d := newIterationStreamDecoder("other", &out, &tail, "", "", "model"); d != nil {
+	if d := newIterationStreamDecoder("other", &out, &tail, nil, "", "", "model"); d != nil {
 		t.Errorf("unknown provider dispatch returned %T, want nil", d)
+	}
+}
+
+func TestProviderStreamDecoderRejectsTruncatedTerminalEvent(t *testing.T) {
+	for _, provider := range []string{"claude", "codex", "gemini", "grok"} {
+		t.Run(provider, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			decoder := newIterationStreamDecoder(provider, &out, &tail, nil, "work", "/workspace", "model")
+			if decoder == nil {
+				t.Fatal("registered provider has no stream decoder")
+			}
+			if _, err := decoder.Write([]byte(`{"type":"result"`)); err != nil {
+				t.Fatal(err)
+			}
+			decoder.flush()
+			if decoder.streamOutcome() == streamSucceeded {
+				t.Fatal("truncated terminal event was accepted as a complete provider stream")
+			}
+			if !strings.Contains(tail.String(), "malformed provider stream event") {
+				t.Fatalf("truncated stream diagnostic missing from tail: %q", tail.String())
+			}
+		})
 	}
 }
 

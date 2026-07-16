@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Loop recovery policy is now process-tested across every provider transition.** The external
+  deterministic matrix covers authentication, provider/output limits, ordinary failures,
+  malformed and truncated streams, account/model cooling, interruption and resume, all 12 directed
+  rotations, and cancellation from the all-limited wait state. Recovery now validates commit
+  binding before finalization, returns crash-left completions to range-validated resume, bounds
+  streamed events and stderr lines, distinguishes one terminal classification/telemetry outcome,
+  keeps the authoritative task flock and active marker in host-only state, stops heartbeats before
+  cleanup, finalizes only the assigned task, rejects ambiguous non-archived IDs across queues,
+  publishes telemetry and traces without following links, and bounds telemetry reads. The existing
+  opt-in all-provider task probe remains the upstream CLI compatibility gate; deterministic tests
+  own recovery policy so live checks never retry or induce quota exhaustion.
+
 - **Provider loop coverage now crosses the complete task lifecycle for every adapter.** The
   deterministic external-process matrix proves claim and lease ownership, native provider argv,
   task state, exact `Coop-Task` binding, done reconciliation, cleanup, and effective telemetry for

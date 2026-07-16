@@ -187,7 +187,11 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 			return errors.New("scenario rejected")
 		}
 	}
-	parsed, err := parseRuntimeForProvider(root, image, args, activeScenario.Provider, activeScenario.ProviderHomes...)
+	expectedProvider := activeScenario.Provider
+	if activeScenario.Loop != nil {
+		expectedProvider = ""
+	}
+	parsed, err := parseRuntimeForProvider(root, image, args, expectedProvider, activeScenario.ProviderHomes...)
 	if err != nil {
 		return errors.New("runtime invocation rejected")
 	}
@@ -209,7 +213,7 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 	case "info", "inspect", "ps", "remove", "kill":
 		return nil
 	case "run":
-		if activeScenario.Provider != parsed.Run.Provider {
+		if activeScenario.Loop == nil && activeScenario.Provider != parsed.Run.Provider {
 			return fmt.Errorf("scenario provider %q does not match runtime provider %q", activeScenario.Provider, parsed.Run.Provider)
 		}
 		parsed.Run.Environment = traceEnvironment(parsed.Run.Env)
@@ -694,7 +698,7 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if s.Provider != provider {
+	if s.Loop == nil && s.Provider != provider {
 		return fmt.Errorf("scenario provider %q does not match %q", s.Provider, provider)
 	}
 	cwd, err := os.Getwd()
@@ -708,12 +712,17 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 		return err
 	}
 	if s.Loop != nil {
-		if err := serveLoopWorker(root, provider, *s.Loop); err != nil {
+		exitCode, signal, runErr := serveLoopAttempt(root, trace, provider, *s.Loop)
+		if err := record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode, Signal: signal}); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stdout, "fixture-loop-complete-"+provider)
-		exitCode := 0
-		return record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode})
+		if runErr != nil {
+			return runErr
+		}
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return nil
 	}
 	if s.Output != nil {
 		fmt.Fprint(os.Stdout, *s.Output)
@@ -789,13 +798,13 @@ func readScenario(root, path string) (scenario, error) {
 		seenHomes[provider] = true
 	}
 	if s.Loop != nil {
-		if s.Version != 4 {
+		if s.Version != 5 {
 			return scenario{}, fmt.Errorf("loop scenario version %d is unsupported", s.Version)
 		}
 		if s.Consult != nil || s.Delegate != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
 			return scenario{}, errors.New("loop scenario cannot set consult, delegate, or direct-provider result fields")
 		}
-		if err := validateLoopScenario(s.Provider, *s.Loop); err != nil {
+		if err := validateLoopScenario(s.Provider, seenHomes, *s.Loop); err != nil {
 			return scenario{}, err
 		}
 		return s, nil

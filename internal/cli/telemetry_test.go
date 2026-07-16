@@ -17,7 +17,7 @@ func TestBuildStageRecord(t *testing.T) {
 	start := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	end := start.Add(90 * time.Second)
 	q := taskCounts{Todo: 2, Doing: 1, Done: 5}
-	rec := buildStageRecord("run123", "work", "v4.0.0", tgt, start, end, 0, 3, 2, "abc123", "def456", q, []string{"t-1"}, []string{"t-2"}, []string{".claude/settings.json"})
+	rec := buildStageRecord("run123", "work", "success", "v4.0.0", tgt, start, end, 0, 3, 2, "abc123", "def456", q, []string{"t-1"}, []string{"t-2"}, []string{".claude/settings.json"})
 
 	// The EFFECTIVE (post-rotation) target is flattened onto the record — provider included, so a
 	// row shows what RAN, the whole point of the fix behind this telemetry.
@@ -41,7 +41,7 @@ func TestBuildStageRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"stage":"work"`, `"provider":"codex"`, `"reopened":2`, `"finished":["t-1"]`, `"untrailered":["t-2"]`, `"gate_files":[".claude/settings.json"]`, `"queue_done":5`} {
+	for _, want := range []string{`"stage":"work"`, `"outcome":"success"`, `"provider":"codex"`, `"reopened":2`, `"finished":["t-1"]`, `"untrailered":["t-2"]`, `"gate_files":[".claude/settings.json"]`, `"queue_done":5`} {
 		if !strings.Contains(string(line), want) {
 			t.Errorf("json missing %s:\n%s", want, line)
 		}
@@ -70,6 +70,68 @@ func TestAppendStageRecord(t *testing.T) {
 		if err := json.Unmarshal([]byte(l), &got); err != nil {
 			t.Errorf("row not valid JSON: %v\n%s", err, l)
 		}
+	}
+}
+
+func TestAppendStageRecordRejectsPreplantedLinks(t *testing.T) {
+	for _, kind := range []string{"symlink", "hardlink"} {
+		t.Run(kind, func(t *testing.T) {
+			repo := t.TempDir()
+			runs := filepath.Join(repo, ".agent", "runs")
+			if err := os.MkdirAll(runs, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "sentinel")
+			if err := os.WriteFile(outside, []byte("untouched\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(runs, "r1.jsonl")
+			var err error
+			if kind == "symlink" {
+				err = os.Symlink(outside, target)
+			} else {
+				err = os.Link(outside, target)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := appendStageRecord(repo, "r1", stageRecord{Run: "r1", Stage: "work"}); err == nil {
+				t.Fatalf("preplanted %s was accepted", kind)
+			}
+			if got, err := os.ReadFile(outside); err != nil || string(got) != "untouched\n" {
+				t.Fatalf("outside sentinel = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestAppendStageRecordRejectsLinkedParentDirectories(t *testing.T) {
+	for _, parent := range []string{".agent", ".agent/runs"} {
+		t.Run(parent, func(t *testing.T) {
+			repo := t.TempDir()
+			outside := t.TempDir()
+			sentinel := filepath.Join(outside, "sentinel")
+			if err := os.WriteFile(sentinel, []byte("untouched\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if parent == ".agent/runs" {
+				if err := os.Mkdir(filepath.Join(repo, ".agent"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(outside, filepath.Join(repo, parent)); err != nil {
+				t.Fatal(err)
+			}
+			if err := appendStageRecord(repo, "linked-parent", stageRecord{Run: "linked-parent", Stage: "work"}); err == nil {
+				t.Fatalf("linked %s parent was accepted", parent)
+			}
+			if got, err := os.ReadFile(sentinel); err != nil || string(got) != "untouched\n" {
+				t.Fatalf("outside sentinel = %q, %v", got, err)
+			}
+			if pathExists(filepath.Join(outside, "linked-parent.jsonl")) {
+				t.Fatal("telemetry was published through the linked parent")
+			}
+		})
 	}
 }
 
@@ -148,6 +210,43 @@ func TestCostFromRecords(t *testing.T) {
 func TestReadStageRecordsMissing(t *testing.T) {
 	if recs := readStageRecords(t.TempDir(), "nope"); recs != nil {
 		t.Errorf("missing run file should read nil, got %v", recs)
+	}
+}
+
+func TestRunTelemetryReadersRejectUnsafeFiles(t *testing.T) {
+	for _, kind := range []string{"symlink", "hardlink", "fifo", "oversized"} {
+		t.Run(kind, func(t *testing.T) {
+			repo := t.TempDir()
+			runs := filepath.Join(repo, ".agent", "runs")
+			if err := os.MkdirAll(runs, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(runs, "unsafe.jsonl")
+			outside := filepath.Join(t.TempDir(), "outside")
+			if err := os.WriteFile(outside, []byte(`{"run":"unsafe","stage":"work","cost_usd":99}`+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch kind {
+			case "symlink":
+				err = os.Symlink(outside, target)
+			case "hardlink":
+				err = os.Link(outside, target)
+			case "fifo":
+				err = syscall.Mkfifo(target, 0o600)
+			case "oversized":
+				err = os.WriteFile(target, make([]byte, maxRunTelemetryBytes+1), 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := readStageRecords(repo, "unsafe"); got != nil {
+				t.Fatalf("unsafe %s telemetry parsed: %#v", kind, got)
+			}
+			if got := costForRepo(repo); got.total.usd != 0 {
+				t.Fatalf("unsafe %s telemetry affected cost: %+v", kind, got)
+			}
+		})
 	}
 }
 

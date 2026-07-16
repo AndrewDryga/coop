@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -17,9 +18,17 @@ import (
 )
 
 type loopScenario struct {
-	TaskID  string `json:"task_id"`
-	Target  string `json:"target"`
-	Outcome string `json:"outcome,omitempty"`
+	TaskID   string        `json:"task_id"`
+	Attempts []loopAttempt `json:"attempts"`
+}
+
+type loopAttempt struct {
+	Target string `json:"target"`
+	Result string `json:"result"`
+}
+
+type loopCursor struct {
+	Index int `json:"index"`
 }
 
 type loopLeaseMetadata struct {
@@ -32,18 +41,51 @@ type loopLeaseMetadata struct {
 	HeartbeatAt   time.Time `json:"heartbeat_at"`
 }
 
-func validateLoopScenario(provider string, plan loopScenario) error {
+func validateLoopScenario(provider string, homes map[string]bool, plan loopScenario) error {
 	if !safeLoopTaskID(plan.TaskID) {
 		return fmt.Errorf("unsafe loop task id %q", plan.TaskID)
 	}
-	target, err := agents.ParseTarget(plan.Target)
-	if err != nil || target.Provider != provider || target.Model == "" || len(target.Accounts) != 1 || target.Account() == "" || target.String() != plan.Target {
-		return fmt.Errorf("loop target %q is not one canonical provider/model/account target for %q", plan.Target, provider)
+	if len(plan.Attempts) == 0 || len(plan.Attempts) > 16 {
+		return errors.New("loop scenario requires 1 to 16 attempts")
 	}
-	if plan.Outcome != "" && plan.Outcome != "unbound" && plan.Outcome != "unbound-log-symlink" && plan.Outcome != "unbound-state-symlink" && plan.Outcome != "repair-binding" {
-		return fmt.Errorf("loop outcome %q is unsupported", plan.Outcome)
+	first, err := loopAttemptTarget(0, plan.Attempts[0])
+	if err != nil {
+		return err
+	}
+	if first.Provider != provider {
+		return fmt.Errorf("loop scenario provider %q does not match first attempt %q", provider, first.Provider)
+	}
+	for i, attempt := range plan.Attempts {
+		target, err := loopAttemptTarget(i, attempt)
+		if err != nil {
+			return err
+		}
+		if !homes[target.Provider] {
+			return fmt.Errorf("loop attempt %d provider %q has no projected home", i, target.Provider)
+		}
+		if err := validateLoopResult(i, attempt.Result); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func loopAttemptTarget(index int, attempt loopAttempt) (agents.Target, error) {
+	target, err := agents.ParseTarget(attempt.Target)
+	if err != nil || target.Model == "" || len(target.Accounts) != 1 || target.Account() == "" || target.String() != attempt.Target {
+		return agents.Target{}, fmt.Errorf("loop attempt %d target %q is not one canonical provider/model/account target", index, attempt.Target)
+	}
+	return target, nil
+}
+
+func validateLoopResult(index int, result string) error {
+	switch result {
+	case "complete", "complete-wait", "unbound", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding",
+		"rate-limit", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait":
+		return nil
+	default:
+		return fmt.Errorf("loop attempt %d result %q is unsupported", index, result)
+	}
 }
 
 func safeLoopTaskID(id string) bool {
@@ -61,7 +103,119 @@ func safeLoopTaskID(id string) bool {
 	return true
 }
 
-func serveLoopWorker(root, provider string, plan loopScenario) error {
+func consumeLoopAttempt(root, provider string, plan loopScenario) (loopAttempt, error) {
+	f, err := procharness.OpenRegularFile(root, filepath.Join(root, "state", "loop-cursor.json"), os.O_RDWR)
+	if err != nil {
+		return loopAttempt{}, err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return loopAttempt{}, err
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	var cursor loopCursor
+	decoder := json.NewDecoder(io.LimitReader(f, 4<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cursor); err != nil || cursor.Index < 0 || cursor.Index >= len(plan.Attempts) {
+		return loopAttempt{}, errors.New("loop cursor is invalid or exhausted")
+	}
+	index := cursor.Index
+	attempt := plan.Attempts[index]
+	target, err := loopAttemptTarget(index, attempt)
+	if err != nil {
+		return loopAttempt{}, err
+	}
+	if target.Provider != provider {
+		return loopAttempt{}, fmt.Errorf("loop attempt %d expected provider %q, got %q", index, target.Provider, provider)
+	}
+	cursor.Index++
+	if err := f.Truncate(0); err != nil {
+		return loopAttempt{}, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return loopAttempt{}, err
+	}
+	if err := json.NewEncoder(f).Encode(cursor); err != nil {
+		return loopAttempt{}, err
+	}
+	if err := f.Sync(); err != nil {
+		return loopAttempt{}, err
+	}
+	return attempt, nil
+}
+
+func serveLoopAttempt(root, trace, provider string, plan loopScenario) (int, string, error) {
+	attempt, err := consumeLoopAttempt(root, provider, plan)
+	if err != nil {
+		return 1, "", err
+	}
+	switch attempt.Result {
+	case "complete", "complete-wait", "unbound", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding":
+		outcome := attempt.Result
+		if outcome == "complete" || outcome == "complete-wait" {
+			outcome = ""
+		} else if outcome == "unbound-wait" {
+			outcome = "unbound"
+		}
+		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, outcome); err != nil {
+			return 1, "", err
+		}
+		fmt.Fprintln(os.Stdout, "fixture-loop-complete-"+provider)
+		if strings.HasSuffix(attempt.Result, "-wait") {
+			return waitLoopSignal(root, trace)
+		}
+		return 0, "", nil
+	case "rate-limit":
+		fmt.Fprintln(os.Stderr, "usage limit reached")
+		fmt.Fprintln(os.Stderr, "retry-after: 3600")
+	case "output-limit":
+		fmt.Fprintln(os.Stderr, "maximum output length")
+	case "authentication":
+		fmt.Fprintln(os.Stderr, loopAuthenticationFailure(provider))
+	case "ordinary":
+		fmt.Fprintln(os.Stdout, "fixture ordinary provider failure")
+	case "ambiguous-limit-prose":
+		fmt.Fprintln(os.Stdout, "error: rate limited")
+	case "ambiguous-auth-prose":
+		fmt.Fprintln(os.Stdout, loopAuthenticationFailure(provider))
+	case "malformed":
+		fmt.Fprintln(os.Stdout, `{"type":not-json}`)
+	case "truncated":
+		fmt.Fprint(os.Stdout, `{"type":"result"`)
+	case "wait":
+		return waitLoopSignal(root, trace)
+	}
+	return 23, "", nil
+}
+
+func waitLoopSignal(root, trace string) (int, string, error) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
+		return 1, "", err
+	}
+	got := <-signals
+	sig, _ := got.(syscall.Signal)
+	return 128 + int(sig), got.String(), nil
+}
+
+func loopAuthenticationFailure(provider string) string {
+	switch provider {
+	case "claude":
+		return "not logged in"
+	case "codex":
+		return "authentication required"
+	case "gemini":
+		return "manual authorization is required"
+	case "grok":
+		return "not signed in"
+	default:
+		return "authentication failed"
+	}
+}
+
+func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 	repo, err := os.Getwd()
 	if err != nil {
 		return err
@@ -83,19 +237,19 @@ func serveLoopWorker(root, provider string, plan loopScenario) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) != 1 || entries[0].Name() != plan.TaskID || !entries[0].IsDir() {
-		return fmt.Errorf("loop assignment is not exactly task %q", plan.TaskID)
+	if len(entries) != 1 || entries[0].Name() != taskID || !entries[0].IsDir() {
+		return fmt.Errorf("loop assignment is not exactly task %q", taskID)
 	}
-	taskDir, err := procharness.CanonicalUnderRoot(root, filepath.Join(inProgress, plan.TaskID))
+	taskDir, err := procharness.CanonicalUnderRoot(root, filepath.Join(inProgress, taskID))
 	if err != nil {
 		return fmt.Errorf("loop task: %w", err)
 	}
-	if err := verifyLoopLease(root, taskDir, provider, plan.Target); err != nil {
+	if err := verifyLoopLease(root, taskDir, provider, target); err != nil {
 		return err
 	}
 
 	change := "loop-" + provider + ".txt"
-	if plan.Outcome == "repair-binding" {
+	if outcome == "repair-binding" {
 		f, err := procharness.OpenRegularFile(root, filepath.Join(repo, change), os.O_RDONLY)
 		if err != nil {
 			return fmt.Errorf("read existing loop change: %w", err)
@@ -105,7 +259,15 @@ func serveLoopWorker(root, provider string, plan loopScenario) error {
 		if readErr != nil || closeErr != nil || string(data) != "completed by "+provider+"\n" {
 			return errors.Join(readErr, closeErr, errors.New("existing loop change mismatch"))
 		}
-		if err := runLoopGit(repo, "commit", "--amend", "--no-edit", "--trailer", "Coop-Task: "+plan.TaskID); err != nil {
+		commitArgs := []string{"commit", "--amend", "--no-edit", "--trailer", "Coop-Task: " + taskID}
+		bound, err := loopHeadBoundToTask(repo, taskID)
+		if err != nil {
+			return err
+		}
+		if bound {
+			commitArgs = append(commitArgs, "--trailer", fmt.Sprintf("Coop-Recovery: fixture-%d", time.Now().UnixNano()))
+		}
+		if err := runLoopGit(repo, commitArgs...); err != nil {
 			return err
 		}
 	} else {
@@ -128,15 +290,15 @@ func serveLoopWorker(root, provider string, plan loopScenario) error {
 			return err
 		}
 		commitArgs := []string{"commit", "-q", "-m", "fixture: complete " + provider + " loop task"}
-		if plan.Outcome == "" {
-			commitArgs = append(commitArgs, "-m", "Coop-Task: "+plan.TaskID)
+		if outcome == "" {
+			commitArgs = append(commitArgs, "-m", "Coop-Task: "+taskID)
 		}
 		if err := runLoopGit(repo, commitArgs...); err != nil {
 			return err
 		}
 	}
 
-	state := fmt.Sprintf("# State - %s\n\n**Status:** complete\n**Done so far:** fixture completed the %s loop lifecycle\n**Next action:** none\n**Traps:** none\n", plan.TaskID, provider)
+	state := fmt.Sprintf("# State - %s\n\n**Status:** complete\n**Done so far:** fixture completed the %s loop lifecycle\n**Next action:** none\n**Traps:** none\n", taskID, provider)
 	if err := writeLoopTaskFile(root, filepath.Join(taskDir, "state.md"), state, false); err != nil {
 		return err
 	}
@@ -145,7 +307,7 @@ func serveLoopWorker(root, provider string, plan loopScenario) error {
 		return err
 	}
 	name := ""
-	switch plan.Outcome {
+	switch outcome {
 	case "unbound-log-symlink":
 		name = "log.md"
 	case "unbound-state-symlink":
@@ -160,10 +322,10 @@ func serveLoopWorker(root, provider string, plan loopScenario) error {
 			return err
 		}
 	}
-	dest := filepath.Join(done, plan.TaskID)
+	dest := filepath.Join(done, taskID)
 	if _, err := os.Lstat(dest); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
-			return fmt.Errorf("loop done task %q already exists", plan.TaskID)
+			return fmt.Errorf("loop done task %q already exists", taskID)
 		}
 		return err
 	}
@@ -227,4 +389,16 @@ func runLoopGit(repo string, args ...string) error {
 		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func loopHeadBoundToTask(repo, taskID string) (bool, error) {
+	format := "%(trailers:key=Coop-Task,valueonly,separator=%x1f)"
+	cmd := exec.Command("git", "log", "-1", "--format="+format)
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("inspect task binding: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	values := strings.Split(strings.TrimSpace(string(out)), "\x1f")
+	return len(values) == 1 && strings.TrimSpace(values[0]) == taskID, nil
 }

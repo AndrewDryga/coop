@@ -169,8 +169,8 @@ func (r *rotation) rotates() bool { return len(r.targets) > 1 }
 // the next iteration — 0 when another target is free now — and, when sleeping, the time
 // it's waiting until.
 func (r *rotation) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep time.Duration, until time.Time) {
-	if resetAt.IsZero() {
-		resetAt = now.Add(limitWait(limitHint{limited: true}, attempt, now))
+	if !resetAt.After(now) {
+		resetAt = now.Add(limitWait(limitHint{limited: true, resetAt: resetAt}, attempt, now))
 	}
 	r.limited[r.targets[r.idx].String()] = resetAt
 	return r.selectTarget(attempt, now)

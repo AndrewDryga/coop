@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -41,7 +43,7 @@ func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {
 	}
 
 	metaPath := filepath.Join(item.Dir, "tmp", leaseMetadataName)
-	meta, ok := readLeaseMetadata(metaPath)
+	meta, ok := readLeaseMetadata(item.Dir)
 	if !ok || meta.RunID != owner.RunID || meta.ControllerPID != owner.PID || meta.Provider != owner.Provider || meta.Target != owner.Target {
 		t.Fatalf("lease metadata = %+v, ok=%v", meta, ok)
 	}
@@ -56,8 +58,8 @@ func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {
 	if err := lease.refresh(); err != nil {
 		t.Fatal(err)
 	}
-	blockedMeta := filepath.Join(root, stateBlocked, id, "tmp", leaseMetadataName)
-	if got, ok := readLeaseMetadata(blockedMeta); !ok || !got.HeartbeatAt.Equal(now) {
+	blockedDir := filepath.Join(root, stateBlocked, id)
+	if got, ok := readLeaseMetadata(blockedDir); !ok || !got.HeartbeatAt.Equal(now) {
 		t.Fatalf("rename-safe heartbeat = %+v, ok=%v", got, ok)
 	}
 	if pathExists(metaPath) {
@@ -109,10 +111,9 @@ func TestTaskLeaseHeartbeatTickerRefreshesMetadata(t *testing.T) {
 
 	now = now.Add(leaseHeartbeatInterval)
 	ticks <- now
-	metadataPath := filepath.Join(item.Dir, "tmp", leaseMetadataName)
 	deadline := time.Now().Add(time.Second)
 	for {
-		meta, ok := readLeaseMetadata(metadataPath)
+		meta, ok := readLeaseMetadata(item.Dir)
 		if ok && meta.HeartbeatAt.Equal(now) {
 			break
 		}
@@ -120,6 +121,117 @@ func TestTaskLeaseHeartbeatTickerRefreshesMetadata(t *testing.T) {
 			t.Fatalf("heartbeat metadata was not refreshed to %s", now)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestTaskLeaseQuiesceStopsHeartbeatAndRetainsLock(t *testing.T) {
+	root, id := t.TempDir(), "quiesced"
+	item := taskForLease(t, root, stateInProgress, id)
+	ticks := make(chan time.Time, 1)
+	owner := testLeaseOwner()
+	owner.Ticker = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+	lease, _, err := tryTaskLease(root, item, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.quiesce()
+	if got := observeTaskLease(item, owner.now()); got.State == leaseUnleased {
+		t.Fatal("quiesce released the authoritative task lock")
+	}
+	if err := moveTaskDir(root, item, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	doneDir := filepath.Join(root, stateDone, id)
+	if err := removeTaskTmp(doneDir); err != nil {
+		t.Fatal(err)
+	}
+	ticks <- owner.now().Add(leaseHeartbeatInterval)
+	if pathExists(filepath.Join(doneDir, "tmp")) {
+		t.Fatal("heartbeat recreated task metadata after quiesce")
+	}
+	if err := lease.release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskLeaseMetadataRejectsProviderControlledTmp(t *testing.T) {
+	root, id := t.TempDir(), "swapped-tmp"
+	item := taskForLease(t, root, stateInProgress, id)
+	lease, _, err := tryTaskLease(root, item, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, leaseMetadataName)
+	const want = "outside sentinel\n"
+	if err := os.WriteFile(sentinel, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(item.Dir, "tmp")
+	if err := os.Rename(tmp, tmp+"-provider"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, tmp); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.refresh(); err == nil {
+		t.Fatal("heartbeat followed a provider-swapped tmp symlink")
+	}
+	if _, ok := readLeaseMetadata(item.Dir); ok {
+		t.Fatal("metadata reader followed a provider-swapped tmp symlink")
+	}
+	if err := lease.release(); err == nil {
+		t.Fatal("lease release silently accepted a provider-swapped tmp symlink")
+	}
+	if got, err := os.ReadFile(sentinel); err != nil || string(got) != want {
+		t.Fatalf("outside metadata changed to %q, %v", got, err)
+	}
+}
+
+func TestTaskLeaseAuthorityRejectsProviderReplacedRealTmp(t *testing.T) {
+	root, id := t.TempDir(), "replaced-real-tmp"
+	item := taskForLease(t, root, stateInProgress, id)
+	first, _, err := tryTaskLease(root, item, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(item.Dir, "tmp")
+	if err := os.Rename(tmp, tmp+"-provider"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, leaseLockName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current, ok := currentTask(root, id)
+	if !ok {
+		t.Fatal("task disappeared after tmp replacement")
+	}
+	second, observed, err := tryTaskLease(root, current, taskLeaseOwner{
+		RunID: "second", PID: 4343, Provider: "claude", Target: "claude:test",
+	})
+	if err != nil || second != nil || observed.State == leaseUnleased {
+		t.Fatalf("replacement inode acquired a second lease: lease=%v observed=%+v err=%v", second, observed, err)
+	}
+	if err := first.release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadLeaseMetadataRejectsSpecialFiles(t *testing.T) {
+	root, id := t.TempDir(), "special-metadata"
+	item := taskForLease(t, root, stateInProgress, id)
+	if _, err := taskLeaseDir(item.Dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(item.Dir, "tmp", leaseMetadataName)
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readLeaseMetadata(item.Dir); ok {
+		t.Fatal("lease metadata reader accepted a FIFO")
 	}
 }
 
@@ -139,7 +251,7 @@ func TestTaskLeaseObservationUsesLockNotHeartbeat(t *testing.T) {
 		t.Errorf("fresh held lease = %+v, want busy codex", got)
 	}
 	lease.meta.HeartbeatAt = now.Add(-leaseStaleAfter - time.Second)
-	if err := writeLeaseMetadata(root, id, lease.meta); err != nil {
+	if err := errors.Join(writeLeaseAuthorityMetadata(root, id, lease.meta), writeLeaseMetadata(root, id, lease.meta)); err != nil {
 		t.Fatal(err)
 	}
 	if got := observeTaskLease(item, now); got.State != leaseStalled || got.Provider != "codex" {
@@ -169,8 +281,7 @@ func TestTaskLeaseAdoptionIgnoresMetadataPIDWhenLockIsFree(t *testing.T) {
 	if _, err := taskLeaseDir(item.Dir); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := filepath.Join(item.Dir, "tmp", leaseLockName)
-	lock, err := openLeaseLock(lockPath, true)
+	lock, err := openLeaseLock(item.Dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}

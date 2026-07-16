@@ -1545,13 +1545,13 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 
 ```bash
-make build                         # build ./coop
-make check                         # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
-make provider-scripted-e2e         # deterministic all-provider process matrix
-make provider-live-e2e-all         # one read-only real prompt per registered provider (opt-in)
-make provider-loop-live-e2e-all    # one writable real task completion per provider (opt-in)
-make provider-consult-live-e2e-all # four real cross-provider coop-consult edges, no lead calls (opt-in)
-make doctor                        # the integration check — proves isolation, needs a runtime
+make build                               # build ./coop
+make check                               # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
+make provider-scripted-e2e               # deterministic all-provider process matrix
+make provider-live-e2e-all               # one read-only real prompt per registered provider (opt-in)
+make provider-loop-live-e2e-all          # one writable real task completion per provider (opt-in)
+make provider-consult-live-e2e-all       # four real cross-provider coop-consult edges, no lead calls (opt-in)
+make doctor                              # the integration check — proves isolation, needs a runtime
 ```
 
 `.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
@@ -1578,6 +1578,12 @@ registry-generated matrix; add only its expected argv and credential assertions 
 The runtime fixture stays registry-neutral. Its provider mode is a deliberately independent oracle:
 it enumerates each registered provider's native argv/output shape, and a completeness test fails
 when a new adapter has no oracle arm.
+
+Recovery rows that depend on terminal semantics run through `script(1)` so the real Coop process
+selects provider streaming and foreground interrupt handling. This covers malformed/truncated
+events and two-stage Ctrl-C telemetry without a production test switch. Terminal diagnostics are
+classified separately from assistant narration; exact rate/auth phrases inside ordinary task prose
+therefore cannot rotate or stop the loop.
 
 The opt-in live layer checks compatibility with the provider CLIs currently installed in the box:
 

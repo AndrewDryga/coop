@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -21,8 +22,9 @@ func TestStreamDecoder(t *testing.T) {
 		`not valid json`,
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":8269,"total_cost_usd":0.1117,"result":"done"}`,
 	}
-	var out, tail bytes.Buffer
+	var out, tail, diagnostic bytes.Buffer
 	d := newStreamDecoder(&out, &tail, "", "", "")
+	d.diagnostic = &diagnostic
 	// Feed in two chunks split mid-line to exercise the partial-line buffer.
 	blob := strings.Join(lines, "\n") + "\n"
 	cut := len(blob) / 2
@@ -58,12 +60,61 @@ func TestStreamDecoder(t *testing.T) {
 	}
 }
 
+func TestNDJSONDecoderBoundsAndMarksMalformedEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write []byte
+	}{
+		{name: "truncated json", write: []byte(`{"type":"result"`)},
+		{name: "malformed json", write: []byte("{not-json}\n")},
+		{name: "oversized event", write: bytes.Repeat([]byte("x"), maxStreamEventBytes+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			events := 0
+			d := newNDJSONDecoder(&out, &tail, func(json.RawMessage) { events++ })
+			if _, err := d.Write(tc.write); err != nil {
+				t.Fatal(err)
+			}
+			d.flush()
+			if !d.malformed || events != 0 || !strings.Contains(tail.String(), "provider stream event") {
+				t.Fatalf("decoder malformed/events/tail = %v/%d/%q", d.malformed, events, tail.String())
+			}
+			if len(d.buf) != 0 {
+				t.Fatalf("decoder retained %d buffered bytes", len(d.buf))
+			}
+		})
+	}
+
+	var out, tail bytes.Buffer
+	d := newNDJSONDecoder(&out, &tail, func(json.RawMessage) {})
+	if _, err := d.Write([]byte("ordinary provider diagnostic\n")); err != nil {
+		t.Fatal(err)
+	}
+	if d.malformed || !strings.Contains(tail.String(), "ordinary provider diagnostic") {
+		t.Fatalf("plain diagnostic malformed/tail = %v/%q", d.malformed, tail.String())
+	}
+}
+
+func TestBoundedNarration(t *testing.T) {
+	var narration boundedNarration
+	narration.WriteString(strings.Repeat("x", maxStreamNarrationBytes+1024))
+	got := narration.Take()
+	if len(got) > maxStreamNarrationBytes+len(" [truncated]") || !strings.HasSuffix(got, " [truncated]") {
+		t.Fatalf("bounded narration length/suffix = %d/%q", len(got), got[len(got)-32:])
+	}
+	if got := narration.Take(); got != "" {
+		t.Fatalf("bounded narration did not reset: %q", got)
+	}
+}
+
 // A result event with a usage block labels input/output tokens on the closing line and captures the
 // cost/turns/token tally on the decoder for the loop's telemetry; a result WITHOUT usage still
 // renders cost/turns and captures those with zero tokens (no crash, no usage pair on the line).
 func TestStreamDecoderResultUsage(t *testing.T) {
-	var out, tail bytes.Buffer
+	var out, tail, diagnostic bytes.Buffer
 	d := newStreamDecoder(&out, &tail, "", "", "")
+	d.diagnostic = &diagnostic
 	// input 4243 + cache_creation 3630 + cache_read 15197 = 23070 in; 698 out.
 	_, _ = d.Write([]byte(`{"type":"result","subtype":"success","num_turns":5,"duration_ms":1000,"total_cost_usd":1.23,"usage":{"input_tokens":4243,"cache_creation_input_tokens":3630,"cache_read_input_tokens":15197,"output_tokens":698}}` + "\n"))
 	d.flush()
@@ -121,8 +172,9 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	now := time.Now()
 	// A blocking rate_limit_event is translated into the text detectLimit understands, with the
 	// reset epoch, so the loop waits until then instead of failing the run.
-	var out, tail bytes.Buffer
+	var out, tail, diagnostic bytes.Buffer
 	d := newStreamDecoder(&out, &tail, "", "", "")
+	d.diagnostic = &diagnostic
 	_, _ = d.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 	if !strings.Contains(tail.String(), "usage limit reached|1781877000") {
 		t.Fatalf("blocking limit not written to tail: %q", tail.String())
@@ -132,6 +184,9 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "rate limited") {
 		t.Errorf("blocking limit should render to the user: %q", out.String())
+	}
+	if !strings.Contains(diagnostic.String(), "usage limit reached|1781877000") {
+		t.Fatalf("blocking limit not written to terminal diagnostics: %q", diagnostic.String())
 	}
 
 	// Once the structured event owns the visible notice, Claude's assistant and result echoes
@@ -146,16 +201,25 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 			t.Errorf("suppressed display text missing from detector tail: want %q in %q", want, tail.String())
 		}
 	}
+	if strings.Contains(diagnostic.String(), "YOU'VE HIT YOUR WEEKLY LIMIT") || !strings.Contains(diagnostic.String(), "Claude AI usage LIMIT reached") {
+		t.Errorf("terminal diagnostics mixed narration or lost the result error: %q", diagnostic.String())
+	}
 
-	// Without a structured event, a text-only limit remains visible and detectable.
+	// Without a structured event, text that merely discusses a limit remains visible in the
+	// response tail but is not promoted into terminal diagnostics used for rotation.
 	var textOut, textTail bytes.Buffer
 	textDecoder := newStreamDecoder(&textOut, &textTail, "", "", "")
+	var textDiagnostic bytes.Buffer
+	textDecoder.diagnostic = &textDiagnostic
 	_, _ = textDecoder.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your weekly limit"}]}}` + "\n"))
 	if !strings.Contains(textOut.String(), "You've hit your weekly limit") {
 		t.Errorf("text-only limit should remain visible: %q", textOut.String())
 	}
 	if !strings.Contains(textTail.String(), "You've hit your weekly limit") {
-		t.Errorf("text-only limit missing from detector tail: %q", textTail.String())
+		t.Errorf("text-only limit missing from response tail: %q", textTail.String())
+	}
+	if textDiagnostic.Len() != 0 {
+		t.Errorf("assistant narration leaked into terminal diagnostics: %q", textDiagnostic.String())
 	}
 
 	// The structured flag is narrow: ordinary assistant text and result errors still render.

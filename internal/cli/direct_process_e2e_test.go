@@ -299,6 +299,9 @@ func (s *directProcessSuite) reset(t *testing.T, scenario any) {
 	if err := os.WriteFile(s.layout.Trace, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(s.layout.State, "loop-cursor.json"), []byte("{\"index\":0}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	data, err := json.Marshal(scenario)
 	if err != nil {
 		t.Fatal(err)

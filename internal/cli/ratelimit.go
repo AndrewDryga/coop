@@ -39,6 +39,10 @@ var (
 	// Output/token exhaustion is recoverable by immediately asking the same model to continue; it is
 	// not a provider rate limit, so it must not rotate credentials or sleep until a reset.
 	outputLimitRe = regexp.MustCompile(`(?i)(?:output limit|max(?:imum)? output length|max(?:imum)?[_ -]?output[_ -]?tokens?|output length limit|finish[_ ]?reason["'\s:=]+(?:length|max[_ -]?tokens?))`)
+	// iterationOutputLimitRe excludes generic prose such as "review output limit handling". The
+	// loop sees assistant narration as well as terminal diagnostics, so only explicit exhaustion
+	// forms may trigger a same-target resume.
+	iterationOutputLimitRe = regexp.MustCompile(`(?i)^(?:error:\s*)?(?:output limit reached(?:[: ].*)?|max(?:imum)? output length(?: reached)?|(?:max(?:imum)?[_ -]?output[_ -]?tokens?)(?:["'\s:=]+(?:reached|exceeded|true))|.*finish[_ ]?reason["'\s:=]+(?:length|max[_ -]?tokens?).*|.*finishreason["'\s:=]+max_tokens.*)[.!]?$`)
 )
 
 // detectLimit inspects an iteration's captured output for a model rate/usage
@@ -94,6 +98,91 @@ func detectLimit(output string, now time.Time) limitHint {
 		return limitHint{limited: true}
 	}
 	return limitHint{}
+}
+
+// detectIterationLimit is the stricter failed-process boundary. Structured provider output can
+// contain ordinary assistant prose, so broad keywords are insufficient evidence for rotation.
+func detectIterationLimit(output string, now time.Time) limitHint {
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if iterationOutputLimitRe.MatchString(line) {
+			return limitHint{limited: true, outputLimited: true}
+		}
+		lower := strings.ToLower(line)
+		proved := usageLimitRe.MatchString(line) ||
+			(hitLimitRe.MatchString(line) && (strings.HasPrefix(lower, "you've hit ") || strings.HasPrefix(lower, "you've reached "))) ||
+			(agents.WrapperRateLimited(line) && iterationDiagnosticPrefix(lower))
+		if proved {
+			hint := detectLimit(output, now)
+			hint.limited = true
+			hint.outputLimited = false
+			return hint
+		}
+	}
+	return limitHint{}
+}
+
+func iterationDiagnosticPrefix(line string) bool {
+	for _, prefix := range []string{
+		"error:", "fatal:", "http ", "http:", "{", "[", "usage limit", "rate limit",
+		"rate-limit", "you are rate limited", "request was rate limited", "server overloaded",
+		"service overloaded", "selected model is at capacity", "resource exhausted",
+		"resource_exhausted", "quota exceeded", "exceeded quota", "insufficient quota",
+		"usagelimit", "ratelimited", "too many requests",
+	} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func iterationAuthentication(provider, output string) bool {
+	agent, ok := agents.Get(provider)
+	if !ok {
+		return false
+	}
+	for _, raw := range strings.Split(strings.ToLower(output), "\n") {
+		line := strings.TrimSpace(raw)
+		for _, signal := range agent.LiveCredentials().AuthSignals {
+			signal = strings.ToLower(strings.TrimSpace(signal))
+			if signal == "" {
+				continue
+			}
+			if line == signal || strings.HasPrefix(line, signal+".") || strings.HasPrefix(line, signal+":") ||
+				((strings.HasPrefix(line, "error:") || strings.HasPrefix(line, "fatal:") || strings.HasPrefix(line, "{") || strings.HasPrefix(line, "[")) && strings.Contains(line, signal)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type iterationClassification struct {
+	outcome string
+	limit   limitHint
+}
+
+func classifyIteration(provider string, code int, err error, diagnostic string, stream providerStreamOutcome, now time.Time) iterationClassification {
+	if err == nil && code == 0 {
+		return iterationClassification{outcome: "success"}
+	}
+	if stream == streamMalformed {
+		return iterationClassification{outcome: "malformed_stream"}
+	}
+	if iterationAuthentication(provider, diagnostic) {
+		return iterationClassification{outcome: "authentication"}
+	}
+	if hint := detectIterationLimit(diagnostic, now); hint.limited {
+		if hint.outputLimited {
+			return iterationClassification{outcome: "output_limit", limit: hint}
+		}
+		return iterationClassification{outcome: "rate_limit", limit: hint}
+	}
+	return iterationClassification{outcome: "process_failure"}
 }
 
 // parseResetTime reads the "resets <when>" clause of a subscription-limit notice
@@ -282,11 +371,13 @@ func sleepForLimitAt(wait time.Duration, resetAt time.Time, wake <-chan struct{}
 type loopAction int
 
 const (
-	actContinue loopAction = iota // success — advance to the next item
-	actWait                       // rate/usage limited — pause, then retry this item
-	actRetry                      // other failure — short backoff, then retry this item
-	actRetryNow                   // output/token limit — immediately resume this item
-	actStop                       // a cap tripped — give up
+	actContinue   loopAction = iota // success — advance to the next item
+	actWait                         // rate/usage limited — pause, then retry this item
+	actRetry                        // other failure — short backoff, then retry this item
+	actRetryNow                     // output/token limit — immediately resume this item
+	actStop                         // a cap tripped — give up
+	actAuthStop                     // provider authentication failed — stop with login recovery
+	actOutputStop                   // repeated output exhaustion hit its independent cap
 )
 
 const (
@@ -368,18 +459,21 @@ const outputRetryBackoff = 5 * time.Second
 // of resuming forever. Keeping the cap-and-counter logic here, pure and unit-tested,
 // separates it from the container run and the actual sleeps. retries counts consecutive
 // output-limit resumes; any other outcome resets it.
-func decideIteration(code int, err error, out string, now time.Time, fails, waits, retries *int) (action loopAction, wait time.Duration, resetAt time.Time) {
-	if err == nil && code == 0 {
+func decideIteration(classification iterationClassification, now time.Time, fails, waits, retries *int) (action loopAction, wait time.Duration, resetAt time.Time) {
+	if classification.outcome == "success" {
 		*fails, *waits, *retries = 0, 0, 0
 		return actContinue, 0, time.Time{}
 	}
-	if hint := detectLimit(out, now); hint.limited {
+	if classification.outcome == "authentication" {
+		*retries = 0
+		return actAuthStop, 0, time.Time{}
+	}
+	if hint := classification.limit; hint.limited {
 		if hint.outputLimited {
 			// An output limit is neither a failure nor a rate wait; only a consecutive RUN of
 			// them is a problem. Cap it so a wedged iteration can't respawn the box forever.
 			if *retries++; *retries > maxOutputRetries {
-				*retries = 0
-				return actStop, 0, time.Time{}
+				return actOutputStop, 0, time.Time{}
 			}
 			if *retries == 1 {
 				return actRetryNow, 0, time.Time{} // fast path: a single long turn resumes at once
@@ -393,6 +487,7 @@ func decideIteration(code int, err error, out string, now time.Time, fails, wait
 		return actWait, limitWait(hint, *waits, now), hint.resetAt
 	}
 	*retries = 0 // a plain failure breaks any output-limit run
+	*waits = 0   // rate-limit pauses are consecutive; an ordinary failure breaks the run
 	if *fails++; *fails >= maxLoopFailures {
 		return actStop, 0, time.Time{}
 	}

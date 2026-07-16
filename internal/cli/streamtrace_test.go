@@ -13,8 +13,9 @@ import (
 )
 
 func TestOpenStreamTrace(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "run.streams")
-	raw, rendered, close, err := openStreamTrace(dir, 3, "codex")
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".agent", "runs", "run.streams")
+	raw, rendered, close, err := openStreamTrace(repo, "run", 3, "codex")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +52,46 @@ func TestOpenStreamTrace(t *testing.T) {
 	}
 	if got := dirInfo.Mode().Perm(); got != 0o700 {
 		t.Errorf("trace dir mode = %o, want 700", got)
+	}
+}
+
+func TestOpenStreamTraceRejectsPreplantedLinks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file bool
+	}{
+		{name: "directory"},
+		{name: "file", file: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			runs := filepath.Join(repo, ".agent", "runs")
+			if err := os.MkdirAll(runs, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "sentinel")
+			if err := os.WriteFile(outside, []byte("untouched\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			streamDir := filepath.Join(runs, "run.streams")
+			if tc.file {
+				if err := os.Mkdir(streamDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(streamDir, "01-codex.jsonl")); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Symlink(filepath.Dir(outside), streamDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, close, err := openStreamTrace(repo, "run", 1, "codex"); err == nil {
+				close()
+				t.Fatal("preplanted stream trace link was accepted")
+			}
+			if got, err := os.ReadFile(outside); err != nil || string(got) != "untouched\n" {
+				t.Fatalf("outside sentinel = %q, %v", got, err)
+			}
+		})
 	}
 }
 

@@ -21,9 +21,10 @@ const (
 // stderrLineFilter removes provider-specific noise from the live view while preserving every
 // other stderr byte, including a final line without a newline.
 type stderrLineFilter struct {
-	out  io.Writer
-	buf  []byte
-	drop func([]byte) bool
+	out      io.Writer
+	buf      []byte
+	dropping bool
+	drop     func([]byte) bool
 }
 
 func newGeminiStderrFilter(out io.Writer) *stderrLineFilter {
@@ -49,18 +50,55 @@ func newCodexStderrFilter(out io.Writer) *stderrLineFilter {
 }
 
 func (f *stderrLineFilter) Write(p []byte) (int, error) {
-	f.buf = append(f.buf, p...)
-	for {
-		i := bytes.IndexByte(f.buf, '\n')
+	written := len(p)
+	for len(p) > 0 {
+		if f.dropping {
+			i := bytes.IndexByte(p, '\n')
+			if i < 0 {
+				return written, nil
+			}
+			f.dropping = false
+			p = p[i+1:]
+			continue
+		}
+		i := bytes.IndexByte(p, '\n')
 		if i < 0 {
+			if err := f.appendFragment(p); err != nil {
+				return 0, err
+			}
 			break
 		}
-		if err := f.writeLine(f.buf[:i], true); err != nil {
+		if err := f.appendFragment(p[:i]); err != nil {
 			return 0, err
 		}
-		f.buf = f.buf[i+1:]
+		if !f.dropping {
+			if err := f.writeLine(f.buf, true); err != nil {
+				return 0, err
+			}
+		}
+		f.buf = nil
+		f.dropping = false
+		p = p[i+1:]
 	}
-	return len(p), nil
+	return written, nil
+}
+
+func (f *stderrLineFilter) appendFragment(p []byte) error {
+	remaining := maxStreamEventBytes - len(f.buf)
+	if len(p) <= remaining {
+		f.buf = append(f.buf, p...)
+		return nil
+	}
+	f.buf = append(f.buf, p[:remaining]...)
+	if _, err := f.out.Write(f.buf); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(f.out, " [truncated]\n"); err != nil {
+		return err
+	}
+	f.buf = nil
+	f.dropping = true
+	return nil
 }
 
 func (f *stderrLineFilter) flush() error {
@@ -96,6 +134,7 @@ type codexStreamDecoder struct {
 	tool    map[string]string
 	shown   map[string]struct{}
 	last    *iterResult
+	failed  bool
 }
 
 func newCodexStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *codexStreamDecoder {
@@ -129,6 +168,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 		}
 		d.emit(ui.Dim("· " + tokenUsage(d.last.InTok, d.last.OutTok)))
 	case "turn.failed":
+		d.failed = true
 		msg := strings.TrimSpace(ev.Message)
 		if msg == "" {
 			msg = strings.TrimSpace(ev.Error.Message)
@@ -138,6 +178,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 		}
 		d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
 		d.toTail(msg)
+		d.toDiagnostic(msg)
 	default:
 		d.emitUnknown(ev.Type)
 	}
@@ -257,6 +298,18 @@ func (d *codexStreamDecoder) emitUnknown(kind string) {
 }
 
 func (d *codexStreamDecoder) lastIterResult() *iterResult { return d.last }
+func (d *codexStreamDecoder) streamOutcome() providerStreamOutcome {
+	if d.malformed {
+		return streamMalformed
+	}
+	if d.failed {
+		return streamFailed
+	}
+	if d.last != nil {
+		return streamSucceeded
+	}
+	return streamIncomplete
+}
 
 func streamCommandLabel(command string) string {
 	command = strings.TrimSpace(command)
@@ -304,9 +357,10 @@ type geminiStreamDecoder struct {
 	profile   string
 	root      string
 	model     string
-	assistant strings.Builder
+	assistant boundedNarration
 	tool      map[string]string
 	last      *iterResult
+	failed    bool
 }
 
 func newGeminiStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *geminiStreamDecoder {
@@ -348,6 +402,7 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 	case "result":
 		d.result(&ev)
 	case "error":
+		d.failed = true
 		msg := strings.TrimSpace(ev.Message)
 		if msg == "" {
 			msg = jsonEventMessage(ev.Error)
@@ -357,6 +412,7 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 		}
 		d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
 		d.toTail(msg)
+		d.toDiagnostic(msg)
 	default:
 		d.emitUnknown(ev.Type)
 	}
@@ -368,8 +424,7 @@ func (d *geminiStreamDecoder) flush() {
 }
 
 func (d *geminiStreamDecoder) flushAssistant() {
-	text := strings.TrimSpace(d.assistant.String())
-	d.assistant.Reset()
+	text := strings.TrimSpace(d.assistant.Take())
 	if text == "" {
 		return
 	}
@@ -432,6 +487,7 @@ func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 	if ev.Status == "success" {
 		return
 	}
+	d.failed = true
 	msg := strings.TrimSpace(ev.Message)
 	if msg == "" {
 		msg = jsonEventMessage(ev.Error)
@@ -441,6 +497,7 @@ func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 	}
 	d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
 	d.toTail(msg)
+	d.toDiagnostic(msg)
 }
 
 func (d *geminiStreamDecoder) emitUnknown(kind string) {
@@ -451,6 +508,18 @@ func (d *geminiStreamDecoder) emitUnknown(kind string) {
 }
 
 func (d *geminiStreamDecoder) lastIterResult() *iterResult { return d.last }
+func (d *geminiStreamDecoder) streamOutcome() providerStreamOutcome {
+	if d.malformed {
+		return streamMalformed
+	}
+	if d.failed {
+		return streamFailed
+	}
+	if d.last != nil {
+		return streamSucceeded
+	}
+	return streamIncomplete
+}
 
 type geminiStreamEvent struct {
 	Type       string          `json:"type"`
@@ -482,8 +551,9 @@ type grokStreamDecoder struct {
 	profile    string
 	model      string
 	modelShown bool
-	text       strings.Builder
+	text       boundedNarration
 	last       *iterResult
+	failed     bool
 }
 
 func newGrokStreamDecoder(out, tail io.Writer, agent, profile, _ string, model string) *grokStreamDecoder {
@@ -516,6 +586,7 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		d.emit(ui.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsage(d.last.InTok, d.last.OutTok))))
 	default:
 		if strings.Contains(strings.ToLower(ev.Type), "error") {
+			d.failed = true
 			d.passthrough(raw)
 			return
 		}
@@ -541,8 +612,7 @@ func (d *grokStreamDecoder) showModel() {
 }
 
 func (d *grokStreamDecoder) flushText() {
-	text := strings.TrimSpace(d.text.String())
-	d.text.Reset()
+	text := strings.TrimSpace(d.text.Take())
 	if text == "" {
 		return
 	}
@@ -551,6 +621,18 @@ func (d *grokStreamDecoder) flushText() {
 }
 
 func (d *grokStreamDecoder) lastIterResult() *iterResult { return d.last }
+func (d *grokStreamDecoder) streamOutcome() providerStreamOutcome {
+	if d.malformed {
+		return streamMalformed
+	}
+	if d.failed {
+		return streamFailed
+	}
+	if d.last != nil {
+		return streamSucceeded
+	}
+	return streamIncomplete
+}
 
 type grokStreamEvent struct {
 	Type     string `json:"type"`

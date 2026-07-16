@@ -83,6 +83,19 @@ func TestRotationUnknownResetBacksOff(t *testing.T) {
 	}
 }
 
+func TestRotationNonfutureResetStillCoolsTarget(t *testing.T) {
+	now := time.Unix(1000, 0)
+	for _, reset := range []time.Time{now.Add(-time.Hour), now} {
+		r := rts("a", "b")
+		if sleep, _ := r.onLimit(reset, 1, now); sleep != 0 || r.active().String() != "claude@b" {
+			t.Fatalf("reset %v: sleep=%v active=%q, want free target b", reset, sleep, r.active())
+		}
+		if until := r.limited["claude@a"]; !until.After(now) {
+			t.Fatalf("reset %v: normalized cooling deadline = %v, want future", reset, until)
+		}
+	}
+}
+
 func TestRotationSelectionSkipsFutureLimitAndClearsExpired(t *testing.T) {
 	now := time.Unix(1000, 0)
 	r := rts("a", "b", "c")
@@ -107,7 +120,7 @@ func TestRememberPreflightLimitAdvancesWorkRotation(t *testing.T) {
 	r := rts("personal", "backup", "third")
 	out := fmt.Sprintf("Claude AI usage limit reached|%d", reset.Unix())
 
-	sleep, until, limited := rememberPreflightLimit(r, 1, nil, out, now)
+	sleep, until, limited := rememberPreflightLimit(r, classifyIteration("claude", 1, nil, out, streamNotUsed, now), now)
 	if !limited || sleep != 0 || !until.IsZero() || r.active().String() != "claude@backup" {
 		t.Fatalf("preflight limit: limited=%v sleep=%v until=%v active=%q, want true, 0, zero, backup", limited, sleep, until, r.active())
 	}
@@ -126,7 +139,8 @@ func TestRememberPreflightLimitAdvancesWorkRotation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := rts("personal", "backup", "third")
-			if _, _, limited := rememberPreflightLimit(r, tc.code, nil, tc.out, now); limited || r.active().String() != "claude@personal" {
+			classification := classifyIteration("claude", tc.code, nil, tc.out, streamNotUsed, now)
+			if _, _, limited := rememberPreflightLimit(r, classification, now); limited || r.active().String() != "claude@personal" {
 				t.Errorf("limited=%v active=%q, want false + personal", limited, r.active())
 			}
 		})

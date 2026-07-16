@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,11 +23,10 @@ const llmIcon = "✦"
 // doing instead of going silent until the final message. It implements io.Writer to sit
 // where the box pipes the agent's stdout: each newline-terminated chunk is one JSON event.
 //
-// Human text (assistant messages, the final result, and a limit notice translated from the
-// structured rate_limit_event) is also copied to tail, so the loop's rate-limit detector —
-// which greps the agent's text — keeps working under stream-json. Tool inputs and outputs
-// are deliberately NOT sent to tail: they're the agent's own work and can contain strings
-// like "429" that would false-match the limit markers.
+// Human text is copied to the response tail for review receipts and continuation. Only raw or
+// structured terminal diagnostics reach the separate classification writer, so ordinary assistant
+// narration cannot rotate providers or stop on an authentication phrase. Tool inputs and outputs
+// reach neither tail because they are the agent's own work and may contain misleading markers.
 type streamDecoder struct {
 	*ndjsonDecoder
 	agent      string            // the agent whose stream this is (e.g. claude), for the model line
@@ -34,6 +34,7 @@ type streamDecoder struct {
 	root       string            // the repo's in-box mount; tool paths show relative to it (empty = off)
 	tool       map[string]string // tool_use id → label, to name a failed tool_result
 	last       *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
+	failed     bool              // a valid terminal error event landed
 	limitShown bool              // a blocking structured limit already owns the visible notice
 }
 
@@ -49,24 +50,57 @@ type iterationStreamDecoder interface {
 	io.Writer
 	flush()
 	lastIterResult() *iterResult
+	streamOutcome() providerStreamOutcome
+}
+
+type providerStreamOutcome int
+
+const (
+	streamNotUsed providerStreamOutcome = iota
+	streamIncomplete
+	streamSucceeded
+	streamFailed
+	streamMalformed
+)
+
+func validateProviderStream(code int, runErr error, outcome providerStreamOutcome) error {
+	if runErr != nil || code != 0 || outcome == streamNotUsed || outcome == streamSucceeded {
+		return runErr
+	}
+	switch outcome {
+	case streamFailed:
+		return errors.New("provider stream reported a terminal failure")
+	case streamMalformed:
+		return errors.New("provider stream contained a malformed event")
+	default:
+		return errors.New("provider stream ended without one valid terminal event")
+	}
 }
 
 // newIterationStreamDecoder dispatches on the schema declared by the provider adapter. Several
 // CLIs use overlapping flag names, so the flags themselves cannot identify the event schema.
-func newIterationStreamDecoder(agent string, out, tail io.Writer, profile, root, model string) iterationStreamDecoder {
+func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, profile, root, model string) iterationStreamDecoder {
 	adapter, ok := agents.Get(agent)
 	if !ok {
 		return nil
 	}
 	switch adapter.Stream().Format {
 	case agents.StreamClaudeJSON:
-		return newStreamDecoder(out, tail, agent, profile, root)
+		d := newStreamDecoder(out, tail, agent, profile, root)
+		d.diagnostic = diagnostic
+		return d
 	case agents.StreamCodexJSON:
-		return newCodexStreamDecoder(out, tail, agent, profile, root, model)
+		d := newCodexStreamDecoder(out, tail, agent, profile, root, model)
+		d.diagnostic = diagnostic
+		return d
 	case agents.StreamGeminiJSON:
-		return newGeminiStreamDecoder(out, tail, agent, profile, root, model)
+		d := newGeminiStreamDecoder(out, tail, agent, profile, root, model)
+		d.diagnostic = diagnostic
+		return d
 	case agents.StreamGrokJSON:
-		return newGrokStreamDecoder(out, tail, agent, profile, root, model)
+		d := newGrokStreamDecoder(out, tail, agent, profile, root, model)
+		d.diagnostic = diagnostic
+		return d
 	default:
 		return nil
 	}
@@ -76,28 +110,61 @@ func newIterationStreamDecoder(agent string, out, tail io.Writer, profile, root,
 // Writes, final-line flushing, and raw passthrough for diagnostics that are not JSON events.
 // Provider decoders only handle complete, valid JSON values.
 type ndjsonDecoder struct {
-	out       io.Writer
-	tail      io.Writer
-	buf       []byte
-	event     func(json.RawMessage)
-	beforeRaw func()
+	out        io.Writer
+	tail       io.Writer
+	diagnostic io.Writer
+	buf        []byte
+	dropping   bool
+	malformed  bool
+	event      func(json.RawMessage)
+	beforeRaw  func()
 }
+
+const (
+	maxStreamEventBytes     = 1 << 20
+	maxStreamNarrationBytes = 64 << 10
+)
 
 func newNDJSONDecoder(out, tail io.Writer, event func(json.RawMessage)) *ndjsonDecoder {
 	return &ndjsonDecoder{out: out, tail: tail, event: event}
 }
 
 func (d *ndjsonDecoder) Write(p []byte) (int, error) {
-	d.buf = append(d.buf, p...)
-	for {
-		i := bytes.IndexByte(d.buf, '\n')
+	written := len(p)
+	for len(p) > 0 {
+		if d.dropping {
+			i := bytes.IndexByte(p, '\n')
+			if i < 0 {
+				return written, nil
+			}
+			d.dropping = false
+			p = p[i+1:]
+			continue
+		}
+		i := bytes.IndexByte(p, '\n')
 		if i < 0 {
+			d.appendFragment(p)
 			break
 		}
-		d.line(d.buf[:i])
-		d.buf = d.buf[i+1:]
+		d.appendFragment(p[:i])
+		if !d.dropping {
+			d.line(d.buf)
+		}
+		d.buf = nil
+		d.dropping = false
+		p = p[i+1:]
 	}
-	return len(p), nil
+	return written, nil
+}
+
+func (d *ndjsonDecoder) appendFragment(p []byte) {
+	if len(d.buf)+len(p) <= maxStreamEventBytes {
+		d.buf = append(d.buf, p...)
+		return
+	}
+	d.buf = nil
+	d.dropping = true
+	d.markMalformed("provider stream event exceeded the size limit")
 }
 
 // flush renders any trailing line left without a newline. A well-formed NDJSON stream ends
@@ -117,22 +184,43 @@ func (d *ndjsonDecoder) toTail(s string) {
 	}
 }
 
+func (d *ndjsonDecoder) toDiagnostic(s string) {
+	if d.diagnostic != nil && s != "" {
+		fmt.Fprintln(d.diagnostic, s)
+	}
+}
+
 func (d *ndjsonDecoder) line(raw []byte) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return
 	}
 	if !json.Valid(raw) {
+		if raw[0] == '{' || raw[0] == '[' {
+			d.markMalformed("malformed provider stream event")
+			return
+		}
 		d.passthrough(raw)
 		return
 	}
 	d.event(json.RawMessage(raw))
 }
 
+func (d *ndjsonDecoder) markMalformed(message string) {
+	d.malformed = true
+	if d.beforeRaw != nil {
+		d.beforeRaw()
+	}
+	d.emit(message)
+	d.toTail(message)
+	d.toDiagnostic(message)
+}
+
 func (d *ndjsonDecoder) rawLine(raw []byte) {
 	s := string(bytes.TrimSpace(raw))
 	d.emit(s)
 	d.toTail(s)
+	d.toDiagnostic(s)
 }
 
 func (d *ndjsonDecoder) passthrough(raw []byte) {
@@ -168,6 +256,46 @@ func (d *streamDecoder) event(raw json.RawMessage) {
 }
 
 func (d *streamDecoder) lastIterResult() *iterResult { return d.last }
+func (d *streamDecoder) streamOutcome() providerStreamOutcome {
+	if d.malformed {
+		return streamMalformed
+	}
+	if d.failed {
+		return streamFailed
+	}
+	if d.last != nil {
+		return streamSucceeded
+	}
+	return streamIncomplete
+}
+
+type boundedNarration struct {
+	text      strings.Builder
+	truncated bool
+}
+
+func (b *boundedNarration) WriteString(s string) {
+	remaining := maxStreamNarrationBytes - b.text.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || s != ""
+		return
+	}
+	if len(s) > remaining {
+		s = s[:remaining]
+		b.truncated = true
+	}
+	b.text.WriteString(s)
+}
+
+func (b *boundedNarration) Take() string {
+	text := b.text.String()
+	if b.truncated {
+		text += " [truncated]"
+	}
+	b.text.Reset()
+	b.truncated = false
+	return text
+}
 
 // assistant renders an assistant turn's content: visible text (the agent talking) and tool
 // calls. Thinking blocks are skipped to keep the view about what's being done.
@@ -265,7 +393,9 @@ func (d *streamDecoder) rateLimit(rl *rateLimitInfo) {
 	}
 	d.emit(ui.Yellow("⚠ rate limited") + " (" + rl.RateLimitType + ")" + when)
 	d.limitShown = true
-	d.toTail(fmt.Sprintf("Claude AI usage limit reached|%d", rl.ResetsAt))
+	message := fmt.Sprintf("Claude AI usage limit reached|%d", rl.ResetsAt)
+	d.toTail(message)
+	d.toDiagnostic(message)
 }
 
 func streamLimitNotice(s string) bool {
@@ -275,6 +405,7 @@ func streamLimitNotice(s string) bool {
 // result renders the iteration's closing summary, or its error.
 func (d *streamDecoder) result(ev *streamEvent) {
 	if ev.IsError {
+		d.failed = true
 		msg := strings.TrimSpace(ev.Result)
 		if msg == "" {
 			msg = "error"
@@ -283,6 +414,7 @@ func (d *streamDecoder) result(ev *streamEvent) {
 			d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
 		}
 		d.toTail(msg)
+		d.toDiagnostic(msg)
 		return
 	}
 	dur := (time.Duration(ev.DurationMS) * time.Millisecond).Round(time.Second)

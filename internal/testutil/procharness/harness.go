@@ -267,6 +267,12 @@ func Start(spec Command) (*Process, error) {
 // PID returns the process-group leader's pid.
 func (p *Process) PID() int { return p.cmd.Process.Pid }
 
+// Output returns the bounded output captured so far. It is safe while the process is running and
+// lets tests wait on a controller diagnostic without adding timing sleeps.
+func (p *Process) Output() (stdout, stderr string) {
+	return p.stdout.String(), p.stderr.String()
+}
+
 // SignalGroup delivers sig to the process's owned group. It does not wait or clean up; Wait owns
 // both, so a test can signal a foreground-style cancellation and then collect its exact result.
 func (p *Process) SignalGroup(sig syscall.Signal) error {
@@ -409,6 +415,7 @@ func ProcessAlive(pid int) bool {
 }
 
 type boundedBuffer struct {
+	mu        sync.Mutex
 	buf       bytes.Buffer
 	limit     int
 	truncated bool
@@ -417,6 +424,8 @@ type boundedBuffer struct {
 func newBoundedBuffer(limit int) *boundedBuffer { return &boundedBuffer{limit: limit} }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	original := len(p)
 	remaining := b.limit - b.buf.Len()
 	if remaining <= 0 {
@@ -432,5 +441,14 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return original, nil
 }
 
-func (b *boundedBuffer) String() string  { return b.buf.String() }
-func (b *boundedBuffer) Truncated() bool { return b.truncated }
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *boundedBuffer) Truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.truncated
+}

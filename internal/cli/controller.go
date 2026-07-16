@@ -96,7 +96,7 @@ func protectedGateChanges(repo, base, head string) []string {
 	return protectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"))
 }
 
-// queueSnapshot maps task id → state across the hosts, for diffing what an iteration moved.
+// queueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.
 func queueSnapshot(hosts []string) map[string]string {
 	m := map[string]string{}
 	for _, h := range hosts {
@@ -107,50 +107,177 @@ func queueSnapshot(hosts []string) map[string]string {
 	return m
 }
 
-// finishedTasks returns the ids that moved INTO done/ between two snapshots — what an iteration
-// completed. Pure, sorted for stable output.
-func finishedTasks(before, after map[string]string) []string {
-	var ids []string
-	for id, st := range after {
-		if st == stateDone && before[id] != stateDone {
-			ids = append(ids, id)
+func aggregateDuplicateTaskIDs(hosts []string) []string {
+	return taskIDDuplicates(hosts, false)
+}
+
+func nonArchivedDuplicateTaskIDs(hosts []string) []string {
+	return taskIDDuplicates(hosts, true)
+}
+
+func taskIDDuplicates(hosts []string, requireLive bool) []string {
+	counts := map[string]int{}
+	live := map[string]bool{}
+	for _, host := range hosts {
+		for _, task := range readTaskTree(host) {
+			counts[task.ID]++
+			if task.State != stateDone {
+				live[task.ID] = true
+			}
 		}
 	}
-	slices.Sort(ids)
-	return ids
+	var duplicates []string
+	for id, count := range counts {
+		if count > 1 && (!requireLive || live[id]) {
+			duplicates = append(duplicates, id)
+		}
+	}
+	slices.Sort(duplicates)
+	return duplicates
+}
+
+func completedAssignedTask(root, id string) (queuedTask, bool) {
+	task, ok := currentTask(root, id)
+	if !ok || task.State != stateDone {
+		return queuedTask{}, false
+	}
+	return queuedTask{Root: root, Item: task}, true
 }
 
 // finalizeFinishedTasks handles the loop's in-box completion path: the worker moved the folder, so
 // the host normalizes state.md and removes tmp before any reviewer consumes a done task. It sweeps
-// EVERY done task, not just this iteration's delta. A task whose metadata cannot be finalized moves
-// back to in_progress before the error returns, so a drained queue cannot strand rejected work.
+// archived done tasks, not active/crash-left lease candidates. A task whose metadata cannot be
+// finalized moves back to in_progress before the error returns, so cleanup remains retryable.
 func finalizeFinishedTasks(hosts []string) error {
 	for _, host := range hosts {
 		for _, t := range readTaskTree(host) {
-			if t.State != stateDone {
+			if t.State != stateDone || crashCompletionCandidate(host, t) {
 				continue
 			}
-			if err := finalizeCompletedTask(t.ID, t.Dir); err != nil {
-				if restoreErr := moveTaskDir(host, t, stateInProgress); restoreErr != nil {
-					return errors.Join(err, fmt.Errorf("restore task %s after finalization failure: %w", t.ID, restoreErr))
-				}
-				restored := filepath.Join(host, stateInProgress, t.ID)
-				recoveryErr := normalizeTaskState(
-					t.ID,
-					restored,
-					"in progress — finalization failed",
-					"fix the task metadata or cleanup obstruction, then re-run `coop loop`",
-					"completion finalization failed",
-					"the task must finalize safely before completion is accepted",
-				)
-				if recoveryErr != nil {
-					recoveryErr = fmt.Errorf("refresh restored task %s: %w", t.ID, recoveryErr)
-				}
-				return errors.Join(err, recoveryErr)
+			if err := finalizeQueuedCompletion(queuedTask{Root: host, Item: t}); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
+}
+
+func finalizeQueuedCompletion(task queuedTask) error {
+	if err := finalizeCompletedTask(task.Item.ID, task.Item.Dir); err != nil {
+		if restoreErr := moveTaskDir(task.Root, task.Item, stateInProgress); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore task %s after finalization failure: %w", task.Item.ID, restoreErr))
+		}
+		restored := filepath.Join(task.Root, stateInProgress, task.Item.ID)
+		recoveryErr := normalizeTaskState(
+			task.Item.ID,
+			restored,
+			"in progress — finalization failed",
+			"fix the task metadata or cleanup obstruction, then re-run `coop loop`",
+			"completion finalization failed",
+			"the task must finalize safely before completion is accepted",
+		)
+		if recoveryErr != nil {
+			recoveryErr = fmt.Errorf("refresh restored task %s: %w", task.Item.ID, recoveryErr)
+		}
+		return errors.Join(err, recoveryErr)
+	}
+	return nil
+}
+
+// reconcileInterruptedCompletions closes the crash window after a worker moved its task to done
+// but before the controller validated the current iteration's commit binding. The lease does not
+// retain that iteration base, so every candidate is restored for the normal range-bound resume
+// path; an older matching commit must never validate new unbound work.
+func reconcileInterruptedCompletions(hosts []string) error {
+	var restoreErrs []error
+	for _, host := range hosts {
+		for _, task := range readTaskTree(host) {
+			if task.State != stateDone || !crashCompletionCandidate(host, task) {
+				continue
+			}
+			lock, current, acquired, err := lockCrashCompletion(host, task)
+			if err != nil {
+				restoreErrs = append(restoreErrs, fmt.Errorf("lock interrupted task %s: %w", task.ID, err))
+				continue
+			}
+			if !acquired {
+				continue
+			}
+			restoreErr := restoreQueuedCompletion(queuedTask{Root: host, Item: current})
+			unlockErr := lock.release()
+			if err := errors.Join(restoreErr, unlockErr); err != nil {
+				restoreErrs = append(restoreErrs, err)
+			}
+		}
+	}
+	return errors.Join(restoreErrs...)
+}
+
+type crashCompletionLock struct {
+	files []*os.File
+}
+
+func (l crashCompletionLock) release() error {
+	var errs []error
+	for i := len(l.files) - 1; i >= 0; i-- {
+		errs = append(errs, unlockLeaseFile(l.files[i]))
+	}
+	return errors.Join(errs...)
+}
+
+func lockCrashCompletion(root string, task taskItem) (crashCompletionLock, taskItem, bool, error) {
+	authority, err := openLeaseAuthority(root, task.ID, true)
+	if err != nil {
+		return crashCompletionLock{}, taskItem{}, false, err
+	}
+	locks := crashCompletionLock{files: []*os.File{authority}}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = authority.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return crashCompletionLock{}, taskItem{}, false, nil
+		}
+		return crashCompletionLock{}, taskItem{}, false, err
+	}
+	local, err := openLeaseLock(task.Dir, false)
+	if err == nil {
+		if err := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = local.Close()
+			_ = locks.release()
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				return crashCompletionLock{}, taskItem{}, false, nil
+			}
+			return crashCompletionLock{}, taskItem{}, false, err
+		}
+		locks.files = append(locks.files, local)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		_ = locks.release()
+		return crashCompletionLock{}, taskItem{}, false, err
+	}
+	current, ok := currentTask(root, task.ID)
+	if !ok || current.State != stateDone || current.Dir != task.Dir {
+		return crashCompletionLock{}, taskItem{}, false, locks.release()
+	}
+	return locks, current, true, nil
+}
+
+func unlockLeaseFile(file *os.File) error {
+	return errors.Join(syscall.Flock(int(file.Fd()), syscall.LOCK_UN), file.Close())
+}
+
+func crashCompletionCandidate(root string, task taskItem) bool {
+	if leaseAuthorityMetadataExists(root, task.ID) {
+		return true
+	}
+	if info, err := os.Lstat(filepath.Join(task.Dir, "tmp")); err == nil &&
+		(info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
+		return true
+	}
+	for _, name := range []string{"lease.lock", "lease.json"} {
+		if info, err := os.Lstat(filepath.Join(task.Dir, "tmp", name)); err == nil && info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 // blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a
@@ -179,17 +306,13 @@ func reopenedBySignoff(before, after map[string]string) []string {
 	return ids
 }
 
-// untrailered returns finished ids with no exact, unique Coop-Task binding. A changed HEAD must bind
-// in this iteration's range; historical fallback is reserved for case-(a) resume where HEAD did not
-// move and the iteration only repaired the folder state after an earlier commit landed.
+// untrailered returns finished ids without exactly one Coop-Task binding in this iteration's range.
+// A no-HEAD-change completion always fails closed; crash recovery restores it for a fresh range.
 func untrailered(repo, base, head string, finished []string) []string {
-	if base == "" || head == "" {
+	if base == "" || head == "" || base == head {
 		return slices.Clone(finished)
 	}
-	search := ""
-	if base != head {
-		search = base + ".." + head
-	}
+	search := base + ".." + head
 	var missing []string
 	for _, id := range finished {
 		if len(commitsForTask(repo, search, id)) != 1 {
@@ -199,43 +322,43 @@ func untrailered(repo, base, head string, finished []string) []string {
 	return missing
 }
 
-// restoreUnbindableCompletions moves rejected completions back to in_progress and records why. The
-// move is the safety boundary: even if writing the recovery note fails, another loop cannot treat
-// the task as accepted done work. Every requested id must be found in done/ or already restored.
-func restoreUnbindableCompletions(hosts, ids []string) error {
+func unbindableQueuedCompletion(repo, base, head string, completed queuedTask) bool {
+	return len(untrailered(repo, base, head, []string{completed.Item.ID})) != 0
+}
+
+// restoreQueuedCompletions moves exact rejected completions back to in_progress and records why.
+// Retaining the queue root is required because duplicate ids across configured queues are valid.
+func restoreQueuedCompletions(tasks []queuedTask) error {
 	var restoreErrs []error
-	for _, id := range ids {
-		found := false
-		for _, host := range hosts {
-			for _, task := range readTaskTree(host) {
-				if task.ID != id || (task.State != stateDone && task.State != stateInProgress) {
-					continue
-				}
-				found = true
-				if task.State == stateDone {
-					if err := moveTaskDir(host, task, stateInProgress); err != nil {
-						restoreErrs = append(restoreErrs, fmt.Errorf("restore task %s: %w", id, err))
-						break
-					}
-				}
-				note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range; if missing, add it with `git commit --amend --no-edit --trailer %q`; if duplicated, rewrite or squash the range down to one binding; then re-run `coop loop`", coopTaskTrailer, coopTaskTrailer+": "+id)
-				if err := appendTaskLogStrict(filepath.Join(host, stateInProgress, id), note); err != nil {
-					restoreErrs = append(restoreErrs, fmt.Errorf("record rejection for task %s: %w", id, err))
-				}
-				if err := normalizeRejectedTaskState(id, filepath.Join(host, stateInProgress, id)); err != nil {
-					restoreErrs = append(restoreErrs, fmt.Errorf("refresh rejected task %s: %w", id, err))
-				}
-				break
-			}
-			if found {
-				break
-			}
+	for _, task := range tasks {
+		if task.Item.State != stateDone && task.Item.State != stateInProgress {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restore task %s: task is not in done or in_progress", task.Item.ID))
+			continue
 		}
-		if !found {
-			restoreErrs = append(restoreErrs, fmt.Errorf("restore task %s: task is not in done or in_progress", id))
+		if err := restoreQueuedCompletion(task); err != nil {
+			restoreErrs = append(restoreErrs, err)
 		}
 	}
 	return errors.Join(restoreErrs...)
+}
+
+func restoreQueuedCompletion(task queuedTask) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range; if missing, add it with `git commit --amend --no-edit --trailer %q`; if the matching trailer already exists outside the new range, amend that commit with a unique `Coop-Recovery: <current UTC timestamp>` trailer while preserving exactly one %s trailer; if duplicated, rewrite or squash the range down to one binding; then re-run `coop loop`", coopTaskTrailer, coopTaskTrailer+": "+id, coopTaskTrailer)
+	var errs []error
+	if err := appendTaskLogStrict(dir, note); err != nil {
+		errs = append(errs, fmt.Errorf("record rejection for task %s: %w", id, err))
+	}
+	if err := normalizeRejectedTaskState(id, dir); err != nil {
+		errs = append(errs, fmt.Errorf("refresh rejected task %s: %w", id, err))
+	}
+	return errors.Join(errs...)
 }
 
 func normalizeRejectedTaskState(id, taskDir string) error {
@@ -254,7 +377,7 @@ func unbindableCompletionError(ids []string, restoreErr error) error {
 	for _, id := range ids {
 		commands = append(commands, fmt.Sprintf("git commit --amend --no-edit --trailer %q", coopTaskTrailer+": "+id))
 	}
-	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — add a missing trailer (%s), or rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
+	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — add a missing trailer (%s), add a unique `Coop-Recovery: <current UTC timestamp>` trailer when amending an already-bound crash-left commit, or rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -273,7 +396,8 @@ func resumeLine(id string, commits []string) string {
 	return "Task " + id + " has commit(s) " + strings.Join(commits, ", ") + " already in history carrying " +
 		"its Coop-Task trailer. Read its log.md/state.md and determine which case applies: (a) a prior " +
 		"attempt COMMITTED then was interrupted before moving the folder to 99_done/ — verify that work " +
-		"against the acceptance criteria and finish the move, do NOT redo it; or (b) the review REOPENED it " +
+		"against the acceptance criteria, amend the commit with a unique `Coop-Recovery: <current UTC timestamp>` " +
+		"trailer while preserving exactly one Coop-Task trailer, and finish the move, but do NOT redo it; or (b) the review REOPENED it " +
 		"for rework (its log.md will say what's wrong) — do that rework. Disambiguate before acting."
 }
 
@@ -436,9 +560,14 @@ func reconcileMerged(states map[string]string, landed map[string]bool) []reconci
 // landedTasks is the set of task ids whose Coop-Task trailer appears anywhere in repo's history.
 func landedTasks(repo string) map[string]bool {
 	set := map[string]bool{}
-	for _, line := range strings.Split(gitOut(repo, "log", "--format=%(trailers:key="+coopTaskTrailer+",valueonly)"), "\n") {
-		if v := strings.TrimSpace(line); v != "" {
-			set[v] = true
+	const separator = "\x1f"
+	format := "%(trailers:key=" + coopTaskTrailer + ",valueonly,separator=%x1f)"
+	for _, line := range strings.Split(gitOut(repo, "log", "--format="+format), "\n") {
+		values := strings.Split(line, separator)
+		if len(values) == 1 {
+			if value := strings.TrimSpace(values[0]); value != "" {
+				set[value] = true
+			}
 		}
 	}
 	return set
@@ -455,6 +584,14 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName string) {
 		return
 	}
 	landed := landedTasks(repo)
+	hosts := make([]string, len(queues))
+	for i, queue := range queues {
+		hosts[i] = filepath.Join(repo, queue)
+	}
+	for _, id := range aggregateDuplicateTaskIDs(hosts) {
+		delete(landed, id)
+		ui.Warn("reconcile: task id %s exists in multiple queues; skipped automatic fork reconciliation", id)
+	}
 	for _, q := range queues {
 		host := filepath.Join(repo, q)
 		states := map[string]string{}
