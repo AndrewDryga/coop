@@ -26,12 +26,12 @@ import (
 // 00_todo/ only, so a reopened task in in_progress fell through to the green "verified done".
 func TestLoopClosingBanner(t *testing.T) {
 	// Reopened INTO in_progress (the bug): not done, and names the count.
-	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "signoff reopened") ||
+	if b := loopClosingBanner(taskCounts{Done: 2, Doing: 3}, 5); !strings.Contains(b, "review left") ||
 		!strings.Contains(b, "3 tasks") || strings.Contains(b, "verified done") {
 		t.Errorf("reopened-into-in_progress banner = %q", b)
 	}
 	// Reopened into todo: same outcome, singular count.
-	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "signoff reopened") ||
+	if b := loopClosingBanner(taskCounts{Done: 4, Todo: 1}, 4); !strings.Contains(b, "review left") ||
 		!strings.Contains(b, "1 task") || strings.Contains(b, "verified done") {
 		t.Errorf("reopened-into-todo banner = %q", b)
 	}
@@ -59,8 +59,8 @@ func TestPruneNudge(t *testing.T) {
 	}
 }
 
-// The loop's exit code lets cron/fleet/CI branch without parsing stderr: 3 iff it stopped with work
-// blocked on a human decision and nothing else actionable; 0 for verified-done and review-reopened.
+// The loop's exit code lets cron/fleet/CI branch without parsing stderr: a review-reopened queue is
+// a failure, 3 means only human-blocked work remains, and 0 means verified done.
 func TestLoopExitCode(t *testing.T) {
 	cases := []struct {
 		cf   taskCounts
@@ -68,8 +68,8 @@ func TestLoopExitCode(t *testing.T) {
 	}{
 		{taskCounts{Done: 3, Blocked: 2}, 3}, // blocked, nothing actionable → 3
 		{taskCounts{Done: 5}, 0},             // verified done → 0
-		{taskCounts{Done: 3, Doing: 1}, 0},   // audit reopened into in_progress → 0 by design
-		{taskCounts{Todo: 2, Blocked: 1}, 0}, // still actionable → 0, not 3
+		{taskCounts{Done: 3, Doing: 1}, 1},   // audit reopened into in_progress → unverified
+		{taskCounts{Todo: 2, Blocked: 1}, 1}, // actionable work takes precedence over blocked
 	}
 	for _, c := range cases {
 		if got := loopExitCode(c.cf); got != c.want {
@@ -307,7 +307,7 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 		"docs/README/CHANGELOG",                     // 4. polished
 		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate
 		"tmp/ was disposable", "evidence that needed to survive completion belongs in artifacts/",
-		"ONLY defect, repair them in place in 99_done/", "do NOT reopen implementation work for metadata alone",
+		"never edit a task in place under 99_done/", "reopen the task as a completion-integrity defect",
 		"MOVING its folder back to 10_in_progress/", // reopen by moving
 		"refreshing state.md to a reopened Status plus one concrete Next action",
 		"THE MOMENT you decide", // execute reopens immediately, never batched
@@ -319,7 +319,7 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	}
 	// The fixed context footer: the absolute queue path, AGENTS.md, and the reopen mechanic —
 	// including execute-immediately, so it binds even under a custom review.md override.
-	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed", "metadata-only", "refresh state.md", "Execute every substantive reopen IMMEDIATELY"} {
+	for _, want := range []string{"/repo/.agent/tasks", "/repo/AGENTS.md", "its folder back to 10_in_progress/", "`coop` is NOT installed", "finalizes done-task lifecycle metadata", "refresh state.md", "Execute every reopen IMMEDIATELY"} {
 		if !strings.Contains(rev, want) {
 			t.Errorf("review prompt footer missing %q:\n%s", want, rev)
 		}

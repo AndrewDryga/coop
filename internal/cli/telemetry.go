@@ -25,57 +25,55 @@ import (
 // blocks or fails an iteration. This is phase 1 (emit) — a replay/canary set over the archive is a
 // separate follow-on.
 type stageRecord struct {
-	Run         string   `json:"run"`
-	Stage       string   `json:"stage"`    // preflight | work | between | signoff
-	Outcome     string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted
-	Provider    string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
-	Model       string   `json:"model,omitempty"`
-	Effort      string   `json:"effort,omitempty"`
-	Account     string   `json:"account,omitempty"`
-	Coop        string   `json:"coop"`
-	Start       string   `json:"start"`
-	End         string   `json:"end"`
-	Exit        int      `json:"exit"`
-	Retries     int      `json:"retries,omitempty"`
-	CostUSD     float64  `json:"cost_usd,omitempty"` // the stage's result-event cost (lead + its native subagents)
-	InTok       int      `json:"in_tok,omitempty"`   // input tokens (fresh + cache write + cache read)
-	OutTok      int      `json:"out_tok,omitempty"`  // output tokens
-	HeadBefore  string   `json:"head_before,omitempty"`
-	HeadAfter   string   `json:"head_after,omitempty"`
-	Reopened    int      `json:"reopened,omitempty"`    // review stages: task folders moved back to in_progress
-	Finished    []string `json:"finished,omitempty"`    // work stage: task ids this iteration moved to done
-	Untrailered []string `json:"untrailered,omitempty"` // finished ids with NO Coop-Task commit in range (unbindable)
-	GateFiles   []string `json:"gate_files,omitempty"`  // host-detected gate-defining paths touched by the stage
-	QueueTodo   int      `json:"queue_todo"`
-	QueueDoing  int      `json:"queue_doing"`
-	QueueDone   int      `json:"queue_done"`
+	Run        string   `json:"run"`
+	Stage      string   `json:"stage"`    // preflight | work | between | signoff | verify
+	Outcome    string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted
+	Provider   string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
+	Model      string   `json:"model,omitempty"`
+	Effort     string   `json:"effort,omitempty"`
+	Account    string   `json:"account,omitempty"`
+	Coop       string   `json:"coop"`
+	Start      string   `json:"start"`
+	End        string   `json:"end"`
+	Exit       int      `json:"exit"`
+	Retries    int      `json:"retries,omitempty"`
+	CostUSD    float64  `json:"cost_usd,omitempty"` // the stage's result-event cost (lead + its native subagents)
+	InTok      int      `json:"in_tok,omitempty"`   // input tokens (fresh + cache write + cache read)
+	OutTok     int      `json:"out_tok,omitempty"`  // output tokens
+	HeadBefore string   `json:"head_before,omitempty"`
+	HeadAfter  string   `json:"head_after,omitempty"`
+	Reopened   int      `json:"reopened,omitempty"`   // review stages: task folders moved back to in_progress
+	Finished   []string `json:"finished,omitempty"`   // work stage: task ids this iteration moved to done
+	GateFiles  []string `json:"gate_files,omitempty"` // host-detected gate-defining paths touched by the stage
+	QueueTodo  int      `json:"queue_todo"`
+	QueueDoing int      `json:"queue_doing"`
+	QueueDone  int      `json:"queue_done"`
 }
 
 // buildStageRecord assembles a record from a stage's EFFECTIVE target (the post-rotation Target, so
 // the row shows what ran, not what was configured) and its outcome. Pure — unit-tested.
-func buildStageRecord(run, stage, outcome, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, untrailered, gateFiles []string) stageRecord {
+func buildStageRecord(run, stage, outcome, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, gateFiles []string) stageRecord {
 	return stageRecord{
-		Run:         run,
-		Stage:       stage,
-		Outcome:     outcome,
-		Provider:    tgt.Provider,
-		Model:       tgt.Model,
-		Effort:      tgt.Effort,
-		Account:     tgt.Account(),
-		Coop:        coopVer,
-		Start:       start.UTC().Format(time.RFC3339),
-		End:         end.UTC().Format(time.RFC3339),
-		Exit:        exit,
-		Retries:     retries,
-		HeadBefore:  headBefore,
-		HeadAfter:   headAfter,
-		Reopened:    reopened,
-		Finished:    finished,
-		Untrailered: untrailered,
-		GateFiles:   gateFiles,
-		QueueTodo:   q.Todo,
-		QueueDoing:  q.Doing,
-		QueueDone:   q.Done,
+		Run:        run,
+		Stage:      stage,
+		Outcome:    outcome,
+		Provider:   tgt.Provider,
+		Model:      tgt.Model,
+		Effort:     tgt.Effort,
+		Account:    tgt.Account(),
+		Coop:       coopVer,
+		Start:      start.UTC().Format(time.RFC3339),
+		End:        end.UTC().Format(time.RFC3339),
+		Exit:       exit,
+		Retries:    retries,
+		HeadBefore: headBefore,
+		HeadAfter:  headAfter,
+		Reopened:   reopened,
+		Finished:   finished,
+		GateFiles:  gateFiles,
+		QueueTodo:  q.Todo,
+		QueueDoing: q.Doing,
+		QueueDone:  q.Done,
 	}
 }
 
@@ -173,9 +171,9 @@ func openRunsRoot(repo string, create bool) (*os.Root, error) {
 // recordStage builds and appends a stage record, stamping end-time, HEAD-after, and the queue
 // counts at emit time. Best-effort — a write failure is warned once and swallowed, so telemetry can
 // never break the run it observes.
-func (a *app) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, untrailered, gateFiles []string, res *iterResult) {
+func (a *app) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, gateFiles []string, res *iterResult) {
 	cnt, _ := queueProgress(hosts)
-	rec := buildStageRecord(run, stage, outcome, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, untrailered, gateFiles)
+	rec := buildStageRecord(run, stage, outcome, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, gateFiles)
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok
 	}

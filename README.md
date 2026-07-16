@@ -1059,9 +1059,9 @@ iteration command if you need something custom. When the queue empties, a fresh,
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
 the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping.
-Coop atomically finalizes each completed `state.md` before review; a reviewer repairs a
-lifecycle-only metadata defect in place instead of reopening finished implementation work. It then
-runs the repo's gate **once** across the whole repo and reopens anything short of "merge with no
+Coop atomically finalizes each completed `state.md` before review. Reviewers never mutate an
+archived task in place; an unexpected lifecycle defect is reopened and reported like any other
+completion-integrity failure. The reviewer then runs the repo's gate **once** across the whole repo and reopens anything short of "merge with no
 changes". If the signoff reopened work, the loop drains and signs off **again** — repeating
 until a signoff reopens nothing (verified done) or it hits the round cap, at which point the
 task it keeps reopening is blocked for a human rather than reported as done. The cap
@@ -1075,7 +1075,13 @@ watch` shows concise `busy`, `stalled`, or `unleased` lease state without exposi
 A stale heartbeat is a diagnostic only — a task is adopted immediately only after its kernel lock
 is available, never by timeout. An older, unleased in-progress folder is adopted through that same
 lock acquisition and is called out once. Stop pre-lease Coop controllers before upgrading: an old
-binary does not participate in this safety boundary.
+binary does not participate in this safety boundary. A completed task leaves a small host-only
+receipt on the persistent authority lock inode, so concurrent loops can recognize a released
+owner's finalized folder without trusting provider-writable task metadata. Before every writable
+agent or review box starts, the controller also journals the current done-folder fingerprints in
+that host-only registry. It removes the journal only after validating the box's queue changes; after a
+controller crash, the next loop replays it and restores any unowned completion instead of silently
+grandfathering it. Completions made outside a supervised box remain ordinary task history.
 
 Every review closes with a structured PASS/FAIL receipt naming the exact sorted task IDs it
 reopened. Coop compares that receipt with the review's done-to-actionable folder delta and its
@@ -1083,19 +1089,21 @@ named subjects; unrelated pre-existing queue work does not count as a reopen, wh
 malformed, or mismatched receipt fails closed and is never accepted as a clean review.
 
 Tune the loop in one committed **`.agent/loop.yaml`** — a section per step (`preflight` /
-`work` / `between` / `signoff`), each with its own `agent:` model ladder and a prompt: between
-is the per-task reviewer, signoff the final one. Prompts never *replace* a coop built-in:
+`work` / `between` / `signoff` / `verify`), each with its own `agent:` model ladder and a prompt:
+between is the per-task reviewer, signoff the final one, and verify is an optional affected-feature
+pass after signoff. Prompts never *replace* a coop built-in:
 **`signoff.prompt`** and **`preflight.prompt`** *append* extra checks/instructions to theirs (so
 the signoff still reopens a shipped task that fails one — e.g. the CHANGELOG gained an entry, the
 docs were regenerated), while **`between.prompt`** *sets* an opt-in per-task audit that runs after
-each completed task and may reopen it. Ordinary between review is off unless enabled + set, but a
+each completed task and may reopen it; **`verify.prompt`** similarly sets its opt-in final pass.
+Ordinary between review is off unless enabled + set, but a
 completed task that changed a gate-defining file always gets an immediate protected audit before
 the loop advances; it uses the configured between target/prompt or falls back to the signoff target
 and a focused built-in prompt. Coop names the just-finished task in either prompt. Each step's
 `agent:` is a ladder of targets
 (`provider[:model][/effort][@account]`) or preset names — so **`signoff.agent`** can review on a
 stronger model than the cheaper `work.agent` loop. Settings live here too: `signoff.rounds`,
-`preflight.enabled`, `work.command`. Every field is optional (a missing file = the built-in
+`preflight.enabled`, `verify.enabled`, `work.command`. Every field is optional (a missing file = the built-in
 defaults), and `coop init` scaffolds a fully-commented starter.
 
 > The old `.agent/loop/*.md` files (`review.md`/`audit.md`/`between.md`) and the legacy
@@ -1584,6 +1592,16 @@ selects provider streaming and foreground interrupt handling. This covers malfor
 events and two-stage Ctrl-C telemetry without a production test switch. Terminal diagnostics are
 classified separately from assistant narration; exact rate/auth phrases inside ordinary task prose
 therefore cannot rotate or stop the loop.
+
+The same process fixture drives work, between-task audit, signoff, and verify as distinct stages,
+including stage-local provider rotation, review reopens, retry and round caps, and the final queue
+exit. Review boxes are checked against their real mount policy: the repository is read-only while
+the task queue alone stays writable for an exact reopen. Stage telemetry records the effective
+provider, model, effort, and account of the terminal attempt after rotation. Cost and tokens come
+only from that attempt's native terminal event: Claude currently reports USD and tokens, while Codex, Gemini, and Grok
+report tokens but no USD. A missing event remains unavailable rather than becoming a synthetic
+zero-cost call. Consult/delegate usage stays in separate peer rows where the adapter exposes it, so
+the closing digest can add it without attributing peer work to the lead stage.
 
 The opt-in live layer checks compatibility with the provider CLIs currently installed in the box:
 

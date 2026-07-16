@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +28,13 @@ const (
 const testLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
 
 var errLeaseCandidateGone = errors.New("lease candidate changed state")
+
+type leaseCompletionReceipt struct {
+	Version int    `json:"version"`
+	Device  uint64 `json:"device"`
+	Inode   uint64 `json:"inode"`
+	Nonce   string `json:"nonce"`
+}
 
 // taskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
 // one of these fields, is the authority: run ids and PIDs exist for recovery evidence and UI only.
@@ -110,6 +120,17 @@ func (l *taskLease) refresh() error {
 func (l *taskLease) quiesce() {
 	l.quiesceOnce.Do(func() { close(l.stop) })
 	<-l.done
+}
+
+// markCompleted records host-only evidence on the already-persistent authority inode while its
+// flock is held. Task-local state is provider-writable and cannot distinguish a foreign controller
+// from an agent that moved an unleased folder.
+func (l *taskLease) markCompleted(taskDir string) error {
+	return writeLeaseCompletionReceipt(l.authority, taskDir)
+}
+
+func (l *taskLease) clearCompleted() error {
+	return clearLeaseCompletionReceipt(l.authority)
 }
 
 // release stops metadata mutation before removing the evidence while still holding both flocks.
@@ -198,6 +219,154 @@ func openLeaseAuthority(root, id string, create bool) (*os.File, error) {
 	return file, nil
 }
 
+func completionReceiptFor(taskDir string) (leaseCompletionReceipt, error) {
+	info, err := os.Lstat(taskDir)
+	if err != nil {
+		return leaseCompletionReceipt{}, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok {
+		return leaseCompletionReceipt{}, fmt.Errorf("task completion path %q is not a real directory", taskDir)
+	}
+	return leaseCompletionReceipt{Version: 1, Device: uint64(stat.Dev), Inode: uint64(stat.Ino)}, nil
+}
+
+func clearLeaseCompletionReceipt(authority *os.File) error {
+	if err := authority.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := authority.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return authority.Sync()
+}
+
+func writeLeaseCompletionReceipt(authority *os.File, taskDir string) error {
+	receipt, err := completionReceiptFor(taskDir)
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	receipt.Nonce = hex.EncodeToString(nonce)
+	return writeLeaseCompletionReceiptValue(authority, receipt)
+}
+
+func writeLeaseCompletionReceiptValue(authority *os.File, receipt leaseCompletionReceipt) error {
+	if receipt.Version != 1 || receipt.Nonce == "" {
+		return errors.New("invalid task completion receipt")
+	}
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		return err
+	}
+	if _, err := authority.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return authority.Sync()
+}
+
+func readLeaseCompletionReceipt(authority *os.File, taskDir string) (leaseCompletionReceipt, bool) {
+	want, err := completionReceiptFor(taskDir)
+	if err != nil {
+		return leaseCompletionReceipt{}, false
+	}
+	if _, err := authority.Seek(0, io.SeekStart); err != nil {
+		return leaseCompletionReceipt{}, false
+	}
+	data, err := io.ReadAll(io.LimitReader(authority, 4<<10))
+	if err != nil {
+		return leaseCompletionReceipt{}, false
+	}
+	var got leaseCompletionReceipt
+	if json.Unmarshal(data, &got) != nil || got.Version != want.Version || got.Device != want.Device ||
+		got.Inode != want.Inode || got.Nonce == "" {
+		return leaseCompletionReceipt{}, false
+	}
+	return got, true
+}
+
+func leaseCompletionReceiptMatches(authority *os.File, taskDir string) bool {
+	_, ok := readLeaseCompletionReceipt(authority, taskDir)
+	return ok
+}
+
+func inspectTaskCompletionReceipt(root string, task taskItem) (leaseCompletionReceipt, bool, bool) {
+	authority, err := openLeaseAuthority(root, task.ID, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return leaseCompletionReceipt{}, false, false
+	}
+	if err != nil {
+		return leaseCompletionReceipt{}, false, true
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		_ = authority.Close()
+		return leaseCompletionReceipt{}, false, true
+	}
+	receipt, ok := readLeaseCompletionReceipt(authority, task.Dir)
+	if err := unlockLeaseFile(authority); err != nil {
+		return leaseCompletionReceipt{}, false, true
+	}
+	return receipt, ok, false
+}
+
+func clearTaskCompletionReceipt(root, id string) error {
+	authority, err := openLeaseAuthority(root, id, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = authority.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil // a new owner cleared the old receipt while acquiring this same flock
+		}
+		return err
+	}
+	return errors.Join(clearLeaseCompletionReceipt(authority), unlockLeaseFile(authority))
+}
+
+// clearTaskCompletionReceiptIfMatches invalidates only the generation the caller observed. The
+// exclusive authority lock closes the gap between comparing a stale receipt and clearing it, so a
+// concurrent trusted completion cannot publish a fresh nonce that this audit then erases.
+func clearTaskCompletionReceiptIfMatches(root string, task taskItem, nonce string) (bool, error) {
+	if nonce == "" {
+		return false, nil
+	}
+	authority, err := openLeaseAuthority(root, task.ID, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := lockExclusiveForCompletionAudit(authority, "task "+task.ID+" authority", func() bool {
+		return leaseAuthorityMetadataExists(root, task.ID)
+	}); err != nil {
+		_ = authority.Close()
+		if errors.Is(err, errCompletionAuditLockOwned) {
+			return false, nil
+		}
+		return false, err
+	}
+	current, ok := currentTask(root, task.ID)
+	if !ok || current.State != stateDone || current.Dir != task.Dir {
+		return false, unlockLeaseFile(authority)
+	}
+	receipt, ok := readLeaseCompletionReceipt(authority, current.Dir)
+	if !ok || receipt.Nonce != nonce {
+		return false, unlockLeaseFile(authority)
+	}
+	return true, errors.Join(clearLeaseCompletionReceipt(authority), unlockLeaseFile(authority))
+}
+
 func writeLeaseAuthorityMetadata(root, id string, meta taskLeaseMetadata) error {
 	key, err := leaseAuthorityKey(root, id)
 	if err != nil {
@@ -265,6 +434,22 @@ func removeLeaseAuthorityMetadata(root, id string) error {
 	}
 	defer registry.Close()
 	if err := registry.Remove(key + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func removeLeaseAuthorityLock(root, id string) error {
+	key, err := leaseAuthorityKey(root, id)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	if err := registry.Remove(key + ".lock"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -502,6 +687,15 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = unlockLeaseFile(f)
 		_ = unlockLeaseFile(authority)
 		return nil, taskLeaseObservation{}, errLeaseCandidateGone
+	}
+	// A new owned attempt invalidates any receipt from an earlier accepted completion. The same
+	// authority flock serializes this with concurrent completion scans.
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		_ = removeLeaseMetadata(root, item.ID)
+		_ = removeLeaseAuthorityMetadata(root, item.ID)
+		_ = unlockLeaseFile(f)
+		_ = unlockLeaseFile(authority)
+		return nil, taskLeaseObservation{}, err
 	}
 	l.startHeartbeat()
 	return l, taskLeaseObservation{}, nil

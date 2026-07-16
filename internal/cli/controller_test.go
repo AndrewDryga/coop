@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -49,26 +52,832 @@ func TestAggregateDuplicateTaskIDs(t *testing.T) {
 	}
 }
 
-func TestCompletedAssignedTaskIgnoresUnrelatedHeldCompletion(t *testing.T) {
+func TestCompletionWindowAndRestoreRespectForeignLease(t *testing.T) {
 	root := t.TempDir()
+	old := taskForLease(t, root, stateDone, "old")
 	assigned := taskForLease(t, root, stateInProgress, "assigned")
-	unrelated := taskForLease(t, root, stateInProgress, "unrelated")
-	foreign, _, err := tryTaskLease(root, unrelated, testLeaseOwner())
+	rogue := taskForLease(t, root, stateInProgress, "rogue")
+	spoofed := taskForLease(t, root, stateInProgress, "spoofed")
+	foreign := taskForLease(t, root, stateInProgress, "foreign")
+	finalized := taskForLease(t, root, stateInProgress, "finalized")
+	foreignLease, _, err := tryTaskLease(root, foreign, testLeaseOwner())
+	if err != nil || foreignLease == nil {
+		t.Fatalf("foreign lease = %v, %v", foreignLease, err)
+	}
+	t.Cleanup(func() { _ = foreignLease.release() })
+	finalizedLease, _, err := tryTaskLease(root, finalized, testLeaseOwner())
+	if err != nil || finalizedLease == nil {
+		t.Fatalf("finalized lease = %v, %v", finalizedLease, err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = foreign.release() })
-	for _, task := range []taskItem{assigned, unrelated} {
+	t.Cleanup(func() { _ = windows.close() })
+	for _, task := range []taskItem{assigned, rogue, spoofed, foreign, finalized} {
 		if err := moveTaskDir(root, task, stateDone); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got, ok := completedAssignedTask(root, assigned.ID)
-	if !ok || got.Root != root || got.Item.ID != assigned.ID {
-		t.Fatalf("assigned completion = (%+v, %v)", got, ok)
+	if err := normalizeCompletedTaskState(spoofed.ID, filepath.Join(root, stateDone, spoofed.ID)); err != nil {
+		t.Fatal(err)
 	}
-	if !pathExists(filepath.Join(root, stateDone, unrelated.ID, "tmp", leaseLockName)) {
-		t.Fatal("observing assigned completion touched the unrelated held task")
+	finalizedDir := filepath.Join(root, stateDone, finalized.ID)
+	if err := finalizeQueuedCompletion(queuedTask{Root: root, Item: taskItem{ID: finalized.ID, Dir: finalizedDir, State: stateDone}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizedLease.markCompleted(finalizedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizedLease.release(); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := windows.candidates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, len(completed))
+	for i := range completed {
+		gotIDs[i] = completed[i].Item.ID
+	}
+	if want := []string{"assigned", "finalized", "foreign", "rogue", "spoofed"}; !slices.Equal(gotIDs, want) {
+		t.Fatalf("window completions = %v, want %v", gotIDs, want)
+	}
+	rejected, err := rejectUnownedCompletions(completed, queuedTask{Root: root, Item: assigned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rejected, []string{"rogue", "spoofed"}) {
+		t.Fatalf("rejected unowned completions = %v, want rogue and spoofed", rejected)
+	}
+	if !pathExists(filepath.Join(root, stateDone, assigned.ID)) {
+		t.Fatal("unowned scan touched this controller's assigned completion")
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) || pathExists(filepath.Join(root, stateDone, rogue.ID)) {
+		t.Error("unowned completion was not restored")
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, spoofed.ID)) || pathExists(filepath.Join(root, stateDone, spoofed.ID)) {
+		t.Error("provider-writable finalized state bypassed unowned completion rejection")
+	}
+	if !pathExists(filepath.Join(root, stateDone, foreign.ID)) {
+		t.Fatal("restore stole a completion from its foreign lease owner")
+	}
+	if !pathExists(filepath.Join(root, stateDone, finalized.ID)) {
+		t.Fatal("restore stole an already-finalized completion from another controller")
+	}
+	if !pathExists(filepath.Join(root, stateDone, old.ID)) {
+		t.Fatal("restore touched a task that was already done before the iteration")
+	}
+}
+
+func TestCompletionWindowDoesNotRedetectDuplicateArchives(t *testing.T) {
+	first, second := filepath.Join(t.TempDir(), "first"), filepath.Join(t.TempDir(), "second")
+	for _, root := range []string{first, second} {
+		writeTaskFile(t, filepath.Join(root, stateDone, "same-id", "task.md"), "# archive\n")
+	}
+	hosts := []string{first, second}
+	windows, err := beginCompletionWindows(hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.close()
+	if completed, err := windows.candidates(); err != nil || len(completed) != 0 {
+		t.Fatalf("duplicate archives redetected as new = %#v, %v", completed, err)
+	}
+}
+
+func TestCompletionWindowDetectsNewArchiveAndReceiptClearedSamePath(t *testing.T) {
+	root := t.TempDir()
+	legacy := taskForLease(t, root, stateDone, "legacy")
+	if err := completeTrustedTask(root, legacy); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.close()
+
+	rogue := taskForLease(t, root, stateInProgress, "rogue-in-window")
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, legacy, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearTaskCompletionReceipt(root, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	returned := taskItem{ID: legacy.ID, Dir: filepath.Join(root, stateInProgress, legacy.ID), State: stateInProgress}
+	if err := moveTaskDir(root, returned, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := windows.candidates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("completion window candidates = %#v, want two", candidates)
+	}
+	got := []string{candidates[0].Item.ID, candidates[1].Item.ID}
+	slices.Sort(got)
+	if want := []string{legacy.ID, rogue.ID}; !slices.Equal(got, want) {
+		t.Fatalf("completion window candidates = %v, want %v", got, want)
+	}
+}
+
+func TestCompletionWindowDetectsReplacedArchiveAtSamePath(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "replaced-archive")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.close()
+
+	displaced := filepath.Join(root, "displaced-archive")
+	if err := os.Rename(archived.Dir, displaced); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(archived.Dir, "task.md"), "# replacement\n")
+	candidates, err := windows.candidates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].Item.ID != archived.ID {
+		t.Fatalf("replacement candidates = %#v, want %s", candidates, archived.ID)
+	}
+}
+
+func TestReviewCompletionWindowDetectsNewReceiptGeneration(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "recompleted-during-review")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	before, ok := taskCompletionReceipt(root, archived)
+	if !ok {
+		t.Fatal("trusted completion did not record its first receipt")
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := moveTrustedTaskFromDone(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, archived.ID)
+	if err := completeTrustedTask(root, reopened); err != nil {
+		t.Fatal(err)
+	}
+	recompleted, _ := currentTask(root, archived.ID)
+	after, ok := taskCompletionReceipt(root, recompleted)
+	if !ok || after.Nonce == before.Nonce {
+		t.Fatalf("completion generation was not refreshed: before=%q after=%q", before.Nonce, after.Nonce)
+	}
+	if _, err := windows.finishReview(); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("review completion audit = %v, want changed generation failure", err)
+	}
+	if !pathExists(recompleted.Dir) {
+		t.Fatal("review audit restored a completion carrying valid host evidence")
+	}
+}
+
+func TestReviewCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "raw-review-recompletion")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, archived.ID)
+	if err := moveTaskDir(root, reopened, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := windows.finishReview(); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("raw out-and-back review audit = %v, want changed generation failure", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) || pathExists(filepath.Join(root, stateDone, archived.ID)) {
+		t.Fatal("raw same-inode review completion was not restored")
+	}
+}
+
+func TestWorkCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "raw-work-recompletion")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, archived.ID)
+	if err := moveTaskDir(root, reopened, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	_, rejected, err := windows.auditDoneCandidates(queuedTask{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rejected, []string{archived.ID}) {
+		t.Fatalf("work audit rejected %v, want %s", rejected, archived.ID)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) || pathExists(filepath.Join(root, stateDone, archived.ID)) {
+		t.Fatal("raw same-inode work completion was not restored")
+	}
+	if err := windows.close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkCompletionWindowWaitsToInvalidateStaleReceipt(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "contended-work-recompletion")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, archived.ID)
+	if err := moveTaskDir(root, reopened, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := openLeaseAuthority(root, archived.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	type auditResult struct {
+		rejected []string
+		err      error
+	}
+	done := make(chan auditResult, 1)
+	go func() {
+		_, rejected, err := windows.auditDoneCandidates(queuedTask{})
+		done <- auditResult{rejected: rejected, err: err}
+	}()
+	select {
+	case result := <-done:
+		t.Fatalf("work audit returned while stale-receipt reader held its lock: %+v", result)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	result := <-done
+	if result.err != nil || !slices.Equal(result.rejected, []string{archived.ID}) {
+		t.Fatalf("contended work audit = rejected %v err %v", result.rejected, result.err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
+		t.Fatal("contended stale receipt let a raw completion remain done")
+	}
+	if err := windows.close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkCompletionWindowWaitsForTransientLocalLeaseReader(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "local-reader-completion")
+	if _, err := taskLeaseDir(rogue.Dir); err != nil {
+		t.Fatal(err)
+	}
+	local, err := openLeaseLock(rogue.Dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := windows.auditDoneCandidates(queuedTask{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("work audit returned while the local reader held its lock: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := unlockLeaseFile(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) {
+		t.Fatal("transient local lock let an unowned completion remain done")
+	}
+	if err := windows.close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkCompletionWindowRejectsArchivedTaskDeparture(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "raw-work-reopen")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.rejectAndClose(queuedTask{}); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("work departure audit = %v, want ownership failure", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
+		t.Fatal("work departure audit lost the reopened task")
+	}
+}
+
+func TestReviewCompletionWindowRejectsInPlaceArchiveMutation(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "mutated-review-archive")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginReviewCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(archived.Dir, "state.md")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state[0] = '!'
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := windows.finishReview(); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("in-place archive mutation audit = %v, want changed generation failure", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
+		t.Fatal("in-place review mutation was not restored for inspection")
+	}
+}
+
+func TestStaleReceiptClearDoesNotEraseFreshGeneration(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "fresh-receipt")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	old, ok := taskCompletionReceipt(root, archived)
+	if !ok {
+		t.Fatal("trusted completion did not record its first receipt")
+	}
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	fresh, ok := taskCompletionReceipt(root, archived)
+	if !ok || fresh.Nonce == old.Nonce {
+		t.Fatalf("trusted recompletion did not publish a fresh nonce: old=%q fresh=%q", old.Nonce, fresh.Nonce)
+	}
+	cleared, err := clearTaskCompletionReceiptIfMatches(root, archived, old.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared {
+		t.Fatal("stale generation unexpectedly cleared a fresh receipt")
+	}
+	got, ok := taskCompletionReceipt(root, archived)
+	if !ok || got.Nonce != fresh.Nonce {
+		t.Fatalf("fresh receipt changed after stale clear: got=%q want=%q", got.Nonce, fresh.Nonce)
+	}
+}
+
+func TestCompletionWindowAuditsBusyReceiptBaseline(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "busy-baseline")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	authority, err := openLeaseAuthority(root, archived.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, archived.ID)
+	if err := moveTaskDir(root, reopened, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.rejectAndClose(queuedTask{}); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("busy-baseline completion audit = %v, want ownership failure", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
+		t.Fatal("busy-baseline unowned completion was not restored")
+	}
+}
+
+func TestTrustedReopenMoveFailureRestoresExactReceipt(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "failed-trusted-reopen")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	before, ok := taskCompletionReceipt(root, archived)
+	if !ok {
+		t.Fatal("trusted completion did not record its receipt")
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, stateInProgress), []byte("obstruction\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTrustedTaskFromDone(root, archived, stateInProgress); err == nil {
+		t.Fatal("trusted reopen unexpectedly moved through a non-directory destination")
+	}
+	after, ok := taskCompletionReceipt(root, archived)
+	if !ok || after.Nonce != before.Nonce {
+		t.Fatalf("failed trusted reopen changed receipt: before=%q after=%q", before.Nonce, after.Nonce)
+	}
+	if candidates, err := windows.candidates(); err != nil || len(candidates) != 0 {
+		t.Fatalf("failed trusted reopen looked like a completion generation: %#v, %v", candidates, err)
+	}
+	if err := windows.close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrustedReopenCrashWindowRestoresClearedReceipt(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "crashed-trusted-reopen")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindowsAllowing([]string{root}, archived.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := openLeaseAuthority(root, archived.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate death after receipt invalidation but before the intended done-to-actionable rename.
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) || pathExists(filepath.Join(root, stateDone, archived.ID)) {
+		t.Fatal("crash-left trusted reopen was not recovered to actionable")
+	}
+}
+
+func TestCompletionWindowScanFailureKeepsJournalForReplay(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "scan-failure-replay")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	windows.scan = func(string, map[string]completionFingerprint) ([]queuedTask, error) {
+		return nil, errors.New("injected completion scan failure")
+	}
+	if err := windows.rejectAndClose(queuedTask{}); err == nil || !strings.Contains(err.Error(), "injected completion scan failure") {
+		t.Fatalf("failed completion audit = %v", err)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; !ok {
+		t.Fatal("failed completion scan deleted its durable replay journal")
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) || pathExists(filepath.Join(root, stateDone, rogue.ID)) {
+		t.Fatal("startup replay did not restore the completion left by the failed scan")
+	}
+}
+
+func TestCompletionWindowCloseRemovesLivenessLock(t *testing.T) {
+	root := t.TempDir()
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := windows.close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openLeaseAuthority(root, completionWindowLockPrefix+windowID, false)
+	if file != nil {
+		_ = file.Close()
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("closed completion window lock = %v, want not exist", err)
+	}
+}
+
+func TestCompletionWindowSetupFailureRemovesUnregisteredLivenessLock(t *testing.T) {
+	root := t.TempDir()
+	indexName, err := completionWindowIndexName(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWriteTaskFile(registry, indexName, []byte("{not-json\n")); err != nil {
+		_ = registry.Close()
+		t.Fatal(err)
+	}
+	_ = registry.Close()
+	before, err := os.ReadDir(os.Getenv(testLeaseAuthorityRootEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), "decode completion window index") {
+		t.Fatalf("completion window setup = %v, want corrupt-index failure", err)
+	}
+	after, err := os.ReadDir(os.Getenv(testLeaseAuthorityRootEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before)+1 {
+		t.Fatalf("setup failure left %d authority files, want only the stable index lock added to %d", len(after), len(before))
+	}
+	indexKey, err := leaseAuthorityKey(root, completionWindowIndexID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[len(after)-1].Name() != indexKey+".lock" {
+		found := false
+		for _, entry := range after {
+			found = found || entry.Name() == indexKey+".lock"
+		}
+		if !found {
+			t.Fatal("setup failure did not retain the stable index authority lock")
+		}
+	}
+}
+
+func TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure(t *testing.T) {
+	root := t.TempDir()
+	indexName, err := completionWindowIndexName(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWriteTaskFile(registry, indexName, []byte("{not-json\n")); err != nil {
+		_ = registry.Close()
+		t.Fatal(err)
+	}
+	_ = registry.Close()
+
+	a := &app{}
+	code, output, usage, classification, windows, err := a.runIteration(
+		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
+		false, []string{root}, completionWindowStrict, true, nil, io.Discard, nil, "setup failure",
+	)
+	if code != 1 || !errors.Is(err, errCompletionWindowSetup) || windows != nil || output != "" || usage != nil {
+		t.Fatalf("setup-failed iteration = code %d output %q usage %#v windows %#v err %v", code, output, usage, windows, err)
+	}
+	if classification.outcome != "process_failure" {
+		t.Fatalf("setup-failed iteration outcome = %q, want process_failure", classification.outcome)
+	}
+}
+
+func TestCompletionWindowReplayRejectsCrashLeftUnownedCompletion(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "rogue-before-crash")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate controller death: the kernel releases the live lock, but the durable index remains.
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("crash replay: %v", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) || pathExists(filepath.Join(root, stateDone, rogue.ID)) {
+		t.Fatal("crash-left unowned completion was not restored")
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("replayed completion window was not removed: %v", err)
+	}
+}
+
+func TestCompletionWindowReplayWaitsForTransientReceiptReader(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "reader-contended-replay")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	authority, err := openLeaseAuthority(root, rogue.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- reconcileCompletionWindows([]string{root}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("replay returned while the receipt reader held its lock: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) || pathExists(filepath.Join(root, stateDone, rogue.ID)) {
+		t.Fatal("replay skipped the completion after transient reader contention")
+	}
+}
+
+func TestCompletionWindowReplayReportsArchivedTaskDepartureOnce(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "departed-before-replay")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("departure replay = %v, want task-specific ownership failure", err)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; ok {
+		t.Fatal("recognized departure replay retained a stale journal")
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
+		t.Fatal("departure replay lost the actionable task")
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("second departure replay = %v, want clean", err)
+	}
+}
+
+func TestReviewCompletionWindowReplayRejectsDeletedArchive(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "deleted-during-review")
+	windows, err := beginReviewCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := os.RemoveAll(archived.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("deleted review replay = %v, want missing-task failure", err)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; !ok {
+		t.Fatal("missing review task deleted its recovery journal")
+	}
+}
+
+func TestCompletionWindowReplayLeavesLiveWindowToItsController(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "live-window-task")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, stateDone, rogue.ID)) {
+		t.Fatal("startup replay stole a completion from a live controller window")
+	}
+	if err := windows.rejectAndClose(queuedTask{}); err == nil || !strings.Contains(err.Error(), rogue.ID) {
+		t.Fatalf("live controller ownership audit = %v, want rejection", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) {
+		t.Fatal("live controller did not restore its unowned completion")
+	}
+}
+
+func TestTrustedCompletionDoesNotStealActiveLease(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateInProgress, "actively-leased")
+	lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+	if err != nil || lease == nil {
+		t.Fatalf("lease = %v, err %v", lease, err)
+	}
+	defer lease.release()
+	if err := completeTrustedTask(root, task); err == nil || !strings.Contains(err.Error(), "leased by another controller") {
+		t.Fatalf("trusted completion against active lease = %v", err)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, task.ID)) || pathExists(filepath.Join(root, stateDone, task.ID)) {
+		t.Fatal("trusted completion moved an actively leased task")
 	}
 }
 
@@ -113,44 +922,33 @@ func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
 	}
 }
 
-func TestFinalizeFinishedTasks(t *testing.T) {
+func TestFinalizeQueuedCompletion(t *testing.T) {
 	root := t.TempDir()
 	doneID := "2026-01-01-done"
-	strandedID := "2026-01-01-stranded" // a completion whose earlier tmp cleanup failed, now retried
 	liveID := "2026-01-02-live"
 	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "task.md"), "# done\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "state.md"), "# State — done\n\n**Status:** commit next\n**Done so far:** kept summary\n**Next action:** move to done\n**Traps:** kept trap\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, doneID, "tmp", "scratch"), "remove\n")
-	writeTaskFile(t, filepath.Join(root, stateDone, strandedID, "task.md"), "# stranded\n")
-	writeTaskFile(t, filepath.Join(root, stateDone, strandedID, "tmp", "scratch"), "remove\n")
 	writeTaskFile(t, filepath.Join(root, stateInProgress, liveID, "task.md"), "# live\n")
 	writeTaskFile(t, filepath.Join(root, stateInProgress, liveID, "tmp", "scratch"), "retain\n")
 
-	// The loop sweeps EVERY done task, so a leftover tmp from a prior run's failed cleanup is
-	// reclaimed on a later run even though it is not part of any fresh done delta.
-	if err := finalizeFinishedTasks([]string{root}); err != nil {
+	doneDir := filepath.Join(root, stateDone, doneID)
+	if err := finalizeQueuedCompletion(queuedTask{Root: root, Item: taskItem{ID: doneID, Dir: doneDir, State: stateDone}}); err != nil {
 		t.Fatal(err)
 	}
-	if pathExists(filepath.Join(root, stateDone, doneID, "tmp")) {
+	if pathExists(filepath.Join(doneDir, "tmp")) {
 		t.Error("observed done task kept its tmp")
-	}
-	if pathExists(filepath.Join(root, stateDone, strandedID, "tmp")) {
-		t.Error("a stranded done task's leftover tmp was not retried")
 	}
 	if !fileExists(filepath.Join(root, stateInProgress, liveID, "tmp", "scratch")) {
 		t.Error("cleanup touched an unfinished task's tmp")
 	}
-	for _, id := range []string{doneID, strandedID} {
-		state := readFileString(filepath.Join(root, stateDone, id, "state.md"))
-		if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
-			t.Errorf("done task %s was not finalized:\n%s", id, state)
-		}
+	state := readFileString(filepath.Join(doneDir, "state.md"))
+	if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
+		t.Errorf("done task was not finalized:\n%s", state)
 	}
-	state := readFileString(filepath.Join(root, stateDone, doneID, "state.md"))
 	if !strings.Contains(state, "**Done so far:** kept summary") || !strings.Contains(state, "**Traps:** kept trap") {
 		t.Errorf("finalization discarded agent-authored fields:\n%s", state)
 	}
-
 }
 
 func TestReconcileInterruptedCompletions(t *testing.T) {
@@ -201,13 +999,46 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		repo, _ := newRepo(t)
 		id := "interrupted-unbound"
 		seedDone(t, repo, id)
-		if err := reconcileInterruptedCompletions([]string{filepath.Join(repo, tasksRoot)}); err != nil {
+		host := filepath.Join(repo, tasksRoot)
+		authority, err := openLeaseAuthority(host, id, true)
+		if err != nil {
 			t.Fatal(err)
 		}
-		dir := filepath.Join(repo, tasksRoot, stateInProgress, id)
+		if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Fatal(err)
+		}
+		staleDir := filepath.Join(repo, "old-completion")
+		if err := os.Mkdir(staleDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeLeaseCompletionReceipt(authority, staleDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(staleDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := unlockLeaseFile(authority); err != nil {
+			t.Fatal(err)
+		}
+		if err := reconcileInterruptedCompletions([]string{host}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(host, stateInProgress, id)
 		if !fileExists(filepath.Join(dir, "task.md")) || pathExists(filepath.Join(repo, tasksRoot, stateDone, id)) {
 			t.Fatal("unbound interrupted completion was not restored")
 		}
+		authority, err = openLeaseAuthority(host, id, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := authority.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() != 0 {
+			t.Fatal("startup restore retained a stale completion receipt")
+		}
+		_ = authority.Close()
 	})
 
 	t.Run("ordinary archive is untouched", func(t *testing.T) {
@@ -256,11 +1087,8 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		if err := reconcileInterruptedCompletions([]string{host}); err != nil {
 			t.Fatal(err)
 		}
-		if err := finalizeFinishedTasks([]string{host}); err != nil {
-			t.Fatal(err)
-		}
 		if !pathExists(filepath.Join(host, stateDone, id)) {
-			t.Fatal("startup reconciliation/finalization moved a completion while its lease was held")
+			t.Fatal("startup reconciliation moved a completion while its lease was held")
 		}
 		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
 			t.Fatal(err)
@@ -271,6 +1099,52 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		if pathExists(filepath.Join(host, stateDone, id)) || !pathExists(filepath.Join(host, stateInProgress, id)) {
 			t.Fatal("released crash-left completion was not restored")
 		}
+	})
+
+	t.Run("accepted completion cleans stale lease metadata", func(t *testing.T) {
+		repo, _ := newRepo(t)
+		host := filepath.Join(repo, tasksRoot)
+		id := "accepted-before-release"
+		item := taskForLease(t, host, stateInProgress, id)
+		lease, _, err := tryTaskLease(host, item, testLeaseOwner())
+		if err != nil || lease == nil {
+			t.Fatalf("lease = %v, err %v", lease, err)
+		}
+		if err := moveTaskDir(host, item, stateDone); err != nil {
+			t.Fatal(err)
+		}
+		doneDir := filepath.Join(host, stateDone, id)
+		lease.quiesce()
+		if err := finalizeQueuedCompletion(queuedTask{Root: host, Item: taskItem{ID: id, Dir: doneDir, State: stateDone}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.markCompleted(doneDir); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate death after the receipt is durable but before release removes metadata.
+		if err := errors.Join(unlockLeaseFile(lease.local), unlockLeaseFile(lease.authority)); err != nil {
+			t.Fatal(err)
+		}
+		if !leaseAuthorityMetadataExists(host, id) {
+			t.Fatal("test did not retain crash-left authority metadata")
+		}
+		if err := reconcileInterruptedCompletions([]string{host}); err != nil {
+			t.Fatal(err)
+		}
+		if !pathExists(doneDir) || pathExists(filepath.Join(host, stateInProgress, id)) {
+			t.Fatal("accepted completion was restored despite its host receipt")
+		}
+		if leaseAuthorityMetadataExists(host, id) {
+			t.Fatal("accepted completion kept stale authority metadata")
+		}
+		authority, err := openLeaseAuthority(host, id, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !leaseCompletionReceiptMatches(authority, doneDir) {
+			t.Fatal("accepted completion lost its host receipt")
+		}
+		_ = authority.Close()
 	})
 
 	t.Run("recovery lock covers rename and bookkeeping window", func(t *testing.T) {
@@ -302,7 +1176,7 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 	})
 }
 
-func TestFinalizeFinishedTasksCleanupFailureRestoresActionableState(t *testing.T) {
+func TestFinalizeQueuedCompletionCleanupFailureRestoresActionableState(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-cleanup-obstructed"
 	doneDir := filepath.Join(root, stateDone, id)
@@ -313,7 +1187,8 @@ func TestFinalizeFinishedTasksCleanupFailureRestoresActionableState(t *testing.T
 	taskTmpCleaner = func(string) error { return errors.New("loop cleanup failed") }
 	t.Cleanup(func() { taskTmpCleaner = oldCleaner })
 
-	if err := finalizeFinishedTasks([]string{root}); err == nil || !strings.Contains(err.Error(), "loop cleanup failed") {
+	item := queuedTask{Root: root, Item: taskItem{ID: id, Dir: doneDir, State: stateDone}}
+	if err := finalizeQueuedCompletion(item); err == nil || !strings.Contains(err.Error(), "loop cleanup failed") {
 		t.Fatalf("loop cleanup failure = %v, want propagated error", err)
 	}
 	restored := filepath.Join(root, stateInProgress, id)
@@ -328,7 +1203,7 @@ func TestFinalizeFinishedTasksCleanupFailureRestoresActionableState(t *testing.T
 	}
 }
 
-func TestFinalizeFinishedTasksStateFailureIsRetryable(t *testing.T) {
+func TestFinalizeQueuedCompletionStateFailureIsRetryable(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-state-obstructed"
 	taskDir := filepath.Join(root, stateDone, id)
@@ -338,7 +1213,8 @@ func TestFinalizeFinishedTasksStateFailureIsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := finalizeFinishedTasks([]string{root}); err == nil || !strings.Contains(err.Error(), "state finalization failed") {
+	item := queuedTask{Root: root, Item: taskItem{ID: id, Dir: taskDir, State: stateDone}}
+	if err := finalizeQueuedCompletion(item); err == nil || !strings.Contains(err.Error(), "state finalization failed") {
 		t.Fatalf("loop finalization state failure = %v, want propagated error", err)
 	}
 	taskDir = filepath.Join(root, stateInProgress, id)
@@ -352,7 +1228,8 @@ func TestFinalizeFinishedTasksStateFailureIsRetryable(t *testing.T) {
 	if err := os.Rename(taskDir, doneDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := finalizeFinishedTasks([]string{root}); err != nil {
+	item.Item.Dir = doneDir
+	if err := finalizeQueuedCompletion(item); err != nil {
 		t.Fatalf("loop finalization retry: %v", err)
 	}
 	if pathExists(filepath.Join(doneDir, "tmp")) {
@@ -361,20 +1238,6 @@ func TestFinalizeFinishedTasksStateFailureIsRetryable(t *testing.T) {
 	state := readFileString(filepath.Join(doneDir, "state.md"))
 	if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
 		t.Errorf("loop finalization retry did not create safe state:\n%s", state)
-	}
-}
-
-func TestReopenedBySignoffUsesExactDoneDelta(t *testing.T) {
-	before := map[string]string{
-		"review-a": stateDone, "review-b": stateDone,
-		"unrelated-doing": stateInProgress, "unrelated-todo": stateTodo,
-	}
-	after := map[string]string{
-		"review-a": stateInProgress, "review-b": stateTodo,
-		"unrelated-doing": stateInProgress, "unrelated-todo": stateTodo,
-	}
-	if got, want := reopenedBySignoff(before, after), []string{"review-a", "review-b"}; !slices.Equal(got, want) {
-		t.Errorf("reopenedBySignoff = %v, want exact sorted delta %v", got, want)
 	}
 }
 
@@ -538,13 +1401,6 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if m := untrailered(repo, base, head, []string{"task-42", "task-99"}); len(m) != 1 || m[0] != "task-99" {
 		t.Errorf("untrailered = %v, want [task-99]", m)
 	}
-	bound := queuedTask{Root: "/first", Item: taskItem{ID: "task-42", State: stateDone}}
-	if unbindableQueuedCompletion(repo, base, head, bound) {
-		t.Error("valid assigned completion was rejected")
-	}
-	if !unbindableQueuedCompletion(repo, head, head, bound) {
-		t.Error("unchanged-HEAD assigned completion was accepted")
-	}
 	// No-HEAD-change work must fail closed even if an old exact trailer is reachable. Crash-left
 	// completion recovery restores the task and requires a new range-bound amend/recommit.
 	if m := untrailered(repo, head, head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
@@ -614,8 +1470,8 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
 
 	item := readTaskTree(root)[0]
-	if err := restoreQueuedCompletions([]queuedTask{{Root: root, Item: item}}); err != nil {
-		t.Fatalf("restoreQueuedCompletions: %v", err)
+	if err := restoreQueuedCompletion(queuedTask{Root: root, Item: item}); err != nil {
+		t.Fatalf("restoreQueuedCompletion: %v", err)
 	}
 	inProgressDir := filepath.Join(root, stateInProgress, id)
 	if !pathExists(inProgressDir) || pathExists(doneDir) {
@@ -828,9 +1684,13 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 		t.Error("fork reconciliation must clean completed task tmp")
 	}
 	for _, id := range []string{"todo1", "wip1"} {
-		state := readFileString(filepath.Join(q, stateDone, id, "state.md"))
+		doneDir := filepath.Join(q, stateDone, id)
+		state := readFileString(filepath.Join(doneDir, "state.md"))
 		if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
 			t.Errorf("fork reconciliation did not finalize %s state:\n%s", id, state)
+		}
+		if !taskCompletionRecorded(q, taskItem{ID: id, Dir: doneDir, State: stateDone}) {
+			t.Errorf("fork reconciliation did not record completion evidence for %s", id)
 		}
 	}
 	if !fileExists(filepath.Join(q, stateBlocked, "blk1", "tmp", "scratch")) {

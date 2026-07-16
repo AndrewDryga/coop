@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Loop review stages are now process-tested as one closed provider workflow.** Deterministic
+  coverage drives work, between-task audit, signoff, and verify on distinct provider/model/account
+  targets; checks the real read-only-review mount policy; and covers review rotation, reopens,
+  retry exhaustion, the signoff round cap, soft-stop auditing, native usage attribution, and final
+  queue/exit bookkeeping. Review telemetry now preserves the terminal outcome, effective target,
+  usage, and total retries instead of hard-coding success. A verify reopen exits nonzero, stale
+  reset hints use bounded backoff, oversized nonterminal stream events no longer invalidate a later
+  terminal success, and every unleased task moved to done during an iteration is restored. A
+  host-only completion receipt distinguishes a released foreign controller without trusting
+  provider-writable task metadata, while a crash-durable done-folder fingerprint journal extends
+  the check across controller death and every writable review stage without reclassifying
+  historical completions made outside a supervised box. Receipt invalidation is generation-bound,
+  work stages reject raw archive reopens, and reviewers never mutate archived task metadata in
+  place after host finalization.
+
 - **Loop recovery policy is now process-tested across every provider transition.** The external
   deterministic matrix covers authentication, provider/output limits, ordinary failures,
   malformed and truncated streams, account/model cooling, interruption and resume, all 12 directed
@@ -63,8 +78,8 @@
 
 - **Completed task snapshots are deterministic.** Every direct, loop, retry, and fork-reconciled
   completion atomically sets `state.md` to `Status: complete` and `Next action: none` before review,
-  preserving useful summaries and traps before removing task-local `tmp/`. Metadata-only review
-  findings are repaired in place; substantive reopens receive a concrete resume state.
+  preserving useful summaries and traps before removing task-local `tmp/`. Reviewers do not mutate
+  archived tasks in place; every reopen receives a concrete resume state.
 
 - **Zsh no longer second-guesses valid Coop targets.** Sourcing the generated completion after
   `compinit` installs command-local `nocorrect` behavior for `coop`, preserving dynamic completion

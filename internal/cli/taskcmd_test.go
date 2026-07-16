@@ -191,6 +191,10 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !strings.Contains(completedState, "**Status:** complete") || !strings.Contains(completedState, "**Next action:** none") {
 		t.Errorf("done must finalize lifecycle-owned state fields:\n%s", completedState)
 	}
+	doneItem := taskItem{ID: id, Dir: filepath.Join(root, stateDone, id), State: stateDone}
+	if !taskCompletionRecorded(root, doneItem) {
+		t.Error("done must record host-only completion evidence")
+	}
 
 	// Review reopens are ordinary non-done moves: scratch created for the next attempt survives
 	// the move, then the next successful completion removes it.
@@ -202,11 +206,36 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !fileExists(filepath.Join(root, stateInProgress, id, "tmp", "review-notes.txt")) {
 		t.Error("review reopen must retain tmp")
 	}
+	authority, err := openLeaseAuthority(root, id, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := authority.Stat()
+	_ = authority.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Error("review reopen retained stale host-only completion evidence")
+	}
+	reopenedItem, ok := currentTask(root, id)
+	if !ok {
+		t.Fatal("reopened task disappeared")
+	}
+	if err := moveTaskDir(root, reopenedItem, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	if taskCompletionRecorded(root, doneItem) {
+		t.Error("same-inode completion after reopen matched the cleared stale receipt")
+	}
 	if code, err := tasksFolderMove(root, []string{id}, stateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done after review reopen: code=%d err=%v", code, err)
 	}
 	if pathExists(filepath.Join(root, stateDone, id, "tmp")) {
 		t.Error("done after review reopen must remove tmp")
+	}
+	if !taskCompletionRecorded(root, doneItem) {
+		t.Error("done after review reopen must refresh host-only completion evidence")
 	}
 
 	// no-op move when already in the target state

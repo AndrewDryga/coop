@@ -42,8 +42,8 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					destinationTarget := loopRecoveryTarget(destination, "rotation-"+destination, "work")
 					writeLoopRecoveryPreset(t, suite.layout.Repo, "rotation", []string{sourceTarget, destinationTarget})
 					attempts := []loopProcessAttempt{
-						{Target: sourceTarget, Result: "rate-limit"},
-						{Target: destinationTarget, Result: "complete"},
+						{Target: sourceTarget, Stage: "work", Result: "rate-limit"},
+						{Target: destinationTarget, Stage: "work", Result: "complete"},
 					}
 					suite.reset(t, loopRecoveryScenario(taskID, attempts))
 					result := runLoopRecovery(t, suite, "rotation")
@@ -74,7 +74,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				taskID := "authentication-" + provider
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
 				target := loopRecoveryTarget(provider, "auth-model", "work")
-				attempts := []loopProcessAttempt{{Target: target, Result: "authentication"}}
+				attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "authentication"}}
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				result := runLoopRecovery(t, suite, target)
 				if result.ExitCode == 0 || !strings.Contains(result.Stderr, "coop login "+provider+"@work") || strings.Contains(result.Stderr, "switching to") || strings.Contains(result.Stderr, "retrying in") {
@@ -98,8 +98,8 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
 		target := loopRecoveryTarget("codex", "output-model", "work")
 		attempts := []loopProcessAttempt{
-			{Target: target, Result: "output-limit"},
-			{Target: target, Result: "complete"},
+			{Target: target, Stage: "work", Result: "output-limit"},
+			{Target: target, Stage: "work", Result: "complete"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
@@ -125,7 +125,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
 				target := loopRecoveryTarget("codex", "ordinary-model", "work")
 				writeLoopRecoveryPreset(t, suite.layout.Repo, "ordinary", []string{target, loopRecoveryTarget("claude", "must-not-run", "work")})
-				attempts := []loopProcessAttempt{{Target: target, Result: resultKind}}
+				attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: resultKind}}
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				process := startLoopRecovery(t, suite, "ordinary")
 				defer process.Cleanup()
@@ -158,7 +158,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				taskID := "stream-" + resultKind
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
 				target := loopRecoveryTarget("codex", "stream-model", "work")
-				attempts := []loopProcessAttempt{{Target: target, Result: resultKind}}
+				attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: resultKind}}
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				process := startLoopRecoveryPTY(t, suite, target)
 				defer process.Cleanup()
@@ -195,9 +195,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		}
 		writeLoopRecoveryPreset(t, suite.layout.Repo, "cooling", targets)
 		attempts := []loopProcessAttempt{
-			{Target: targets[0], Result: "rate-limit"},
-			{Target: targets[1], Result: "rate-limit"},
-			{Target: targets[2], Result: "complete"},
+			{Target: targets[0], Stage: "work", Result: "rate-limit"},
+			{Target: targets[1], Stage: "work", Result: "rate-limit"},
+			{Target: targets[2], Stage: "work", Result: "complete"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, "cooling")
@@ -220,7 +220,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		for _, provider := range suite.providers {
 			target := loopRecoveryTarget(provider, "limited-"+provider, "work")
 			targets = append(targets, target)
-			attempts = append(attempts, loopProcessAttempt{Target: target, Result: "rate-limit"})
+			attempts = append(attempts, loopProcessAttempt{Target: target, Stage: "work", Result: "rate-limit"})
 		}
 		writeLoopRecoveryPreset(t, suite.layout.Repo, "all-limited", targets)
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
@@ -253,8 +253,8 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
 		target := loopRecoveryTarget("codex", "resume-model", "work")
 		attempts := []loopProcessAttempt{
-			{Target: target, Result: "wait"},
-			{Target: target, Result: "complete"},
+			{Target: target, Stage: "work", Result: "wait"},
+			{Target: target, Stage: "work", Result: "complete"},
 		}
 		scenario := loopRecoveryScenario(taskID, attempts)
 		suite.reset(t, scenario)
@@ -294,7 +294,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		taskID := "hard-interrupt-telemetry"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
 		target := loopRecoveryTarget("codex", "interrupt-model", "work")
-		attempts := []loopProcessAttempt{{Target: target, Result: "wait"}}
+		attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "wait"}}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecoveryPTY(t, suite, target)
 		defer process.Cleanup()
@@ -353,7 +353,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				taskID := "interrupted-completion-" + tc.name
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
 				target := loopRecoveryTarget("codex", "completion-model", "work")
-				attempt := loopProcessAttempt{Target: target, Result: tc.result}
+				attempt := loopProcessAttempt{Target: target, Stage: "work", Result: tc.result}
 				suite.reset(t, loopRecoveryScenario(taskID, []loopProcessAttempt{attempt}))
 				process := startLoopRecovery(t, suite, target)
 				defer process.Cleanup()
@@ -375,7 +375,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				}
 				crashHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
 
-				suite.reset(t, loopRecoveryScenario(taskID, []loopProcessAttempt{{Target: target, Result: "repair-binding"}}))
+				suite.reset(t, loopRecoveryScenario(taskID, []loopProcessAttempt{{Target: target, Stage: "work", Result: "repair-binding"}}))
 				restart := runLoopRecovery(t, suite, target)
 				trace := readProcessTrace(t, suite.layout.Trace)
 				if restart.Err != nil || restart.ExitCode != 0 || !loopTraceHasAttempt(trace) {
@@ -397,7 +397,7 @@ func loopRecoveryScenario(taskID string, attempts []loopProcessAttempt) loopProc
 	if err != nil {
 		panic(err)
 	}
-	return loopProcessScenario{Version: 5, Provider: target.Provider, ProviderHomes: agents.Names(), Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts}}
+	return loopProcessScenario{Version: 6, Provider: target.Provider, ProviderHomes: agents.Names(), Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts}}
 }
 
 func loopRecoveryTarget(provider, model, account string) string {
@@ -438,11 +438,20 @@ func startLoopRecovery(t *testing.T, suite *directProcessSuite, target string) *
 
 func startLoopRecoveryPTY(t *testing.T, suite *directProcessSuite, target string) *procharness.Process {
 	t.Helper()
+	command := terminalLoopCommand(t, loopRecoveryCommand(suite, target))
+	process, err := procharness.Start(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return process
+}
+
+func terminalLoopCommand(t *testing.T, base procharness.Command) procharness.Command {
+	t.Helper()
 	path, err := exec.LookPath("script")
 	if err != nil {
 		t.Fatal("script(1) is required for terminal-bound loop coverage")
 	}
-	base := loopRecoveryCommand(suite, target)
 	command := procharness.Command{
 		Path: path, Dir: base.Dir, Env: base.Env, MaxOutput: base.MaxOutput,
 		KillGrace: base.KillGrace,
@@ -459,11 +468,7 @@ func startLoopRecoveryPTY(t *testing.T, suite *directProcessSuite, target string
 	default:
 		t.Skipf("terminal-bound loop coverage is unsupported on %s", runtime.GOOS)
 	}
-	process, err := procharness.Start(command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return process
+	return command
 }
 
 func shellQuote(value string) string {
@@ -569,7 +574,8 @@ func assertLoopAttemptContractsWithStreaming(t *testing.T, suite *directProcessS
 		}
 		assertDirectEnvironment(t, starts[i].Environment, suite.allCredKeys, provider, directProviderContracts[provider], target.Model, target.Effort)
 		wantExit := 23
-		if attempt.Result == "complete" || strings.HasPrefix(attempt.Result, "unbound") || attempt.Result == "repair-binding" {
+		if (strings.HasPrefix(attempt.Result, "complete") && attempt.Result != "complete-wait") ||
+			(strings.HasPrefix(attempt.Result, "unbound") && attempt.Result != "unbound-wait") || attempt.Result == "repair-binding" {
 			wantExit = 0
 		} else if attempt.Result == "wait" {
 			wantExit = 130

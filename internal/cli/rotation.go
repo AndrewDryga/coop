@@ -170,7 +170,9 @@ func (r *rotation) rotates() bool { return len(r.targets) > 1 }
 // it's waiting until.
 func (r *rotation) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep time.Duration, until time.Time) {
 	if !resetAt.After(now) {
-		resetAt = now.Add(limitWait(limitHint{limited: true, resetAt: resetAt}, attempt, now))
+		// A stale reset is no more informative than no reset. Drop it so repeated stale hints use
+		// the normal bounded backoff instead of pinning every attempt to the minimum wait.
+		resetAt = now.Add(limitWait(limitHint{limited: true}, attempt, now))
 	}
 	r.limited[r.targets[r.idx].String()] = resetAt
 	return r.selectTarget(attempt, now)

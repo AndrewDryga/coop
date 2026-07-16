@@ -164,7 +164,7 @@ func (d *ndjsonDecoder) appendFragment(p []byte) {
 	}
 	d.buf = nil
 	d.dropping = true
-	d.markMalformed("provider stream event exceeded the size limit")
+	d.reportStreamProblem("provider stream event exceeded the size limit")
 }
 
 // flush renders any trailing line left without a newline. A well-formed NDJSON stream ends
@@ -208,6 +208,10 @@ func (d *ndjsonDecoder) line(raw []byte) {
 
 func (d *ndjsonDecoder) markMalformed(message string) {
 	d.malformed = true
+	d.reportStreamProblem(message)
+}
+
+func (d *ndjsonDecoder) reportStreamProblem(message string) {
 	if d.beforeRaw != nil {
 		d.beforeRaw()
 	}

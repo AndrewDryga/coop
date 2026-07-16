@@ -467,7 +467,8 @@ func translateWorkdir(root, workdir string, mounts []mount) (string, error) {
 }
 
 func validateMountPolicy(root string, run runCommand, providerHomes []string) error {
-	repoMounts := 0
+	repoMounts, reviewQueueMounts := 0, 0
+	repoReadOnly := false
 	for _, m := range run.Mounts {
 		if m.Named {
 			if (m.Source != "coop-cache" || m.Target != "/home/node/.cache") &&
@@ -481,13 +482,18 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 		if m.Target == run.Workdir {
 			repoMounts++
-			if m.ReadOnly || m.Source != run.HostWorkdir {
-				return fmt.Errorf("repo mount %q:%q must be the writable translated workdir", m.Source, m.Target)
+			repoReadOnly = m.ReadOnly
+			if m.Source != run.HostWorkdir {
+				return fmt.Errorf("repo mount %q:%q must be the translated workdir", m.Source, m.Target)
 			}
 			info, err := os.Stat(m.Source)
 			if err != nil || !info.IsDir() {
 				return fmt.Errorf("repo mount source %q is not a directory", m.Source)
 			}
+			continue
+		}
+		if !m.ReadOnly && m.Source == filepath.Join(run.HostWorkdir, ".agent", "tasks") && m.Target == filepath.Join(run.Workdir, ".agent", "tasks") {
+			reviewQueueMounts++
 			continue
 		}
 		if provider, ok := credentialMountProvider(m.Target); ok && credentialSourceMatches(root, provider, m.Source) {
@@ -522,7 +528,10 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 	}
 	if repoMounts != 1 {
-		return fmt.Errorf("run has %d writable repo mounts, want one", repoMounts)
+		return fmt.Errorf("run has %d repo mounts, want one", repoMounts)
+	}
+	if (repoReadOnly && reviewQueueMounts != 1) || (!repoReadOnly && reviewQueueMounts != 0) {
+		return fmt.Errorf("run has repo read-only=%v and %d review queue mounts", repoReadOnly, reviewQueueMounts)
 	}
 	return nil
 }
@@ -712,7 +721,7 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 		return err
 	}
 	if s.Loop != nil {
-		exitCode, signal, runErr := serveLoopAttempt(root, trace, provider, *s.Loop)
+		exitCode, signal, runErr := serveLoopAttempt(root, trace, provider, providerArgv, *s.Loop)
 		if err := record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode, Signal: signal}); err != nil {
 			return err
 		}
@@ -798,7 +807,7 @@ func readScenario(root, path string) (scenario, error) {
 		seenHomes[provider] = true
 	}
 	if s.Loop != nil {
-		if s.Version != 5 {
+		if s.Version != 6 {
 			return scenario{}, fmt.Errorf("loop scenario version %d is unsupported", s.Version)
 		}
 		if s.Consult != nil || s.Delegate != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {

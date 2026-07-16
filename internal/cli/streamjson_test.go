@@ -60,13 +60,14 @@ func TestStreamDecoder(t *testing.T) {
 	}
 }
 
-func TestNDJSONDecoderBoundsAndMarksMalformedEvents(t *testing.T) {
+func TestNDJSONDecoderBoundsAndReportsStreamProblems(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		write []byte
+		name      string
+		write     []byte
+		malformed bool
 	}{
-		{name: "truncated json", write: []byte(`{"type":"result"`)},
-		{name: "malformed json", write: []byte("{not-json}\n")},
+		{name: "truncated json", write: []byte(`{"type":"result"`), malformed: true},
+		{name: "malformed json", write: []byte("{not-json}\n"), malformed: true},
 		{name: "oversized event", write: bytes.Repeat([]byte("x"), maxStreamEventBytes+1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,13 +78,22 @@ func TestNDJSONDecoderBoundsAndMarksMalformedEvents(t *testing.T) {
 				t.Fatal(err)
 			}
 			d.flush()
-			if !d.malformed || events != 0 || !strings.Contains(tail.String(), "provider stream event") {
-				t.Fatalf("decoder malformed/events/tail = %v/%d/%q", d.malformed, events, tail.String())
+			if d.malformed != tc.malformed || events != 0 || !strings.Contains(tail.String(), "provider stream event") {
+				t.Fatalf("decoder malformed/events/tail = %v/%d/%q, want malformed %v", d.malformed, events, tail.String(), tc.malformed)
 			}
 			if len(d.buf) != 0 {
 				t.Fatalf("decoder retained %d buffered bytes", len(d.buf))
 			}
 		})
+	}
+
+	var successOut, successTail bytes.Buffer
+	success := newStreamDecoder(&successOut, &successTail, "claude", "work", "")
+	_, _ = success.Write(bytes.Repeat([]byte("x"), maxStreamEventBytes+1))
+	_, _ = success.Write([]byte("\n" + `{"type":"result","subtype":"success","num_turns":1,"duration_ms":1,"total_cost_usd":0.01}` + "\n"))
+	success.flush()
+	if got := success.streamOutcome(); got != streamSucceeded {
+		t.Fatalf("valid terminal result after oversized event = %d, want succeeded", got)
 	}
 
 	var out, tail bytes.Buffer

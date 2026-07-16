@@ -399,19 +399,26 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 	}
 	if t.State == newState {
 		if newState == stateDone {
-			if err := finalizeCompletedTask(t.ID, t.Dir); err != nil {
+			if err := completeTrustedTask(root, t); err != nil {
 				return -1, fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
 			}
 		}
 		ui.Note("%s is already %s", t.ID, stateLabel(newState))
 		return 0, nil
 	}
-	if err := moveTaskDir(root, t, newState); err != nil {
-		return -1, err
-	}
 	if newState == stateDone {
-		if err := finalizeCompletedTask(t.ID, filepath.Join(root, stateDone, t.ID)); err != nil {
-			return -1, fmt.Errorf("%w — the task is in done; fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+		if err := completeTrustedTask(root, t); err != nil {
+			return -1, fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+		}
+	} else {
+		var err error
+		if t.State == stateDone {
+			err = moveTrustedTaskFromDone(root, t, newState)
+		} else {
+			err = moveTaskDir(root, t, newState)
+		}
+		if err != nil {
+			return -1, err
 		}
 	}
 	ui.OK("%s %s", pastVerb, t.ID)
@@ -798,7 +805,13 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		return 1, err
 	}
 	if t.State != stateBlocked {
-		if err := moveTaskDir(root, t, stateBlocked); err != nil {
+		var err error
+		if t.State == stateDone {
+			err = moveTrustedTaskFromDone(root, t, stateBlocked)
+		} else {
+			err = moveTaskDir(root, t, stateBlocked)
+		}
+		if err != nil {
 			return -1, err
 		}
 	}

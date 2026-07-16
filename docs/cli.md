@@ -470,7 +470,8 @@ coop loop [agent] — work the task queue until done, then sign off.
   short of "merge with no changes". If the signoff reopened work, the loop drains and
   signs off AGAIN, repeating until a signoff reopens nothing (verified done) or the round
   cap is hit — then the task it keeps reopening is blocked for a human (exit 3), not
-  reported as done. The cap SCALES with the batch: half the tasks worked this run, clamped
+  reported as done. A later review or verify pass that leaves work actionable exits 1 so
+  automation cannot mistake it for verified done. The cap SCALES with the batch: half the tasks worked this run, clamped
   to [3, loop.yaml signoff.rounds] (default 5) — a small batch still gets a few tries, a big
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.

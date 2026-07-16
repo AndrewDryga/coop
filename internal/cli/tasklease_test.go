@@ -21,6 +21,16 @@ func testLeaseOwner() taskLeaseOwner {
 	}
 }
 
+func taskCompletionReceipt(root string, task taskItem) (leaseCompletionReceipt, bool) {
+	receipt, ok, _ := inspectTaskCompletionReceipt(root, task)
+	return receipt, ok
+}
+
+func taskCompletionRecorded(root string, task taskItem) bool {
+	_, ok := taskCompletionReceipt(root, task)
+	return ok
+}
+
 func taskForLease(t *testing.T, root, state, id string) taskItem {
 	t.Helper()
 	writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# "+id+"\n")

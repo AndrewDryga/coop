@@ -85,13 +85,13 @@ func TestRotationUnknownResetBacksOff(t *testing.T) {
 
 func TestRotationNonfutureResetStillCoolsTarget(t *testing.T) {
 	now := time.Unix(1000, 0)
-	for _, reset := range []time.Time{now.Add(-time.Hour), now} {
+	for _, reset := range []time.Time{time.Time{}, now.Add(-time.Hour), now} {
 		r := rts("a", "b")
-		if sleep, _ := r.onLimit(reset, 1, now); sleep != 0 || r.active().String() != "claude@b" {
+		if sleep, _ := r.onLimit(reset, 3, now); sleep != 0 || r.active().String() != "claude@b" {
 			t.Fatalf("reset %v: sleep=%v active=%q, want free target b", reset, sleep, r.active())
 		}
-		if until := r.limited["claude@a"]; !until.After(now) {
-			t.Fatalf("reset %v: normalized cooling deadline = %v, want future", reset, until)
+		if until, want := r.limited["claude@a"], now.Add(4*time.Minute); !until.Equal(want) {
+			t.Fatalf("reset %v: normalized cooling deadline = %v, want backoff %v", reset, until, want)
 		}
 	}
 }

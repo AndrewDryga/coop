@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -437,7 +438,7 @@ func TestReadScenarioAcceptsOnlyClosedBoundedBehavior(t *testing.T) {
 	}
 }
 
-func TestReadLoopScenarioAcceptsOnlyClosedV5Attempts(t *testing.T) {
+func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 	root := canonicalTemp(t)
 	path := filepath.Join(root, "scenario.json")
 	write := func(body string) error {
@@ -448,23 +449,36 @@ func TestReadLoopScenarioAcceptsOnlyClosedV5Attempts(t *testing.T) {
 		_, err := readScenario(root, path)
 		return err
 	}
-	valid := `{"version":5,"provider":"codex","provider_homes":["codex"],"loop":{"task_id":"loop-task-codex","attempts":[{"target":"codex:loop-model@work","result":"complete"}]}}`
+	valid := `{"version":6,"provider":"codex","provider_homes":["codex"],"loop":{"task_id":"loop-task-codex","attempts":[{"target":"codex:loop-model@work","stage":"work","result":"complete"}]}}`
 	if err := write(valid); err != nil {
 		t.Fatalf("valid loop scenario rejected: %v", err)
 	}
-	for _, result := range []string{"complete-wait", "unbound", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "rate-limit", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
+	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "rate-limit", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
 		body := strings.Replace(valid, `"result":"complete"`, `"result":"`+result+`"`, 1)
 		if err := write(body); err != nil {
 			t.Fatalf("closed loop result %q rejected: %v", result, err)
 		}
 	}
+	for _, stage := range []string{"between", "signoff", "verify"} {
+		for _, result := range []string{"pass", "reopen", "reopen-ordinary", "rate-limit", "output-limit", "authentication", "ordinary", "malformed", "truncated", "wait"} {
+			body := strings.Replace(valid, `"stage":"work"`, `"stage":"`+stage+`"`, 1)
+			body = strings.Replace(body, `"result":"complete"`, `"result":"`+result+`"`, 1)
+			if err := write(body); err != nil {
+				t.Fatalf("closed %s result %q rejected: %v", stage, result, err)
+			}
+		}
+	}
 	for _, body := range []string{
-		strings.Replace(valid, `"version":5`, `"version":4`, 1),
+		strings.Replace(valid, `"version":6`, `"version":5`, 1),
+		strings.Replace(valid, `,"stage":"work"`, "", 1),
+		strings.Replace(valid, `"stage":"work"`, `"stage":"preflight"`, 1),
+		strings.Replace(valid, `"result":"complete"`, `"result":"pass"`, 1),
+		strings.Replace(strings.Replace(valid, `"stage":"work"`, `"stage":"signoff"`, 1), `"result":"complete"`, `"result":"repair-binding"`, 1),
 		strings.Replace(valid, `"task_id":"loop-task-codex"`, `"task_id":"../escape"`, 1),
 		strings.Replace(valid, `"provider":"codex"`, `"provider":"claude"`, 1),
 		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"claude:loop-model@work"`, 1),
 		strings.Replace(valid, `"target":"codex:loop-model@work"`, `"target":"codex@work,personal"`, 1),
-		strings.Replace(valid, `"attempts":[{"target":"codex:loop-model@work","result":"complete"}]`, `"attempts":[]`, 1),
+		strings.Replace(valid, `"attempts":[{"target":"codex:loop-model@work","stage":"work","result":"complete"}]`, `"attempts":[]`, 1),
 		strings.TrimSuffix(valid, "}") + `,"command":"sh -c id"}`,
 		strings.TrimSuffix(valid, "}") + `,"marker":"mixed"}`,
 		strings.TrimSuffix(valid, "}") + `,"consult":{"calls":[],"steps":[]}}`,
@@ -472,6 +486,48 @@ func TestReadLoopScenarioAcceptsOnlyClosedV5Attempts(t *testing.T) {
 	} {
 		if err := write(body); err == nil {
 			t.Errorf("unsafe/open loop scenario accepted:\n%s", body)
+		}
+	}
+}
+
+func TestVerifyLoopPromptRequiresStageMarkerAndTask(t *testing.T) {
+	taskID := "loop-task-codex"
+	tests := []struct {
+		stage, provider string
+		argv            []string
+	}{
+		{"work", "codex", []string{"codex", "exec", "Work task " + taskID + ", already claimed in 10_in_progress/."}},
+		{"between", "claude", []string{"claude", "-p", "FIXTURE BETWEEN " + taskID, "--output-format", "stream-json"}},
+		{"signoff", "gemini", []string{"gemini", "-p", "FIXTURE SIGNOFF " + taskID}},
+		{"verify", "grok", []string{"grok", "-p", "FIXTURE VERIFY " + taskID}},
+	}
+	for _, test := range tests {
+		if err := verifyLoopPrompt(test.stage, taskID, test.provider, test.argv); err != nil {
+			t.Errorf("valid %s prompt rejected: %v", test.stage, err)
+		}
+		withoutTask := slices.Clone(test.argv)
+		withoutTask[len(withoutTask)-1] = strings.ReplaceAll(withoutTask[len(withoutTask)-1], taskID, "other-task")
+		if test.provider == "claude" {
+			withoutTask[2] = strings.ReplaceAll(withoutTask[2], taskID, "other-task")
+		}
+		if err := verifyLoopPrompt(test.stage, taskID, test.provider, withoutTask); err == nil {
+			t.Errorf("%s prompt without task id accepted", test.stage)
+		}
+	}
+	prompts := map[string]string{
+		"work":    "Work task " + taskID + ", already claimed in 10_in_progress/.",
+		"between": "FIXTURE BETWEEN " + taskID,
+		"signoff": "FIXTURE SIGNOFF " + taskID,
+		"verify":  "FIXTURE VERIFY " + taskID,
+	}
+	for expected := range prompts {
+		for actual, prompt := range prompts {
+			if expected == actual {
+				continue
+			}
+			if err := verifyLoopPrompt(expected, taskID, "codex", []string{"codex", "exec", prompt}); err == nil {
+				t.Errorf("%s prompt accepted as %s", actual, expected)
+			}
 		}
 	}
 }

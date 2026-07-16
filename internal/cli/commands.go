@@ -1680,12 +1680,37 @@ func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*
 // provider, model, effort, and account — and fails CLOSED. A rate limit rotates the stage's ladder
 // (or waits) and retries; a launch error or a nonzero, non-limit exit is retried within a small
 // budget, and if the stage still can't run it returns an error so the caller can't mistake "nothing
-// reopened" for "reviewed and accepted". A user interrupt (ctx canceled) returns no error — not a
-// review failure. Returns the completed review's output so the caller can read its reopen receipt.
+// reopened" for "reviewed and accepted". A user interrupt is returned distinctly from a review
+// failure. The result preserves the terminal attempt and retry count so every caller records the
+// same truthful stage telemetry before deciding whether to continue.
 // Local counters keep review trouble out of the work loop's stop accounting.
 type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming bool)
 
 var errReviewInterrupted = errors.New("review interrupted")
+
+type completionWindowMode uint8
+
+const (
+	completionWindowStrict completionWindowMode = iota
+	completionWindowReview
+)
+
+type reviewRunResult struct {
+	output   string
+	usage    *iterResult
+	outcome  string
+	exit     int
+	retries  int
+	target   agents.Target
+	reopened []string
+}
+
+func interruptedReviewResult(last reviewRunResult, retries int) reviewRunResult {
+	last.outcome = "interrupted"
+	last.exit = loopInterruptedExitCode
+	last.retries = retries
+	return last
+}
 
 func iterationAuthenticationError(target agents.Target) error {
 	if account := target.Account(); account != "" {
@@ -1701,42 +1726,59 @@ func reviewMountPolicy(writes loopcfg.ReviewWrites, queues []string) (bool, []st
 	return true, queues
 }
 
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (string, *iterResult, error) {
-	var fails, waits, retries int
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (reviewRunResult, error) {
+	var fails, waits, outputRetries, totalRetries int
+	last := reviewRunResult{target: rev.active()}
 	for {
 		if reviewStopRequested(ctx, wake) {
-			return "", nil, errReviewInterrupted
+			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 		}
 		agent := a.applyTarget(rev)
+		target := rev.active()
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		readOnly, writable := reviewMountPolicy(writes, hosts)
-		_, out, res, classification, _ := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, readOnly, writable, sink, peers, activity)
-		if ctx != nil && ctx.Err() != nil {
-			return "", nil, errReviewInterrupted
+		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, readOnly, writable, sink, peers, activity)
+		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target}
+		if errors.Is(runErr, errCompletionWindowSetup) {
+			return last, runErr
 		}
-		switch action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &retries); action {
+		reopened, completionErr := windows.finishReview()
+		last.reopened = reopened
+		if completionErr != nil {
+			return last, fmt.Errorf("%w: review stage changed task completion ownership: %v", errCompletionWindowAudit, completionErr)
+		}
+		if ctx != nil && ctx.Err() != nil {
+			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
+		}
+		if len(reopened) > 0 && classification.outcome != "success" {
+			return last, fmt.Errorf("%w: failed review stage also reopened %s", errCompletionWindowAudit, strings.Join(reopened, ", "))
+		}
+		switch action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &outputRetries); action {
 		case actContinue:
-			return out, res, nil
+			return last, nil
 		case actWait:
+			totalRetries++
 			if rev.rotates() {
 				a.rotateOnLimit(rev, resetAt, &waits, wake)
 			} else {
 				sleepForLimit(wait, resetAt, wake)
 			}
 		case actRetryNow:
+			totalRetries++
 			if !sleepOrWake(wait, wake) {
-				return "", nil, errReviewInterrupted
+				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actRetry:
+			totalRetries++
 			if !sleepOrWake(10*time.Second, wake) {
-				return "", nil, errReviewInterrupted
+				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actStop:
-			return "", nil, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
+			return last, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
 		case actAuthStop:
-			return "", nil, iterationAuthenticationError(rev.active())
+			return last, iterationAuthenticationError(target)
 		case actOutputStop:
-			return "", nil, fmt.Errorf("review stage reached the model output limit %d times — stopping", retries)
+			return last, fmt.Errorf("review stage reached the model output limit %d times — stopping", outputRetries)
 		}
 	}
 }
@@ -1927,7 +1969,7 @@ const defaultSignoffPrompt = "Review pass — you are the SENIOR REVIEWER for wo
 	"2. Follows the standards — it obeys AGENTS.md and every rule in .agent/rules, matches the surrounding code's style, and adds NO scope creep: no unrequested features or knobs, no unrelated refactors, no churn. Reopen violations.\n" +
 	"3. Tested for real — it has tests that exercise the FAILURE/edge path, not just the happy path, and they actually cover the new behavior. Reopen thin or missing tests.\n" +
 	"4. Polished — no debug prints, commented-out or dead code, leftover TODO/FIXME, or stray files; comments say why, not what; a user-visible change updated the docs/README/CHANGELOG. Reopen anything unpolished.\n" +
-	"5. Bookkeeping — a commit implementing it exists in git log (find it by its Coop-Task: <task-id> trailer, NOT by any SHA the notes cite — coop re-signs commits on the host, so their SHAs change and a stale SHA in a note is EXPECTED, not a defect to reopen), a final state.md is present, and the queue is internally consistent (no id in two state dirs, no half-moved folder). Status must be complete and Next action must be none. If those lifecycle values are the ONLY defect, repair them in place in 99_done/ and continue the review; do NOT reopen implementation work for metadata alone. Task-local tmp/ was disposable and has been removed before this review; any evidence that needed to survive completion belongs in artifacts/.\n" +
+	"5. Bookkeeping — a commit implementing it exists in git log (find it by its Coop-Task: <task-id> trailer, NOT by any SHA the notes cite — coop re-signs commits on the host, so their SHAs change and a stale SHA in a note is EXPECTED, not a defect to reopen), a final state.md is present, and the queue is internally consistent (no id in two state dirs, no half-moved folder). Status must be complete and Next action must be none. Coop finalizes those lifecycle values before review; never edit a task in place under 99_done/. If they are unexpectedly wrong, reopen the task as a completion-integrity defect and say that no implementation change is required. Task-local tmp/ was disposable and has been removed before this review; any evidence that needed to survive completion belongs in artifacts/.\n" +
 	"Then ONCE across the WHOLE repo (not per task), run the repo's gate (per AGENTS.md). If it fails, reopen the responsible task(s) — the most-recently-done whose commit plausibly caused it — with the failure.\n" +
 	"Reopen a task by MOVING its folder back to 10_in_progress/, writing in its log.md exactly what's wrong and what \"done\" requires, and refreshing state.md to a reopened Status plus one concrete Next action — and do it THE MOMENT you decide, before reviewing the next task: a review session can be cut at any turn boundary, and a verdict that exists only as prose is silently lost. Never batch reopens for the end, and never park verdicts behind background subagents you wait on — work still running when your turn ends dies with it. Change no task code; make no commits."
 
@@ -1960,7 +2002,7 @@ func loopSignoffPrompt(repo string, queues []string, appendPrompt string, finish
 // resume or failover restarts the agent process mid-review, killing background subagents and
 // dropping any reopen decided but not yet written to the queue as a folder move.
 func reviewContextFooter(repo string, queues []string) string {
-	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box. A stale Status/Next action in an otherwise complete done task is metadata-only: repair those fields in place and do not reopen it. For any substantive defect, reopen the task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), note what was missing in log.md, and refresh state.md with a reopened Status and one concrete Next action. Execute every substantive reopen IMMEDIATELY as you decide it (move the folder, then write the note and state) — never batch reopens for the end and never leave them waiting on background work: an interrupted session loses any verdict not yet written to the queue.",
+	return fmt.Sprintf("Context: the task queue(s) are at %s and the project contract is %s. `coop` is NOT installed in this box. Coop finalizes done-task lifecycle metadata before review; never edit a task in place under 99_done/. For any defect, reopen the task by MOVING its folder back to 10_in_progress/ yourself (do not run `coop`), note what was missing in log.md, and refresh state.md with a reopened Status and one concrete Next action. Execute every reopen IMMEDIATELY as you decide it (move the folder, then write the note and state) — never batch reopens for the end and never leave them waiting on background work: an interrupted session loses any verdict not yet written to the queue.",
 		absJoin(repo, queues), filepath.Join(repo, "AGENTS.md")) +
 		" You are the authoritative review for this stage: do NOT invoke the review-board skill or spawn another review board. When evidence is missing, do focused read-only investigation yourself (inspect the code, tests, history, or run a targeted verifier)." +
 		" When you are completely finished, end your reply with exactly one receipt line and nothing after it: `REVIEW COMPLETE — PASS — reopened: none` if every subject passed, or `REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>` listing every task you moved, sorted by task ID with no spaces. The loop compares the verdict and exact IDs against the named review subjects and folders that actually moved; a missing, malformed, or mismatched receipt is re-run — never batch or defer a reopen past this line." +
@@ -2244,8 +2286,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if err := reconcileInterruptedCompletions(hosts); err != nil {
 		return 1, fmt.Errorf("recover interrupted completion: %w", err)
 	}
-	if err := finalizeFinishedTasks(hosts); err != nil {
-		return 1, fmt.Errorf("finalize archived completion: %w", err)
+	if err := reconcileCompletionWindows(hosts); err != nil {
+		return 1, fmt.Errorf("recover interrupted completion window: %w", err)
 	}
 	if duplicates := nonArchivedDuplicateTaskIDs(hosts); len(duplicates) > 0 {
 		return 1, fmt.Errorf("aggregated loop cannot safely distinguish non-archived task id(s) present in multiple queues: %s — rename the duplicates or select one queue with --tasks", strings.Join(duplicates, ", "))
@@ -2286,7 +2328,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// decided per iteration because a cross-provider rotation can swap the active agent.
 	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
-	health := newLoopHealth() // per-task risk signals (reopens, gate edits, untagged) accumulated across the run
+	health := newLoopHealth() // per-task risk signals (reopens and gate edits) accumulated across the run
 	audits := newAuditEvidenceStore()
 	// The signoff pass (end-of-loop) and between-tasks audits both run only under the signoff-aware
 	// agent form, not a custom work.command. Ordinary between review is opt-in; a completed task that
@@ -2380,8 +2422,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, _ := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, false, nil, sink, peers, "preflight")
-			a.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil, nil)
+			pfCode, _, _, pfClassification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, false, nil, sink, peers, "preflight")
+			if errors.Is(runErr, errCompletionWindowSetup) {
+				return 1, runErr
+			}
+			if _, err := windows.finishReview(); err != nil {
+				return 1, fmt.Errorf("pre-flight changed task completion ownership: %w", err)
+			}
+			a.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
 			prev := rot.active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfClassification, time.Now()); limited {
 				if wait > 0 {
@@ -2467,12 +2515,6 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if lease.legacy {
 				ui.Info("adopting unleased in-progress task %s", assigned.Item.ID)
 			}
-			// Snapshot which tasks are done BEFORE the iteration, so the between audit can name
-			// exactly what this iteration finished (the diff), not guess "the most recent".
-			var doneBefore map[string]string
-			if len(custom) == 0 {
-				doneBefore = doneTaskDirs(hosts)
-			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			active := assigned.Item.Title
 			ui.Info("%s · owned by %s", progressBanner(n, c, active), agent)
@@ -2486,50 +2528,114 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			cmd, streaming := iterCmd(agent, iterWork)
-			code, _, res, classification, _ := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, false, nil, sink, peers, active)
+			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowStrict, false, nil, sink, peers, active)
+			if errors.Is(runErr, errCompletionWindowSetup) {
+				return 1, errors.Join(runErr, lease.release())
+			}
 			// Stop metadata writes but keep the flock while validating and finalizing this exact task.
 			lease.quiesce()
 			// Completion integrity is a hard boundary. Fresh work must bind inside this iteration's
 			// commit range. Crash recovery restores work for a new range-bound attempt, never trusting
 			// provider-writable metadata or reachable history. The flock stays held through validation,
 			// recovery notes, and accepted-state cleanup so no second controller sees a half-transition.
-			var completedTasks []queuedTask
-			if completed, ok := completedAssignedTask(assigned.Root, assigned.Item.ID); ok {
-				completedTasks = append(completedTasks, completed)
+			completedTasks, unowned, completionScanErr := windows.auditDoneCandidates(assigned)
+			if completionScanErr != nil {
+				return 1, errors.Join(
+					fmt.Errorf("scan task completions: %w", completionScanErr),
+					lease.release(), windows.abandon(),
+				)
 			}
 			var finished []string
-			if len(completedTasks) == 1 {
-				finished = []string{completedTasks[0].Item.ID}
+			var assignedCompletion *queuedTask
+			for i := range completedTasks {
+				if completedTasks[i].Root == assigned.Root && completedTasks[i].Item.ID == assigned.Item.ID {
+					assignedCompletion = &completedTasks[i]
+					finished = []string{completedTasks[i].Item.ID}
+					break
+				}
 			}
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
 			var missing []string
-			if len(completedTasks) == 1 && unbindableQueuedCompletion(repo, iterHead, headAfter, completedTasks[0]) {
-				missing = finished
-				restoreErr := restoreQueuedCompletions(completedTasks)
-				releaseErr := lease.release()
-				return 1, errors.Join(unbindableCompletionError(missing, restoreErr), releaseErr)
+			if assignedCompletion != nil {
+				missing = untrailered(repo, iterHead, headAfter, finished)
 			}
-			// The worker moves its own folder in-box. Finalize every accepted done task before a stop,
-			// retry, audit, or signoff can consume the archive.
-			for _, task := range completedTasks {
-				if cleanupErr := finalizeQueuedCompletion(task); cleanupErr != nil {
-					releaseErr := lease.release()
+			departed, departureErr := windows.departures()
+			var restoreErr error
+			if departureErr != nil {
+				if assignedCompletion != nil {
+					restoreErr = restoreCompromisedCompletion(*assignedCompletion)
+				}
+				return 1, errors.Join(departureErr, restoreErr, lease.release(), windows.abandon())
+			}
+			if len(departed) > 0 {
+				if assignedCompletion != nil {
+					restoreErr = restoreCompromisedCompletion(*assignedCompletion)
+				}
+				var windowErr error
+				if restoreErr != nil {
+					windowErr = windows.abandon()
+				} else {
+					windowErr = windows.close()
+				}
+				releaseErr := errors.Join(lease.release(), windowErr)
+				departureErr = fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", "))
+				return 1, errors.Join(departureErr, restoreErr, releaseErr)
+			}
+			if len(missing) > 0 {
+				restoreErr = errors.Join(restoreErr, restoreQueuedCompletion(*assignedCompletion))
+				var windowErr error
+				if restoreErr != nil {
+					windowErr = windows.abandon()
+				} else {
+					windowErr = windows.close()
+				}
+				releaseErr := errors.Join(lease.release(), windowErr)
+				var unownedErr error
+				if len(unowned) > 0 {
+					unownedErr = unownedCompletionError(unowned, nil)
+				}
+				return 1, errors.Join(unbindableCompletionError(missing, restoreErr), unownedErr, releaseErr)
+			}
+			if len(unowned) > 0 {
+				if assignedCompletion != nil {
+					restoreErr = errors.Join(restoreErr, restoreCompromisedCompletion(*assignedCompletion))
+				}
+				var windowErr error
+				if restoreErr != nil {
+					windowErr = windows.abandon()
+				} else {
+					windowErr = windows.close()
+				}
+				releaseErr := errors.Join(lease.release(), windowErr)
+				return 1, errors.Join(unownedCompletionError(unowned, restoreErr), releaseErr)
+			}
+			// Finalize only the completion whose lease this controller owns. Concurrent controllers
+			// close their own crash boundaries and unowned moves have already failed closed above.
+			if assignedCompletion != nil {
+				if cleanupErr := finalizeQueuedCompletion(*assignedCompletion); cleanupErr != nil {
+					releaseErr := errors.Join(lease.release(), windows.abandon())
 					return 1, errors.Join(fmt.Errorf("%w — completion was not accepted; fix the obstruction and re-run `coop loop`", cleanupErr), releaseErr)
 				}
+				if receiptErr := lease.markCompleted(assignedCompletion.Item.Dir); receiptErr != nil {
+					restoreErr := restoreUnrecordedCompletion(*assignedCompletion)
+					clearErr := lease.clearCompleted()
+					releaseErr := errors.Join(lease.release(), windows.abandon())
+					return 1, errors.Join(fmt.Errorf("record task completion %s: %w", assigned.Item.ID, receiptErr), restoreErr, clearErr, releaseErr)
+				}
 			}
-			if releaseErr := lease.release(); releaseErr != nil {
+			if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
 				return 1, fmt.Errorf("release task lease %s: %w", assigned.Item.ID, releaseErr)
 			}
 			gateHits := protectedGateChanges(repo, iterHead, headAfter)
 			if len(gateHits) > 0 {
 				ui.Warn("this iteration edited gate-defining file(s) %s — the review must confirm the gate wasn't weakened to pass", strings.Join(gateHits, ", "))
 			}
-			health.noteIteration(finished, gateHits, missing)
+			health.noteIteration(finished, gateHits)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop only after
 			// completion validation and finalization closed the crash boundary above. Record the actual
 			// attempt as interrupted rather than silently dropping it from telemetry.
 			if iterCtx != nil && iterCtx.Err() != nil {
-				a.recordStage(repo, runid, "work", "interrupted", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing, gateHits, res)
+				a.recordStage(repo, runid, "work", "interrupted", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
 				break
 			}
 			action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &retries)
@@ -2543,13 +2649,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 				}
 				headAfter = gitOut(repo, "rev-parse", "HEAD")
 			}
-			a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, missing, gateHits, res)
+			a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
 			// Review a just-completed task now when a successful iteration has ordinary between
 			// review configured OR its complete run-bound diff touched the gate. Protected completion
 			// is checked even when the worker exited nonzero, so a retry cannot hand a changed checker
 			// to the next task before the mandatory audit runs.
 			if len(custom) == 0 {
-				if finishedDirs := newlyFinished(doneBefore, doneTaskDirs(hosts)); len(finishedDirs) > 0 {
+				if assignedCompletion != nil {
+					finishedDirs := []string{assignedCompletion.Item.ID + " — " + assignedCompletion.Item.Dir}
 					finishedIDs := taskIDsOf(finishedDirs)
 					stepChanges := loopChanges(repo, loopStartHead, headAfter).forTasks(finishedIDs)
 					auditGateFiles := protectedGateFiles(append(stepChanges.gateFiles(), gateHits...))
@@ -2567,32 +2674,34 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						// A protected audit is mandatory: failure or a missing/mismatched receipt stops
 						// before another task can trust the changed gate.
 						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-						btSnap := queueSnapshot(hosts)
-						btExit := 0
 						stage := "between audit"
 						if protectedAudit {
 							stage = "protected audit"
 						}
-						btOut, btRes, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, lc.Between.Writes, sink, peers, wake)
+						// A first Ctrl-C is a soft stop: the completed task still earns its audit. Only
+						// the second cancels iterCtx; its Done channel also wakes a review backoff promptly.
+						var hardStop <-chan struct{}
+						if iterCtx != nil {
+							hardStop = iterCtx.Done()
+						}
+						btRun, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, lc.Between.Writes, sink, peers, hardStop)
+						reopenedIDs := btRun.reopened
+						a.recordStage(repo, runid, "between", btRun.outcome, btRun.target, btStart, btRun.exit, btRun.retries, len(reopenedIDs), btHead, hosts, nil, auditGateFiles, btRun.usage)
 						if errors.Is(rerr, errReviewInterrupted) {
 							break
 						}
+						if errors.Is(rerr, errCompletionWindowSetup) || errors.Is(rerr, errCompletionWindowAudit) {
+							return 1, rerr
+						}
 						if rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(finishedIDs, ", "), rerr)
-							btExit = 1
 						}
-						reopenedIDs := reopenedBySignoff(btSnap, queueSnapshot(hosts))
-						outcome := "success"
-						if rerr != nil {
-							outcome = "process_failure"
-						}
-						a.recordStage(repo, runid, "between", outcome, betweenRot.active(), btStart, btExit, 0, len(reopenedIDs), btHead, hosts, nil, nil, auditGateFiles, btRes)
 						interrupted := iterCtx != nil && iterCtx.Err() != nil
-						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btOut, reopenedIDs, finishedIDs); verdictErr != nil {
+						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btRun.output, reopenedIDs, finishedIDs); verdictErr != nil {
 							return 1, fmt.Errorf("protected-change audit for %s: %w — stopped before another task could trust the changed gate; inspect the task and re-run `coop loop`", strings.Join(finishedIDs, ", "), verdictErr)
 						}
 						if rerr == nil && !interrupted {
-							audits.capture(finishedIDs, reopenedIDs, protectedAudit, btOut)
+							audits.capture(finishedIDs, reopenedIDs, protectedAudit, btRun.output)
 							audits.drop(reopenedIDs)
 						}
 					}
@@ -2694,10 +2803,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		// Hand the signoff the run's change context (per task, bound by the Coop-Task trailer) + health,
 		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
-		soSnap := queueSnapshot(hosts)
 		cs := loopChanges(repo, loopStartHead, soHead)
-		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(taskIDsOf(subjects)) + cs.reviewBlock(health)
-		signoffOut, soRes, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", taskIDsOf(subjects)), iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
+		subjectIDs := taskIDsOf(subjects)
+		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(subjectIDs) + cs.reviewBlock(health)
+		soRun, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
+		// Preserve the exact tasks this review reopened before any early return. A failing or
+		// interrupted reviewer can still have moved a task, and telemetry must preserve that fact.
+		reopenedIDs := soRun.reopened
+		a.recordStage(repo, runid, "signoff", soRun.outcome, soRun.target, soStart, soRun.exit, soRun.retries, len(reopenedIDs), soHead, hosts, nil, nil, soRun.usage)
 		if errors.Is(serr, errReviewInterrupted) {
 			cf, _ := queueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
@@ -2712,19 +2825,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
 		}
-		// Derive the review's exact done-to-actionable delta once. Other actionable tasks can exist
-		// independently of this review and must not affect its telemetry, health, or outcome.
-		reopenedIDs := reopenedBySignoff(soSnap, queueSnapshot(hosts))
 		health.noteReopen(reopenedIDs)
-		a.recordStage(repo, runid, "signoff", "success", signoffRot.active(), soStart, 0, 0, len(reopenedIDs), soHead, hosts, nil, nil, nil, soRes)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
 		// prose but never moves the folders — its subagents interrupted, or it batched them past the
 		// end — would leave the queue empty and read as "accepted". The review must end with a
 		// structured receipt; if its ids disagree with the folders that actually moved (or the receipt
 		// is missing entirely), the round is treated as interrupted and
 		// re-run within the cap, or — at the cap — the loop exits loudly rather than claim a false done.
-		receipt, ok := reviewReopenReceipt(signoffOut)
-		if reopenVerdictLost(receipt, ok, reopenedIDs, taskIDsOf(subjects)) {
+		receipt, ok := reviewReopenReceipt(soRun.output)
+		if reopenVerdictLost(receipt, ok, reopenedIDs, subjectIDs) {
 			if signoffRound >= maxSignoffRounds {
 				return 3, fmt.Errorf("signoff verdict inconsistent after %d rounds: review reported %s but task delta was %s — verdicts may have been lost, a human should look", maxSignoffRounds, receiptClaim(receipt, ok), receiptIDs(reopenedIDs))
 			}
@@ -2754,7 +2863,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// what, typically "e2e-test the affected features". It runs after the signoff accepted the batch,
 	// on its own model, with the run's change context injected; best-effort, and it may reopen a task
 	// whose e2e it can't get to pass (surfaced in the closing digest + exit). Skipped on a custom
-	// work.command or a requested stop.
+	// work.command or a requested stop. Ordinary process failures remain best-effort; completion
+	// ownership setup/audit failures are hard boundaries and stop the loop.
 	if verifyEnabled && !softStop.Load() && (iterCtx == nil || iterCtx.Err() == nil) {
 		cs := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD"))
 		if cs.empty() {
@@ -2763,30 +2873,26 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			ui.Info("verify pass — e2e the affected features (%s)", strings.Join(cs.subsystems, ", "))
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) + "\n\n" + reviewContextFooter(repo, queues)
 			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			vExit := 0
-			verifyIDs := make([]string, 0, len(cs.tasks))
-			for _, task := range cs.tasks {
-				verifyIDs = append(verifyIDs, task.id)
-			}
+			verifyIDs := cs.taskIDs()
 			verifyActivity := reviewActivity("verify", verifyIDs)
 			if len(verifyIDs) == 0 {
 				verifyActivity = "verify: unbound changes"
 			}
-			_, vRes, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, lc.Verify.Writes, sink, peers, wake)
+			vRun, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, lc.Verify.Writes, sink, peers, wake)
+			reopenedIDs := vRun.reopened
+			health.noteReopen(reopenedIDs)
+			a.recordStage(repo, runid, "verify", vRun.outcome, vRun.target, vStart, vRun.exit, vRun.retries, len(reopenedIDs), vHead, hosts, nil, nil, vRun.usage)
 			if errors.Is(verr, errReviewInterrupted) {
 				cf, _ := queueProgress(hosts)
 				fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 				return loopInterruptedExitCode, nil
 			}
+			if errors.Is(verr, errCompletionWindowSetup) || errors.Is(verr, errCompletionWindowAudit) {
+				return 1, verr
+			}
 			if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
-				vExit = 1
 			}
-			outcome := "success"
-			if verr != nil {
-				outcome = "process_failure"
-			}
-			a.recordStage(repo, runid, "verify", outcome, verifyRot.active(), vStart, vExit, 0, 0, vHead, hosts, nil, nil, nil, vRes)
 		}
 	}
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
@@ -2939,12 +3045,14 @@ func (a *app) advanceStall(repo string, hosts []string, prevHead string, settled
 }
 
 // loopExitCode is the machine-readable companion to loopClosingBanner so cron/fleet/CI can branch on
-// the loop's outcome without parsing stderr prose: 3 when the loop stopped with work blocked on a
-// human decision and nothing else actionable (including a task the review kept reopening past the
-// round cap), 0 otherwise — verified done. Failures (1) and usage errors (2) surface from their own
-// call sites, not here.
+// the loop's outcome without parsing stderr prose: 1 when a final review left work actionable, 3
+// when work is blocked on a human decision and nothing else is actionable, and 0 only when the
+// queue is verified done. Other failures (1) and usage errors (2) surface from their own call sites.
 func loopExitCode(cf taskCounts) int {
-	if cf.Todo+cf.Doing == 0 && cf.Blocked > 0 {
+	if cf.Todo+cf.Doing > 0 {
+		return 1
+	}
+	if cf.Blocked > 0 {
 		return 3
 	}
 	return 0
@@ -2960,7 +3068,7 @@ func loopClosingBanner(cf taskCounts, completed int) string {
 	switch {
 	case cf.Todo+cf.Doing > 0:
 		return ui.Bold(ui.Yellow(fmt.Sprintf(
-			"⚠ signoff reopened %s — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
+			"⚠ review left %s actionable — run 'coop loop' to work them", ui.Count(cf.Todo+cf.Doing, "task"))))
 	case cf.Blocked > 0:
 		// Tasks parked in 50_blocked/ on a human decision are NOT done — don't report success.
 		return ui.Bold(ui.Yellow(fmt.Sprintf(
@@ -3052,7 +3160,17 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, classification iterationClassification, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, repoReadOnly bool, repoWritablePaths []string, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
+	if windowMode == completionWindowReview {
+		windows, err = beginReviewCompletionWindows(hosts)
+	} else {
+		windows, err = beginCompletionWindows(hosts)
+	}
+	if err != nil {
+		err = fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
+		classification = classifyIteration(agent, 1, err, err.Error(), streamNotUsed, time.Now())
+		return 1, "", nil, classification, nil, err
+	}
 	tail := &tailWriter{max: 64 << 10}
 	diagnostic := &tailWriter{max: 64 << 10}
 	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
@@ -3170,7 +3288,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		bar.stop()
 	}
 	classification = classifyIteration(agent, code, err, diagnostic.String(), streamOutcome, time.Now())
-	return code, tail.String(), res, classification, err
+	return code, tail.String(), res, classification, windows, err
 }
 
 // monitorProgress watches the queue while an iteration runs and pushes count changes into the live

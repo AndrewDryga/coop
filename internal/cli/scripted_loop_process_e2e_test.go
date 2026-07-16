@@ -25,6 +25,7 @@ type loopProcessPlan struct {
 
 type loopProcessAttempt struct {
 	Target string `json:"target"`
+	Stage  string `json:"stage"`
 	Result string `json:"result"`
 }
 
@@ -52,8 +53,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				}
 				target += "@work"
 				scenario := loopProcessScenario{
-					Version: 5, Provider: provider, ProviderHomes: agents.Names(),
-					Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Result: "complete"}}},
+					Version: 6, Provider: provider, ProviderHomes: agents.Names(),
+					Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete"}}},
 				}
 
 				suite.reset(t, scenario)
@@ -94,8 +95,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					t.Fatal(err)
 				}
 				suite.reset(t, loopProcessScenario{
-					Version: 5, Provider: provider, ProviderHomes: agents.Names(),
-					Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Result: outcome}}},
+					Version: 6, Provider: provider, ProviderHomes: agents.Names(),
+					Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: outcome}}},
 				})
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				result := procharness.Run(ctx, procharness.Command{
@@ -152,8 +153,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 						t.Fatal(err)
 					}
 					suite.reset(t, loopProcessScenario{
-						Version: 5, Provider: provider, ProviderHomes: agents.Names(),
-						Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Result: "repair-binding"}}},
+						Version: 6, Provider: provider, ProviderHomes: agents.Names(),
+						Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "repair-binding"}}},
 					})
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					retry := procharness.Run(ctx, procharness.Command{
@@ -174,6 +175,106 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				}
 			})
 		}
+	})
+	t.Run("rejects an unassigned completion even when trailered", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "loop-unassigned"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, taskID+"-extra")
+		target := "codex:loop-model/high@work"
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete-extra-finalized"}}},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		cancel()
+		if result.ExitCode != 1 || !strings.Contains(result.Stderr, "completion rejected for unleased task(s) "+taskID+"-extra") {
+			t.Fatalf("unassigned completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if _, err := os.Stat(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID+"-extra", "task.md")); err != nil {
+			t.Fatalf("unassigned completion was not restored: %v", err)
+		}
+		assigned := filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)
+		state, err := os.ReadFile(filepath.Join(assigned, "state.md"))
+		if err != nil || !strings.Contains(string(state), "**Status:** in progress — completion rejected") || !strings.Contains(string(state), "**Next action:** resume the assigned task") {
+			t.Fatalf("assigned completion was not deliberately restored: %q, %v", state, err)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete-extra-finalized"}})
+		assertLoopTraceProcessesGone(t, trace)
+	})
+	t.Run("rejects an archived task reopened by work", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "loop-work-reopen"
+		archiveID := taskID + "-archive"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, archiveID)
+		root := filepath.Join(suite.layout.Repo, tasksRoot)
+		archiveTodo := filepath.Join(root, stateTodo, archiveID)
+		archiveDone := filepath.Join(root, stateDone, archiveID)
+		if err := os.Rename(archiveTodo, archiveDone); err != nil {
+			t.Fatal(err)
+		}
+		target := "codex:loop-model/high@work"
+		attempt := loopProcessAttempt{Target: target, Stage: "work", Result: "complete-reopen-archive"}
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{attempt}},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		cancel()
+		if result.ExitCode != 1 || !strings.Contains(result.Stderr, "work stage reopened unowned archived task(s) "+archiveID) {
+			t.Fatalf("work archive reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		assigned := filepath.Join(root, stateInProgress, taskID)
+		state, err := os.ReadFile(filepath.Join(assigned, "state.md"))
+		if err != nil || !strings.Contains(string(state), "**Status:** in progress — completion rejected") || !strings.Contains(string(state), "**Next action:** resume the assigned task") {
+			t.Fatalf("assigned completion was not restored after archive reopen: %q, %v", state, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, stateInProgress, archiveID, "task.md")); err != nil {
+			t.Fatalf("reopened archive is not actionable: %v", err)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{attempt})
+		assertLoopTraceProcessesGone(t, trace)
+	})
+	t.Run("rejects unowned completion when assigned binding also fails", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "loop-combined-rejection"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, taskID+"-extra")
+		target := "codex:loop-model/high@work"
+		attempt := loopProcessAttempt{Target: target, Stage: "work", Result: "unbound-extra-finalized"}
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{attempt}},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		cancel()
+		if result.ExitCode != 1 || !strings.Contains(result.Stderr, "completion rejected for task(s) "+taskID) || !strings.Contains(result.Stderr, "completion rejected for unleased task(s) "+taskID+"-extra") {
+			t.Fatalf("combined completion rejection = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		for _, id := range []string{taskID, taskID + "-extra"} {
+			if _, err := os.Stat(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, id, "task.md")); err != nil {
+				t.Fatalf("rejected task %s was not restored: %v", id, err)
+			}
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{attempt})
+		assertLoopTraceProcessesGone(t, trace)
 	})
 }
 
@@ -291,7 +392,7 @@ func assertLoopProcessResult(t *testing.T, suite *directProcessSuite, provider, 
 	}
 	record := records[len(records)-1]
 	head := loopProcessGit(t, suite, "rev-parse", "HEAD")
-	if record.Stage != "work" || record.Outcome != "success" || record.Provider != provider || record.Model != model || record.Effort != effort || record.Account != account || record.Exit != 0 || record.Retries != 0 || record.Reopened != 0 || record.HeadBefore != headBefore || record.HeadAfter != head || !slices.Equal(record.Finished, []string{taskID}) || len(record.Untrailered) != 0 || len(record.GateFiles) != 0 || record.QueueTodo != 0 || record.QueueDoing != 0 || record.QueueDone != 1 {
+	if record.Stage != "work" || record.Outcome != "success" || record.Provider != provider || record.Model != model || record.Effort != effort || record.Account != account || record.Exit != 0 || record.Retries != 0 || record.Reopened != 0 || record.HeadBefore != headBefore || record.HeadAfter != head || !slices.Equal(record.Finished, []string{taskID}) || len(record.GateFiles) != 0 || record.QueueTodo != 0 || record.QueueDoing != 0 || record.QueueDone != 1 {
 		t.Fatalf("loop telemetry = %#v", record)
 	}
 }

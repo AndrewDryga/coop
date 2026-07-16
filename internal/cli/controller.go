@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -136,30 +137,141 @@ func taskIDDuplicates(hosts []string, requireLive bool) []string {
 	return duplicates
 }
 
-func completedAssignedTask(root, id string) (queuedTask, bool) {
-	task, ok := currentTask(root, id)
-	if !ok || task.State != stateDone {
-		return queuedTask{}, false
+// completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
+// task authority lock across move, finalization, and receipt creation so a concurrent loop can
+// observe either the old state or an accepted done inode, never a transient.
+func completeTrustedTask(root string, task taskItem) (retErr error) {
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		return fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
 	}
-	return queuedTask{Root: root, Item: task}, true
+	accepted := false
+	var acceptedTask queuedTask
+	defer func() {
+		if accepted {
+			retErr = errors.Join(retErr, windows.rejectAndClose(acceptedTask))
+		} else {
+			retErr = errors.Join(retErr, windows.abandon())
+		}
+	}()
+	authority, err := openLeaseAuthority(root, task.ID, true)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = authority.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("task %s is leased by another controller", task.ID)
+		}
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, unlockLeaseFile(authority)) }()
+	current, ok := currentTask(root, task.ID)
+	if !ok || current.Dir != task.Dir || current.State != task.State {
+		return errLeaseCandidateGone
+	}
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		return err
+	}
+	if current.State != stateDone {
+		if err := moveTaskDir(root, current, stateDone); err != nil {
+			return err
+		}
+		current.State = stateDone
+		current.Dir = filepath.Join(root, stateDone, current.ID)
+	}
+	if err := finalizeCompletedTask(current.ID, current.Dir); err != nil {
+		return err
+	}
+	if err := writeLeaseCompletionReceipt(authority, current.Dir); err != nil {
+		return err
+	}
+	acceptedTask = queuedTask{Root: root, Item: current}
+	accepted = true
+	return nil
 }
 
-// finalizeFinishedTasks handles the loop's in-box completion path: the worker moved the folder, so
-// the host normalizes state.md and removes tmp before any reviewer consumes a done task. It sweeps
-// archived done tasks, not active/crash-left lease candidates. A task whose metadata cannot be
-// finalized moves back to in_progress before the error returns, so cleanup remains retryable.
-func finalizeFinishedTasks(hosts []string) error {
-	for _, host := range hosts {
-		for _, t := range readTaskTree(host) {
-			if t.State != stateDone || crashCompletionCandidate(host, t) {
-				continue
-			}
-			if err := finalizeQueuedCompletion(queuedTask{Root: host, Item: t}); err != nil {
-				return err
-			}
-		}
+// moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before
+// a host command reopens or blocks an archived task. On a failed move it restores the old receipt,
+// so concurrent supervised windows never see a false unowned completion.
+func moveTrustedTaskFromDone(root string, task taskItem, newState string) (retErr error) {
+	windows, err := beginCompletionWindowsAllowing([]string{root}, task.ID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
 	}
-	return nil
+	windowOpen := true
+	defer func() {
+		if windowOpen {
+			retErr = errors.Join(retErr, windows.abandon())
+		}
+	}()
+	closeWindow := func(audit bool) error {
+		windowOpen = false
+		if audit {
+			return windows.rejectAndClose(queuedTask{})
+		}
+		return windows.close()
+	}
+
+	authority, err := openLeaseAuthority(root, task.ID, true)
+	if err != nil {
+		return errors.Join(err, closeWindow(false))
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		closeErr := authority.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			err = fmt.Errorf("task %s is leased by another controller", task.ID)
+		}
+		return errors.Join(err, closeErr, closeWindow(false))
+	}
+	current, ok := currentTask(root, task.ID)
+	if !ok || current.Dir != task.Dir || current.State != stateDone {
+		return errors.Join(errLeaseCandidateGone, unlockLeaseFile(authority), closeWindow(false))
+	}
+	previous, previousOK := readLeaseCompletionReceipt(authority, current.Dir)
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		return errors.Join(err, unlockLeaseFile(authority))
+	}
+	moveErr := moveTaskDir(root, current, newState)
+	var restoreErr error
+	if moveErr != nil && previousOK {
+		restoreErr = writeLeaseCompletionReceiptValue(authority, previous)
+	}
+	unlockErr := unlockLeaseFile(authority)
+	if restoreErr != nil {
+		return errors.Join(moveErr, restoreErr, unlockErr)
+	}
+	return errors.Join(moveErr, unlockErr, closeWindow(true))
+}
+
+// rejectUnownedCompletions restores folders this iteration moved without owning their lease. A
+// foreign-held folder belongs to another live controller and is ignored. After both locks are
+// acquired, only a matching host-only completion receipt proves a released foreign controller
+// finalized the folder; provider-writable task metadata is never ownership evidence.
+func rejectUnownedCompletions(tasks []queuedTask, assigned queuedTask) ([]string, error) {
+	var rejected []string
+	var errs []error
+	for _, task := range tasks {
+		if task.Root == assigned.Root && task.Item.ID == assigned.Item.ID {
+			continue
+		}
+		lock, current, acquired, err := lockCrashCompletion(task.Root, task.Item)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("lock rejected task %s: %w", task.Item.ID, err))
+			continue
+		}
+		if !acquired {
+			continue
+		}
+		if lock.completed(current.Dir) {
+			errs = append(errs, lock.release())
+			continue
+		}
+		rejected = append(rejected, task.Item.ID)
+		errs = append(errs, restoreUnownedCompletion(queuedTask{Root: task.Root, Item: current}), lock.clearCompleted(), lock.release())
+	}
+	slices.Sort(rejected)
+	return rejected, errors.Join(errs...)
 }
 
 func finalizeQueuedCompletion(task queuedTask) error {
@@ -184,18 +296,22 @@ func finalizeQueuedCompletion(task queuedTask) error {
 	return nil
 }
 
-// reconcileInterruptedCompletions closes the crash window after a worker moved its task to done
-// but before the controller validated the current iteration's commit binding. The lease does not
-// retain that iteration base, so every candidate is restored for the normal range-bound resume
-// path; an older matching commit must never validate new unbound work.
+// reconcileInterruptedCompletions closes the crash window around accepted completion. A matching
+// host receipt means finalization finished and only stale lease metadata needs removal. Without a
+// receipt, the lease does not retain the iteration base, so the task is restored for a new
+// range-bound attempt; an older matching commit must never validate new unbound work.
 func reconcileInterruptedCompletions(hosts []string) error {
 	var restoreErrs []error
 	for _, host := range hosts {
 		for _, task := range readTaskTree(host) {
-			if task.State != stateDone || !crashCompletionCandidate(host, task) {
+			if task.State != stateDone {
+				restoreErrs = append(restoreErrs, clearTaskCompletionReceipt(host, task.ID))
 				continue
 			}
-			lock, current, acquired, err := lockCrashCompletion(host, task)
+			if !crashCompletionCandidate(host, task) {
+				continue
+			}
+			lock, current, acquired, err := lockInterruptedCompletion(host, task)
 			if err != nil {
 				restoreErrs = append(restoreErrs, fmt.Errorf("lock interrupted task %s: %w", task.ID, err))
 				continue
@@ -203,9 +319,21 @@ func reconcileInterruptedCompletions(hosts []string) error {
 			if !acquired {
 				continue
 			}
+			if lock.completed(current.Dir) {
+				cleanupErr := errors.Join(
+					removeLeaseAuthorityMetadata(host, current.ID),
+					removeLeaseMetadata(host, current.ID),
+					lock.release(),
+				)
+				if cleanupErr != nil {
+					restoreErrs = append(restoreErrs, fmt.Errorf("clean accepted task %s lease metadata: %w", task.ID, cleanupErr))
+				}
+				continue
+			}
 			restoreErr := restoreQueuedCompletion(queuedTask{Root: host, Item: current})
+			clearErr := lock.clearCompleted()
 			unlockErr := lock.release()
-			if err := errors.Join(restoreErr, unlockErr); err != nil {
+			if err := errors.Join(restoreErr, clearErr, unlockErr); err != nil {
 				restoreErrs = append(restoreErrs, err)
 			}
 		}
@@ -214,7 +342,19 @@ func reconcileInterruptedCompletions(hosts []string) error {
 }
 
 type crashCompletionLock struct {
-	files []*os.File
+	authority *os.File
+	files     []*os.File
+}
+
+func (l crashCompletionLock) completed(taskDir string) bool {
+	return l.authority != nil && leaseCompletionReceiptMatches(l.authority, taskDir)
+}
+
+func (l crashCompletionLock) clearCompleted() error {
+	if l.authority == nil {
+		return nil
+	}
+	return clearLeaseCompletionReceipt(l.authority)
 }
 
 func (l crashCompletionLock) release() error {
@@ -226,27 +366,46 @@ func (l crashCompletionLock) release() error {
 }
 
 func lockCrashCompletion(root string, task taskItem) (crashCompletionLock, taskItem, bool, error) {
+	return lockCompletionForAudit(root, task, false)
+}
+
+// lockInterruptedCompletion preserves compatibility with a pre-authority controller whose held
+// task-local lock is still authoritative. Completion-window audits use lockCrashCompletion instead:
+// their journal must not be retired merely because a non-authoritative local reader was transient.
+func lockInterruptedCompletion(root string, task taskItem) (crashCompletionLock, taskItem, bool, error) {
+	return lockCompletionForAudit(root, task, true)
+}
+
+func lockCompletionForAudit(root string, task taskItem, allowLegacyLocalOwner bool) (crashCompletionLock, taskItem, bool, error) {
 	authority, err := openLeaseAuthority(root, task.ID, true)
 	if err != nil {
 		return crashCompletionLock{}, taskItem{}, false, err
 	}
-	locks := crashCompletionLock{files: []*os.File{authority}}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	locks := crashCompletionLock{authority: authority, files: []*os.File{authority}}
+	if err := lockExclusiveForCompletionAudit(authority, "task "+task.ID+" authority", func() bool {
+		return leaseAuthorityMetadataExists(root, task.ID)
+	}); err != nil {
 		_ = authority.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		if errors.Is(err, errCompletionAuditLockOwned) {
 			return crashCompletionLock{}, taskItem{}, false, nil
 		}
 		return crashCompletionLock{}, taskItem{}, false, err
 	}
 	local, err := openLeaseLock(task.Dir, false)
 	if err == nil {
-		if err := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lockErr := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if allowLegacyLocalOwner && (errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN)) {
 			_ = local.Close()
 			_ = locks.release()
-			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-				return crashCompletionLock{}, taskItem{}, false, nil
-			}
-			return crashCompletionLock{}, taskItem{}, false, err
+			return crashCompletionLock{}, taskItem{}, false, nil
+		}
+		if lockErr != nil {
+			lockErr = lockExclusiveForCompletionAudit(local, "task "+task.ID+" local lease", nil)
+		}
+		if lockErr != nil {
+			_ = local.Close()
+			_ = locks.release()
+			return crashCompletionLock{}, taskItem{}, false, lockErr
 		}
 		locks.files = append(locks.files, local)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -258,6 +417,35 @@ func lockCrashCompletion(root string, task taskItem) (crashCompletionLock, taskI
 		return crashCompletionLock{}, taskItem{}, false, locks.release()
 	}
 	return locks, current, true, nil
+}
+
+var errCompletionAuditLockOwned = errors.New("completion audit lock is owned")
+
+// lockExclusiveForCompletionAudit waits out short host-only receipt reads and compatibility-lock
+// observers. A real controller is identified by authority metadata; any other unresolved lock
+// fails the audit so its durable journal is retained instead of accepting uncertainty.
+func lockExclusiveForCompletionAudit(file *os.File, label string, owned func() bool) error {
+	const (
+		pollInterval = 2 * time.Millisecond
+		waitLimit    = time.Second
+	)
+	deadline := time.Now().Add(waitLimit)
+	for {
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return err
+		}
+		if owned != nil && owned() {
+			return errCompletionAuditLockOwned
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s remained busy without authoritative owner metadata", label)
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 func unlockLeaseFile(file *os.File) error {
@@ -293,19 +481,6 @@ func blockedTaskIDs(hosts []string) []string {
 	return ids
 }
 
-// reopenedBySignoff returns the ids the signoff bounced OUT of done/ (back to todo or in_progress)
-// between two snapshots — what the review reopened this round, for the health digest. Sorted.
-func reopenedBySignoff(before, after map[string]string) []string {
-	var ids []string
-	for id, st := range after {
-		if before[id] == stateDone && st != stateDone {
-			ids = append(ids, id)
-		}
-	}
-	slices.Sort(ids)
-	return ids
-}
-
 // untrailered returns finished ids without exactly one Coop-Task binding in this iteration's range.
 // A no-HEAD-change completion always fails closed; crash recovery restores it for a fresh range.
 func untrailered(repo, base, head string, finished []string) []string {
@@ -320,26 +495,6 @@ func untrailered(repo, base, head string, finished []string) []string {
 		}
 	}
 	return missing
-}
-
-func unbindableQueuedCompletion(repo, base, head string, completed queuedTask) bool {
-	return len(untrailered(repo, base, head, []string{completed.Item.ID})) != 0
-}
-
-// restoreQueuedCompletions moves exact rejected completions back to in_progress and records why.
-// Retaining the queue root is required because duplicate ids across configured queues are valid.
-func restoreQueuedCompletions(tasks []queuedTask) error {
-	var restoreErrs []error
-	for _, task := range tasks {
-		if task.Item.State != stateDone && task.Item.State != stateInProgress {
-			restoreErrs = append(restoreErrs, fmt.Errorf("restore task %s: task is not in done or in_progress", task.Item.ID))
-			continue
-		}
-		if err := restoreQueuedCompletion(task); err != nil {
-			restoreErrs = append(restoreErrs, err)
-		}
-	}
-	return errors.Join(restoreErrs...)
 }
 
 func restoreQueuedCompletion(task queuedTask) error {
@@ -361,6 +516,51 @@ func restoreQueuedCompletion(task queuedTask) error {
 	return errors.Join(errs...)
 }
 
+func restoreUnownedCompletion(task queuedTask) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore unowned task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	note := "completion rejected: this provider iteration moved a task it did not lease; work exactly the assigned task, then re-run `coop loop`"
+	return errors.Join(
+		appendTaskLogStrict(dir, note),
+		normalizeTaskState(id, dir, "in progress — completion rejected", "work this task only when it is assigned", "completion was rejected as unowned", "another iteration moved this task without its lease"),
+	)
+}
+
+func restoreCompromisedCompletion(task queuedTask) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore assigned task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	note := "completion rejected: this iteration also moved an unleased task, so its assigned completion was restored for a clean reviewed attempt"
+	return errors.Join(
+		appendTaskLogStrict(dir, note),
+		normalizeTaskState(id, dir, "in progress — completion rejected", "resume the assigned task and complete it without touching another task", "the assigned work committed but its iteration violated task ownership", "the next completion needs a unique Coop-Recovery trailer"),
+	)
+}
+
+func restoreUnrecordedCompletion(task queuedTask) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore unrecorded task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	note := "completion rejected: host-only completion evidence could not be recorded before releasing the task lease"
+	return errors.Join(
+		appendTaskLogStrict(dir, note),
+		normalizeTaskState(id, dir, "in progress — finalization failed", "fix the host completion-receipt error, then re-run `coop loop`", "the implementation committed but host finalization did not finish", "completion evidence must be recorded under the task authority lock"),
+	)
+}
+
 func normalizeRejectedTaskState(id, taskDir string) error {
 	return normalizeTaskState(
 		id,
@@ -378,6 +578,17 @@ func unbindableCompletionError(ids []string, restoreErr error) error {
 		commands = append(commands, fmt.Sprintf("git commit --amend --no-edit --trailer %q", coopTaskTrailer+": "+id))
 	}
 	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — add a missing trailer (%s), add a unique `Coop-Recovery: <current UTC timestamp>` trailer when amending an already-bound crash-left commit, or rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
+	if restoreErr != nil {
+		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
+	}
+	return errors.New(msg)
+}
+
+func unownedCompletionError(ids []string, restoreErr error) error {
+	msg := "could not validate a completion outside this iteration's lease"
+	if len(ids) > 0 {
+		msg = fmt.Sprintf("completion rejected for unleased task(s) %s: this iteration may complete only its assigned task; task(s) restored to in_progress", strings.Join(ids, ", "))
+	}
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -605,12 +816,8 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName string) {
 				ui.Warn("task %s is blocked but its work landed via fork %s — a human should reconcile it", act.ID, forkName)
 				continue
 			}
-			if err := moveTaskDir(host, items[act.ID], stateDone); err != nil {
-				ui.Warn("reconcile: could not move %s to done: %v", act.ID, err)
-				continue
-			}
 			doneDir := filepath.Join(host, stateDone, act.ID)
-			if err := finalizeCompletedTask(act.ID, doneDir); err != nil {
+			if err := completeTrustedTask(host, items[act.ID]); err != nil {
 				ui.Warn("reconcile: %v — fix the obstruction, then retry: coop tasks done %s", err, act.ID)
 				continue
 			}

@@ -43,7 +43,6 @@ type taskHealth struct {
 	reopens   int      // times the signoff reopened it before it passed
 	gateFiles []string // gate-defining files it edited (a task weakening its own checker)
 	retries   int      // work-iteration retries spent on it
-	untagged  bool     // it finished with no Coop-Task commit (unbindable)
 }
 
 // loopHealth accumulates per-task health across a run; the zero value is a clean run.
@@ -236,22 +235,18 @@ func (h *loopHealth) noteReopen(ids []string) {
 	}
 }
 
-// noteIteration folds one work iteration's warnings (the gate-file edits and untagged finishes it
-// already logged) into the tasks it finished.
-func (h *loopHealth) noteIteration(finished, gateFiles, untagged []string) {
+// noteIteration folds one work iteration's gate-file warnings into the tasks it finished.
+func (h *loopHealth) noteIteration(finished, gateFiles []string) {
 	for _, id := range finished {
 		th := h.at(id)
 		th.gateFiles = append(th.gateFiles, gateFiles...)
 		th.retries++
 	}
-	for _, id := range untagged {
-		h.at(id).untagged = true
-	}
 }
 
 // shaky reports whether a task's run had any risk signal worth the reviewer's extra scrutiny.
 func (t taskHealth) shaky() bool {
-	return t.reopens > 0 || len(t.gateFiles) > 0 || t.untagged
+	return t.reopens > 0 || len(t.gateFiles) > 0
 }
 
 // parseLoopCommits groups `git log --format=<sha>\t<subject>\t<task-id>` output by trailer id
@@ -443,9 +438,6 @@ func (cs loopChangeSet) reviewBlock(h *loopHealth) string {
 			if len(gateFiles) > 0 {
 				flags = append(flags, "edited gate file(s) "+abbrev(gateFiles, 3)+" — confirm the gate wasn't weakened to pass")
 			}
-			if th != nil && th.untagged {
-				flags = append(flags, "finished with no Coop-Task commit")
-			}
 			shaky = append(shaky, "  • "+t.id+": "+strings.Join(flags, "; "))
 		}
 	}
@@ -537,8 +529,6 @@ func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string, cost runCos
 				why = fmt.Sprintf("reopened %d×", th.reopens)
 			case len(th.gateFiles) > 0:
 				why = "edited its gate"
-			case th.untagged:
-				why = "untagged commit"
 			}
 			shaky = append(shaky, t.id+" ("+why+")")
 		}
