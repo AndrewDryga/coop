@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -340,8 +341,14 @@ func rangeFiles(repo, rng string) []string {
 func commitFiles(repo string, commits []commitInfo) []string {
 	seen := map[string]bool{}
 	for _, c := range commits {
-		for _, f := range splitLines(gitOut(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", c.sha)) {
-			seen[f] = true
+		// NUL output preserves every valid path byte; raw Output avoids gitOut's whitespace trim.
+		args := gitArgs(repo, []string{"diff-tree", "--no-commit-id", "--name-only", "-z", "-r", c.sha})
+		if out, err := exec.Command("git", args...).Output(); err == nil {
+			for _, f := range strings.Split(string(out), "\x00") {
+				if f != "" {
+					seen[f] = true
+				}
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))

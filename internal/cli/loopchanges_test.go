@@ -233,6 +233,31 @@ func TestLoopChangesFromGit(t *testing.T) {
 	}
 }
 
+func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	git(t, repo, "config", "core.quotePath", "true") // old newline output must quote the UTF-8 path
+	guard := "révision/queue-guard.sh"
+	full := filepath.Join(repo, filepath.FromSlash(guard))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "add guard below unicode directory")
+	files := commitFiles(repo, []commitInfo{{sha: gitOut(repo, "rev-parse", "HEAD")}})
+	if !slices.Equal(files, []string{guard}) {
+		t.Fatalf("commitFiles = %q, want exact Git path %q", files, guard)
+	}
+	if got := protectedGateFiles(files); !slices.Equal(got, []string{guard}) {
+		t.Fatalf("protected attribution = %q, want %q", got, guard)
+	}
+}
+
 func TestHumanDigest(t *testing.T) {
 	cs := loopChangeSet{
 		tasks:      []taskChanges{{id: "task-json", commits: []commitInfo{{"a1", "add --json flag"}}, files: []string{"internal/cli/output.go"}}},

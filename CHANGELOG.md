@@ -82,7 +82,8 @@
   explicit PASS/FAIL verdict plus a deterministic task-ID list. Coop compares those IDs with the
   review's done-to-actionable folder delta and named subjects, so unrelated actionable work cannot
   distort health, telemetry, round outcomes, or receipt validation; malformed and count-only legacy
-  receipts fail closed.
+  receipts fail closed. Per-commit protected-file attribution now reads NUL-delimited Git paths, so
+  non-ASCII directories cannot hide gate edits from a task-specific review.
 
 ## 5.3.0
 
