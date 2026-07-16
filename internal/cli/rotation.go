@@ -211,12 +211,12 @@ func (r *rotation) clearExpired(now time.Time) {
 }
 
 // oneOffLadder builds a single-entry ladder from a run's decomposed one-off selection — the
-// model and account a fork worker (or applyOneOff) parsed out of its positional target. model
-// may carry a model@account shortcut; credential pins the account. Giving the account twice
-// (both model's @ and credential) is an error. Returns nil when both are empty (caller falls
+// model, effort, and account a fork worker (or applyOneOff) parsed out of its positional target.
+// model may carry a model@account shortcut; credential pins the account. Giving the account twice
+// (both model's @ and credential) is an error. Returns nil when all are empty (caller falls
 // back to the preset/default). Provider stays "" — expandLadder fills the run's agent in.
-func oneOffLadder(model, credential string) ([]agents.Target, error) {
-	if model == "" && credential == "" {
+func oneOffLadder(model, credential, effort string) ([]agents.Target, error) {
+	if model == "" && credential == "" && effort == "" {
 		return nil, nil
 	}
 	m, atAcct, hadAt := strings.Cut(model, "@")
@@ -234,7 +234,7 @@ func oneOffLadder(model, credential string) ([]agents.Target, error) {
 	if atAcct != "" {
 		cred = atAcct
 	}
-	t := agents.Target{Model: m}
+	t := agents.Target{Model: m, Effort: effort}
 	if cred != "" {
 		t.Accounts = []string{cred}
 	}

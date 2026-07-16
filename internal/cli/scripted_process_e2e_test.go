@@ -344,9 +344,13 @@ func oneProcessEvent(t *testing.T, trace []*processTrace, source, event string) 
 }
 
 func assertProcessMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
+	assertProcessMountsAtTarget(t, layout, layout.Repo, processTracePath(layout.Root, layout.Repo), provider, account, mounts)
+}
+
+func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, repoTarget, provider, account string, mounts []processMount) {
 	t.Helper()
 	profileSource := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
-	repoSource := processTracePath(layout.Root, layout.Repo)
+	repoSource := processTracePath(layout.Root, repo)
 	profileTarget := "<container>/home/node/." + provider
 	foundProfile, foundRepo := false, false
 	for _, mount := range mounts {
@@ -362,7 +366,7 @@ func assertProcessMounts(t *testing.T, layout procharness.Layout, provider, acco
 		if !recordedFixturePath(mount.Source) {
 			t.Errorf("recorded mount escaped fixture root: %#v", mount)
 		}
-		if mount.Source == repoSource && mount.Target == repoSource && !mount.ReadOnly {
+		if mount.Source == repoSource && mount.Target == repoTarget && !mount.ReadOnly {
 			foundRepo = true
 			continue
 		}
@@ -381,7 +385,7 @@ func assertProcessMounts(t *testing.T, layout procharness.Layout, provider, acco
 		}
 	}
 	if !foundRepo {
-		t.Fatalf("writable repo mount %s:%s missing from %#v", repoSource, repoSource, mounts)
+		t.Fatalf("writable repo mount %s:%s missing from %#v", repoSource, repoTarget, mounts)
 	}
 	if !foundProfile {
 		t.Fatalf("profile mount %s:%s missing from %#v", profileSource, profileTarget, mounts)

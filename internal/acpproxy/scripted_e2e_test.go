@@ -731,7 +731,7 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 		"COOP_REPO":              repo,
 		"COOP_RUNTIME":           fixtureBin,
 		"COOP_IMAGE":             "fixture-image",
-		"COOP_HOMES":             "0",
+		"COOP_HOMES":             "1",
 		"COOP_NETWORK":           "0",
 		"COOP_AUTO_UP":           "0",
 		"COOP_CACHE":             "0",

@@ -298,6 +298,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if !fa.loop && fa.tasks != "" {
 		return fa, errors.New("coop fork --tasks only applies with --loop")
 	}
+	if fa.cont && fa.newSession {
+		return fa, errors.New("coop fork: --continue and --new are mutually exclusive")
+	}
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
 		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <agent>)")
@@ -332,16 +335,28 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.credential != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, fa.agent), fa.credential) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
+	}
+	ws := forkWorkspace(repo, fa.name)
+	existed := pathExists(ws)
+	// Read provider memory before --fresh destroys it, and reject a brand-new provider-less fork
+	// before clone/image work. An explicit target or preset already set agentSet and always wins.
+	if !fa.agentSet {
+		if remembered := readForkAgent(ws); remembered != "" {
+			if existed && !fa.worker && remembered != fa.agent {
+				ui.Info("using this fork's agent: %s (pass an agent to switch)", remembered)
+			}
+			fa.agent = remembered
+		}
+	}
 	// --loop with no --tasks is the monorepo-aware default: runForkLoop seeds every
 	// project.TaskDirs queue (just .agent/tasks in a single repo) at its own path. Leaving
 	// fa.tasks empty is the signal for that; an explicit --tasks is the single-queue override,
 	// resolved+validated just below. Fail fast HERE if the repo has no queue at all — before any
 	// clone — so a queue-less repo can't leave a stray fork behind and its worker error in a log.
 	if fa.loop && fa.tasks == "" {
-		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-		if err != nil {
-			return -1, err
-		}
 		dirs, err := project.TaskDirs(repo)
 		if err != nil {
 			return -1, err
@@ -364,11 +379,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
 	// BEFORE resolveImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
 	if fa.fresh {
-		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-		if err != nil {
-			return -1, err
-		}
-		if ws := forkWorkspace(repo, fa.name); pathExists(ws) {
+		if pathExists(ws) {
 			if forkNeedsStop(repo, fa.name) {
 				if !fa.force {
 					return 1, fmt.Errorf("--fresh: fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or add --force to stop it automatically)", fa.name, fa.name)
@@ -382,12 +393,16 @@ func (a *app) forkCreate(args []string) (int, error) {
 			}
 		}
 	}
-	repo, img, err := a.resolveImage()
+	// Keep established queue and destructive-work refusals first, but still reject a brand-new
+	// provider-less fork before image or clone work. Provider memory was read above so --fresh can
+	// retain its target after the workspace is destroyed.
+	if fa.agent == "" {
+		return 2, noProviderErr("fork <name>")
+	}
+	_, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, fa.name)
-	existed := pathExists(ws) // a re-entry (vs a fresh fork) — resume by default below
 	if fa.fresh && pathExists(ws) {
 		if err := destroyFork(repo, fa.name); err != nil { // guard already passed above
 			return -1, err
@@ -400,20 +415,6 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 	} else if !fa.worker {
 		ui.Info("resuming fork %s (%s)", fa.name, ws)
-	}
-	// A fork remembers its agent: an explicit one wins (and updates the memory);
-	// otherwise re-entry uses the agent the fork was created with, so resume-by-default
-	// finds the right session instead of silently falling back to claude.
-	if !fa.agentSet {
-		if remembered := readForkAgent(ws); remembered != "" {
-			if existed && !fa.worker && remembered != fa.agent {
-				ui.Info("using this fork's agent: %s (pass an agent to switch)", remembered)
-			}
-			fa.agent = remembered
-		}
-	}
-	if fa.agent == "" { // provider required — no positional, no preset lead, no remembered agent (a fresh fork)
-		return 2, noProviderErr("fork <name>")
 	}
 	saveForkAgent(ws, fa.agent)
 	if fa.loop {
@@ -438,6 +439,40 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err := a.applyOneOff(fa.agent, fa.model, fa.credential, fa.effort); err != nil {
 		return 2, err
 	}
+	// Codex mints its own IDs. Preserve an existing exact hint; migrate an old default-cwd
+	// fork to an exact hint before launch; otherwise snapshot IDs so the completed fresh run
+	// can claim only one uniquely new native session.
+	var discoverer agents.SessionDiscoverer
+	var sessionsBefore []string
+	captureNewSession := false
+	if ag, ok := agents.Get(fa.agent); ok && !ag.PresetSessionID() {
+		discoverer, _ = ag.(agents.SessionDiscoverer)
+		if discoverer != nil {
+			account := a.cfg.ActiveProfile(fa.agent)
+			sessionCWD := box.Workdir(a.cfg, ws)
+			release, err := lockSessionProducer(a.cfg, fa.agent, sessionCWD)
+			if err != nil {
+				return 1, err
+			}
+			defer release()
+
+			hint := readForkSession(ws, fa.agent, account)
+			snapshot := discoverer.SessionIDs(a.cfg, sessionCWD)
+			if hint == "" && !fa.newSession && existed && !fa.fresh && a.cfg.Workdir == "" {
+				if legacy := discoverer.LatestSessionID(a.cfg, sessionCWD); agents.ValidSessionID(legacy) && slices.Contains(snapshot, legacy) {
+					saveForkSession(ws, fa.agent, account, legacy)
+					hint = legacy
+				}
+			}
+			captureNewSession = fa.newSession || hint == "" || !slices.Contains(snapshot, hint)
+			if captureNewSession {
+				sessionsBefore = snapshot
+			}
+			if fa.newSession {
+				clearForkSession(ws, fa.agent, account)
+			}
+		}
+	}
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
 	// run when no session for this fork exists. See forkLaunchCmd.
@@ -447,6 +482,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	if err == nil {
+		if captureNewSession {
+			a.rememberNewDiscoveredForkSession(ws, fa.agent, discoverer, sessionsBefore)
+		}
 		forkNextSteps(fa.name) // the box ran (the work is in the fork); print next steps even on a nonzero agent exit
 	}
 	return code, err // propagate the agent's exit code, like every other launch path
@@ -454,32 +492,83 @@ func (a *app) forkCreate(args []string) (int, error) {
 
 // forkLaunchCmd builds the agent command for entering a fork: resume the fork's prior
 // session on re-entry (when one exists), else start fresh. For agents that honor a
-// coop-owned session id (claude/gemini) coop allocates one per (fork, agent), persists
+// coop-owned session id (claude/gemini/grok) coop allocates one per (fork, agent, account), persists
 // it in the fork's git-excluded .coop state, starts the session under it, and resumes
 // exactly it later — so a loop or consult that shares the cwd can never hijack the
-// "continue". codex can't preset an id, so it scans for its most-recent interactive
-// session instead.
+// "continue". codex can't preset an id, so coop persists the native id it discovers
+// after a run and resumes that exact session later.
 func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
 	ag, ok := agents.Get(fa.agent)
 	if !ok {
 		return a.defaultCmd(fa.agent)
 	}
+	sessionCWD := box.Workdir(a.cfg, ws)
+	account := a.cfg.ActiveProfile(fa.agent)
 	id := ""
+	if !fa.newSession {
+		id = readForkSession(ws, fa.agent, account)
+	}
 	if ag.PresetSessionID() {
-		if id = readForkSession(ws, fa.agent); id == "" {
+		if !fa.newSession {
+			// Old forks stored one provider-only id with no account metadata. Adopt it only
+			// when the selected account's adapter can prove that exact session exists.
+			if id == "" {
+				legacy := readLegacyForkSession(ws, fa.agent)
+				if legacy != "" {
+					if _, resumed := ag.Resume(a.cfg, sessionCWD, legacy); resumed {
+						id = legacy
+						saveForkSession(ws, fa.agent, account, id)
+					}
+				}
+			}
+		}
+		if id == "" {
 			if sid, err := newSessionID(); err == nil {
 				id = sid
-				saveForkSession(ws, fa.agent, id)
+				saveForkSession(ws, fa.agent, account, id)
 			}
 		}
 	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
-		if rc, resumed := ag.Resume(a.cfg, ws, id); resumed {
-			ui.Info("continuing your last %s session in this fork", fa.agent)
-			return rc
+		// A shared COOP_WORKDIR makes a legacy Codex cwd lookup ambiguous across forks. Start
+		// fresh once when no exact persisted native ID exists; the completed run records it.
+		ambiguousDiscovery := !ag.PresetSessionID() && id == "" && a.cfg.Workdir != ""
+		if !ambiguousDiscovery {
+			if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
+				ui.Info("continuing your last %s session in this fork", fa.agent)
+				return rc
+			}
 		}
 	}
 	return ag.StartSession(a.cfg, id)
+}
+
+func (a *app) rememberNewDiscoveredForkSession(ws, provider string, discoverer agents.SessionDiscoverer, before []string) {
+	if discoverer == nil {
+		return
+	}
+	id := uniquelyNewSessionID(before, discoverer.SessionIDs(a.cfg, box.Workdir(a.cfg, ws)))
+	if agents.ValidSessionID(id) {
+		saveForkSession(ws, provider, a.cfg.ActiveProfile(provider), id)
+	}
+}
+
+func uniquelyNewSessionID(before, after []string) string {
+	seen := make(map[string]bool, len(before))
+	for _, id := range before {
+		seen[id] = true
+	}
+	newID := ""
+	for _, id := range after {
+		if seen[id] {
+			continue
+		}
+		if newID != "" && newID != id {
+			return ""
+		}
+		newID = id
+	}
+	return newID
 }
 
 func forkNextSteps(name string) {
@@ -502,6 +591,7 @@ func setupFork(repo, name string) (string, error) {
 	}
 	_ = gitCheckoutNewBranch(ws, name) // branch may already exist in origin; fine
 	propagateGitEnv(repo, ws)
+	excludeFork(ws, ".coop/") // trusted setup only; never re-open agent-writable .git metadata later
 	return ws, nil
 }
 
@@ -552,11 +642,7 @@ func propagateGitIdentity(repo, ws string) {
 func forkAgentFile(ws string) string { return filepath.Join(ws, ".coop", "agent") }
 
 func readForkAgent(ws string) string {
-	data, err := os.ReadFile(forkAgentFile(ws))
-	if err != nil {
-		return ""
-	}
-	if a := strings.TrimSpace(string(data)); agents.Valid(a) {
+	if a := readForkMeta(ws, forkAgentFile(ws)); agents.Valid(a) {
 		return a
 	}
 	return ""
@@ -564,39 +650,85 @@ func readForkAgent(ws string) string {
 
 func saveForkAgent(ws, agent string) { saveForkMeta(ws, forkAgentFile(ws), agent) }
 
-// saveForkMeta writes one of a fork's .coop/ bookkeeping files (its agent, its session id),
-// best-effort: an empty value is a no-op, and any write failure is swallowed since the file
-// is a convenience re-derived or re-prompted next run. On a successful write it excludes
-// .coop/ from the fork's diff so the bookkeeping never lands in a merge.
-func saveForkMeta(ws, path, value string) {
-	if value == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	if os.WriteFile(path, []byte(value+"\n"), 0o644) == nil {
-		excludeFork(ws, ".coop/")
-	}
-}
+const forkMetadataFileLimit = 4 << 10
 
-// forkSessionFile records the coop-owned session id for a fork+agent (claude/gemini),
-// inside the fork but git-excluded, so re-entry resumes exactly that session.
-func forkSessionFile(ws, agent string) string {
-	return filepath.Join(ws, ".coop", "session."+agent)
-}
-
-func readForkSession(ws, agent string) string {
-	data, err := os.ReadFile(forkSessionFile(ws, agent))
+// Fork metadata is provider-writable between launches. Reads and writes reuse the task metadata
+// no-follow root/file primitives so a planted .coop or file symlink cannot reach a host path.
+// Errors remain best-effort because these hints can be re-derived or re-prompted next run.
+func readForkMeta(ws, path string) string {
+	meta := filepath.Join(ws, ".coop")
+	if filepath.Dir(path) != meta {
+		return ""
+	}
+	root, err := openTaskMetadataRoot(meta)
 	if err != nil {
+		return ""
+	}
+	defer root.Close()
+	data, err := readTaskMetadataFile(root, filepath.Base(path))
+	if err != nil || len(data) > forkMetadataFileLimit {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
 }
 
-func saveForkSession(ws, agent, id string) { saveForkMeta(ws, forkSessionFile(ws, agent), id) }
+func saveForkMeta(ws, path, value string) {
+	meta := filepath.Join(ws, ".coop")
+	if value == "" || len(value) > forkMetadataFileLimit || filepath.Dir(path) != meta {
+		return
+	}
+	if err := os.Mkdir(meta, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return
+	}
+	root, err := openTaskMetadataRoot(meta)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	_ = atomicWriteTaskFile(root, filepath.Base(path), []byte(value+"\n"))
+}
 
-// newSessionID returns a random RFC-4122 v4 UUID — the form claude and gemini require
+// forkSessionFile records the coop-owned session id for a fork+agent+account,
+// inside the fork but git-excluded, so re-entry resumes exactly that session.
+func forkSessionFile(ws, agent, account string) string {
+	return filepath.Join(ws, ".coop", "session."+agent+"."+account)
+}
+
+func legacyForkSessionFile(ws, agent string) string {
+	return filepath.Join(ws, ".coop", "session."+agent)
+}
+
+func readForkSession(ws, agent, account string) string {
+	id := readForkMeta(ws, forkSessionFile(ws, agent, account))
+	if !agents.ValidSessionID(id) {
+		return ""
+	}
+	return id
+}
+
+func readLegacyForkSession(ws, agent string) string {
+	id := readForkMeta(ws, legacyForkSessionFile(ws, agent))
+	if !agents.ValidSessionID(id) {
+		return ""
+	}
+	return id
+}
+
+func saveForkSession(ws, agent, account, id string) {
+	saveForkMeta(ws, forkSessionFile(ws, agent, account), id)
+}
+
+func clearForkSession(ws, agent, account string) {
+	meta := filepath.Join(ws, ".coop")
+	root, err := openTaskMetadataRoot(meta)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	_ = root.Remove(filepath.Base(forkSessionFile(ws, agent, account)))
+}
+
+// newSessionID returns a random RFC-4122 v4 UUID — the form claude, gemini, and grok require
 // for --session-id.
 func newSessionID() (string, error) {
 	var b [16]byte

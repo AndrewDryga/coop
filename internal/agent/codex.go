@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,20 +66,30 @@ func (codexAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 // id (it mints its own UUIDv7), so coop allocates none and Resume scans instead.
 func (codexAgent) PresetSessionID() bool { return false }
 
-// StartSession ignores id (codex can't preset one) and just starts interactively;
-// Resume finds that session afterward by scanning.
+// StartSession ignores id (codex can't preset one) and just starts interactively.
 func (a codexAgent) StartSession(cfg *config.Config, _ string) []string {
 	return a.Interactive(cfg)
 }
 
-func (a codexAgent) Resume(cfg *config.Config, ws, _ string) ([]string, bool) {
-	// `codex resume --last` is global, so find this fork's most recent *interactive*
-	// session by the cwd recorded in its session files and resume that one by id.
-	if id := latestCodexSession(cfg.AgentDir("codex"), ws); id != "" {
+func (a codexAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
+	// `codex resume --last` is global. Fork launch owns legacy discovery explicitly, while
+	// the adapter accepts only a persisted exact native ID for ordinary resumes.
+	if id = findCodexSession(cfg.AgentDir("codex"), ws, id); id != "" {
 		b := a.base(cfg)
 		return append([]string{b[0], "resume", id}, b[1:]...), true
 	}
 	return a.Interactive(cfg), false
+}
+
+// LatestSessionID supports one-time adoption of an old fork that predates exact native-ID hints.
+func (codexAgent) LatestSessionID(cfg *config.Config, cwd string) string {
+	latest, _ := codexSessionSnapshot(cfg.AgentDir("codex"), cwd)
+	return latest
+}
+
+func (codexAgent) SessionIDs(cfg *config.Config, cwd string) []string {
+	_, ids := codexSessionSnapshot(cfg.AgentDir("codex"), cwd)
+	return ids
 }
 
 func (codexAgent) Login(*config.Config) []string {
@@ -286,39 +298,70 @@ func hardenCodexSQLiteFeedbackLog(dir string) {
 	_ = exec.Command(sqlite, db, `CREATE TRIGGER IF NOT EXISTS block_log_inserts BEFORE INSERT ON logs BEGIN SELECT RAISE(IGNORE); END;`).Run()
 }
 
-// latestCodexSession returns the id of the most recent codex session recorded for cwd,
-// or "" if none. Codex stores sessions flat by date as JSONL whose first line is a
-// session_meta carrying {id, cwd}.
-func latestCodexSession(codexDir, cwd string) string {
-	var bestID string
-	var bestTime time.Time
-	_ = filepath.WalkDir(filepath.Join(codexDir, "sessions"), func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".jsonl") {
+// findCodexSession returns the exact requested CLI session for cwd. Codex stores JSONL by date
+// with first-line {type,payload:{id,cwd,source}} metadata.
+func findCodexSession(codexDir, cwd, id string) string {
+	if ValidSessionID(id) {
+		_, ids := codexSessionSnapshot(codexDir, cwd)
+		if slices.Contains(ids, id) {
+			return id
+		}
+	}
+	return ""
+}
+
+const codexSessionMetadataLimit = 64 << 10
+
+// codexSessionSnapshot returns newest-first identity plus the complete unique ID set for cwd.
+// Rollout metadata is provider-writable, so only bounded regular JSONL files are inspected.
+func codexSessionSnapshot(codexDir, cwd string) (string, []string) {
+	root, err := openSessionRoot(filepath.Join(codexDir, "sessions"))
+	if err != nil {
+		return "", nil
+	}
+	defer root.Close()
+	var latest string
+	var latestTime time.Time
+	ids := map[string]bool{}
+	_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") || d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		f, openErr := os.Open(p)
-		if openErr != nil {
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		defer f.Close()
-		line, _ := bufio.NewReader(f).ReadString('\n')
-		var m struct {
+		f, err := root.Open(path)
+		if err != nil {
+			return nil
+		}
+		line, readErr := bufio.NewReader(io.LimitReader(f, codexSessionMetadataLimit+1)).ReadString('\n')
+		_ = f.Close()
+		if len(line) > codexSessionMetadataLimit || (readErr != nil && readErr != io.EOF) {
+			return nil
+		}
+		var meta struct {
+			Type    string `json:"type"`
 			Payload struct {
 				ID, Cwd, Source string
 			} `json:"payload"`
 		}
-		if json.Unmarshal([]byte(line), &m) != nil || m.Payload.Cwd != cwd || m.Payload.ID == "" {
+		if json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
+			meta.Payload.Cwd != cwd || meta.Payload.Source != "cli" || !ValidSessionID(meta.Payload.ID) {
 			return nil
 		}
-		if m.Payload.Source == "exec" {
-			return nil // a loop/consult `codex exec` session, not the interactive one we resume
-		}
-		if info, err := d.Info(); err == nil && info.ModTime().After(bestTime) {
-			bestTime, bestID = info.ModTime(), m.Payload.ID
+		ids[meta.Payload.ID] = true
+		if info.ModTime().After(latestTime) {
+			latestTime, latest = info.ModTime(), meta.Payload.ID
 		}
 		return nil
 	})
-	return bestID
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return latest, out
 }
 
 // ACPRateLimitSignals: codex-acp surfaces a limit as codexErrorInfo=usageLimitExceeded

@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,29 +56,100 @@ func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {
 }
 
 // Resume pins the coop-owned session id rather than "latest" — a loop or consult in the same
-// cwd could be the latest, but resuming an explicit uuid is immune. It's matched by file
-// content across every project bucket, so neither gemini's bucket-naming scheme nor a
-// same-named fork in another repo can break or misdirect detection.
+// cwd could be the latest, but resuming an explicit uuid is immune. Metadata is matched across
+// every project bucket because Gemini's bucket naming has changed between releases.
 func (a geminiAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	if id != "" && geminiHasSession(cfg, id) {
+	if ValidSessionID(id) && geminiHasSession(cfg, ws, id) {
 		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
 }
 
-// geminiHasSession reports whether any chats file records session id. gemini stores chats under
-// ~/.gemini/tmp/<bucket>/chats where <bucket> is a version-dependent encoding of the project path
-// (a slug now, a hash in older versions, with a collision suffix) — so rather than reconstruct it
-// (and silently miss when it changes), scan every bucket and match the coop-owned id, a unique
-// uuid that appears only in its own session.
-func geminiHasSession(cfg *config.Config, id string) bool {
-	files, _ := filepath.Glob(filepath.Join(cfg.AgentDir("gemini"), "tmp", "*", "chats", "*"))
-	for _, f := range files {
-		if data, err := os.ReadFile(f); err == nil && strings.Contains(string(data), id) {
-			return true
+// geminiHasSession matches both the Coop-owned id and Gemini's native sha256(cwd) projectHash.
+// Bucket names have changed across releases, so scan them but never accept another cwd's session.
+func geminiHasSession(cfg *config.Config, ws, id string) bool {
+	wantProject := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
+	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("gemini"), "tmp"))
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return false
+	}
+	buckets, _ := dir.ReadDir(-1)
+	_ = dir.Close()
+	for _, bucket := range buckets {
+		if !bucket.IsDir() || bucket.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		chats := filepath.Join(bucket.Name(), "chats")
+		info, err := root.Lstat(chats)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		chatDir, err := root.Open(chats)
+		if err != nil {
+			continue
+		}
+		files, _ := chatDir.ReadDir(-1)
+		_ = chatDir.Close()
+		for _, entry := range files {
+			path := filepath.Join(chats, entry.Name())
+			info, err := root.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			f, err := root.Open(path)
+			if err != nil {
+				continue
+			}
+			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, 1<<20))
+			_ = f.Close()
+			// Some whole-file legacy records omit projectHash. Accept those only from the old
+			// exact sha256(cwd) bucket; a slug without metadata cannot prove cwd safely.
+			if sessionID == id && (projectHash == wantProject || (projectHash == "" && bucket.Name() == wantProject)) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// geminiSessionMetadata reads only the two top-level keys needed for lookup. It works for the
+// first object in current JSONL and for legacy whole-file JSON without loading transcript arrays.
+func geminiSessionMetadata(r io.Reader) (sessionID, projectHash string) {
+	dec := json.NewDecoder(r)
+	start, err := dec.Token()
+	if err != nil || start != json.Delim('{') {
+		return "", ""
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return "", ""
+		}
+		switch key {
+		case "sessionId":
+			if err := dec.Decode(&sessionID); err != nil {
+				return "", ""
+			}
+		case "projectHash":
+			if err := dec.Decode(&projectHash); err != nil {
+				return "", ""
+			}
+		default:
+			var ignored json.RawMessage
+			if err := dec.Decode(&ignored); err != nil {
+				return "", ""
+			}
+		}
+		if sessionID != "" && projectHash != "" {
+			return sessionID, projectHash
+		}
+	}
+	return sessionID, projectHash
 }
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }

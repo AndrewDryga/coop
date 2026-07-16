@@ -293,24 +293,27 @@ func TestApplyTarget(t *testing.T) {
 	}
 }
 
-// oneOffLadder parses a decomposed one-off (model, account) into a single ladder entry,
+// oneOffLadder parses a decomposed one-off (model, effort, account) into a single ladder entry,
 // model-first with the model@account shortcut; conflicting accounts error.
 func TestOneOffLadder(t *testing.T) {
-	if l, _ := oneOffLadder("", ""); l != nil {
+	if l, _ := oneOffLadder("", "", ""); l != nil {
 		t.Errorf("no one-off → nil ladder, got %v", l)
 	}
-	l, err := oneOffLadder("opus@work", "")
+	l, err := oneOffLadder("opus@work", "", "high")
 	if err != nil || len(l) != 1 || l[0].Model != "opus" || l[0].Account() != "work" {
 		t.Errorf("model opus@work = %+v (%v)", l, err)
 	}
-	l, _ = oneOffLadder("opus", "work")
+	if err != nil || len(l) != 1 || l[0].Effort != "high" {
+		t.Fatalf("oneOffLadder effort = %#v, %v", l, err)
+	}
+	l, _ = oneOffLadder("opus", "work", "")
 	if l[0].Model != "opus" || l[0].Account() != "work" {
 		t.Errorf("model opus + account work = %+v", l)
 	}
-	if _, err := oneOffLadder("opus@work", "personal"); err == nil {
+	if _, err := oneOffLadder("opus@work", "personal", ""); err == nil {
 		t.Error("account given twice (model @work + account personal) should error")
 	}
-	if _, err := oneOffLadder("opus@", ""); err == nil {
+	if _, err := oneOffLadder("opus@", "", ""); err == nil {
 		t.Error("empty account after @ should error")
 	}
 }

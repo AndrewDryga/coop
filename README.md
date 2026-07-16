@@ -337,13 +337,23 @@ A fork remembers the agent it was created with, so `coop fork perf` after
 `coop fork perf codex` re-enters with *codex*, not a silent fallback to claude (pass an
 agent to switch; `coop fork ls` shows each fork's agent). The agent's session history
 persists too, so re-entry continues its last conversation instead of starting fresh.
-For claude and gemini, coop assigns each fork its own session id (kept in the fork's
-git-excluded `.coop/`) and resumes exactly that one — so a loop or a peer consult that
-shares the fork's directory can never hijack the "continue". codex can't be handed an
-id, so it resumes the most-recent *interactive* session recorded for the fork (skipping
-`codex exec` loop/consult runs). It falls back to a fresh session when none exists.
-Force one with `--new`; `--fresh` recreates the whole fork (refusing to discard unmerged/dirty
-work without `--force`).
+For Claude, Gemini, and Grok, Coop assigns each fork, provider, and account its own session ID.
+Codex cannot be handed a new ID, so Coop records the native ID Codex mints after the run. Those
+hints stay in the fork's git-excluded `.coop/`, and re-entry resumes that exact session for the
+active account and container-visible fork directory. Older Codex forks without a hint discover
+the most-recent interactive session for their exact cwd, skipping `codex exec` loop/consult runs;
+when `COOP_WORKDIR` makes that cwd shared, they start fresh once instead of guessing. Switching
+providers or accounts starts or resumes that target's separate native session; Coop does not
+splice one provider's transcript into another here.
+
+Coop allows only one Coop-owned interactive Codex process for the same account and container
+workdir at a time; a contender fails with a retryable error instead of risking the wrong native
+session ID. A Codex process started outside Coop cannot join that lock, so do not run one against
+the same account and cwd while a fresh fork session is being established.
+
+`--new` starts a new session for the selected provider/account while keeping the fork's files.
+`--fresh` recreates the whole fork but remembers its selected provider (and refuses to discard
+unmerged/dirty work without `--force`).
 
 ### Review — in your terminal or your IDE
 

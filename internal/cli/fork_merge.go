@@ -221,6 +221,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if err := a.rebaseForkOntoParent(repo, ws, name); err != nil {
 		return false, err
 	}
+	parentBeforeLand := gitOut(repo, "rev-parse", "HEAD")
 	// Gate the CANDIDATE (the rebased fork), never the live parent — with the parent's own gate
 	// policy. A red gate leaves the parent exactly as it was: no reset --hard of a shared tree.
 	if img != "" && !a.gatePasses(repo, ws, img) {
@@ -234,7 +235,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	}
 	// Reconcile the parent queue: a task whose Coop-Task trailer just landed moves to done/, so the
 	// parent loop doesn't redo work this fork already completed. Best-effort — the land already stuck.
-	a.reconcileQueueAfterMerge(repo, name)
+	a.reconcileQueueAfterMerge(repo, name, parentBeforeLand+"..HEAD")
 	return true, nil
 }
 

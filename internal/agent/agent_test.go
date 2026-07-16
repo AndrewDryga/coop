@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -401,11 +403,27 @@ func TestResume(t *testing.T) {
 	if cmd, ok := claude.Resume(cfg, ws, "99999999-2222-4333-8444-555555555555"); ok {
 		t.Errorf("claude Resume matched an id with no session file: %v", cmd)
 	}
+	linkedClaudeID := "22222222-2222-4333-8444-555555555555"
+	outsideClaude := filepath.Join(t.TempDir(), "outside.jsonl")
+	mustWrite(t, outsideClaude, "{}\n")
+	if err := os.Symlink(outsideClaude, filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), linkedClaudeID+".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, ok := claude.Resume(cfg, ws, linkedClaudeID); ok {
+		t.Errorf("claude Resume followed a session symlink: %v", cmd)
+	}
+	directoryClaudeID := "33333333-2222-4333-8444-555555555555"
+	if err := os.Mkdir(filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), directoryClaudeID+".jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, ok := claude.Resume(cfg, ws, directoryClaudeID); ok {
+		t.Errorf("claude Resume accepted a session directory: %v", cmd)
+	}
 
 	// gemini resumes the exact id, matched by file content (not "latest").
 	gemini, _ := Get("gemini")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "demo", "chats", "session-x.jsonl"),
-		`{"sessionId":"`+id+`"}`)
+		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(ws))))
 	if cmd, ok := gemini.Resume(cfg, ws, id); !ok ||
 		!slices.Equal(cmd, []string{"gemini", "--yolo", "--resume", id}) {
 		t.Errorf("gemini Resume = (%v, %v)", cmd, ok)
@@ -414,7 +432,8 @@ func TestResume(t *testing.T) {
 	// resume must find the id regardless of the bucket name (the old raw-basename lookup silently
 	// missed a fork named e.g. "My.Repo" whose real bucket is "my-repo").
 	slugWs := filepath.Join(t.TempDir(), "My.Cool_Repo")
-	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", "chats", "s.jsonl"), `{"sessionId":"`+id+`"}`)
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", "chats", "s.jsonl"),
+		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(slugWs))))
 	if _, ok := gemini.Resume(cfg, slugWs, id); !ok {
 		t.Error("gemini Resume must match a session in a slug-named bucket, not only the raw basename")
 	}
@@ -423,16 +442,56 @@ func TestResume(t *testing.T) {
 	// spans every bucket scheme, not just slugs. (A raw-basename lookup would silently miss it.)
 	hashID := "77777777-2222-4333-8444-555555555555"
 	hashBucket := "00019aef076a44ed361af8d31415c187d0650aad947127fd02c5617717734f4f"
-	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, "chats", "h.jsonl"), `{"sessionId":"`+hashID+`"}`)
-	if _, ok := gemini.Resume(cfg, filepath.Join(t.TempDir(), "hashed-repo"), hashID); !ok {
+	hashWs := filepath.Join(t.TempDir(), "hashed-repo")
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, "chats", "h.jsonl"),
+		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, hashID, sha256.Sum256([]byte(hashWs))))
+	if _, ok := gemini.Resume(cfg, hashWs, hashID); !ok {
 		t.Error("gemini Resume must match a session in a 64-char-hash bucket (the gemini 0.46+ scheme)")
 	}
+	if cmd, ok := gemini.Resume(cfg, filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
+		t.Errorf("gemini Resume matched the same id under another cwd: %v", cmd)
+	}
+	// Gemini still loads legacy whole-file JSON records. Pretty printing must not make the
+	// persisted fork session disappear after a CLI upgrade.
+	legacyGeminiID := "66666666-2222-4333-8444-555555555555"
+	legacyGeminiWS := filepath.Join(t.TempDir(), "legacy-gemini")
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "legacy", "chats", "session.json"), fmt.Sprintf(`{
+  "messages": [],
+  "sessionId": %q,
+  "projectHash": "%x"
+}`, legacyGeminiID, sha256.Sum256([]byte(legacyGeminiWS))))
+	if _, ok := gemini.Resume(cfg, legacyGeminiWS, legacyGeminiID); !ok {
+		t.Error("gemini Resume must match a pretty-printed legacy JSON session")
+	}
+	missingHashID := "33333333-2222-4333-8444-555555555555"
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "legacy-no-hash", "chats", "session.json"),
+		fmt.Sprintf(`{"sessionId":%q}`, missingHashID))
+	if cmd, ok := gemini.Resume(cfg, legacyGeminiWS, missingHashID); ok {
+		t.Errorf("gemini Resume accepted legacy metadata with no cwd projectHash: %v", cmd)
+	}
+	hashOnlyID := "11111111-2222-4333-8444-555555555555"
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", fmt.Sprintf("%x", sha256.Sum256([]byte(legacyGeminiWS))), "chats", "legacy.json"),
+		fmt.Sprintf(`{"sessionId":%q}`, hashOnlyID))
+	if _, ok := gemini.Resume(cfg, legacyGeminiWS, hashOnlyID); !ok {
+		t.Error("gemini Resume must accept a no-projectHash legacy record in the exact cwd hash bucket")
+	}
+	symlinkID := "22222222-2222-4333-8444-555555555555"
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	mustWrite(t, outside, fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, symlinkID, sha256.Sum256([]byte(legacyGeminiWS))))
+	symlink := filepath.Join(cfg.AgentDir("gemini"), "tmp", "linked", "chats", "session.json")
+	if err := os.MkdirAll(filepath.Dir(symlink), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, ok := gemini.Resume(cfg, legacyGeminiWS, symlinkID); ok {
+		t.Errorf("gemini Resume followed a provider-created session symlink: %v", cmd)
+	}
 
-	// grok resumes the exact coop-owned id, matched by file content anywhere under sessions/
-	// (its working-dir bucketing is version-dependent, so a content scan can't silently miss).
+	// grok resumes the exact coop-owned id in the matching cwd bucket.
 	grok, _ := Get("grok")
-	mustWrite(t, filepath.Join(cfg.AgentDir("grok"), "sessions", "some-cwd-bucket", "s.jsonl"),
-		`{"sessionId":"`+id+`"}`)
+	mustWrite(t, filepath.Join(cfg.AgentDir("grok"), "sessions", url.PathEscape(ws), id, "summary.json"), `{}`)
 	if cmd, ok := grok.Resume(cfg, ws, id); !ok ||
 		!slices.Equal(cmd, []string{"grok", "--permission-mode", "bypassPermissions", "--resume", id}) {
 		t.Errorf("grok Resume = (%v, %v)", cmd, ok)
@@ -441,22 +500,155 @@ func TestResume(t *testing.T) {
 	if cmd, ok := grok.Resume(cfg, ws, "88888888-2222-4333-8444-555555555555"); ok {
 		t.Errorf("grok Resume matched an id with no session: %v", cmd)
 	}
+	if cmd, ok := grok.Resume(cfg, filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
+		t.Errorf("grok Resume matched the same id under another cwd: %v", cmd)
+	}
+	// Overlong encoded cwd names use a slug/hash bucket plus a bounded .cwd marker.
+	longGrokID := "55555555-2222-4333-8444-555555555555"
+	longGrokWS := "/" + strings.Repeat("long-directory/", 24) + "repo"
+	longBucket := filepath.Join(cfg.AgentDir("grok"), "sessions", "repo-deadbeef")
+	mustWrite(t, filepath.Join(longBucket, ".cwd"), longGrokWS+"\n")
+	mustWrite(t, filepath.Join(longBucket, longGrokID, "summary.json"), `{}`)
+	if _, ok := grok.Resume(cfg, longGrokWS, longGrokID); !ok {
+		t.Error("grok Resume must match a long-cwd .cwd bucket")
+	}
+	duplicateGrokWS := "/" + strings.Repeat("duplicate-directory/", 24) + "repo"
+	duplicateGrokID := "66666666-2222-4333-8444-555555555555"
+	staleGrokBucket := filepath.Join(cfg.AgentDir("grok"), "sessions", "repo-stale")
+	validGrokBucket := filepath.Join(cfg.AgentDir("grok"), "sessions", "repo-valid")
+	mustWrite(t, filepath.Join(staleGrokBucket, ".cwd"), duplicateGrokWS+"\n")
+	mustWrite(t, filepath.Join(validGrokBucket, ".cwd"), duplicateGrokWS+"\n")
+	mustWrite(t, filepath.Join(validGrokBucket, duplicateGrokID, "summary.json"), `{}`)
+	if _, ok := grok.Resume(cfg, duplicateGrokWS, duplicateGrokID); !ok {
+		t.Error("grok Resume let a stale matching cwd bucket mask a later valid bucket")
+	}
+	emptyGrokID := "44444444-2222-4333-8444-555555555555"
+	if err := os.MkdirAll(filepath.Join(longBucket, emptyGrokID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, ok := grok.Resume(cfg, longGrokWS, emptyGrokID); ok {
+		t.Errorf("grok Resume accepted an empty session directory: %v", cmd)
+	}
 
-	// codex ignores the id and resumes its most-recent INTERACTIVE session for the cwd,
-	// skipping a newer `codex exec` (source=="exec") loop/consult session.
+	// Codex resumes only an exact persisted CLI session for the cwd. Empty-ID legacy discovery
+	// belongs to the fork launcher, and newer exec/editor/unknown records are not interactive CLI.
 	codex, _ := Get("codex")
 	sess := filepath.Join(cfg.AgentDir("codex"), "sessions", "2026", "06")
+	interactiveCodexID := "019f6a60-a28e-7d22-919c-81f43bef064f"
+	execCodexID := "019f6a61-b39f-7e33-a811-92f64cf17550"
 	mustWrite(t, filepath.Join(sess, "16", "rollout-interactive.jsonl"),
-		`{"type":"session_meta","payload":{"id":"abc-123","cwd":"`+ws+`","source":"cli"}}`+"\n")
+		`{"type":"session_meta","payload":{"id":"`+interactiveCodexID+`","cwd":"`+ws+`","source":"cli"}}`+"\n")
 	mustWrite(t, filepath.Join(sess, "17", "rollout-exec.jsonl"),
-		`{"type":"session_meta","payload":{"id":"exec-999","cwd":"`+ws+`","source":"exec"}}`+"\n")
-	if cmd, ok := codex.Resume(cfg, ws, id); !ok ||
-		!slices.Equal(cmd, []string{"codex", "resume", "abc-123", "--dangerously-bypass-approvals-and-sandbox"}) {
-		t.Errorf("codex Resume = (%v, %v) — want the interactive session, not the newer exec one", cmd, ok)
+		`{"type":"session_meta","payload":{"id":"`+execCodexID+`","cwd":"`+ws+`","source":"exec"}}`+"\n")
+	for i, source := range []string{"vscode", "unknown"} {
+		foreignID := fmt.Sprintf("019f6a6%d-b39f-7e33-a811-92f64cf1755%d", i+2, i+1)
+		mustWrite(t, filepath.Join(sess, fmt.Sprintf("%d", 18+i), "rollout-foreign.jsonl"),
+			`{"type":"session_meta","payload":{"id":"`+foreignID+`","cwd":"`+ws+`","source":"`+source+`"}}`+"\n")
+	}
+	mustWrite(t, filepath.Join(sess, "20", "rollout-malformed.jsonl"),
+		`{"type":"session_meta","payload":{"id":"--help","cwd":"`+ws+`","source":"cli"}}`+"\n")
+	mustWrite(t, filepath.Join(sess, "21", "rollout-wrong-type.jsonl"),
+		`{"type":"response_item","payload":{"id":"019f6a64-b39f-7e33-a811-92f64cf17553","cwd":"`+ws+`","source":"cli"}}`+"\n")
+	if cmd, ok := codex.Resume(cfg, ws, ""); ok {
+		t.Errorf("codex Resume(empty) selected global history: %v", cmd)
+	}
+	if cmd, ok := codex.Resume(cfg, ws, interactiveCodexID); !ok || !slices.Contains(cmd, interactiveCodexID) {
+		t.Errorf("codex Resume(exact id) = (%v, %v)", cmd, ok)
+	}
+	if cmd, ok := codex.Resume(cfg, ws, "missing-id"); ok {
+		t.Errorf("codex Resume accepted another native id: %v", cmd)
+	}
+	discoverer := codex.(SessionDiscoverer)
+	if got := discoverer.LatestSessionID(cfg, ws); got != interactiveCodexID {
+		t.Errorf("codex latest CLI session = %q, want %q", got, interactiveCodexID)
+	}
+	if got := discoverer.SessionIDs(cfg, ws); !slices.Equal(got, []string{interactiveCodexID}) {
+		t.Errorf("codex CLI session IDs = %v, want only %q", got, interactiveCodexID)
+	}
+	unsafeCodexID := "019f6a62-8f6e-7440-a55e-9df3ff5b77dd"
+	outsideCodex := filepath.Join(t.TempDir(), "outside.jsonl")
+	mustWrite(t, outsideCodex, `{"type":"session_meta","payload":{"id":"`+unsafeCodexID+`","cwd":"`+ws+`","source":"cli"}}`+"\n")
+	if err := os.Symlink(outsideCodex, filepath.Join(sess, "symlink.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, ok := codex.Resume(cfg, ws, unsafeCodexID); ok {
+		t.Errorf("codex Resume followed a provider-created rollout symlink: %v", cmd)
+	}
+	oversizeCodexID := "019f6a63-8f6e-7440-a55e-9df3ff5b77dd"
+	mustWrite(t, filepath.Join(sess, "oversize.jsonl"), strings.Repeat(" ", codexSessionMetadataLimit+1)+
+		`{"type":"session_meta","payload":{"id":"`+oversizeCodexID+`","cwd":"`+ws+`","source":"cli"}}`)
+	if cmd, ok := codex.Resume(cfg, ws, oversizeCodexID); ok {
+		t.Errorf("codex Resume accepted oversized first-line metadata: %v", cmd)
+	}
+	if err := os.Mkdir(filepath.Join(sess, "special.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	// A session recorded for a DIFFERENT cwd must not match.
 	if cmd, ok := codex.Resume(cfg, "/work/myrepo-forks/other", id); ok {
 		t.Errorf("codex Resume(other fork) wrongly matched: %v", cmd)
+	}
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		if cmd, ok := ag.Resume(cfg, ws, "--help"); ok {
+			t.Errorf("%s Resume accepted a non-UUID session id: %v", name, cmd)
+		}
+	}
+}
+
+func TestValidSessionID(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{"019f6a60-a28e-7d22-919c-81f43bef064f", true},
+		{"11111111-2222-4333-8444-555555555555", true},
+		{"--help", false},
+		{"019F6A60-A28E-7D22-919C-81F43BEF064F", false},
+		{"019f6a60a28e7d22919c81f43bef064f", false},
+		{"019f6a60-a28e-0d22-919c-81f43bef064f", false},
+		{"019f6a60-a28e-7d22-719c-81f43bef064f", false},
+	} {
+		if got := ValidSessionID(tc.id); got != tc.want {
+			t.Errorf("ValidSessionID(%q) = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}
+
+func TestResumeRejectsSymlinkedSessionRoots(t *testing.T) {
+	ws := "/work/repo"
+	id := "019f6a60-a28e-7d22-919c-81f43bef064f"
+	for _, provider := range []string{"claude", "codex", "gemini", "grok"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			outside := t.TempDir()
+			var rootPath string
+			switch provider {
+			case "claude":
+				rootPath = filepath.Join(cfg.AgentDir(provider), "projects")
+				mustWrite(t, filepath.Join(outside, ClaudeProjectKey(ws), id+".jsonl"), `{}`)
+			case "codex":
+				rootPath = filepath.Join(cfg.AgentDir(provider), "sessions")
+				mustWrite(t, filepath.Join(outside, "2026", "07", "rollout.jsonl"),
+					`{"type":"session_meta","payload":{"id":"`+id+`","cwd":"`+ws+`","source":"cli"}}`+"\n")
+			case "gemini":
+				rootPath = filepath.Join(cfg.AgentDir(provider), "tmp")
+				mustWrite(t, filepath.Join(outside, "bucket", "chats", "session.jsonl"),
+					fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(ws))))
+			case "grok":
+				rootPath = filepath.Join(cfg.AgentDir(provider), "sessions")
+				mustWrite(t, filepath.Join(outside, url.PathEscape(ws), id, "summary.json"), `{}`)
+			}
+			if err := os.MkdirAll(filepath.Dir(rootPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, rootPath); err != nil {
+				t.Fatal(err)
+			}
+			ag, _ := Get(provider)
+			if cmd, ok := ag.Resume(cfg, ws, id); ok {
+				t.Errorf("Resume followed symlinked %s history root: %v", provider, cmd)
+			}
+		})
 	}
 }
 

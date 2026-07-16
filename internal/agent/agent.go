@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +51,58 @@ type EffortSpec struct {
 	Flag       string
 	Aliases    []string
 	Assignment string
+}
+
+// SessionDiscoverer is the optional capability for an adapter that cannot choose its new
+// session ID but can discover the native ID after a run. Forks persist it and resume exactly it.
+type SessionDiscoverer interface {
+	LatestSessionID(cfg *config.Config, cwd string) string
+	SessionIDs(cfg *config.Config, cwd string) []string
+}
+
+// ValidSessionID accepts the canonical UUID form used by provider session stores. Session
+// metadata is provider-writable, so unchecked values must never reach provider argv.
+func ValidSessionID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i := range id {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if id[i] != '-' {
+				return false
+			}
+			continue
+		}
+		if !((id[i] >= '0' && id[i] <= '9') || (id[i] >= 'a' && id[i] <= 'f')) {
+			return false
+		}
+	}
+	return id[14] >= '1' && id[14] <= '8' && strings.ContainsRune("89ab", rune(id[19]))
+}
+
+// openSessionRoot pins a provider-writable history directory across the lstat/open race.
+// OpenRoot confines descendants but intentionally follows a symlink in the root path itself.
+func openSessionRoot(path string) (*os.Root, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+		return nil, fmt.Errorf("session root is not a real directory")
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	after, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, after) {
+		_ = root.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("session root changed while opening")
+	}
+	return root, nil
 }
 
 func (s EffortSpec) Args(level string) []string {
@@ -155,17 +208,16 @@ type Agent interface {
 	ACPSessionDirs() []string
 	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
 	// whether a session was found (else the caller starts fresh via StartSession). id
-	// is the coop-owned session id for this (fork, agent): agents that honor a preset
-	// id (claude, gemini) resume exactly that id — immune to loop/consult sessions that
-	// share the cwd — while codex, which mints its own id, ignores it and scans for its
-	// most-recent interactive (non-exec) session.
+	// is the persisted session id for this (fork, agent, account): preset-id agents resume the
+	// coop-owned id; codex resumes its previously discovered native id. Fork launch owns the
+	// one-time legacy Codex lookup, so ordinary adapter resumes remain exact-only.
 	Resume(cfg *config.Config, ws, id string) ([]string, bool)
 	// StartSession is the fresh interactive command under the coop-chosen session id:
-	// claude/gemini stamp it via --session-id so a later Resume can pin exactly it;
+	// claude/gemini/grok stamp it via --session-id so a later Resume can pin exactly it;
 	// codex ignores id and mints its own. An empty id falls back to Interactive.
 	StartSession(cfg *config.Config, id string) []string
 	// PresetSessionID reports whether the agent honors a caller-chosen session id. When
-	// false (codex), coop allocates none and relies on Resume's scan.
+	// false (codex), coop allocates none and discovers the native ID around a fresh run.
 	PresetSessionID() bool
 	// Login authenticates the agent (its token persists in its config dir).
 	Login(cfg *config.Config) []string

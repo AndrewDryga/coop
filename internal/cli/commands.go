@@ -57,9 +57,46 @@ func (a *app) resolveImage() (repo, img string, err error) {
 // "" for raw commands (coop run/shell) that aren't an agent session — they mount no
 // agent credentials.
 func (a *app) runInBox(cmd []string, agent string, peers []agents.Target) (int, error) {
+	return a.runInBoxMode(cmd, agent, peers, false)
+}
+
+func (a *app) runAgentInBox(cmd []string, agent string, peers []agents.Target) (int, error) {
+	return a.runInBoxMode(cmd, agent, peers, true)
+}
+
+func (a *app) runAgentCommandInBox(cmd []string, agent string, peers []agents.Target, args []string) (int, error) {
+	// `codex exec` writes source:"exec" rollouts, which discovery excludes. It remains fully
+	// concurrent with interactive Codex sessions; only source:"cli" producers need serialization.
+	if !agentCommandProducesInteractiveSession(agent, args) {
+		return a.runInBox(cmd, agent, peers)
+	}
+	return a.runAgentInBox(cmd, agent, peers)
+}
+
+func agentCommandProducesInteractiveSession(agent string, args []string) bool {
+	return agent != "codex" || len(args) == 0 || args[0] != "exec"
+}
+
+func (a *app) lockInteractiveSession(agent, repo string) (func(), error) {
+	if ag, ok := agents.Get(agent); ok {
+		if _, discovers := ag.(agents.SessionDiscoverer); discovers {
+			return lockSessionProducer(a.cfg, agent, box.Workdir(a.cfg, repo))
+		}
+	}
+	return func() {}, nil
+}
+
+func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, session bool) (int, error) {
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
+	}
+	if session {
+		release, err := a.lockInteractiveSession(agent, repo)
+		if err != nil {
+			return 1, err
+		}
+		defer release()
 	}
 	lead := ""
 	if len(peers) > 0 || (a.preset != nil && agent != "") {
@@ -131,7 +168,8 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, peers)
+	providerArgs := dropDashDash(args)
+	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
 }
 
 // launchPreset runs an orchestration preset interactively (`coop <preset>`): its lead agent
@@ -153,7 +191,8 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	return a.runInBox(append(append([]string{}, a.defaultCmd(tool)...), dropDashDash(args)...), tool, peers)
+	providerArgs := dropDashDash(args)
+	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
 }
 
 // nudgeIfUnauthed prints one heads-up (TTY only, never blocks) when the credential this run will use
@@ -212,7 +251,7 @@ func (a *app) selectRunEffort(tool, effort string) {
 // credential) errors.
 func (a *app) applyOneOff(tool, model, credential, effort string) error {
 	a.selectRunEffort(tool, effort) // effort rides with the model but can be set even when model/account aren't
-	ladder, err := oneOffLadder(model, credential)
+	ladder, err := oneOffLadder(model, credential, effort)
 	if err != nil {
 		return err
 	}
@@ -981,7 +1020,8 @@ func (a *app) cmdFusion(args []string) (int, error) {
 		return -1, err
 	}
 	// The governor's autonomous default command, plus any extra args you pass through.
-	cmd := append(append([]string{}, a.defaultCmd(governor)...), dropDashDash(rest)...)
+	providerArgs := dropDashDash(rest)
+	cmd := append(append([]string{}, a.defaultCmd(governor)...), providerArgs...)
 	if p != nil && governor == p.LeadAgent && len(p.LeadLadder) > 1 {
 		ui.Info("fusion: preset %s pins this terminal session to first lead rung %s (no fallback rotation; use ACP or loop to rotate)", p.Name, p.LeadLadder[0].String())
 	}
@@ -990,6 +1030,13 @@ func (a *app) cmdFusion(args []string) (int, error) {
 	}
 	desc := strings.Join(council.Members, " + ")
 	ui.Info("fusion: %s governs; council %s (read-only)", governor, desc)
+	if agentCommandProducesInteractiveSession(governor, providerArgs) {
+		release, err := a.lockInteractiveSession(governor, repo)
+		if err != nil {
+			return 1, err
+		}
+		defer release()
+	}
 	pre := gitOut(repo, "rev-parse", "HEAD")
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, FusionMembers: council.Members, Peers: peers, Preset: a.preset,

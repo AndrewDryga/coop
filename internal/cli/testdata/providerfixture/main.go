@@ -91,9 +91,16 @@ type scenario struct {
 	Output        *string           `json:"output,omitempty"`
 	Behavior      string            `json:"behavior,omitempty"`
 	ExitCode      int               `json:"exit_code"`
+	NativeSession *nativeSession    `json:"native_session,omitempty"`
 	Consult       *consultScenario  `json:"consult,omitempty"`
 	Delegate      *delegateScenario `json:"delegate,omitempty"`
 	Loop          *loopScenario     `json:"loop,omitempty"`
+}
+
+type nativeSession struct {
+	Account string `json:"account"`
+	CWD     string `json:"cwd"`
+	ID      string `json:"id"`
 }
 
 func main() {
@@ -720,6 +727,11 @@ func serveProvider(root, trace, scenarioPath string, args []string) error {
 	if err := record(root, trace, traceRecord{Source: "provider", Event: "start", PID: os.Getpid(), ParentPID: os.Getppid(), Argv: traceProviderArgv(providerArgv), Cwd: traceContainerPath(root, cwd), Environment: traceEnvironment(environmentMap(os.Environ()))}); err != nil {
 		return err
 	}
+	if s.NativeSession != nil {
+		if err := writeNativeSession(root, provider, *s.NativeSession); err != nil {
+			return err
+		}
+	}
 	if s.Loop != nil {
 		exitCode, signal, runErr := serveLoopAttempt(root, trace, provider, providerArgv, *s.Loop)
 		if err := record(root, trace, traceRecord{Source: "provider", Event: "exit", PID: os.Getpid(), ExitCode: &exitCode, Signal: signal}); err != nil {
@@ -810,7 +822,7 @@ func readScenario(root, path string) (scenario, error) {
 		if s.Version != 6 {
 			return scenario{}, fmt.Errorf("loop scenario version %d is unsupported", s.Version)
 		}
-		if s.Consult != nil || s.Delegate != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
+		if s.Consult != nil || s.Delegate != nil || s.NativeSession != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
 			return scenario{}, errors.New("loop scenario cannot set consult, delegate, or direct-provider result fields")
 		}
 		if err := validateLoopScenario(s.Provider, seenHomes, *s.Loop); err != nil {
@@ -822,7 +834,7 @@ func readScenario(root, path string) (scenario, error) {
 		if s.Version != 3 {
 			return scenario{}, fmt.Errorf("delegate scenario version %d is unsupported", s.Version)
 		}
-		if s.Consult != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
+		if s.Consult != nil || s.NativeSession != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
 			return scenario{}, errors.New("delegate scenario cannot set consult or direct-provider result fields")
 		}
 		if err := validateDelegateScenario(s.Provider, seenHomes, *s.Delegate); err != nil {
@@ -834,7 +846,7 @@ func readScenario(root, path string) (scenario, error) {
 		if s.Version != 2 {
 			return scenario{}, fmt.Errorf("consult scenario version %d is unsupported", s.Version)
 		}
-		if s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
+		if s.NativeSession != nil || s.Marker != "" || s.Output != nil || s.Behavior != "" || s.ExitCode != 0 {
 			return scenario{}, errors.New("consult scenario cannot set direct-provider result fields")
 		}
 		if err := validateConsultScenario(s.Provider, seenHomes, *s.Consult); err != nil {
@@ -850,6 +862,19 @@ func readScenario(root, path string) (scenario, error) {
 	}
 	if s.Marker != "" && s.Output != nil {
 		return scenario{}, errors.New("scenario cannot set both marker and output")
+	}
+	if s.NativeSession != nil {
+		if s.Provider != "codex" {
+			return scenario{}, errors.New("native_session is supported only for codex")
+		}
+		account := s.NativeSession.Account
+		profileInfo, profileErr := os.Stat(filepath.Join(root, "config", s.Provider, "profiles", account))
+		if account == "" || filepath.Base(account) != account || strings.HasPrefix(account, "-") || profileErr != nil || !profileInfo.IsDir() || !filepath.IsAbs(s.NativeSession.CWD) || len(s.NativeSession.CWD) > 4<<10 {
+			return scenario{}, errors.New("native_session requires a mounted account and bounded absolute cwd")
+		}
+		if !agents.ValidSessionID(s.NativeSession.ID) {
+			return scenario{}, errors.New("native_session id must be a canonical UUID")
+		}
 	}
 	if err := validateScenarioText("marker", s.Marker); err != nil {
 		return scenario{}, err
@@ -869,6 +894,24 @@ func readScenario(root, path string) (scenario, error) {
 		return scenario{}, fmt.Errorf("scenario behavior %q is unsupported", s.Behavior)
 	}
 	return s, nil
+}
+
+func writeNativeSession(root, provider string, session nativeSession) error {
+	if provider != "codex" {
+		return fmt.Errorf("native session provider %q is unsupported", provider)
+	}
+	dir := filepath.Join(root, "config", provider, "profiles", session.Account, "sessions", "2026", "07", "16")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(map[string]any{
+		"type":    "session_meta",
+		"payload": map[string]string{"id": session.ID, "cwd": session.CWD, "source": "cli"},
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "fixture-"+session.ID+".jsonl"), append(data, '\n'), 0o600)
 }
 
 func validateScenarioText(label, value string) error {

@@ -1452,12 +1452,12 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if m := untrailered(repo, duplicateHead, twoBindingsHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("multiple matching commits must fail closed, got %v", m)
 	}
-	// landedTasks sees the trailer across all history.
-	if !landedTasks(repo)["task-42"] {
+	// landedTasks sees the trailer in the explicitly requested history.
+	if !landedTasks(repo, "HEAD")["task-42"] {
 		t.Error("landedTasks should include task-42")
 	}
 	git("commit", "-q", "--allow-empty", "-m", "ambiguous landed\n\nCoop-Task: duplicate-landed\nCoop-Task: duplicate-landed")
-	if landedTasks(repo)["duplicate-landed"] {
+	if landedTasks(repo, "HEAD")["duplicate-landed"] {
 		t.Error("landedTasks accepted a commit with duplicate Coop-Task trailers")
 	}
 }
@@ -1657,13 +1657,14 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	}
 	git("add", "-A")
 	git("commit", "-q", "-m", "seed queue")
+	beforeLand := gitOut(repo, "rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "todo1 work\n\nCoop-Task: todo1")
 	git("commit", "-q", "--allow-empty", "-m", "wip1 work\n\nCoop-Task: wip1")
 	git("commit", "-q", "--allow-empty", "-m", "blk1 work\n\nCoop-Task: blk1")
 	git("commit", "-q", "--allow-empty", "-m", "ambiguous work\n\nCoop-Task: same-id")
 
 	a := &app{cfg: &config.Config{TasksFiles: []string{tasksRoot, q2Rel}}}
-	a.reconcileQueueAfterMerge(repo, "fork1")
+	a.reconcileQueueAfterMerge(repo, "fork1", beforeLand+"..HEAD")
 
 	if !pathExists(filepath.Join(q, stateDone, "todo1")) || pathExists(filepath.Join(q, stateTodo, "todo1")) {
 		t.Error("a landed todo task should have moved to done")
@@ -1699,6 +1700,16 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	// The reconciled task got a note in its log.md.
 	if data, _ := os.ReadFile(filepath.Join(q, stateDone, "todo1", "log.md")); !strings.Contains(string(data), "reconciled: landed by fork fork1") {
 		t.Errorf("reconcile note missing from todo1 log.md: %q", data)
+	}
+
+	// Reusing an old task ID must not let an unrelated later fork merge complete the new task.
+	git("commit", "-q", "--allow-empty", "-m", "historical work\n\nCoop-Task: reused")
+	unrelatedBase := gitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(q, stateTodo, "reused", "task.md"), "# reused\n")
+	git("commit", "-q", "--allow-empty", "-m", "unrelated fork work")
+	a.reconcileQueueAfterMerge(repo, "unrelated", unrelatedBase+"..HEAD")
+	if !pathExists(filepath.Join(q, stateTodo, "reused")) || pathExists(filepath.Join(q, stateDone, "reused")) {
+		t.Error("an old historical trailer completed a reused task during an unrelated merge")
 	}
 }
 

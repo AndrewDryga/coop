@@ -70,11 +70,21 @@ func (a claudeAgent) StartSession(cfg *config.Config, id string) []string {
 // loop or consult session that merely shares the cwd (which `--continue` would pick).
 // No file for id yet → it was never created; the caller starts it fresh under that id.
 func (a claudeAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	if id == "" {
+	if !ValidSessionID(id) {
 		return a.Interactive(cfg), false
 	}
-	sess := filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), id+".jsonl")
-	if _, err := os.Stat(sess); err == nil {
+	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("claude"), "projects"))
+	if err != nil {
+		return a.Interactive(cfg), false
+	}
+	defer root.Close()
+	bucket := ClaudeProjectKey(ws)
+	info, err := root.Lstat(bucket)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return a.Interactive(cfg), false
+	}
+	info, err = root.Lstat(filepath.Join(bucket, id+".jsonl"))
+	if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false

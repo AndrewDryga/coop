@@ -768,12 +768,13 @@ func reconcileMerged(states map[string]string, landed map[string]bool) []reconci
 	return acts
 }
 
-// landedTasks is the set of task ids whose Coop-Task trailer appears anywhere in repo's history.
-func landedTasks(repo string) map[string]bool {
+// landedTasks is the set of task ids whose Coop-Task trailer appears in the exact landed range.
+func landedTasks(repo, revRange string) map[string]bool {
 	set := map[string]bool{}
 	const separator = "\x1f"
 	format := "%(trailers:key=" + coopTaskTrailer + ",valueonly,separator=%x1f)"
-	for _, line := range strings.Split(gitOut(repo, "log", "--format="+format), "\n") {
+	args := []string{"log", "--format=" + format, revRange}
+	for _, line := range strings.Split(gitOut(repo, args...), "\n") {
 		values := strings.Split(line, separator)
 		if len(values) == 1 {
 			if value := strings.TrimSpace(values[0]); value != "" {
@@ -789,12 +790,12 @@ func landedTasks(repo string) map[string]bool {
 // note; a blocked task with a landed trailer is flagged for a human, never moved. Best-effort — the
 // merge already succeeded, so a reconcile hiccup must not fail it. Prevents the parent loop from
 // redoing work a fork already landed.
-func (a *app) reconcileQueueAfterMerge(repo, forkName string) {
+func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) {
 	queues, err := taskQueues(a.cfg, repo, nil)
 	if err != nil {
 		return
 	}
-	landed := landedTasks(repo)
+	landed := landedTasks(repo, revRange)
 	hosts := make([]string, len(queues))
 	for i, queue := range queues {
 		hosts[i] = filepath.Join(repo, queue)

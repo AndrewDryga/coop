@@ -3,7 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,8 +63,7 @@ func (grokAgent) ACP(cfg *config.Config) []string {
 
 // ACPSessionDirs: grok persists sessions under ~/.grok/sessions/ (organized by working
 // directory, alongside a session_search.sqlite index). Share it so an ACP box keeps the
-// conversation across a credential switch. (The exact transcript layout wants a live box
-// run to confirm; sessions/ is the documented store.)
+// conversation across a credential switch.
 func (grokAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
 // PresetSessionID: grok's -s/--session-id names a NEW conversation by UUID and --resume
@@ -77,32 +77,72 @@ func (a grokAgent) StartSession(cfg *config.Config, id string) []string {
 	return append(a.base(cfg), "--session-id", id)
 }
 
-// Resume re-enters the coop-owned session id. grok stores sessions under ~/.grok/sessions/
-// keyed by working directory; rather than reconstruct that key, scan the tree for the
-// coop-minted UUID (unique to its own session) and resume it by id — immune to a loop or
-// consult session that merely shares the cwd. No match → start fresh.
+// Resume re-enters the coop-owned session id in Grok's cwd-scoped native store. No exact
+// cwd/id match means fresh, so another fork, loop, or consult session cannot be selected.
 func (a grokAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	if id != "" && grokHasSession(cfg, id) {
+	if ValidSessionID(id) && grokHasSession(cfg, ws, id) {
 		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
 }
 
-// grokHasSession reports whether any file under ~/.grok/sessions records session id. Like
-// gemini, coop matches its own unique uuid by file content rather than reconstruct grok's
-// working-dir bucketing (version-dependent), so detection can't silently miss.
-func grokHasSession(cfg *config.Config, id string) bool {
-	found := false
-	_ = filepath.WalkDir(filepath.Join(cfg.AgentDir("grok"), "sessions"), func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || found {
-			return nil
+// grokHasSession matches Grok's native sessions/<cwd-bucket>/<session-id> layout. Ordinary
+// buckets URL-encode cwd; overlong names record it in a bounded .cwd file instead.
+func grokHasSession(cfg *config.Config, ws, id string) bool {
+	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("grok"), "sessions"))
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return false
+	}
+	entries, _ := dir.ReadDir(-1)
+	_ = dir.Close()
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
 		}
-		if data, readErr := os.ReadFile(p); readErr == nil && strings.Contains(string(data), id) {
-			found = true
+		if grokBucketCWD(root, entry.Name()) != ws {
+			continue
 		}
-		return nil
-	})
-	return found
+		session := filepath.Join(entry.Name(), id)
+		info, err := root.Lstat(session)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		marker, err := root.Lstat(filepath.Join(session, "summary.json"))
+		if err == nil && marker.Mode().IsRegular() && marker.Mode()&os.ModeSymlink == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func grokBucketCWD(root *os.Root, bucket string) string {
+	if cwd, err := url.PathUnescape(bucket); err == nil && filepath.IsAbs(cwd) {
+		return cwd
+	}
+	path := filepath.Join(bucket, ".cwd")
+	info, err := root.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 4<<10 {
+		return ""
+	}
+	f, err := root.Open(path)
+	if err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(io.LimitReader(f, (4<<10)+1))
+	_ = f.Close()
+	if err != nil || len(data) > 4<<10 {
+		return ""
+	}
+	cwd := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(cwd) {
+		return ""
+	}
+	return cwd
 }
 
 // Login: device-code flow for the box (no browser, and grok's OAuth redirect can't reach the

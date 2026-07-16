@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -182,6 +183,7 @@ func TestForkAgentMemory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(ws, ".git", "info"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	excludeFork(ws, ".coop/") // setupFork establishes this before the first provider run
 	// A fork with no memory yet.
 	if got := readForkAgent(ws); got != "" {
 		t.Errorf("readForkAgent(fresh) = %q, want empty", got)
@@ -210,6 +212,54 @@ func TestForkAgentMemory(t *testing.T) {
 	}
 	if got := readForkAgent(ws); got != "" {
 		t.Errorf("readForkAgent(bogus) = %q, want empty", got)
+	}
+}
+
+func TestForkMetadataRefusesSymlinks(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, "sentinel")
+	want := "11111111-2222-4333-8444-555555555555\n"
+	if err := os.WriteFile(sentinel, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := filepath.Join(ws, ".coop")
+	if err := os.Symlink(outside, meta); err != nil {
+		t.Fatal(err)
+	}
+	saveForkAgent(ws, "claude")
+	if pathExists(filepath.Join(outside, "agent")) {
+		t.Fatal("fork metadata write followed a symlinked .coop directory")
+	}
+	if err := os.Remove(meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(meta, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{forkAgentFile(ws), forkSessionFile(ws, "claude", "work")} {
+		if err := os.Symlink(sentinel, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := readForkAgent(ws); got != "" {
+		t.Fatalf("readForkAgent followed a symlink: %q", got)
+	}
+	if got := readForkSession(ws, "claude", "work"); got != "" {
+		t.Fatalf("readForkSession followed a symlink: %q", got)
+	}
+	saveForkAgent(ws, "gemini")
+	saveForkSession(ws, "claude", "work", strings.TrimSpace(want))
+	data, err := os.ReadFile(sentinel)
+	if err != nil || string(data) != want {
+		t.Fatalf("fork metadata write changed symlink target: %q, %v", data, err)
+	}
+	if got := readForkAgent(ws); got != "gemini" {
+		t.Fatalf("safe agent replacement = %q, want gemini", got)
+	}
+	if got := readForkSession(ws, "claude", "work"); got != strings.TrimSpace(want) {
+		t.Fatalf("safe session replacement = %q", got)
 	}
 }
 
@@ -696,6 +746,9 @@ func TestParseForkContinue(t *testing.T) {
 	if fa, err := parseForkCreate([]string{"demo", "codex", "--continue"}); err != nil || !fa.cont || fa.agent != "codex" {
 		t.Errorf("parseForkCreate(demo codex --continue) = {cont:%v agent:%q}, err=%v", fa.cont, fa.agent, err)
 	}
+	if _, err := parseForkCreate([]string{"demo", "codex", "--continue", "--new"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("parseForkCreate(--continue --new) = %v, want mutually exclusive error", err)
+	}
 }
 
 func TestForkLaunchCmd(t *testing.T) {
@@ -709,7 +762,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	// First launch of a preset agent (claude): start under a fresh coop-owned id and
 	// persist it; the command carries --session-id <uuid>.
 	cmd := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, false)
-	id := readForkSession(ws, "claude")
+	id := readForkSession(ws, "claude", "default")
 	if id == "" {
 		t.Fatal("first launch did not persist a session id")
 	}
@@ -732,8 +785,37 @@ func TestForkLaunchCmd(t *testing.T) {
 	if !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, id) {
 		t.Errorf("re-entry cmd = %v, want --resume %s", cmd, id)
 	}
-	if readForkSession(ws, "claude") != id {
+	if readForkSession(ws, "claude", "default") != id {
 		t.Error("session id changed on re-entry")
+	}
+
+	// Native histories use the cwd visible inside the box, which may differ from the host fork
+	// path under COOP_WORKDIR. The .coop hint remains in the host workspace.
+	overrideWS := filepath.Join(t.TempDir(), "myrepo-forks", "override")
+	if err := os.MkdirAll(overrideWS, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.cfg.Workdir = "/workspace/fork"
+	saveForkSession(overrideWS, "claude", "default", id)
+	overrideSession := filepath.Join(a.cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(a.cfg.Workdir), id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(overrideSession), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overrideSession, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = a.forkLaunchCmd(forkArgs{name: "override", agent: "claude"}, overrideWS, true)
+	if !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, id) {
+		t.Errorf("COOP_WORKDIR re-entry cmd = %v, want --resume %s", cmd, id)
+	}
+	a.cfg.Workdir = ""
+
+	// --new rotates the persisted id instead of launching a supposedly fresh session under the
+	// existing conversation's id.
+	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude", newSession: true}, ws, true)
+	newID := readForkSession(ws, "claude", "default")
+	if newID == "" || newID == id || !slices.Contains(cmd, "--session-id") || !slices.Contains(cmd, newID) || slices.Contains(cmd, "--resume") {
+		t.Errorf("--new command/id = %v / %q, want a new persisted --session-id distinct from %q", cmd, newID, id)
 	}
 
 	// Re-entry when the session id was persisted but never materialized (e.g. quit
@@ -742,7 +824,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.MkdirAll(ws2, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	saveForkSession(ws2, "claude", id)
+	saveForkSession(ws2, "claude", "default", id)
 	cmd = a.forkLaunchCmd(forkArgs{name: "ghost", agent: "claude"}, ws2, true)
 	if !slices.Contains(cmd, "--session-id") || slices.Contains(cmd, "--resume") {
 		t.Errorf("ghost re-entry cmd = %v, want a fresh --session-id (no live session)", cmd)
@@ -750,11 +832,111 @@ func TestForkLaunchCmd(t *testing.T) {
 
 	// codex can't preset an id: no session file, and a fresh start is plain Interactive.
 	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "codex"}, ws, false)
-	if readForkSession(ws, "codex") != "" {
+	if readForkSession(ws, "codex", "default") != "" {
 		t.Error("codex must not get a coop-owned session id")
 	}
 	if slices.Contains(cmd, "--session-id") {
 		t.Errorf("codex launch must not preset a session id: %v", cmd)
+	}
+
+	// Codex mints its own UUID. After the run, Coop discovers and persists it so a newer
+	// same-cwd session cannot hijack this fork under a shared container workdir.
+	codexID := "019f6a60-a28e-7d22-919c-81f43bef064f"
+	codexDir := filepath.Join(a.cfg.AgentDir("codex"), "sessions", "2026", "07", "16")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexFile := filepath.Join(codexDir, "first.jsonl")
+	if err := os.WriteFile(codexFile, []byte(`{"type":"session_meta","payload":{"id":"`+codexID+`","cwd":"`+ws+`","source":"cli"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codexAdapter, _ := agents.Get("codex")
+	discoverer := codexAdapter.(agents.SessionDiscoverer)
+	a.rememberNewDiscoveredForkSession(ws, "codex", discoverer, nil)
+	if got := readForkSession(ws, "codex", "default"); got != codexID {
+		t.Fatalf("remembered Codex id = %q, want %q", got, codexID)
+	}
+	newerCodexID := "019f6a61-b39f-7e33-a811-92f64cf17550"
+	newerFile := filepath.Join(codexDir, "newer.jsonl")
+	if err := os.WriteFile(newerFile, []byte(`{"type":"session_meta","payload":{"id":"`+newerCodexID+`","cwd":"`+ws+`","source":"cli"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newerFile, time.Now().Add(time.Minute), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "codex"}, ws, true)
+	if !slices.Contains(cmd, "resume") || !slices.Contains(cmd, codexID) || slices.Contains(cmd, newerCodexID) {
+		t.Errorf("Codex exact re-entry cmd = %v, want persisted %s", cmd, codexID)
+	}
+
+	// Each account gets a distinct hint. Switching accounts cannot reuse or overwrite the other
+	// account's explicit conversation id.
+	a.cfg.SetActiveProfile("claude", "work")
+	workCmd := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, true)
+	workID := readForkSession(ws, "claude", "work")
+	if workID == "" || workID == newID || !slices.Contains(workCmd, workID) {
+		t.Errorf("work-account command/id = %v / %q, default id %q", workCmd, workID, newID)
+	}
+
+	// The fork is provider-writable. A planted hint must not become a host path probe or argv value.
+	if err := os.WriteFile(forkSessionFile(ws, "claude", "work"), []byte("../../outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, true)
+	safeID := readForkSession(ws, "claude", "work")
+	if safeID == "" || safeID == "../../outside" || !slices.Contains(cmd, safeID) || slices.Contains(cmd, "../../outside") {
+		t.Errorf("invalid persisted id was not replaced: cmd %v id %q", cmd, safeID)
+	}
+
+	// A legacy provider-only hint is adopted only when the selected account contains that exact
+	// session; otherwise a new account-scoped id replaces the ambiguous hint.
+	legacyID := "77777777-2222-4333-8444-555555555555"
+	legacyWS := filepath.Join(t.TempDir(), "myrepo-forks", "legacy")
+	if err := os.MkdirAll(legacyWS, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveForkMeta(legacyWS, legacyForkSessionFile(legacyWS, "claude"), legacyID)
+	legacySession := filepath.Join(a.cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(legacyWS), legacyID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(legacySession), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacySession, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = a.forkLaunchCmd(forkArgs{name: "legacy", agent: "claude"}, legacyWS, true)
+	if got := readForkSession(legacyWS, "claude", "work"); got != legacyID || !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, legacyID) {
+		t.Errorf("legacy adoption = id %q cmd %v, want resume %q", got, cmd, legacyID)
+	}
+
+	missID := "88888888-2222-4333-8444-555555555555"
+	missWS := filepath.Join(t.TempDir(), "myrepo-forks", "legacy-miss")
+	if err := os.MkdirAll(missWS, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveForkMeta(missWS, legacyForkSessionFile(missWS, "claude"), missID)
+	cmd = a.forkLaunchCmd(forkArgs{name: "legacy-miss", agent: "claude"}, missWS, true)
+	got := readForkSession(missWS, "claude", "work")
+	if got == "" || got == missID || !slices.Contains(cmd, "--session-id") || slices.Contains(cmd, "--resume") {
+		t.Errorf("ambiguous legacy miss = id %q cmd %v, want a new scoped session", got, cmd)
+	}
+}
+
+func TestUniquelyNewSessionID(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after []string
+		want          string
+	}{
+		{"one new", []string{"old"}, []string{"old", "new"}, "new"},
+		{"none", []string{"old"}, []string{"old"}, ""},
+		{"two new fail closed", []string{"old"}, []string{"old", "a", "b"}, ""},
+		{"duplicates collapse", nil, []string{"new", "new"}, "new"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := uniquelyNewSessionID(tc.before, tc.after); got != tc.want {
+				t.Errorf("uniquelyNewSessionID(%v, %v) = %q, want %q", tc.before, tc.after, got, tc.want)
+			}
+		})
 	}
 }
 

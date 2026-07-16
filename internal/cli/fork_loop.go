@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -56,6 +58,39 @@ func lockForkState(repo, name string) (func(), error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+// lockSessionProducer excludes every Coop-owned interactive producer from one native history
+// scope while a fork attributes a new ID. ConfigDir/.locks is host-only and shared across repos.
+// Contention fails fast because an interactive session can remain open for hours.
+func lockSessionProducer(cfg *config.Config, provider, cwd string) (func(), error) {
+	dir := filepath.Join(cfg.ConfigDir, ".locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	profile := cfg.AgentDir(provider)
+	if resolved, err := filepath.EvalSymlinks(profile); err == nil {
+		profile = resolved
+	} else if absolute, absErr := filepath.Abs(profile); absErr == nil {
+		profile = absolute
+	}
+	sum := sha256.Sum256([]byte(profile + "\x00" + cwd))
+	path := filepath.Join(dir, fmt.Sprintf("session-%x.lock", sum[:12]))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("another interactive %s session is active for account %q in workdir %q", provider, cfg.ActiveProfile(provider), cwd)
+		}
 		return nil, err
 	}
 	return func() {
@@ -455,7 +490,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 	// The fork's rotation ladder: the fork target's one-off model/account wins; else its
 	// preset's ladder (a.preset, loaded by forkCreate); else the default (agent model across
 	// all accounts).
-	ladder, err := oneOffLadder(model, credential)
+	ladder, err := oneOffLadder(model, credential, effort)
 	if err != nil {
 		return -1, err
 	}

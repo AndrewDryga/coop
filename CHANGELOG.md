@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Fork re-entry now keeps provider sessions isolated by account and workspace.** Claude,
+  Gemini, and Grok persist one explicit session ID per fork/provider/account; Coop records the
+  native ID Codex mints and resumes that exact interactive session. `--new` rotates the
+  explicit ID, `--fresh` preserves the remembered provider before recreating the clone, and a
+  provider switch starts a separate native session rather than carrying a transcript in place.
+  Shared `COOP_WORKDIR` paths fail fresh rather than guessing when an old Codex fork has no hint.
+  Provider-writable fork hints are bounded and no-follow, merge reconciliation considers only the
+  commits just landed, and deterministic external-process coverage now proves fresh, resume, new,
+  provider/account switching, seeded task work, confirmation, merge, and parent queue settlement.
+  Coop-owned interactive Codex producers for one account/workdir now share a config-global,
+  fail-fast lock so concurrent repos cannot cross-claim a native session. A fork-loop target that
+  specifies only effort now preserves that explicit choice as its one-off ladder entry.
+
 - **Loop review stages are now process-tested as one closed provider workflow.** Deterministic
   coverage drives work, between-task audit, signoff, and verify on distinct provider/model/account
   targets; checks the real read-only-review mount policy; and covers review rotation, reopens,

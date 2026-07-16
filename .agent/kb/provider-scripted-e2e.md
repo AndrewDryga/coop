@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/controller.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/controller.go, internal/cli/fork.go, internal/cli/fork_merge.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-07-16
 ---
 
@@ -19,6 +19,19 @@ The same target also crosses the full consult boundary: external CLI dispatch, `
 generated wrapper/persona mounts, scoped homes, native provider argv/output, continuation state,
 fallback, and telemetry. It covers every provider arm and all 12 ordered distinct fallback pairs;
 see [[provider-consult-e2e]] for the state and live-ring contracts.
+
+Fork coverage uses disposable parent and fork repositories to cross the external CLI/runtime
+boundary without a second emulator. It proves fresh, resume, and new sessions; all four native
+launch shapes; provider, account, cwd, and explicit-ID isolation; remembered-provider behavior
+across `--fresh`; task seeding; confirmation; merge; and parent queue reconciliation. Claude,
+Gemini, and Grok use Coop-owned IDs scoped by provider and account. Coop records Codex's native
+post-run ID and later requires that exact account/cwd match; a legacy hint under a shared
+`COOP_WORKDIR` starts fresh instead of guessing. All Coop-owned interactive Codex producers for
+one profile/cwd take the same host-only ConfigDir lock, even across parent repos; contention fails
+before provider launch because a TUI can remain open for hours. External Codex processes cannot
+participate, so native-ID attribution remains best-effort if one mutates the same profile/cwd
+during a fresh run. Merge assertions use only the newly landed commit range so an older reused
+task trailer cannot settle unrelated current work.
 
 The registry-derived loop matrix runs the external `coop loop` binary once per provider against a
 closed fixture worker. It requires the host to claim and flock-lease the exact task before provider
@@ -86,6 +99,7 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-16 - added fork session isolation and merge lifecycle process coverage
 - 2026-07-16 - moved authoritative leases to host-only state and scoped finalization to the assigned task
 - 2026-07-16 - added external recovery, rotation, PTY interruption/stream-bound, and telemetry outcome coverage
 - 2026-07-16 - made unbound recovery metadata root-bounded and no-follow
