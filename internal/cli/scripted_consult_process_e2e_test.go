@@ -250,40 +250,92 @@ func TestProviderScriptedConsultFailureMatrix(t *testing.T) {
 func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	providers := agents.Names()
-	for index, peer := range providers {
-		lead := providers[(index+1)%len(providers)]
-		peer, lead := peer, lead
-		t.Run(peer, func(t *testing.T) {
-			calls := []consultCallSpec{
-				{Target: peer, Mode: "fresh", Prompt: "timeout question", ExitCode: 124},
-				{Target: peer, Mode: "fresh", Prompt: "overflow question", ExitCode: 1},
-				{Target: peer, Mode: "fresh", Prompt: "diagnostic overflow question", ExitCode: 1},
+	assertProcessesGone := func(t *testing.T, trace []*processTrace) {
+		t.Helper()
+		for _, event := range trace {
+			if event.PID > 0 {
+				awaitProcessGone(t, event.PID)
 			}
-			steps := []consultStepSpec{
-				consultDirectStep(peer, "fresh", "timeout", "timeout question", ""),
-				consultDirectStep(peer, "fresh", "overflow", "overflow question", ""),
-				consultDirectStep(peer, "fresh", "diagnostic-overflow", "diagnostic overflow question", ""),
-			}
-			result, trace := suite.run(t, []string{lead, "--peer", peer}, consultProcessScenario(lead, providers, calls, steps))
-			replyOverflow := strings.Contains(result.Stderr, "reply exceeded") || (peer == "codex" && strings.Contains(result.Stderr, "Codex output exceeded"))
-			if result.Err != nil || result.ExitCode != 1 || len(result.Stdout) > 64<<10 ||
-				!replyOverflow || !strings.Contains(result.Stderr, "diagnostics exceeded") {
-				t.Fatalf("timeout/overflow for %s = exit %d err %v stdout-bytes %d\nstdout:\n%s\nstderr:\n%s", peer, result.ExitCode, result.Err, len(result.Stdout), result.Stdout, result.Stderr)
-			}
-			if strings.Contains(result.Stderr, strings.Repeat("d", 1024)) {
-				t.Fatalf("diagnostic overflow leaked a partial provider stream for %s", peer)
-			}
-			if len(processEvents(trace, "peer", "ready")) != 1 || len(processEvents(trace, "timeout", "exit")) != 3 {
-				t.Fatalf("timeout/overflow trace for %s did not own all processes:\n%s", peer, readProcessFile(t, suite.layout.Trace))
-			}
-			assertConsultStateSecure(t, suite, peer, false)
-			for _, event := range trace {
-				if event.PID > 0 {
-					awaitProcessGone(t, event.PID)
-				}
-			}
-		})
+		}
 	}
+	setTimeout := func(seconds int) {
+		t.Helper()
+		path := filepath.Join(suite.layout.Config, "env")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines, found := strings.Split(string(body), "\n"), 0
+		for index, line := range lines {
+			if strings.HasPrefix(line, "COOP_CONSULT_TIMEOUT=") {
+				lines[index] = fmt.Sprintf("COOP_CONSULT_TIMEOUT=%d", seconds)
+				found++
+			}
+		}
+		if found != 1 {
+			t.Fatalf("fixture env has %d COOP_CONSULT_TIMEOUT entries, want 1", found)
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("timeout", func(t *testing.T) {
+		for index, peer := range providers {
+			lead := providers[(index+1)%len(providers)]
+			peer, lead := peer, lead
+			t.Run(peer, func(t *testing.T) {
+				calls := []consultCallSpec{{Target: peer, Mode: "fresh", Prompt: "timeout question", ExitCode: 124}}
+				steps := []consultStepSpec{consultDirectStep(peer, "fresh", "timeout", "timeout question", "")}
+				result, trace := suite.run(t, []string{lead, "--peer", peer}, consultProcessScenario(lead, providers, calls, steps))
+				if result.Err != nil || result.ExitCode != 124 || !strings.Contains(result.Stderr, "no reply within 2s") {
+					t.Fatalf("timeout for %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s", peer, result.ExitCode, result.Err, result.Stdout, result.Stderr)
+				}
+				if len(processEvents(trace, "peer", "ready")) != 1 || len(processEvents(trace, "timeout", "exit")) != 1 {
+					t.Fatalf("timeout trace for %s did not own the provider process:\n%s", peer, readProcessFile(t, suite.layout.Trace))
+				}
+				assertConsultStateSecure(t, suite, peer, false)
+				assertProcessesGone(t, trace)
+			})
+		}
+	})
+
+	// Overflow classification must not race the deliberately tiny deadline used above.
+	setTimeout(10)
+	t.Run("overflow", func(t *testing.T) {
+		for index, peer := range providers {
+			lead := providers[(index+1)%len(providers)]
+			peer, lead := peer, lead
+			t.Run(peer, func(t *testing.T) {
+				calls := []consultCallSpec{
+					{Target: peer, Mode: "fresh", Prompt: "overflow question", ExitCode: 1},
+					{Target: peer, Mode: "fresh", Prompt: "diagnostic overflow question", ExitCode: 1},
+				}
+				steps := []consultStepSpec{
+					consultDirectStep(peer, "fresh", "overflow", "overflow question", ""),
+					consultDirectStep(peer, "fresh", "diagnostic-overflow", "diagnostic overflow question", ""),
+				}
+				result, trace := suite.run(t, []string{lead, "--peer", peer}, consultProcessScenario(lead, providers, calls, steps))
+				replyOverflow := strings.Contains(result.Stderr, "reply exceeded") || (peer == "codex" && strings.Contains(result.Stderr, "Codex output exceeded"))
+				if result.Err != nil || result.ExitCode != 1 || len(result.Stdout) > 64<<10 ||
+					!replyOverflow || !strings.Contains(result.Stderr, "diagnostics exceeded") {
+					t.Fatalf("overflow for %s = exit %d err %v stdout-bytes %d\nstdout:\n%s\nstderr:\n%s", peer, result.ExitCode, result.Err, len(result.Stdout), result.Stdout, result.Stderr)
+				}
+				run := oneProcessEvent(t, trace, "runtime", "run")
+				if run.Run == nil || processEnvironmentValue(run.Run.Environment, "COOP_CONSULT_TIMEOUT") != "10" {
+					t.Fatalf("overflow runtime did not receive COOP_CONSULT_TIMEOUT=10: %#v", run.Run)
+				}
+				if strings.Contains(result.Stderr, strings.Repeat("d", 1024)) {
+					t.Fatalf("diagnostic overflow leaked a partial provider stream for %s", peer)
+				}
+				if len(processEvents(trace, "peer", "ready")) != 0 || len(processEvents(trace, "timeout", "exit")) != 2 {
+					t.Fatalf("overflow trace for %s did not own both provider processes:\n%s", peer, readProcessFile(t, suite.layout.Trace))
+				}
+				assertConsultStateSecure(t, suite, peer, false)
+				assertProcessesGone(t, trace)
+			})
+		}
+	})
 }
 
 func TestProviderScriptedConsultPromptAndTranscriptBounds(t *testing.T) {
