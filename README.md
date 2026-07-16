@@ -764,24 +764,26 @@ for history violations.
 ### Instructions, one source of truth
 
 `coop init` wires a tool-neutral setup so every agent reads the same instructions:
-`CLAUDE.md` and `GEMINI.md` symlink to a canonical `AGENTS.md`, and Codex shares
-Claude's skills directory. A real (non-symlink) instruction file you already have is
-left untouched. A shared `~/.config/coop/agents/INSTRUCTIONS.md` is also wired into each
+`CLAUDE.md` and `GEMINI.md` symlink to a canonical `AGENTS.md`, and each agent shares one
+project skills source. A real (non-symlink) instruction file you already have is left
+untouched. A shared `~/.config/coop/agents/INSTRUCTIONS.md` is also wired into each
 agent's global instruction path in the box (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
 `~/.gemini/GEMINI.md`, `~/.grok/AGENTS.md`) — machine-level guidance that follows you
 across repos, while project rules stay in the repo's own `AGENTS.md`. A per-agent file
 wins over the shared one: drop a `CLAUDE.md` into `~/.config/coop/agents/claude/` (or
 `AGENTS.md` into `codex/`, …) and that agent uses it instead.
 
-**`.agent/` is the only cornerstone.** `coop init` scaffolds the per-agent dirs
+**`.agent/` is the normal cornerstone.** `coop init` scaffolds the per-agent dirs
 (`.claude/`/`.codex/`/`.gemini/`) only for the agents you're signed in to — or the
 `--agents claude,codex` (or `all`) you name. A repo that never uses an agent can just
 delete its dir: when a box runs an agent whose dir is absent, coop synthesizes the
-workflow skills from the shared `.agent/skills` at the box's user-level
-`~/.<agent>/skills` (a writable copy — the host `.agent/` stays untouched). The one
-thing that needs the dir back is running that agent's OWN CLI on the host; boxes don't.
-When a repo *has* the per-agent dir, that committed copy wins and is used as-is (so a box
-can still self-improve it).
+workflow skills from `.agent/skills` at the box's user-level `~/.<agent>/skills` (a
+writable copy — the host source stays untouched). If the repo already has a real
+`.claude/skills` and no `.agent/skills`, init keeps it as the source instead of creating a
+competing tree; new agent links and box synthesis use it without adding Coop's templates.
+Existing valid skills links are left alone. The one thing that needs the dir back is running
+that agent's OWN CLI on the host; boxes don't. When a repo *has* the per-agent dir, that
+committed copy wins and is used as-is (so a box can still self-improve it).
 
 Claude's settings and hooks follow the same rule. `coop init` keeps fallback copies in
 `.agent/claude/settings.json` and `.agent/claude/hooks/`; a Claude box copies each missing
@@ -1131,12 +1133,13 @@ failure: it reads the reset time from the agent's own output, waits it out with 
 countdown, and resumes the same item once the limit clears — so an overnight run rides
 through the daily cap instead of burning retries against it.
 
-`init` also installs generic workflow skills into `.claude/skills/` (shared with
-Codex): `/spec` a multi-file change, `/work` it step-by-step against the gate, `/sweep`
-to drain `.agent/tasks/`, `/investigate` to root-cause a failure, `/verify-api`
-before calling anything you're unsure of, and `/review-board` for a thorough
-multi-hat review before landing. Edit them freely — `init` won't overwrite a
-skill you've changed.
+On a fresh scaffold, `init` also installs generic workflow skills into `.agent/skills/`
+and links the selected agents to it: `/spec` a multi-file change, `/work` it step-by-step
+against the gate, `/sweep` to drain `.agent/tasks/`, `/investigate` to root-cause a
+failure, `/verify-api` before calling anything you're unsure of, and `/review-board` for
+a thorough multi-hat review before landing. Edit them freely — `init` won't overwrite a
+skill you've changed. When init adopts an existing real `.claude/skills/` instead, it
+leaves that project-owned set unchanged and links the other selected agents to it.
 
 ### The `.agent/` working folder
 

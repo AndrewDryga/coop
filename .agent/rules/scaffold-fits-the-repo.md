@@ -18,6 +18,12 @@ hook or a custom hooksPath. When a repo uses another hooks directory, init must 
 copy or chain both tracked hooks there. When the active directory already owns a prepare hook, tell
 the user to add the Coop-hook call to it; forcing the box path would silently discard repo hooks.
 
+**Keep one established skills source.** Prefer an existing `.agent/skills`; otherwise adopt a real
+`.claude/skills` before scaffolding `.agent/skills`. Point new agent links at that source, but do not
+seed Coop templates into an adopted project-owned directory, and preserve any existing link that
+already resolves to a directory. Box-time synthesis must use the same source priority so an agent
+omitted during init still sees the repo's skills.
+
 **When unsure, don't pollute — ask.** If nothing is detected, the gate is left **neutral**
 (documented but inert: zero imposed checks) rather than guessing. At a terminal `coop init`
 *asks* which gate to add; piped/CI (`!ui.IsTerminal(os.Stdin)`) it stays neutral and never

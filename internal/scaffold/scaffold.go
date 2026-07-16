@@ -32,12 +32,13 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	s := &scaffolder{repo: repo}
 	// A per-agent dir (.claude/.codex/.gemini) is scaffolded only for agents in agentDirs — the ones
 	// you actually use. A repo that drops the others stays clean: a box synthesizes a missing agent's
-	// skills from .agent/ on demand (see box.synthSkillsMounts). agentDirs is the signed-in set (or
-	// `coop init --agents …`); empty means .agent/ only.
+	// skills from the repo's shared source on demand (see box.synthSkillsMounts). agentDirs is the
+	// signed-in set (or `coop init --agents …`); empty means .agent/ only.
 	has := func(a string) bool { return slices.Contains(agentDirs, a) }
+	skillsRoot := skillsSource(repo)
 	dirs := []string{
 		filepath.Join(repo, ".agent", "rules"),
-		filepath.Join(repo, ".agent", "skills"),
+		skillsRoot,
 		filepath.Join(repo, ".agent", "presets"), // orchestration recipes live here (coop presets init writes one)
 		filepath.Join(repo, ".agent", "claude", "hooks"),
 	}
@@ -89,10 +90,9 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		}
 	}
 
-	// One brain, every agent: AGENTS.md is canonical and CLAUDE.md / GEMINI.md
-	// symlink to it. The workflow skills likewise live once, in .agent/skills, and
-	// each agent's skills dir (.claude / .codex / .gemini) symlinks to it. A real
-	// (non-symlink) instruction file or skills dir is never clobbered.
+	// One brain, every agent: AGENTS.md is canonical and CLAUDE.md / GEMINI.md symlink to it.
+	// Workflow skills likewise keep one established source: .agent/skills normally, or an existing
+	// real .claude/skills. A real instruction file, skills dir, or valid skills link is never clobbered.
 	if has("claude") {
 		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "CLAUDE.md")); err != nil {
 			return err
@@ -107,13 +107,20 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		if !has(strings.TrimPrefix(dir, ".")) {
 			continue
 		}
-		if err := s.linkIfAbsent("../.agent/skills", filepath.Join(repo, dir, "skills")); err != nil {
+		link := filepath.Join(repo, dir, "skills")
+		target, err := filepath.Rel(filepath.Dir(link), skillsRoot)
+		if err != nil {
+			return err
+		}
+		if err := s.linkSkillsIfAbsent(target, link); err != nil {
 			return err
 		}
 	}
 
-	if err := s.copySkills(); err != nil {
-		return err
+	if skillsRoot == filepath.Join(repo, ".agent", "skills") {
+		if err := s.copySkills(); err != nil {
+			return err
+		}
 	}
 	// The committed per-project config (serve ports, monorepo members). Never clobbers an existing one.
 	if _, err := WriteProject(repo, DetectSubprojects(repo)); err != nil {
@@ -161,6 +168,19 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 }
 
 type scaffolder struct{ repo string }
+
+// skillsSource keeps an established shared source instead of creating a competing skill tree.
+func skillsSource(repo string) string {
+	agentSkills := filepath.Join(repo, ".agent", "skills")
+	if info, err := os.Stat(agentSkills); err == nil && info.IsDir() {
+		return agentSkills
+	}
+	claudeSkills := filepath.Join(repo, ".claude", "skills")
+	if info, err := os.Lstat(claudeSkills); err == nil && info.IsDir() {
+		return claudeSkills
+	}
+	return agentSkills
+}
 
 func (s *scaffolder) rel(p string) string {
 	if r, err := filepath.Rel(s.repo, p); err == nil {
@@ -229,6 +249,17 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 		ui.Detail("kept existing %s (real file, not a symlink)", s.rel(link))
 	}
 	return nil
+}
+
+// linkSkillsIfAbsent also preserves a symlink to another existing project skills directory.
+func (s *scaffolder) linkSkillsIfAbsent(target, link string) error {
+	if info, err := os.Lstat(link); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if resolved, err := os.Stat(link); err == nil && resolved.IsDir() {
+			ui.Detail("kept existing %s", s.rel(link))
+			return nil
+		}
+	}
+	return s.linkIfAbsent(target, link)
 }
 
 func (s *scaffolder) copySkills() error {

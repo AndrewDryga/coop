@@ -1270,7 +1270,7 @@ func TestSynthSkillsMounts(t *testing.T) {
 		}
 	}
 	// No .agent/skills → nothing to synthesize.
-	names := []string{"claude", "codex", "grok"}
+	names := []string{"claude", "codex", "gemini", "grok"}
 	if got, _ := synthSkillsMounts(repo, "/home/node", names); got != nil {
 		t.Errorf("no .agent/skills → no mounts, got %v", got)
 	}
@@ -1281,8 +1281,8 @@ func TestSynthSkillsMounts(t *testing.T) {
 	for _, m := range got {
 		boxPaths[m.box] = true
 	}
-	if !boxPaths["/home/node/.claude/skills"] || !boxPaths["/home/node/.codex/skills"] {
-		t.Errorf("claude+codex skills should be synthesized: %v", got)
+	if !boxPaths["/home/node/.claude/skills"] || !boxPaths["/home/node/.codex/skills"] || !boxPaths["/home/node/.gemini/skills"] {
+		t.Errorf("Claude, Codex, and Gemini skills should be synthesized: %v", got)
 	}
 	if boxPaths["/home/node/.grok/skills"] {
 		t.Error("grok is not skills-capable — must not synthesize a skills mount")
@@ -1294,6 +1294,81 @@ func TestSynthSkillsMounts(t *testing.T) {
 		if m.box == "/home/node/.claude/skills" {
 			t.Errorf("repo has .claude/skills → must not synthesize a user-level one: %v", got)
 		}
+	}
+}
+
+func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
+	repo := t.TempDir()
+	writeSkill := func(root, name string) {
+		t.Helper()
+		path := filepath.Join(repo, root, name, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	findMount := func(mounts []extraMount, boxPath string) string {
+		t.Helper()
+		for _, mount := range mounts {
+			if mount.box == boxPath {
+				return mount.host
+			}
+		}
+		return ""
+	}
+	removeTemps := func(paths []string) {
+		t.Helper()
+		for _, path := range paths {
+			if err := os.RemoveAll(path); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+
+	writeSkill(".claude/skills", "claude-only")
+	mounts, temps := synthSkillsMounts(repo, "/home/node", []string{"claude", "codex", "gemini"})
+	for _, agent := range []string{"codex", "gemini"} {
+		skills := findMount(mounts, "/home/node/."+agent+"/skills")
+		if skills == "" {
+			t.Fatalf("%s skills were not synthesized from .claude/skills: %v", agent, mounts)
+		}
+		if _, err := os.Stat(filepath.Join(skills, "claude-only", "SKILL.md")); err != nil {
+			t.Errorf("synthesized %s skills missed Claude source content: %v", agent, err)
+		}
+	}
+	if got := findMount(mounts, "/home/node/.claude/skills"); got != "" {
+		t.Errorf("project .claude/skills should suppress Claude synthesis, got %q", got)
+	}
+	removeTemps(temps)
+
+	writeSkill(".agent/skills", "agent-first")
+	mounts, temps = synthSkillsMounts(repo, "/home/node", []string{"codex"})
+	codexSkills := findMount(mounts, "/home/node/.codex/skills")
+	if codexSkills == "" {
+		t.Fatalf("Codex skills were not synthesized from .agent/skills: %v", mounts)
+	}
+	if _, err := os.Stat(filepath.Join(codexSkills, "agent-first", "SKILL.md")); err != nil {
+		t.Errorf(".agent/skills did not win source priority: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(codexSkills, "claude-only", "SKILL.md")); !os.IsNotExist(err) {
+		t.Errorf("synthesis merged lower-priority Claude skills: %v", err)
+	}
+	removeTemps(temps)
+
+	symlinkRepo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(symlinkRepo, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(symlinkRepo, ".project-skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../.project-skills", filepath.Join(symlinkRepo, ".claude", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	if mounts, _ := synthSkillsMounts(symlinkRepo, "/home/node", []string{"codex"}); mounts != nil {
+		t.Errorf("symlinked .claude/skills should not become the shared source: %v", mounts)
 	}
 }
 

@@ -576,7 +576,9 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   Per-agent dirs (.claude/.codex/.gemini) are scaffolded only for the agents you're
   signed in to — or the --agents list ("all" for every one). A repo you keep on
   only .agent/ still works: a box synthesizes missing skills from .agent/skills on
-  demand, and Claude also gets fallback settings + hooks from .agent/claude.
+  demand, and Claude also gets fallback settings + hooks from .agent/claude. If a
+  real .claude/skills already exists and .agent/skills does not, init keeps it as
+  the shared source instead of creating a competing skills tree.
 
   Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, the
   workflow skills, and two starter subagents for the orchestrator pattern —

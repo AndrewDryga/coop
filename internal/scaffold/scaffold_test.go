@@ -328,6 +328,89 @@ func TestInit(t *testing.T) {
 	}
 }
 
+func TestInitSkillsSource(t *testing.T) {
+	t.Run("existing agent source remains canonical", func(t *testing.T) {
+		repo := t.TempDir()
+		marker := filepath.Join(repo, ".agent", "skills", "project", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("project skill\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(marker); err != nil || string(got) != "project skill\n" {
+			t.Fatalf("existing .agent skill changed: %v\n%s", err, got)
+		}
+		for _, rel := range []string{".claude/skills", ".codex/skills", ".gemini/skills"} {
+			if got, err := os.Readlink(filepath.Join(repo, rel)); err != nil || got != "../.agent/skills" {
+				t.Errorf("%s target = %q (%v), want ../.agent/skills", rel, got, err)
+			}
+		}
+	})
+
+	t.Run("real claude source is adopted without pollution", func(t *testing.T) {
+		repo := t.TempDir()
+		marker := filepath.Join(repo, ".claude", "skills", "project", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("tuned skill\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(filepath.Join(repo, ".agent", "skills")); !os.IsNotExist(err) {
+			t.Errorf("init created a competing .agent/skills: %v", err)
+		}
+		if got, err := os.ReadFile(marker); err != nil || string(got) != "tuned skill\n" {
+			t.Fatalf("existing Claude skill changed: %v\n%s", err, got)
+		}
+		if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "spec")); !os.IsNotExist(err) {
+			t.Errorf("init seeded Coop templates into project-owned Claude skills: %v", err)
+		}
+		agents, err := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(agents), "They live once in\n`.agent/skills/`") || !strings.Contains(string(agents), "existing real `.claude/skills/`") {
+			t.Errorf("generated instructions describe the wrong shared skills source:\n%s", agents)
+		}
+		for _, rel := range []string{".codex/skills", ".gemini/skills"} {
+			if got, err := os.Readlink(filepath.Join(repo, rel)); err != nil || got != "../.claude/skills" {
+				t.Errorf("%s target = %q (%v), want ../.claude/skills", rel, got, err)
+			}
+		}
+	})
+
+	t.Run("valid links stay and dangling links are repaired", func(t *testing.T) {
+		repo := t.TempDir()
+		for _, rel := range []string{".claude/skills", ".project-skills", ".codex", ".gemini"} {
+			if err := os.MkdirAll(filepath.Join(repo, rel), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink("../.project-skills", filepath.Join(repo, ".codex", "skills")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../missing-skills", filepath.Join(repo, ".gemini", "skills")); err != nil {
+			t.Fatal(err)
+		}
+		if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.Readlink(filepath.Join(repo, ".codex", "skills")); got != "../.project-skills" {
+			t.Errorf("valid project skills link was repointed to %q", got)
+		}
+		if got, _ := os.Readlink(filepath.Join(repo, ".gemini", "skills")); got != "../.claude/skills" {
+			t.Errorf("dangling skills link target = %q, want ../.claude/skills", got)
+		}
+	})
+}
+
 func assertClaudeHookFallbacks(t *testing.T, data []byte) {
 	t.Helper()
 	var settings struct {

@@ -380,11 +380,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			instructionMounts = append(instructionMounts, extraMount{p, cfg.HomeInBox + "/." + it.agent + "/" + it.file})
 		}
 	}
-	// .agent is the cornerstone: synthesize an agent's workflow skills from the shared .agent/skills
-	// when the repo has NO per-agent skills dir of its own — so a repo that keeps only .agent/ (no
-	// committed .claude/.codex/.gemini) still gives the agent its skills, mounted USER-level at
-	// ~/.<agent>/skills (writable copy, dies with the box). When the repo HAS its own skills dir,
-	// that project mount wins and we synthesize nothing (project beats user, like the subagents mount).
+	// Synthesize workflow skills from the repo's shared source when it has no per-agent skills dir —
+	// so a repo can omit committed adapter directories and still give each agent its skills, mounted
+	// USER-level at ~/.<agent>/skills (writable copy, dies with the box). A project skills dir wins,
+	// like the subagents mount.
 	synthMounts, synthDirs := synthSkillsMounts(spec.Repo, cfg.HomeInBox, skillsAgentSet(spec))
 	tmpDirs = append(tmpDirs, synthDirs...)
 	if spec.Homes {
@@ -811,16 +810,19 @@ func skillsAgentSet(spec RunSpec) []string {
 }
 
 // synthSkillsMounts returns the user-level ~/.<agent>/skills mounts to synthesize from the repo's
-// shared .agent/skills — one per skills-capable agent whose repo has NO per-agent skills dir of its
-// own — plus the temp dirs to clean up. Empty when the repo has no .agent/skills. This is ".agent is
-// the cornerstone": a repo can drop its committed .claude/.codex/.gemini and the box still gives the
-// agent its workflow skills. Each mount is a WRITABLE COPY, not a read-only bind of the host dir:
+// shared skills source — .agent/skills, or an established .claude/skills fallback — one per
+// skills-capable agent whose repo has NO per-agent skills dir of its own. Each mount is a WRITABLE
+// COPY, not a read-only bind of the host dir:
 // some CLIs (codex) install their own system skills INTO the skills dir, which a :ro mount breaks —
-// and the copy keeps the host's .agent/skills pristine. The copies die with the box.
+// and the copy keeps the host's source pristine. The copies die with the box.
 func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string) {
 	src := filepath.Join(repo, ".agent", "skills")
 	if !dirExists(src) {
-		return nil, nil
+		src = filepath.Join(repo, ".claude", "skills")
+		info, err := os.Lstat(src)
+		if err != nil || !info.IsDir() {
+			return nil, nil
+		}
 	}
 	seen := map[string]bool{}
 	for _, ag := range agentNames {

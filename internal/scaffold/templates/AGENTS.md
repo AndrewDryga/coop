@@ -83,12 +83,13 @@ local (git-ignored) so it never creates commit noise or merge churn.
   inside a subproject, also honor its own `.agent/rules/` and `AGENTS.md` if present.
 
 ## Skills
-Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
+Use these workflow skills when present instead of hand-rolling: `/spec` before a multi-file
 change, `/work` to execute a plan step by step against the gate, `/sweep` to
 drain `.agent/tasks/` unattended, `/investigate` to root-cause a failure before
 fixing, `/verify-api` before calling anything you're not sure exists, and
-`/review-board` for a thorough multi-hat review before landing. They live once in
-`.agent/skills/`; each agent's dir (`.claude`, `.codex`, `.gemini`) symlinks to it.
+`/review-board` for a thorough multi-hat review before landing. A fresh scaffold keeps them in
+`.agent/skills/`; an existing real `.claude/skills/` remains the project-owned source instead.
+Selected agent dirs (`.claude`, `.codex`, `.gemini`) link to the established source.
 
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it in

@@ -1262,7 +1262,7 @@ var scaffoldableAgents = []string{"claude", "codex", "gemini"}
 // scaffoldAgentSet resolves which per-agent dirs `coop init` scaffolds: the --agents list when given
 // ("all" → every scaffoldable agent; else the named ones, kept to the scaffoldable set), else the
 // agents you're signed in to. Empty (no --agents, none signed in) → .agent/ only — a box synthesizes
-// a missing agent's skills from .agent/ on demand, so the un-scaffolded agents still work.
+// a missing agent's skills from the repo's shared source on demand, so un-scaffolded agents work.
 func scaffoldAgentSet(cfg *config.Config, flag string, flagSet bool) []string {
 	pick := func(names []string) []string {
 		var out []string
@@ -1334,7 +1334,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	}
 	// Which per-agent dirs to scaffold: `--agents` if given (a name list, or "all"), else the agents
 	// you're signed in to. Others aren't clutter you delete later — a box synthesizes a missing
-	// agent's skills from .agent/ on demand.
+	// agent's skills from the repo's shared source on demand.
 	agentDirs := scaffoldAgentSet(a.cfg, agentsFlag, agentsSet)
 	if err := scaffold.Init(repo, stack, langs, agentDirs); err != nil {
 		return 0, err
@@ -1350,7 +1350,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
 	if len(agentDirs) > 0 {
-		ui.Info("per-agent dirs: %s — missing artifacts synthesize in-box from .agent/ on demand", strings.Join(agentDirs, ", "))
+		ui.Info("per-agent dirs: %s — missing artifacts synthesize in-box from shared sources on demand", strings.Join(agentDirs, ", "))
 	} else {
 		ui.Info("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
 	}
