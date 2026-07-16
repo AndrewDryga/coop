@@ -196,7 +196,7 @@ func TestInit(t *testing.T) {
 		".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh",
 		".claude/settings.json", ".claude/hooks/commit-gate.sh",
 		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
-		".githooks/pre-commit",
+		".githooks/pre-commit", ".githooks/prepare-commit-msg",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
 		if err != nil {
@@ -261,8 +261,10 @@ func TestInit(t *testing.T) {
 	}
 	assertNoClaudeStopHook(t, projectSettings)
 	assertProjectClaudeCommitGate(t, projectSettings)
-	if fi, _ := os.Stat(filepath.Join(repo, ".githooks/pre-commit")); fi != nil && fi.Mode()&0o100 == 0 {
-		t.Error(".githooks/pre-commit is not executable")
+	for _, rel := range []string{".githooks/pre-commit", ".githooks/prepare-commit-msg"} {
+		if fi, _ := os.Stat(filepath.Join(repo, rel)); fi == nil || fi.Mode()&0o100 == 0 {
+			t.Errorf("%s is missing or not executable", rel)
+		}
 	}
 
 	// CLAUDE.md / GEMINI.md are symlinks to AGENTS.md.
@@ -443,6 +445,24 @@ func TestInitGitHooks(t *testing.T) {
 			t.Fatalf("git init: %v\n%s", err, out)
 		}
 	}
+	captureInit := func(dir string) (string, error) {
+		t.Helper()
+		oldStderr := os.Stderr
+		readLog, writeLog, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stderr = writeLog
+		initErr := Init(dir, "", nil, []string{"claude", "codex", "gemini"})
+		_ = writeLog.Close()
+		os.Stderr = oldStderr
+		logged, err := io.ReadAll(readLog)
+		_ = readLog.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(logged), initErr
+	}
 
 	// A fresh repo gets core.hooksPath pointed at the tracked, executable hook.
 	repo := t.TempDir()
@@ -458,23 +478,125 @@ func TestInitGitHooks(t *testing.T) {
 	} else if fi.Mode()&0o100 == 0 {
 		t.Error("pre-commit hook is not executable")
 	}
+	if fi, err := os.Stat(filepath.Join(repo, ".githooks/prepare-commit-msg")); err != nil {
+		t.Fatalf("prepare-commit-msg hook missing: %v", err)
+	} else if fi.Mode()&0o100 == 0 {
+		t.Error("prepare-commit-msg hook is not executable")
+	}
 	if fi, err := os.Stat(filepath.Join(repo, ".agent/claude/hooks/commit-gate.sh")); err != nil {
 		t.Fatalf("shared Claude commit gate missing: %v", err)
 	} else if fi.Mode()&0o100 == 0 {
 		t.Error("shared Claude commit gate is not executable")
 	}
+	if logged, err := captureInit(repo); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(logged, "chain $HOME/.config/coop/git-hooks/prepare-commit-msg") {
+		t.Errorf("stock prepare-commit-msg hook received custom-hook guidance:\n%s", logged)
+	}
 
-	// A user's custom hooksPath is left untouched (re-init is non-destructive).
+	// The repo-local hooksPath wins over Coop's box-global hooksPath. On a host the tracked shim is a
+	// no-op; in a box it must reach the mounted hook and forward Git's message path.
+	home := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	latestMessage := func() string {
+		t.Helper()
+		out, err := exec.Command("git", "-C", repo, "log", "-1", "--format=%B").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	for key, value := range map[string]string{"user.name": "Test", "user.email": "test@example.com"} {
+		if err := gitConfigSet(repo, key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tracked := filepath.Join(repo, "tracked.txt")
+	if err := os.WriteFile(tracked, []byte("host\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-m", "host no-op")
+	if msg := latestMessage(); strings.Contains(msg, "noreply@coop.dev") {
+		t.Fatalf("host commit unexpectedly ran a box hook:\n%s", msg)
+	}
+
+	boxHook := filepath.Join(home, ".config", "coop", "git-hooks", "prepare-commit-msg")
+	if err := os.MkdirAll(filepath.Dir(boxHook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(boxHook, []byte("#!/bin/sh\nprintf '\\nCo-authored-by: chained <noreply@coop.dev>\\n' >> \"$1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tracked, []byte("box\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-m", "test chain")
+	if msg := latestMessage(); !strings.Contains(msg, "chained <noreply@coop.dev>") {
+		t.Fatalf("repo-local prepare-commit-msg did not chain the box hook:\n%s", msg)
+	}
+
+	// A project-owned hook in the active scaffold directory is preserved with chaining guidance.
 	repo2 := t.TempDir()
 	gitInit(repo2)
-	if err := gitConfigSet(repo2, "core.hooksPath", ".my-hooks"); err != nil {
+	customPrepare := filepath.Join(repo2, ".githooks", "prepare-commit-msg")
+	if err := os.MkdirAll(filepath.Dir(customPrepare), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := Init(repo2, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	const customHook = "#!/bin/sh\n# project-owned\n"
+	if err := os.WriteFile(customPrepare, []byte(customHook), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := gitConfigGet(repo2, "core.hooksPath"); got != ".my-hooks" {
+	logged, err := captureInit(repo2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gitConfigGet(repo2, "core.hooksPath"); got != ".githooks" {
+		t.Errorf("core.hooksPath = %q, want .githooks", got)
+	}
+	if got, err := os.ReadFile(customPrepare); err != nil || string(got) != customHook {
+		t.Errorf("custom prepare-commit-msg hook was clobbered: %v\n%s", err, got)
+	}
+	if want := "chain $HOME/.config/coop/git-hooks/prepare-commit-msg"; !strings.Contains(logged, want) {
+		t.Errorf("active custom hook guidance missing %q:\n%s", want, logged)
+	}
+
+	// A custom hooksPath is left untouched and gets one message covering both tracked hooks.
+	repo3 := t.TempDir()
+	gitInit(repo3)
+	if err := gitConfigSet(repo3, "core.hooksPath", ".my-hooks"); err != nil {
+		t.Fatal(err)
+	}
+	customPrepare = filepath.Join(repo3, ".githooks", "prepare-commit-msg")
+	if err := os.MkdirAll(filepath.Dir(customPrepare), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(customPrepare, []byte(customHook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logged, err = captureInit(repo3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gitConfigGet(repo3, "core.hooksPath"); got != ".my-hooks" {
 		t.Errorf("custom core.hooksPath was clobbered: got %q, want .my-hooks", got)
+	}
+	if got, err := os.ReadFile(customPrepare); err != nil || string(got) != customHook {
+		t.Errorf("inactive prepare-commit-msg hook was clobbered: %v\n%s", err, got)
+	}
+	if want := ".githooks/pre-commit and .githooks/prepare-commit-msg"; !strings.Contains(logged, want) {
+		t.Errorf("custom hooksPath guidance missing %q:\n%s", want, logged)
+	}
+	if strings.Contains(logged, "chain $HOME/.config/coop/git-hooks/prepare-commit-msg") {
+		t.Errorf("custom hooksPath received redundant inactive-hook guidance:\n%s", logged)
 	}
 }
 

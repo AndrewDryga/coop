@@ -254,10 +254,9 @@ func (s *scaffolder) copySkills() error {
 	return nil
 }
 
-// installGitHooks generates the tracked .githooks/pre-commit gate (every committer) and Claude's
-// shared fallback commit gate, plus the project-scoped Claude copy when requested. Each carries the
-// detected stack checks. A repo with no detected stack gets a neutral gate. A user's custom
-// hooksPath is never clobbered.
+// installGitHooks generates the tracked git hooks and Claude's shared fallback commit gate, plus
+// the project-scoped Claude copy when requested. A repo with no detected stack gets a neutral gate.
+// A user's custom hooksPath or existing hook is never clobbered.
 func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 	if len(langs) > 0 {
 		ui.Detail("commit gate: %s", strings.Join(langs, ", "))
@@ -265,6 +264,17 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		ui.Detail("commit gate: no language detected — left neutral (edit .githooks/pre-commit to add checks)")
 	}
 	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".githooks", "pre-commit"), preCommitHook(langs), 0o755); err != nil {
+		return err
+	}
+	preparePath := filepath.Join(s.repo, ".githooks", "prepare-commit-msg")
+	prepareExists, prepareIsStock := false, false
+	if _, err := os.Lstat(preparePath); err == nil {
+		prepareExists = true
+		data, readErr := os.ReadFile(preparePath)
+		info, statErr := os.Stat(preparePath)
+		prepareIsStock = readErr == nil && statErr == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
+	}
+	if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
 		return err
 	}
 	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".agent", "claude", "hooks", "commit-gate.sh"), claudeCommitGate(langs), 0o755); err != nil {
@@ -285,8 +295,11 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 			return err
 		}
 		ui.Detail("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
+		if prepareExists && !prepareIsStock {
+			ui.Detail("kept existing .githooks/prepare-commit-msg; chain $HOME/.config/coop/git-hooks/prepare-commit-msg from it for coop box attribution")
+		}
 	default:
-		ui.Detail("kept your core.hooksPath=%q; coop's gate is in .githooks/pre-commit", current)
+		ui.Detail("kept your core.hooksPath=%q; copy or chain .githooks/pre-commit and .githooks/prepare-commit-msg there", current)
 	}
 	return nil
 }

@@ -168,6 +168,14 @@ staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
 ` + gateBody(langs, "1") + "\n\nexit 0\n"
 }
 
+// prepareCommitMsgChainHook lets a repo-local hooksPath retain the box's co-author hook. On the
+// host that hook is absent, so normal commits remain unchanged.
+const prepareCommitMsgChainHook = `#!/bin/sh
+hook="$HOME/.config/coop/git-hooks/prepare-commit-msg"
+[ -x "$hook" ] || exit 0
+exec "$hook" "$@"
+`
+
 // claudeCommitGate is the .claude/hooks/commit-gate.sh gate (Claude only; a Claude hook
 // blocks the tool call on exit 2). Reads the tool call on stdin and acts only on git commit.
 func claudeCommitGate(langs []string) string {

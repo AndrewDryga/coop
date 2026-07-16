@@ -1120,8 +1120,11 @@ merge the current `.agent/skills/sweep/` files while preserving local customizat
 scaffolds already have this layout. `init` also installs a fast Claude commit-gate hook. Because that is Claude-only,
 `init` *also* installs a tracked git pre-commit gate (`.githooks/pre-commit`) and points
 `core.hooksPath` at it, so the format check runs for *every* committer — Codex, Gemini, and a plain
-`git commit` — and rides along on a fresh clone. A custom `core.hooksPath` is left
-untouched; skip the gate once with `git commit --no-verify`.
+`git commit` — and rides along on a fresh clone. Its tracked `.githooks/prepare-commit-msg` shim
+also chains Coop's mounted box-attribution hook when present, while doing nothing on a normal host.
+A custom `core.hooksPath` is left untouched: copy or chain both tracked hooks from the active hook
+directory. If it already has a `prepare-commit-msg`, add the shim's Coop-hook call to that file
+instead of replacing it. Skip the format gate once with `git commit --no-verify`.
 
 If the model hits a rate or usage limit mid-run, the loop doesn't treat it as a
 failure: it reads the reset time from the agent's own output, waits it out with a
