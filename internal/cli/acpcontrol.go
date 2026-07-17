@@ -2119,15 +2119,18 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 			}
 			unavailable = council.UnavailableRoles
 		}
+		headline := ""
 		if p == sel.Preset && presetTarget.Provider != "" {
 			option.Name += " · " + displayName(presetTarget.Provider)
 			if presetTarget.Model != "" {
 				option.Name += " · " + presetTarget.Model
 			}
-			option.Description = "Active target: " + presetTarget.String()
-			if roster := c.presetRolesSummary(p); roster != "" {
-				option.Description += "\n\n" + roster
-			}
+			headline = "Active target: " + presetTarget.String() // the live rung, failovers included
+		}
+		// Describe every loadable preset — the active one leads with its live rung, the rest with
+		// their declared lead — so hovering an option previews its roster before you select it.
+		if desc := c.presetDescription(p, headline); desc != "" {
+			option.Description = desc
 		}
 		if len(unavailable) > 0 {
 			option.Description += "; unavailable council roles: " + strings.Join(unavailable, ", ")
@@ -2164,15 +2167,42 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	return out
 }
 
-// presetRolesSummary renders the selected preset's roles for its dropdown help as a
-// "Subagents:" roster — one readable line each, "• <name> (<mode>) — <target> — for <hints>" —
-// so the whole recipe (not just the lead) is legible without opening the YAML. Empty when the
-// preset has no roles or fails to load; the caller only asks for the currently-selected preset.
-func (c *acpControl) presetRolesSummary(name string) string {
+// presetDescription builds a preset dropdown option's help — a target headline plus the
+// "Subagents:" roster — so hovering any option previews the whole recipe, not just the lead. The
+// active preset passes its live rung as headline; for every other option (headline == "") the
+// preset's declared lead fills it. Returns headline unchanged if the preset can't load (so the
+// active option keeps its target line, and an unselected one falls back to the static blurb).
+func (c *acpControl) presetDescription(name, headline string) string {
 	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name)
 	if err != nil {
-		return ""
+		return headline
 	}
+	if headline == "" {
+		headline = "Lead: " + presetLeadDisplay(p)
+	}
+	if roster := rolesRoster(p); roster != "" {
+		return headline + "\n\n" + roster
+	}
+	return headline
+}
+
+// presetLeadDisplay renders a preset's declared lead as a target string — the whole fallback
+// ladder joined with " → " (a bare provider when no models/accounts are pinned).
+func presetLeadDisplay(p *preset.Preset) string {
+	if len(p.LeadLadder) == 0 {
+		return p.LeadAgent
+	}
+	rungs := make([]string, len(p.LeadLadder))
+	for i, t := range p.LeadLadder {
+		rungs[i] = t.String()
+	}
+	return strings.Join(rungs, " → ")
+}
+
+// rolesRoster renders a preset's roles as the "Subagents:" block — one readable line each,
+// "• <name> (<mode>) — <target> — for <hints>" — so the whole recipe is legible without opening
+// the YAML. Empty when the preset has no roles.
+func rolesRoster(p *preset.Preset) string {
 	lines := make([]string, 0, len(p.Roles))
 	for _, r := range p.Roles {
 		ladder := r.TargetLadder()

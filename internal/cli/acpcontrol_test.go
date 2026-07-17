@@ -1919,6 +1919,35 @@ roles:
 	}
 }
 
+// An UNSELECTED preset still previews its recipe on hover: the dropdown option leads with the
+// declared lead ladder ("Lead: …") and lists the roster, so you can read what a preset does
+// before switching to it — without a live "Active target:" (that's only the running rung).
+func TestACPPresetHelpPreviewsUnselectedPreset(t *testing.T) {
+	c := newTestControl(t)
+	writeACPTestPreset(t, c.repo, "frontier", `lead:
+  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
+roles:
+  thinker: {mode: consult, agent: codex:gpt-5.6-terra/xhigh, when: [architecture, debugging]}
+  fast: {mode: delegate, agent: codex:gpt-5.6-luna/xhigh}
+`)
+	// newTestControl leaves sel empty (no preset selected), so "frontier" is an unselected option.
+
+	got := string(c.coopOptions()[0])
+	for _, want := range []string{
+		`Lead: claude:claude-fable-5/xhigh → codex:gpt-5.6-sol/xhigh`,
+		"Subagents:",
+		`thinker (read-only) — codex:gpt-5.6-terra/xhigh — for architecture, debugging`,
+		`fast (writes) — codex:gpt-5.6-luna/xhigh`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("unselected preset preview missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Active target:") {
+		t.Errorf("an unselected preset must not claim a live Active target:\n%s", got)
+	}
+}
+
 func writeACPTestPreset(t *testing.T, repo, name, body string) {
 	t.Helper()
 	dir := filepath.Join(repo, ".agent", "presets", name)
