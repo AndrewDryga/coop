@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 6.2.0
 
 - **The ACP preset dropdown now previews every preset on hover.** Each preset option — not just
