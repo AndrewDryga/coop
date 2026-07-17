@@ -64,6 +64,22 @@ func testReviewWritesDockerRuntime(t *testing.T, taskOnly bool) {
 	if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks", "99_done"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The box drops CAP_DAC_OVERRIDE (boxLimits --cap-drop ALL), so its root can only write files
+	// it reaches by ordinary permission, not by owning them. A CI runner owns this fixture under a
+	// UID the box does not, so make the tree world-writable. The read-only MOUNT still blocks the
+	// protected paths — a writable file on a :ro bind cannot be written — which is what this proves.
+	if err := filepath.Walk(repo, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(0o666)
+		if info.IsDir() {
+			mode = 0o777
+		}
+		return os.Chmod(p, mode)
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	queue := filepath.Join(repo, ".agent", "tasks")
 	var boxErr strings.Builder
