@@ -163,7 +163,12 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				process := startLoopRecoveryPTY(t, suite, target)
 				defer process.Cleanup()
 				awaitLoopProcessOutput(t, process, "iteration failed (1/5) — retrying in 10s", 10*time.Second)
-				if err := process.SignalGroup(syscall.SIGTERM); err != nil {
+				// Signal coop directly, not the group: under the script(1) PTY a group signal makes
+				// util-linux script own the exit code (it exits 0, "Session terminated, killing
+				// shell"), but signaling the child lets script report coop's real code via -e — the
+				// same reason the hard-interrupt case below targets coop's PID.
+				coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+				if err := syscall.Kill(coopPID, syscall.SIGTERM); err != nil {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
