@@ -314,6 +314,7 @@ set -f
 set -- $targets
 total=$#
 [ "$total" -gt 0 ] || die "consult role $name has an empty target ladder"
+available_targets=
 for target do
 	case "$target" in '' | *[!a-zA-Z0-9._:/-]*) die "invalid target token in $name ladder" ;; esac
 	load_target "$target"
@@ -323,7 +324,7 @@ for target do
 	esac
 	if [ -n "$role" ]; then scope="${COOP_PRIMARY:-} ${COOP_PEERS:-}"; else scope=${COOP_PEERS:-}; fi
 	case " $scope " in
-*" $peer "*) available_targets="${available_targets:-} $target" ;;
+*" $peer "*) available_targets="$available_targets $target" ;;
 		*)
 			if [ -n "$role" ]; then
 				echo "[coop-consult $name: skipping $target — credential is outside this run; ask the operator to run 'coop login $peer' and relaunch, or remove this preset rung]" >&2
