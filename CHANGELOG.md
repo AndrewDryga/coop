@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 6.3.0
 
 - **`coop tasks ls` filters by state, and task ids are clickable.** Pass one or more of
