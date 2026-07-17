@@ -748,7 +748,7 @@ only from a clean worktree when the limited rung changed neither files (ignored 
 nor Git history. Providers without mounted credentials are skipped. Every available rung's
 credential home is mounted for the lead box. The role's prompt (if any) is the persona the peer adopts — so
 two consult roles on one agent stay distinct. Native roles run inside the
-lead's session, so under a `codex`/`gemini` lead they **degrade to exactly such a consult** —
+lead's session, so under a `codex`/`gemini`/`grok` lead they **degrade to exactly such a consult** —
 same model and persona, `coop-consult <role>` instead of in-session — so a non-Claude lead
 still gets Claude's deep reasoning.
 `coop presets init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, and `roles/fast.md` (usable
@@ -917,14 +917,15 @@ council when choosing this mode.
 "agent_servers": {
   "coop fusion (codex)":  { "command": "coop", "args": ["acp", "fusion", "codex", "--peer", "claude", "--peer", "gemini"] },
   "coop fusion (claude)": { "command": "coop", "args": ["acp", "fusion", "claude", "--peer", "codex", "--peer", "gemini"] },
-  "coop fusion (gemini)": { "command": "coop", "args": ["acp", "fusion", "gemini", "--peer", "claude", "--peer", "codex"] }
+  "coop fusion (gemini)": { "command": "coop", "args": ["acp", "fusion", "gemini", "--peer", "claude", "--peer", "codex"] },
+  "coop fusion (grok)":   { "command": "coop", "args": ["acp", "fusion", "grok", "--peer", "claude", "--peer", "codex"] }
 }
 ```
 
 ### Second opinions (`--peer`)
 
 Outside fusion, name peers with `--peer <agent>` (repeatable) on a normal run —
-`coop claude --peer codex --peer gemini` (or a `codex`/`gemini` lead; in Zed,
+`coop claude --peer codex --peer gemini` (or a `codex`/`gemini`/`grok` lead; in Zed,
 `coop acp claude --peer codex`) — for a lighter version of the same idea: on a
 genuinely hard or risky call the agent may consult those peers read-only and in
 parallel (through the same `coop-consult` wrapper) to catch blind spots, then decide.
@@ -950,7 +951,7 @@ command -v coop      # e.g. /Users/you/.local/bin/coop
 **2. Authenticate** the agent you'll use (see [Authentication](#authentication)):
 
 ```bash
-coop login claude    # or codex / gemini
+coop login claude    # or codex / gemini / grok
 ```
 
 **3. Register it in Zed.** In the agent panel use Add Custom Agent, or edit
@@ -980,7 +981,7 @@ and a solo run is `["acp","claude:opus/xhigh@work"]`. The toolbar dropdowns come
 target and stay switchable mid-thread, and coop ignores any editor permission-`mode` setting —
 every session runs yolo (the box is the boundary). **One caveat:** a **codex** governor (or lead)
 takes its model from codex's own `config.toml` — coop can't set it over ACP — so choose a
-`claude` or `gemini` governor when you want coop to pick the model.
+`claude`, `gemini`, or `grok` governor when you want coop to pick the model.
 
 > GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`, use the
 > absolute path from step 1 as `command`.
@@ -992,7 +993,8 @@ session in yolo, whatever the provider's own settings — the box is the boundar
 permission theater would only slow it down.
 
 Under the hood `coop acp [claude|codex|gemini|grok|fusion]` runs the matching adapter
-(`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`)
+(`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`,
+`grok agent stdio`)
 inside the box over stdio. The repo mounts at its real host path — the same path
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
 lines up: a thread you started with `coop loop` is there to resume in Zed.
@@ -1055,7 +1057,7 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 coop init                 # scaffold AGENTS.md, the .agent/ working folder, and the hooks
 coop tasks add "..."      # add a task (a folder under .agent/tasks/00_todo/)
 coop loop claude          # disposable agents work the queue until it's done, then sign off
-coop loop codex           # …or name the agent: claude, codex, or gemini (or a preset name)
+coop loop codex           # …or name claude, codex, gemini, grok, or a preset
 ```
 
 A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
@@ -1064,7 +1066,7 @@ in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric 
 selects and claims the next task host-side (or resumes one left in `10_in_progress/`), then
 starts a fresh agent assigned to that exact task (no context rot). It won't quit while either
 state has acquirable work. Name the agent
-(`claude`/`codex`/`gemini`, or a preset name whose lead supplies it); loop.yaml `work.command` still overrides the whole
+(`claude`/`codex`/`gemini`/`grok`, or a preset name whose lead supplies it); loop.yaml `work.command` still overrides the whole
 iteration command if you need something custom. When the queue empties, a fresh, **demanding
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
@@ -1554,29 +1556,25 @@ A single static Go binary plus a config folder. A repo you work on optionally ca
 
 ```
 main.go             entrypoint
-internal/agent/     one file per coding agent (claude/codex/gemini): commands, resume, MCP, defaults, packages
+internal/agent/     one file per coding agent (claude/codex/gemini/grok): commands, resume, MCP, defaults, packages
 internal/box/       the engine: secret-shadowing mounts, git env, image selection, container run
 internal/acpproxy/  the ACP session proxy: survives box restarts, replays the handshake, coop's editor hooks
 internal/fusion/    the council: peer commands + the governor instruction
 internal/preset/    orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
 internal/project/   .agent/project.yaml — a monorepo's subprojects + the serve ports
-internal/mcp/       one mcp.json → Claude / Gemini / Codex native configs (pure Go, no Python)
+internal/mcp/       one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)
 internal/scaffold/  `coop init` templates + the workflow skills (embedded in the binary)
 internal/cli/       command dispatch, grouped help, the fork lifecycle, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
 install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```
 
-```bash
-make build                               # build ./coop
-make check                               # lint + unit/process E2E + docs checks (what CI runs; no Docker needed)
-make provider-scripted-e2e               # deterministic all-provider process matrix
-make provider-live-e2e-all               # one read-only real prompt per registered provider (opt-in)
-make provider-resume-live-e2e-all        # two-process native session continuity per provider (opt-in)
-make provider-loop-live-e2e-all          # one writable real task completion per provider (opt-in)
-make provider-consult-live-e2e-all       # four real cross-provider coop-consult edges, no lead calls (opt-in)
-make doctor                              # the integration check — proves isolation, needs a runtime
-```
+| Layer | Targets | What they prove |
+|---|---|---|
+| Blocking | `make check` | formatting, vet, unit tests, deterministic provider process E2E, tagged process-control races, generated docs, casts, and maintenance tools; no runtime or credentials |
+| Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork/fleet policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
+| Runtime boundary | `make doctor` · `make review-writes-e2e` | real box isolation and task-only review writes; requires Docker/Podman (or Apple `container` for doctor) |
+| Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 
 `.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
 own box — gets the right `go`/`gofmt` automatically.
@@ -1585,46 +1583,12 @@ The security-critical logic — secret enumeration (`internal/box/mounts.go`) an
 assembly (`internal/box/run.go`) — is pure and unit-tested without a runtime; `coop
 doctor` proves the whole thing end-to-end against the real box.
 
-The scripted provider target builds fresh Coop and fixture binaries under a disposable root, starts
-from an allowlist-only environment, and checks the real CLI/box/runtime command boundary for every
-registered provider. It covers bare and pinned accounts, model/effort precedence and exact native
-argv/env, forwarded args, fail-fast target validation, output passthrough, exit propagation, and
-ready-synchronized foreground-group cancellation. It also invokes the exact generated
-`coop-consult` mount for all four provider arms and every one of the 12 directed distinct fallback
-pairs, including continuation, failed-resume recovery, rate-limit decisions, telemetry, scope
-denials, output bounds, and cleanup. Its fake runtime validates and records mounts,
-env files, workdir, image, and provider argv, but it is not a container sandbox; `coop doctor` and
-`make review-writes-e2e` own that proof. On failure, rerun the printed provider subtest with `-v`; its diagnostic includes the
-size-bounded JSONL trace. Host paths are fixture-relative, environment values are default-redacted,
-and free-form label/provider values are represented by deterministic digests, so exact contracts
-remain testable without persisting their contents. A new adapter automatically enters the
-registry-generated matrix; add only its expected argv and credential assertions in the tagged test.
-The runtime fixture stays registry-neutral. Its provider mode is a deliberately independent oracle:
-it enumerates each registered provider's native argv/output shape, and a completeness test fails
-when a new adapter has no oracle arm.
-
-Recovery rows that depend on terminal semantics run through `script(1)` so the real Coop process
-selects provider streaming and foreground interrupt handling. This covers malformed/truncated
-events and two-stage Ctrl-C telemetry without a production test switch. Terminal diagnostics are
-classified separately from assistant narration; exact rate/auth phrases inside ordinary task prose
-therefore cannot rotate or stop the loop.
-
-Provider session lookup also has a generated large-history regression matrix under a disposable
-config root. It covers every registered adapter's exact hit, full miss, wrong cwd and ID, malformed
-history, alternate-account isolation, and repeated descriptor closure. Its benchmark reports lookup
-time and allocations without imposing machine-sensitive thresholds. Current Gemini buckets use
-their bounded `.project_root` ownership marker to skip foreign histories; markerless legacy buckets
-retain bounded metadata fallback. No secondary session index or cache is maintained.
-
-The same process fixture drives work, between-task audit, signoff, and verify as distinct stages,
-including stage-local provider rotation, review reopens, retry and round caps, and the final queue
-exit. Review boxes are checked against their real mount policy: the repository is read-only while
-the task queue alone stays writable for an exact reopen. Stage telemetry records the effective
-provider, model, effort, and account of the terminal attempt after rotation. Cost and tokens come
-only from that attempt's native terminal event: Claude currently reports USD and tokens, while Codex, Gemini, and Grok
-report tokens but no USD. A missing event remains unavailable rather than becoming a synthetic
-zero-cost call. Consult/delegate usage stays in separate peer rows where the adapter exposes it, so
-the closing digest can add it without attributing peer work to the lead stage.
+The deterministic provider suite crosses the real Coop CLI/box/runtime boundary with strict
+provider-native fixture oracles for Claude, Codex, Gemini, and Grok. It owns target/account/model/
+effort propagation, all directed fallback pairs, rate/auth/output failures, cancellation, loop audit
+stages, fork/fleet lifecycle, session lookup, telemetry, and cleanup. Its fake runtime validates
+assembly, not container enforcement; `doctor` and `review-writes-e2e` own that boundary. On failure,
+rerun the printed subtest with `-v` and inspect its bounded, redacted trace.
 
 The opt-in live layer checks compatibility with the provider CLIs currently installed in the box:
 
@@ -1641,136 +1605,45 @@ make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'
 make provider-consult-live-e2e-all
 ```
 
-An explicit target list uses Coop's normal `provider[:model][/effort][@account]` grammar and permits
-a provider-local skip only when the runtime, image, CLI, or selected credential is missing, or a
-projected OAuth access token cannot outlive the run. A host-bound credential such as Gemini's
-encrypted OAuth keychain reports `credential_not_portable`; use a `GEMINI_API_KEY` selection (or
-Vertex express-mode `GOOGLE_API_KEY`) for live compatibility. `all`
-is registry-generated strict mode: every registered provider must be attempted and pass. The strict
-target also accepts a complete registry-ordered explicit list when compatibility should exercise
-specific configured credentials rather than marked defaults. Once a marker prompt starts, auth
-errors, rate limits, timeouts, nonzero exits, wrong output, repository or
-source-credential changes, and incomplete cleanup are failures; the suite never retries or induces
-quota exhaustion. The run emits exactly one `COOP_PROVIDER_LIVE_SUMMARY` JSON line with installed
-CLI versions and per-provider attempted/passed/skipped/failed state. Failures also retain only
-redacted diagnostics: phase, exit code, timeout/truncation flags, and provider-owned
-authentication/rate-limit/process classification. Raw provider output is never retained.
-Version evidence is reduced to a provider-labelled semver token; paths, environment echoes, control
-text, and other free-form `--version` output are rejected. Final verification has a fixed precedence:
-incomplete runtime cleanup, changed source credentials, and a changed repository override the child
-result in that order, so a provider failure cannot hide a broken isolation boundary.
-For host-side failures, `detail_code` separates credential projection, permissions, file type,
-size/path/replacement, repository setup/snapshot, child-result, and runtime-cleanup failures.
-Credential detail codes call for repairing or re-authenticating the selected credential; repository
-or child/cleanup codes indicate the local runtime/test harness and are safe to attach to a bug report.
+An explicit list uses Coop's normal target grammar. `all` is registry-generated strict mode: every
+provider must be attempted and pass, with no prerequisite skip. A complete registry-ordered explicit
+list may select non-default accounts. Once a provider request starts, auth errors, rate limits,
+timeouts, wrong output, repository/source changes, and incomplete cleanup are failures; there is one
+attempt and the suite never induces quota exhaustion.
 
-The separate loop live target reuses the same target parsing, projected credentials, version
-admission, hard deadline, revocation, cleanup, and redacted summary. It does not run the loop
-controller: the blocking scripted matrix already proves that exact external CLI, lease, task,
-commit, reconciliation, and telemetry path without quota. Instead, the live harness pre-claims one
-mechanical disposable task and gives the selected provider exactly one writable `Headless` call
-with the real loop work prompt. A pass requires one commit with the exact task trailer, only the
-requested marker file, a clean tree, final task state/log, and the sole task moved to done. Extra
-tracked or ignored files, changed task instructions, scratch retention, or an incomplete move fail
-repository verification. Use `provider-loop-live-e2e-all` only for explicit release acceptance:
-it starts one real headless session per admitted provider and remains outside `make check`.
+| Live target | Model sessions / minimum calls | Stable evidence |
+|---|---:|---|
+| `provider-live-e2e` | 1 per admitted provider | `COOP_PROVIDER_LIVE_SUMMARY` |
+| `provider-resume-live-e2e` | 2 per admitted provider | `COOP_PROVIDER_RESUME_LIVE_SUMMARY` |
+| `provider-loop-live-e2e` | 1 writable task per admitted provider | `COOP_PROVIDER_LOOP_LIVE_SUMMARY` |
+| `provider-consult-live-e2e` | 4 peer sessions for a complete ring; no lead sessions; tool use may add upstream turns | `COOP_CONSULT_LIVE_SUMMARY` |
+| `acp-e2e` | scenario-dependent; several adapter generations | none (strict test output) |
 
-For the read-only marker target, each provider gets a fresh committed repository mounted read-only,
-an isolated HOME/XDG/config tree, no project/global instructions or MCP settings, open egress, bounded output,
-and a hard deadline. Claude, Codex, and Grok auth files are projected to access-token-only forms;
-refresh tokens never enter the isolated tree. Gemini's host-bound keychain is fingerprinted but
-never copied. Only the exact selected Gemini env key is preserved, and only selected
-adapter-declared artifacts and explicit credential-env assignments enter new `0600` inodes.
-Sessions, hooks, histories, unrelated settings, alternate keys, and other accounts stay in the
-source vault. Source credentials (including inode identity), complete repository bytes/modes, and
-Git HEAD/status/refs/reflogs are compared afterward. The tagged live helper validates an inherited private control descriptor,
-then lets the runtime inherit the helper's harness-owned process group; default Coop builds retain
-the normal separate runtime group. On timeout, the projected credential path is atomically revoked
-before the first process signal. Child and parent share one random private tombstone path, so parent
-teardown can retry a child-side deletion failure and reports a persistent failure as incomplete
-cleanup; the runtime CLI never inherits that path. The harness waits for the whole group to disappear before
-Docker/Podman boxes are reaped by cidfile and every runtime polls the unique label across running
-and stopped state through a quiet grace window. The control descriptor is close-on-exec and its
-environment key is stripped before the runtime starts. These
-targets are deliberately outside `make check` because each attempted provider consumes one real
-model request. Deterministic argv, policy, error, rate-limit, and cancellation coverage remains in
-`make provider-scripted-e2e`; `make check` also runs the no-credential tagged process-control denial
-suite.
+Each run gets a disposable repository, HOME/XDG roots, access-only projected credentials, no
+inherited instructions/MCP/session history, a hard deadline, and bounded cleanup. Source credentials
+and complete repository/Git state are fingerprinted before and after. Raw provider output, paths,
+accounts, tokens, and refresh authority are never retained. These targets stay outside `make check`
+because every admitted provider consumes real quota.
 
-The separate resume live target keeps that same read-only repository, projected credential,
-deadline, revocation, source-fingerprint, and cleanup boundary for two helper OS processes. The
-first request contains a random token and creates one provider-native session in the disposable
-home. Its exact canonical session ID crosses the process boundary through one bounded private file;
-the second provider request receives only that ID and asks for the preceding assistant response
-without repeating it. The helper retains the marker only as verifier state; it is not forwarded to
-the provider process, its environment, or its prompt. Claude,
-Gemini, and Grok use their caller-pinned IDs and production exact-history lookup. Codex records the
-`thread.started` ID from its bounded native JSON stream and invokes `codex exec resume <id>` in the
-second process. A pass therefore proves current native headless continuity plus the deterministic
-interactive lookup contract; it does not automate a TUI. The run emits one redacted
-`COOP_PROVIDER_RESUME_LIVE_SUMMARY` line. Each admitted provider consumes exactly two real requests,
-there are no retries, and the strict `-all` target fails on any prerequisite skip.
-The supervisor label used for bounded cleanup is independent from ACP transcript sharing; only an
-actual ACP launch mounts the credential-independent ACP session directories.
+`make acp-e2e` applies the same credential and runtime boundary to installed ACP adapters and fails
+on every skip; scenarios may start several generations and it intentionally has no stable summary
+prefix. Use `make acp-scripted-e2e` for
+injected limits, malformed responses, switching, fallback, and replay cases that should not spend
+live quota.
 
-The separate consult live ring exercises one registry-derived edge into each provider. The child
-invokes the mounted `coop-consult` wrapper directly, so no lead model is called. A complete run
-starts four peer CLI sessions; provider tool round-trips can consume more than one upstream turn
-per session. Each edge proves real lead-plus-peer credential scope and wrapper wiring; all 12
-ordered fallback pairs and their policy remain deterministic. All four
-projected credentials and CLI versions must be ready before the first
-request; otherwise permissive mode emits safe `ring_prerequisite`/credential skips and admits zero
-calls. The strict `-all` target fails unless every edge was attempted and passed. Each fresh-only
-edge mounts exactly its lead and peer credentials, runs once without retry in the same clean writable
-disposable repository, and asks the peer
-to attempt tracked, untracked, and ignored writes. A pass requires the exact fresh-session status,
-the unique final marker, unchanged complete repository bytes/modes and HEAD/status/refs/reflogs, unchanged
-source credentials, revoked projected credentials, and per-edge quiescent CID/label/process
-cleanup before the next session starts. It emits exactly one
-redacted `COOP_CONSULT_LIVE_SUMMARY` JSON line; raw provider output, paths, target accounts, and
-credential material are never retained. This live ring proves current cross-provider fresh CLI compatibility;
-resume, cross-provider scope, rate-limit, and failure behavior stays in the deterministic matrix so validation never
-induces quota exhaustion.
+| Summary result | Action |
+|---|---|
+| `missing_runtime`, `missing_image`, `missing_cli`, `missing_credential` | Install/build/sign in, then rerun. No paid request started. |
+| `credential_refresh_required` | Re-authenticate the selected account; its projected access token cannot outlive the deadline. |
+| `credential_not_portable` | Select an env-backed key (for Gemini, `GEMINI_API_KEY` or Vertex `GOOGLE_API_KEY`). |
+| `ring_prerequisite` | Repair the named prerequisite. The consult ring admitted zero paid calls. |
+| `failed` with `attempted=true` | Treat as an upstream CLI/provider compatibility failure; reproduce syntax/policy with the deterministic fixture. |
+| `repository_changed`, `source_changed`, `cleanup_failed`, `harness_failed` | Treat as a local isolation/harness defect; these override provider success. |
 
-The scrubbed child retains only the selected runtime's connection/storage capability. Explicit
-Docker connection variables are copied directly; otherwise the parent resolves the active Docker
-context to its endpoint and TLS material. Podman is reduced to the selected connection URI/identity
-plus storage settings. Behavior-bearing Docker/Podman config files and connection selectors are
-never forwarded, so they cannot inject proxies, hooks, or credential helpers into the isolated
-runtime command. These values are available only to the host runtime command and are never rendered
-into container args or the stable summary. The child's `HOME` and XDG roots remain disposable;
-Apple `container` needs no inherited connection environment.
-
-`make acp-e2e` applies the same credential and runtime boundary to the installed-adapter ACP suite.
-Each scenario stages the marked default for a bare target and every explicitly named account in its
-direct target or loaded preset ladder. It copies Frontier through a bounded regular-file-only
-transaction and gives the process a unique cleanup label. The isolated binary is built with the
-test-only `cooplivetest` tag. Every inner generation blocks behind a pipe gate until a resident PGID
-leader has durably published its UID, harness cleanup nonce, group id, and stable Linux/Darwin start
-token in a private bounded registry. The recorded nonce is the harness's cleanup label, not Coop's
-separate internal generation label. The leader stays resident if the inner Coop exits, so a delayed
-runtime cannot escape group ownership. SIGHUP revalidates the outer control descriptor and carries
-it only across the supervisor's immediate self-exec; provider/runtime child execs cannot inherit it.
-Publication is serialized and reserves a bounded registry slot before releasing a generation.
-Teardown revokes the projected credential tree first, stops and awaits the outer supervisor,
-revalidates each identity immediately before TERM/KILL, waits for every generation group to
-disappear, and only then removes CIDs and labels. Stale or unverifiable records never authorize a
-signal to another process or allow cleanup to declare a quiet success. The Make target is strict:
-any missing, host-bound, or near-expiry prerequisite fails instead of allowing an all-skipped run to
-look green.
-Run the deterministic `make acp-scripted-e2e` matrix for injected rate limits, malformed output,
-fallback orderings, and other fault cases that should not consume live provider requests.
-
-OAuth file copies carry no refresh authority and are attempted only when their access token remains
-valid beyond the hard deadline. Standard mode still reports `credential_refresh_required` before
-the prompt when the projected token is expired or near expiry; strict mode fails without starting
-that provider. The version-only box still runs for such preflight skips, so the summary distinguishes
-installed-CLI compatibility from credential readiness.
-
-A new provider is selected by `all` automatically after it registers. `Agent.LiveCredentials` is a
-compiler-required part of every adapter: it declares exact artifact projectors, portability, and
-redacted auth-error signals. The registry-generic `TestMetadata` enforces unique safe basenames,
-exactly one primary artifact, a projector for every artifact, a portability callback, and safe
-signals; adding a provider-specific metadata row is not required. Missing or invalid projection and
-unknown portability fail as `unsafe_credential` before any model request. There is no raw-file or
-permissive fallback.
+To add a provider, register its production `Agent`, implement the compiler-required
+`LiveCredentials`, and add its independent native argv/output oracle. Registry completeness tests
+fail until the scripted ACP/provider tables and help fragments acknowledge it; strict `all` includes
+it automatically. Detailed fixture, credential-projection, process-ownership, and session-history
+contracts live in [the provider testing KB](.agent/kb/provider-scripted-e2e.md),
+[live testing KB](.agent/kb/provider-live-e2e.md), and
+[ACP testing KB](.agent/kb/acp-scripted-e2e.md).

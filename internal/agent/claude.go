@@ -173,27 +173,43 @@ type claudeAccessCredential struct {
 	Scopes      []string `json:"scopes"`
 }
 
-func decodeClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
+func parseClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
 	var source struct {
 		OAuth *claudeAccessCredential `json:"claudeAiOauth"`
 	}
 	if err := json.Unmarshal(data, &source); err != nil {
 		return claudeAccessCredential{}, fmt.Errorf("decode Claude credential: %w", err)
 	}
-	if source.OAuth == nil || source.OAuth.AccessToken == "" || source.OAuth.ExpiresAt <= 0 ||
-		!slices.Contains(source.OAuth.Scopes, "user:inference") {
+	if source.OAuth == nil {
+		return claudeAccessCredential{}, fmt.Errorf("claude credential has no OAuth shape")
+	}
+	return *source.OAuth, nil
+}
+
+func decodeClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
+	projected, err := parseClaudeAccessCredential(data)
+	if err != nil {
+		return claudeAccessCredential{}, err
+	}
+	if projected.AccessToken == "" || projected.ExpiresAt <= 0 ||
+		!slices.Contains(projected.Scopes, "user:inference") {
 		return claudeAccessCredential{}, fmt.Errorf("claude credential has no access-only OAuth shape")
 	}
-	projected := *source.OAuth
 	projected.Scopes = []string{"user:inference"}
 	return projected, nil
 }
 
 func projectClaudeCredential(data []byte) ([]byte, error) {
-	projected, err := decodeClaudeAccessCredential(data)
+	projected, err := parseClaudeAccessCredential(data)
 	if err != nil {
 		return nil, err
 	}
+	// A refresh-only login is safe to stage after stripping refresh authority, but unusable. Keep
+	// the empty access shape so Portability can report credential_refresh_required before launch.
+	if !slices.Contains(projected.Scopes, "user:inference") {
+		return nil, fmt.Errorf("claude credential has no inference scope")
+	}
+	projected.Scopes = []string{"user:inference"}
 	encoded, err := json.Marshal(struct {
 		OAuth claudeAccessCredential `json:"claudeAiOauth"`
 	}{OAuth: projected})

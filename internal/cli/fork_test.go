@@ -800,6 +800,9 @@ func TestLatestTaskLogOnlyDone(t *testing.T) {
 // rejected arg.
 func TestForkACPAcceptsCredential(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	if code, err := a.forkACP("myfork", nil); code != 2 || err == nil || strings.Contains(err.Error(), "preset") {
+		t.Errorf("fork acp without a target = (%d, %v), want provider-only guidance", code, err)
+	}
 	code, err := a.forkACP("myfork", []string{"claude@ghost"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("fork acp claude@ghost = (%d, %v), want (2, an account error naming ghost)", code, err)

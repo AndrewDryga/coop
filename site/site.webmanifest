@@ -1,7 +1,7 @@
 {
   "name": "coop",
   "short_name": "coop",
-  "description": "Run agent loops on your real repos — in a disposable box they can't escape. One binary drives Claude, Codex, and Gemini.",
+  "description": "Run agent loops on your real repos — in a disposable box they can't escape. One binary drives Claude, Codex, Gemini, and Grok.",
   "id": ".",
   "start_url": ".",
   "scope": ".",

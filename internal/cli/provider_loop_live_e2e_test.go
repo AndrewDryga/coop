@@ -141,12 +141,6 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 	if err != nil || string(taskBody) != providerLoopLiveTaskBody(provider, marker) {
 		return fmt.Errorf("live loop task contract changed")
 	}
-	commitEdit, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, ".git", "COMMIT_EDITMSG"))
-	wantCommitEdit := "test: complete live loop task\n\nCoop-Task: " + taskID + "\n"
-	if err != nil || string(commitEdit) != wantCommitEdit {
-		return fmt.Errorf("live loop Git commit message state mismatch")
-	}
-
 	headOutput, err := runProviderLoopLiveGit(layout, "rev-parse", "HEAD")
 	if err != nil {
 		return err
@@ -173,9 +167,12 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 		return fmt.Errorf("live loop commit trailer mismatch")
 	}
 	message, err := runProviderLoopLiveGit(layout, "log", "-1", "--format=%B")
-	wantMessage := "test: complete live loop task\n\nCoop-Task: " + taskID
-	if err != nil || strings.TrimSpace(string(message)) != wantMessage {
-		return fmt.Errorf("live loop commit message mismatch")
+	if err != nil {
+		return err
+	}
+	commitEdit, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, ".git", "COMMIT_EDITMSG"))
+	if err != nil || strings.TrimSpace(string(commitEdit)) != strings.TrimSpace(string(message)) {
+		return fmt.Errorf("live loop Git commit message state mismatch")
 	}
 	if err := verifyProviderLoopLiveReflogs(layout, before.Reflogs, strings.TrimSpace(before.Repository.Head), head); err != nil {
 		return err
@@ -508,6 +505,43 @@ func runProviderLoopLiveGitEnv(layout procharness.Layout, extraEnv []string, arg
 }
 
 func TestProviderLoopLiveContract(t *testing.T) {
+	t.Run("nonpassing provider preserves its failure against an unchanged fixture", func(t *testing.T) {
+		layout, err := procharness.NewLayout(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := liveprovider.InitRepository(layout); err != nil {
+			t.Fatal(err)
+		}
+		target := agents.Target{Provider: "claude", Model: "model", Accounts: []string{"work"}}
+		marker := "COOP_LIVE_MARKER_unattempted"
+		if err := prepareProviderLoopLiveRepository(layout, target, marker); err != nil {
+			t.Fatal(err)
+		}
+		repository, err := liveprovider.SnapshotRepository(layout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := snapshotProviderLoopLiveBaseline(layout, repository)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repositoryErr := verifyProviderLiveRepository(layout, repository, before, target, marker, liveWorkflowLoop, false)
+		if repositoryErr != nil {
+			t.Fatal(repositoryErr)
+		}
+		child := liveprovider.ProviderResult{
+			Provider: target.Provider, Attempted: true, Status: liveprovider.StatusFailed,
+			ReasonCode: liveprovider.ReasonPromptExit, Phase: "prompt", ErrorClass: "process",
+		}
+		got := liveprovider.FinalizeResult(child, liveprovider.VerificationFailures{
+			RepositoryChanged: repositoryErr != nil, AttemptedObserved: true,
+		})
+		if got.ReasonCode != liveprovider.ReasonPromptExit || !got.Attempted {
+			t.Fatalf("failed provider result was masked: %+v", got)
+		}
+	})
+
 	newCompleted := func(t *testing.T) (procharness.Layout, providerLoopLiveBaseline, agents.Target, string) {
 		t.Helper()
 		layout, err := procharness.NewLayout(t.TempDir())
@@ -537,7 +571,7 @@ func TestProviderLoopLiveContract(t *testing.T) {
 		if _, err := runProviderLoopLiveGit(layout, "add", "--", file); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := runProviderLoopLiveGit(layout, "commit", "-qm", "test: complete live loop task", "-m", "Coop-Task: "+providerLoopLiveTaskID(target.Provider)); err != nil {
+		if _, err := runProviderLoopLiveGit(layout, "commit", "-qm", "test: complete live loop task", "-m", "Exercise the provider loop completion contract.", "-m", "Coop-Task: "+providerLoopLiveTaskID(target.Provider)); err != nil {
 			t.Fatal(err)
 		}
 		task := filepath.Join(layout.Repo, tasksRoot, stateInProgress, providerLoopLiveTaskID(target.Provider))

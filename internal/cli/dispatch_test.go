@@ -3,10 +3,12 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 func TestNearestCommand(t *testing.T) {
-	cmds := append(append([]string{}, topLevelCommands...), "claude", "codex", "gemini")
+	cmds := append(append([]string{}, topLevelCommands...), agents.Names()...)
 	cases := []struct {
 		in   string
 		want string

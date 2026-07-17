@@ -269,18 +269,36 @@ func runProviderLiveCompatibility(
 		RemoveByLabel:   rt.RemoveByLabel,
 	})
 	cancelCleanup()
-	repositoryOK := false
-	if workflow == liveWorkflowLoop {
-		repositoryOK = verifyProviderLoopLiveRepository(layout, loopBefore, target, marker) == nil
-	} else {
-		after, snapshotErr := liveprovider.VerifyRepository(layout, before)
-		repositoryOK = snapshotErr == nil && before.Equal(after)
+	repositoryErr := verifyProviderLiveRepository(layout, before, loopBefore, target, marker, workflow, result.Passed)
+	if repositoryErr != nil {
+		t.Logf("%s %s repository verification: %v", target.Provider, workflow, repositoryErr)
 	}
 	sourceErr := prepared.VerifySources()
 	return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{
 		CleanupFailed: cleanupErr != nil || revokeErr != nil, SourceChanged: sourceErr != nil,
-		RepositoryChanged: !repositoryOK, AttemptedObserved: attempted,
+		RepositoryChanged: repositoryErr != nil, AttemptedObserved: attempted,
 	})
+}
+
+func verifyProviderLiveRepository(
+	layout procharness.Layout,
+	before liveprovider.RepositorySnapshot,
+	loopBefore providerLoopLiveBaseline,
+	target agents.Target,
+	marker, workflow string,
+	passed bool,
+) error {
+	if workflow == liveWorkflowLoop && passed {
+		return verifyProviderLoopLiveRepository(layout, loopBefore, target, marker)
+	}
+	after, err := liveprovider.VerifyRepository(layout, before)
+	if err != nil {
+		return err
+	}
+	if !before.Equal(after) {
+		return errors.New("live repository metadata changed")
+	}
+	return nil
 }
 
 func liveIdentifier(prefix string) (string, error) {

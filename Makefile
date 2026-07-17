@@ -56,7 +56,7 @@ provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or 
 	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -v ./internal/cli/
 
 live-process-control: ## Deterministic denial tests for tagged live-test process ownership
-	@go test -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract)' -count=1 ./internal/cli/ ./internal/runtime/
+	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract)' -count=1 ./internal/cli/ ./internal/runtime/
 	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/
 
 provider-live-e2e: ## Opt-in read-only upstream CLI probe (set COOP_LIVE_TARGETS=provider,...)

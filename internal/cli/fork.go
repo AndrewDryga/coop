@@ -1233,15 +1233,13 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}
 	}
 	if agent == "" {
-		return 2, noProviderErr("fork <name> acp")
+		return 2, fmt.Errorf("name the agent — coop fork <name> acp <%s>; sign in with 'coop login <agent>' or see 'coop credentials'", strings.Join(agents.Names(), "|"))
 	}
 	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
 		return 2, err
 	}
-	cmd, ok := acpCommand(a.cfg, agent)
-	if !ok {
-		return 2, errors.New("usage: coop fork <name> acp [claude|codex|gemini]")
-	}
+	// isTargetHead accepted only a registered provider, so the adapter lookup cannot miss.
+	cmd := acpCommand(a.cfg, agent)
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err

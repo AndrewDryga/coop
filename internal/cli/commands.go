@@ -51,8 +51,8 @@ func (a *app) resolveImage() (repo, img string, err error) {
 }
 
 // runInBox runs a command in the box against the current repo with the default
-// homes/network/cache toggles (the common interactive path). agent names the agent
-// being driven (claude/codex/gemini) so its credentials are mounted and, with named peers,
+// homes/network/cache toggles (the common interactive path). agent names the registered agent
+// being driven so its credentials are mounted and, with named peers,
 // it gets the second-opinion directive plus exactly those peers' credentials. Pass
 // "" for raw commands (coop run/shell) that aren't an agent session — they mount no
 // agent credentials.
@@ -422,12 +422,12 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	return a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
 }
 
-// acpCommand maps an agent to its ACP adapter command inside the box.
-func acpCommand(cfg *config.Config, tool string) ([]string, bool) {
+// acpCommand maps a validated agent to its ACP adapter command inside the box.
+func acpCommand(cfg *config.Config, tool string) []string {
 	if ag, ok := agents.Get(tool); ok {
-		return ag.ACP(cfg), true
+		return ag.ACP(cfg)
 	}
-	return nil, false
+	return nil
 }
 
 // cmdACP runs the box as an ACP agent over stdio: the repo mounts at its real
@@ -568,7 +568,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 	}
 	if !agents.Valid(tool) {
-		return 2, errors.New("coop acp: no provider named and none signed in — run 'coop login <agent>' (claude|codex|gemini|grok), or name one: coop acp claude")
+		return 2, noProviderErr("acp")
 	}
 	// Fail a bad credential fast, in the outer process, before spawning anything (the inner's
 	// applyOneOff does the real selection).
@@ -639,7 +639,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
 	// the resolved model as a flag. tool passed agents.Valid above, so this can't miss.
-	cmd, _ := acpCommand(a.cfg, tool)
+	cmd := acpCommand(a.cfg, tool)
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
@@ -1602,7 +1602,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	// --no-mcp: this one run mounts no MCP anywhere (the committed form is loop.yaml `mcp: false`,
 	// honored inside loop() so fork loops get it too). Blanking MCPFile is the single switch every
 	// downstream check keys off (Config.MCPActive) — claude's --mcp-config and the generated
-	// codex/gemini configs all stay out of the boxes.
+	// provider-native configs all stay out of the boxes.
 	if noMCP {
 		a.cfg.MCPFile = ""
 	}
@@ -2302,7 +2302,7 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 }
 
 // consult opts every iteration into the second-opinion directive: the box mounts the authed
-// peers' credentials and the coop-consult wrapper, so an unattended lead can ask codex/gemini
+// peers' credentials and the coop-consult wrapper, so an unattended lead can ask registered peers
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
 func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight bool, maxTasks int) (int, error) {

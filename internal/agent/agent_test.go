@@ -829,8 +829,16 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 	}
 
 	claude, _ := Get("claude")
-	if got, err := mustLiveCredentials(t, claude).Artifacts[0].Project([]byte(`{"claudeAiOauth":{"accessToken":"access","expiresAt":7,"scopes":["account:read"]}}`)); err == nil || got != nil {
+	claudeProject := mustLiveCredentials(t, claude).Artifacts[0].Project
+	if got, err := claudeProject([]byte(`{"claudeAiOauth":{"accessToken":"access","expiresAt":7,"scopes":["account:read"]}}`)); err == nil || got != nil {
 		t.Fatalf("Claude projection without inference scope = %q, %v; want fail closed", got, err)
+	}
+	got, err = claudeProject([]byte(`{"claudeAiOauth":{"accessToken":"","expiresAt":0,"scopes":["user:inference"],"refreshToken":"REFRESH_CANARY"}}`))
+	if err != nil {
+		t.Fatalf("Claude refresh-only projection: %v", err)
+	}
+	if want := `{"claudeAiOauth":{"accessToken":"","expiresAt":0,"scopes":["user:inference"]}}` + "\n"; string(got) != want {
+		t.Fatalf("Claude refresh-only projection = %s, want %s", got, want)
 	}
 
 	for _, provider := range []string{"claude", "codex", "grok"} {
@@ -1063,7 +1071,11 @@ func TestACPRateLimitSignalsPinned(t *testing.T) {
 		// current honest state: no structured signal, so it rotates only on the output-token axis.
 		"grok": nil,
 	}
-	for name, w := range want {
+	for _, name := range Names() {
+		w, ok := want[name]
+		if !ok {
+			t.Fatalf("registered agent %s has no pinned ACP rate-signal expectation", name)
+		}
 		a, ok := Get(name)
 		if !ok {
 			t.Fatalf("agent %s not registered", name)

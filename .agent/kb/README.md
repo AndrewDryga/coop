@@ -49,7 +49,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — claude "token expired" still works in-box via the refresh token
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — file, primary, alternate, and env-only credential truth converges in the box predicate
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state
-- [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated one-attempt read-only and task-completion workflows
+- [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 - [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 - [model-tiers-and-role-vs-lead](model-tiers-and-role-vs-lead.md) — ModelFor is one model per provider (active>target>fallback>env); a preset role's model rides its wrapper target, never global state, or it shadows a rotated lead

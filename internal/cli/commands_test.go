@@ -567,7 +567,7 @@ func TestLoopTargetResolution(t *testing.T) {
 	if _, has, ps, _, _, _, _, err := parseLoopArgs(nil, false); err != nil || has || ps != "" {
 		t.Errorf("parseLoopArgs(nil) = (has=%v, preset=%q, %v), want (false, \"\", nil) — no implicit default", has, ps, err)
 	}
-	for _, ag := range []string{"claude", "codex", "gemini"} {
+	for _, ag := range agents.Names() {
 		tg, has, ps, _, _, _, _, err := parseLoopArgs([]string{ag}, false)
 		if err != nil || !has || ps != "" || tg.Provider != ag {
 			t.Errorf("parseLoopArgs(%q) = (%+v, has=%v, preset=%q, %v), want provider=%q", ag, tg, has, ps, err, ag)

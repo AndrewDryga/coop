@@ -46,8 +46,8 @@ roles:
   thinker:
     # mode: native — coop generates a Claude subagent (coop-thinker) that runs in the
     # lead's session, no separate box. It's Claude's own subagent file, so it needs a
-    # Claude LEAD; a codex/gemini lead fans out via its own runtime multi-agent, and this
-    # role degrades to a read-only consult. With no subagent: below, coop generates it
+    # Claude LEAD; under a codex, gemini, or grok lead this role degrades to a read-only
+    # consult. With no subagent: below, coop generates it
     # from this role's model, when, and prompt.
     mode: native
     # agent — a target: provider[:model][/effort]. The model (after the ':') is what the generated

@@ -741,9 +741,8 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                                 model + prompt) in the box, or set
                                 <code>subagent:</code> to reuse an existing one.
                                 It's Claude's own subagent, so it needs a Claude
-                                lead; under a codex/gemini lead — which fans out
-                                via its own runtime multi-agent — this role
-                                degrades to a read-only
+                                lead; under a Codex, Gemini, or Grok lead this
+                                role degrades to a read-only
                                 <code>coop-consult &lt;role&gt;</code> (same model
                                 + persona)
                             </td>
@@ -1140,9 +1139,9 @@ roles:
                         runs yolo whatever the editor's permission-mode setting.
                         One caveat: a <strong>codex</strong> governor takes its
                         model from codex's own <code>config.toml</code> (coop
-                        can't set it over ACP), so pick a <code>claude</code> or
-                        <code>gemini</code> governor when you want coop to choose
-                        the model.
+                        can't set it over ACP), so pick a <code>claude</code>,
+                        <code>gemini</code>, or <code>grok</code> governor when
+                        you want coop to choose the model.
                     </p>
                     <p>
                         Because the repo mounts at its real path, sessions line

@@ -207,6 +207,7 @@ func RenderManual(cfg *config.Config) string {
 			b.WriteString("\n" + h + "\n")
 		}
 	}
+	b.WriteString("\n" + sourceTreeConformance + "\n")
 	return b.String()
 }
 
@@ -220,6 +221,19 @@ const runHelp = `coop run — run a raw command in the box.
   Everything after -- runs verbatim in the sandbox — same mounts, secret-shadowing,
   and network as an agent. "coop run echo hi" works too; use -- when the command has
   flags coop would otherwise read (e.g. coop run -- npm test --watch).`
+
+const sourceTreeConformance = `SOURCE-TREE CONFORMANCE
+
+  From a source checkout, 'make check' is the blocking no-credential gate. Focused
+  deterministic targets are 'make provider-scripted-e2e', 'make acp-scripted-e2e',
+  and 'make live-process-control'. Real isolation checks are 'make doctor' and
+  'make review-writes-e2e'.
+
+  'make provider-live-e2e', 'make provider-resume-live-e2e',
+  'make provider-loop-live-e2e', 'make provider-consult-live-e2e', and
+  'make acp-e2e' are opt-in because they use installed CLIs, configured credentials,
+  and real quota. Strict '-all' forms, request counts, summaries, and triage are in
+  README.md under Layout & development.`
 
 // agentHelp is `coop help <agent>`: it documents coop's OWN wrapper flags (the ones coop consumes
 // before a --), since `coop <agent> --help` forwards to the agent's real CLI. Kept short per

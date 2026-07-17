@@ -30,7 +30,7 @@ func TestCompletionCandidates(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
 
 	top := a.completionCandidates(nil)
-	for _, w := range []string{"fork", "tasks", "loop", "claude", "completion"} {
+	for _, w := range []string{"fork", "tasks", "loop", "claude", "grok", "completion"} {
 		if !hasCand(top, w) {
 			t.Errorf("top-level completion missing %q", w)
 		}
@@ -85,8 +85,35 @@ func TestCompletionCandidates(t *testing.T) {
 	if got := a.completionCandidatesFor([]string{"loop"}, "codex:gpt-5.5/"); !hasCand(got, "codex:gpt-5.5/high") {
 		t.Errorf("effort-prefix completion missing codex:gpt-5.5/high: %v", got)
 	}
+	if got := a.completionCandidatesFor([]string{"loop"}, "grok:grok-4.5/"); !hasCand(got, "grok:grok-4.5/high") {
+		t.Errorf("effort-prefix completion missing grok:grok-4.5/high: %v", got)
+	}
 	if got := a.completionCandidatesFor([]string{"loop"}, "gemini:gemini-3.5-flash/"); hasCand(got, "gemini:gemini-3.5-flash/high") {
 		t.Errorf("gemini completion must not offer unsupported effort levels: %v", got)
+	}
+
+	for _, prev := range [][]string{{"fork", "work"}, {"fork", "work", "acp"}} {
+		got := a.completionCandidatesFor(prev, "grok:")
+		if !hasCand(got, "grok:grok-4.5") {
+			t.Errorf("%q target completion missing grok:grok-4.5: %v", prev, got)
+		}
+	}
+	if got := a.completionCandidatesFor([]string{"fork", "work"}, ""); !hasCand(got, "acp") {
+		t.Errorf("fork target completion must offer ACP mode: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"fork", "work", "acp"}, ""); !hasCand(got, "--peer") {
+		t.Errorf("fork ACP target completion must offer peers: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"fork", "work", "acp", "claude"}, ""); !hasCand(got, "--peer") {
+		t.Errorf("fork ACP provider completion must offer peers: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"fork", "work", "acp", "codex", "--peer"}, "grok:"); !hasCand(got, "grok:grok-4.5") {
+		t.Errorf("fork ACP peer completion missing Grok target: %v", got)
+	}
+	for _, reserved := range []string{"ls", "acp", "watch"} {
+		if got := a.completionCandidatesFor([]string{"fork", reserved}, ""); len(got) != 0 {
+			t.Errorf("fork reserved word %q offered invalid trailing candidates: %v", reserved, got)
+		}
 	}
 }
 
@@ -116,6 +143,9 @@ func TestCompletionTargetsAccountsAndPresets(t *testing.T) {
 	}
 	if got := a.completionCandidatesFor([]string{"loop", "claude", "--peer"}, ""); !hasCand(got, "codex:gpt-5.5") {
 		t.Errorf("peer completion after the loop target missing codex:gpt-5.5: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"fork", "work"}, ""); !hasCand(got, "frontier") {
+		t.Errorf("fork target completion missing preset: %v", got)
 	}
 }
 

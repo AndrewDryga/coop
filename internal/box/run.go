@@ -52,9 +52,9 @@ type RunSpec struct {
 	Network bool // join the sibling-services network if `coop up` created one
 	Cache   bool // mount the shared dependency cache volume
 
-	// Agent names the launched agent (claude/codex/gemini) whose credential home and
+	// Agent names the launched registered agent whose credential home and
 	// env-file API key this run may mount — so a plain `coop claude` box can't read the
-	// Codex/Gemini credentials. Empty for a raw/maintenance run (no agent session), which
+	// other providers' credentials. Empty for a raw/maintenance run (no agent session), which
 	// mounts no agent credentials at all. FusionGovernor/ConsultLead (below) widen the
 	// scope to the EXPLICIT peers in Peers, since the lead is told to invoke them. See
 	// credentialScope. Ignored when Homes is false.

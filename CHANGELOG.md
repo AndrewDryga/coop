@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Provider conformance now stays aligned with the four-adapter registry.** Fork ACP completion and
+  missing-provider guidance include Grok, generated source-tree docs name the deterministic and live
+  gates, and refresh-only Claude credentials are stripped of refresh authority then reported as
+  `credential_refresh_required` instead of an unsafe projection failure. Live loop verification now
+  preserves failed/skipped provider outcomes against an unchanged fixture and accepts descriptive
+  commit bodies while retaining exact subject, trailer, repository, index, ref, and reflog checks.
+
 - **Provider session lookup is bounded and tested against large native histories.** A generated
   all-provider matrix now covers exact resume, full misses, wrong cwd and ID, malformed entries,
   account isolation, descriptor closure, and diagnostic allocation/latency benchmarks. Gemini skips

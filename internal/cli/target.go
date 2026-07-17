@@ -18,7 +18,7 @@ func noProviderErr(cmd string) error {
 	if cmd == "" {
 		usage = "coop"
 	}
-	return fmt.Errorf("name the agent — %s <%s> (or a preset name); see 'coop credentials' for who's signed in",
+	return fmt.Errorf("name the agent — %s <%s> (or a preset name); sign in with 'coop login <agent>' or see 'coop credentials'",
 		strings.TrimSpace(usage), strings.Join(agents.Names(), "|"))
 }
 

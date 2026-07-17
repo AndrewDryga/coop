@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 type matrixPlan struct {
@@ -36,6 +39,16 @@ var matrixProviders = []matrixProvider{
 	{name: "codex", prefix: "CO"},
 	{name: "gemini", prefix: "GE"},
 	{name: "grok", prefix: "GR"},
+}
+
+func TestScriptedACPProviderOracleCoversRegistry(t *testing.T) {
+	names := make([]string, 0, len(matrixProviders))
+	for _, provider := range matrixProviders {
+		names = append(names, provider.name)
+	}
+	if want := agents.Names(); !slices.Equal(names, want) {
+		t.Fatalf("scripted ACP providers = %v, registered providers = %v", names, want)
+	}
 }
 
 func TestScriptedACPDirectedProviderSwitchMatrix(t *testing.T) {

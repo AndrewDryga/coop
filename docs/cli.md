@@ -697,4 +697,17 @@ coop version — print coop's version and exit.
 
   Prints coop's build version (git tag or commit). Takes no arguments; -v and
   --version are aliases.
+
+SOURCE-TREE CONFORMANCE
+
+  From a source checkout, 'make check' is the blocking no-credential gate. Focused
+  deterministic targets are 'make provider-scripted-e2e', 'make acp-scripted-e2e',
+  and 'make live-process-control'. Real isolation checks are 'make doctor' and
+  'make review-writes-e2e'.
+
+  'make provider-live-e2e', 'make provider-resume-live-e2e',
+  'make provider-loop-live-e2e', 'make provider-consult-live-e2e', and
+  'make acp-e2e' are opt-in because they use installed CLIs, configured credentials,
+  and real quota. Strict '-all' forms, request counts, summaries, and triage are in
+  README.md under Layout & development.
 ```

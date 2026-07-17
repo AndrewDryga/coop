@@ -163,6 +163,30 @@ func TestPrepareEnvOnlyBelongsToSourceDefault(t *testing.T) {
 	}
 }
 
+func TestPrepareClaudeRefreshOnlyNeedsAuthentication(t *testing.T) {
+	source := t.TempDir()
+	credential := filepath.Join(source, "claude", "profiles", "default", ".credentials.json")
+	writeSource(t, credential,
+		`{"claudeAiOauth":{"accessToken":"","expiresAt":0,"scopes":["user:inference"],"refreshToken":"REFRESH_CANARY"}}`, 0o600)
+	destination := filepath.Join(t.TempDir(), "isolated")
+	prepared, err := Prepare(source, destination, []Selection{{
+		Provider: "claude", Account: "default", SourceDefault: true,
+	}})
+	if err != nil {
+		t.Fatalf("refresh-only Claude credential should reach preflight: %v", err)
+	}
+	if got := prepared.PreflightReason("claude", "default", time.Now().Add(time.Hour)); got != ReasonCredentialRefresh {
+		t.Fatalf("PreflightReason = %q, want %q", got, ReasonCredentialRefresh)
+	}
+	projected, err := os.ReadFile(filepath.Join(destination, "claude", "profiles", "default", ".credentials.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(projected), "REFRESH_CANARY") {
+		t.Fatal("refresh-only Claude projection retained refresh authority")
+	}
+}
+
 func TestPrepareRejectsAmbiguousActiveEnvironmentCredentials(t *testing.T) {
 	tests := []struct {
 		provider string

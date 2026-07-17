@@ -106,7 +106,7 @@ func Main(argv []string) int {
 
 	// `-h`/`--help` (or a bare `help` arg) on coop's own subcommands prints that command's
 	// help without needing a runtime — fork gets its own family help. Agent and raw
-	// commands (claude/codex/gemini/run/…) aren't in the map, so they fall through and
+	// commands (registered agents and run/…) aren't in the map, so they fall through and
 	// forward `--help`/`help` to the underlying CLI / box.
 	if helpRequested(argv[1:]) || (len(argv) > 1 && argv[1] == "help") {
 		if argv[0] == "fork" {
@@ -256,7 +256,7 @@ func helpForCommand(cmd string) int {
 		printCommandHelp(agentHelp)
 		return 0
 	case isKnownCommand(cmd):
-		// The agents (claude/codex/gemini) forward --help to their own CLI, so coop keeps no
+		// Registered agents forward --help to their own CLI, so coop keeps no
 		// static page — point there instead of inventing one.
 		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
 		return 0
