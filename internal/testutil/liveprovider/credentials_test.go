@@ -446,11 +446,17 @@ func TestPreparedFingerprintDetectsCredentialChanges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Remove(primary); err != nil {
+			// Stage the replacement as a sibling first — allocated while the original still
+			// exists, so it gets a distinct inode — then rename it over the primary. A
+			// remove+recreate could recycle the freed inode and defeat os.SameFile, making this
+			// case flake by filesystem. The forged mtime proves the swap is caught with no
+			// timestamp signal.
+			swap := primary + ".swap"
+			writeSource(t, swap, string(data), info.Mode().Perm())
+			if err := os.Chtimes(swap, info.ModTime(), info.ModTime()); err != nil {
 				t.Fatal(err)
 			}
-			writeSource(t, primary, string(data), info.Mode().Perm())
-			if err := os.Chtimes(primary, info.ModTime(), info.ModTime()); err != nil {
+			if err := os.Rename(swap, primary); err != nil {
 				t.Fatal(err)
 			}
 		},
