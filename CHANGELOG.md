@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 6.1.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **The ACP preset dropdown now shows its full subagent roster.** The selected preset's help
+  lists each role beneath the active lead target — name, read-only/writes mode, its
+  `provider:model/effort` target, and its routing hints — so the whole orchestration recipe is
+  legible in the editor without opening the preset YAML.
 
 ## 6.0.0
 
