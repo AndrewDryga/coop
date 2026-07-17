@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,11 +36,52 @@ type taskArgSpec struct {
 // free-form text (a title / a human's answer) that may start with "-", and decisions self-validates,
 // so they're intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
-	"ls":    {[]string{"--all"}, 0},
+	"ls":    {lsFlags, 0},
 	"lint":  {nil, 0},
 	"claim": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
 	"rm": {[]string{"--all-done", "--yes", "-y"}, 1},
+}
+
+// lsFlags are the flags `coop tasks ls` accepts: --all (uncap the done archive) plus a per-state
+// filter. The filter flags name the lifecycle states (todo/in-progress/blocked/done); pass several
+// to union them. Shared by the single-queue validator (taskArgSpecs) and the umbrella roll-up
+// (tasksListAll) so both accept the same set.
+var lsFlags = []string{"--all", "--todo", "--in-progress", "--blocked", "--done"}
+
+// lsStateFlags maps each ls filter flag to the lifecycle state it selects.
+var lsStateFlags = map[string]string{
+	"--todo":        stateTodo,
+	"--in-progress": stateInProgress,
+	"--blocked":     stateBlocked,
+	"--done":        stateDone,
+}
+
+// taskStateFilter reads the --todo/--in-progress/--blocked/--done flags out of args into the set of
+// states to show, in lifecycle order. Empty (no filter flag given) means "show every state".
+func taskStateFilter(args []string) []string {
+	want := map[string]bool{}
+	for flag, state := range lsStateFlags {
+		if slices.Contains(args, flag) {
+			want[state] = true
+		}
+	}
+	var states []string
+	for _, state := range taskStates { // emit in lifecycle order, deduped
+		if want[state] {
+			states = append(states, state)
+		}
+	}
+	return states
+}
+
+// filterLabel names the filtered states for the "no <…> tasks" note when a filter matches nothing.
+func filterLabel(only []string) string {
+	labels := make([]string, len(only))
+	for i, s := range only {
+		labels[i] = stateLabel(s)
+	}
+	return strings.Join(labels, "/")
 }
 
 // validateArgs enforces a subcommand's flags + positional count: any token starting with "-" must be
@@ -84,7 +126,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "":
 		return tasksFolderList(root, false) // bare `coop tasks` lists the queue (a useful default view; see rule)
 	case "ls":
-		return tasksFolderList(root, slices.Contains(args, "--all"))
+		return tasksFolderList(root, slices.Contains(args, "--all"), taskStateFilter(args)...)
 	case "lint":
 		return tasksFolderLint(root)
 	case "add":
@@ -961,20 +1003,30 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 // The full count stays in the section header + summary; `--all` shows everything.
 const doneListCap = 5
 
-func tasksFolderList(root string, all bool) (int, error) {
+// tasksFolderList prints the queue grouped by state. only narrows it to the given states (a
+// --blocked/--todo/… filter); empty shows every state. Each task's id is an OSC 8 hyperlink to its
+// folder, so it opens on click in a supporting terminal and stays plain text in a pipe.
+func tasksFolderList(root string, all bool, only ...string) (int, error) {
 	items := readTaskTree(root)
 	if len(items) == 0 {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
 	}
 	p := ui.For(os.Stdout)
+	show := map[string]bool{}
+	for _, s := range only {
+		show[s] = true
+	}
 	byState := map[string][]taskItem{}
 	for _, t := range items {
 		byState[t.State] = append(byState[t.State], t)
 	}
 	// Groups breathe: a blank line between state sections (see rule list-output-echoes-source).
-	first := true
+	first, printed := true, false
 	for _, state := range taskStates {
+		if len(show) > 0 && !show[state] { // a filter narrows which sections render
+			continue
+		}
 		ts := byState[state]
 		if len(ts) == 0 {
 			continue
@@ -982,7 +1034,7 @@ func tasksFolderList(root string, all bool) (int, error) {
 		if !first {
 			fmt.Print("\n\n") // two blank lines between state sections
 		}
-		first = false
+		first, printed = false, true
 		// The state label is colored by state (the shared key — cyan todo · yellow in progress ·
 		// red blocked · green done), so a section is findable by its color; the count rides dim.
 		fmt.Printf("%s %s\n", p.Bold(paintState(p, state, stateLabel(state))), p.Dim(fmt.Sprintf("(%d)", len(ts))))
@@ -998,38 +1050,66 @@ func tasksFolderList(root string, all bool) (int, error) {
 			// Title-first (what a human scans), wrapped across as many lines as it needs so the
 			// whole title is readable and uncluttered. The id — a long machine handle you only
 			// need to `claim`/`done` — drops to a faint line below, led by the at-a-glance markers
-			// (subtask count, blocked flag), so the title carries no trailing noise.
+			// (subtask count, blocked flag), and links to the task folder so it opens on click.
 			for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
 				fmt.Printf("  %s\n", tl)
 			}
+			id := p.Link(fileURI(t.Dir), p.Faint(t.ID))
 			if m := listMarkers(p, t); m != "" {
-				fmt.Printf("    %s  %s\n", m, p.Faint(t.ID))
+				fmt.Printf("    %s  %s\n", m, id)
 			} else {
-				fmt.Printf("    %s\n", p.Faint(t.ID))
+				fmt.Printf("    %s\n", id)
 			}
 		}
 	}
+	if !printed {
+		// A filter that matched nothing — say so plainly rather than an empty block plus a summary.
+		fmt.Printf("  %s\n", p.Gray("(no "+filterLabel(only)+" tasks)"))
+		return 0, nil
+	}
+	// Footer summary — counts for the states shown (all four when unfiltered), so it echoes what's
+	// above instead of re-surfacing states the filter deliberately hid.
 	c, _ := taskTreeCounts(items)
-	summary := strings.Join([]string{
-		paintCount(c.Todo, p.Cyan) + " todo",
-		paintCount(c.Doing, p.Yellow) + " in progress",
-		paintCount(c.Blocked, p.Red) + " blocked",
-		paintCount(c.Done, p.Green) + " done",
-	}, p.Dim(" · "))
+	counts := []struct {
+		state, label string
+		n            int
+		color        func(string) string
+	}{
+		{stateTodo, "todo", c.Todo, p.Cyan},
+		{stateInProgress, "in progress", c.Doing, p.Yellow},
+		{stateBlocked, "blocked", c.Blocked, p.Red},
+		{stateDone, "done", c.Done, p.Green},
+	}
+	var parts []string
+	for _, sc := range counts {
+		if len(show) > 0 && !show[sc.state] {
+			continue
+		}
+		parts = append(parts, paintCount(sc.n, sc.color)+" "+sc.label)
+	}
 	fmt.Print("\n")
 	if p.Enabled() {
 		fmt.Printf("  %s\n", p.Dim(strings.Repeat("─", bannerWidth()-2))) // footer rule, right-aligned to the header's
 	}
-	fmt.Printf("  %s\n", summary)
-	// Explain the per-task [n/m] marker for a first-time reader — but only when a task actually has
-	// subtasks, so the common (subtask-free) listing stays uncluttered.
+	fmt.Printf("  %s\n", strings.Join(parts, p.Dim(" · ")))
+	// Explain the per-task [n/m] marker for a first-time reader — but only when a DISPLAYED task
+	// has subtasks, so the common (subtask-free) listing stays uncluttered.
 	for _, t := range items {
+		if len(show) > 0 && !show[t.State] {
+			continue
+		}
 		if len(t.Subtasks) > 0 {
 			fmt.Printf("  %s\n", p.Dim("[checked/total] = subtasks"))
 			break
 		}
 	}
 	return 0, nil
+}
+
+// fileURI renders an absolute path as a file:// URL for an OSC 8 hyperlink — percent-encoding
+// spaces and other unsafe characters so a task folder like ".../a b" links correctly.
+func fileURI(abs string) string {
+	return (&url.URL{Scheme: "file", Path: abs}).String()
 }
 
 // paintState colors s by task state — the one key shared across the list (the state headings

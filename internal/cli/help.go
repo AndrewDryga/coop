@@ -584,7 +584,9 @@ var commandHelp = map[string]string{
 
   Usage: coop tasks [--tasks <path>]... <command>
 
-  ls [--all]       list tasks by state, with counts (recent done capped; --all shows all)
+  ls [--all] [--todo|--in-progress|--blocked|--done]
+                   list tasks by state, with counts (recent done capped; --all shows all). Pass one
+                   or more state flags to show only those. Task ids link to the folder — click to open.
   watch            live board: the queue + any active forks, deduped by id (auto-exits when done).
                    Per-fork fleet view: coop fleet watch
   add [--project <name>] "<title>"

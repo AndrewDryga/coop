@@ -255,7 +255,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		// CREATE into a queue (add, split) need one unambiguous target.
 		switch sub {
 		case "ls":
-			return tasksListAll(repo, rels)
+			return tasksListAll(repo, rels, rest[1:])
 		case "lint":
 			return tasksLintAll(repo, rels)
 		case "decisions":
@@ -263,7 +263,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		case "claim", "block", "unblock", "done", "path", "rm", "clear":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
-			return tasksListAll(repo, rels)
+			return tasksListAll(repo, rels, nil)
 		default:
 			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <path> (ls, lint, decisions, and the id commands span all %d configured queues)", sub, len(rels))
 		}
@@ -311,7 +311,14 @@ func tasksAddInQueue(repo, rel string, args []string, projectName string) (int, 
 // tasksListAll rolls up `coop tasks ls` across several configured queues (a monorepo with a
 // per-project .agent/tasks each), printing every queue under its rel-path header. A queue that
 // doesn't exist yet is noted, not fatal — the mutating commands still require a single target.
-func tasksListAll(repo string, rels []string) (int, error) {
+func tasksListAll(repo string, rels []string, args []string) (int, error) {
+	// Validate ls flags here too — the umbrella roll-up doesn't route through cmdTasksFolder, so
+	// without this an unknown flag (or a typo like --blockd) would be silently ignored.
+	if err := validateArgs("tasks ls", args, lsFlags, 0); err != nil {
+		return 2, err
+	}
+	all := slices.Contains(args, "--all")
+	only := taskStateFilter(args)
 	p := ui.For(os.Stdout)
 	for i, rel := range rels {
 		if i > 0 {
@@ -327,7 +334,7 @@ func tasksListAll(repo string, rels []string) (int, error) {
 		case len(readTaskTree(root)) == 0:
 			fmt.Println(p.Gray("  (no tasks)"))
 		default:
-			if _, err := tasksFolderList(root, false); err != nil {
+			if _, err := tasksFolderList(root, all, only...); err != nil {
 				return -1, err
 			}
 		}

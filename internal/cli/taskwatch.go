@@ -86,7 +86,7 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 		if len(rels) == 1 {
 			return tasksFolderList(filepath.Join(repo, rels[0]), false)
 		}
-		return tasksListAll(repo, rels)
+		return tasksListAll(repo, rels, nil)
 	}
 	if _, merged, _, _ := read(); len(merged) == 0 {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")

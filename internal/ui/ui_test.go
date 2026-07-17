@@ -47,3 +47,17 @@ func TestIsTerminalNil(t *testing.T) {
 		t.Error("nil file must not be a terminal")
 	}
 }
+
+func TestPaletteLink(t *testing.T) {
+	on := Palette{on: true}
+	if got, want := on.Link("file:///a/b", "id"), "\x1b]8;;file:///a/b\x1b\\id\x1b]8;;\x1b\\"; got != want {
+		t.Errorf("Link(on) = %q, want %q", got, want)
+	}
+	// A pipe (color off) and an empty uri both fall back to plain text — no escapes.
+	if got := (Palette{on: false}).Link("file:///a/b", "id"); got != "id" {
+		t.Errorf("Link(off) = %q, want plain %q", got, "id")
+	}
+	if got := on.Link("", "id"); got != "id" {
+		t.Errorf("Link(empty uri) = %q, want plain %q", got, "id")
+	}
+}

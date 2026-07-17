@@ -865,6 +865,73 @@ func TestTasksFolderListCapsDone(t *testing.T) {
 	}
 }
 
+func TestFileURI(t *testing.T) {
+	// Absolute path → file:// URL with unsafe characters percent-encoded (a space here).
+	if got, want := fileURI("/Users/x/a b"), "file:///Users/x/a%20b"; got != want {
+		t.Errorf("fileURI = %q, want %q", got, want)
+	}
+}
+
+// `coop tasks ls --blocked` (and the other state flags) narrows the listing to those states, with
+// a footer that echoes only what's shown; a filter matching nothing says so plainly.
+func TestTasksFolderListStateFilter(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-todoA", "task.md"), "# Todo A\n")
+	writeTaskFile(t, filepath.Join(root, stateBlocked, "2026-01-02-blockedB", "task.md"), "# Blocked B\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-03-doneC", "task.md"), "# Done C\n")
+
+	blocked := captureStdout(t, func() { _, _ = tasksFolderList(root, false, stateBlocked) })
+	if !strings.Contains(blocked, "Blocked B") || strings.Contains(blocked, "Todo A") || strings.Contains(blocked, "Done C") {
+		t.Errorf("--blocked should show only the blocked task:\n%s", blocked)
+	}
+	if strings.Contains(blocked, "in progress") { // a hidden state must not leak into the footer summary
+		t.Errorf("filtered summary must list only the shown state:\n%s", blocked)
+	}
+
+	// A union of flags shows every named state, and nothing else.
+	union := captureStdout(t, func() { _, _ = tasksFolderList(root, false, stateTodo, stateDone) })
+	if !strings.Contains(union, "Todo A") || !strings.Contains(union, "Done C") || strings.Contains(union, "Blocked B") {
+		t.Errorf("--todo --done union wrong:\n%s", union)
+	}
+
+	// A filter that matches nothing prints a plain note instead of an empty block + summary.
+	only := t.TempDir()
+	writeTaskFile(t, filepath.Join(only, stateTodo, "2026-01-01-x", "task.md"), "# X\n")
+	none := captureStdout(t, func() { _, _ = tasksFolderList(only, false, stateBlocked) })
+	if !strings.Contains(none, "no blocked tasks") {
+		t.Errorf("an empty filter should note 'no blocked tasks':\n%s", none)
+	}
+
+	// The flags pass validation via the real dispatch, and a typo is still rejected with a hint.
+	if code, err := cmdTasksFolder(root, root, []string{"ls", "--blocked", "--todo"}); code != 0 || err != nil {
+		t.Errorf("ls --blocked --todo: got (%d, %v), want (0, nil)", code, err)
+	}
+	if code, err := cmdTasksFolder(root, root, []string{"ls", "--blockd"}); code != 2 || err == nil {
+		t.Errorf("ls --blockd (typo): got (%d, %v), want (2, err)", code, err)
+	}
+}
+
+// In an umbrella project the filter threads through the multi-queue roll-up: --blocked shows the
+// blocked work in every subproject's queue and hides the rest; a bad flag is rejected there too.
+func TestTasksListAllStateFilter(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, "a", ".agent", "tasks", stateBlocked, "2026-01-01-ablk", "task.md"), "# A blocked\n")
+	writeTaskFile(t, filepath.Join(repo, "a", ".agent", "tasks", stateTodo, "2026-01-02-atodo", "task.md"), "# A todo\n")
+	writeTaskFile(t, filepath.Join(repo, "b", ".agent", "tasks", stateBlocked, "2026-01-03-bblk", "task.md"), "# B blocked\n")
+	rels := []string{filepath.Join("a", ".agent", "tasks"), filepath.Join("b", ".agent", "tasks")}
+
+	out := captureStdout(t, func() { _, _ = tasksListAll(repo, rels, []string{"--blocked"}) })
+	if !strings.Contains(out, "A blocked") || !strings.Contains(out, "B blocked") {
+		t.Errorf("umbrella --blocked should show blocked work in every queue:\n%s", out)
+	}
+	if strings.Contains(out, "A todo") {
+		t.Errorf("umbrella --blocked must hide todo work:\n%s", out)
+	}
+	if code, err := tasksListAll(repo, rels, []string{"--blockd"}); code != 2 || err == nil {
+		t.Errorf("umbrella ls with a bad flag: got (%d, %v), want (2, err)", code, err)
+	}
+}
+
 // unblock must not drop a task into todo with an UNRESOLVED decision.md — that's the exact state
 // lint rejects ("unresolved decision.md but is todo"). With no inline answer and a placeholder
 // Resolution it refuses (task stays blocked); an inline answer resolves it and unblocks lint-clean.

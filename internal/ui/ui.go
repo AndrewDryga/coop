@@ -246,3 +246,14 @@ func (p Palette) Green(s string) string  { return p.paint(codeGreen, s) }
 func (p Palette) Red(s string) string    { return p.paint(codeRed, s) }
 func (p Palette) Yellow(s string) string { return p.paint(codeYellow, s) }
 func (p Palette) Cyan(s string) string   { return p.paint(codeCyan, s) }
+
+// Link wraps text in an OSC 8 terminal hyperlink to uri, so a supporting terminal makes it
+// clickable — but only when this palette is enabled (a real terminal) and uri is non-empty, so a
+// pipe stays clean text. A terminal that doesn't understand OSC 8 ignores the escape and shows
+// text unchanged, so it degrades gracefully.
+func (p Palette) Link(uri, text string) string {
+	if !p.on || uri == "" {
+		return text
+	}
+	return "\x1b]8;;" + uri + "\x1b\\" + text + "\x1b]8;;\x1b\\"
+}
