@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
+- **Scaffolds and adopted repos keep their existing conventions working.** The asdf Dockerfile
+  template keeps the toolchain on the box login path, monorepo `coop init` prints each member's own
+  scaffold paths, established `.agent/skills` links are never repointed away from their source, and
+  a repo-local `core.hooksPath` chains Coop's box attribution hook instead of silently disabling it.
+  Gate-defining-change review also detects queue-guard scripts under adopted queues.
+
+- **In-progress tasks are leased to their loop controller.** `coop tasks list` and `watch` label
+  leased work busy, stalled, or unleased; a free lease is adopted immediately, and a stale heartbeat
+  under a held lease reads as stalled rather than being stolen.
+
 - **ACP provider switches keep internal carry context out of the editor.** Coop now removes its
   exact injected history from provider user echoes, Codex's whitespace-normalized session titles,
   and Grok's prompt-queue notifications while preserving surrounding text and metadata. The live
@@ -114,12 +126,13 @@
   prewarming. Preset first-account pins use the normal credential validator, and role defaults no
   longer inherit an unrelated raw peer's model.
 
-- Replace ambiguous `coop loop --once` with `--max-tasks N`: bounded runs count tasks only after
-  done/blocked settlement following retries and immediate audit, then pause before another claim or
-  final signoff.
+- **Loop runs can be bounded with `--max-tasks N`.** A bounded run counts a task only after
+  done/blocked settlement following retries and its immediate audit, then pauses before another
+  claim or final signoff — exit code 0 marks the intentional pause. Unlimited loops drain normally.
 
-- Non-zero in-progress work now keeps at least one yellow cell in loop, fleet, and task-watch
-  progress bars, while blocked work retains its existing one-red-cell minimum.
+- **Non-zero progress never rounds to invisible.** In-progress work keeps at least one yellow cell
+  in loop, fleet, and task-watch progress bars, while blocked work retains its existing
+  one-red-cell minimum.
 
 - **Loop status stays on the work actually running.** Sticky bars keep their assigned task through
   folder moves, while between, protected, signoff, and verify passes name their own stage and review
@@ -148,7 +161,9 @@
   independently authoritative; review stages now also prohibit recursively invoking `review-board`
   while permitting focused read-only investigation.
 
-- Introduce five-column Box Run beside progress bars and one-column Corner Run (`◰ ◳ ◲ ◱`) in dense task rows as Coop's signature spinners; keep each live surface aligned and add `COOP_SPINNER=0` for quiet debug and recording captures.
+- **Box Run and Corner Run are Coop's signature spinners.** A five-column Box Run animates beside
+  progress bars and a one-column Corner Run (`◰ ◳ ◲ ◱`) marks dense task rows; every live surface
+  stays aligned, and `COOP_SPINNER=0` keeps debug and recording captures quiet.
 
 - **ACP presets now exclusively own lead selection.** A normal toolbar shows Preset, Provider,
   and Account; an active preset shows only Preset because its ladder owns provider, model, effort,
@@ -162,8 +177,6 @@
   phantom replay state; close deactivates a thread while retaining its resumable identity, delete
   removes its identity and carry caches, and stale output from a retired child is dropped before it
   can mutate or duplicate the live thread.
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **Review receipts are bound to exact task deltas.** Between and signoff reviews now report an
   explicit PASS/FAIL verdict plus a deterministic task-ID list. Coop compares those IDs with the
