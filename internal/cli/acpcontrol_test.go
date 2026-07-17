@@ -1885,6 +1885,40 @@ func TestACPSpawnTargetCrossProviderRung(t *testing.T) {
 	}
 }
 
+// The selected preset's dropdown help summarizes its subagents — each role's name, target, and
+// routing hints — under the active lead target, so the whole recipe (not just the lead) is
+// visible without opening the YAML. Roles load from the real file; the rotation is pre-built
+// (like presetControl) so an active target resolves without signed-in creds.
+func TestACPPresetHelpSummarizesRoles(t *testing.T) {
+	c := newTestControl(t)
+	writeACPTestPreset(t, c.repo, "frontier", `lead: {agent: claude:claude-fable-5@personal}
+roles:
+  thinker: {mode: consult, agent: codex:gpt-5.6-terra/xhigh, when: [architecture, debugging]}
+  critic: {mode: consult, agent: grok:grok-4.5/high, when: [plan-review, tradeoffs]}
+  fast: {mode: delegate, agent: codex:gpt-5.6-luna/xhigh, commit: never, concurrent: never}
+`)
+	c.sel = acpSelection{Preset: "frontier"}
+	c.rotFor = c.sel
+	c.rot = newRotation([]agents.Target{{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}}})
+
+	got := string(c.coopOptions()[0])
+	for _, want := range []string{
+		"Active target: claude:claude-fable-5@personal",
+		"Subagents:",
+		`thinker (read-only) — codex:gpt-5.6-terra/xhigh — for architecture, debugging`,
+		`critic (read-only) — grok:grok-4.5/high — for plan-review, tradeoffs`,
+		`fast (writes) — codex:gpt-5.6-luna/xhigh`, // delegate + no `when:` → no "for" clause
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("preset help missing %q:\n%s", want, got)
+		}
+	}
+	// A role with no routing hints must not sprout a dangling "— for".
+	if strings.Contains(got, `codex:gpt-5.6-luna/xhigh — for`) {
+		t.Errorf("a hint-less role rendered a dangling for-clause:\n%s", got)
+	}
+}
+
 func writeACPTestPreset(t *testing.T, repo, name, body string) {
 	t.Helper()
 	dir := filepath.Join(repo, ".agent", "presets", name)

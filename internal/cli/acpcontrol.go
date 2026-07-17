@@ -2125,6 +2125,9 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 				option.Name += " · " + presetTarget.Model
 			}
 			option.Description = "Active target: " + presetTarget.String()
+			if roster := c.presetRolesSummary(p); roster != "" {
+				option.Description += "\n\n" + roster
+			}
 		}
 		if len(unavailable) > 0 {
 			option.Description += "; unavailable council roles: " + strings.Join(unavailable, ", ")
@@ -2159,6 +2162,52 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	out = append(out, marshalSelect(coopAccountID, "Account",
 		"The plain lead's login — switching is transparent (shared session store)", acct, aopts))
 	return out
+}
+
+// presetRolesSummary renders the selected preset's roles for its dropdown help as a
+// "Subagents:" roster — one readable line each, "• <name> (<mode>) — <target> — for <hints>" —
+// so the whole recipe (not just the lead) is legible without opening the YAML. Empty when the
+// preset has no roles or fails to load; the caller only asks for the currently-selected preset.
+func (c *acpControl) presetRolesSummary(name string) string {
+	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name)
+	if err != nil {
+		return ""
+	}
+	lines := make([]string, 0, len(p.Roles))
+	for _, r := range p.Roles {
+		ladder := r.TargetLadder()
+		if len(ladder) == 0 {
+			continue
+		}
+		line := "• " + r.Name
+		if label := roleModeLabel(r.Mode); label != "" {
+			line += " (" + label + ")"
+		}
+		line += " — " + ladder[0].String()
+		if len(r.When) > 0 {
+			line += " — for " + strings.Join(r.When, ", ")
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "Subagents:\n" + strings.Join(lines, "\n")
+}
+
+// roleModeLabel names a role's mode in plain words for the preset roster — the read-only vs
+// writes distinction is what matters at a glance. An unknown mode falls back to its own token.
+func roleModeLabel(mode string) string {
+	switch mode {
+	case preset.ModeConsult:
+		return "read-only"
+	case preset.ModeDelegate:
+		return "writes"
+	case preset.ModeNative:
+		return "native"
+	default:
+		return mode
+	}
 }
 
 // displayName is a provider's human product name for the dropdowns ("Codex"), falling back to
