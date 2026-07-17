@@ -66,18 +66,19 @@ func testReviewWritesDockerRuntime(t *testing.T, taskOnly bool) {
 	}
 
 	queue := filepath.Join(repo, ".agent", "tasks")
+	var boxErr strings.Builder
 	spec := RunSpec{
 		Image: reviewWritesTestImage, Repo: repo, Workdir: "/workspace",
 		Cmd:          []string{"sh", "-ec", reviewWritesRuntimeScript(taskOnly)},
 		RepoReadOnly: taskOnly, Batch: true, Quiet: true,
-		Stdout: io.Discard, Stderr: io.Discard,
+		Stdout: io.Discard, Stderr: &boxErr,
 	}
 	if taskOnly {
 		spec.RepoWritablePaths = []string{queue}
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
 	if code, err := Run(cfg, runtime.Runtime{Name: "docker"}, spec); err != nil || code != 0 {
-		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+		t.Fatalf("Run = %d, %v; want 0, nil\nbox stderr:\n%s", code, err, boxErr.String())
 	}
 
 	protected := map[string]string{
