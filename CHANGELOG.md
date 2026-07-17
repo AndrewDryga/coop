@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 6.0.0
 
 - **Scaffolds and adopted repos keep their existing conventions working.** The asdf Dockerfile
   template keeps the toolchain on the box login path, monorepo `coop init` prints each member's own
@@ -154,6 +152,12 @@
   replies atomically publish one bounded continuation record; failed resumes preserve the last
   complete transcript for the next call, while empty, malformed, timed-out, oversized, and
   provider-failed attempts stay terminal without publishing false continuity or telemetry.
+
+- **A consult role with no mounted target rejects cleanly in the box.** The wrapper left an
+  internal variable unset until the first admitted target, so under the box's dash `/bin/sh` a
+  role whose every target lacked mounted credentials aborted with a shell error instead of the
+  intended "no target with mounted credentials" message. It now initializes up front, matching the
+  delegate wrapper.
 
 - **Final signoff receives bounded between-audit evidence.** Receipt-consistent ordinary and
   protected audits retain a compact per-task verdict, tested gate, and unresolved findings for the
