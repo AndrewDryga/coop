@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 6.3.1
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now
+  routes to the listing — `coop tasks --blocked` is `coop tasks ls --blocked` — instead of failing
+  with an "unknown subcommand" / "works one queue at a time" error, in a single repo and umbrella
+  projects alike.
 
 ## 6.3.0
 
