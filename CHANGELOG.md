@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 6.1.0
 
 - **The ACP preset dropdown now shows its full subagent roster.** The selected preset's help
