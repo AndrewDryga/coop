@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 6.0.0
 
 - **Scaffolds and adopted repos keep their existing conventions working.** The asdf Dockerfile
