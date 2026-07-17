@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 6.2.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **The ACP preset dropdown now previews every preset on hover.** Each preset option — not just
+  the active one — shows its declared lead ladder and subagent roster in the help text, so you can
+  read what a preset does before switching to it. The active preset still leads with its live rung.
 
 ## 6.1.0
 
