@@ -12,6 +12,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type geminiAgent struct{}
@@ -20,6 +21,7 @@ func init() { register(geminiAgent{}) }
 
 func (geminiAgent) Name() string        { return "gemini" }
 func (geminiAgent) DisplayName() string { return "Gemini CLI" }
+func (geminiAgent) Badge() string       { return ui.Yellow("g") }
 func (geminiAgent) Stream() StreamSpec {
 	return StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2}
 }

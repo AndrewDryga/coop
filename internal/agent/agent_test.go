@@ -565,6 +565,14 @@ func TestResume(t *testing.T) {
 	if got := discoverer.SessionIDs(cfg, ws); !slices.Equal(got, []string{interactiveCodexID}) {
 		t.Errorf("codex CLI session IDs = %v, want only %q", got, interactiveCodexID)
 	}
+	// An interactive (or resume) launch produces a discoverable session needing the lock; a
+	// headless `exec` writes a source:"exec" rollout that discovery excludes, so it needs none.
+	if !discoverer.ProducesSession(nil) || !discoverer.ProducesSession([]string{"resume"}) {
+		t.Error("codex interactive/resume argv should produce a discoverable session")
+	}
+	if discoverer.ProducesSession([]string{"exec", "prompt"}) {
+		t.Error("codex `exec` argv should not produce a discoverable session")
+	}
 	unsafeCodexID := "019f6a62-8f6e-7440-a55e-9df3ff5b77dd"
 	outsideCodex := filepath.Join(t.TempDir(), "outside.jsonl")
 	mustWrite(t, outsideCodex, `{"type":"session_meta","payload":{"id":"`+unsafeCodexID+`","cwd":"`+ws+`","source":"cli"}}`+"\n")

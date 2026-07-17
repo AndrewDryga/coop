@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -256,28 +257,22 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	return line
 }
 
-// agentBadge is a 1-cell colored letter naming a fork's agent (c=claude, x=codex, g=gemini),
-// so the dashboard shows who runs each fork without spending the name column on it.
+// agentBadge is a 1-cell colored letter naming a fork's agent, so the dashboard shows who runs
+// each fork without spending the name column on it. Each registered agent owns its own badge
+// (Agent.Badge); an empty or unknown agent falls back to a dim initial here.
 func agentBadge(agent string) string {
-	switch agent {
-	case "claude":
-		return ui.Magenta("c")
-	case "codex":
-		return ui.Green("x")
-	case "gemini":
-		return ui.Yellow("g")
-	case "grok":
-		return ui.Cyan("G")
-	case "":
-		return ui.Dim("?")
-	default:
-		// An unknown agent's initial, but only if it's a 1-cell ASCII letter — a wide (e.g. CJK)
-		// rune would render 2 cells and shove the whole row out of column. Fall back to "?".
-		if r := []rune(agent)[0]; r < 128 {
-			return ui.Dim(string(r))
-		}
+	if ag, ok := agents.Get(agent); ok {
+		return ag.Badge()
+	}
+	if agent == "" {
 		return ui.Dim("?")
 	}
+	// An unknown agent's initial, but only if it's a 1-cell ASCII letter — a wide (e.g. CJK)
+	// rune would render 2 cells and shove the whole row out of column. Fall back to "?".
+	if r := []rune(agent)[0]; r < 128 {
+		return ui.Dim(string(r))
+	}
+	return ui.Dim("?")
 }
 
 // lastLogLine returns the last non-empty line of a fork's log (reading only the tail, since the

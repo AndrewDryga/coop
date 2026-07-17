@@ -74,7 +74,16 @@ func (a *app) runAgentCommandInBox(cmd []string, agent string, peers []agents.Ta
 }
 
 func agentCommandProducesInteractiveSession(agent string, args []string) bool {
-	return agent != "codex" || len(args) == 0 || args[0] != "exec"
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return true
+	}
+	// Only a session-discovering adapter (codex) can distinguish a headless invocation from
+	// an interactive one; everything else always produces an interactive session.
+	if d, ok := ag.(agents.SessionDiscoverer); ok {
+		return d.ProducesSession(args)
+	}
+	return true
 }
 
 func (a *app) lockInteractiveSession(agent, repo string) (func(), error) {

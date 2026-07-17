@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type claudeAgent struct{}
@@ -18,6 +19,7 @@ func init() { register(claudeAgent{}) }
 
 func (claudeAgent) Name() string        { return "claude" }
 func (claudeAgent) DisplayName() string { return "Claude Code" }
+func (claudeAgent) Badge() string       { return ui.Magenta("c") }
 func (claudeAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamClaudeJSON,

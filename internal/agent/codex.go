@@ -15,6 +15,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type codexAgent struct{}
@@ -31,6 +32,7 @@ func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
 func (codexAgent) DisplayName() string { return "Codex" }
+func (codexAgent) Badge() string       { return ui.Green("x") }
 func (codexAgent) Stream() StreamSpec {
 	return StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1}
 }
@@ -79,6 +81,12 @@ func (a codexAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
 		return append([]string{b[0], "resume", id}, b[1:]...), true
 	}
 	return a.Interactive(cfg), false
+}
+
+// ProducesSession is false for `codex exec …` — headless rollouts (source:"exec") that
+// discovery excludes, so they stay concurrent with interactive Codex sessions and need no lock.
+func (codexAgent) ProducesSession(args []string) bool {
+	return len(args) == 0 || args[0] != "exec"
 }
 
 // LatestSessionID supports one-time adoption of an old fork that predates exact native-ID hints.

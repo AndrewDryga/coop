@@ -12,6 +12,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type grokAgent struct{}
@@ -20,6 +21,7 @@ func init() { register(grokAgent{}) }
 
 func (grokAgent) Name() string        { return "grok" }
 func (grokAgent) DisplayName() string { return "Grok" }
+func (grokAgent) Badge() string       { return ui.Cyan("G") }
 func (grokAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2,
