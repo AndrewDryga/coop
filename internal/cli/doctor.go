@@ -312,7 +312,7 @@ func doctorCredAndHomeProbe(home string) string {
 [ -f "%[1]s/.claude/.credentials.json" ]         && echo "RESULT PASS the scoped agent's own credential home is mounted"  || echo "RESULT FAIL the scoped agent's credential home is missing"
 [ ! -e "%[1]s/.codex/auth.json" ]                && echo "RESULT PASS a peer agent's credential home is NOT mounted"      || echo "RESULT FAIL codex credentials leaked into a claude-scoped box"
 [ ! -e "%[1]s/.gemini/gemini-credentials.json" ] && echo "RESULT PASS a second peer's credential home is NOT mounted"     || echo "RESULT FAIL gemini credentials leaked into a claude-scoped box"
-[ -n "$ANTHROPIC_API_KEY" ] && echo "RESULT PASS the scoped agent's API key is in the env"   || echo "RESULT FAIL the scoped agent's API key is missing from the env"
+[ -z "$ANTHROPIC_API_KEY" ] && echo "RESULT PASS the scoped agent's env token yields to its mounted login" || echo "RESULT FAIL the scoped agent's env token shadowed its mounted login"
 [ -z "$OPENAI_API_KEY" ]    && echo "RESULT PASS a peer's API key is stripped from the env"   || echo "RESULT FAIL OPENAI_API_KEY (a peer's) leaked into a claude-scoped box"
 [ -z "$GOOGLE_API_KEY" ]    && echo "RESULT PASS a peer's alias key (bare) is stripped"       || echo "RESULT FAIL GOOGLE_API_KEY (a peer alias) leaked into a claude-scoped box"
 if mkdir -p "%[1]s/.config/coop-browser-probe" && : > "%[1]s/.config/coop-browser-probe/write"; then
@@ -356,8 +356,10 @@ func doctorCheckCredAndHomeScope(rep *report, a *app, fixture, img string, using
 		}
 		_ = os.WriteFile(filepath.Join(dir, credFile), []byte(`{"token":"hunter2"}`), 0o644)
 	}
-	// ANTHROPIC is claude's (in scope); OPENAI is codex's; GOOGLE is one of gemini's keys, given
-	// bare so the filter must drop a peer's alias AND a bare (env-imported) line.
+	// ANTHROPIC is claude's own, but claude also has a mounted login (the marker seeded above), so
+	// its env token yields to that login and is dropped — a marker-backed account is never shadowed
+	// by an env token. OPENAI is codex's; GOOGLE is one of gemini's keys, given bare so the filter
+	// must drop a peer's alias AND a bare (env-imported) line.
 	_ = os.WriteFile(credCfg.EnvFile(), []byte("ANTHROPIC_API_KEY=hunter2\nOPENAI_API_KEY=hunter2\nGOOGLE_API_KEY\n"), 0o644)
 
 	probe, cleanup, err := writeProbeFile(doctorCredAndHomeProbe(credCfg.HomeInBox))
