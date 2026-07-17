@@ -343,6 +343,36 @@ func TestIntegrationListShowsCleanLabels(t *testing.T) {
 	}
 }
 
+// A bare leading flag on `coop tasks` is the default listing with that flag — `coop tasks
+// --blocked` means `coop tasks ls --blocked`, not a subcommand named "--blocked". This must hold
+// for a single queue AND the umbrella roll-up (the reported "super inconvenient" case).
+func TestTasksBareLeadingFlagListsFiltered(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateBlocked, "2026-01-01-b", "task.md"), "# Blocked one\n")
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-02-t", "task.md"), "# Todo one\n")
+
+	var code int
+	var err error
+	out := captureStdout(t, func() { code, err = appFor(repo).cmdTasks([]string{"--blocked"}) })
+	if code != 0 || err != nil {
+		t.Fatalf("coop tasks --blocked: got (%d, %v), want (0, nil)", code, err)
+	}
+	if !strings.Contains(out, "Blocked one") || strings.Contains(out, "Todo one") {
+		t.Errorf("bare --blocked should list only the blocked task:\n%s", out)
+	}
+
+	// Umbrella (several queues): the same shorthand rolls up, still filtered.
+	writeTaskFile(t, filepath.Join(repo, "sub", tasksRoot, stateBlocked, "2026-01-03-c", "task.md"), "# Sub blocked\n")
+	multi := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot, filepath.Join("sub", tasksRoot)}}}
+	out2 := captureStdout(t, func() { code, err = multi.cmdTasks([]string{"--blocked"}) })
+	if code != 0 || err != nil {
+		t.Fatalf("umbrella coop tasks --blocked: got (%d, %v), want (0, nil)", code, err)
+	}
+	if !strings.Contains(out2, "Blocked one") || !strings.Contains(out2, "Sub blocked") || strings.Contains(out2, "Todo one") {
+		t.Errorf("umbrella bare --blocked should roll up blocked only:\n%s", out2)
+	}
+}
+
 // TestLoopAcceptsFolderQueue is the regression guard for the loop's queue-existence check:
 // it used fileExists, which is false for a directory, so it rejected every folder queue with
 // "no task file found" before running a single iteration. The guard must accept a real

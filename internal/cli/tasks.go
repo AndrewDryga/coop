@@ -188,6 +188,13 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// A leading flag is the default listing with that flag: `coop tasks --blocked` means
+	// `coop tasks ls --blocked`, not a subcommand named "--blocked". --tasks is already pulled out,
+	// so anything flag-shaped still at the front is an ls filter (validated as one downstream). See
+	// rule bare-flag-routes-to-default-view.
+	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
+		rest = append([]string{"ls"}, rest...)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
