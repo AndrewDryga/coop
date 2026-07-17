@@ -182,6 +182,17 @@ const (
 	CredentialNotPortable
 )
 
+// StoredCredentialStatus is the adapter's best-effort validity check for its native credential
+// marker. Unknown preserves presence-based behavior for opaque or host-bound stores. Ready includes
+// credentials the native CLI can refresh without another login.
+type StoredCredentialStatus uint8
+
+const (
+	StoredCredentialUnknown StoredCredentialStatus = iota
+	StoredCredentialReady
+	StoredCredentialReauthRequired
+)
+
 // Agent is everything coop needs to drive one coding agent. To add an agent, write a
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
@@ -244,6 +255,9 @@ type Agent interface {
 	// nonempty result means those keys, not a stale marker, define presence and execution authority.
 	// The caller reports marker presence; adapters decide precedence once from it and their selector.
 	ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string
+	// StoredCredentialStatus validates the adapter's native marker for user-facing credential status.
+	// It never reads provider-wide env credentials; those retain their presence-based status.
+	StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus
 	// LiveCredentials declares the access-only credential projection and redacted compatibility
 	// diagnostics for this adapter. It is consumed only by opt-in live tests, but compiler-required
 	// so a registered provider cannot silently evade the registry-generated suite.

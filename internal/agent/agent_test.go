@@ -979,6 +979,73 @@ func TestPortableCredentialSafetyRequiresValidityBeyondDeadline(t *testing.T) {
 	}
 }
 
+func TestStoredCredentialStatus(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	futureMillis := now.Add(time.Hour).UnixMilli()
+	claude, _ := Get("claude")
+	claudeDir := filepath.Join(root, "claude")
+	writeClaude := func(body string) StoredCredentialStatus {
+		mustWrite(t, filepath.Join(claudeDir, ".credentials.json"), body)
+		return claude.StoredCredentialStatus(claudeDir, now)
+	}
+	if got := writeClaude(fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":"access","expiresAt":%d,"scopes":["user:inference"]}}`, futureMillis)); got != StoredCredentialReady {
+		t.Errorf("current Claude access = %v, want ready", got)
+	}
+	if got := writeClaude(`{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`); got != StoredCredentialReady {
+		t.Errorf("refreshable Claude = %v, want ready", got)
+	}
+	for name, body := range map[string]string{
+		"stripped":              `{"claudeAiOauth":{"scopes":["user:inference"]}}`,
+		"future without access": fmt.Sprintf(`{"claudeAiOauth":{"expiresAt":%d,"scopes":["user:inference"]}}`, futureMillis),
+		"missing scope":         fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"access","expiresAt":%d}}`, futureMillis),
+		"malformed":             `{`,
+	} {
+		if got := writeClaude(body); got != StoredCredentialReauthRequired {
+			t.Errorf("%s Claude = %v, want reauth required", name, got)
+		}
+	}
+
+	grok, _ := Get("grok")
+	grokDir := filepath.Join(root, "grok")
+	grokEntry := func(expiresAt, refresh string) string {
+		return fmt.Sprintf(`{"key":"access","refresh_token":%q,"expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}`, refresh, expiresAt)
+	}
+	writeGrok := func(body string) StoredCredentialStatus {
+		mustWrite(t, filepath.Join(grokDir, "auth.json"), body)
+		return grok.StoredCredentialStatus(grokDir, now)
+	}
+	future := now.Add(time.Hour).UTC().Format(time.RFC3339Nano)
+	past := now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	if got := writeGrok(`{"issuer::id":` + grokEntry(future, "") + `}`); got != StoredCredentialReady {
+		t.Errorf("current Grok access = %v, want ready", got)
+	}
+	if got := writeGrok(`{"issuer::id":` + grokEntry(past, "refresh") + `}`); got != StoredCredentialReady {
+		t.Errorf("refreshable Grok = %v, want ready", got)
+	}
+	if got := writeGrok(`{"expired":` + grokEntry(past, "") + `,"current":` + grokEntry(future, "") + `}`); got != StoredCredentialReady {
+		t.Errorf("mixed-expiry Grok = %v, want ready", got)
+	}
+	for name, body := range map[string]string{
+		"expired":         `{"issuer::id":` + grokEntry(past, "") + `}`,
+		"missing routing": fmt.Sprintf(`{"issuer::id":{"key":"access","expires_at":%q}}`, future),
+		"mixed scalar":    `{"issuer::id":` + grokEntry(future, "") + `,"bad":"scalar"}`,
+		"malformed":       `{`,
+	} {
+		if got := writeGrok(body); got != StoredCredentialReauthRequired {
+			t.Errorf("%s Grok = %v, want reauth required", name, got)
+		}
+	}
+
+	for _, name := range []string{"codex", "gemini"} {
+		ag, _ := Get(name)
+		if got := ag.StoredCredentialStatus(filepath.Join(root, name), now); got != StoredCredentialUnknown {
+			t.Errorf("%s stored credential status = %v, want unknown", name, got)
+		}
+	}
+}
+
 func TestCLIErrorClassificationIsProviderOwnedAndRedacted(t *testing.T) {
 	cases := map[string]string{
 		"claude": "Not logged in",

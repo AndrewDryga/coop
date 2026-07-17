@@ -350,15 +350,13 @@ func liveConfigOptions(t *testing.T, live *liveACP, response map[string]any) map
 	return byID
 }
 
-func liveOptionValue(t *testing.T, live *liveACP, option liveConfigOption, reject ...string) string {
-	t.Helper()
+func liveOptionValue(option liveConfigOption, reject ...string) (string, bool) {
 	for _, candidate := range option.Options {
 		if candidate.Value != "" && !slices.Contains(reject, candidate.Value) {
-			return candidate.Value
+			return candidate.Value, true
 		}
 	}
-	live.fail(t, "config_option", nil)
-	return ""
+	return "", false
 }
 
 func setLiveConfig(ctx context.Context, t *testing.T, live *liveACP, sessionID, configID, value string) map[string]liveConfigOption {
@@ -843,13 +841,19 @@ func TestLiveProviderConformance(t *testing.T) {
 			}
 
 			modelOption, hasModel := options["model"]
-			if !hasModel {
+			if !hasModel || modelOption.CurrentValue == "" {
+				live.fail(t, "model_capability", nil)
+			}
+			currentAdvertised := false
+			for _, candidate := range modelOption.Options {
+				currentAdvertised = currentAdvertised || candidate.Value == modelOption.CurrentValue
+			}
+			if !currentAdvertised {
 				live.fail(t, "model_capability", nil)
 			}
 			selectedModel := ""
 			initialModel := modelOption.CurrentValue
-			if hasModel {
-				nextModel := liveOptionValue(t, live, modelOption, modelOption.CurrentValue)
+			if nextModel, canChangeModel := liveOptionValue(modelOption, modelOption.CurrentValue); canChangeModel {
 				modelChangeMark := live.client.mark()
 				options = setLiveConfig(ctx, t, live, sessionID, "model", nextModel)
 				if options["model"].CurrentValue != nextModel {
@@ -865,6 +869,8 @@ func TestLiveProviderConformance(t *testing.T) {
 						live.fail(t, "model_migration", nil)
 					}
 				}
+			} else {
+				t.Logf("%s ACP advertises one model; live switching is unavailable and migration remains covered by the scripted matrix", provider)
 			}
 
 			replayMark := live.client.mark()

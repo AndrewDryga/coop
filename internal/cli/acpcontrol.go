@@ -533,6 +533,7 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 	if targetResult.tracked && targetResult.change.translated {
 		return c.translatedModelResponse(line, targetResult), targetResult.restart
 	}
+	c.clearPreambleOnTerminal(line)
 	if filtered, matched := c.filterPreambleEcho(line); matched {
 		if len(filtered) == 0 {
 			return nil, false
@@ -736,6 +737,7 @@ func (c *acpControl) armPromptResendsLocked(reason string) {
 		}
 		c.resend[sid] = true
 		delete(c.turnActive, sid)
+		delete(c.echoPreamble, sid)
 		delete(c.heldChunk, sid)
 		delete(c.waits, sid)
 		acpproxy.Trace("%s: re-sending the in-flight prompt %s for session %s after the swap", reason, id, sid)
@@ -1450,6 +1452,8 @@ func (c *acpControl) promptForwarded(line []byte, synthetic bool) {
 	c.promptSession[string(h.ID)] = h.Params.SessionID
 	if preamble := carriedPreamble(line); preamble != "" {
 		c.echoPreamble[h.Params.SessionID] = preamble
+	} else {
+		delete(c.echoPreamble, h.Params.SessionID)
 	}
 	c.beginTurnLocked(h.Params.SessionID, c.lead)
 	c.turnActive[h.Params.SessionID] = true
@@ -1457,42 +1461,126 @@ func (c *acpControl) promptForwarded(line []byte, synthetic bool) {
 }
 
 // filterPreambleEcho removes only the exact carry block Coop injected into an admitted prompt. Some
-// adapters echo prompt content as user_message_chunk; forwarding that block makes the editor render a
-// giant synthetic user bubble. Any real user text before or after the exact block is preserved.
+// adapters echo prompt content as a user message, session title, or prompt-queue entry; forwarding
+// those makes the editor render Coop's synthetic context. Any real text and unknown fields around the
+// exact block survive. The filter stays armed until the turn ends because one adapter may emit more
+// than one echo form.
 func (c *acpControl) filterPreambleEcho(line []byte) ([]byte, bool) {
-	if !bytes.Contains(line, []byte("user_message_chunk")) {
+	if !bytes.Contains(line, []byte("user_message_chunk")) && !bytes.Contains(line, []byte("session_info_update")) &&
+		!bytes.Contains(line, []byte("_x.ai/queue/changed")) {
 		return line, false
 	}
 	var message map[string]json.RawMessage
 	var params map[string]json.RawMessage
-	var update map[string]json.RawMessage
-	var content map[string]json.RawMessage
-	if json.Unmarshal(line, &message) != nil || json.Unmarshal(message["params"], &params) != nil ||
-		json.Unmarshal(params["update"], &update) != nil || json.Unmarshal(update["content"], &content) != nil {
+	if json.Unmarshal(line, &message) != nil || json.Unmarshal(message["params"], &params) != nil {
 		return line, false
 	}
-	var method, session, kind, text string
+	var method, session string
 	_ = json.Unmarshal(message["method"], &method)
 	_ = json.Unmarshal(params["sessionId"], &session)
-	_ = json.Unmarshal(update["sessionUpdate"], &kind)
-	_ = json.Unmarshal(content["text"], &text)
-	if method != "session/update" || kind != "user_message_chunk" || session == "" || text == "" {
+	if session == "" {
 		return line, false
 	}
 	c.mu.Lock()
 	preamble := c.echoPreamble[session]
-	if preamble == "" || !strings.Contains(text, preamble) {
-		c.mu.Unlock()
+	c.mu.Unlock()
+	if preamble == "" {
 		return line, false
 	}
-	delete(c.echoPreamble, session)
-	c.mu.Unlock()
-	text = strings.Replace(text, preamble, "", 1)
-	if text == "" {
-		return nil, true
+	if method == "_x.ai/queue/changed" {
+		var entries []json.RawMessage
+		if json.Unmarshal(params["entries"], &entries) != nil {
+			return line, false
+		}
+		filtered := make([]json.RawMessage, 0, len(entries))
+		matched := false
+		for _, raw := range entries {
+			var entry map[string]json.RawMessage
+			var kind, text string
+			if json.Unmarshal(raw, &entry) == nil {
+				_ = json.Unmarshal(entry["kind"], &kind)
+				_ = json.Unmarshal(entry["text"], &text)
+			}
+			if kind == "prompt" && strings.Contains(text, preamble) {
+				matched = true
+				text = strings.Replace(text, preamble, "", 1)
+				if text == "" {
+					continue
+				}
+				entry["text"], _ = json.Marshal(text)
+				encoded, err := json.Marshal(entry)
+				if err != nil {
+					return line, false
+				}
+				raw = encoded
+			}
+			filtered = append(filtered, raw)
+		}
+		if !matched {
+			return line, false
+		}
+		if len(filtered) == 0 {
+			return nil, true
+		}
+		params["entries"], _ = json.Marshal(filtered)
+		message["params"], _ = json.Marshal(params)
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return line, false
+		}
+		return append(encoded, '\n'), true
 	}
-	content["text"], _ = json.Marshal(text)
-	update["content"], _ = json.Marshal(content)
+	if method != "session/update" {
+		return line, false
+	}
+	var update map[string]json.RawMessage
+	if json.Unmarshal(params["update"], &update) != nil {
+		return line, false
+	}
+	var kind string
+	_ = json.Unmarshal(update["sessionUpdate"], &kind)
+	switch kind {
+	case "user_message_chunk":
+		var content map[string]json.RawMessage
+		if json.Unmarshal(update["content"], &content) != nil {
+			return line, false
+		}
+		var text string
+		_ = json.Unmarshal(content["text"], &text)
+		if !strings.Contains(text, preamble) {
+			return line, false
+		}
+		text = strings.Replace(text, preamble, "", 1)
+		if text == "" {
+			return nil, true
+		}
+		content["text"], _ = json.Marshal(text)
+		update["content"], _ = json.Marshal(content)
+	case "session_info_update":
+		var title string
+		_ = json.Unmarshal(update["title"], &title)
+		match := preamble
+		if !strings.Contains(title, match) {
+			// Codex canonicalizes a multi-block prompt title by collapsing whitespace. Match only
+			// the complete canonical form of the exact preamble we armed for this session.
+			match = strings.Join(strings.Fields(preamble), " ")
+		}
+		if match == "" || !strings.Contains(title, match) {
+			return line, false
+		}
+		title = strings.Replace(title, match, "", 1)
+		if title == "" {
+			delete(update, "title")
+			if len(update) == 1 { // sessionUpdate itself carries no editor-visible information
+				return nil, true
+			}
+		} else {
+			update["title"], _ = json.Marshal(title)
+		}
+	default:
+		return line, false
+	}
+
 	params["update"], _ = json.Marshal(update)
 	message["params"], _ = json.Marshal(params)
 	encoded, err := json.Marshal(message)
@@ -1500,6 +1588,21 @@ func (c *acpControl) filterPreambleEcho(line []byte) ([]byte, bool) {
 		return line, false
 	}
 	return append(encoded, '\n'), true
+}
+
+// clearPreambleOnTerminal runs before auth/rate-limit recovery can consume the prompt correlation
+// and return early. Normal turn capture clears the same entry later; deletion is intentionally
+// idempotent so every terminal path has one cleanup boundary.
+func (c *acpControl) clearPreambleOnTerminal(line []byte) {
+	id := terminalResponseID(line)
+	if id == "" {
+		return
+	}
+	c.mu.Lock()
+	if session := c.promptSession[id]; session != "" {
+		delete(c.echoPreamble, session)
+	}
+	c.mu.Unlock()
 }
 
 // appendTurn adds text to a session's in-progress turn narrative, keeping the TAIL when it

@@ -1,7 +1,6 @@
 package box
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,52 +69,6 @@ func profileCredentialPresent(ag agents.Agent, profileDir string, envKeys map[st
 func profileMarkerPresent(ag agents.Agent, profileDir string) bool {
 	file, _ := ag.AuthMarker()
 	return fileExists(filepath.Join(profileDir, file))
-}
-
-// ProfileTokenExpiry returns when agent's named-profile credential expires, and whether that's
-// knowable. Only an OAuth login carries a readable expiry — claude's .credentials.json
-// (claudeAiOauth.expiresAt, ms epoch); an API-key login or another agent returns ok=false (nothing
-// to check). ProfileAuthed is a presence heuristic and can't tell a live token from an expired one
-// that's still on disk; this can, so callers (e.g. `coop credentials`) don't report a dead token as
-// "signed in" — the exact trap behind a "signed in but 401" run.
-func ProfileTokenExpiry(cfg *config.Config, agent, profile string) (time.Time, bool) {
-	if agent != "claude" {
-		return time.Time{}, false
-	}
-	data, err := os.ReadFile(filepath.Join(cfg.AgentProfileDir(agent, profile), ".credentials.json"))
-	if err != nil {
-		return time.Time{}, false
-	}
-	var c struct {
-		ClaudeAiOauth struct {
-			ExpiresAt int64 `json:"expiresAt"`
-		} `json:"claudeAiOauth"`
-	}
-	if json.Unmarshal(data, &c) != nil || c.ClaudeAiOauth.ExpiresAt == 0 {
-		return time.Time{}, false
-	}
-	return time.UnixMilli(c.ClaudeAiOauth.ExpiresAt), true
-}
-
-// ProfileRenewable reports whether agent's named-profile OAuth login carries a refresh token. An
-// access token past its expiresAt is NOT a dead login when one is present — the agent CLI renews
-// it on use and writes the fresh token back (verified: a claude profile shown "expired" answered
-// live in-box, then its expiresAt moved forward). So callers treat expired-but-renewable as signed
-// in, not "token expired". Only claude exposes a readable OAuth credential; anything else is false.
-func ProfileRenewable(cfg *config.Config, agent, profile string) bool {
-	if agent != "claude" {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(cfg.AgentProfileDir(agent, profile), ".credentials.json"))
-	if err != nil {
-		return false
-	}
-	var c struct {
-		ClaudeAiOauth struct {
-			RefreshToken string `json:"refreshToken"`
-		} `json:"claudeAiOauth"`
-	}
-	return json.Unmarshal(data, &c) == nil && c.ClaudeAiOauth.RefreshToken != ""
 }
 
 // ProfileTokenMtime returns when agent's named-profile token material last changed on disk — the

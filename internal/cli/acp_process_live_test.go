@@ -77,6 +77,22 @@ func TestLiveACPProcessPublishesBeforeReleaseAndKeepsStableLeader(t *testing.T) 
 	}
 }
 
+func TestLiveACPProcessPreservesEditorStdin(t *testing.T) {
+	root := t.TempDir()
+	cmd, _, recorded, _ := liveACPHelperCommand(t, root, "stdio", true)
+	cmd.Stdin = strings.NewReader("editor-request\n")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(payload)); got != "editor-request" {
+		t.Fatalf("inner ACP stdin = %q, want editor-request", got)
+	}
+}
+
 func TestLiveACPProcessFailsClosedWithoutIdentity(t *testing.T) {
 	root := t.TempDir()
 	cmd, marker, _, _ := liveACPHelperCommand(t, root, "missing_token", true)
@@ -240,12 +256,26 @@ func TestLiveACPProcessHelper(t *testing.T) {
 		}
 	}
 	marker := os.Getenv("COOP_TEST_LIVE_ACP_MARKER")
-	inner := exec.Command("/bin/sh", "-c", `
+	innerScript := `
 test ! -e /dev/fd/3 || exit 126
 coop_pgid=$(ps -o pgid= -p $$) || exit 126
 printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER"
-`)
+`
+	if scenario == "stdio" {
+		innerScript = `
+test ! -e /dev/fd/3 || exit 126
+coop_pgid=$(ps -o pgid= -p $$) || exit 126
+line=stdin-eof
+IFS= read -r line || :
+printf '%s' "$line" > "$COOP_TEST_LIVE_ACP_RECORDED"
+printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER"
+`
+	}
+	inner := exec.Command("/bin/sh", "-c", innerScript)
 	inner.Env = os.Environ()
+	if scenario == "stdio" {
+		inner.Stdin = os.Stdin
+	}
 	inner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	err := startACPProcess(inner, "internal-supervisor")
 	wantFailure := scenario == "missing_token" || scenario == "invalid_control" ||

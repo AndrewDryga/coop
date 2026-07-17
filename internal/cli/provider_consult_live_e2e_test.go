@@ -562,11 +562,12 @@ func runConsultLiveEdge(
 		result.ErrorClass = class
 		return result
 	}
-	if !validConsultLiveReply(stdout.String(), peer.Provider, edgeMarker) {
+	if detail := consultLiveReplyDetail(stdout.String(), peer.Provider, edgeMarker); detail != "" {
 		result.Status = liveprovider.StatusFailed
 		result.ReasonCode = liveprovider.ReasonMarkerMismatch
 		result.Phase = "prompt"
 		result.ErrorClass = "marker"
+		result.DetailCode = detail
 		return result
 	}
 	after, snapshotErr := liveprovider.VerifyRepository(repositoryLayout, before)
@@ -623,12 +624,28 @@ func consultLivePrompt(peer, marker string) string {
 }
 
 func validConsultLiveReply(output, provider, marker string) bool {
+	return consultLiveReplyDetail(output, provider, marker) == ""
+}
+
+func consultLiveReplyDetail(output, provider, marker string) string {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 2 || strings.TrimSpace(lines[0]) != "["+provider+": fresh session]" ||
-		strings.TrimSpace(lines[len(lines)-1]) != marker {
-		return false
+	if len(lines) < 2 {
+		return "reply_shape"
 	}
-	return strings.Count(output, marker) == 1
+	if strings.TrimSpace(lines[0]) != "["+provider+": fresh session]" {
+		return "wrapper_header"
+	}
+	switch strings.Count(output, marker) {
+	case 0:
+		return "marker_missing"
+	case 1:
+		if strings.TrimSpace(lines[len(lines)-1]) != marker {
+			return "marker_not_final"
+		}
+	default:
+		return "marker_repeated"
+	}
+	return ""
 }
 
 func writeConsultAttempt(path string) error {
@@ -728,13 +745,18 @@ func TestProviderConsultLiveContract(t *testing.T) {
 	if !validConsultLiveReply("[codex: fresh session]\n"+marker+"\n", "codex", marker) {
 		t.Fatal("exact fresh wrapper reply was rejected")
 	}
-	for _, output := range []string{
-		marker + "\n", "[codex: continued on codex]\n" + marker + "\n",
-		"[codex: fresh session]\n" + marker + "\nextra\n",
-		"[codex: fresh session]\n" + marker + "\n" + marker + "\n",
+	for _, tc := range []struct {
+		output string
+		detail string
+	}{
+		{marker + "\n", "reply_shape"},
+		{"[codex: continued on codex]\n" + marker + "\n", "wrapper_header"},
+		{"[codex: fresh session]\nno marker\n", "marker_missing"},
+		{"[codex: fresh session]\n" + marker + "\nextra\n", "marker_not_final"},
+		{"[codex: fresh session]\n" + marker + "\n" + marker + "\n", "marker_repeated"},
 	} {
-		if validConsultLiveReply(output, "codex", marker) {
-			t.Errorf("invalid consult reply was accepted: %q", output)
+		if got := consultLiveReplyDetail(tc.output, "codex", marker); got != tc.detail {
+			t.Errorf("invalid consult reply detail = %q, want %q for %q", got, tc.detail, tc.output)
 		}
 	}
 

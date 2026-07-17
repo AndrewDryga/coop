@@ -26,7 +26,7 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 					if err := os.MkdirAll(dir, 0o700); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.WriteFile(filepath.Join(dir, marker), []byte("token"), 0o600); err != nil {
+					if err := os.WriteFile(filepath.Join(dir, marker), credentialMatrixMarker(name), 0o600); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -123,6 +123,17 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func credentialMatrixMarker(provider string) []byte {
+	switch provider {
+	case "claude":
+		return []byte(`{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`)
+	case "grok":
+		return []byte(grokProfileCredential("2099-01-01T00:00:00Z", ""))
+	default:
+		return []byte(`{"token":"fixture"}`)
 	}
 }
 

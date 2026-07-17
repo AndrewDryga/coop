@@ -229,6 +229,10 @@ func (a codexAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []stri
 	return a.CredentialEnvKeys()
 }
 
+func (codexAgent) StoredCredentialStatus(string, time.Time) StoredCredentialStatus {
+	return StoredCredentialUnknown
+}
+
 func codexCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
 	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
 	if err != nil {

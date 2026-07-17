@@ -1,21 +1,25 @@
 ---
 name: credentials-expired-is-a-false-alarm
-description: claude "token expired" in `coop credentials` still works in-box via the refresh token
+description: refreshable OAuth stays signed in; re-login required means the stored login cannot recover
 subsystem: credentials
-sources: [internal/box/profiles.go, internal/cli/profiles.go]
-updated: 2026-07-12
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/grok.go, internal/box/profiles.go, internal/cli/profiles.go]
+updated: 2026-07-16
 ---
-`coop credentials` can show a claude account as "token expired" (yellow) when its OAuth access token
-is past `expiresAt`. That is NOT a dead login: if the credential carries a refresh token, the claude
-CLI renews it on use and writes the fresh token back.
+`coop credentials` treats an expired OAuth access token with valid refresh authority as "signed in":
+the provider CLI can renew it on use. A marker that is malformed, stripped, missing required scopes
+or routing metadata, or both expired and nonrenewable reads "re-login required". That label is an
+actionable failure, not the old expiry false alarm; run the displayed `coop login` remedy rather than
+trying a provider request first.
 
-`box.ProfileRenewable` (`internal/box/profiles.go`) checks for that refresh token, and `profileState`
-(`internal/cli/profiles.go`) treats expired-but-renewable as "signed in" — it surfaces "token
-expired" only when there is NO refresh token. So before concluding an account is blocked, try a run:
-an "expired" claude account usually answers fine in-box (seen live — an account shown "expired"
-answered, then its `expiresAt` moved forward). The `rotated <age>` column in `coop credentials`
-reads the mtime of that same token material (`box.ProfileTokenMtime`), which a refresh bumps. See
-[[box-time-is-utc]] for the wall clock behind `expiresAt`.
+The provider adapter owns this distinction through `StoredCredentialStatus`. Claude and Grok can
+validate their native OAuth records; Codex and Gemini retain opaque presence behavior. Env-only
+credentials also remain presence-based because there is no native marker to inspect. This source
+readiness check does not widen live authority: the live projections use separate access-only output
+types and never carry a refresh token into the box.
+
+The `rotated <age>` column still reads the marker mtime through `box.ProfileTokenMtime`; a login or
+refresh rewrite advances it. See [[box-time-is-utc]] for the wall clock behind provider expiries.
 
 ## Changelog
+- 2026-07-16 — replaced the stale "try a run" advice with adapter-owned readiness and an authoritative re-login remedy
 - 2026-07-12 — created: expired-but-renewable claude tokens still work in-box; `profileState` only reports "expired" when there's no refresh token.

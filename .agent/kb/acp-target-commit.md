@@ -3,7 +3,7 @@ name: acp-target-commit
 description: ACP model and effort choices become controller truth only from the effective provider response
 subsystem: acp
 sources: [internal/cli/acpcontrol.go, internal/cli/acpcontrol_test.go, internal/agent/grok.go]
-updated: 2026-07-15
+updated: 2026-07-16
 ---
 
 Native and synthesized target requests carry a monotonic provider/field sequence. A provider success
@@ -18,5 +18,11 @@ It forces every active session through fresh `session/new`, arms in-flight resen
 recreation intent across SIGHUP; prose, near misses, stale responses, and other provider errors remain
 errors (`internal/cli/acpcontrol.go:777`, `internal/cli/acpcontrol.go:2736`).
 
+Live conformance changes a model only when the installed adapter advertises a distinct option. Grok
+0.2.101 can truthfully expose only its current agent model. Coop must not merge the illustrative
+`Agent.Models()` list into native ACP choices: scripted E2E owns the cross-agent migration contract,
+while live E2E still requires a nonempty current model, reload, and a second successful prompt.
+
 ## Changelog
+- 2026-07-16 - made live switching capability-aware after Grok exposed one native model option
 - 2026-07-15 - created after live Grok exposed response-gating and cross-agent migration behavior

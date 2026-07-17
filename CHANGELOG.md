@@ -2,12 +2,21 @@
 
 ## Unreleased
 
+- **ACP provider switches keep internal carry context out of the editor.** Coop now removes its
+  exact injected history from provider user echoes, Codex's whitespace-normalized session titles,
+  and Grok's prompt-queue notifications while preserving surrounding text and metadata. The live
+  process wrapper also preserves the editor's stdin across its supervised background launch.
+  Strict conformance follows each adapter's advertised model capability instead of failing a
+  single-model provider or inventing unsupported dropdown choices.
+
 - **Provider conformance now stays aligned with the four-adapter registry.** Fork ACP completion and
   missing-provider guidance include Grok, generated source-tree docs name the deterministic and live
   gates, and refresh-only Claude credentials are stripped of refresh authority then reported as
   `credential_refresh_required` instead of an unsafe projection failure. Live loop verification now
   preserves failed/skipped provider outcomes against an unchanged fixture and accepts descriptive
   commit bodies while retaining exact subject, trailer, repository, index, ref, and reflog checks.
+  `coop credentials` now distinguishes refreshable OAuth sessions from malformed, stripped, or
+  expired Claude/Grok markers and gives the latter one exact re-login command.
 
 - **Provider session lookup is bounded and tested against large native histories.** A generated
   all-provider matrix now covers exact resume, full misses, wrong cwd and ID, malformed entries,

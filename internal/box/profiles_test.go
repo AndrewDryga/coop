@@ -205,38 +205,3 @@ func TestProfileTokenMtime(t *testing.T) {
 		t.Errorf("mtime moved to %v after an unrelated write; must track only the marker", got)
 	}
 }
-
-func TestProfileRenewable(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir}
-	write := func(profile, body string) {
-		d := cfg.AgentProfileDir("claude", profile)
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(d, ".credentials.json"), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A login with a refresh token renews on use → renewable, even with an expiry in the past.
-	write("live", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1}}`)
-	if !ProfileRenewable(cfg, "claude", "live") {
-		t.Error("a refresh token present should read as renewable")
-	}
-	// No refresh token (empty or absent) → not renewable: a genuinely dead OAuth login.
-	write("empty", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"","expiresAt":1}}`)
-	if ProfileRenewable(cfg, "claude", "empty") {
-		t.Error("an empty refresh token should not be renewable")
-	}
-	write("none", `{"claudeAiOauth":{"accessToken":"a","expiresAt":1}}`)
-	if ProfileRenewable(cfg, "claude", "none") {
-		t.Error("a missing refresh token should not be renewable")
-	}
-	// Only claude exposes a readable OAuth credential; another agent / a missing file is false.
-	if ProfileRenewable(cfg, "codex", "live") {
-		t.Error("non-claude agents have no readable OAuth credential")
-	}
-	if ProfileRenewable(cfg, "claude", "ghost") {
-		t.Error("a missing credential file is not renewable")
-	}
-}

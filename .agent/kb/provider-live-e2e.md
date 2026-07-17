@@ -84,6 +84,9 @@ isolated binary is built with `cooplivetest`; default Coop binaries contain the 
 process-group path. Each inner generation blocks behind a pipe gate while a resident wrapper becomes
 its PGID leader. The wrapper publishes a private, versioned record containing the current UID,
 harness cleanup nonce, PGID, and Linux/Darwin kernel start token before releasing the inner command.
+Because POSIX non-interactive shells otherwise attach `/dev/null` to an asynchronous command's stdin,
+the wrapper saves the editor pipe on a private descriptor before backgrounding and restores it only
+for the inner Coop process. A tagged process test reads a real request through that boundary.
 That nonce is deliberately distinct from Coop's internal `coop.sup` generation label and is scrubbed
 before the inner exec. The wrapper
 stays resident after the inner leader exits, so a delayed runtime cannot outlive the recorded
@@ -124,6 +127,7 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-07-16 - preserved ACP editor stdin through the live process-control wrapper
 - 2026-07-16 - added native-resume ownership and the shared live-result triage ledger
 - 2026-07-16 - separated supervision from ACP transcript sharing after live resume exposed the shadow mount
 - 2026-07-16 - added two-process exact native-session continuity with a private bounded ID handoff

@@ -784,17 +784,52 @@ func TestACPControlFiltersOnlyExactCarriedPromptEcho(t *testing.T) {
 		}})
 		return append(encoded, '\n')
 	}
+	titleEcho := func(text string) []byte {
+		encoded, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+			"sessionId": "s1", "update": map[string]any{"sessionUpdate": "session_info_update", "title": text, "meta": "keep"},
+		}})
+		return append(encoded, '\n')
+	}
+	queueEcho := func(text string) []byte {
+		encoded, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "_x.ai/queue/changed", "params": map[string]any{
+			"sessionId": "s1", "entries": []any{map[string]any{"id": "q1", "kind": "prompt", "position": 0, "text": text, "version": 0, "meta": "keep"}},
+		}})
+		return append(encoded, '\n')
+	}
+	title := string(toEd(c, titleEcho(strings.Join(strings.Fields(preamble), " ")+" real follow-up")))
+	if strings.Contains(title, "[coop] This thread continues") || !strings.Contains(title, "real follow-up") || !strings.Contains(title, `"meta":"keep"`) {
+		t.Fatalf("session title filtering changed real text or leaked carry: %s", title)
+	}
+	// A provider may report the same admitted prompt through more than one update shape.
 	if out := toEd(c, echo(preamble)); len(out) != 0 {
 		t.Fatalf("exact synthetic echo reached editor: %s", out)
 	}
 
-	// Re-admit the same wrapped prompt to model an adapter that concatenates content blocks. The
-	// exact synthetic substring is removed while both surrounding user-authored fragments survive.
+	// Re-admit the same wrapped prompt and reverse the echo order. The exact synthetic substring is
+	// removed while both surrounding user-authored fragments and a later title echo survive.
 	c.promptForwarded(rewritten, false)
 	out := string(toEd(c, echo("before "+preamble+" after")))
 	if strings.Contains(out, "[coop] This thread continues") || !strings.Contains(out, "before  after") {
 		t.Fatalf("combined echo filtering changed real user text or leaked carry: %s", out)
 	}
+	if out := toEd(c, titleEcho(preamble)); strings.Contains(string(out), "[coop] This thread continues") || !strings.Contains(string(out), `"meta":"keep"`) {
+		t.Fatalf("exact title filtering lost sibling fields or leaked carry: %s", out)
+	}
+	queued := string(toEd(c, queueEcho("queued "+preamble+" request")))
+	if strings.Contains(queued, "[coop] This thread continues") || !strings.Contains(queued, "queued  request") ||
+		!strings.Contains(queued, `"meta":"keep"`) || !strings.Contains(queued, `"id":"q1"`) {
+		t.Fatalf("queue filtering changed real text/metadata or leaked carry: %s", queued)
+	}
+
+	nearMiss := strings.Replace(preamble, "[coop]", "[user]", 1)
+	if out := string(toEd(c, echo(nearMiss))); !strings.Contains(out, "[user] This thread continues") {
+		t.Fatalf("near-miss user text was filtered: %s", out)
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}`+"\n"))
+	if out := string(toEd(c, echo(preamble))); !strings.Contains(out, "[coop] This thread continues") {
+		t.Fatalf("completed turn retained a stale carry filter: %s", out)
+	}
+
 	c.promptForwarded(rewritten, false)
 	ordinary := string(toEd(c, echo("user-authored [coop] words")))
 	if !strings.Contains(ordinary, "user-authored [coop] words") {

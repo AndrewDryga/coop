@@ -24,8 +24,12 @@ IFS= read -r coop_gate <&3 || exit 125
 [ "$coop_gate" = go ] || exit 125
 exec 3<&-
 trap '' TERM HUP INT
-( trap - TERM HUP INT; exec "$@" ) &
+# A non-interactive shell gives an asynchronous command /dev/null as stdin. Preserve the editor's
+# ACP pipe on a private descriptor before backgrounding, then close the duplicate in both processes.
+exec 4<&0
+( trap - TERM HUP INT; exec "$@" <&4 4<&- ) &
 coop_child=$!
+exec 4<&-
 exec 0<&- 1>&- 2>&-
 wait "$coop_child"
 while :; do /bin/sleep 3600; done

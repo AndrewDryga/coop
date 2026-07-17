@@ -173,17 +173,27 @@ type claudeAccessCredential struct {
 	Scopes      []string `json:"scopes"`
 }
 
-func parseClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
+type claudeSourceCredential struct {
+	claudeAccessCredential
+	RefreshToken string `json:"refreshToken"`
+}
+
+func parseClaudeSourceCredential(data []byte) (claudeSourceCredential, error) {
 	var source struct {
-		OAuth *claudeAccessCredential `json:"claudeAiOauth"`
+		OAuth *claudeSourceCredential `json:"claudeAiOauth"`
 	}
 	if err := json.Unmarshal(data, &source); err != nil {
-		return claudeAccessCredential{}, fmt.Errorf("decode Claude credential: %w", err)
+		return claudeSourceCredential{}, fmt.Errorf("decode Claude credential: %w", err)
 	}
 	if source.OAuth == nil {
-		return claudeAccessCredential{}, fmt.Errorf("claude credential has no OAuth shape")
+		return claudeSourceCredential{}, fmt.Errorf("claude credential has no OAuth shape")
 	}
 	return *source.OAuth, nil
+}
+
+func parseClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
+	source, err := parseClaudeSourceCredential(data)
+	return source.claudeAccessCredential, err
 }
 
 func decodeClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
@@ -224,6 +234,22 @@ func (a claudeAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []str
 		return nil
 	}
 	return a.CredentialEnvKeys()
+}
+
+func (claudeAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
+	data, err := os.ReadFile(filepath.Join(profileDir, ".credentials.json"))
+	if err != nil {
+		return StoredCredentialReauthRequired
+	}
+	credential, err := parseClaudeSourceCredential(data)
+	if err != nil || !slices.Contains(credential.Scopes, "user:inference") {
+		return StoredCredentialReauthRequired
+	}
+	if credential.RefreshToken != "" || (credential.AccessToken != "" && credential.ExpiresAt > 0 &&
+		time.UnixMilli(credential.ExpiresAt).After(now)) {
+		return StoredCredentialReady
+	}
+	return StoredCredentialReauthRequired
 }
 
 func claudeCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {

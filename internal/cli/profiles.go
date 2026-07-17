@@ -52,7 +52,7 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 	}
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean (p is the profile loop var below)
 	width := colWidth(allProfiles, 0, 40)
-	statusW := len("not signed in") // the widest short status label
+	statusW := len("re-login required") // the widest short status label
 	first := true
 	for _, agent := range names {
 		if !first {
@@ -79,8 +79,8 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		}
 		var relogin []string
 		for _, p := range profiles {
-			label, expired := a.profileState(agent, p)
-			if expired {
+			label, needsLogin := a.profileState(agent, p)
+			if needsLogin {
 				relogin = append(relogin, p)
 			}
 			tag := ""
@@ -109,17 +109,17 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 	return 0, nil
 }
 
-// profileState reports a profile's short sign-in label and whether it needs a re-login. An OAuth
-// access token past its expiry is NOT dead when the login carries a refresh token — the agent CLI
-// renews it on use — so only an expired token with no refresh token reads as "token expired" (the
-// caller surfaces the re-login remedy on its own line). Shared by the listing and single view.
-func (a *app) profileState(agent, p string) (label string, expired bool) {
+// profileState reports a profile's short sign-in label and whether it needs a re-login. Presence is
+// enough for opaque stores and env keys; adapters that can inspect their native OAuth marker reject
+// malformed, stripped, or expired credentials while accepting refreshable ones.
+func (a *app) profileState(agent, p string) (label string, needsLogin bool) {
 	if !box.ProfileAuthed(a.cfg, agent, p) {
 		return "not signed in", false
 	}
-	if exp, ok := box.ProfileTokenExpiry(a.cfg, agent, p); ok && time.Now().After(exp) &&
-		!box.ProfileRenewable(a.cfg, agent, p) {
-		return "token expired", true
+	ag, ok := agents.Get(agent)
+	if ok && box.ProfileMarkerPresent(a.cfg, agent, p) &&
+		ag.StoredCredentialStatus(a.cfg.AgentProfileDir(agent, p), time.Now()) == agents.StoredCredentialReauthRequired {
+		return "re-login required", true
 	}
 	return "signed in", false
 }
@@ -135,13 +135,13 @@ func (a *app) credentialAge(agent, profile string) string {
 	return "—"
 }
 
-// paintStatus colors a profileState label (possibly padded): green signed in, yellow
-// expired, dim otherwise.
+// paintStatus colors a profileState label (possibly padded): green signed in, yellow when a
+// re-login is required, dim otherwise.
 func paintStatus(pal ui.Palette, label string) string {
 	switch strings.TrimSpace(label) {
 	case "signed in":
 		return pal.Green(label)
-	case "token expired":
+	case "re-login required":
 		return pal.Yellow(label)
 	default:
 		return pal.Dim(label)
@@ -194,7 +194,7 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	}
 	pal := ui.For(os.Stdout)
 	fmt.Println(pal.Bold(agent + " / " + profile))
-	label, expired := a.profileState(agent, profile)
+	label, needsLogin := a.profileState(agent, profile)
 	fmt.Printf("  status     %s\n", paintStatus(pal, label))
 	if label != "not signed in" {
 		fmt.Printf("  rotated    %s\n", a.credentialAge(agent, profile))
@@ -209,7 +209,7 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	} else {
 		fmt.Println("  source     env file")
 	}
-	if expired {
+	if needsLogin {
 		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+"@"+profile))
 	}
 	return 0, nil

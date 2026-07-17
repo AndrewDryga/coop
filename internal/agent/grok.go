@@ -212,7 +212,12 @@ type grokAccessCredential struct {
 	CreateTime    string `json:"create_time"`
 }
 
-func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, error) {
+type grokSourceCredential struct {
+	grokAccessCredential
+	RefreshToken string `json:"refresh_token"`
+}
+
+func decodeGrokSourceCredential(data []byte) (map[string]grokSourceCredential, error) {
 	var source map[string]json.RawMessage
 	if err := json.Unmarshal(data, &source); err != nil {
 		return nil, fmt.Errorf("decode Grok credential: %w", err)
@@ -220,9 +225,9 @@ func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, e
 	if len(source) == 0 {
 		return nil, fmt.Errorf("grok credential has no access-only auth shape")
 	}
-	projected := make(map[string]grokAccessCredential, len(source))
+	credentials := make(map[string]grokSourceCredential, len(source))
 	for key, raw := range source {
-		var entry grokAccessCredential
+		var entry grokSourceCredential
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return nil, fmt.Errorf("grok credential contains a non-object entry")
 		}
@@ -237,10 +242,22 @@ func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, e
 		if _, err := time.Parse(time.RFC3339Nano, entry.CreateTime); err != nil {
 			continue
 		}
-		projected[key] = entry
+		credentials[key] = entry
 	}
-	if len(projected) == 0 {
+	if len(credentials) == 0 {
 		return nil, fmt.Errorf("grok credential has no access-only auth shape")
+	}
+	return credentials, nil
+}
+
+func decodeGrokAccessCredential(data []byte) (map[string]grokAccessCredential, error) {
+	source, err := decodeGrokSourceCredential(data)
+	if err != nil {
+		return nil, err
+	}
+	projected := make(map[string]grokAccessCredential, len(source))
+	for key, entry := range source {
+		projected[key] = entry.grokAccessCredential
 	}
 	return projected, nil
 }
@@ -262,6 +279,24 @@ func (a grokAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []strin
 		return nil
 	}
 	return a.CredentialEnvKeys()
+}
+
+func (grokAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
+	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
+	if err != nil {
+		return StoredCredentialReauthRequired
+	}
+	credentials, err := decodeGrokSourceCredential(data)
+	if err != nil {
+		return StoredCredentialReauthRequired
+	}
+	for _, credential := range credentials {
+		expiresAt, _ := time.Parse(time.RFC3339Nano, credential.ExpiresAt)
+		if credential.RefreshToken != "" || expiresAt.After(now) {
+			return StoredCredentialReady
+		}
+	}
+	return StoredCredentialReauthRequired
 }
 
 func grokCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {

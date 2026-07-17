@@ -265,6 +265,10 @@ func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bo
 	return nil
 }
 
+func (geminiAgent) StoredCredentialStatus(string, time.Time) StoredCredentialStatus {
+	return StoredCredentialUnknown
+}
+
 // MCP builds the settings mounted inside a gemini box: the host settings plus the
 // box-only file-filtering override, and shared servers only when MCP is active.
 func (geminiAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
