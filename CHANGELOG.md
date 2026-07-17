@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 6.3.1
 
 - **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now
