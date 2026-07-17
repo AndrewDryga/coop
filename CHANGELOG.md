@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 6.3.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **`coop tasks ls` filters by state, and task ids are clickable.** Pass one or more of
+  `--todo` / `--in-progress` / `--blocked` / `--done` to narrow the listing (and its footer
+  summary) to those states — across a single queue or an umbrella roll-up. Every task id is now
+  an OSC 8 hyperlink to its folder, so it opens on click in a supporting terminal (plain text in a
+  pipe), pointing at the right per-subproject path in umbrella projects.
 
 ## 6.2.0
 
