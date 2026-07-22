@@ -83,7 +83,7 @@ coop fork — a throwaway clone handed to an agent; review and land it like a PR
 
   coop fork <name> [target|preset]  open or re-enter a fork; run an agent (claude:opus@work) or a preset
   coop fork <name> <target|preset> --loop  loop the fork on a tasks folder (-d detaches)
-  coop fork ls                      list this repo's forks
+  coop fork ls [--json]             list this repo's forks (--json adds per-workspace serve URLs)
   coop fork logs [name]             tail a fork's loop log (no name: all forks)
   coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
   coop fork <name> acp [target]     front the fork as an ACP agent (for editors)
