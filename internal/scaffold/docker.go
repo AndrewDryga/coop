@@ -127,10 +127,19 @@ func ComposeServiceNames(path string) []string { return composeServices(path) }
 // dockerfileSuggestion is the "base the box on your image" template; %s is the agent npm
 // package list (from agents.Packages(), so it never drifts from the asdf image).
 const dockerfileSuggestion = `
-  Box image — base the agent box on your image so the agent runs in your app's
-  environment. Save as .agent/Dockerfile, then 'coop build':
+  Box image — base the agent box on your project's environment. Save as .agent/Dockerfile,
+  then 'coop build'. Simplest: inherit coop's box (agent CLIs + ACP adapters, browser
+  libraries, security setup) and add just your toolchain:
 
-    FROM your-app-image:latest AS base          # or a build stage from your Dockerfile
+    ARG COOP_BASE_IMAGE
+    FROM ${COOP_BASE_IMAGE}                      # coop build resolves + passes the base
+    USER root
+    RUN apt-get update && apt-get install -y --no-install-recommends <your-system-deps>
+    USER node
+
+  Or start from your own app image and bring the agent CLIs yourself:
+
+    FROM your-app-image:latest                  # or a build stage from your Dockerfile
     USER root
     RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
      && apt-get install -y --no-install-recommends nodejs git ca-certificates \
@@ -139,7 +148,6 @@ const dockerfileSuggestion = `
      && (id -u node >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash node)
     USER node
     WORKDIR /workspace
-    # (apt shown — swap for apk/etc. if your base isn't Debian/Ubuntu)
 `
 
 // SuggestDocker prints (docs only, never writes) how to build the agent box on the repo's

@@ -8,6 +8,11 @@
   to `.agent/Dockerfile` (moved from the repo-root `Dockerfile.agent`) and `.agent/compose.yml`.
   `coop init` scaffolds and git-tracks `.agent/Dockerfile`.
 
+- **A project box Dockerfile can inherit coop's base image.** Write `ARG COOP_BASE_IMAGE` /
+  `FROM ${COOP_BASE_IMAGE}`, and `coop build` resolves the shared base (building it first if
+  missing), passing it in as a build-arg — so your box gets coop's agent CLIs, browser libraries,
+  and security setup, and you add only your own toolchain.
+
 ## 6.3.1
 
 - **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now

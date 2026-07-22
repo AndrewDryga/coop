@@ -1340,6 +1340,18 @@ USER node
 ```
 
 (If the base lacks Node, install it first — the asdf template uses NodeSource.)
+
+**Shortcut — inherit coop's base.** Rather than meet the contract yourself, start from coop's own
+box and add only your toolchain; `coop build` resolves the base image and passes it in (building it
+first if needed):
+
+```dockerfile
+ARG COOP_BASE_IMAGE
+FROM ${COOP_BASE_IMAGE}   # agent CLIs + ACP adapters, asdf, browser libs, non-root node — all inherited
+USER root
+RUN <install your toolchain>
+USER node
+```
 </details>
 
 <details><summary><b>Reusing an existing devcontainer</b></summary>

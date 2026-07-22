@@ -222,6 +222,19 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 		ui.Info("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", dfRel)
 	}
 	ui.Info("building %s from %s (this project's toolchain)", img, dfRel)
+	// A project Dockerfile may inherit coop's trusted base (agent CLIs + ACP adapters, browser
+	// libraries, writable-home + security setup) with `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`,
+	// adding only its own toolchain. When it does, make sure the base is present (build it if missing,
+	// rebuild it on --fresh) and pass it in as a build-arg.
+	content, _ := os.ReadFile(filepath.Join(repo, dfRel))
+	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
+	if usesBase && (fresh || !ImageExists(rt, cfg.BaseImage)) {
+		ui.Info("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, dfRel)
+		if err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...)); err != nil {
+			return err
+		}
+		StampImageMeta(cfg, cfg.BaseImage, version)
+	}
 	// Build from a shadow-filtered COPY of the repo, not the repo itself: secret shadowing is a
 	// run-time -v overlay, so without this a `COPY .env /` / `COPY . .` in an agent-authored
 	// .agent/Dockerfile would bake a shadowed secret into a persistent (pushable) image layer. The
@@ -232,16 +245,29 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 		return fmt.Errorf("staging the build context: %w", err)
 	}
 	defer cleanup()
-	args := []string{"build"}
-	if fresh {
-		args = append(args, "--pull", "--no-cache")
-	}
-	args = append(args, "-t", img, "-f", filepath.Join(ctx, dfRel), ctx)
-	err = buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
+	err = buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, projectBuildArgs(ctx, dfRel, img, cfg.BaseImage, usesBase, fresh)...))
 	if err == nil {
 		StampImageInputs(cfg, repo, img) // record inputs so a later run can flag drift
 	}
 	return err
+}
+
+// projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
+// staged ctx, tagged img. When the Dockerfile inherits coop's base (usesBase), it passes the base as
+// a build-arg and, on --fresh, uses --no-cache WITHOUT --pull — the base is a local image tag, not a
+// registry ref, so --pull would fail trying to fetch it. An external FROM still gets --pull on fresh.
+func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool) []string {
+	args := []string{"build"}
+	if fresh {
+		args = append(args, "--no-cache")
+		if !usesBase {
+			args = append(args, "--pull")
+		}
+	}
+	if usesBase {
+		args = append(args, "--build-arg", "COOP_BASE_IMAGE="+baseImage)
+	}
+	return append(args, "-t", img, "-f", filepath.Join(ctx, dfRel), ctx)
 }
 
 // baseBuildArgs assembles the runtime args for building the shared base image (BaseDockerfile via

@@ -150,6 +150,41 @@ func TestBoxDockerfileUntracked(t *testing.T) {
 	}
 }
 
+// projectBuildArgs: a base-inheriting Dockerfile gets the COOP_BASE_IMAGE build-arg and, on --fresh,
+// --no-cache WITHOUT --pull (the base is a local tag); a standalone one gets --pull on fresh and no arg.
+func TestProjectBuildArgs(t *testing.T) {
+	// Inherits the base: build-arg present, no --pull even on fresh.
+	got := projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box", true, true)
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--build-arg COOP_BASE_IMAGE=coop-box") {
+		t.Errorf("inheriting build must pass the base build-arg: %v", got)
+	}
+	if strings.Contains(joined, "--pull") {
+		t.Errorf("a local base can't be pulled — no --pull on an inheriting build: %v", got)
+	}
+	if !strings.Contains(joined, "--no-cache") {
+		t.Errorf("--fresh must still add --no-cache: %v", got)
+	}
+	// Standalone (external FROM): no build-arg, --pull on fresh.
+	got = projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box", false, true)
+	joined = strings.Join(got, " ")
+	if strings.Contains(joined, "COOP_BASE_IMAGE") {
+		t.Errorf("a standalone build must not pass the base arg: %v", got)
+	}
+	if !strings.Contains(joined, "--pull") || !strings.Contains(joined, "--no-cache") {
+		t.Errorf("a standalone --fresh build should --pull --no-cache: %v", got)
+	}
+	// Non-fresh standalone: neither --pull nor --no-cache; ends with -t/-f/ctx.
+	got = projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box", false, false)
+	joined = strings.Join(got, " ")
+	if strings.Contains(joined, "--pull") || strings.Contains(joined, "--no-cache") {
+		t.Errorf("a plain build takes no cache flags: %v", got)
+	}
+	if !strings.HasSuffix(joined, "-t coop-app -f /ctx/.agent/Dockerfile /ctx") {
+		t.Errorf("build must target img + resolved -f path + ctx: %v", got)
+	}
+}
+
 // TestBaseDockerfileInstallLayer: grok installs via a script (curl … | bash), so the
 // script-install layer carries its RUN line while the npm-only agents (claude/codex/gemini)
 // contribute nothing — proving Agent.InstallScript becomes a root RUN line before USER node, the
