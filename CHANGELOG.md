@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 7.0.0
 
 - **The box image and sidecar compose paths are configurable, and the box Dockerfile now lives at
