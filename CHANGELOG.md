@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 7.0.0
 
 - **The box image and sidecar compose paths are configurable, and the box Dockerfile now lives at
   `.agent/Dockerfile`.** Set `box.dockerfile` / `box.compose` in `.agent/project.yaml` to point at
@@ -39,8 +39,6 @@
   `coop.service.scheme: https` compose label, default `http`), and `coop fork ls --json` reports each
   workspace's service URLs. Config (the compose path) is read from the policy repo, the file from the
   workspace. (The box image gains `socat`; run `coop build`/`coop update` to rebuild.)
-
-## 6.3.1
 
 - **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now
   routes to the listing — `coop tasks --blocked` is `coop tasks ls --blocked` — instead of failing
