@@ -1114,12 +1114,18 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec) []string {
 		return args
 	}
 	for _, port := range p.Serve.Ports {
-		host := project.HostPort(policyRepo, port)
+		// Allocate from the WORKSPACE path (spec.Repo), not the policy repo: a fork inherits the
+		// parent's serve.ports config but must get its OWN distinct host ports (project.HostPort
+		// hashes the path), so two forks — or a fork and its parent — never collide on one host port.
+		host := project.HostPort(spec.Repo, port)
 		if !hostPortFree(host) {
 			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — skipping\n", host, port)
 			continue
 		}
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
+		// Tell the box its own host-facing URL for this port (e.g. for an OIDC redirect URI or a
+		// "open me at …" line) — discovery without the box reproducing coop's port hash.
+		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
 		fmt.Fprintf(os.Stderr, "coop: serving box :%d at http://localhost:%d\n", port, host)
 	}
 	return args

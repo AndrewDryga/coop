@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,7 +129,7 @@ func forkHelpText(p ui.Palette) string {
 	rows := []struct{ cmd, desc string }{
 		{"coop fork <name> [target|preset]", "open or re-enter a fork; run an agent (claude:opus@work) or a preset"},
 		{"coop fork <name> <target|preset> --loop", "loop the fork on a tasks folder (-d detaches)"},
-		{"coop fork ls", "list this repo's forks"},
+		{"coop fork ls [--json]", "list this repo's forks (--json adds per-workspace serve URLs)"},
 		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
 		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open, --gate)"},
 		{"coop fork <name> acp [target]", "front the fork as an ACP agent (for editors)"},
@@ -897,12 +899,24 @@ func forkLifecycleNames(repo string) []string {
 }
 
 func (a *app) forkLs(args []string) (int, error) {
-	if err := rejectArgs("fork ls", args); err != nil {
+	asJSON := false
+	rest := make([]string, 0, len(args))
+	for _, x := range args {
+		if x == "--json" {
+			asJSON = true
+			continue
+		}
+		rest = append(rest, x)
+	}
+	if err := rejectArgs("fork ls", rest); err != nil {
 		return 2, err // a stray token should fail, not be silently ignored
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
+	}
+	if asJSON {
+		return forkLsJSON(repo)
 	}
 	names := forkLifecycleNames(repo)
 	if len(names) == 0 {
@@ -929,6 +943,40 @@ func (a *app) forkLs(args []string) (int, error) {
 			ui.Warn("fork %q shadows the '%s' subcommand — reach it via 'coop fork path %s' or 'coop fork rm %s'", n, n, n, n)
 		}
 	}
+	return 0, nil
+}
+
+// forkLsJSON prints the repo's workspaces (root first, then forks) as JSON, each with its path and
+// per-port serve URLs — machine-readable discovery for host tooling (screenshots, config
+// generation) so it never reproduces coop's host-port hash. Each URL is keyed on the WORKSPACE
+// path, so a fork's URLs are its own — matching what that fork's box publishes.
+func forkLsJSON(repo string) (int, error) {
+	p, _ := project.Load(repo) // serve.ports config, best-effort (a broken project.yaml → no URLs)
+	serveURLs := func(ws string) map[string]string {
+		if len(p.Serve.Ports) == 0 {
+			return nil
+		}
+		m := make(map[string]string, len(p.Serve.Ports))
+		for _, port := range p.Serve.Ports {
+			m[strconv.Itoa(port)] = fmt.Sprintf("http://localhost:%d", project.HostPort(ws, port))
+		}
+		return m
+	}
+	type workspace struct {
+		Name  string            `json:"name"`
+		Path  string            `json:"path"`
+		Serve map[string]string `json:"serve,omitempty"`
+	}
+	out := []workspace{{Name: "root", Path: repo, Serve: serveURLs(repo)}}
+	for _, n := range forkLifecycleNames(repo) {
+		ws := forkWorkspace(repo, n)
+		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws)})
+	}
+	b, err := json.MarshalIndent(map[string]any{"workspaces": out}, "", "  ")
+	if err != nil {
+		return 1, err
+	}
+	fmt.Println(string(b))
 	return 0, nil
 }
 

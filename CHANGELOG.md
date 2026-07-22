@@ -21,6 +21,13 @@
   `paths:`, or the current subproject, never inferred from a prompt — deduped, reported with the
   route that chose each. A missing or repo-escaping include is rejected.
 
+- **Forks get their own serve ports, discoverable as JSON.** A fork inherits its parent's
+  `serve.ports` but now allocates each host port from its OWN workspace path (not the shared policy
+  repo), so parallel forks and the root never collide on one host port. Each box also gets a
+  `COOP_SERVE_URL_<port>` env var — its host-facing URL, e.g. for an OIDC redirect — and
+  `coop fork ls --json` lists every workspace (root + forks) with its serve URLs, so host tooling
+  discovers them without reproducing coop's port hash.
+
 ## 6.3.1
 
 - **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now
