@@ -3,8 +3,34 @@ package box
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// ComposeProject is per-workspace: two checkouts with the SAME basename at DIFFERENT paths share an
+// image tag but get DISTINCT compose projects (the clone/fork collision fix), and it's stable for a
+// path so a workspace's sidecar volumes persist across runs.
+func TestComposeProject(t *testing.T) {
+	p1 := filepath.Join(t.TempDir(), "myrepo")
+	p2 := filepath.Join(t.TempDir(), "myrepo")
+	for _, p := range []string{p1, p2} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ServicesProject(p1) != ServicesProject(p2) {
+		t.Fatal("same basename must share the image tag")
+	}
+	if ComposeProject(p1) == ComposeProject(p2) {
+		t.Errorf("same basename at different paths must get DISTINCT compose projects, both %q", ComposeProject(p1))
+	}
+	if got := ComposeProject(p1); got != ComposeProject(p1) {
+		t.Error("compose project must be stable for a path")
+	}
+	if !strings.HasPrefix(ComposeProject(p1), ServicesProject(p1)+"-") {
+		t.Errorf("compose project should be <image-tag>-<hash>, got %q", ComposeProject(p1))
+	}
+}
 
 func TestServicesProject(t *testing.T) {
 	cases := map[string]string{

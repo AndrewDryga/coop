@@ -89,7 +89,7 @@ ARG AGENT_PACKAGES="%s"
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
-      postgresql-client procps inotify-tools util-linux \
+      postgresql-client procps inotify-tools util-linux socat \
       python3 python-is-python3 python3-pip \
       ripgrep fd-find jq tree \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
@@ -152,6 +152,16 @@ if command -v asdf >/dev/null 2>&1; then
     v=$(asdf list nodejs 2>/dev/null | tr -cd '0-9.\n ' | tr ' ' '\n' | grep . | sort -V | tail -n1)
     [ -n "$v" ] && asdf set --home nodejs "$v" >/dev/null 2>&1 && asdf reshim nodejs >/dev/null 2>&1
   fi
+fi
+# Sidecar forwarders: for each COOP_FORWARD entry "<hostport>:<service>:<containerport>", listen on
+# the box's own 127.0.0.1:<hostport> and forward raw TCP to <service>:<containerport> on the compose
+# network. Raw TCP passes TLS through untouched, so the app in the box reaches a sidecar at the SAME
+# localhost:<hostport> URL the host browser uses (OIDC issuer match).
+if [ -n "$COOP_FORWARD" ] && command -v socat >/dev/null 2>&1; then
+  echo "$COOP_FORWARD" | tr , '\n' | while IFS=: read -r hp svc sp; do
+    [ -n "$hp" ] && [ -n "$svc" ] && [ -n "$sp" ] || continue
+    socat "TCP-LISTEN:$hp,bind=127.0.0.1,fork,reuseaddr" "TCP:$svc:$sp" >/dev/null 2>&1 &
+  done
 fi
 exec "$@"
 ENTRY

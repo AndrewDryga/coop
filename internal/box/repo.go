@@ -1,6 +1,8 @@
 package box
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,8 +25,9 @@ func ResolveRepo(override string) (string, error) {
 	return os.Getwd()
 }
 
-// ServicesProject is the deterministic compose project name for a repo: a
-// lowercased, sanitized basename. It also doubles as the per-project image tag.
+// ServicesProject is the deterministic per-REPO name: a lowercased, sanitized basename. It is the
+// per-project IMAGE tag — legitimately shared across clones of the same repo (same Dockerfile →
+// same image), so it stays basename-only.
 func ServicesProject(repo string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(filepath.Base(repo)) {
@@ -33,6 +36,29 @@ func ServicesProject(repo string) string {
 		}
 	}
 	return "coop-" + b.String()
+}
+
+// ComposeProject is the per-WORKSPACE compose project (and network) name: the sanitized basename
+// plus a short hash of the workspace's CANONICAL path. Distinct per checkout, so a fork and its
+// parent — or two clones — never share one compose project (and its volumes). The path is
+// canonicalized (symlinks resolved, e.g. macOS /var→/private/var) so the SAME physical workspace
+// always yields the SAME name: its sidecar volumes persist across every run. Distinct from the
+// image tag (ServicesProject), which stays repo-based.
+func ComposeProject(workspacePath string) string {
+	canon := canonicalWorkspace(workspacePath)
+	sum := sha256.Sum256([]byte(canon))
+	return ServicesProject(canon) + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// canonicalWorkspace resolves a workspace path to a stable canonical form (symlinks followed,
+// cleaned) so the same physical checkout always hashes identically — the invariant behind stable
+// per-workspace ports AND stable sidecar volumes. Falls back to a plain clean if the path can't be
+// resolved (e.g. doesn't exist yet).
+func canonicalWorkspace(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(path)
 }
 
 // ComposeFileRel is the DEFAULT repo-relative compose path (project.DefaultCompose) — the scaffold

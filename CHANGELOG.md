@@ -28,6 +28,15 @@
   `coop fork ls --json` lists every workspace (root + forks) with its serve URLs, so host tooling
   discovers them without reproducing coop's port hash.
 
+- **Sidecars are per-workspace, reachable at one URL inside and out.** The compose project + network
+  names now derive from the workspace path, so a fork's services and volumes are its own (not shared
+  with the parent or another clone). An `expose:`d port in `.agent/compose.yml` is published to a
+  stable per-workspace loopback host port, and a raw-TCP forwarder in the box (baked-in `socat`,
+  started by the entrypoint from `COOP_FORWARD`) makes that same `localhost:<port>` reach the sidecar
+  from *inside* the box — so an OIDC issuer matches on both sides, no `host.docker.internal`, no
+  weakened isolation. The box gets `COOP_SERVICE_<NAME>_URL`, and `coop fork ls --json` reports each
+  workspace's service URLs. (The box image gains `socat`; run `coop build`/`coop update` to rebuild.)
+
 ## 6.3.1
 
 - **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now

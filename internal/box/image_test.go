@@ -206,3 +206,18 @@ func TestBaseDockerfileInstallLayer(t *testing.T) {
 		t.Errorf("a script-install RUN must precede USER node (run@%d user@%d)", run, user)
 	}
 }
+
+// The base image bakes socat and the coop-entry sidecar forwarder (raw-TCP loopback) so a box can
+// reach an expose'd sidecar at the same localhost:<hostport> URL the host uses (OIDC issuer match).
+func TestBaseDockerfileHasSidecarForwarder(t *testing.T) {
+	df := BaseDockerfile()
+	for _, want := range []string{
+		"util-linux socat",
+		`if [ -n "$COOP_FORWARD" ]`,
+		"TCP-LISTEN:$hp,bind=127.0.0.1,fork,reuseaddr",
+	} {
+		if !strings.Contains(df, want) {
+			t.Errorf("base Dockerfile missing sidecar-forwarder bit %q", want)
+		}
+	}
+}

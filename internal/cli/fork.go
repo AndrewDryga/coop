@@ -916,7 +916,7 @@ func (a *app) forkLs(args []string) (int, error) {
 		return -1, err
 	}
 	if asJSON {
-		return forkLsJSON(repo)
+		return a.forkLsJSON(repo)
 	}
 	names := forkLifecycleNames(repo)
 	if len(names) == 0 {
@@ -950,7 +950,7 @@ func (a *app) forkLs(args []string) (int, error) {
 // per-port serve URLs — machine-readable discovery for host tooling (screenshots, config
 // generation) so it never reproduces coop's host-port hash. Each URL is keyed on the WORKSPACE
 // path, so a fork's URLs are its own — matching what that fork's box publishes.
-func forkLsJSON(repo string) (int, error) {
+func (a *app) forkLsJSON(repo string) (int, error) {
 	p, _ := project.Load(repo) // serve.ports config, best-effort (a broken project.yaml → no URLs)
 	serveURLs := func(ws string) map[string]string {
 		if len(p.Serve.Ports) == 0 {
@@ -962,15 +962,32 @@ func forkLsJSON(repo string) (int, error) {
 		}
 		return m
 	}
-	type workspace struct {
-		Name  string            `json:"name"`
-		Path  string            `json:"path"`
-		Serve map[string]string `json:"serve,omitempty"`
+	// Sidecar URLs need the compose config; skip the docker call for workspaces without a compose
+	// file, and stay best-effort (no docker / parse error → omitted, never an error).
+	svcURLs := func(ws string) map[string]string {
+		cf := box.ComposeFile(ws)
+		if cf == "" {
+			return nil
+		}
+		m := map[string]string{}
+		for _, sp := range box.ServicePorts(a.rt, ws, cf) {
+			m[fmt.Sprintf("%s:%d", sp.Service, sp.ContainerPort)] = fmt.Sprintf("http://localhost:%d", sp.HostPort)
+		}
+		if len(m) == 0 {
+			return nil
+		}
+		return m
 	}
-	out := []workspace{{Name: "root", Path: repo, Serve: serveURLs(repo)}}
+	type workspace struct {
+		Name     string            `json:"name"`
+		Path     string            `json:"path"`
+		Serve    map[string]string `json:"serve,omitempty"`
+		Services map[string]string `json:"services,omitempty"`
+	}
+	out := []workspace{{Name: "root", Path: repo, Serve: serveURLs(repo), Services: svcURLs(repo)}}
 	for _, n := range forkLifecycleNames(repo) {
 		ws := forkWorkspace(repo, n)
-		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws)})
+		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws)})
 	}
 	b, err := json.MarshalIndent(map[string]any{"workspaces": out}, "", "  ")
 	if err != nil {

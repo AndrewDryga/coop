@@ -470,13 +470,30 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
+	// Sidecar discovery + same-URL forwarders: whenever the box will join the services network,
+	// tell it each expose'd sidecar's stable per-workspace host URL (COOP_SERVICE_<NAME>_URL) and
+	// hand coop-entry the mappings (COOP_FORWARD) so localhost:<hostport> reaches the sidecar from
+	// inside the box identically to the host browser. Gated like the network join, not on auto-up —
+	// the services may already be running from `coop up`. Best-effort; no sidecars → nothing added.
+	if cfg.Egress == "open" && spec.Network && rt.Name != "container" {
+		if cf := ComposeFile(spec.Repo); cf != "" {
+			if svc := ServicePorts(rt, spec.Repo, cf); len(svc) > 0 {
+				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
+				for _, p := range svc {
+					spec.ExtraArgs = append(spec.ExtraArgs, "-e",
+						fmt.Sprintf("COOP_SERVICE_%s_URL=http://localhost:%d", serviceEnvName(p.Service), p.HostPort))
+				}
+			}
+		}
+	}
+
 	networkName := ""
 	// Only "open" gets any networking (the same fail-closed test the --network flag uses below):
 	// an offline box (COOP_EGRESS=none) has nothing to reach, so skip the services-net join.
 	if cfg.Egress == "open" && spec.Network {
 		net := cfg.ServicesNet
 		if net == "" {
-			net = ServicesProject(spec.Repo) + "_default"
+			net = ComposeProject(spec.Repo) + "_default"
 		}
 		if rt.Silent("network", "inspect", net) {
 			networkName = net

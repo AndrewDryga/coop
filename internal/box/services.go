@@ -26,8 +26,20 @@ func EnsureServices(rt runtime.Runtime, repo string, stdout, stderr io.Writer) e
 	if err := ValidateComposeFile(file, repo); err != nil {
 		return fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
-	proj := ServicesProject(repo)
-	code, err := rt.Run(nil, stdout, stderr, "compose", "-p", proj, "-f", file, "up", "-d", "--wait")
+	proj := ComposeProject(repo)
+	args := []string{"compose", "-p", proj, "-f", file}
+	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
+	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
+	if sp := ServicePorts(rt, repo, file); len(sp) > 0 {
+		override, cleanup, err := writeServiceOverride(sp)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		args = append(args, "-f", override)
+	}
+	args = append(args, "up", "-d", "--wait")
+	code, err := rt.Run(nil, stdout, stderr, args...)
 	if err != nil {
 		return err
 	}

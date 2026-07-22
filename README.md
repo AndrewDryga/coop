@@ -1389,6 +1389,25 @@ coop down -v   # stop services and wipe their throwaway data
 
 Services run as their own containers on a private network the box joins — connect with
 e.g. `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in `agents/env`).
+
+**Reaching a service at the same URL inside and out.** For something the *host browser* and the
+*app in the box* must both reach at one URL — an OIDC issuer like Keycloak — give the service an
+`expose:` (container-only) port in `.agent/compose.yml`:
+
+```yaml
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak
+    expose: ["8443"]      # coop publishes this to a stable, per-workspace localhost port
+```
+
+coop assigns a stable host port per **workspace** (so parallel forks never collide), publishes it
+loopback-only, and runs a tiny raw-TCP forwarder inside the box so `https://localhost:<port>`
+resolves to Keycloak from *both* sides — the issuer string matches, no `host.docker.internal`, no
+weakened isolation. The box gets `COOP_SERVICE_KEYCLOAK_URL=http://localhost:<port>`; `coop fork ls
+--json` lists every workspace's service URLs for host tooling. (Compose project + network names are
+per-workspace too, so a fork's services and volumes are its own.)
+
 The agent never installs or hosts a database, so it can't corrupt one, and `coop down -v`
 resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
 from re-downloading the world.

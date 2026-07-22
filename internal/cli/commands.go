@@ -1272,7 +1272,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if file == "" {
 		return -1, fmt.Errorf("no %s — run 'coop init --services postgres,redis' to scaffold one", project.ComposePath(repo))
 	}
-	proj := box.ServicesProject(repo)
+	proj := box.ComposeProject(repo)
 	rel, _ := filepath.Rel(repo, file)
 	ui.Info("starting services from %s (waiting until healthy)", rel)
 	if err := box.EnsureServices(a.rt, repo, os.Stdout, os.Stderr); err != nil {
@@ -1303,7 +1303,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	if file == "" {
 		return -1, fmt.Errorf("no %s here — nothing to bring down", project.ComposePath(repo))
 	}
-	proj := box.ServicesProject(repo)
+	proj := box.ComposeProject(repo)
 	cargs := []string{"compose", "-p", proj, "-f", file, "down"}
 	if volumes {
 		cargs = append(cargs, "--volumes")
