@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
-// A per-project image (built from a repo's Dockerfile.agent) bakes that repo's toolchain
+// A per-project image (built from a repo's .agent/Dockerfile) bakes that repo's toolchain
 // at build time, so it can drift from the files that define it. We record a hash of those
 // inputs when `coop build` builds the image, and compare on a later run to nudge a rebuild.
 // (The shared base has no per-repo inputs — `coop update` keeps it fresh — so it's exempt.)
@@ -23,13 +24,14 @@ import (
 // missed or spurious *warning* — never a blocked run.
 
 // inputsHash hashes the files that define a repo's per-project image. ok is false when the
-// repo has no Dockerfile.agent (it runs on the shared base, which has no per-repo inputs).
+// repo has no box Dockerfile (it runs on the shared base, which has no per-repo inputs).
 func inputsHash(repo string) (hash string, ok bool) {
-	if !fileExists(filepath.Join(repo, "Dockerfile.agent")) {
+	dfRel := project.DockerfilePath(repo)
+	if !fileExists(filepath.Join(repo, dfRel)) {
 		return "", false
 	}
 	h := sha256.New()
-	for _, name := range []string{"Dockerfile.agent", ".tool-versions"} {
+	for _, name := range []string{dfRel, ".tool-versions"} {
 		data, err := os.ReadFile(filepath.Join(repo, name))
 		if err != nil {
 			continue // a missing .tool-versions is fine; its absence is part of the hash via the name
@@ -58,9 +60,9 @@ func StampImageInputs(cfg *config.Config, repo, img string) {
 	}
 }
 
-// StaleImageInputs reports whether repo's per-project image was built from a different
-// Dockerfile.agent/.tool-versions than are on disk now. Best-effort: no Dockerfile.agent,
-// or no recorded stamp (never built by this coop), returns false — never nag on a guess.
+// StaleImageInputs reports whether repo's per-project image was built from a different box
+// Dockerfile/.tool-versions than are on disk now. Best-effort: no box Dockerfile, or no recorded
+// stamp (never built by this coop), returns false — never nag on a guess.
 func StaleImageInputs(cfg *config.Config, repo, img string) bool {
 	hash, ok := inputsHash(repo)
 	if !ok {
@@ -151,7 +153,7 @@ func ImageBuildAge(cfg *config.Config, img string) (time.Time, bool) {
 func StalenessNudges(cfg *config.Config, repo, img string) []string {
 	var out []string
 	if StaleImageInputs(cfg, repo, img) {
-		out = append(out, "box image is stale — Dockerfile.agent/.tool-versions changed since it was built; run 'coop build'")
+		out = append(out, "box image is stale — the box Dockerfile/.tool-versions changed since it was built; run 'coop build'")
 	}
 	if builtBy, skewed := BaseImageSkew(cfg, img); skewed {
 		out = append(out, fmt.Sprintf("box image was built by coop %s and this coop expects a different box — run 'coop build' to realign them", builtBy))

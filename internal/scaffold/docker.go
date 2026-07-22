@@ -9,12 +9,13 @@ import (
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // dockerFinds is what detectDocker turned up: the repo's own Dockerfiles and compose files
-// (coop's own Dockerfile.agent / .agent/compose.yml excluded), plus the service names from
-// the first compose file.
+// (coop's own .agent/Dockerfile / .agent/compose.yml live in the hidden .agent/, never scanned),
+// plus the service names from the first compose file.
 type dockerFinds struct {
 	dockerfiles []string // repo-relative paths
 	composes    []string // repo-relative paths
@@ -64,11 +65,10 @@ func detectDocker(repo string) dockerFinds {
 	return f
 }
 
-// isDockerfile matches Dockerfile and Dockerfile.<x>, but not coop's own Dockerfile.agent.
+// isDockerfile matches Dockerfile and Dockerfile.<x>. coop's own box Dockerfile lives at
+// .agent/Dockerfile — inside the hidden .agent/ that detectDocker never scans — so it needs no
+// exclusion here.
 func isDockerfile(name string) bool {
-	if name == "Dockerfile.agent" {
-		return false
-	}
 	return name == "Dockerfile" || strings.HasPrefix(name, "Dockerfile.")
 }
 
@@ -128,7 +128,7 @@ func ComposeServiceNames(path string) []string { return composeServices(path) }
 // package list (from agents.Packages(), so it never drifts from the asdf image).
 const dockerfileSuggestion = `
   Box image — base the agent box on your image so the agent runs in your app's
-  environment. Save as Dockerfile.agent, then 'coop build':
+  environment. Save as .agent/Dockerfile, then 'coop build':
 
     FROM your-app-image:latest AS base          # or a build stage from your Dockerfile
     USER root
@@ -144,10 +144,10 @@ const dockerfileSuggestion = `
 
 // SuggestDocker prints (docs only, never writes) how to build the agent box on the repo's
 // existing Docker. It runs only when the box isn't set up yet — a Dockerized repo with no
-// Dockerfile.agent is the gap it fills; it never nags an already-configured one. The caller
+// .agent/Dockerfile is the gap it fills; it never nags an already-configured one. The caller
 // (cmdInit) runs it after the summary anchor so it reads as box-setup guidance before the steps.
 func SuggestDocker(repo string) {
-	if _, err := os.Stat(filepath.Join(repo, "Dockerfile.agent")); err == nil {
+	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(project.DockerfilePath(repo)))); err == nil {
 		return
 	}
 	f := detectDocker(repo)

@@ -23,9 +23,9 @@ func TestDetectDocker(t *testing.T) {
 	write("Dockerfile", "FROM alpine\n")
 	write("docker/Dockerfile.prod", "FROM debian\n")
 	write("docker-compose.yml", "services:\n  db:\n    image: postgres\n  redis:\n    image: redis\nvolumes:\n  pgdata:\n")
-	// coop's own files are excluded: Dockerfile.agent by name, and the sibling-services compose
-	// inside the hidden .agent/ dir (detectDocker never descends dotdirs).
-	write("Dockerfile.agent", "FROM debian\n")
+	// coop's own box files live in the hidden .agent/ dir, which detectDocker never descends —
+	// so neither the box Dockerfile nor the sibling-services compose show up as the repo's own.
+	write(".agent/Dockerfile", "FROM debian\n")
 	write(".agent/compose.yml", "services:\n  x:\n    image: y\n")
 	// a skipped dir is not descended.
 	write("node_modules/foo/Dockerfile", "FROM node\n")
@@ -59,7 +59,7 @@ func TestSuggestDocker(t *testing.T) {
 		return out
 	}
 
-	// A Dockerized repo with no Dockerfile.agent → a suggestion naming the agent layer + services.
+	// A Dockerized repo with no .agent/Dockerfile → a suggestion naming the agent layer + services.
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "Dockerfile"), []byte("FROM alpine\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -74,12 +74,15 @@ func TestSuggestDocker(t *testing.T) {
 		}
 	}
 
-	// A repo that already has Dockerfile.agent → no nagging.
-	if err := os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM debian\n"), 0o644); err != nil {
+	// A repo that already has .agent/Dockerfile → no nagging.
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM debian\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := capture(repo); got != "" {
-		t.Errorf("should not suggest when Dockerfile.agent exists:\n%s", got)
+		t.Errorf("should not suggest when .agent/Dockerfile exists:\n%s", got)
 	}
 
 	// A repo with no Docker → nothing.

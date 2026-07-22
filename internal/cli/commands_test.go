@@ -1173,7 +1173,7 @@ func TestWriteMCPStub(t *testing.T) {
 }
 
 func TestInitNextSteps(t *testing.T) {
-	// In a git repo (no Dockerfile.agent, no services) → just the edit-then-loop step.
+	// In a git repo (no box Dockerfile, no services) → just the edit-then-loop step.
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1181,8 +1181,11 @@ func TestInitNextSteps(t *testing.T) {
 	if got := initNextSteps(repo, nil); len(got) != 1 || !strings.Contains(got[0], "coop loop") {
 		t.Errorf("git repo steps = %v, want only the loop step", got)
 	}
-	// A scaffolded Dockerfile.agent + sibling services → build, up (naming the services), loop.
-	if err := os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM x"), 0o644); err != nil {
+	// A scaffolded .agent/Dockerfile + sibling services → build, up (naming the services), loop.
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got := initNextSteps(repo, []string{"postgres", "redis"})

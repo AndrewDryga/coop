@@ -12,6 +12,9 @@ import (
 
 func writeRepoFile(t *testing.T, path, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -20,22 +23,22 @@ func writeRepoFile(t *testing.T, path, content string) {
 func TestInputsHash(t *testing.T) {
 	repo := t.TempDir()
 	if _, ok := inputsHash(repo); ok {
-		t.Fatal("no Dockerfile.agent: want ok=false (shared base)")
+		t.Fatal("no .agent/Dockerfile: want ok=false (shared base)")
 	}
 
-	writeRepoFile(t, filepath.Join(repo, "Dockerfile.agent"), "FROM x\n")
+	writeRepoFile(t, filepath.Join(repo, ".agent/Dockerfile"), "FROM x\n")
 	h1, ok := inputsHash(repo)
 	if !ok || h1 == "" {
-		t.Fatalf("with Dockerfile.agent: want ok=true and a hash, got ok=%v hash=%q", ok, h1)
+		t.Fatalf("with .agent/Dockerfile: want ok=true and a hash, got ok=%v hash=%q", ok, h1)
 	}
 	if h2, _ := inputsHash(repo); h2 != h1 {
 		t.Fatalf("hash not stable: %s != %s", h2, h1)
 	}
 
-	writeRepoFile(t, filepath.Join(repo, "Dockerfile.agent"), "FROM y\n")
+	writeRepoFile(t, filepath.Join(repo, ".agent/Dockerfile"), "FROM y\n")
 	h3, _ := inputsHash(repo)
 	if h3 == h1 {
-		t.Fatal("a Dockerfile.agent change must change the hash")
+		t.Fatal("a .agent/Dockerfile change must change the hash")
 	}
 
 	writeRepoFile(t, filepath.Join(repo, ".tool-versions"), "golang 1.26.4\n")
@@ -55,10 +58,10 @@ func TestStaleImageInputs(t *testing.T) {
 	const img = "coop-test"
 
 	if StaleImageInputs(cfg, repo, img) {
-		t.Fatal("shared base (no Dockerfile.agent) must never be reported stale")
+		t.Fatal("shared base (no .agent/Dockerfile) must never be reported stale")
 	}
 
-	writeRepoFile(t, filepath.Join(repo, "Dockerfile.agent"), "FROM x\n")
+	writeRepoFile(t, filepath.Join(repo, ".agent/Dockerfile"), "FROM x\n")
 	if StaleImageInputs(cfg, repo, img) {
 		t.Fatal("an unstamped image must not be reported stale (no guessing)")
 	}
@@ -155,7 +158,7 @@ func TestImageBuildAgeAndNudges(t *testing.T) {
 
 	// Per-project images date from their inputs stamp (no meta), so age works there too.
 	cfg2 := &config.Config{BoxHome: t.TempDir()}
-	writeRepoFile(t, filepath.Join(repo, "Dockerfile.agent"), "FROM x\n")
+	writeRepoFile(t, filepath.Join(repo, ".agent/Dockerfile"), "FROM x\n")
 	StampImageInputs(cfg2, repo, "proj-img")
 	if _, ok := ImageBuildAge(cfg2, "proj-img"); !ok {
 		t.Fatal("per-project inputs stamp must date the image")

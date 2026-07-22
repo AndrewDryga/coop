@@ -129,7 +129,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	// Knowledge (rules/skills) is un-ignored at any depth so a member may carry its own; only
 	// project.yaml is top-level.
-	for _, want := range []string{"**/.agent/*\n", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/claude/", "!.agent/project.yaml"} {
+	for _, want := range []string{"**/.agent/*\n", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
@@ -172,6 +172,10 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 	}
 	if n := strings.Count(string(gi), "**/.agent/*\n"); n != 1 {
 		t.Fatalf("Coop block appears %d times, want 1:\n%s", n, gi)
+	}
+	// The .agent/Dockerfile move also un-ignores it, added to an older block exactly once.
+	if n := strings.Count(string(gi), "!**/.agent/Dockerfile"); n != 1 {
+		t.Fatalf("Dockerfile un-ignore appears %d times, want 1:\n%s", n, gi)
 	}
 }
 
@@ -842,16 +846,16 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 }
 
 func TestInitStack(t *testing.T) {
-	// --stack asdf with a .tool-versions → the asdf Dockerfile.agent (NOT compose: sibling
+	// --stack asdf with a .tool-versions → the asdf .agent/Dockerfile (NOT compose: sibling
 	// services are opt-in via `coop init`'s prompt / --services, so Init never adds db/redis).
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("golang 1.26.4\n"), 0o644)
 	if err := Init(repo, "asdf", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
-	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
+	df, err := os.ReadFile(filepath.Join(repo, ".agent/Dockerfile"))
 	if err != nil || !strings.Contains(string(df), "asdf install") {
-		t.Errorf("asdf stack Dockerfile.agent missing or wrong:\n%s", df)
+		t.Errorf("asdf stack .agent/Dockerfile missing or wrong:\n%s", df)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".agent", "compose.yml")); err == nil {
 		t.Error("Init must not scaffold .agent/compose.yml — sibling services are opt-in")
@@ -876,9 +880,9 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
-	df, err := os.ReadFile(filepath.Join(repo, "Dockerfile.agent"))
+	df, err := os.ReadFile(filepath.Join(repo, ".agent/Dockerfile"))
 	if err != nil {
-		t.Fatalf("asdf Dockerfile.agent not written: %v", err)
+		t.Fatalf("asdf .agent/Dockerfile not written: %v", err)
 	}
 	for _, want := range []string{"asdf install", ".tool-versions"} {
 		if !strings.Contains(string(df), want) {
@@ -891,8 +895,8 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	if err := Init(repo2, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(repo2, "Dockerfile.agent")); !os.IsNotExist(err) {
-		t.Error("no stack + no .tool-versions should not scaffold a Dockerfile.agent")
+	if _, err := os.Stat(filepath.Join(repo2, ".agent/Dockerfile")); !os.IsNotExist(err) {
+		t.Error("no stack + no .tool-versions should not scaffold a .agent/Dockerfile")
 	}
 
 	// A removed language stack errors even when a .tool-versions is present —

@@ -593,10 +593,10 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   detected from go.mod / *.tf / mix.exs / Cargo.toml or .tool-versions (gofmt,
   terraform fmt, mix format, cargo fmt). With nothing detected the gate is left
   neutral (it imposes no checks); at a terminal it asks which gate to add. A
-  .tool-versions (or --stack asdf) also scaffolds an asdf Dockerfile.agent.
+  .tool-versions (or --stack asdf) also scaffolds an asdf .agent/Dockerfile.
   Sibling services (db/redis) are opt-in: at a terminal it asks which to add as a
   .agent/compose.yml — none by default, or pass --services. If the repo already has
-  its own Docker and no Dockerfile.agent yet, it suggests how to build the box on it.
+  its own Docker and no .agent/Dockerfile yet, it suggests how to build the box on it.
   Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
   inert until you add a server) so there's an obvious place to declare MCP servers.
   Writes the TOP-LEVEL .agent/project.yaml (committed): in a monorepo — detected by
@@ -636,8 +636,8 @@ coop build — build the box image (stable, pinned).
   Usage: coop build
 
   Builds the shared base, or a per-project image if the repo has a
-  Dockerfile.agent — pinning versions for reproducibility. Re-run after
-  changing Dockerfile.agent or .tool-versions. For the latest, use coop update.
+  .agent/Dockerfile — pinning versions for reproducibility. Re-run after
+  changing .agent/Dockerfile or .tool-versions. For the latest, use coop update.
 
   New runs use the fresh image automatically. Editor sessions (coop acp) are
   restarted onto it transparently — they reconnect, so you don't lose the session.

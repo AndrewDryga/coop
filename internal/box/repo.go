@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // ResolveRepo returns the repo root to operate on: the override if set, else the
@@ -33,15 +35,16 @@ func ServicesProject(repo string) string {
 	return "coop-" + b.String()
 }
 
-// ComposeFileRel is the repo-relative (slash-form) path of the sibling-services compose file:
-// one committed location under .agent/, beside loop.yaml/project.yaml. ComposeFile returns it
-// when it exists to auto-run on the HOST daemon (validated first by box.ValidateComposeFile).
-const ComposeFileRel = ".agent/compose.yml"
+// ComposeFileRel is the DEFAULT repo-relative compose path (project.DefaultCompose) — the scaffold
+// write location under .agent/. At runtime ComposeFile honors box.compose from project.yaml,
+// falling back here.
+const ComposeFileRel = project.DefaultCompose
 
-// ComposeFile returns the repo's sibling-services compose file (.agent/compose.yml), or "" if it's
-// absent or empty — a zero-byte file declares no services, so auto-running `compose up` would error.
+// ComposeFile returns the repo's sibling-services compose file (box.compose, else .agent/compose.yml),
+// or "" if it's absent or empty — a zero-byte file declares no services, so auto-running
+// `compose up` would error. The path is validated in-repo by project.Load.
 func ComposeFile(repo string) string {
-	f := filepath.Join(repo, filepath.FromSlash(ComposeFileRel))
+	f := filepath.Join(repo, filepath.FromSlash(project.ComposePath(repo)))
 	if fi, err := os.Stat(f); err == nil && !fi.IsDir() && fi.Size() > 0 {
 		return f
 	}

@@ -11,6 +11,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -171,13 +172,13 @@ WORKDIR /workspace
 `
 
 // ImageForRepo decides which image a repo runs in: an explicit override wins; a
-// repo with its own Dockerfile.agent gets its own tag (so a project's toolchain
+// repo with its own box Dockerfile gets its own tag (so a project's toolchain
 // never clobbers the shared base); everything else uses the base image.
 func ImageForRepo(repo, baseImage, override string) string {
 	if override != "" {
 		return override
 	}
-	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
+	if fileExists(filepath.Join(repo, project.DockerfilePath(repo))) {
 		return ServicesProject(repo)
 	}
 	return baseImage
@@ -188,7 +189,7 @@ func ImageExists(rt runtime.Runtime, image string) bool {
 	return rt.Silent("image", "inspect", image)
 }
 
-// Build builds the box image: a repo with a Dockerfile.agent builds that (its
+// Build builds the box image: a repo with a .agent/Dockerfile builds that (its
 // own toolchain), otherwise the shared base is built from BaseDockerfile. When
 // fresh is set it adds --pull --no-cache so the base image and the npm-installed
 // agent CLIs + ACP adapters are pulled to their latest (this is `coop update`).
@@ -198,7 +199,13 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 	if err := rt.EnsureDaemon(); err != nil {
 		return err
 	}
-	if !fileExists(filepath.Join(repo, "Dockerfile.agent")) {
+	// Load once so a malformed project.yaml fails the build loudly, and to resolve box.dockerfile.
+	proj, err := project.Load(repo)
+	if err != nil {
+		return err
+	}
+	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile
+	if !fileExists(filepath.Join(repo, dfRel)) {
 		ui.Info("building %s (shared base)", cfg.BaseImage)
 		err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
 		if err == nil {
@@ -207,17 +214,17 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 		return err
 	}
 	img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
-	// Dockerfile.agent defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent with
+	// The box Dockerfile defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent with
 	// write access to the repo can author one. The build is always an explicit human action, but an
 	// untracked box definition is exactly the agent-authored case — surface it so a moved/planted
 	// file isn't built silently. Cheap visibility, not a gate.
-	if fileUntracked(repo, "Dockerfile.agent") {
-		ui.Info("note: Dockerfile.agent is untracked in git — it defines this box, and an agent can author one; review it before building")
+	if fileUntracked(repo, dfRel) {
+		ui.Info("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", dfRel)
 	}
-	ui.Info("building %s from Dockerfile.agent (this project's toolchain)", img)
+	ui.Info("building %s from %s (this project's toolchain)", img, dfRel)
 	// Build from a shadow-filtered COPY of the repo, not the repo itself: secret shadowing is a
 	// run-time -v overlay, so without this a `COPY .env /` / `COPY . .` in an agent-authored
-	// Dockerfile.agent would bake a shadowed secret into a persistent (pushable) image layer. The
+	// .agent/Dockerfile would bake a shadowed secret into a persistent (pushable) image layer. The
 	// staged context omits every shadowed path (and .git), so a targeted COPY of a secret fails the
 	// build loudly instead of leaking silently.
 	ctx, cleanup, err := stageBuildContext(repo)
@@ -229,7 +236,7 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 	if fresh {
 		args = append(args, "--pull", "--no-cache")
 	}
-	args = append(args, "-t", img, "-f", filepath.Join(ctx, "Dockerfile.agent"), ctx)
+	args = append(args, "-t", img, "-f", filepath.Join(ctx, dfRel), ctx)
 	err = buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, args...))
 	if err == nil {
 		StampImageInputs(cfg, repo, img) // record inputs so a later run can flag drift
@@ -263,7 +270,7 @@ func baseBuildArgs(cfg *config.Config, fresh bool) []string {
 }
 
 // stageBuildContext copies repo into a throwaway dir, OMITTING every shadowed path (NewShadowDecider
-// — the same denylist that hides secrets from a run) and .git, so a Dockerfile.agent build can't bake
+// — the same denylist that hides secrets from a run) and .git, so a .agent/Dockerfile build can't bake
 // an in-repo secret into an image layer. Returns the staged dir and a cleanup func. A non-secret
 // COPY still works (the file is present); a COPY of a shadowed file fails (it's absent), which is the
 // intended loud failure rather than a silent leak.
@@ -349,7 +356,7 @@ func buildErr(code int, err error) error {
 
 // fileUntracked reports whether repo is a git repo in which name (a repo-relative path) is NOT
 // tracked (committed or staged) — the agent-authored case worth surfacing for files coop then
-// builds or auto-runs (Dockerfile.agent, .agent/compose.yml). It uses read-only `ls-files`
+// builds or auto-runs (.agent/Dockerfile, .agent/compose.yml). It uses read-only `ls-files`
 // (hardened: no fsmonitor/hooks fire on the agent-writable repo) and returns false for a non-git
 // repo, where "untracked" isn't a meaningful signal.
 func fileUntracked(repo, name string) bool {

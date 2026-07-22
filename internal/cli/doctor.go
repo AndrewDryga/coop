@@ -184,7 +184,7 @@ func doctorCheckUID(rep *report, uid string, usingReal bool) {
 	case !usingReal:
 		fmt.Printf("  %s the box uid is %s (alpine fallback runs as root; build the box image to check its USER)\n", ui.Dim("·"), uid)
 	case uid == "0":
-		rep.no("the box runs as ROOT (uid 0) — give Dockerfile.agent a non-root USER")
+		rep.no("the box runs as ROOT (uid 0) — give .agent/Dockerfile a non-root USER")
 	default:
 		rep.ok(fmt.Sprintf("the box runs as non-root (uid %s)", uid))
 	}

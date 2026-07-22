@@ -9,7 +9,7 @@ import (
 )
 
 // stageBuildContext must OMIT shadowed secrets (and .git) from the Docker build context — so a
-// Dockerfile.agent COPY can't bake them into an image layer — while keeping every non-secret file.
+// .agent/Dockerfile COPY can't bake them into an image layer — while keeping every non-secret file.
 func TestStageBuildContext(t *testing.T) {
 	repo := t.TempDir()
 	write := func(rel, body string) {
@@ -22,7 +22,7 @@ func TestStageBuildContext(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("Dockerfile.agent", "FROM x\n")
+	write(".agent/Dockerfile", "FROM x\n")
 	write("main.go", "package main\n")
 	write("config/app.yaml", "ok\n")
 	write(".env", "SECRET=1\n")          // shadowed
@@ -37,7 +37,7 @@ func TestStageBuildContext(t *testing.T) {
 	defer cleanup()
 
 	exists := func(rel string) bool { _, e := os.Lstat(filepath.Join(ctx, rel)); return e == nil }
-	for _, keep := range []string{"Dockerfile.agent", "main.go", "config/app.yaml", "config"} {
+	for _, keep := range []string{".agent/Dockerfile", "main.go", "config/app.yaml", "config"} {
 		if !exists(keep) {
 			t.Errorf("staged context should keep non-secret %q", keep)
 		}
@@ -104,9 +104,9 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	}
 }
 
-// An agent can author a Dockerfile.agent (it defines the next box); coop flags an untracked one
+// An agent can author the box Dockerfile (it defines the next box); coop flags an untracked one
 // before building. Tracked → quiet; non-git → no signal.
-func TestDockerfileAgentUntracked(t *testing.T) {
+func TestBoxDockerfileUntracked(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -119,27 +119,33 @@ func TestDockerfileAgentUntracked(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
+	const df = ".agent/Dockerfile"
+	write := func(dir string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(df)), []byte("FROM x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	repo := t.TempDir()
 	gitc(repo, "init", "-q")
-	if err := os.WriteFile(filepath.Join(repo, "Dockerfile.agent"), []byte("FROM x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	write(repo)
 	// Present but untracked → flagged.
-	if !fileUntracked(repo, "Dockerfile.agent") {
-		t.Error("an untracked Dockerfile.agent should be flagged")
+	if !fileUntracked(repo, df) {
+		t.Error("an untracked box Dockerfile should be flagged")
 	}
 	// Tracked → not flagged.
-	gitc(repo, "add", "Dockerfile.agent")
+	gitc(repo, "add", df)
 	gitc(repo, "commit", "-qm", "add")
-	if fileUntracked(repo, "Dockerfile.agent") {
-		t.Error("a committed Dockerfile.agent should not be flagged")
+	if fileUntracked(repo, df) {
+		t.Error("a committed box Dockerfile should not be flagged")
 	}
 	// Non-git dir → no signal (false), even with the file present.
 	nogit := t.TempDir()
-	if err := os.WriteFile(filepath.Join(nogit, "Dockerfile.agent"), []byte("FROM x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if fileUntracked(nogit, "Dockerfile.agent") {
+	write(nogit)
+	if fileUntracked(nogit, df) {
 		t.Error("a non-git repo should not be flagged (untracked isn't meaningful there)")
 	}
 }

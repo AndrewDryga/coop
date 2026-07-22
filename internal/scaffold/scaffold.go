@@ -1,6 +1,6 @@
 // Package scaffold writes the Coop working set into a repo: AGENTS.md, the
 // .agent/ queue and agent fallbacks, optional project adapters, the workflow
-// skills, and optionally a per-project Dockerfile.agent + .agent/compose.yml.
+// skills, and optionally a per-project .agent/Dockerfile + .agent/compose.yml.
 // Every template is embedded in the binary, so one `coop` binary can scaffold
 // any repo with no extra files.
 package scaffold
@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/taskstate"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -24,7 +25,7 @@ var templates embed.FS
 
 // Init scaffolds the working set into repo. The toolchain is driven by
 // .tool-versions: with no --stack a present .tool-versions auto-scaffolds the asdf
-// Dockerfile.agent; `--stack asdf` forces it. gateLangs are the stacks the commit hooks
+// .agent/Dockerfile; `--stack asdf` forces it. gateLangs are the stacks the commit hooks
 // check (from DetectStacks, or the caller's interactive prompt); empty means a neutral gate.
 // Per-file progress prints as faint ui.Detail lines; the caller prints the summary and the
 // next-step actions. Existing files are never clobbered.
@@ -143,7 +144,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	case "":
 		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err == nil {
 			stack = "asdf"
-			ui.Detail("detected .tool-versions — scaffolding an asdf-driven Dockerfile.agent")
+			ui.Detail("detected .tool-versions — scaffolding an asdf-driven .agent/Dockerfile")
 		}
 	case "asdf":
 		// scaffolded below
@@ -156,7 +157,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 			return fmt.Errorf("--stack asdf needs a .tool-versions in the repo\n" +
 				"  e.g. `echo 'elixir 1.18.3-otp-27' > .tool-versions`, then re-run")
 		}
-		if err := s.writeIfAbsent(filepath.Join(repo, "Dockerfile.agent"), "templates/dockerfile/asdf", 0o644); err != nil {
+		if err := s.writeIfAbsent(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile)), "templates/dockerfile/asdf", 0o644); err != nil {
 			return err
 		}
 	}
@@ -376,7 +377,7 @@ func (s *scaffolder) updateGitignore() error {
 	// config — is un-ignored at any depth as well, since a large monorepo member may carry its own;
 	// only project.yaml is TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays
 	// root-anchored.
-	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/claude/\n!**/.agent/loop.yaml\n!**/.agent/compose.yml\n!.agent/project.yaml\n" +
+	const block = "\n# coop working state (commit knowledge, ignore state)\n**/.agent/*\n!**/.agent/rules/\n!**/.agent/skills/\n!**/.agent/presets/\n!**/.agent/claude/\n!**/.agent/loop.yaml\n!**/.agent/compose.yml\n!**/.agent/Dockerfile\n!.agent/project.yaml\n" +
 		"\n# preset native subagents coop generates in the box (coop-<role>) — never committed\n.claude/agents/coop-*.md\n" +
 		"\n# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n!.gemini/\n.gemini/*\n!.gemini/skills\n"
 	if !strings.Contains(content, "**/.agent/*") {
@@ -386,6 +387,10 @@ func (s *scaffolder) updateGitignore() error {
 	// Claude fallback and would otherwise keep the new source ignored forever.
 	if !strings.Contains(content, "!**/.agent/claude/") {
 		content = strings.Replace(content, "!**/.agent/skills/\n", "!**/.agent/skills/\n!**/.agent/claude/\n", 1)
+	}
+	// Older scaffolds predate the .agent/Dockerfile move and would keep it ignored — un-ignore it.
+	if strings.Contains(content, "**/.agent/*") && !strings.Contains(content, "!**/.agent/Dockerfile") {
+		content = strings.Replace(content, "!**/.agent/compose.yml\n", "!**/.agent/compose.yml\n!**/.agent/Dockerfile\n", 1)
 	}
 	if content == orig {
 		return nil // already up to date

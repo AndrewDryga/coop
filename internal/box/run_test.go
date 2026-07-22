@@ -938,7 +938,7 @@ func TestBuildArgs(t *testing.T) {
 	if a := baseBuildArgs(pinned, false); !containsSeq(a, []string{"--build-arg", "AGENT_PACKAGES=@anthropic-ai/claude-code@1.2.3"}) {
 		t.Errorf("pinned packages not forwarded: %v", a)
 	}
-	// (A repo with a Dockerfile.agent builds from a shadow-filtered staged context — see
+	// (A repo with a .agent/Dockerfile builds from a shadow-filtered staged context — see
 	// TestStageBuildContext; that path lives in Build, not baseBuildArgs.)
 }
 

@@ -22,14 +22,17 @@ func TestServicesProject(t *testing.T) {
 func TestImageForRepo(t *testing.T) {
 	dir := t.TempDir()
 	if got := ImageForRepo(dir, "coop-box", ""); got != "coop-box" {
-		t.Errorf("no Dockerfile.agent -> %q, want coop-box", got)
+		t.Errorf("no .agent/Dockerfile -> %q, want coop-box", got)
 	}
 	if got := ImageForRepo(dir, "coop-box", "custom"); got != "custom" {
 		t.Errorf("override -> %q, want custom", got)
 	}
-	os.WriteFile(filepath.Join(dir, "Dockerfile.agent"), []byte("FROM scratch"), 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, ".agent", "Dockerfile"), []byte("FROM scratch"), 0o644)
 	if got := ImageForRepo(dir, "coop-box", ""); got != ServicesProject(dir) {
-		t.Errorf("Dockerfile.agent -> %q, want %q", got, ServicesProject(dir))
+		t.Errorf(".agent/Dockerfile -> %q, want %q", got, ServicesProject(dir))
 	}
 }
 

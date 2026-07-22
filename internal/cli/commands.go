@@ -1270,7 +1270,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	}
 	file := box.ComposeFile(repo)
 	if file == "" {
-		return -1, errors.New("no .agent/compose.yml — run 'coop init --services postgres,redis' to scaffold one")
+		return -1, fmt.Errorf("no %s — run 'coop init --services postgres,redis' to scaffold one", project.ComposePath(repo))
 	}
 	proj := box.ServicesProject(repo)
 	rel, _ := filepath.Rel(repo, file)
@@ -1301,7 +1301,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	}
 	file := box.ComposeFile(repo)
 	if file == "" {
-		return -1, errors.New("no .agent/compose.yml here — nothing to bring down")
+		return -1, fmt.Errorf("no %s here — nothing to bring down", project.ComposePath(repo))
 	}
 	proj := box.ServicesProject(repo)
 	cargs := []string{"compose", "-p", proj, "-f", file, "down"}
@@ -1402,7 +1402,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		return 0, err
 	}
 	// One "coop:" anchor closes the dim per-file log; then the optional Docker-box guidance
-	// (only when the repo has its own Docker and no Dockerfile.agent yet); then the actions you
+	// (only when the repo has its own Docker and no .agent/Dockerfile yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
 	ui.Info("scaffolded into %s", repo)
 	if len(agentDirs) > 0 {
@@ -1445,7 +1445,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 }
 
 // initNextSteps is the short list of actions to run after scaffolding, built from what landed: a
-// build step when there's a Dockerfile.agent, a `coop up` when sibling services were added, and
+// build step when there's a .agent/Dockerfile, a `coop up` when sibling services were added, and
 // always the edit-then-loop step. Assembled here (not in scaffold) so the whole list is shown in
 // one block.
 func initNextSteps(repo string, services []string) []string {
@@ -1455,8 +1455,8 @@ func initNextSteps(repo string, services []string) []string {
 	if !pathExists(filepath.Join(repo, ".git")) {
 		steps = append(steps, "`git init`  (coop's forks and loop need a git repo)")
 	}
-	if fileExists(filepath.Join(repo, "Dockerfile.agent")) {
-		steps = append(steps, "review Dockerfile.agent, then `coop build`")
+	if dfRel := project.DockerfilePath(repo); fileExists(filepath.Join(repo, dfRel)) {
+		steps = append(steps, fmt.Sprintf("review %s, then `coop build`", dfRel))
 	}
 	if len(services) > 0 {
 		steps = append(steps, fmt.Sprintf("`coop up`  (starts %s for the box)", strings.Join(services, " + ")))

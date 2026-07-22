@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **The box image and sidecar compose paths are configurable, and the box Dockerfile now lives at
+  `.agent/Dockerfile`.** Set `box.dockerfile` / `box.compose` in `.agent/project.yaml` to point at
+  any in-repo file (reuse an existing `Dockerfile`, or your own `docker-compose.yml`); they default
+  to `.agent/Dockerfile` (moved from the repo-root `Dockerfile.agent`) and `.agent/compose.yml`.
+  `coop init` scaffolds and git-tracks `.agent/Dockerfile`.
 
 ## 6.3.1
 

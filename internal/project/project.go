@@ -33,6 +33,13 @@ import (
 // File is the repo-relative path of the project config.
 const File = ".agent/project.yaml"
 
+// Default box-input paths when project.yaml doesn't set box.dockerfile / box.compose. Both live
+// under .agent/ (coop's committed home) — the Dockerfile alongside the sidecar compose file.
+const (
+	DefaultDockerfile = ".agent/Dockerfile"
+	DefaultCompose    = ".agent/compose.yml"
+)
+
 // The host-port window: high, unprivileged, and away from the common dev ports (3000/5173/8080) so a
 // coop-assigned host port rarely clashes with a service you're already running.
 const (
@@ -57,6 +64,9 @@ type Serve struct {
 // user's own setting (env/conf) or coop's built-in default. The booleans are pointers because
 // absent must stay distinguishable from false (their defaults are true).
 type Box struct {
+	Dockerfile string `yaml:"dockerfile"` // box image definition, repo-relative ("" ⇒ .agent/Dockerfile)
+	Compose    string `yaml:"compose"`    // sidecar services compose file, repo-relative ("" ⇒ .agent/compose.yml)
+
 	Egress  string `yaml:"egress"`  // "" (unset) | "open" | "none" — anything else fails Load
 	AutoUp  *bool  `yaml:"auto_up"` // auto-start .agent/compose.yml services (default true)
 	Network *bool  `yaml:"network"` // join the sibling-services network (default true)
@@ -107,7 +117,67 @@ func Load(repo string) (*Project, error) {
 			return nil, fmt.Errorf("%s: box.pids %q — use a positive integer, or 0/unlimited for no cap", File, p.Box.Pids)
 		}
 	}
+	if p.Box.Dockerfile, err = boxRelPath("dockerfile", p.Box.Dockerfile); err != nil {
+		return nil, err
+	}
+	if p.Box.Compose, err = boxRelPath("compose", p.Box.Compose); err != nil {
+		return nil, err
+	}
 	return &p, nil
+}
+
+// boxRelPath validates an optional repo-relative box path (box.dockerfile / box.compose): empty
+// stays empty (the default applies later); otherwise it must be a relative path inside the repo,
+// returned cleaned — the same tighten-only rule as subprojects, so a committed file can't point
+// coop's build/compose at something outside the repo.
+func boxRelPath(field, val string) (string, error) {
+	if val == "" {
+		return "", nil
+	}
+	clean := filepath.Clean(val)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s: box.%s %q must be a relative path inside the repo", File, field, val)
+	}
+	return clean, nil
+}
+
+// DockerfileRel / ComposeRel project the box-input paths off a loaded Project: the configured
+// value, else the default. Callers that already hold a *Project (e.g. Build, which Loads to fail
+// loudly on a bad file) use these; the package-level helpers below are for the path-check sites.
+func (p *Project) DockerfileRel() string {
+	if p.Box.Dockerfile != "" {
+		return p.Box.Dockerfile
+	}
+	return DefaultDockerfile
+}
+
+func (p *Project) ComposeRel() string {
+	if p.Box.Compose != "" {
+		return p.Box.Compose
+	}
+	return DefaultCompose
+}
+
+// DockerfilePath returns the repo-relative path to the box's Dockerfile — box.dockerfile from
+// project.yaml, else DefaultDockerfile. Best-effort: a project.yaml that won't load (which the
+// build/run paths surface loudly on their own Load) falls back to the default here rather than
+// erroring, so path-existence checks stay total.
+func DockerfilePath(repo string) string {
+	p, err := Load(repo)
+	if err != nil {
+		return DefaultDockerfile
+	}
+	return p.DockerfileRel()
+}
+
+// ComposePath returns the repo-relative path to the sidecar compose file — box.compose from
+// project.yaml, else DefaultCompose. Best-effort, like DockerfilePath.
+func ComposePath(repo string) string {
+	p, err := Load(repo)
+	if err != nil {
+		return DefaultCompose
+	}
+	return p.ComposeRel()
 }
 
 // HostPort maps a repo + container port to a host port deterministically: the same project always

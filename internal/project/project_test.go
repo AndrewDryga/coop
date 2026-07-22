@@ -96,6 +96,33 @@ func TestLoadBoxGate(t *testing.T) {
 	}
 }
 
+// TestBoxDockerfileComposePaths: box.dockerfile / box.compose resolve to their configured value,
+// else the .agent/ defaults; an escaping or absolute path is rejected at Load.
+func TestBoxDockerfileComposePaths(t *testing.T) {
+	// Absent project.yaml (and unset keys) → the defaults.
+	empty := t.TempDir()
+	if got := DockerfilePath(empty); got != DefaultDockerfile {
+		t.Errorf("default dockerfile = %q, want %q", got, DefaultDockerfile)
+	}
+	if got := ComposePath(empty); got != DefaultCompose {
+		t.Errorf("default compose = %q, want %q", got, DefaultCompose)
+	}
+	// Configured overrides win (and are cleaned).
+	repo := writeProject(t, "box:\n  dockerfile: build/box.Dockerfile\n  compose: ./docker-compose.yml\n")
+	if got := DockerfilePath(repo); got != "build/box.Dockerfile" {
+		t.Errorf("override dockerfile = %q, want build/box.Dockerfile", got)
+	}
+	if got := ComposePath(repo); got != "docker-compose.yml" {
+		t.Errorf("override compose = %q, want docker-compose.yml", got)
+	}
+	// A path that escapes or leaves the repo is rejected at Load (tighten-only, like subprojects).
+	for _, bad := range []string{"box:\n  dockerfile: ../evil\n", "box:\n  compose: /etc/passwd\n"} {
+		if _, err := Load(writeProject(t, bad)); err == nil {
+			t.Errorf("expected an error for out-of-repo box path:\n%s", bad)
+		}
+	}
+}
+
 // TestTaskDirs: single repo → just .agent/tasks; monorepo → each subproject's queue (+ root's if it
 // has one). Falls back to .agent/tasks when there's no project.yaml.
 func TestTaskDirs(t *testing.T) {

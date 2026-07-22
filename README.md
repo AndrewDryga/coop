@@ -43,7 +43,7 @@ It's the working tooling behind two write-ups:
 - [Fusion](#fusion-a-governed-council) — a council of models that argues before it commits
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · a fleet
-- [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `Dockerfile.agent` · services · dev-server ports
+- [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `.agent/Dockerfile` · services · dev-server ports
 - [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Layout & development](#layout--development)
 
 ---
@@ -1036,7 +1036,7 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 > **Services** work too — if the repo has a `.agent/compose.yml`, run `coop up` first and
 > the ACP box joins the same network.
 > **Custom images** must carry the ACP adapters: `coop init` scaffolds them in; for an
-> older/hand-written `Dockerfile.agent`, add `@agentclientprotocol/claude-agent-acp@latest`
+> older/hand-written `.agent/Dockerfile`, add `@agentclientprotocol/claude-agent-acp@latest`
 > and `@agentclientprotocol/codex-acp@latest` to its `npm install -g` line (else `coop acp` fails with
 > `codex-acp: not found`).
 
@@ -1281,7 +1281,7 @@ Dev Containers + Compose model, minus the ceremony.
 If your repo pins versions in a `.tool-versions` (asdf), the base box provisions that
 toolchain at runtime — resolved from the working dir up the tree, or
 `~/.tool-versions` — and caches it in a shared volume. So a repo with *just* a
-`.tool-versions` (no `Dockerfile.agent`, no scaffolding) gets its toolchain with zero
+`.tool-versions` (no `.agent/Dockerfile`, no scaffolding) gets its toolchain with zero
 setup:
 
 ```bash
@@ -1293,25 +1293,30 @@ The first install of a new toolchain can be slow (e.g. Erlang compiles), then it
 reused across runs and repos. Set `COOP_NO_ASDF=1` (in `agents/env`) to skip provisioning
 from `.tool-versions`; coop still repairs a stale persisted Node shim when needed so the
 agent CLIs keep running. For a baked, fully-reproducible image instead,
-`coop init --stack asdf` scaffolds an asdf `Dockerfile.agent` that installs the same
+`coop init --stack asdf` scaffolds an asdf `.agent/Dockerfile` that installs the same
 `.tool-versions` at build time.
 
-### `Dockerfile.agent` — a per-project image
+### `.agent/Dockerfile` — a per-project image
 
 ```bash
-coop init --stack asdf   # writes an asdf Dockerfile.agent (from .tool-versions)
+coop init --stack asdf   # writes an asdf .agent/Dockerfile (from .tool-versions)
 coop build               # builds it, tagged coop-<repo-name> — its own image
 ```
 
-A repo with its own `Dockerfile.agent` gets its own image tag, so projects never
+A repo with its own `.agent/Dockerfile` gets its own image tag, so projects never
 collide, and every `coop`, `coop loop`, `coop fork`, `coop acp` in that repo uses it.
 The scaffolded one is the asdf image — it bakes in the exact `.tool-versions`
 toolchain (versions live there, not in the Dockerfile). For anything more exotic,
-hand-write a `Dockerfile.agent` (see the box contract below). When the agent needs a new
+hand-write a `.agent/Dockerfile` (see the box contract below). When the agent needs a new
 system package, add it to the `RUN` line and `coop build` again — the dependency
 *graduates into the image* instead of being installed each run. If you change
-`Dockerfile.agent` or `.tool-versions` but forget to rebuild, `coop` notices on the next
+`.agent/Dockerfile` or `.tool-versions` but forget to rebuild, `coop` notices on the next
 run and reminds you to `coop build` (it records the image's inputs at build time).
+
+Prefer to keep the box definition elsewhere — reuse a stage of your app's existing
+`Dockerfile`, or point sidecars at your own `docker-compose.yml` instead of maintaining a
+separate one? Set `box.dockerfile` / `box.compose` in `.agent/project.yaml` (repo-relative
+paths); they default to `.agent/Dockerfile` and `.agent/compose.yml`.
 
 <details><summary><b>The box contract (build any base)</b></summary>
 
@@ -1456,7 +1461,7 @@ turn them off.
 | Var | Default | |
 |---|---|---|
 | `COOP_RUNTIME` | auto | `container` / `docker` / `podman` |
-| `COOP_IMAGE` | (auto) | force a specific image (overrides `Dockerfile.agent` detection) |
+| `COOP_IMAGE` | (auto) | force a specific image (overrides `.agent/Dockerfile` detection) |
 | `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
 | `COOP_AGENT_PACKAGES` | (latest) | pin the global agent + ACP npm specs for a reproducible `coop build` |
 | `COOP_REPO` | (git toplevel) | the repo to operate on, overriding cwd detection |
@@ -1477,7 +1482,7 @@ The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
 `COOP_NO_NEW_PRIVILEGES`) apply on docker and podman; Apple's `container` CLI differs,
 so they're skipped there for now. On docker/podman the box also runs with **all Linux
 capabilities dropped** (`--cap-drop ALL`) — the agent workloads need none, and it keeps
-root-in-container (a repo `Dockerfile.agent` that does `USER root`) from holding
+root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holding
 `CAP_DAC_OVERRIDE` / `CAP_NET_RAW` / `CAP_MKNOD` and friends.
 
 **Agents & config**
@@ -1535,7 +1540,7 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 | Symptom | Fix |
 |---|---|
 | **"no container runtime found"** | Install Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman, then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
-| **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `Dockerfile.agent` (its own image). |
+| **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `.agent/Dockerfile` (its own image). |
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
@@ -1546,13 +1551,13 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 | **A loop's live view misrenders provider activity** | Run it with `COOP_STREAM_TRACE=1`; each streaming attempt writes byte-exact raw JSONL plus Coop's rendered lines under `.agent/runs/<run>.streams/`. The files may contain prompts, tool inputs, and model output — treat them as sensitive. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
 | **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
-| **"box image is stale … run 'coop build'"** | You changed `Dockerfile.agent` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
+| **"box image is stale … run 'coop build'"** | You changed `.agent/Dockerfile` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
 | **A scaffolded `db` (postgres:18) exits 1 on `coop up`** | Scaffolds from before this fix mounted `pgdata` at `/var/lib/postgresql/data`, which postgres 18+ refuses (it wants a single mount at `/var/lib/postgresql`). Edit `.agent/compose.yml` and move the mount up one level. New scaffolds are already fixed. |
 
 ## Layout & development
 
 A single static Go binary plus a config folder. A repo you work on optionally carries a
-`Dockerfile.agent` (its toolchain) and `.agent/compose.yml` (its services):
+`.agent/Dockerfile` (its toolchain) and `.agent/compose.yml` (its services):
 
 ```
 main.go             entrypoint

@@ -1074,7 +1074,7 @@ func boxLimits(cfg *config.Config, runtimeName string) []string {
 		a = append(a, "--security-opt", "no-new-privileges")
 	}
 	// Drop every Linux capability: the agent workloads (node, npm, asdf, git) need none of
-	// Docker's default set, and dropping them tightens the posture for a repo Dockerfile.agent
+	// Docker's default set, and dropping them tightens the posture for a repo .agent/Dockerfile
 	// that runs USER root — root-in-container then holds no CAP_DAC_OVERRIDE / CAP_NET_RAW /
 	// CAP_MKNOD / CAP_SYS_CHROOT to abuse. Add one back only if a concrete need appears.
 	a = append(a, "--cap-drop", "ALL")
