@@ -131,6 +131,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop tasks watch", "live board of the queue + active forks")
 	row("coop tasks add \"<title>\"", "add a task (then claim/block/unblock/done)")
 	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
+	row("coop context", "compile the docs relevant to touched paths")
 	row("coop backlog", "park unscheduled ideas; promote when ready")
 
 	group("SERVICES — the box's .agent/compose.yml sidecars")
@@ -631,6 +632,32 @@ var commandHelp = map[string]string{
   goes straight to the queue ('coop tasks add'), never here. Defaults to .agent/tasks/ — or, in
   a monorepo, every subproject's queue (see coop tasks): ls rolls up across them and rm/promote
   find the item in whichever queue holds it, while add needs a single --tasks.`,
+
+	"context": `coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
+
+  Usage: coop context [--changed] [--task <id>] [--json | --rendered] [paths...]
+
+  Selects which committed docs an agent needs for the paths in play — canonical
+  AGENTS.md/CLAUDE.md (always, whole) plus the .agent/project.yaml 'context.routes'
+  whose globs match — so a session carries less than the whole repo's instructions.
+
+  Scope is DETERMINISTIC (never inferred from a prompt), from any of:
+    paths...         explicit repo-relative paths
+    --changed        paths git reports changed (staged, unstaged, untracked)
+    --task <id>      the paths a queued task declares (a 'paths:' frontmatter field)
+    (current subproject, when run inside one)
+
+  Output: a report of each file + the route that selected it; --json for the same
+  as data; --rendered to print the compiled content itself (canonical first, whole).
+  A route include that is missing or escapes the repo is an error; canonical files
+  are discovered, never truncated. Config comes from the committed project.yaml (so a
+  fork inherits the parent's routes); scope comes from the fork's own tree.
+
+  Define routes in .agent/project.yaml:
+    context:
+      routes:
+        - paths: ["portal/**", "**/*.ex"]
+          include: [.agent/kb/portal.md]`,
 
 	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
 

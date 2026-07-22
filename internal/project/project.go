@@ -51,8 +51,23 @@ const (
 type Project struct {
 	Subprojects []string `yaml:"subprojects"` // monorepo member dirs (repo-relative), each its own coop project
 	Serve       Serve    `yaml:"serve"`
-	Box         Box      `yaml:"box"`  // committed box policy (below an explicit COOP_* setting)
-	Gate        string   `yaml:"gate"` // fork-merge revalidation command (an explicit COOP_GATE wins)
+	Box         Box      `yaml:"box"`     // committed box policy (below an explicit COOP_* setting)
+	Context     Context  `yaml:"context"` // path-routed instruction/rule/KB compilation (coop context)
+	Gate        string   `yaml:"gate"`    // fork-merge revalidation command (an explicit COOP_GATE wins)
+}
+
+// Context is the path-routed context configuration: which committed docs to compile for a given
+// scope (touched paths). See internal/contextc for the compiler; canonical AGENTS.md/CLAUDE.md are
+// always included regardless of routes.
+type Context struct {
+	Routes []Route `yaml:"routes"`
+}
+
+// Route includes its Docs whenever any of its Paths globs matches a scope path. Both are
+// repo-relative (validated in Load); Paths support `*` within a segment and `**` across segments.
+type Route struct {
+	Paths   []string `yaml:"paths"`   // repo-relative globs (e.g. "portal/**", "**/*.ex")
+	Include []string `yaml:"include"` // repo-relative docs to compile when a path matches
 }
 
 // Serve is the serving config: container ports to publish.
@@ -122,6 +137,24 @@ func Load(repo string) (*Project, error) {
 	}
 	if p.Box.Compose, err = boxRelPath("compose", p.Box.Compose); err != nil {
 		return nil, err
+	}
+	// context.routes: every include doc and match glob must be a relative path inside the repo — the
+	// compiler reads committed files on the host from a possibly-untrusted repo, so a route can never
+	// point outside it (a missing include is caught at compile time, when it's actually selected).
+	for i := range p.Context.Routes {
+		r := &p.Context.Routes[i]
+		for j, inc := range r.Include {
+			clean := filepath.Clean(inc)
+			if inc == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("%s: context.routes[%d].include %q must be a relative path inside the repo", File, i, inc)
+			}
+			r.Include[j] = clean
+		}
+		for _, g := range r.Paths {
+			if g == "" || filepath.IsAbs(g) || g == ".." || strings.HasPrefix(g, "../") {
+				return nil, fmt.Errorf("%s: context.routes[%d].paths %q must be a non-empty relative glob inside the repo", File, i, g)
+			}
+		}
 	}
 	return &p, nil
 }

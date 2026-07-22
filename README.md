@@ -1462,6 +1462,34 @@ For a fully reproducible image, also pin the tool versions: set
 `COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@2.1.186 @openai/codex@0.142.0 …"` (the full
 list is in `internal/agent/*.go`).
 
+### Path-routed context (`coop context`)
+
+In a big repo, an agent doesn't need every rule and KB card for every change. `coop context`
+compiles just the committed docs relevant to the paths in play — the canonical `AGENTS.md`/
+`CLAUDE.md` (always, whole) plus the routes whose globs match — so a session carries less.
+
+```yaml
+# .agent/project.yaml
+context:
+  routes:
+    - paths: [portal/**, "**/*.ex"]   # * within a segment, ** across segments
+      include: [.agent/kb/portal.md]  # repo-relative docs to add when a path matches
+```
+
+```bash
+coop context --changed              # scope = the paths git reports changed
+coop context --task <id>            # scope = a task's declared `paths:` frontmatter
+coop context portal/lib/user.ex     # scope = explicit repo-relative paths
+coop context --changed --json       # same, as data (files + the route that selected each)
+coop context --changed --rendered   # the compiled content itself, canonical first
+```
+
+Scope is **deterministic** — explicit paths, git-changed paths, a task's declared paths, or the
+current subproject — never inferred from a prompt. A route include that's missing or escapes the
+repo is an error; canonical instructions are never summarized or truncated. Config comes from the
+committed `project.yaml` (so a fork inherits the parent's routes) while scope comes from the fork's
+own tree.
+
 ## Configuration
 
 Set via environment variables, or `~/.config/coop/coop.conf` (`KEY=VALUE` lines, same

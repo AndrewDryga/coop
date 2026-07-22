@@ -97,6 +97,14 @@ func projectYAML(subprojects []string) string {
 #   cpus: "4"
 #   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
 
+# context: which committed docs 'coop context' compiles for a given scope. Canonical
+# AGENTS.md/CLAUDE.md are always included; each route adds its docs when a touched path matches
+# one of its globs (* within a segment, ** across segments).
+# context:
+#   routes:
+#     - paths: [portal/**, "**/*.ex"]
+#       include: [.agent/kb/portal.md]
+
 # gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
 # failure). Same shape as COOP_GATE; an explicit COOP_GATE wins.
 # gate: make check

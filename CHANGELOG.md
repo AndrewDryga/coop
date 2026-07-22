@@ -13,6 +13,14 @@
   missing), passing it in as a build-arg — so your box gets coop's agent CLIs, browser libraries,
   and security setup, and you add only your own toolchain.
 
+- **`coop context` compiles the committed docs relevant to the paths in play.** A new
+  `context.routes` map in `.agent/project.yaml` maps path globs (`*` within a segment, `**` across)
+  to instruction/rule/KB docs; `coop context [--changed] [--task <id>] [paths…]` (plus `--json` and
+  `--rendered`) selects the canonical `AGENTS.md`/`CLAUDE.md` (always, whole) plus every route whose
+  glob matches a deterministic scope path — explicit paths, git-changed paths, a task's declared
+  `paths:`, or the current subproject, never inferred from a prompt — deduped, reported with the
+  route that chose each. A missing or repo-escaping include is rejected.
+
 ## 6.3.1
 
 - **`coop tasks --blocked` works without the `ls`.** A bare leading flag on `coop tasks` now
