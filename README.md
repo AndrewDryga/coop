@@ -1346,8 +1346,8 @@ box and add only your toolchain; `coop build` resolves the base image and passes
 first if needed):
 
 ```dockerfile
-ARG COOP_BASE_IMAGE
-FROM ${COOP_BASE_IMAGE}   # agent CLIs + ACP adapters, asdf, browser libs, non-root node — all inherited
+ARG COOP_BASE_IMAGE=coop-box   # coop build overrides this with the resolved base
+FROM ${COOP_BASE_IMAGE}        # agent CLIs + ACP adapters, asdf, browser libs, non-root node — all inherited
 USER root
 RUN <install your toolchain>
 USER node

@@ -131,8 +131,8 @@ const dockerfileSuggestion = `
   then 'coop build'. Simplest: inherit coop's box (agent CLIs + ACP adapters, browser
   libraries, security setup) and add just your toolchain:
 
-    ARG COOP_BASE_IMAGE
-    FROM ${COOP_BASE_IMAGE}                      # coop build resolves + passes the base
+    ARG COOP_BASE_IMAGE=coop-box                # coop build overrides this with the resolved base
+    FROM ${COOP_BASE_IMAGE}
     USER root
     RUN apt-get update && apt-get install -y --no-install-recommends <your-system-deps>
     USER node
