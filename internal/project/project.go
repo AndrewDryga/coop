@@ -218,7 +218,15 @@ func ComposePath(repo string) string {
 // projects almost never collide. Deterministic rather than first-come so the URL reporter and the box
 // itself agree on the mapping without having to coordinate.
 func HostPort(repo string, port int) int {
-	return hostPortBase + int(crc32.ChecksumIEEE([]byte(repo+":"+fmt.Sprint(port)))%hostPortSpan)
+	return HostPortFor(repo, strconv.Itoa(port))
+}
+
+// HostPortFor maps a repo + an arbitrary key to a host port deterministically — the same key always
+// publishes to the same host port, two different keys almost never collide. HostPort is the
+// port-only case (key = the port); sidecars key on "<service>:<port>" so two services sharing a
+// container port — or a sidecar port equal to a serve.port — still get distinct host ports.
+func HostPortFor(repo, key string) int {
+	return hostPortBase + int(crc32.ChecksumIEEE([]byte(repo+":"+key))%hostPortSpan)
 }
 
 // TaskDirs returns the repo-relative .agent/tasks queue(s) for repo, aggregating a monorepo's

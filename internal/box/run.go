@@ -455,7 +455,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
 	if autoUpServices(cfg, spec, rt.Name) {
-		if cf := ComposeFile(spec.Repo); cf != "" {
+		if cf := ComposeFile(spec.Repo, projectPolicyRepo(spec)); cf != "" {
 			if !spec.Quiet {
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))
 			}
@@ -464,7 +464,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// output (and the real error) when you need to diagnose a failure. EnsureServices validates
 			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here and the
 			// session continues WITHOUT services rather than running anything host-dangerous.
-			if err := EnsureServices(rt, spec.Repo, io.Discard, io.Discard); err != nil {
+			if err := EnsureServices(rt, spec.Repo, projectPolicyRepo(spec), io.Discard, io.Discard); err != nil {
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
 			}
 		}
@@ -476,12 +476,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// inside the box identically to the host browser. Gated like the network join, not on auto-up —
 	// the services may already be running from `coop up`. Best-effort; no sidecars → nothing added.
 	if cfg.Egress == "open" && spec.Network && rt.Name != "container" {
-		if cf := ComposeFile(spec.Repo); cf != "" {
+		if cf := ComposeFile(spec.Repo, projectPolicyRepo(spec)); cf != "" {
 			if svc := ServicePorts(rt, spec.Repo, cf); len(svc) > 0 {
 				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
 				for _, p := range svc {
 					spec.ExtraArgs = append(spec.ExtraArgs, "-e",
-						fmt.Sprintf("COOP_SERVICE_%s_URL=http://localhost:%d", serviceEnvName(p.Service), p.HostPort))
+						fmt.Sprintf("COOP_SERVICE_%s_URL=%s://localhost:%d", serviceEnvName(p.Service), p.Scheme, p.HostPort))
 				}
 			}
 		}

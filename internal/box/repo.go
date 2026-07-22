@@ -66,11 +66,13 @@ func canonicalWorkspace(path string) string {
 // falling back here.
 const ComposeFileRel = project.DefaultCompose
 
-// ComposeFile returns the repo's sibling-services compose file (box.compose, else .agent/compose.yml),
-// or "" if it's absent or empty — a zero-byte file declares no services, so auto-running
-// `compose up` would error. The path is validated in-repo by project.Load.
-func ComposeFile(repo string) string {
-	f := filepath.Join(repo, filepath.FromSlash(project.ComposePath(repo)))
+// ComposeFile returns the sibling-services compose file, or "" if it's absent or empty (a zero-byte
+// file declares no services). It completes the config-source/runtime-identity split: the relative
+// PATH (box.compose, else .agent/compose.yml) is trusted config, read from policyRepo, while the
+// FILE itself is read from the workspace at that path — so a fork uses the parent's committed choice
+// of WHERE the compose file lives, but its OWN copy of the file. For a plain repo pass repo twice.
+func ComposeFile(workspace, policyRepo string) string {
+	f := filepath.Join(workspace, filepath.FromSlash(project.ComposePath(policyRepo)))
 	if fi, err := os.Stat(f); err == nil && !fi.IsDir() && fi.Size() > 0 {
 		return f
 	}

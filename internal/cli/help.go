@@ -143,8 +143,8 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	case ref: // the reference form is machine-independent: no per-repo service list
 		row("coop up", "start the .agent/compose.yml services")
 		row("coop down", "stop the .agent/compose.yml services")
-	case len(scaffold.ComposeServiceNames(box.ComposeFile(repo))) > 0:
-		services := scaffold.ComposeServiceNames(box.ComposeFile(repo))
+	case len(scaffold.ComposeServiceNames(box.ComposeFile(repo, repo))) > 0:
+		services := scaffold.ComposeServiceNames(box.ComposeFile(repo, repo))
 		row("coop up", "start the .agent/compose.yml services ("+strings.Join(services, ", ")+")")
 		row("coop down", "stop the .agent/compose.yml services")
 	default:

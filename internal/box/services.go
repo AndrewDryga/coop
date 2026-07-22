@@ -14,8 +14,8 @@ import (
 // no-op (nil) when the repo has no compose file. Progress is written to stdout/stderr; the
 // caller decides where to point them and gates on a compose-capable runtime (Apple
 // `container` has no compose). Shared by `coop up` and box.Run's auto-start.
-func EnsureServices(rt runtime.Runtime, repo string, stdout, stderr io.Writer) error {
-	file := ComposeFile(repo)
+func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer) error {
+	file := ComposeFile(workspace, policyRepo)
 	if file == "" {
 		return nil
 	}
@@ -23,14 +23,14 @@ func EnsureServices(rt runtime.Runtime, repo string, stdout, stderr io.Writer) e
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	if err := ValidateComposeFile(file, repo); err != nil {
+	if err := ValidateComposeFile(file, workspace); err != nil {
 		return fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
-	proj := ComposeProject(repo)
+	proj := ComposeProject(workspace)
 	args := []string{"compose", "-p", proj, "-f", file}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
-	if sp := ServicePorts(rt, repo, file); len(sp) > 0 {
+	if sp := ServicePorts(rt, workspace, file); len(sp) > 0 {
 		override, cleanup, err := writeServiceOverride(sp)
 		if err != nil {
 			return err

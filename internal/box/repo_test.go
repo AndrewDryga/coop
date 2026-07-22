@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // ComposeProject is per-workspace: two checkouts with the SAME basename at DIFFERENT paths share an
@@ -64,25 +66,38 @@ func TestImageForRepo(t *testing.T) {
 
 func TestComposeFile(t *testing.T) {
 	dir := t.TempDir()
-	if ComposeFile(dir) != "" {
+	if ComposeFile(dir, dir) != "" {
 		t.Error("no compose file should yield empty string")
 	}
 	f := filepath.Join(dir, filepath.FromSlash(ComposeFileRel))
 	os.MkdirAll(filepath.Dir(f), 0o755)
 	os.WriteFile(f, []byte("services: {}"), 0o644)
-	if ComposeFile(dir) != f {
-		t.Errorf("ComposeFile = %q, want %q", ComposeFile(dir), f)
+	if ComposeFile(dir, dir) != f {
+		t.Errorf("ComposeFile = %q, want %q", ComposeFile(dir, dir), f)
 	}
 	// A root compose.agent.yml is NOT picked up — only .agent/compose.yml is.
 	os.Remove(f)
 	os.WriteFile(filepath.Join(dir, "compose.agent.yml"), []byte("services: {}"), 0o644)
-	if ComposeFile(dir) != "" {
+	if ComposeFile(dir, dir) != "" {
 		t.Error("the retired root compose.agent.yml must not be recognized")
 	}
 	os.WriteFile(f, []byte("services: {}"), 0o644) // restore .agent/compose.yml for the zero-byte check
 	// A zero-byte file counts as none — it declares no services, so `compose up` would only error.
 	os.WriteFile(f, nil, 0o644)
-	if ComposeFile(dir) != "" {
+	if ComposeFile(dir, dir) != "" {
 		t.Error("an empty compose file should count as no compose file")
+	}
+
+	// The config/runtime split: the relative PATH comes from the POLICY repo, the FILE from the
+	// workspace at that path — so a fork uses the parent's committed compose LOCATION but its own file.
+	policy := t.TempDir()
+	os.MkdirAll(filepath.Join(policy, ".agent"), 0o755)
+	os.WriteFile(filepath.Join(policy, filepath.FromSlash(project.File)), []byte("box:\n  compose: build/svc.yml\n"), 0o644)
+	ws := t.TempDir()
+	wf := filepath.Join(ws, "build", "svc.yml")
+	os.MkdirAll(filepath.Dir(wf), 0o755)
+	os.WriteFile(wf, []byte("services: {}"), 0o644)
+	if got := ComposeFile(ws, policy); got != wf {
+		t.Errorf("path must come from policy repo, file from workspace: got %q, want %q", got, wf)
 	}
 }

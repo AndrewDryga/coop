@@ -22,6 +22,7 @@ type ServicePort struct {
 	Service       string
 	ContainerPort int
 	HostPort      int
+	Scheme        string // "http" (default) or the service's `coop.service.scheme` compose label
 }
 
 // ServicePorts returns the per-workspace host-port mapping for a repo's sidecars: it asks the
@@ -44,7 +45,8 @@ func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string) []Servi
 func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
 	var cfg struct {
 		Services map[string]struct {
-			Expose []string `json:"expose"`
+			Expose []string          `json:"expose"`
+			Labels map[string]string `json:"labels"`
 		} `json:"services"`
 	}
 	if json.Unmarshal(configJSON, &cfg) != nil {
@@ -58,12 +60,24 @@ func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
 	sort.Strings(names)
 	var out []ServicePort
 	for _, name := range names {
-		for _, e := range cfg.Services[name].Expose {
+		svc := cfg.Services[name]
+		scheme := svc.Labels["coop.service.scheme"] // coop.service.scheme: https — else default http
+		if scheme == "" {
+			scheme = "http"
+		}
+		for _, e := range svc.Expose {
 			port, err := strconv.Atoi(strings.TrimSpace(e))
 			if err != nil || port < 1 || port > 65535 {
 				continue
 			}
-			out = append(out, ServicePort{Service: name, ContainerPort: port, HostPort: project.HostPort(canon, port)})
+			out = append(out, ServicePort{
+				Service:       name,
+				ContainerPort: port,
+				// Key on service+port, so two services sharing a container port — or a sidecar port
+				// equal to a serve.port — never collide on one host port.
+				HostPort: project.HostPortFor(canon, name+":"+strconv.Itoa(port)),
+				Scheme:   scheme,
+			})
 		}
 	}
 	return out

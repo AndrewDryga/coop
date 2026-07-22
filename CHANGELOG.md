@@ -34,8 +34,11 @@
   stable per-workspace loopback host port, and a raw-TCP forwarder in the box (baked-in `socat`,
   started by the entrypoint from `COOP_FORWARD`) makes that same `localhost:<port>` reach the sidecar
   from *inside* the box — so an OIDC issuer matches on both sides, no `host.docker.internal`, no
-  weakened isolation. The box gets `COOP_SERVICE_<NAME>_URL`, and `coop fork ls --json` reports each
-  workspace's service URLs. (The box image gains `socat`; run `coop build`/`coop update` to rebuild.)
+  weakened isolation. The host port is keyed on service *and* port, so two sidecars — or a sidecar
+  and a `serve.port` — never collide. The box gets `COOP_SERVICE_<NAME>_URL` (scheme from an optional
+  `coop.service.scheme: https` compose label, default `http`), and `coop fork ls --json` reports each
+  workspace's service URLs. Config (the compose path) is read from the policy repo, the file from the
+  workspace. (The box image gains `socat`; run `coop build`/`coop update` to rebuild.)
 
 ## 6.3.1
 

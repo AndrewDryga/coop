@@ -1398,14 +1398,18 @@ e.g. `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in `age
 services:
   keycloak:
     image: quay.io/keycloak/keycloak
-    expose: ["8443"]      # coop publishes this to a stable, per-workspace localhost port
+    expose: ["8443"]                     # coop publishes this to a stable, per-workspace localhost port
+    labels:
+      coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
 ```
 
-coop assigns a stable host port per **workspace** (so parallel forks never collide), publishes it
-loopback-only, and runs a tiny raw-TCP forwarder inside the box so `https://localhost:<port>`
-resolves to Keycloak from *both* sides — the issuer string matches, no `host.docker.internal`, no
-weakened isolation. The box gets `COOP_SERVICE_KEYCLOAK_URL=http://localhost:<port>`; `coop fork ls
---json` lists every workspace's service URLs for host tooling. (Compose project + network names are
+coop assigns a stable host port per **workspace** (so parallel forks never collide — the port is
+keyed on the service *and* the port, so two sidecars, or a sidecar and a `serve.port`, don't clash),
+publishes it loopback-only, and runs a tiny raw-TCP forwarder inside the box so
+`https://localhost:<port>` resolves to Keycloak from *both* sides — the issuer string matches, no
+`host.docker.internal`, no weakened isolation. The box gets
+`COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>` (scheme from the label); `coop fork ls --json`
+lists every workspace's service URLs for host tooling. (Compose project + network names are
 per-workspace too, so a fork's services and volumes are its own.)
 
 The agent never installs or hosts a database, so it can't corrupt one, and `coop down -v`

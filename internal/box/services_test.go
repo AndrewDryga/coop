@@ -62,7 +62,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 		os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
 			[]byte("services:\n  db:\n    image: postgres:18\n"), 0o644)
 		rec := filepath.Join(t.TempDir(), "rec")
-		if err := EnsureServices(recorderRuntime(t, rec), repo, io.Discard, io.Discard); err != nil {
+		if err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard); err != nil {
 			t.Fatalf("valid file should run: %v", err)
 		}
 		out, _ := os.ReadFile(rec)
@@ -77,7 +77,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 		os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
 			[]byte("services:\n  x:\n    image: a\n    privileged: true\n"), 0o644)
 		rec := filepath.Join(t.TempDir(), "rec")
-		err := EnsureServices(recorderRuntime(t, rec), repo, io.Discard, io.Discard)
+		err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard)
 		if err == nil {
 			t.Fatal("an unsafe compose file must be refused")
 		}
@@ -92,7 +92,8 @@ func TestEnsureServicesValidates(t *testing.T) {
 
 	t.Run("no compose file is a no-op", func(t *testing.T) {
 		rec := filepath.Join(t.TempDir(), "rec")
-		if err := EnsureServices(recorderRuntime(t, rec), t.TempDir(), io.Discard, io.Discard); err != nil {
+		dir := t.TempDir()
+		if err := EnsureServices(recorderRuntime(t, rec), dir, dir, io.Discard, io.Discard); err != nil {
 			t.Fatalf("no compose file should be a nil no-op: %v", err)
 		}
 		if _, statErr := os.Stat(rec); statErr == nil {

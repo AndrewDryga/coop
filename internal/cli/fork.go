@@ -951,6 +951,9 @@ func (a *app) forkLs(args []string) (int, error) {
 // generation) so it never reproduces coop's host-port hash. Each URL is keyed on the WORKSPACE
 // path, so a fork's URLs are its own — matching what that fork's box publishes.
 func (a *app) forkLsJSON(repo string) (int, error) {
+	// Sidecar URLs need the runtime for `docker compose config`; detect it best-effort (fork ls is
+	// otherwise pure-local, so no runtime → serve URLs still list, service URLs just don't).
+	_ = a.ensureRuntime()
 	p, _ := project.Load(repo) // serve.ports config, best-effort (a broken project.yaml → no URLs)
 	serveURLs := func(ws string) map[string]string {
 		if len(p.Serve.Ports) == 0 {
@@ -965,13 +968,13 @@ func (a *app) forkLsJSON(repo string) (int, error) {
 	// Sidecar URLs need the compose config; skip the docker call for workspaces without a compose
 	// file, and stay best-effort (no docker / parse error → omitted, never an error).
 	svcURLs := func(ws string) map[string]string {
-		cf := box.ComposeFile(ws)
+		cf := box.ComposeFile(ws, repo)
 		if cf == "" {
 			return nil
 		}
 		m := map[string]string{}
 		for _, sp := range box.ServicePorts(a.rt, ws, cf) {
-			m[fmt.Sprintf("%s:%d", sp.Service, sp.ContainerPort)] = fmt.Sprintf("http://localhost:%d", sp.HostPort)
+			m[fmt.Sprintf("%s:%d", sp.Service, sp.ContainerPort)] = fmt.Sprintf("%s://localhost:%d", sp.Scheme, sp.HostPort)
 		}
 		if len(m) == 0 {
 			return nil
