@@ -1481,10 +1481,13 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --no-edit --trailer", "rewrite or squash", id} {
+	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --only --no-edit --trailer", "implementation commit is older than HEAD", "do not amend the current HEAD", "rewrite or squash", id} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("rejection log missing %q:\n%s", want, log)
 		}
+	}
+	if strings.Contains(string(log), "git commit --amend --no-edit --trailer") {
+		t.Errorf("rejection log retained the index-unsafe amend command:\n%s", log)
 	}
 	state, err := os.ReadFile(filepath.Join(inProgressDir, "state.md"))
 	if err != nil {
@@ -1500,10 +1503,13 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if rejectErr == nil {
 		t.Fatal("unbindable completion must stop the controller")
 	}
-	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --no-edit --trailer", "rewrite/squash", id} {
+	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --only --no-edit --trailer", "implementation commit is older than HEAD", "do not amend the current HEAD", "rewrite/squash", id} {
 		if !strings.Contains(rejectErr.Error(), want) {
 			t.Errorf("controller error missing %q: %v", want, rejectErr)
 		}
+	}
+	if strings.Contains(rejectErr.Error(), "git commit --amend --no-edit --trailer") {
+		t.Errorf("controller error retained the index-unsafe amend command: %v", rejectErr)
 	}
 }
 

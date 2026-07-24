@@ -505,7 +505,7 @@ func restoreQueuedCompletion(task queuedTask) error {
 		}
 	}
 	dir := filepath.Join(task.Root, stateInProgress, id)
-	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range; if missing, add it with `git commit --amend --no-edit --trailer %q`; if the matching trailer already exists outside the new range, amend that commit with a unique `Coop-Recovery: <current UTC timestamp>` trailer while preserving exactly one %s trailer; if duplicated, rewrite or squash the range down to one binding; then re-run `coop loop`", coopTaskTrailer, coopTaskTrailer+": "+id, coopTaskTrailer)
+	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range; %s; if duplicated, rewrite or squash the range down to one binding; then re-run `coop loop`", coopTaskTrailer, taskBindingRecovery(id))
 	var errs []error
 	if err := appendTaskLogStrict(dir, note); err != nil {
 		errs = append(errs, fmt.Errorf("record rejection for task %s: %w", id, err))
@@ -573,15 +573,29 @@ func normalizeRejectedTaskState(id, taskDir string) error {
 }
 
 func unbindableCompletionError(ids []string, restoreErr error) error {
-	commands := make([]string, 0, len(ids))
+	recoveries := make([]string, 0, len(ids))
 	for _, id := range ids {
-		commands = append(commands, fmt.Sprintf("git commit --amend --no-edit --trailer %q", coopTaskTrailer+": "+id))
+		recoveries = append(recoveries, fmt.Sprintf("%s: %s", id, taskBindingRecovery(id)))
 	}
-	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — add a missing trailer (%s), add a unique `Coop-Recovery: <current UTC timestamp>` trailer when amending an already-bound crash-left commit, or rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(commands, "; "))
+	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(recoveries, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
 	return errors.New(msg)
+}
+
+// taskBindingRecovery describes both safe history shapes. A bare amend is deliberately absent:
+// without --only it can absorb unrelated staged work, and when the implementation is not HEAD it
+// would attach the task to the wrong commit.
+func taskBindingRecovery(id string) string {
+	return fmt.Sprintf(
+		"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
+			"(`git commit --amend --only --no-edit --trailer %q`); if the implementation commit is older than HEAD, "+
+			"do not amend the current HEAD — reword that implementation commit and replay its descendants; if the "+
+			"matching trailer already exists outside the new range, amend that same commit with a unique "+
+			"`Coop-Recovery: <current UTC timestamp>` trailer while preserving exactly one %s trailer",
+		coopTaskTrailer+": "+id, coopTaskTrailer,
+	)
 }
 
 func unownedCompletionError(ids []string, restoreErr error) error {
