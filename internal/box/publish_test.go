@@ -2,6 +2,7 @@ package box
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,22 @@ func TestAppendPublish(t *testing.T) {
 	// the box learns its host-facing URL for the port.
 	if !strings.Contains(strings.Join(got, " "), fmt.Sprintf("COOP_SERVE_URL_5173=http://localhost:%d", host)) {
 		t.Errorf("publish should inject COOP_SERVE_URL_5173: %v", got)
+	}
+
+	// An occupied assigned port cannot be published by this box, but its deterministic URL remains
+	// available for workspace-aware tooling (for example when the host dev server owns it).
+	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", host))
+	if err != nil {
+		t.Skipf("cannot occupy deterministic host port %d: %v", host, err)
+	}
+	occupied := appendPublish(nil, &config.Config{Egress: "open"}, RunSpec{Repo: repo})
+	listener.Close()
+	joined := strings.Join(occupied, " ")
+	if strings.Contains(joined, "-p") {
+		t.Errorf("occupied port must not be published: %v", occupied)
+	}
+	if !strings.Contains(joined, fmt.Sprintf("COOP_SERVE_URL_5173=http://localhost:%d", host)) {
+		t.Errorf("occupied port lost its assigned URL: %v", occupied)
 	}
 
 	// A fork inherits serve.ports from its PolicyRepo but allocates the host port from its OWN

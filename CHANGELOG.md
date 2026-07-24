@@ -13,8 +13,9 @@
 - **Projects can declare committed box-only environment defaults.** Add literal strings under
   `box.env` in `.agent/project.yaml`; the user's `agents/env` and Coop's generated runtime values
   still win, and the reserved `COOP_*` namespace is rejected. Every box now receives the stable
-  `COOP_BOX=1` identity marker, and loop boxes request configured dev-server publishing without
-  depending on a serve URL for identity.
+  `COOP_BOX=1` identity marker. Loop boxes request configured dev-server publishing, and retain
+  their assigned `COOP_SERVE_URL_<port>` for configuration even when an existing listener means
+  that particular box cannot publish the port.
 
 ## 7.0.0
 

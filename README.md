@@ -1462,8 +1462,9 @@ Two things to know: the dev server must bind `0.0.0.0` inside the box (`vite --h
 `next dev -H 0.0.0.0`, …) — a container-localhost server isn't reachable through the
 mapping — and ports bind to *your* localhost only (never the LAN). Publishing needs
 network egress (`COOP_EGRESS=open`, the default); a host port already in use is skipped
-with a note. A box restart (credential switch, rebuild) restarts the dev server's world —
-the URL stays the same, just re-run the server.
+with a note, while `COOP_SERVE_URL_<port>` still carries the workspace's assigned URL for
+configuration and discovery. A box restart (credential switch, rebuild) restarts the dev
+server's world — the URL stays the same, just re-run the server.
 
 ### Keeping the box current
 
