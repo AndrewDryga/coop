@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Compose sidecars now reconcile removed services and basename-era projects.** `coop up`,
+  automatic box startup, and `coop down` pass `--remove-orphans`, so changing the configured
+  Compose file no longer leaves old containers running. Coop also retires the pre-workspace-hash
+  project only when every matching container's Compose labels prove it belongs to the current
+  checkout. Legacy volumes are preserved because they carry no safe checkout ownership label.
+
 ## 7.0.0
 
 - **The box image and sidecar compose paths are configurable, and the box Dockerfile now lives at

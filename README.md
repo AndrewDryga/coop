@@ -1389,6 +1389,10 @@ coop down -v   # stop services and wipe their throwaway data
 
 Services run as their own containers on a private network the box joins — connect with
 e.g. `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in `agents/env`).
+Changing the configured Compose file is reconciled on the next `coop up` or box launch: services
+removed from the file are stopped. `coop down` does the same. Coop also removes a legacy
+basename-only stack when its container labels prove it belongs to this checkout; its old volumes
+are preserved because they do not carry equivalent ownership labels.
 
 **Reaching a service at the same URL inside and out.** For something the *host browser* and the
 *app in the box* must both reach at one URL — an OIDC issuer like Keycloak — give the service an

@@ -222,6 +222,77 @@ func TestSilent(t *testing.T) {
 	}
 }
 
+func TestLabelsByLabelIncludesStoppedAndInspectsEveryMatch(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+case "$1" in
+	ps) printf '%s\n' one two ;;
+	inspect)
+		case "$4" in
+			one) printf '%s\n' '{"project":"p","owner":"one"}' ;;
+			two) printf '%s\n' '{"project":"p","owner":"two"}' ;;
+		esac
+		;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+
+	got, err := (Runtime{Name: runtimeCLI}).LabelsByLabel(context.Background(), "project", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0]["owner"] != "one" || got[1]["owner"] != "two" {
+		t.Fatalf("LabelsByLabel = %#v", got)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ps -q -a --filter label=project=p\n" +
+		"inspect --format {{json .Config.Labels}} one\n" +
+		"inspect --format {{json .Config.Labels}} two\n"
+	if string(data) != want {
+		t.Errorf("runtime calls = %q, want %q", data, want)
+	}
+}
+
+func TestLabelsByLabelFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, failure, want string
+	}{
+		{name: "query", failure: "query", want: "list matching containers"},
+		{name: "inspect", failure: "inspect", want: "inspect --format"},
+		{name: "decode", failure: "decode", want: "decode labels"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+			if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$1" = ps ]; then
+	[ "$COOP_TEST_FAILURE" = query ] && { echo query-failed >&2; exit 41; }
+	echo one
+fi
+if [ "$1" = inspect ]; then
+	[ "$COOP_TEST_FAILURE" = inspect ] && { echo inspect-failed >&2; exit 42; }
+	[ "$COOP_TEST_FAILURE" = decode ] && { echo not-json; exit 0; }
+	echo '{"project":"p"}'
+fi
+`), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_FAILURE", tc.failure)
+			_, err := (Runtime{Name: runtimeCLI}).LabelsByLabel(context.Background(), "project", "p")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LabelsByLabel error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // Canceling an error-reporting label reap kills the runtime CLI's whole process group, including
 // helpers it spawned. This keeps `fork stop` bounded without leaking a child behind its deadline.
 func TestRemoveByLabelCancellationKillsRuntimeGroup(t *testing.T) {

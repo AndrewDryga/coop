@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -330,6 +331,36 @@ func (r Runtime) appleContainerIDsContext(ctx context.Context, all bool, filters
 // CountByLabel returns how many running containers carry the label key=value.
 func (r Runtime) CountByLabel(key, value string) int {
 	return len(r.psIDs("label=" + key + "=" + value))
+}
+
+// LabelsByLabel returns the label maps for every running or stopped container matching key=value.
+// Compose migration cleanup uses this to prove workspace ownership before addressing a legacy
+// basename-only project. Query and inspect failures are errors, never an empty result.
+func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[string]string, error) {
+	if filepath.Base(r.Name) == "container" {
+		return nil, errors.New("label inspection is unsupported by Apple container")
+	}
+	ids, err := r.containerIDsContext(ctx, true, "label="+key+"="+value)
+	if err != nil {
+		return nil, fmt.Errorf("list matching containers: %w", err)
+	}
+	labels := make([]map[string]string, 0, len(ids))
+	for _, id := range ids {
+		args := []string{"inspect", "--format", "{{json .Config.Labels}}", id}
+		out, err := contextCommand(ctx, r.Name, args...).CombinedOutput()
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, out))
+		}
+		var item map[string]string
+		if err := json.Unmarshal(bytes.TrimSpace(out), &item); err != nil {
+			return nil, fmt.Errorf("decode labels for container %s: %w", id, err)
+		}
+		labels = append(labels, item)
+	}
+	return labels, nil
 }
 
 // KillByLabel sends SIGKILL to every running container whose label matches

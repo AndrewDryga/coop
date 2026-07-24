@@ -1303,12 +1303,10 @@ func (a *app) cmdDown(args []string) (int, error) {
 	if file == "" {
 		return -1, fmt.Errorf("no %s here — nothing to bring down", project.ComposePath(repo))
 	}
-	proj := box.ComposeProject(repo)
-	cargs := []string{"compose", "-p", proj, "-f", file, "down"}
-	if volumes {
-		cargs = append(cargs, "--volumes")
+	if err := box.DownServices(a.rt, repo, repo, volumes, os.Stdout, os.Stderr); err != nil {
+		return -1, err
 	}
-	return a.rt.Run(os.Stdin, os.Stdout, os.Stderr, cargs...)
+	return 0, nil
 }
 
 // scaffoldableAgents are the agents with a per-agent dir `coop init` can scaffold (grok reads the

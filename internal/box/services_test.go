@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,7 +67,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 			t.Fatalf("valid file should run: %v", err)
 		}
 		out, _ := os.ReadFile(rec)
-		if !strings.Contains(string(out), "compose") || !strings.Contains(string(out), "up") {
+		if !strings.Contains(string(out), "compose") || !strings.Contains(string(out), "up -d --wait --remove-orphans") {
 			t.Errorf("expected `compose ... up` to run, recorder has: %q", out)
 		}
 	})
@@ -100,4 +101,157 @@ func TestEnsureServicesValidates(t *testing.T) {
 			t.Error("compose must not run when there's no file")
 		}
 	})
+}
+
+func composeLabelRuntime(t *testing.T, recorder string, ids []string, labels map[string]string) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "rt")
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n")
+	script.WriteString("if [ \"$1\" = ps ]; then\n  :\n")
+	for _, id := range ids {
+		script.WriteString("  printf '%s\\n' " + strconv.Quote(id) + "\n")
+	}
+	script.WriteString("fi\nif [ \"$1\" = inspect ]; then\n  case \"$4\" in\n")
+	for id, value := range labels {
+		script.WriteString("    " + id + ") printf '%s\\n' " + strconv.Quote(value) + " ;;\n")
+	}
+	script.WriteString("  esac\nfi\n")
+	if err := os.WriteFile(shim, []byte(script.String()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+func testComposeRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
+		[]byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func legacyLabels(repo, project string) string {
+	return `{"com.docker.compose.project":` + strconv.Quote(project) +
+		`,"com.docker.compose.project.working_dir":` + strconv.Quote(filepath.Join(repo, ".agent")) + `}`
+}
+
+func TestEnsureServicesReconcilesOwnedLegacyBeforeCurrentUp(t *testing.T) {
+	repo := testComposeRepo(t)
+	rec := filepath.Join(t.TempDir(), "rec")
+	legacy := ServicesProject(repo)
+	rt := composeLabelRuntime(t, rec, []string{"old-db"}, map[string]string{
+		"old-db": legacyLabels(repo, legacy),
+	})
+	if err := EnsureServices(rt, repo, repo, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	legacyDown := "compose -p " + legacy + " -f " + filepath.Join(repo, ".agent", "compose.yml") + " down --remove-orphans"
+	currentUp := "compose -p " + ComposeProject(repo) + " -f " + filepath.Join(repo, ".agent", "compose.yml") + " up -d --wait --remove-orphans"
+	if i, j := strings.Index(got, legacyDown), strings.Index(got, currentUp); i < 0 || j < 0 || i >= j {
+		t.Fatalf("legacy cleanup must precede current up:\n%s", got)
+	}
+}
+
+func TestLegacyComposeOwnershipFailsClosed(t *testing.T) {
+	repo := testComposeRepo(t)
+	legacy := ServicesProject(repo)
+	tests := []struct {
+		name   string
+		ids    []string
+		labels map[string]string
+		reason string
+	}{
+		{name: "no containers"},
+		{
+			name: "missing working dir", ids: []string{"old"},
+			labels: map[string]string{"old": `{"com.docker.compose.project":` + strconv.Quote(legacy) + `}`},
+			reason: "no Compose working-directory label",
+		},
+		{
+			name: "outside workspace", ids: []string{"old"},
+			labels: map[string]string{"old": legacyLabels(t.TempDir(), legacy)},
+			reason: "outside this workspace",
+		},
+		{
+			name: "mixed ownership", ids: []string{"ours", "theirs"},
+			labels: map[string]string{
+				"ours":   legacyLabels(repo, legacy),
+				"theirs": legacyLabels(t.TempDir(), legacy),
+			},
+			reason: "outside this workspace",
+		},
+		{
+			name: "wrong repeated project label", ids: []string{"old"},
+			labels: map[string]string{"old": legacyLabels(repo, "other")},
+			reason: "different project label",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := filepath.Join(t.TempDir(), "rec")
+			owned, reason, err := legacyComposeOwnership(composeLabelRuntime(t, rec, tc.ids, tc.labels), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if owned {
+				t.Fatal("ambiguous or empty legacy project must not be owned")
+			}
+			if tc.reason == "" {
+				if reason != "" {
+					t.Fatalf("empty project reason = %q, want empty", reason)
+				}
+			} else if !strings.Contains(reason, tc.reason) {
+				t.Fatalf("reason = %q, want %q", reason, tc.reason)
+			}
+			data, _ := os.ReadFile(rec)
+			if strings.Contains(string(data), "compose ") {
+				t.Fatalf("ownership check ran Compose cleanup:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestDownServicesKeepsLegacyVolumes(t *testing.T) {
+	repo := testComposeRepo(t)
+	rec := filepath.Join(t.TempDir(), "rec")
+	legacy := ServicesProject(repo)
+	rt := composeLabelRuntime(t, rec, []string{"old-db"}, map[string]string{
+		"old-db": legacyLabels(repo, legacy),
+	})
+	if err := DownServices(rt, repo, repo, true, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var composeCalls []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "compose ") {
+			composeCalls = append(composeCalls, line)
+		}
+	}
+	if len(composeCalls) != 2 {
+		t.Fatalf("compose calls = %v, want current and legacy down", composeCalls)
+	}
+	if !strings.Contains(composeCalls[0], ComposeProject(repo)) ||
+		!strings.Contains(composeCalls[0], "down --remove-orphans --volumes") {
+		t.Errorf("current down did not remove current volumes: %q", composeCalls[0])
+	}
+	if !strings.Contains(composeCalls[1], legacy) ||
+		!strings.HasSuffix(composeCalls[1], "down --remove-orphans") ||
+		strings.Contains(composeCalls[1], "--volumes") {
+		t.Errorf("legacy down must preserve volumes: %q", composeCalls[1])
+	}
 }
