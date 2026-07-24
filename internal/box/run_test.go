@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func TestDecideTTY(t *testing.T) {
@@ -99,6 +100,62 @@ func TestRunRepoWritable(t *testing.T) {
 	}
 	if slices.Contains(fields, repo+":/workspace:ro") {
 		t.Fatalf("full-write repo mount must not be read-only:\n%s", args)
+	}
+}
+
+func TestRunProjectEnvAndIdentityWithoutHomes(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte(
+		"box:\n  env:\n    PGPORT: \"5432\"\n    PGHOST: db\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	argsFile := filepath.Join(dir, "args")
+	envCopy := filepath.Join(dir, "env")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" > "$COOP_TEST_ARGS"
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = --env-file ]; then
+		shift
+		cp "$1" "$COOP_TEST_ENV_COPY"
+		break
+	fi
+	shift
+done
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_ARGS", argsFile)
+	t.Setenv("COOP_TEST_ENV_COPY", envCopy)
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none",
+		ExtraRunArgs: []string{"-e", "COOP_BOX=0"},
+	}
+	spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"true"}, Batch: true, Quiet: true}
+	if code, err := Run(cfg, runtime.Runtime{Name: runtimeCLI}, spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotArgs := string(args)
+	if !strings.Contains(gotArgs, "--env-file") {
+		t.Fatalf("Homes=false project env did not reach the runtime:\n%s", gotArgs)
+	}
+	if i, j := strings.Index(gotArgs, "COOP_BOX=0"), strings.LastIndex(gotArgs, "COOP_BOX=1"); i < 0 || j < 0 || i >= j {
+		t.Fatalf("Coop-owned box identity must override invocation args:\n%s", gotArgs)
+	}
+	env, err := os.ReadFile(envCopy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env) != "PGHOST=db\nPGPORT=5432\n" {
+		t.Errorf("project env = %q", env)
 	}
 }
 
@@ -283,6 +340,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
 		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
+		"-e", "COOP_BOX=1",
 		"-w", "/workspace", "coop-box", "claude",
 	}
 	if !slices.Equal(got, want) {

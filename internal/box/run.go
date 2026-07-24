@@ -179,8 +179,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// each field only where the user didn't explicitly set its COOP_* (env/conf beats file beats
 	// default), on a copy so the shared Config is never mutated. A broken project.yaml warns and
 	// is skipped (same best-effort posture as appendPublish) rather than bricking every launch.
+	var projectEnv map[string]string
 	if p, err := project.Load(projectPolicyRepo(spec)); err == nil {
 		cfg = applyProjectPolicy(cfg, p, &spec)
+		projectEnv = p.Box.Env
 	} else if !spec.Quiet {
 		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
 	}
@@ -432,20 +434,30 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// shadowed by its global env token. Non-agent runtime vars always pass through. assembleArgs
 	// computes the same provider scope for the home mounts.
 	envFile := ""
+	userEnvFile := ""
+	drop := map[string]bool{}
 	if spec.Homes && fileExists(cfg.EnvFile()) {
-		drop := envKeysOutsideScope(cfg, credentialScope(cfg, spec))
-		switch {
-		case len(drop) == 0:
-			envFile = cfg.EnvFile() // nothing to strip — pass it through unchanged
-		default:
-			if p, err := writeFilteredEnvFile(cfg.EnvFile(), drop); err == nil {
-				tmpFiles = append(tmpFiles, p)
-				envFile = p
-			} else {
-				// Fail closed: if the peer keys can't be stripped, omit the env file
-				// entirely rather than leak them into a scoped box.
-				ui.Info("env: omitted (could not filter peer API keys): %v", err)
-			}
+		userEnvFile = cfg.EnvFile()
+		drop = envKeysOutsideScope(cfg, credentialScope(cfg, spec))
+	}
+	switch {
+	case len(projectEnv) > 0:
+		p, err := writeMergedEnvFile(projectEnv, userEnvFile, drop)
+		if err != nil {
+			return -1, fmt.Errorf("prepare project box env: %w", err)
+		}
+		tmpFiles = append(tmpFiles, p)
+		envFile = p
+	case userEnvFile != "" && len(drop) == 0:
+		envFile = userEnvFile
+	case userEnvFile != "":
+		if p, err := writeFilteredEnvFile(userEnvFile, drop); err == nil {
+			tmpFiles = append(tmpFiles, p)
+			envFile = p
+		} else {
+			// Fail closed: if the peer keys can't be stripped, omit the env file
+			// entirely rather than leak them into a scoped box.
+			ui.Info("env: omitted (could not filter peer API keys): %v", err)
 		}
 	}
 
@@ -1051,7 +1063,7 @@ func decideTTY(spec RunSpec, stdinIsTTY bool) ttyMode {
 // scalar box knobs are overwritten on the copy).
 func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *config.Config {
 	b := p.Box
-	if b == (project.Box{}) {
+	if boxPolicyEmpty(b) {
 		return cfg // no box: section — nothing to overlay (gate: is resolved by fork_merge, not here)
 	}
 	c := *cfg
@@ -1074,6 +1086,11 @@ func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *
 		c.Pids = b.Pids
 	}
 	return &c
+}
+
+func boxPolicyEmpty(b project.Box) bool {
+	return b.Dockerfile == "" && b.Compose == "" && len(b.Env) == 0 && b.Egress == "" &&
+		b.AutoUp == nil && b.Network == nil && b.Memory == "" && b.CPUs == "" && b.Pids == ""
 }
 
 // boxLimits returns the resource + privilege caps that keep a runaway agent from
@@ -1334,9 +1351,6 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		if n, err := strconv.Atoi(cfg.ConsultTimeout); err == nil && n > 0 {
 			args = append(args, "-e", "COOP_CONSULT_TIMEOUT="+cfg.ConsultTimeout)
 		}
-		if envFile != "" {
-			args = append(args, "--env-file", envFile)
-		}
 		// Per-agent global instructions (the box env note + the user's, built in Run) at each
 		// agent's native path. The lead (fusion governor / consult lead) is excluded there; its
 		// augmented file is the fusion/consult mount just below.
@@ -1351,8 +1365,12 @@ func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoy
 		args = appendROMounts(args, mcpMounts)
 	}
 
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
+	}
 	args = append(args, cfg.ExtraRunArgs...)
 	args = append(args, spec.ExtraArgs...)
+	args = append(args, "-e", "COOP_BOX=1")
 	if spec.Serve {
 		args = appendPublish(args, cfg, spec)
 	}

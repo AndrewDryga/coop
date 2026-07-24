@@ -10,6 +10,12 @@
   project only when every matching container's Compose labels prove it belongs to the current
   checkout. Legacy volumes are preserved because they carry no safe checkout ownership label.
 
+- **Projects can declare committed box-only environment defaults.** Add literal strings under
+  `box.env` in `.agent/project.yaml`; the user's `agents/env` and Coop's generated runtime values
+  still win, and the reserved `COOP_*` namespace is rejected. Every box now receives the stable
+  `COOP_BOX=1` identity marker, and loop boxes request configured dev-server publishing without
+  depending on a serve URL for identity.
+
 ## 7.0.0
 
 - **The box image and sidecar compose paths are configurable, and the box Dockerfile now lives at

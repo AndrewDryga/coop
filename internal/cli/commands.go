@@ -3310,7 +3310,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: a.forkOwner, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
 		RepoReadOnly: repoReadOnly, RepoWritablePaths: repoWritablePaths,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		Stdout: stdoutW,
 		Stderr: stderrW,
 		Ctx:    ctx,

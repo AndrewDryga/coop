@@ -5,15 +5,16 @@
 //     automatically, so you don't hand-maintain COOP_TASKS.
 //   - serve.ports: container ports coop publishes so a dev server running in the box is reachable from
 //     the host browser, each mapped to a stable host port.
-//   - box: the committed box policy every run in this repo inherits (egress, services toggles,
-//     resource caps) — applied below an explicit COOP_* env/conf setting (box.Run overlays it).
+//   - box: the committed box policy and literal environment defaults every run in this repo
+//     inherits — applied below explicit user/runtime settings (box.Run overlays it).
 //   - gate: the revalidation command `coop fork merge` runs in the box (an explicit COOP_GATE wins).
 //
 // SECURITY: this file is committed and read on the HOST from a repo you may not fully trust, so it
 // must never be able to LOOSEN the user's posture. The precedence (explicit env/conf > this file >
 // built-in default) makes egress tighten-only by construction — its built-in default is already the
 // loosest value ("open") — and no_new_privileges is deliberately NOT a key here (its default is on;
-// a committed switch could only turn it off).
+// a committed switch could only turn it off). box.env reaches only the container, rejects Coop's
+// reserved COOP_ namespace, and stays below the user's agents/env and runtime-generated values.
 package project
 
 import (
@@ -79,8 +80,9 @@ type Serve struct {
 // user's own setting (env/conf) or coop's built-in default. The booleans are pointers because
 // absent must stay distinguishable from false (their defaults are true).
 type Box struct {
-	Dockerfile string `yaml:"dockerfile"` // box image definition, repo-relative ("" ⇒ .agent/Dockerfile)
-	Compose    string `yaml:"compose"`    // sidecar services compose file, repo-relative ("" ⇒ .agent/compose.yml)
+	Dockerfile string            `yaml:"dockerfile"` // box image definition, repo-relative ("" ⇒ .agent/Dockerfile)
+	Compose    string            `yaml:"compose"`    // sidecar services compose file, repo-relative ("" ⇒ .agent/compose.yml)
+	Env        map[string]string `yaml:"env"`        // literal box-only environment defaults
 
 	Egress  string `yaml:"egress"`  // "" (unset) | "open" | "none" — anything else fails Load
 	AutoUp  *bool  `yaml:"auto_up"` // auto-start .agent/compose.yml services (default true)
@@ -138,6 +140,16 @@ func Load(repo string) (*Project, error) {
 	if p.Box.Compose, err = boxRelPath("compose", p.Box.Compose); err != nil {
 		return nil, err
 	}
+	for key, value := range p.Box.Env {
+		switch {
+		case !validEnvName(key):
+			return nil, fmt.Errorf("%s: box.env key %q must be a POSIX environment name", File, key)
+		case strings.HasPrefix(key, "COOP_"):
+			return nil, fmt.Errorf("%s: box.env key %q uses Coop's reserved COOP_ namespace", File, key)
+		case strings.ContainsAny(value, "\r\n\x00"):
+			return nil, fmt.Errorf("%s: box.env value for %s must be a single literal line", File, key)
+		}
+	}
 	// context.routes: every include doc and match glob must be a relative path inside the repo — the
 	// compiler reads committed files on the host from a possibly-untrusted repo, so a route can never
 	// point outside it (a missing include is caught at compile time, when it's actually selected).
@@ -157,6 +169,22 @@ func Load(repo string) (*Project, error) {
 		}
 	}
 	return &p, nil
+}
+
+func validEnvName(key string) bool {
+	if key == "" || !isEnvNameStart(key[0]) {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		if !isEnvNameStart(key[i]) && (key[i] < '0' || key[i] > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func isEnvNameStart(c byte) bool {
+	return c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
 }
 
 // boxRelPath validates an optional repo-relative box path (box.dockerfile / box.compose): empty

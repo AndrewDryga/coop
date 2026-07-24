@@ -24,7 +24,7 @@ func TestScaffoldedProjectParses(t *testing.T) {
 		t.Errorf("commented scaffold must load empty, got %+v", p)
 	}
 	data, _ := os.ReadFile(filepath.Join(repo, filepath.FromSlash(project.File)))
-	for _, want := range []string{"box:", "egress:", "gate:"} {
+	for _, want := range []string{"box:", "env:", "PGHOST:", "egress:", "gate:"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("scaffold missing %q documentation", want)
 		}

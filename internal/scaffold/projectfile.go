@@ -90,6 +90,9 @@ func projectYAML(subprojects []string) string {
 # box:
 #   dockerfile: <path>  # box image (default .agent/Dockerfile; or reuse a repo Dockerfile)
 #   compose: <path>     # sidecars (default .agent/compose.yml; or point at your own)
+#   env:                # committed, non-secret box defaults; agents/env wins; COOP_* is reserved
+#     PGHOST: db
+#     PGPORT: "5432"
 #   egress: none        # "open" = npm + model API (default); "none" cuts ALL network — forensics only, agents can't work
 #   auto_up: false      # auto-start the sidecar services (default true)
 #   network: false      # join the sibling-services network (default true)

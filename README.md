@@ -1318,6 +1318,17 @@ Prefer to keep the box definition elsewhere — reuse a stage of your app's exis
 separate one? Set `box.dockerfile` / `box.compose` in `.agent/project.yaml` (repo-relative
 paths); they default to `.agent/Dockerfile` and `.agent/compose.yml`.
 
+Put committed, non-secret defaults needed only inside the box under `box.env`. Values are literal
+strings; quote numeric-looking values. The user's `~/.config/coop/agents/env` overrides these
+defaults, and `COOP_*` names are reserved for Coop's runtime contract.
+
+```yaml
+box:
+  env:
+    PGHOST: db
+    PGPORT: "5432"
+```
+
 <details><summary><b>The box contract (build any base)</b></summary>
 
 An image is a valid agent box when:
@@ -1535,6 +1546,7 @@ turn them off.
 | `COOP_WORKDIR` | (real path) | where the repo mounts in the box |
 | `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |
 | `COOP_RUN_ARGS` | — | extra args passed straight to the container runtime |
+| `COOP_BOX` | `1` in every box | stable in-box identity marker; independent of serving and networking |
 | `COOP_PIDS` | `4096` | box pids-limit (fork-bomb cap); `0`/`unlimited`/empty turns it off |
 | `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |

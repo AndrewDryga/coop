@@ -3,6 +3,7 @@ package box
 import (
 	"os"
 	"slices"
+	"sort"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -117,6 +118,35 @@ func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return writeTempFile(filteredEnvContent(data, drop))
+}
+
+// writeMergedEnvFile renders deterministic project defaults followed by the trusted user env.
+// Later duplicate entries win in Docker/Podman env files, so agents/env remains authoritative.
+func writeMergedEnvFile(projectEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
+	keys := make([]string, 0, len(projectEnv))
+	for key := range projectEnv {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, key := range keys {
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(projectEnv[key])
+		b.WriteByte('\n')
+	}
+	if userPath != "" {
+		data, err := os.ReadFile(userPath)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(filteredEnvContent(data, drop))
+	}
+	return writeTempFile(b.String())
+}
+
+func filteredEnvContent(data []byte, drop map[string]bool) string {
 	lines := strings.Split(string(data), "\n")
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -129,7 +159,7 @@ func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
 		}
 		kept = append(kept, line)
 	}
-	return writeTempFile(strings.Join(kept, "\n"))
+	return strings.Join(kept, "\n")
 }
 
 // peerProviders returns the provider names of a run's explicit peers, order-preserving.

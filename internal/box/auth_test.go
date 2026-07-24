@@ -378,3 +378,27 @@ func TestWriteFilteredEnvFile(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteMergedEnvFileProjectDefaultsBeforeUserOverrides(t *testing.T) {
+	user := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(user, []byte("# user\nPGHOST=localhost\nOPENAI_API_KEY=drop\nMY_FLAG\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := writeMergedEnvFile(
+		map[string]string{"PGPORT": "5432", "PGHOST": "db"},
+		user,
+		map[string]bool{"OPENAI_API_KEY": true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(out)
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "PGHOST=db\nPGPORT=5432\n# user\nPGHOST=localhost\nMY_FLAG\n"
+	if string(data) != want {
+		t.Errorf("merged env = %q, want %q", data, want)
+	}
+}
