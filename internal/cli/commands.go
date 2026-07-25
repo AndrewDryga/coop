@@ -1737,6 +1737,9 @@ func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*
 // reopened" for "reviewed and accepted". A user interrupt is returned distinctly from a review
 // failure. The result preserves the terminal attempt and retry count so every caller records the
 // same truthful stage telemetry before deciding whether to continue.
+// subjects are the exact task ids under review: their completion evidence stays strict inside the
+// stage's completion window, while a non-subject task a parallel host session completes during the
+// window is reported as concurrent activity instead of killing the run.
 // Local counters keep review trouble out of the work loop's stop accounting.
 type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming bool)
 
@@ -1760,6 +1763,9 @@ type reviewRunResult struct {
 	retries  int
 	target   agents.Target
 	reopened []string
+	// concurrent holds non-subject tasks a parallel host controller completed while a review
+	// window was open. They must enter later signoff bookkeeping rather than be absorbed.
+	concurrent []string
 }
 
 func interruptedReviewResult(last reviewRunResult, retries int) reviewRunResult {
@@ -1785,8 +1791,9 @@ func reviewReadOnlyPaths(mode completionWindowMode, repoReadOnly bool, hosts []s
 	return hosts
 }
 
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (reviewRunResult, error) {
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (reviewRunResult, error) {
 	var fails, waits, outputRetries, totalRetries int
+	var concurrent []string
 	last := reviewRunResult{target: rev.active()}
 	for {
 		if reviewStopRequested(ctx, wake) {
@@ -1795,21 +1802,22 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		agent := a.applyTarget(rev)
 		target := rev.active()
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
-		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, reviewRepoReadOnly(writes), sink, peers, activity)
-		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target}
+		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity)
+		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
 		if errors.Is(runErr, errCompletionWindowSetup) {
 			return last, runErr
 		}
-		reopened, completionErr := windows.finishReview()
-		last.reopened = reopened
+		observed, completionErr := windows.finishReview()
+		if len(observed) > 0 {
+			ui.Info("concurrent host completion during review: %s — a parallel host session's change, not this review's", strings.Join(observed, ", "))
+			concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, observed...))))
+			last.concurrent = concurrent
+		}
 		if completionErr != nil {
 			return last, fmt.Errorf("%w: review stage changed task completion ownership: %v", errCompletionWindowAudit, completionErr)
 		}
 		if ctx != nil && ctx.Err() != nil {
 			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
-		}
-		if len(reopened) > 0 && classification.outcome != "success" {
-			return last, fmt.Errorf("%w: failed review stage also reopened %s", errCompletionWindowAudit, strings.Join(reopened, ", "))
 		}
 		if receipt, ok := reviewReopenReceipt(out); ok && len(receipt.reopened) > 0 && classification.outcome != "success" {
 			return last, fmt.Errorf("failed review stage declared reopen for %s; verdict was not applied", strings.Join(receipt.reopened, ", "))
@@ -2284,15 +2292,22 @@ func newlyFinished(before, now map[string]string) []string {
 	return out
 }
 
-// reviewBaselineAfterVerdict keeps host-reopened tasks absent from the next baseline even if a
-// concurrent controller re-completes one immediately after the authoritative reopen transaction.
-// Such a completion must enter the next signoff subject diff, never inherit the prior verdict.
-func reviewBaselineAfterVerdict(done map[string]string, reopened []string) map[string]string {
-	baseline := make(map[string]string, len(done))
-	for id, dir := range done {
+// reviewBaselineAfterVerdict advances the signoff baseline past a receipt-consistent round without
+// rescanning done/. A completion landing during the audit-to-re-anchor handoff must remain outside
+// the baseline so the next subject diff reviews it instead of silently absorbing it.
+func reviewBaselineAfterVerdict(prior map[string]string, subjects, reopened, concurrent []string) map[string]string {
+	baseline := make(map[string]string, len(prior)+len(subjects))
+	for id, dir := range prior {
+		baseline[id] = dir
+	}
+	for _, subject := range subjects {
+		id, dir, _ := strings.Cut(subject, " — ")
 		baseline[id] = dir
 	}
 	for _, id := range reopened {
+		delete(baseline, id)
+	}
+	for _, id := range concurrent {
 		delete(baseline, id)
 	}
 	return baseline
@@ -2505,7 +2520,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if err := reconcileInterruptedCompletions(hosts); err != nil {
 		return 1, fmt.Errorf("recover interrupted completion: %w", err)
 	}
-	if err := reconcileCompletionWindows(hosts); err != nil {
+	recoveredReviewCompletions, err := reconcileCompletionWindowsWithActivity(hosts)
+	if err != nil {
 		return 1, fmt.Errorf("recover interrupted completion window: %w", err)
 	}
 	if duplicates := nonArchivedDuplicateTaskIDs(hosts); len(duplicates) > 0 {
@@ -2641,7 +2657,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, false, sink, peers, "preflight")
+			pfCode, _, _, pfClassification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, nil, false, sink, peers, "preflight")
 			if errors.Is(runErr, errCompletionWindowSetup) {
 				return 1, runErr
 			}
@@ -2684,13 +2700,18 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	loopStartHead := prevHead                     // for the end-of-run signing sweep (catches any straggler cycle)
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
-	reviewBaseline := doneTaskDirs(hosts)
+	reviewBaseline := reviewBaselineAfterVerdict(doneTaskDirs(hosts), nil, nil, recoveredReviewCompletions)
+	if len(recoveredReviewCompletions) > 0 {
+		ui.Info("recovered concurrent host completion during an interrupted review: %s — carrying it into signoff", strings.Join(recoveredReviewCompletions, ", "))
+	}
 	// Loop-until-accepted: drain the work queue, run the signoff pass, and if it reopened
 	// anything, drain and sign off AGAIN — repeating until a signoff reopens nothing (accepted) or
 	// the round cap is hit (block the stuck task for a human). The cap scales with the batch —
 	// clamp(tasks worked/2, 3, signoff.rounds) — so a big overnight batch can't ping-pong one
 	// stuck task forever while a tiny batch still gets a few tries (computed per round from the run's
 	// completed count; the hard ceiling bounds it). A custom work.command has no signoff pass.
+	// Final verify may jump back here when a parallel host completion needs its own signoff.
+reviewAgain:
 	for signoffRound := 1; ; signoffRound++ {
 		for n := 1; ; {
 			// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
@@ -2748,7 +2769,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			cmd, streaming := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowStrict, false, sink, peers, active)
+			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowStrict, nil, false, sink, peers, active)
 			if errors.Is(runErr, errCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.release())
 			}
@@ -2907,7 +2928,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 						if iterCtx != nil {
 							hardStop = iterCtx.Done()
 						}
-						btRun, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, lc.Between.Writes, sink, peers, hardStop)
+						btRun, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, lc.Between.Writes, sink, peers, hardStop)
+						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						if rerr == nil {
 							btRun.reopened, rerr = applyReviewVerdict(hosts, finishedIDs, btRun.output)
 						}
@@ -3032,7 +3054,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		cs := loopChanges(repo, loopStartHead, soHead)
 		subjectIDs := taskIDsOf(subjects)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(subjectIDs) + cs.reviewBlock(health)
-		soRun, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, lc.Signoff.Writes, sink, peers, wake)
+		soRun, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, lc.Signoff.Writes, sink, peers, wake)
 		if serr == nil {
 			soRun.reopened, serr = applyReviewVerdict(hosts, subjectIDs, soRun.output)
 		}
@@ -3069,15 +3091,21 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			continue
 		}
 		audits.drop(reopenedIDs)
-		// This round's verdict is consistent — re-anchor the baseline to the post-review done set, so
-		// the next round reviews only what re-enters done/ (reworked reopens, new completions), never
-		// a task this round just accepted. The lost-verdict path above deliberately keeps the old
-		// baseline: an untrusted round's whole subject set is reviewed again.
-		reviewBaseline = reviewBaselineAfterVerdict(doneTaskDirs(hosts), reopenedIDs)
+		// This round's verdict is consistent — advance the baseline past its accepted subjects
+		// WITHOUT rescanning done/. A completion landing during or just after the review window stays
+		// outside the baseline and enters the next round's subject diff. The lost-verdict path above
+		// deliberately keeps the old baseline so the whole untrusted subject set is reviewed again.
+		reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, subjects, reopenedIDs, soRun.concurrent)
 		switch signoffRoundOutcome(signoffRound, maxSignoffRounds, len(reopenedIDs) > 0) {
 		case signoffContinue:
 			ui.Info("signoff reopened %s — draining again", ui.Count(len(reopenedIDs), "task"))
 			continue
+		case signoffAccepted:
+			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneTaskDirs(hosts))); len(pending) > 0 {
+				ui.Info("signoff passed, but a parallel session completed %s during the round — running another signoff round to review it", ui.Count(len(pending), "task"))
+				signoffRound = 0
+				continue
+			}
 		case signoffCapReached:
 			// The work loop couldn't get these tasks to a state the signoff accepts within the cap —
 			// park them for a human rather than spin or claim a false "done" (exit 3 via loopExitCode).
@@ -3085,8 +3113,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if err := blockReopenedTasks(hosts, reopenedIDs, maxSignoffRounds); err != nil {
 				return 3, err
 			}
+			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneTaskDirs(hosts))); len(pending) > 0 {
+				ui.Info("blocked the repeatedly reopened work; a parallel session also completed %s — running a fresh signoff round for it", ui.Count(len(pending), "task"))
+				signoffRound = 0
+				continue
+			}
 		}
-		// signoffAccepted (nothing reopened) or signoffCapReached (just blocked) → the loop is done.
+		// signoffAccepted (nothing reopened or pending) or signoffCapReached (just blocked) → done.
 		break
 	}
 	// Verify: an optional FINAL pass over the whole run's changes — its prompt (verify.prompt) says
@@ -3109,7 +3142,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if len(verifyIDs) == 0 {
 				verifyActivity = "verify: unbound changes"
 			}
-			vRun, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, lc.Verify.Writes, sink, peers, wake)
+			vRun, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, lc.Verify.Writes, sink, peers, wake)
 			if verr == nil {
 				vRun.reopened, verr = applyReviewVerdict(hosts, verifyIDs, vRun.output)
 			}
@@ -3126,6 +3159,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			}
 			if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
+			}
+			reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, vRun.concurrent)
+			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneTaskDirs(hosts))); len(pending) > 0 {
+				ui.Info("verify observed concurrent host completion of %s — returning to signoff before exit", strings.Join(pending, ", "))
+				goto reviewAgain
 			}
 		}
 	}
@@ -3394,9 +3432,9 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
 	if windowMode == completionWindowReview {
-		windows, err = beginReviewCompletionWindows(hosts)
+		windows, err = beginReviewCompletionWindows(hosts, reviewSubjects)
 	} else {
 		windows, err = beginCompletionWindows(hosts)
 	}

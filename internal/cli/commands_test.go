@@ -416,12 +416,16 @@ func TestNewlyFinished(t *testing.T) {
 	if extra := newlyFinished(now, now); len(extra) != 0 {
 		t.Errorf("no change should mean no finished tasks, got %v", extra)
 	}
-	baseline := reviewBaselineAfterVerdict(now, []string{"b"})
+	prior := map[string]string{"a": "/q/99_done/a", "c": "/q/99_done/c"}
+	baseline := reviewBaselineAfterVerdict(prior, []string{"b — /q/99_done/b"}, []string{"b"}, []string{"c"})
 	if _, present := baseline["b"]; present {
 		t.Fatal("a concurrently re-completed reopen entered the next review baseline")
 	}
-	if got := taskIDsOf(newlyFinished(baseline, now)); !slices.Equal(got, []string{"b"}) {
-		t.Fatalf("re-completed reopen subjects = %v, want [b]", got)
+	if _, present := baseline["c"]; present {
+		t.Fatal("a concurrent host completion was absorbed into the next review baseline")
+	}
+	if got := taskIDsOf(newlyFinished(baseline, now)); !slices.Equal(got, []string{"b", "c"}) {
+		t.Fatalf("re-completed reopen subjects = %v, want [b c]", got)
 	}
 }
 

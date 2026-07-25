@@ -286,13 +286,18 @@ func resetLoopProcessRepo(t *testing.T, suite *directProcessSuite) {
 
 func seedLoopProcessTask(t *testing.T, repo, id string) {
 	t.Helper()
+	seedLoopProcessTaskIn(t, repo, stateTodo, id)
+}
+
+func seedLoopProcessTaskIn(t *testing.T, repo, state, id string) {
+	t.Helper()
 	root := filepath.Join(repo, tasksRoot)
-	for _, state := range []string{stateTodo, stateInProgress, stateBlocked, stateDone} {
-		if err := os.MkdirAll(filepath.Join(root, state), 0o755); err != nil {
+	for _, dir := range []string{stateTodo, stateInProgress, stateBlocked, stateDone} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	task := filepath.Join(root, stateTodo, id)
+	task := filepath.Join(root, state, id)
 	if err := os.Mkdir(task, 0o755); err != nil {
 		t.Fatal(err)
 	}

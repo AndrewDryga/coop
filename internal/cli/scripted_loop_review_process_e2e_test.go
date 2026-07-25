@@ -102,6 +102,93 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	t.Run("concurrent host completion during passing signoff forces another round", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "signoff-concurrent-completion"
+		hostID := taskID + "-host"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		// The parallel human session's task: parked in 50_blocked so the work loop cannot claim
+		// it, then finished through the real host CLI while the round-1 signoff box is running.
+		seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, hostID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+		// Round 1 PASSES its subject and reopens nothing — without the forced round, this is
+		// exactly where the loop would exit past the foreign completion. Round 2 must run with
+		// the host completion as its ONLY subject (the fixture rejects a prompt that omits it,
+		// and the one-evidence-line-per-subject verdict contract rejects any extra subject).
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass-host-completion"},
+			{Target: signoff, Stage: "signoff", Result: "pass-with-host"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(result.Stderr, "concurrent host completion during review: "+hostID) ||
+			!strings.Contains(result.Stderr, "running another signoff round") ||
+			!strings.Contains(result.Stderr, "2/2 in 1 iterations") {
+			t.Fatalf("concurrent completion loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, hostID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, hostID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, hostID)) {
+			t.Fatal("host-owned concurrent completion did not stay done")
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("reviewed subject did not finish done")
+		}
+		// records: work, round-1 signoff (passed its subject, tolerated the foreign completion),
+		// round-2 signoff reviewing the fed-forward host completion before the loop may exit.
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 || records[1].Stage != "signoff" || records[1].Reopened != 0 ||
+			records[1].QueueDoing != 0 || records[1].QueueDone != 2 ||
+			records[2].Stage != "signoff" || records[2].Reopened != 0 || records[2].QueueDone != 2 {
+			t.Fatalf("concurrent completion telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+	})
+
+	t.Run("concurrent host completion during verify forces later signoff", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "verify-concurrent-completion"
+		hostID := taskID + "-host"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, hostID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
+		// The foreign completion lands during the FINAL verify window. The loop must return to
+		// signoff, review that exact task, and then verify again before it may exit.
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "pass-host-completion"},
+			{Target: signoff, Stage: "signoff", Result: "pass-with-host"},
+			{Target: verify, Stage: "verify", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(result.Stderr, "verify observed concurrent host completion of "+hostID) ||
+			!strings.Contains(result.Stderr, "returning to signoff before exit") {
+			t.Fatalf("verify concurrent completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, hostID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, hostID)) {
+			t.Fatal("verify fail-closed disturbed the host-owned completion")
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("verify retry disturbed the verified subject")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 5 || records[3].Stage != "signoff" || records[4].Stage != "verify" {
+			t.Fatalf("verify concurrent-completion telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+	})
+
 	t.Run("between rotation records terminal target", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "between-rotation"
@@ -676,7 +763,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			}
 		}
 		wantExit := 0
-		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" && attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" && attempt.Result != "repair-review-binding" && attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "reopen" && attempt.Result != "reopen-injection" {
+		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" && attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" && attempt.Result != "repair-review-binding" && attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" && attempt.Result != "pass-with-host" && attempt.Result != "reopen" && attempt.Result != "reopen-injection" {
 			wantExit = 23
 		}
 		if attempt.Result == "wait" {

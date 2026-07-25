@@ -40,6 +40,8 @@ type completionWindowRecord struct {
 	Baseline              map[string]completionFingerprint `json:"baseline"`
 	AllowedDoneDeparture  string                           `json:"allowed_done_departure,omitempty"`
 	AllowedDoneDepartures []string                         `json:"allowed_done_departures,omitempty"`
+	ReviewWindow          bool                             `json:"review_window,omitempty"`
+	ReviewSubjects        []string                         `json:"review_subjects,omitempty"`
 }
 
 type completionWindowIndex struct {
@@ -283,11 +285,30 @@ func lockCompletionWindowIndex(root string) (*os.File, completionWindowIndex, er
 }
 
 func beginCompletionWindows(hosts []string) (*completionWindowSet, error) {
-	return beginCompletionWindowsWithPolicy(hosts, nil)
+	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false)
 }
 
-func beginReviewCompletionWindows(hosts []string) (*completionWindowSet, error) {
-	return beginCompletionWindows(hosts)
+func duplicateReviewTaskIDs(hosts, ids []string) []string {
+	duplicates := aggregateDuplicateTaskIDs(hosts)
+	var relevant []string
+	for _, id := range slices.Compact(slices.Sorted(slices.Values(ids))) {
+		if slices.Contains(duplicates, id) {
+			relevant = append(relevant, id)
+		}
+	}
+	return relevant
+}
+
+// beginReviewCompletionWindows opens review-stage windows bound to the exact task ids under
+// review, persisting the subject set in the journal record so finishReview and crash replay
+// apply the same scope: subjects stay strict, other completions are classified by ownership.
+// ReviewWindow stays explicit because an empty subject list is strict for preflight/verify, while
+// an ordinary work window has no review subjects for a different reason.
+func beginReviewCompletionWindows(hosts, subjects []string) (*completionWindowSet, error) {
+	if duplicates := duplicateReviewTaskIDs(hosts, subjects); len(duplicates) > 0 {
+		return nil, fmt.Errorf("review subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
+	}
+	return beginCompletionWindowsWithPolicy(hosts, nil, subjects, true)
 }
 
 func beginCompletionWindowsAllowing(hosts []string, taskID string) (*completionWindowSet, error) {
@@ -295,10 +316,10 @@ func beginCompletionWindowsAllowing(hosts []string, taskID string) (*completionW
 }
 
 func beginCompletionWindowsAllowingTasks(hosts, taskIDs []string) (*completionWindowSet, error) {
-	return beginCompletionWindowsWithPolicy(hosts, taskIDs)
+	return beginCompletionWindowsWithPolicy(hosts, taskIDs, nil, false)
 }
 
-func beginCompletionWindowsWithPolicy(hosts []string, allowedDoneDepartures []string) (*completionWindowSet, error) {
+func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjects []string, reviewWindow bool) (*completionWindowSet, error) {
 	if len(hosts) == 0 {
 		return &completionWindowSet{}, nil
 	}
@@ -331,7 +352,10 @@ func beginCompletionWindowsWithPolicy(hosts []string, allowedDoneDepartures []st
 			return nil, errors.Join(err, unlockErr, removeErr, set.close())
 		}
 		record := completionWindowRecord{
-			Baseline: baseline, AllowedDoneDepartures: slices.Compact(slices.Sorted(slices.Values(allowedDoneDepartures))),
+			Baseline:              baseline,
+			AllowedDoneDepartures: slices.Compact(slices.Sorted(slices.Values(allowedDoneDepartures))),
+			ReviewWindow:          reviewWindow,
+			ReviewSubjects:        slices.Compact(slices.Sorted(slices.Values(reviewSubjects))),
 		}
 		index.Windows[id] = record
 		writeErr := writeCompletionWindowIndex(root, index)
@@ -511,32 +535,98 @@ func (s *completionWindowSet) rejectAndClose(assigned queuedTask) error {
 	return errors.Join(ownershipErr, departureErr, s.close())
 }
 
-func (s *completionWindowSet) finishReview() ([]string, error) {
+func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subjectIDs []string) (changed, concurrent []string) {
+	subjects := make(map[string]bool, len(subjectIDs))
+	for _, id := range subjectIDs {
+		subjects[id] = true
+	}
+	rejectedSet := make(map[string]bool, len(rejected))
+	for _, id := range rejected {
+		rejectedSet[id] = true
+	}
+	for _, candidate := range candidates {
+		switch id := candidate.Item.ID; {
+		case len(subjects) == 0 || subjects[id]:
+			changed = append(changed, id)
+		case !rejectedSet[id]:
+			concurrent = append(concurrent, id)
+		}
+	}
+	return slices.Compact(changed), slices.Compact(concurrent) // candidates are sorted by id
+}
+
+func (s *completionWindowSet) reviewScope() (hosts, subjectIDs []string) {
+	for _, window := range s.windows {
+		hosts = append(hosts, window.root)
+		subjectIDs = append(subjectIDs, window.record.ReviewSubjects...)
+	}
+	return slices.Compact(slices.Sorted(slices.Values(hosts))),
+		slices.Compact(slices.Sorted(slices.Values(subjectIDs)))
+}
+
+// auditReview applies one snapshot comparison without closing the journal. scanErr means the
+// comparison itself could not be trusted and the live window must be abandoned for replay;
+// reviewErr is a completed comparison that found lifecycle or ownership churn.
+func (s *completionWindowSet) auditReview(hosts, subjectIDs []string) (concurrent []string, scanErr, reviewErr error) {
 	candidates, rejected, err := s.auditDoneCandidates(queuedTask{})
 	if err != nil {
-		return nil, errors.Join(err, s.abandon())
+		return nil, err, nil
 	}
+	changed, concurrent := classifyReviewCompletionCandidates(candidates, rejected, subjectIDs)
 	var changedErr error
-	if len(candidates) > 0 {
-		ids := make([]string, 0, len(candidates))
-		for _, candidate := range candidates {
-			ids = append(ids, candidate.Item.ID)
-		}
-		ids = slices.Compact(ids)
-		changedErr = fmt.Errorf("review completion set changed for %s", strings.Join(ids, ", "))
+	if len(changed) > 0 {
+		changedErr = fmt.Errorf("review completion set changed for %s", strings.Join(changed, ", "))
 	}
 	var ownershipErr error
 	if len(rejected) > 0 {
 		ownershipErr = unownedCompletionError(rejected, nil)
 	}
+	relevant := slices.Clone(subjectIDs)
+	for _, candidate := range candidates {
+		relevant = append(relevant, candidate.Item.ID)
+	}
+	var duplicateErr error
+	if duplicates := duplicateReviewTaskIDs(hosts, relevant); len(duplicates) > 0 {
+		duplicateErr = fmt.Errorf("review task id(s) %s became ambiguous across task queues", strings.Join(duplicates, ", "))
+	}
 	departed, departureErr := s.departures()
 	if departureErr == nil && len(departed) > 0 {
 		departureErr = fmt.Errorf("review task lifecycle changed for %s; reviews must report verdicts for host application", strings.Join(departed, ", "))
 	}
-	return nil, errors.Join(changedErr, ownershipErr, departureErr, s.close())
+	return concurrent, nil, errors.Join(changedErr, ownershipErr, duplicateErr, departureErr)
 }
 
-func reconcileCompletionWindows(hosts []string) error {
+// finishReview closes a review-stage window, scoping strictness to the exact subjects the
+// window recorded at begin. Any completion churn on a subject fails closed, as does a
+// completion no host authority finalized (rejected as unowned and restored). A non-subject
+// completion that survives ownership rejection was finalized by a parallel host controller —
+// concurrent host activity, not this review's mutation — so it is returned to the caller for
+// the next review round's baseline instead of failing the run. After closing the durable window,
+// the saved snapshot is audited once more so activity in the scan-to-close handoff cannot escape.
+// Tolerance exists ONLY under an explicit subject contract: a window with no recorded subjects
+// (preflight, a subject-free verify) stays fully strict.
+func (s *completionWindowSet) finishReview() ([]string, error) {
+	hosts, subjectIDs := s.reviewScope()
+	closed := &completionWindowSet{windows: slices.Clone(s.windows), scan: s.scan}
+	for i := range closed.windows {
+		closed.windows[i].live = nil
+	}
+	concurrent, scanErr, reviewErr := s.auditReview(hosts, subjectIDs)
+	if scanErr != nil {
+		return nil, errors.Join(scanErr, s.abandon())
+	}
+	if err := errors.Join(reviewErr, s.close()); err != nil {
+		return nil, err
+	}
+	afterClose, scanErr, reviewErr := closed.auditReview(hosts, subjectIDs)
+	if err := errors.Join(scanErr, reviewErr); err != nil {
+		return nil, err
+	}
+	return slices.Compact(slices.Sorted(slices.Values(append(concurrent, afterClose...)))), nil
+}
+
+func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
+	var concurrent []string
 	var errs []error
 	for _, root := range hosts {
 		indexFile, index, err := lockCompletionWindowIndex(root)
@@ -559,9 +649,25 @@ func reconcileCompletionWindows(hosts []string) error {
 			}
 			candidates, candidateErr := changedDoneCompletions(root, record.Baseline)
 			invalidateErr := invalidateStaleCandidateReceipts(root, record.Baseline, candidates)
-			_, rejectErr := rejectUnownedCompletions(candidates, queuedTask{})
+			rejected, rejectErr := rejectUnownedCompletions(candidates, queuedTask{})
+			var reviewErr error
+			var observed []string
+			if record.ReviewWindow {
+				changed, recovered := classifyReviewCompletionCandidates(candidates, rejected, record.ReviewSubjects)
+				observed = recovered
+				if len(changed) > 0 {
+					reviewErr = fmt.Errorf("review completion set changed before recovery for %s", strings.Join(changed, ", "))
+				}
+				relevant := slices.Clone(record.ReviewSubjects)
+				for _, candidate := range candidates {
+					relevant = append(relevant, candidate.Item.ID)
+				}
+				if duplicates := duplicateReviewTaskIDs(hosts, relevant); len(duplicates) > 0 {
+					reviewErr = errors.Join(reviewErr, fmt.Errorf("review task id(s) %s became ambiguous across task queues before recovery", strings.Join(duplicates, ", ")))
+				}
+			}
 			departed, departureErr := completionWindowDepartures(root, record)
-			if err := errors.Join(candidateErr, invalidateErr, rejectErr, departureErr); err != nil {
+			if err := errors.Join(candidateErr, invalidateErr, rejectErr, reviewErr, departureErr); err != nil {
 				errs = append(errs, err, unlockLeaseFile(live))
 				continue
 			}
@@ -579,8 +685,14 @@ func reconcileCompletionWindows(hosts []string) error {
 			if unlockErr == nil {
 				errs = append(errs, removeLeaseAuthorityLock(root, completionWindowLockPrefix+id))
 			}
+			concurrent = append(concurrent, observed...)
 		}
 		errs = append(errs, unlockLeaseFile(indexFile))
 	}
-	return errors.Join(errs...)
+	return slices.Compact(slices.Sorted(slices.Values(concurrent))), errors.Join(errs...)
+}
+
+func reconcileCompletionWindows(hosts []string) error {
+	_, err := reconcileCompletionWindowsWithActivity(hosts)
+	return err
 }

@@ -220,7 +220,7 @@ func TestReviewCompletionWindowDetectsNewReceiptGeneration(t *testing.T) {
 	if !ok {
 		t.Fatal("trusted completion did not record its first receipt")
 	}
-	windows, err := beginCompletionWindows([]string{root})
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestReviewCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	archived, _ = currentTask(root, archived.ID)
-	windows, err := beginCompletionWindows([]string{root})
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestReviewCompletionWindowRejectsInPlaceArchiveMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	archived, _ = currentTask(root, archived.ID)
-	windows, err := beginReviewCompletionWindows([]string{root})
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestReviewCompletionWindowRejectsDirectTaskReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	archived, _ = currentTask(root, archived.ID)
-	windows, err := beginReviewCompletionWindows([]string{root})
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +473,215 @@ func TestReviewCompletionWindowRejectsDirectTaskReopen(t *testing.T) {
 	}
 	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
 		t.Fatal("rejected direct review reopen lost the actionable task")
+	}
+}
+
+func TestReviewCompletionWindowRejectsReplacedSubject(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "replaced-review-subject")
+	if err := completeTrustedTask(root, subject); err != nil {
+		t.Fatal(err)
+	}
+	subject, _ = currentTask(root, subject.ID)
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	displaced := filepath.Join(root, "displaced-review-subject")
+	if err := os.Rename(subject.Dir, displaced); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(subject.Dir, "task.md"), "# replacement\n")
+	concurrent, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), subject.ID) {
+		t.Fatalf("replaced subject audit = %v, want subject failure", err)
+	}
+	if len(concurrent) != 0 {
+		t.Fatalf("replaced subject was reported as concurrent host activity: %v", concurrent)
+	}
+}
+
+func TestReviewCompletionWindowRejectsDeletedSubject(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "deleted-review-subject")
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(subject.Dir); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), subject.ID) {
+		t.Fatalf("deleted subject audit = %v, want subject failure", err)
+	}
+	if len(concurrent) != 0 {
+		t.Fatalf("deleted subject was reported as concurrent host activity: %v", concurrent)
+	}
+}
+
+// TestReviewCompletionWindowReportsConcurrentHostCompletion: a parallel host session finishing an
+// UNRELATED task (`coop tasks done`) while a review of another exact subject runs is concurrent
+// host activity — the audit reports it for the next review round instead of killing the run, and
+// the completion keeps its host receipt.
+func TestReviewCompletionWindowReportsConcurrentHostCompletion(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "review-subject")
+	if err := completeTrustedTask(root, subject); err != nil {
+		t.Fatal(err)
+	}
+	subject, _ = currentTask(root, subject.ID)
+	foreign := taskForLease(t, root, stateTodo, "foreign-host-completion")
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := completeTrustedTask(root, foreign); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := windows.finishReview()
+	if err != nil {
+		t.Fatalf("concurrent host completion killed the review audit: %v", err)
+	}
+	if !slices.Equal(concurrent, []string{foreign.ID}) {
+		t.Fatalf("concurrent completions = %v, want [%s]", concurrent, foreign.ID)
+	}
+	completed, ok := currentTask(root, foreign.ID)
+	if !ok || completed.State != stateDone {
+		t.Fatalf("foreign host completion = %+v, want done", completed)
+	}
+	if !taskCompletionRecorded(root, completed) {
+		t.Fatal("tolerated foreign completion lost its host receipt")
+	}
+	if kept, _ := currentTask(root, subject.ID); kept.State != stateDone {
+		t.Fatal("review subject was disturbed by concurrent host activity")
+	}
+}
+
+func TestReviewCompletionWindowReportsCompletionAfterInitialAudit(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "handoff-review-subject")
+	foreign := taskForLease(t, root, stateTodo, "handoff-host-completion")
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scans := 0
+	windows.scan = func(root string, baseline map[string]completionFingerprint) ([]queuedTask, error) {
+		scans++
+		if scans == 2 {
+			if err := completeTrustedTask(root, foreign); err != nil {
+				return nil, err
+			}
+		}
+		return changedDoneCompletions(root, baseline)
+	}
+	concurrent, err := windows.finishReview()
+	if err != nil {
+		t.Fatalf("post-close host completion killed review: %v", err)
+	}
+	if scans != 2 || !slices.Equal(concurrent, []string{foreign.ID}) {
+		t.Fatalf("post-close audit = scans %d concurrent %v, want 2 and [%s]", scans, concurrent, foreign.ID)
+	}
+}
+
+func TestReviewCompletionWindowRejectsSubjectIDThatBecomesAmbiguous(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	subject := taskForLease(t, first, stateDone, "ambiguous-review-subject")
+	windows, err := beginReviewCompletionWindows([]string{first, second}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskForLease(t, second, stateTodo, subject.ID)
+	concurrent, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), "became ambiguous") || !strings.Contains(err.Error(), subject.ID) {
+		t.Fatalf("ambiguous review subject audit = %v, want task-specific failure", err)
+	}
+	if len(concurrent) != 0 {
+		t.Fatalf("ambiguous review subject reported concurrent completions: %v", concurrent)
+	}
+}
+
+// TestReviewCompletionWindowSubjectStaysStrictBesideConcurrentActivity: tolerating foreign
+// completions must not weaken subject tamper detection — a mutated subject still fails closed in
+// the same window, and the audit reports no concurrent activity on the failure path.
+func TestReviewCompletionWindowSubjectStaysStrictBesideConcurrentActivity(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "strict-review-subject")
+	if err := completeTrustedTask(root, subject); err != nil {
+		t.Fatal(err)
+	}
+	subject, _ = currentTask(root, subject.ID)
+	foreign := taskForLease(t, root, stateTodo, "foreign-beside-subject")
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := completeTrustedTask(root, foreign); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(subject.Dir, "task.md"), "# tampered subject\n")
+	concurrent, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), subject.ID) {
+		t.Fatalf("tampered subject audit = %v, want subject failure", err)
+	}
+	if len(concurrent) != 0 {
+		t.Fatalf("failed review audit still reported concurrent completions: %v", concurrent)
+	}
+	if done, _ := currentTask(root, foreign.ID); done.State != stateDone {
+		t.Fatal("subject tampering revoked an unrelated host completion")
+	}
+}
+
+// TestReviewCompletionWindowRejectsRawNonSubjectCompletion: subject scoping tolerates only
+// completions a host authority finalized — a raw folder move into done (the review box completing
+// a task itself) is still rejected and restored even though the task is not a review subject.
+func TestReviewCompletionWindowRejectsRawNonSubjectCompletion(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "raw-review-subject")
+	if err := completeTrustedTask(root, subject); err != nil {
+		t.Fatal(err)
+	}
+	rogue := taskForLease(t, root, stateTodo, "raw-review-completion")
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), rogue.ID) {
+		t.Fatalf("raw non-subject completion audit = %v, want ownership failure", err)
+	}
+	if len(concurrent) != 0 {
+		t.Fatalf("unowned completion was reported as concurrent host activity: %v", concurrent)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, rogue.ID)) || pathExists(filepath.Join(root, stateDone, rogue.ID)) {
+		t.Fatal("raw non-subject completion was not restored")
+	}
+}
+
+// TestReviewCompletionWindowWithoutSubjectsStaysStrict: concurrent-activity tolerance exists only
+// under an explicit subject contract — a review window opened with NO subjects (preflight, a
+// subject-free verify) must fail closed on any completion, even a host-receipted one, instead of
+// reading the empty set as blanket permission to absorb queue churn.
+func TestReviewCompletionWindowWithoutSubjectsStaysStrict(t *testing.T) {
+	root := t.TempDir()
+	foreign := taskForLease(t, root, stateTodo, "foreign-without-subjects")
+	windows, err := beginReviewCompletionWindows([]string{root}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := completeTrustedTask(root, foreign); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), foreign.ID) {
+		t.Fatalf("subject-free review audit = %v, want strict completion failure", err)
+	}
+	if len(concurrent) != 0 {
+		t.Fatalf("subject-free review reported concurrent completions: %v", concurrent)
 	}
 }
 
@@ -946,7 +1155,7 @@ func TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure(t *testing.
 	a := &app{}
 	code, output, usage, classification, windows, err := a.runIteration(
 		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
-		false, []string{root}, completionWindowStrict, true, io.Discard, nil, "setup failure",
+		false, []string{root}, completionWindowStrict, nil, true, io.Discard, nil, "setup failure",
 	)
 	if code != 1 || !errors.Is(err, errCompletionWindowSetup) || windows != nil || output != "" || usage != nil {
 		t.Fatalf("setup-failed iteration = code %d output %q usage %#v windows %#v err %v", code, output, usage, windows, err)
@@ -1058,7 +1267,7 @@ func TestCompletionWindowReplayReportsArchivedTaskDepartureOnce(t *testing.T) {
 func TestReviewCompletionWindowReplayRejectsDeletedArchive(t *testing.T) {
 	root := t.TempDir()
 	archived := taskForLease(t, root, stateDone, "deleted-during-review")
-	windows, err := beginReviewCompletionWindows([]string{root})
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1079,6 +1288,124 @@ func TestReviewCompletionWindowReplayRejectsDeletedArchive(t *testing.T) {
 	}
 	if _, ok := index.Windows[windowID]; !ok {
 		t.Fatal("missing review task deleted its recovery journal")
+	}
+	if record := index.Windows[windowID]; !record.ReviewWindow || !slices.Equal(record.ReviewSubjects, []string{archived.ID}) {
+		t.Fatalf("deleted review journal scope = %#v, want exact review subject", record)
+	}
+}
+
+func TestReviewCompletionWindowReplayRejectsSubjectRecompletion(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "recompleted-review-subject")
+	if err := completeTrustedTask(root, subject); err != nil {
+		t.Fatal(err)
+	}
+	subject, _ = currentTask(root, subject.ID)
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := moveTrustedTaskFromDone(root, subject, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, subject.ID)
+	if err := completeTrustedTask(root, reopened); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), subject.ID) {
+		t.Fatalf("subject recompletion replay = %v, want subject failure", err)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; !ok {
+		t.Fatal("subject recompletion replay discarded its recovery journal")
+	}
+}
+
+func TestSubjectFreeReviewCompletionWindowReplayStaysStrict(t *testing.T) {
+	root := t.TempDir()
+	foreign := taskForLease(t, root, stateTodo, "subject-free-review-completion")
+	windows, err := beginReviewCompletionWindows([]string{root}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := completeTrustedTask(root, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err == nil || !strings.Contains(err.Error(), foreign.ID) {
+		t.Fatalf("subject-free review replay = %v, want strict completion failure", err)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, ok := index.Windows[windowID]
+	if !ok || !record.ReviewWindow || len(record.ReviewSubjects) != 0 {
+		t.Fatalf("subject-free review replay journal = %#v, present %v", record, ok)
+	}
+}
+
+// TestReviewCompletionWindowReplayPreservesConcurrentHostCompletion: the journal record carries
+// the review's subject scope, and replaying a crashed review window applies the same rules the
+// live audit does — a host-receipted foreign completion stays done with its receipt while the
+// journal entry is retired cleanly.
+func TestReviewCompletionWindowReplayPreservesConcurrentHostCompletion(t *testing.T) {
+	root := t.TempDir()
+	subject := taskForLease(t, root, stateDone, "crashed-review-subject")
+	if err := completeTrustedTask(root, subject); err != nil {
+		t.Fatal(err)
+	}
+	subject, _ = currentTask(root, subject.ID)
+	foreign := taskForLease(t, root, stateTodo, "crashed-review-foreign")
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{subject.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := completeTrustedTask(root, foreign); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate controller death: the kernel releases the live lock, but the durable index remains.
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record, ok := index.Windows[windowID]; !ok || !record.ReviewWindow || !slices.Equal(record.ReviewSubjects, []string{subject.ID}) {
+		t.Fatalf("review window journal = %#v, want exact subject [%s]", record, subject.ID)
+	}
+	concurrent, err := reconcileCompletionWindowsWithActivity([]string{root})
+	if err != nil {
+		t.Fatalf("crash replay: %v", err)
+	}
+	if !slices.Equal(concurrent, []string{foreign.ID}) {
+		t.Fatalf("crash replay concurrent completions = %v, want [%s]", concurrent, foreign.ID)
+	}
+	done, ok := currentTask(root, foreign.ID)
+	if !ok || done.State != stateDone || !taskCompletionRecorded(root, done) {
+		t.Fatal("crash replay revoked a host-receipted concurrent completion")
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; ok {
+		t.Fatal("replayed review window retained a stale journal")
 	}
 }
 

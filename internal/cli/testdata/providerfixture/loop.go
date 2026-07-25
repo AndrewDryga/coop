@@ -89,7 +89,7 @@ func validateLoopResult(index int, stage, result string) error {
 			return nil
 		}
 	case "between", "signoff", "verify":
-		if common || result == "pass" || result == "reopen" || result == "reopen-injection" || result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" || result == "complete-extra" {
+		if common || result == "pass" || result == "pass-host-completion" || result == "pass-with-host" || result == "reopen" || result == "reopen-injection" || result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" || result == "complete-extra" {
 			return nil
 		}
 	default:
@@ -219,7 +219,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return waitLoopSignal(root, trace)
 		}
 		return 0, "", nil
-	case "pass", "reopen", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "complete-extra":
+	case "pass", "pass-host-completion", "pass-with-host", "reopen", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "complete-extra":
 		if !strings.HasPrefix(attempt.Result, "reopen") {
 			if err := verifyLoopTaskDone(root, plan.TaskID); err != nil {
 				return 1, "", err
@@ -230,7 +230,29 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				}
 			}
 		}
+		// A parallel human session finishing an UNRELATED task while this review attempt is still
+		// running — through the real host CLI, so it carries genuine completion authority. The
+		// review itself PASSES its own subject, so nothing else forces another round.
+		if attempt.Result == "pass-host-completion" {
+			if err := hostCompleteLoopTask(root, plan.TaskID+"-host"); err != nil {
+				return 1, "", err
+			}
+		}
 		reply := loopReviewReply(plan.TaskID, attempt.Stage, strings.HasPrefix(attempt.Result, "reopen"))
+		if attempt.Result == "pass-with-host" {
+			// The concurrently host-completed sibling must be THIS round's review subject; a prompt
+			// that omits it means the loop silently absorbed the completion. The exactly-one-
+			// evidence-line-per-subject contract then proves it is the ONLY subject.
+			hostID := plan.TaskID + "-host"
+			if err := verifyLoopTaskDone(root, hostID); err != nil {
+				return 1, "", err
+			}
+			if !strings.Contains(loopPromptFrom(provider, providerArgv), hostID) {
+				return 1, "", fmt.Errorf("loop review prompt does not name concurrent subject %s", hostID)
+			}
+			reply = "AUDIT EVIDENCE — " + hostID + " — gate: fixture gate — findings: none\n" +
+				"REVIEW COMPLETE — PASS — reopened: none"
+		}
 		if attempt.Result == "reopen-injection" {
 			reply = loopReviewReplyWithFinding(
 				plan.TaskID,
@@ -290,6 +312,37 @@ func finalizeLoopExtraTask(root, taskID string) error {
 	return writeLoopTaskFile(root, filepath.Join(repo, ".agent", "tasks", "99_done", taskID, "state.md"), state, false)
 }
 
+// hostCompleteLoopTask completes a task through the REAL host CLI (`coop tasks done`) while this
+// provider attempt is still running — a parallel human session finishing an unrelated task inside
+// a review completion window. The child environment mirrors the procharness layout so the
+// subprocess shares the suite's lease-authority registry with the loop under test.
+func hostCompleteLoopTask(root, taskID string) error {
+	repo, err := loopRepo(root)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("coop", "tasks", "done", taskID)
+	cmd.Dir = repo
+	cmd.Env = []string{
+		"HOME=" + filepath.Join(root, "home"),
+		"PATH=" + os.Getenv("PATH"),
+		"TMPDIR=" + filepath.Join(root, "tmp"),
+		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg", "cache"),
+		"XDG_CONFIG_HOME=" + filepath.Join(root, "xdg", "config"),
+		"XDG_STATE_HOME=" + filepath.Join(root, "xdg", "state"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "state", "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"COOP_CONF=" + filepath.Join(root, "config", "missing.conf"),
+		"COOP_CONFIG_DIR=" + filepath.Join(root, "config"),
+		"COOP_REPO=" + repo,
+		"COOP_NO_UPDATE_CHECK=1",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("coop tasks done %s: %w: %s", taskID, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func waitLoopRelease(root, taskID string) error {
 	path := filepath.Join(root, "state", "loop-release-"+taskID)
 	deadline := time.Now().Add(10 * time.Second)
@@ -321,20 +374,23 @@ func moveLoopExtraTask(root, taskID string) error {
 	return nil
 }
 
-func verifyLoopPrompt(stage, taskID, provider string, argv []string) error {
-	prompt := ""
+func loopPromptFrom(provider string, argv []string) string {
 	if provider == "codex" {
 		if len(argv) > 0 {
-			prompt = argv[len(argv)-1]
+			return argv[len(argv)-1]
 		}
-	} else {
-		for i := len(argv) - 2; i >= 0; i-- {
-			if argv[i] == "-p" {
-				prompt = argv[i+1]
-				break
-			}
+		return ""
+	}
+	for i := len(argv) - 2; i >= 0; i-- {
+		if argv[i] == "-p" {
+			return argv[i+1]
 		}
 	}
+	return ""
+}
+
+func verifyLoopPrompt(stage, taskID, provider string, argv []string) error {
+	prompt := loopPromptFrom(provider, argv)
 	marker := map[string]string{
 		"work":    "Work task " + taskID + ", already claimed in 10_in_progress/.",
 		"between": "FIXTURE BETWEEN", "signoff": "FIXTURE SIGNOFF", "verify": "FIXTURE VERIFY",

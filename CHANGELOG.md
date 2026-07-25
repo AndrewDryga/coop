@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Review completion windows are scoped to their exact subjects.** A parallel host session
+  finishing an unrelated task (`coop tasks done`) while a between/signoff/verify box runs no
+  longer kills the loop with "review completion set changed". The window records the review's
+  subject ids in its crash journal: subject churn, unreceipted folder moves, reopens, and
+  deletions still fail closed, while a host-receipted foreign completion is tolerated, reported,
+  and excluded from the re-anchored signoff baseline so it joins the next review round instead
+  of being silently absorbed. A final verify that observes one returns to signoff before exit,
+  and crash replay preserves that pending review.
+
 - **Review task ownership is host-enforced.** Task-scoped review boxes now see the whole
   repository read-only and return bounded evidence plus a proposed verdict. Coop validates the
   complete proposal and applies all exact-subject reopens atomically under host authority;

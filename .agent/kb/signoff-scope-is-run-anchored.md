@@ -2,8 +2,8 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/cli/commands.go, internal/cli/loopchanges.go]
-updated: 2026-07-14
+sources: [internal/cli/commands.go, internal/cli/completionwindow.go, internal/cli/loopchanges.go]
+updated: 2026-07-25
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -20,6 +20,14 @@ re-enters it they show up in the next round's diff). Two wrong placements that f
   again; a moved baseline would diff it away and the re-run would review nothing.
 - Re-anchoring from the PRE-review snapshot (e.g. `soSnap`): reopened tasks are still in that done
   set, so their rework diffs to nothing and ships unreviewed.
+- Re-anchoring over a CONCURRENT host completion: a parallel session may `coop tasks done` an
+  unrelated task while the review box runs. The review's completion window tolerates it (the
+  window records the review's exact subject ids; a host-receipted non-subject completion is
+  concurrent activity, not the review's mutation — everything else still fails closed), and
+  `finishReview` returns those ids so `reviewBaselineAfterVerdict` excludes them too. Absorbing
+  them into the baseline would ship a human-completed task with no review round ever seeing it.
+  Final verify returns to signoff when it observes one. If the controller crashes first, startup
+  replay returns the journal's concurrent ids and excludes them from the new run baseline.
 
 Accepted tradeoff, by design: done tasks from a previous CRASHED run (completed but never signed
 off) are history to the new run and are not re-reviewed — there is no reviewed-marker to tell them
@@ -33,6 +41,8 @@ signoff still independently inspects the task and runs the gate.
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-07-25 — review completion windows became subject-scoped (parallel human `coop tasks done`
+  no longer kills the run); documented the concurrent-completion baseline exclusion.
 - 2026-07-14 — documented the bounded audit-evidence handoff and rechecked its replacement/drop
   semantics against `internal/cli/commands.go` and `internal/cli/loopchanges.go`.
 - 2026-07-14 — updated the receipt contract from a count to an exact verdict + task-id delta and
