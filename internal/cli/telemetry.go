@@ -42,7 +42,7 @@ type stageRecord struct {
 	OutTok     int      `json:"out_tok,omitempty"`  // output tokens
 	HeadBefore string   `json:"head_before,omitempty"`
 	HeadAfter  string   `json:"head_after,omitempty"`
-	Reopened   int      `json:"reopened,omitempty"`   // review stages: task folders moved back to in_progress
+	Reopened   int      `json:"reopened,omitempty"`   // review stages: host-applied task reopens
 	Finished   []string `json:"finished,omitempty"`   // work stage: task ids this iteration moved to done
 	GateFiles  []string `json:"gate_files,omitempty"` // host-detected gate-defining paths touched by the stage
 	QueueTodo  int      `json:"queue_todo"`

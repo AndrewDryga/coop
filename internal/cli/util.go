@@ -406,6 +406,7 @@ var gitHardening = []string{
 	"-c", "diff.external=",
 	"-c", "uploadpack.packObjectsHook=",
 	"-c", "protocol.ext.allow=never",
+	"-c", "rebase.updateRefs=false",
 	"-c", "commit.gpgsign=false",
 	"-c", "gpg.program=false",
 	"-c", "gpg.ssh.program=false",

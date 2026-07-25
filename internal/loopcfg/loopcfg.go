@@ -66,7 +66,7 @@ const (
 	ReviewWritesRepo  ReviewWrites = "repo"
 )
 
-// RepositoryWritable reports the explicit escape hatch from the task-only review default.
+// RepositoryWritable reports the explicit source-writing escape hatch from report-only review.
 func (w ReviewWrites) RepositoryWritable() bool { return w == ReviewWritesRepo }
 
 // Between is the opt-in per-task audit after each completed task.
@@ -74,7 +74,7 @@ type Between struct {
 	Enabled bool         `yaml:"enabled"` // run the audit; false = off
 	Agent   []string     `yaml:"agent"`   // audit model ladder; empty = the signoff model
 	Prompt  string       `yaml:"prompt"`  // SETS the audit prompt (between has no built-in); required when enabled
-	Writes  ReviewWrites `yaml:"writes"`  // tasks (default) or repo (explicit full-repository writes)
+	Writes  ReviewWrites `yaml:"writes"`  // tasks = read-only/report-only (default); repo = source writable
 }
 
 // Signoff is the end-of-loop pass: the senior review that accepts the batch or reopens tasks.
@@ -82,7 +82,7 @@ type Signoff struct {
 	Rounds int          `yaml:"rounds"` // work→signoff round cap; 0 = the built-in default (5)
 	Agent  []string     `yaml:"agent"`  // signoff model ladder; empty = the work model
 	Prompt string       `yaml:"prompt"` // APPENDED to the built-in senior review; "" = nothing appended
-	Writes ReviewWrites `yaml:"writes"` // tasks (default) or repo (explicit full-repository writes)
+	Writes ReviewWrites `yaml:"writes"` // tasks = read-only/report-only (default); repo = source writable
 }
 
 // Verify is an optional FINAL pass, after the signoff accepts the batch: it receives the run's change
@@ -92,7 +92,7 @@ type Verify struct {
 	Enabled bool         `yaml:"enabled"` // run the post-signoff verify pass; false = off
 	Agent   []string     `yaml:"agent"`   // verify model ladder; empty = the signoff model
 	Prompt  string       `yaml:"prompt"`  // SETS the verify prompt (no built-in); required when enabled
-	Writes  ReviewWrites `yaml:"writes"`  // tasks (default) or repo (explicit full-repository writes)
+	Writes  ReviewWrites `yaml:"writes"`  // tasks = read-only/report-only (default); repo = source writable
 }
 
 // Rung is one entry of an `agent:` ladder: EXACTLY one of Target or Preset is set.

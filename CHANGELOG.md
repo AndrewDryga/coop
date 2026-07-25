@@ -4,6 +4,25 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Review task ownership is host-enforced.** Task-scoped review boxes now see the whole
+  repository read-only and return bounded evidence plus a proposed verdict. Coop validates the
+  complete proposal and applies all exact-subject reopens atomically under host authority;
+  malformed, interrupted, failed, and out-of-scope reviews cannot mutate task lifecycle state.
+  Even `writes: repo` remounts every task queue read-only. Reviewer findings are stored only as
+  delimited untrusted evidence; the next worker receives a fixed reproduction-first action.
+
+- **A task has exactly one reachable commit binding.** Completion rejects both a missing
+  iteration binding, any second `Coop-Task` trailer reachable from `HEAD`, and any binding for a
+  different task in the iteration range. Reopened work must amend or rewrite its original task
+  commit instead of stacking another bound commit, and verify authority comes only from
+  host-recorded completions.
+
+- **Signing no longer depends on a clean active checkout.** Coop re-signs in an isolated linked
+  worktree, verifies that commit trees are unchanged, then updates the original branch with an
+  old-SHA compare-and-swap. Staged, unstaged, untracked, and secret-decoy files remain untouched,
+  side refs cannot be rewritten, repository-local SSH key commands are ignored, and a concurrent
+  ref move leaves the signed candidate unapplied.
+
 ## 7.1.0
 
 - **Compose sidecars now reconcile removed services and basename-era projects.** `coop up`,

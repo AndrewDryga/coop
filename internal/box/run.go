@@ -44,9 +44,9 @@ type RunSpec struct {
 	// RepoReadOnly mounts Repo read-only. Maintenance checks can inspect an isolated candidate
 	// without letting the command alter even that disposable tree.
 	RepoReadOnly bool
-	// RepoWritablePaths remounts these descendants read-write after a read-only Repo bind. Review
-	// stages use this for task queues: agents can update lifecycle state without editing source.
-	RepoWritablePaths []string
+	// RepoReadOnlyPaths remounts real descendant directories read-only after a writable Repo bind.
+	// Review stages use it for task queues so source-fixing access never grants lifecycle access.
+	RepoReadOnlyPaths []string
 
 	Homes   bool // mount per-agent home dirs, env-file, INSTRUCTIONS, and MCP configs
 	Network bool // join the sibling-services network if `coop up` created one
@@ -194,16 +194,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if spec.RepoReadOnly && len(mounts) > 0 {
 		mounts[0].RO = true // ComputeMounts guarantees the primary repo bind is first
-		writable, err := repoWritableMounts(spec.Repo, workdir, spec.RepoWritablePaths)
+	}
+	if !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
+		protected, err := repoReadOnlyPathMounts(spec.Repo, workdir, spec.RepoReadOnlyPaths)
 		if err != nil {
 			return -1, err
 		}
-		// Descendant binds follow the parent repo bind, while secret decoys remain last and
-		// therefore continue to shadow matching paths inside a writable task queue.
-		ordered := make([]Mount, 0, len(mounts)+len(writable))
-		ordered = append(ordered, mounts[0])
-		ordered = append(ordered, writable...)
-		mounts = append(ordered, mounts[1:]...)
+		mounts = append(mounts, protected...)
 	}
 	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
@@ -520,6 +517,64 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	return rt.Run(stdin, stdout, stderr, args...)
 }
 
+func repoReadOnlyPathMounts(repo, workdir string, paths []string) ([]Mount, error) {
+	repoAbs, err := filepath.Abs(repo)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository for read-only paths: %w", err)
+	}
+	repoResolved, err := filepath.EvalSymlinks(repoAbs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository for read-only paths: %w", err)
+	}
+	seen := map[string]bool{}
+	var mounts []Mount
+	for _, path := range paths {
+		pathAbs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve read-only repository path %q: %w", path, err)
+		}
+		rel, err := filepath.Rel(repoAbs, pathAbs)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("read-only repository path %q is not a real descendant of %q", path, repo)
+		}
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		current := repoAbs
+		for _, component := range strings.Split(rel, string(filepath.Separator)) {
+			current = filepath.Join(current, component)
+			info, err := os.Lstat(current)
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf(
+					"read-only repository path %q does not exist; create the configured task queue before a repository-writable review",
+					path,
+				)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("inspect read-only repository path %q: %w", path, err)
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return nil, fmt.Errorf("read-only repository path %q crosses a non-directory or symlink", path)
+			}
+		}
+		target := filepath.Join(workdir, rel)
+		resolved, err := filepath.EvalSymlinks(pathAbs)
+		if err != nil {
+			return nil, fmt.Errorf("resolve read-only repository path %q: %w", path, err)
+		}
+		resolvedRel, err := filepath.Rel(repoResolved, resolved)
+		if err != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) ||
+			filepath.Clean(filepath.Join(repoResolved, rel)) != resolved {
+			return nil, fmt.Errorf("read-only repository path %q escapes through a symlink", path)
+		}
+		mounts = append(mounts, Mount{
+			Kind: Bind, Source: pathAbs, Target: target, RO: true,
+		})
+	}
+	return mounts, nil
+}
+
 func validateFusionSpec(spec RunSpec) error {
 	if spec.FusionGovernor == "" {
 		if len(spec.FusionMembers) > 0 {
@@ -548,53 +603,6 @@ func validateFusionSpec(spec RunSpec) error {
 		seenPeers[peer.Provider] = true
 	}
 	return nil
-}
-
-func repoWritableMounts(repo, workdir string, paths []string) ([]Mount, error) {
-	var mounts []Mount
-	for _, path := range paths {
-		rel, err := filepath.Rel(repo, path)
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("writable repository path %q must be a descendant of %q", path, repo)
-		}
-		path = filepath.Join(repo, rel)
-		exists, err := queueRootExistsWithoutSymlinks(repo, rel)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			continue // A monorepo may configure a member queue before that member starts using it.
-		}
-		resolvedRepo, repoErr := filepath.EvalSymlinks(repo)
-		resolvedPath, pathErr := filepath.EvalSymlinks(path)
-		resolvedRel, relErr := filepath.Rel(resolvedRepo, resolvedPath)
-		if repoErr != nil || pathErr != nil || relErr != nil || resolvedRel == "." || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("writable repository path %q must resolve to a descendant of %q", path, repo)
-		}
-		mounts = append(mounts, Mount{Kind: Bind, Source: path, Target: filepath.Join(workdir, rel)})
-	}
-	return mounts, nil
-}
-
-// queueRootExistsWithoutSymlinks distinguishes an unstarted optional queue from a symlinked
-// path. A writable bind on any symlinked component could remount a protected in-repo path at the
-// queue's lexical target, bypassing the read-only repository bind and any decoy at that target.
-func queueRootExistsWithoutSymlinks(repo, rel string) (bool, error) {
-	path := repo
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		path = filepath.Join(path, part)
-		info, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return false, fmt.Errorf("writable repository path %q must not traverse symlink %q", filepath.Join(repo, rel), path)
-		}
-	}
-	return true, nil
 }
 
 func projectPolicyRepo(spec RunSpec) string {

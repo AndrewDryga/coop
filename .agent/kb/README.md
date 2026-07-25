@@ -59,7 +59,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-replay-publication](acp-replay-publication.md) — publish replacement native bindings atomically before releasing held editor work
 - [acp-target-commit](acp-target-commit.md) — commit model/effort truth from the effective provider response, including Grok migrations
 - [acp-carry-echo](acp-carry-echo.md) — inject best-effort context once and hide only its exact provider echo from the editor
-- [review-task-only-mounts](review-task-only-mounts.md) — review boxes bind the repo read-only, then remount validated task-queue descendants writable; their order is the isolation boundary
+- [review-host-owned-verdicts](review-host-owned-verdicts.md) — review boxes report bounded evidence; Coop alone applies validated task lifecycle changes
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist

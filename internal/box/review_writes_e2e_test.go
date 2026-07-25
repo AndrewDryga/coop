@@ -1,8 +1,8 @@
 //go:build reviewwritee2e
 
-// Runtime coverage for the task-only review boundary. It deliberately runs only through
-// make review-writes-e2e: unit tests remain runtime-free, while this test proves Docker applies
-// the nested read-only/read-write mounts as intended.
+// Runtime coverage for the review write boundary. It deliberately runs only through
+// make review-writes-e2e: unit tests remain runtime-free, while this test proves Docker keeps the
+// task queues remain read-only even when full repository source writes are explicit.
 package box
 
 import (
@@ -32,18 +32,18 @@ func TestReviewWritesDockerRuntime(t *testing.T) {
 
 	for _, tc := range []struct {
 		name     string
-		taskOnly bool
+		readOnly bool
 	}{
-		{name: "task-only default", taskOnly: true},
-		{name: "full repository opt-in", taskOnly: false},
+		{name: "report-only default", readOnly: true},
+		{name: "full repository opt-in", readOnly: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testReviewWritesDockerRuntime(t, tc.taskOnly)
+			testReviewWritesDockerRuntime(t, tc.readOnly)
 		})
 	}
 }
 
-func testReviewWritesDockerRuntime(t *testing.T, taskOnly bool) {
+func testReviewWritesDockerRuntime(t *testing.T, readOnly bool) {
 	t.Helper()
 	repo := t.TempDir()
 	write := func(rel, body string) {
@@ -81,16 +81,14 @@ func testReviewWritesDockerRuntime(t *testing.T, taskOnly bool) {
 		t.Fatal(err)
 	}
 
-	queue := filepath.Join(repo, ".agent", "tasks")
 	var boxErr strings.Builder
 	spec := RunSpec{
 		Image: reviewWritesTestImage, Repo: repo, Workdir: "/workspace",
-		Cmd:          []string{"sh", "-ec", reviewWritesRuntimeScript(taskOnly)},
-		RepoReadOnly: taskOnly, Batch: true, Quiet: true,
+		Cmd:               []string{"sh", "-ec", reviewWritesRuntimeScript(readOnly)},
+		RepoReadOnly:      readOnly,
+		RepoReadOnlyPaths: []string{filepath.Join(repo, ".agent", "tasks")},
+		Batch:             true, Quiet: true,
 		Stdout: io.Discard, Stderr: &boxErr,
-	}
-	if taskOnly {
-		spec.RepoWritablePaths = []string{queue}
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
 	if code, err := Run(cfg, runtime.Runtime{Name: "docker"}, spec); err != nil || code != 0 {
@@ -103,7 +101,7 @@ func testReviewWritesDockerRuntime(t *testing.T, taskOnly bool) {
 		"Makefile":         "gate before\n",
 	}
 	for rel, want := range protected {
-		if !taskOnly {
+		if !readOnly {
 			want = "allowed\n"
 		}
 		body, err := os.ReadFile(filepath.Join(repo, rel))
@@ -114,42 +112,44 @@ func testReviewWritesDockerRuntime(t *testing.T, taskOnly bool) {
 			t.Errorf("%s = %q, want %q", rel, body, want)
 		}
 	}
-	log, err := os.ReadFile(filepath.Join(repo, ".agent", "tasks", "99_done", "task", "log.md"))
-	if err != nil {
-		t.Fatal(err)
+	log, err := os.ReadFile(filepath.Join(repo, ".agent", "tasks", "10_in_progress", "task", "log.md"))
+	if err != nil || string(log) != "log before\n" {
+		t.Errorf("protected task log = %q, %v", log, err)
 	}
-	if !strings.Contains(string(log), "runtime log") {
-		t.Errorf("task log = %q, want runtime write", log)
+	state, err := os.ReadFile(filepath.Join(repo, ".agent", "tasks", "10_in_progress", "task", "state.md"))
+	if err != nil || string(state) != "state before\n" {
+		t.Errorf("protected task state = %q, %v", state, err)
 	}
-	state, err := os.ReadFile(filepath.Join(repo, ".agent", "tasks", "99_done", "task", "state.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(state) != "runtime state\n" {
-		t.Errorf("task state = %q, want runtime write", state)
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".agent", "tasks", "10_in_progress", "task")); !os.IsNotExist(err) {
-		t.Fatalf("in-progress task still exists after lifecycle move: %v", err)
+	if _, err := os.Stat(filepath.Join(repo, ".agent", "tasks", "99_done", "task")); !os.IsNotExist(err) {
+		t.Fatalf("review moved the protected task: %v", err)
 	}
 }
 
-func reviewWritesRuntimeScript(taskOnly bool) string {
-	const protected = "/workspace/source.txt /workspace/.agent/loop.yaml /workspace/Makefile"
-	if taskOnly {
-		return `for path in ` + protected + `; do
+func reviewWritesRuntimeScript(readOnly bool) string {
+	const tasks = "/workspace/.agent/tasks/10_in_progress/task/log.md /workspace/.agent/tasks/10_in_progress/task/state.md"
+	if readOnly {
+		return `for path in /workspace/source.txt /workspace/.agent/loop.yaml /workspace/Makefile ` + tasks + `; do
   if (printf 'denied\n' > "$path") 2>/dev/null; then
     echo "unexpected writable path: $path"
     exit 1
   fi
 done
-printf 'runtime log\n' >> /workspace/.agent/tasks/10_in_progress/task/log.md
-printf 'runtime state\n' > /workspace/.agent/tasks/10_in_progress/task/state.md
-mv /workspace/.agent/tasks/10_in_progress/task /workspace/.agent/tasks/99_done/task`
+if mv /workspace/.agent/tasks/10_in_progress/task /workspace/.agent/tasks/99_done/task 2>/dev/null; then
+  echo "unexpected writable task queue"
+  exit 1
+fi`
 	}
-	return `for path in ` + protected + `; do
+	return `for path in /workspace/source.txt /workspace/.agent/loop.yaml /workspace/Makefile; do
   printf 'allowed\n' > "$path"
 done
-printf 'runtime log\n' >> /workspace/.agent/tasks/10_in_progress/task/log.md
-printf 'runtime state\n' > /workspace/.agent/tasks/10_in_progress/task/state.md
-mv /workspace/.agent/tasks/10_in_progress/task /workspace/.agent/tasks/99_done/task`
+for path in ` + tasks + `; do
+  if (printf 'denied\n' > "$path") 2>/dev/null; then
+    echo "unexpected writable task path: $path"
+    exit 1
+  fi
+done
+if mv /workspace/.agent/tasks/10_in_progress/task /workspace/.agent/tasks/99_done/task 2>/dev/null; then
+  echo "unexpected writable task queue"
+  exit 1
+fi`
 }

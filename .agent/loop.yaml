@@ -36,10 +36,10 @@ between:
   # audit, using this target/prompt when configured or the signoff target + built-in prompt otherwise.
   enabled: true
 
-  # Review boxes write task queues only: the repository stays read-only while
-  # every configured queue is remounted read-write so an audit may reopen work.
-  # Set this to repo only when this reviewer is intentionally allowed to fix
-  # source.
+  # `tasks` is report-only: the entire repository, including task queues, is read-only.
+  # The reviewer returns evidence + exact task ids; Coop applies validated reopens host-side.
+  # Set this to repo only when this reviewer is intentionally allowed to fix source.
+  # Task lifecycle transitions remain report-only even with source writes enabled.
   # Values: tasks | repo. Default: tasks.
   writes: tasks
 
@@ -57,15 +57,15 @@ between:
       proves it, not at a claim in log.md.
     - The failure path is tested, not just the happy path.
     - The gate is green on the committed tree (`make check`), and `make align` leaves no diff.
-    - The commit says WHY. A lifecycle-only state.md mismatch is repaired in 99_done/ and does not
-      reopen implementation work; any substantive reopen gets a concrete resume state.
-    Verdict: pass → append one line to the task's log.md ("audit: pass — <evidence>"). Fail →
-    move the folder back to 10_in_progress/ and append the concrete gap (what to fix, where)
-    to log.md. Never widen scope beyond the audited task.
+    - The commit says WHY. A lifecycle-only state.md mismatch is a finding for Coop to normalize
+      and does not reopen implementation work; any substantive reopen names the concrete gap.
+    Report only: do not edit the queue or move task folders. Coop validates your evidence and
+    applies exact-subject reopens host-side. Never widen scope beyond the audited task.
 
 signoff:
-  # Signoff writes task queues only by default. Set this to repo only when the
-  # final reviewer is intentionally expected to edit and commit source.
+  # Signoff is report-only by default; Coop applies validated task reopens host-side.
+  # Set this to repo only when the final reviewer is expected to edit and commit source.
+  # Task lifecycle transitions remain report-only.
   # Values: tasks | repo. Default: tasks.
   writes: tasks
 
@@ -97,7 +97,8 @@ signoff:
       nothing untracked was smuggled in beside the change.
 
 verify:
-  # Verify writes task queues only by default. Set this to repo only when the
-  # e2e reviewer is intentionally expected to fix what it finds.
+  # Verify is report-only by default; Coop applies validated task reopens host-side.
+  # Set this to repo only when the e2e reviewer is expected to fix source.
+  # Task lifecycle transitions remain report-only.
   # Values: tasks | repo. Default: tasks.
   writes: tasks

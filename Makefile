@@ -97,7 +97,7 @@ acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider crede
 acp-e2e: ## Real ACP adapter e2e (isolated binary; needs a configured runtime, built box, and credentials)
 	@COOP_ACP_LIVE_REQUIRE_ALL=1 go test -timeout 30m -tags acpe2e -run 'Test(LiveProviderConformance|LiveCrossProviderCarry|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState|CodexTargetRolloutTruth|FrontierStoredTargetTruth)$$' -count=1 -v ./internal/acpproxy/
 
-review-writes-e2e: ## Review write-policy e2e (needs Docker; pulls a small test image once)
+review-writes-e2e: ## Review mount-isolation e2e (needs Docker; pulls a small test image once)
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21
 	@go test -tags reviewwritee2e -run '^TestReviewWritesDockerRuntime$$' -count=1 -v ./internal/box/
 

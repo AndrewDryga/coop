@@ -450,6 +450,247 @@ func TestReviewCompletionWindowRejectsInPlaceArchiveMutation(t *testing.T) {
 	}
 }
 
+func TestReviewCompletionWindowRejectsDirectTaskReopen(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "direct-review-reopen")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginReviewCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := windows.finishReview()
+	if err == nil || !strings.Contains(err.Error(), "reviews must report verdicts for host application") {
+		t.Fatalf("direct review reopen audit = %v, want host-application failure", err)
+	}
+	if len(reopened) != 0 {
+		t.Fatalf("direct review reopen was accepted as host-applied: %v", reopened)
+	}
+	if !pathExists(filepath.Join(root, stateInProgress, archived.ID)) {
+		t.Fatal("rejected direct review reopen lost the actionable task")
+	}
+}
+
+func TestTrustedTaskReopenRollsBackMetadataAndReceipt(t *testing.T) {
+	injected := errors.New("injected metadata failure")
+	cases := []struct {
+		name     string
+		complete bool
+		update   func(string) error
+	}{
+		{
+			name:     "failure after log write",
+			complete: true,
+			update: func(dir string) error {
+				if err := appendTaskLogStrict(dir, "partial review note"); err != nil {
+					return err
+				}
+				return injected
+			},
+		},
+		{
+			name:     "failure after state write",
+			complete: true,
+			update: func(dir string) error {
+				if err := normalizeTaskState(
+					"atomic-review-reopen",
+					dir,
+					"reopened",
+					"partial state",
+					"partial done",
+					"partial trap",
+				); err != nil {
+					return err
+				}
+				return injected
+			},
+		},
+		{
+			name: "new metadata files are removed",
+			update: func(dir string) error {
+				if err := appendTaskLogStrict(dir, "new review note"); err != nil {
+					return err
+				}
+				if err := normalizeTaskState(
+					"atomic-review-reopen",
+					dir,
+					"reopened",
+					"new state",
+					"new done",
+					"new trap",
+				); err != nil {
+					return err
+				}
+				return injected
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			task := taskForLease(t, root, stateDone, "atomic-review-reopen")
+			if tc.complete {
+				writeTaskFile(t, filepath.Join(task.Dir, "log.md"), "# original log\n")
+				writeTaskFile(t, filepath.Join(task.Dir, "state.md"),
+					"# State\n\n**Status:** complete\n**Done so far:** original\n**Next action:** none\n**Traps:** original\n")
+				if err := completeTrustedTask(root, task); err != nil {
+					t.Fatal(err)
+				}
+				task, _ = currentTask(root, task.ID)
+			}
+			beforeFiles := map[string][]byte{}
+			beforeExists := map[string]bool{}
+			for _, name := range []string{"log.md", "state.md"} {
+				body, err := os.ReadFile(filepath.Join(task.Dir, name))
+				if err == nil {
+					beforeFiles[name], beforeExists[name] = body, true
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+			}
+			beforeReceipt, beforeReceiptOK := taskCompletionReceipt(root, task)
+
+			err := moveTrustedTaskFromDoneWith(root, task, stateInProgress, tc.update)
+			if !errors.Is(err, injected) {
+				t.Fatalf("trusted reopen error = %v, want injected failure", err)
+			}
+			current, ok := currentTask(root, task.ID)
+			if !ok || current.State != stateDone || current.Dir != task.Dir {
+				t.Fatalf("task after rollback = %+v, %v; want original done task", current, ok)
+			}
+			if pathExists(filepath.Join(root, stateInProgress, task.ID)) {
+				t.Fatal("failed host reopen left an in-progress task")
+			}
+			for _, name := range []string{"log.md", "state.md"} {
+				body, err := os.ReadFile(filepath.Join(current.Dir, name))
+				if beforeExists[name] {
+					if err != nil || string(body) != string(beforeFiles[name]) {
+						t.Fatalf("%s after rollback = %q, %v; want %q", name, body, err, beforeFiles[name])
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("%s was created by failed reopen: %v", name, err)
+				}
+			}
+			afterReceipt, afterReceiptOK := taskCompletionReceipt(root, current)
+			if afterReceiptOK != beforeReceiptOK || (afterReceiptOK && afterReceipt != beforeReceipt) {
+				t.Fatalf("completion receipt after rollback = %+v/%v, want %+v/%v",
+					afterReceipt, afterReceiptOK, beforeReceipt, beforeReceiptOK)
+			}
+			if err := reconcileCompletionWindows([]string{root}); err != nil {
+				t.Fatalf("failed reopen left a recovery window: %v", err)
+			}
+		})
+	}
+}
+
+func TestTrustedTaskReopenRollsBackEverySubject(t *testing.T) {
+	root := t.TempDir()
+	var tasks []taskItem
+	beforeFiles := map[string]map[string][]byte{}
+	beforeReceipts := map[string]leaseCompletionReceipt{}
+	for _, id := range []string{"atomic-review-a", "atomic-review-b"} {
+		task := taskForLease(t, root, stateDone, id)
+		writeTaskFile(t, filepath.Join(task.Dir, "log.md"), "# original "+id+" log\n")
+		writeTaskFile(t, filepath.Join(task.Dir, "state.md"),
+			"# State\n\n**Status:** complete\n**Done so far:** original\n**Next action:** none\n**Traps:** original\n")
+		if err := completeTrustedTask(root, task); err != nil {
+			t.Fatal(err)
+		}
+		task, _ = currentTask(root, id)
+		tasks = append(tasks, task)
+		beforeFiles[id] = map[string][]byte{}
+		for _, name := range []string{"log.md", "state.md"} {
+			body, err := os.ReadFile(filepath.Join(task.Dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeFiles[id][name] = body
+		}
+		receipt, ok := taskCompletionReceipt(root, task)
+		if !ok {
+			t.Fatalf("task %s has no completion receipt", id)
+		}
+		beforeReceipts[id] = receipt
+	}
+	injected := errors.New("second task metadata failed")
+	moves := []trustedTaskMove{
+		{
+			root: root, task: tasks[0], newState: stateInProgress,
+			afterMove: func(dir string) error {
+				return appendTaskLogStrict(dir, "first task partial review")
+			},
+		},
+		{
+			root: root, task: tasks[1], newState: stateInProgress,
+			afterMove: func(dir string) error {
+				if err := appendTaskLogStrict(dir, "second task partial review"); err != nil {
+					return err
+				}
+				return injected
+			},
+		},
+	}
+	if err := moveTrustedTasksFromDoneWith(moves); !errors.Is(err, injected) {
+		t.Fatalf("multi-task reopen = %v, want injected failure", err)
+	}
+	for _, task := range tasks {
+		current, ok := currentTask(root, task.ID)
+		if !ok || current.State != stateDone {
+			t.Fatalf("task %s after rollback = %+v/%v, want done", task.ID, current, ok)
+		}
+		if pathExists(filepath.Join(root, stateInProgress, task.ID)) {
+			t.Fatalf("task %s remained in progress after transaction rollback", task.ID)
+		}
+		for _, name := range []string{"log.md", "state.md"} {
+			body, err := os.ReadFile(filepath.Join(current.Dir, name))
+			if err != nil || string(body) != string(beforeFiles[task.ID][name]) {
+				t.Fatalf("%s/%s after rollback = %q, %v; want %q",
+					task.ID, name, body, err, beforeFiles[task.ID][name])
+			}
+		}
+		receipt, ok := taskCompletionReceipt(root, current)
+		if !ok || receipt != beforeReceipts[task.ID] {
+			t.Fatalf("task %s receipt after rollback = %+v/%v, want %+v",
+				task.ID, receipt, ok, beforeReceipts[task.ID])
+		}
+	}
+}
+
+func TestTrustedTaskMoveRollsBackDeclaredMetadata(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateInProgress, "decision-rollback")
+	original := []byte("# Original decision\n")
+	writeTaskFile(t, filepath.Join(task.Dir, "decision.md"), string(original))
+	injected := errors.New("decision callback failed")
+	err := moveTrustedTasksFromDoneWith([]trustedTaskMove{{
+		root: root, task: taskItem{ID: task.ID}, newState: stateBlocked,
+		sourceStates:  []string{stateInProgress},
+		metadataNames: []string{"decision.md"},
+		afterMove: func(dir string) error {
+			if err := os.WriteFile(filepath.Join(dir, "decision.md"), []byte("# Partial replacement\n"), 0o644); err != nil {
+				return err
+			}
+			return injected
+		},
+	}})
+	if !errors.Is(err, injected) {
+		t.Fatalf("trusted move = %v, want injected callback failure", err)
+	}
+	current, ok := currentTask(root, task.ID)
+	if !ok || current.State != stateInProgress {
+		t.Fatalf("task after rollback = %+v/%v, want in progress", current, ok)
+	}
+	body, err := os.ReadFile(filepath.Join(current.Dir, "decision.md"))
+	if err != nil || string(body) != string(original) {
+		t.Fatalf("decision after rollback = %q, %v; want %q", body, err, original)
+	}
+}
+
 func TestStaleReceiptClearDoesNotEraseFreshGeneration(t *testing.T) {
 	root := t.TempDir()
 	archived := taskForLease(t, root, stateDone, "fresh-receipt")
@@ -705,7 +946,7 @@ func TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure(t *testing.
 	a := &app{}
 	code, output, usage, classification, windows, err := a.runIteration(
 		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
-		false, []string{root}, completionWindowStrict, true, nil, io.Discard, nil, "setup failure",
+		false, []string{root}, completionWindowStrict, true, io.Discard, nil, "setup failure",
 	)
 	if code != 1 || !errors.Is(err, errCompletionWindowSetup) || windows != nil || output != "" || usage != nil {
 		t.Fatalf("setup-failed iteration = code %d output %q usage %#v windows %#v err %v", code, output, usage, windows, err)
@@ -1249,7 +1490,7 @@ func TestResumeLine(t *testing.T) {
 	// A landed commit → a line that names the sha and BOTH cases (finish-the-move vs reopened-rework),
 	// so it never falsely asserts the task is done.
 	l := resumeLine("my-task", []string{"abc123"})
-	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "Coop-Recovery", "finish the move"} {
+	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "Coop-Recovery", "finish the move", "exactly one reachable", "do not add a second"} {
 		if !strings.Contains(l, want) {
 			t.Errorf("resume line missing %q:\n%s", want, l)
 		}
@@ -1361,9 +1602,10 @@ func TestAssignLoopTaskOnlyNeverSwitchesTasks(t *testing.T) {
 	}
 }
 
-// TestCommitsForTaskAndUntrailered drives the real git trailer parser. Fresh work binds only in its
-// commit range; unchanged HEAD, malformed, duplicate, different-id, and substring values fail closed.
-func TestCommitsForTaskAndUntrailered(t *testing.T) {
+// TestCommitsForTaskAndUnbindableTasks drives the real git trailer parser. Fresh work binds only
+// when the iteration range and reachable history each contain exactly one binding; unchanged HEAD,
+// malformed, duplicate, different-id, substring, and historical duplicate values fail closed.
+func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -1395,38 +1637,49 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 		t.Errorf("commitsForTask(task-99) = %v, want none", c)
 	}
 	// A finished task WITH a trailer commit in range is bindable (not untrailered); one WITHOUT is.
-	if m := untrailered(repo, base, head, []string{"task-42"}); len(m) != 0 {
+	if m := unbindableTasks(repo, base, head, []string{"task-42"}); len(m) != 0 {
 		t.Errorf("task-42 is trailered in range, should not be flagged: %v", m)
 	}
-	if m := untrailered(repo, base, head, []string{"task-42", "task-99"}); len(m) != 1 || m[0] != "task-99" {
-		t.Errorf("untrailered = %v, want [task-99]", m)
+	if m := unbindableTasks(repo, base, head, []string{"task-42", "task-99"}); len(m) != 1 || m[0] != "task-99" {
+		t.Errorf("unbindable = %v, want [task-99]", m)
 	}
+	git("commit", "-q", "--allow-empty", "-m", "forge another task\n\nCoop-Task: archived-task")
+	forgedHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := unbindableTasks(repo, base, forgedHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("foreign task binding in assigned range = %v, want [task-42]", m)
+	}
+	git("commit", "-q", "--allow-empty", "-m", "hide foreign task\n\nCoop-Task:\nCoop-Task: archived-task")
+	hiddenForeignHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := unbindableTasks(repo, forgedHead, hiddenForeignHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("empty then foreign task binding = %v, want [task-42]", m)
+	}
+	git("reset", "--hard", "-q", head)
 	// No-HEAD-change work must fail closed even if an old exact trailer is reachable. Crash-left
 	// completion recovery restores the task and requires a new range-bound amend/recommit.
-	if m := untrailered(repo, head, head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, head, head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unchanged HEAD used historical task binding: %v", m)
 	}
-	if m := untrailered(repo, head, head, []string{"task-4", "task"}); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
-		t.Errorf("different ids and substrings must remain untrailered, got %v", m)
+	if m := unbindableTasks(repo, head, head, []string{"task-4", "task"}); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
+		t.Errorf("different ids and substrings must remain unbindable, got %v", m)
 	}
-	if m := untrailered(repo, "", head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, "", head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unknown iteration base must fail closed, got %v", m)
 	}
-	if m := untrailered(repo, head, "", []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, head, "", []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unknown iteration head must fail closed, got %v", m)
 	}
 
 	// Once HEAD changes, an older valid trailer cannot bless fresh unbound work.
 	git("commit", "-q", "--allow-empty", "-m", "fresh rework without a trailer")
 	unboundHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := untrailered(repo, head, unboundHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, head, unboundHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("historical-only binding after fresh work = %v, want [task-42]", m)
 	}
 
 	// A trailer-like line outside Git's final contiguous trailer block is not a trailer.
 	git("commit", "-q", "--allow-empty", "-m", "malformed\n\nCoop-Task: task-42\n\nCo-authored-by: T <t@t>")
 	malformedHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := untrailered(repo, unboundHead, malformedHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, unboundHead, malformedHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("malformed trailer binding = %v, want [task-42]", m)
 	}
 
@@ -1436,20 +1689,20 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	if c := commitsForTask(repo, malformedHead+".."+duplicateHead, "task-42"); len(c) != 0 {
 		t.Errorf("duplicate trailers must not bind, got commits %v", c)
 	}
-	if m := untrailered(repo, malformedHead, duplicateHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, malformedHead, duplicateHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("duplicate trailer binding = %v, want [task-42]", m)
 	}
 
 	git("commit", "-q", "--allow-empty", "-m", "valid again\n\nCoop-Task: task-42")
 	validHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := untrailered(repo, duplicateHead, validHead, []string{"task-42"}); len(m) != 0 {
-		t.Errorf("single exact trailer should bind fresh work: %v", m)
+	if m := unbindableTasks(repo, duplicateHead, validHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+		t.Errorf("a second reachable binding outside the fresh range must fail closed: %v", m)
 	}
 	// Two individually valid commits for one task are still ambiguous: one task must bind to one
 	// commit in the iteration range, not merely find at least one matching trailer somewhere in it.
 	git("commit", "-q", "--allow-empty", "-m", "second valid binding\n\nCoop-Task: task-42")
 	twoBindingsHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := untrailered(repo, duplicateHead, twoBindingsHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m := unbindableTasks(repo, duplicateHead, twoBindingsHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("multiple matching commits must fail closed, got %v", m)
 	}
 	// landedTasks sees the trailer in the explicitly requested history.
@@ -1459,6 +1712,18 @@ func TestCommitsForTaskAndUntrailered(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "ambiguous landed\n\nCoop-Task: duplicate-landed\nCoop-Task: duplicate-landed")
 	if landedTasks(repo, "HEAD")["duplicate-landed"] {
 		t.Error("landedTasks accepted a commit with duplicate Coop-Task trailers")
+	}
+
+	// Rewriting the existing binding makes the old commit unreachable and creates exactly one
+	// range-local and reachable binding, which is the required reopened-task recovery shape.
+	git("reset", "--hard", "-q", head)
+	git("commit", "--amend", "-q", "--allow-empty", "-m", "reworked\n\nCoop-Task: task-42\nCoop-Recovery: fixture")
+	rewrittenHead := gitOut(repo, "rev-parse", "HEAD")
+	if m := unbindableTasks(repo, base, rewrittenHead, []string{"task-42"}); len(m) != 0 {
+		t.Errorf("rewritten sole binding should be accepted: %v", m)
+	}
+	if commits := commitsForTask(repo, rewrittenHead, "task-42"); len(commits) != 1 || commits[0] != rewrittenHead[:7] {
+		t.Errorf("rewritten reachable bindings = %v, want only %s", commits, rewrittenHead[:7])
 	}
 }
 

@@ -274,8 +274,11 @@ var commandHelp = map[string]string{
   The range is the UNPUSHED one — @{upstream}..HEAD — git's own rule for what is
   safe to rewrite: it never touches pushed history and never pushes. With no
   upstream, pass --from <ref> (e.g. the commit you last pushed). It refuses a
-  dirty tree and a range containing a merge commit. 'coop loop' signs each cycle
-  automatically when you sign by default (commit.gpgsign=true).`,
+  range containing a merge commit. Signing runs in an isolated linked worktree,
+  verifies that commit trees are unchanged, then compare-and-swaps the branch ref;
+  staged, unstaged, and untracked files in your active checkout remain untouched.
+  'coop loop' signs each cycle automatically when you sign by default
+  (commit.gpgsign=true).`,
 	"prompt": `coop prompt — one compact status line for a shell prompt, tmux, or menubar.
 
   Usage: coop prompt
@@ -691,9 +694,16 @@ var commandHelp = map[string]string{
   overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
   next target in its agent: ladder, or waits out the reset when all are limited.
 
-  Every review closes with a structured PASS/FAIL receipt naming the exact sorted task IDs it
-  reopened. Coop compares it with the review's done-to-actionable folder delta and named subjects;
-  unrelated queue work is ignored, while a missing, malformed, or mismatched receipt fails closed.
+  Every review closes with one AUDIT EVIDENCE line per subject and a structured PASS/FAIL receipt
+  naming the exact sorted task IDs it proposes reopening. By default the whole repository,
+  including task queues, is read-only. Coop validates the complete proposal, acquires host task
+  authority, and applies exact-subject reopens. Missing, malformed, interrupted, failed, and
+  out-of-scope proposals mutate no task. writes: repo permits source fixes, but task lifecycle is
+  still host-applied.
+
+  Completion requires exactly one Coop-Task binding in the current iteration range and exactly
+  one binding for that task reachable from HEAD. Reopened work must amend or rewrite the original
+  task commit; a second bound commit is rejected and the task is restored to in-progress.
 
   One committed .agent/loop.yaml configures every step (preflight/work/between/signoff/verify),
   each with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the

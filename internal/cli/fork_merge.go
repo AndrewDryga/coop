@@ -253,7 +253,13 @@ func wantsSigning() bool {
 // off by default — so these re-enable it with vetted values. The program key tracks gpg.format
 // (openpgp/ssh/x509).
 func trustedSignArgs() []string {
-	args := []string{"-c", "commit.gpgsign=true"}
+	// Blank identity selection first so an agent-writable local config cannot choose a key or
+	// execute gpg.ssh.defaultKeyCommand. Trusted global values, when present, are appended last.
+	args := []string{
+		"-c", "commit.gpgsign=true",
+		"-c", "user.signingkey=",
+		"-c", "gpg.ssh.defaultKeyCommand=",
+	}
 	format := gitGlobalOut("--get", "gpg.format")
 	progKey, def := "gpg.program", "gpg"
 	switch format {
@@ -272,6 +278,10 @@ func trustedSignArgs() []string {
 	args = append(args, "-c", progKey+"="+prog)
 	if key := gitGlobalOut("--get", "user.signingkey"); key != "" {
 		args = append(args, "-c", "user.signingkey="+key)
+	} else if format == "ssh" {
+		if command := gitGlobalOut("--get", "gpg.ssh.defaultKeyCommand"); command != "" {
+			args = append(args, "-c", "gpg.ssh.defaultKeyCommand="+command)
+		}
 	}
 	return args
 }

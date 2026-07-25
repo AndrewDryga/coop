@@ -200,7 +200,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		}
 		assigned := filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)
 		state, err := os.ReadFile(filepath.Join(assigned, "state.md"))
-		if err != nil || !strings.Contains(string(state), "**Status:** in progress — completion rejected") || !strings.Contains(string(state), "**Next action:** resume the assigned task") {
+		if err != nil || !strings.Contains(string(state), "**Status:** in progress — completion rejected") || !strings.Contains(string(state), "**Next action:** repair the commit binding") {
 			t.Fatalf("assigned completion was not deliberately restored: %q, %v", state, err)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)

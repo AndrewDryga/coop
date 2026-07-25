@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,22 +22,64 @@ import (
 // between commit and folder-move was ambiguous.
 const coopTaskTrailer = "Coop-Task"
 
-// commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
-// the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history. Git joins duplicate
-// values with the explicit unit separator, so a duplicate trailer fails closed instead of looking
-// like a valid first line followed by unrelated output.
-func commitsForTask(repo, rangeExpr, id string) []string {
-	const trailerSep = "\x1f"
-	args := []string{"log", "--format=%h%x09%(trailers:key=" + coopTaskTrailer + ",valueonly,separator=%x1f)"}
+type taskTrailerCommit struct {
+	info      commitInfo
+	values    []string
+	malformed bool
+}
+
+// taskTrailerCommits uses one NUL-delimited Git stream, so a trailer value can never be confused
+// with the next commit record without paying one process launch per commit. Git's trailer parser
+// identifies the final trailer block; the explicit inner separator preserves empty and duplicate
+// Coop-Task occurrences so callers can fail closed.
+func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerCommit, bool) {
+	args := []string{"log"}
+	if reverse {
+		args = append(args, "--reverse")
+	}
+	format := "%h%x00%s%x00%(trailers:key=" + coopTaskTrailer + ",only,unfold,separator=%x1f)"
+	args = append(args, "-z", "--format="+format)
 	if rangeExpr != "" {
 		args = append(args, rangeExpr)
 	}
+	cmd := exec.Command("git", gitArgs(repo, args)...)
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	fields := strings.Split(string(raw), "\x00")
+	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%3 != 0 {
+		return nil, false
+	}
+	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/3)
+	for i := 0; i < len(fields)-1; i += 3 {
+		record := taskTrailerCommit{info: commitInfo{sha: fields[i], subject: fields[i+1]}}
+		if fields[i+2] != "" {
+			for _, trailer := range strings.Split(fields[i+2], "\x1f") {
+				key, value, ok := strings.Cut(trailer, ":")
+				if !ok || !strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer) {
+					record.malformed = true
+					continue
+				}
+				record.values = append(record.values, strings.TrimSpace(value))
+			}
+		}
+		commits = append(commits, record)
+	}
+	return commits, true
+}
+
+// commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
+// the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history.
+func commitsForTask(repo, rangeExpr, id string) []string {
 	var shas []string
-	for _, line := range strings.Split(gitOut(repo, args...), "\n") {
-		sha, val, ok := strings.Cut(line, "\t")
-		values := strings.Split(val, trailerSep)
-		if ok && len(values) == 1 && strings.TrimSpace(values[0]) == id {
-			shas = append(shas, sha)
+	commits, ok := taskTrailerCommits(repo, rangeExpr, false)
+	if !ok {
+		return nil
+	}
+	for _, commit := range commits {
+		if !commit.malformed && len(commit.values) == 1 && commit.values[0] == id {
+			shas = append(shas, commit.info.sha)
 		}
 	}
 	return shas
@@ -194,8 +237,64 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 // moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before
 // a host command reopens or blocks an archived task. On a failed move it restores the old receipt,
 // so concurrent supervised windows never see a false unowned completion.
-func moveTrustedTaskFromDone(root string, task taskItem, newState string) (retErr error) {
-	windows, err := beginCompletionWindowsAllowing([]string{root}, task.ID)
+func moveTrustedTaskFromDone(root string, task taskItem, newState string) error {
+	return moveTrustedTaskFromDoneWith(root, task, newState, nil)
+}
+
+type trustedTaskMove struct {
+	root          string
+	task          taskItem
+	newState      string
+	sourceStates  []string
+	metadataNames []string
+	afterMove     func(string) error
+}
+
+type trustedTaskMoveState struct {
+	move           trustedTaskMove
+	current        taskItem
+	authority      *os.File
+	metadata       map[string]taskMetadataSnapshot
+	previous       leaseCompletionReceipt
+	previousOK     bool
+	receiptTouched bool
+	moved          bool
+}
+
+// moveTrustedTaskFromDoneWith is the one-task form of the atomic host move used for review
+// verdicts. The callback may update only log.md and state.md.
+func moveTrustedTaskFromDoneWith(root string, task taskItem, newState string, afterMove func(string) error) error {
+	return moveTrustedTasksFromDoneWith([]trustedTaskMove{{
+		root: root, task: task, newState: newState, afterMove: afterMove,
+	}})
+}
+
+// moveTrustedTasksFromDoneWith holds every task authority lock before the first mutation. Review
+// verdicts use this all-or-nothing boundary so a later lease or metadata failure cannot leave an
+// earlier subject reopened. Every declared metadata file and completion receipt is restored if any
+// callback or move fails.
+func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
+	if len(moves) == 0 {
+		return nil
+	}
+	moves = slices.Clone(moves)
+	slices.SortFunc(moves, func(a, b trustedTaskMove) int {
+		if byRoot := strings.Compare(a.root, b.root); byRoot != 0 {
+			return byRoot
+		}
+		return strings.Compare(a.task.ID, b.task.ID)
+	})
+	var roots, taskIDs []string
+	for i, move := range moves {
+		if i > 0 && move.root == moves[i-1].root && move.task.ID == moves[i-1].task.ID {
+			return fmt.Errorf("duplicate trusted task move for %s", move.task.ID)
+		}
+		if i == 0 || move.root != moves[i-1].root {
+			roots = append(roots, move.root)
+		}
+		taskIDs = append(taskIDs, move.task.ID)
+	}
+	windows, err := beginCompletionWindowsAllowingTasks(roots, taskIDs)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
 	}
@@ -212,36 +311,180 @@ func moveTrustedTaskFromDone(root string, task taskItem, newState string) (retEr
 		}
 		return windows.close()
 	}
-
-	authority, err := openLeaseAuthority(root, task.ID, true)
-	if err != nil {
-		return errors.Join(err, closeWindow(false))
-	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		closeErr := authority.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			err = fmt.Errorf("task %s is leased by another controller", task.ID)
+	var states []trustedTaskMoveState
+	unlockAll := func() error {
+		var errs []error
+		for i := len(states) - 1; i >= 0; i-- {
+			if states[i].authority != nil {
+				errs = append(errs, unlockLeaseFile(states[i].authority))
+				states[i].authority = nil
+			}
 		}
-		return errors.Join(err, closeErr, closeWindow(false))
+		return errors.Join(errs...)
 	}
-	current, ok := currentTask(root, task.ID)
-	if !ok || current.Dir != task.Dir || current.State != stateDone {
-		return errors.Join(errLeaseCandidateGone, unlockLeaseFile(authority), closeWindow(false))
+	failBeforeMutation := func(cause error) error {
+		return errors.Join(cause, unlockAll(), closeWindow(true))
 	}
-	previous, previousOK := readLeaseCompletionReceipt(authority, current.Dir)
-	if err := clearLeaseCompletionReceipt(authority); err != nil {
-		return errors.Join(err, unlockLeaseFile(authority))
+	for _, move := range moves {
+		authority, err := openLeaseAuthority(move.root, move.task.ID, true)
+		if err != nil {
+			return failBeforeMutation(err)
+		}
+		state := trustedTaskMoveState{move: move, authority: authority}
+		states = append(states, state)
+		if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				err = fmt.Errorf("task %s is leased by another controller", move.task.ID)
+			}
+			return failBeforeMutation(err)
+		}
+		current, ok := currentTask(move.root, move.task.ID)
+		if !ok {
+			return failBeforeMutation(errLeaseCandidateGone)
+		}
+		if len(move.sourceStates) == 0 {
+			if current.Dir != move.task.Dir || current.State != stateDone {
+				return failBeforeMutation(errLeaseCandidateGone)
+			}
+		} else if !slices.Contains(move.sourceStates, current.State) {
+			return failBeforeMutation(fmt.Errorf(
+				"task %s is %s, want one of %s",
+				move.task.ID,
+				stateLabel(current.State),
+				strings.Join(move.sourceStates, ", "),
+			))
+		}
+		states[len(states)-1].current = current
+		if move.afterMove != nil {
+			names := move.metadataNames
+			if len(names) == 0 {
+				names = []string{"log.md", "state.md"}
+			}
+			metadata, err := snapshotTaskMetadata(current.Dir, names...)
+			if err != nil {
+				return failBeforeMutation(err)
+			}
+			states[len(states)-1].metadata = metadata
+		}
+		states[len(states)-1].previous, states[len(states)-1].previousOK =
+			readLeaseCompletionReceipt(authority, current.Dir)
 	}
-	moveErr := moveTaskDir(root, current, newState)
-	var restoreErr error
-	if moveErr != nil && previousOK {
-		restoreErr = writeLeaseCompletionReceiptValue(authority, previous)
+	rollback := func(cause error) error {
+		rollbackErr := rollbackTrustedTaskMoves(states)
+		unlockErr := unlockAll()
+		if rollbackErr != nil {
+			return errors.Join(cause, fmt.Errorf("roll back trusted task moves: %w", rollbackErr), unlockErr)
+		}
+		return errors.Join(cause, unlockErr, closeWindow(false))
 	}
-	unlockErr := unlockLeaseFile(authority)
-	if restoreErr != nil {
-		return errors.Join(moveErr, restoreErr, unlockErr)
+	for i := range states {
+		states[i].receiptTouched = true
+		if err := clearLeaseCompletionReceipt(states[i].authority); err != nil {
+			return rollback(err)
+		}
 	}
-	return errors.Join(moveErr, unlockErr, closeWindow(true))
+	for i := range states {
+		state := &states[i]
+		if state.current.State != state.move.newState {
+			if err := moveTaskDir(state.move.root, state.current, state.move.newState); err != nil {
+				return rollback(err)
+			}
+			state.moved = true
+		}
+		if state.move.afterMove != nil {
+			dir := filepath.Join(state.move.root, state.move.newState, state.current.ID)
+			if err := state.move.afterMove(dir); err != nil {
+				return rollback(err)
+			}
+		}
+	}
+	return errors.Join(unlockAll(), closeWindow(true))
+}
+
+func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
+	restored := make([]bool, len(states))
+	var errs []error
+	for i := len(states) - 1; i >= 0; i-- {
+		state := &states[i]
+		restored[i] = true
+		dir := filepath.Join(state.move.root, state.move.newState, state.current.ID)
+		var metadataErr error
+		if state.move.afterMove != nil {
+			metadataErr = restoreTaskMetadata(dir, state.metadata)
+		}
+		var moveErr error
+		if state.moved {
+			moved := state.current
+			moved.State = state.move.newState
+			moved.Dir = dir
+			moveErr = moveTaskDir(state.move.root, moved, state.current.State)
+		}
+		restored[i] = metadataErr == nil && moveErr == nil
+		if err := errors.Join(metadataErr, moveErr); err != nil {
+			errs = append(errs, fmt.Errorf("restore task %s: %w", state.current.ID, err))
+		}
+	}
+	for i := range states {
+		state := &states[i]
+		if !state.receiptTouched || !state.previousOK || !restored[i] {
+			continue
+		}
+		if err := writeLeaseCompletionReceiptValue(state.authority, state.previous); err != nil {
+			errs = append(errs, fmt.Errorf("restore task %s completion receipt: %w", state.current.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+type taskMetadataSnapshot struct {
+	body   []byte
+	exists bool
+}
+
+func snapshotTaskMetadata(taskDir string, names ...string) (map[string]taskMetadataSnapshot, error) {
+	root, err := openTaskMetadataRoot(taskDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	snapshots := make(map[string]taskMetadataSnapshot, len(names))
+	for _, name := range names {
+		body, err := readTaskMetadataFile(root, name)
+		if errors.Is(err, os.ErrNotExist) {
+			snapshots[name] = taskMetadataSnapshot{}
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("snapshot task metadata %q: %w", name, err)
+		}
+		snapshots[name] = taskMetadataSnapshot{body: body, exists: true}
+	}
+	return snapshots, nil
+}
+
+func restoreTaskMetadata(taskDir string, snapshots map[string]taskMetadataSnapshot) error {
+	root, err := openTaskMetadataRoot(taskDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	var errs []error
+	names := make([]string, 0, len(snapshots))
+	for name := range snapshots {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		snapshot := snapshots[name]
+		if snapshot.exists {
+			errs = append(errs, atomicWriteTaskFile(root, name, snapshot.body))
+			continue
+		}
+		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove rolled-back task metadata %q: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // rejectUnownedCompletions restores folders this iteration moved without owning their lease. A
@@ -481,16 +724,31 @@ func blockedTaskIDs(hosts []string) []string {
 	return ids
 }
 
-// untrailered returns finished ids without exactly one Coop-Task binding in this iteration's range.
-// A no-HEAD-change completion always fails closed; crash recovery restores it for a fresh range.
-func untrailered(repo, base, head string, finished []string) []string {
+// unbindableTasks returns finished ids without exactly one Coop-Task binding both in this
+// iteration's range and across history reachable from the proposed HEAD. Reopened work therefore
+// has to rewrite its existing bound commit instead of adding a second one. A no-HEAD-change
+// completion always fails closed; crash recovery restores it for a fresh range.
+func unbindableTasks(repo, base, head string, finished []string) []string {
 	if base == "" || head == "" || base == head {
 		return slices.Clone(finished)
 	}
 	search := base + ".." + head
+	allowed := make(map[string]bool, len(finished))
+	for _, id := range finished {
+		allowed[id] = true
+	}
+	changes := loopChanges(repo, base, head)
+	if changes.invalidTaskBindings {
+		return slices.Clone(finished)
+	}
+	for _, id := range changes.taskIDs() {
+		if !allowed[id] {
+			return slices.Clone(finished)
+		}
+	}
 	var missing []string
 	for _, id := range finished {
-		if len(commitsForTask(repo, search, id)) != 1 {
+		if len(commitsForTask(repo, search, id)) != 1 || len(commitsForTask(repo, head, id)) != 1 {
 			missing = append(missing, id)
 		}
 	}
@@ -505,7 +763,7 @@ func restoreQueuedCompletion(task queuedTask) error {
 		}
 	}
 	dir := filepath.Join(task.Root, stateInProgress, id)
-	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range; %s; if duplicated, rewrite or squash the range down to one binding; then re-run `coop loop`", coopTaskTrailer, taskBindingRecovery(id))
+	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", coopTaskTrailer, taskBindingRecovery(id))
 	var errs []error
 	if err := appendTaskLogStrict(dir, note); err != nil {
 		errs = append(errs, fmt.Errorf("record rejection for task %s: %w", id, err))
@@ -577,7 +835,7 @@ func unbindableCompletionError(ids []string, restoreErr error) error {
 	for _, id := range ids {
 		recoveries = append(recoveries, fmt.Sprintf("%s: %s", id, taskBindingRecovery(id)))
 	}
-	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range needs exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(recoveries, "; "))
+	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(recoveries, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -592,8 +850,9 @@ func taskBindingRecovery(id string) string {
 		"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
 			"(`git commit --amend --only --no-edit --trailer %q`); if the implementation commit is older than HEAD, "+
 			"do not amend the current HEAD — reword that implementation commit and replay its descendants; if the "+
-			"matching trailer already exists outside the new range, amend that same commit with a unique "+
-			"`Coop-Recovery: <current UTC timestamp>` trailer while preserving exactly one %s trailer",
+			"matching trailer already exists outside the new range, amend or rewrite that same commit with the rework "+
+			"and a unique `Coop-Recovery: <current UTC timestamp>` trailer while preserving exactly one reachable %s "+
+			"binding; never add a second task-bound commit",
 		coopTaskTrailer+": "+id, coopTaskTrailer,
 	)
 }
@@ -623,7 +882,8 @@ func resumeLine(id string, commits []string) string {
 		"attempt COMMITTED then was interrupted before moving the folder to 99_done/ — verify that work " +
 		"against the acceptance criteria, amend the commit with a unique `Coop-Recovery: <current UTC timestamp>` " +
 		"trailer while preserving exactly one Coop-Task trailer, and finish the move, but do NOT redo it; or (b) the review REOPENED it " +
-		"for rework (its log.md will say what's wrong) — do that rework. Disambiguate before acting."
+		"for rework (its log.md will say what's wrong) — do that rework by amending or rewriting the already-bound implementation commit, " +
+		"leaving exactly one reachable Coop-Task binding; do not add a second task-bound commit. Disambiguate before acting."
 }
 
 // resumePrefixFor builds the informed-resume preamble for the assigned task when its Coop-Task
@@ -785,15 +1045,13 @@ func reconcileMerged(states map[string]string, landed map[string]bool) []reconci
 // landedTasks is the set of task ids whose Coop-Task trailer appears in the exact landed range.
 func landedTasks(repo, revRange string) map[string]bool {
 	set := map[string]bool{}
-	const separator = "\x1f"
-	format := "%(trailers:key=" + coopTaskTrailer + ",valueonly,separator=%x1f)"
-	args := []string{"log", "--format=" + format, revRange}
-	for _, line := range strings.Split(gitOut(repo, args...), "\n") {
-		values := strings.Split(line, separator)
-		if len(values) == 1 {
-			if value := strings.TrimSpace(values[0]); value != "" {
-				set[value] = true
-			}
+	commits, ok := taskTrailerCommits(repo, revRange, false)
+	if !ok {
+		return set
+	}
+	for _, commit := range commits {
+		if !commit.malformed && len(commit.values) == 1 && commit.values[0] != "" {
+			set[commit.values[0]] = true
 		}
 	}
 	return set

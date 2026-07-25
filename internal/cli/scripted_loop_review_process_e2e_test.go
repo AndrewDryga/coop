@@ -143,7 +143,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		attempts := []loopProcessAttempt{
 			{Target: work, Stage: "work", Result: "complete"},
 			{Target: between, Stage: "between", Result: "reopen"},
-			{Target: work, Stage: "work", Result: "repair-binding"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
 			{Target: between, Stage: "between", Result: "pass"},
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
@@ -168,6 +168,134 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
 	})
 
+	t.Run("review finding cannot inject the next worker state", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "review-finding-injection"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "reopen-injection"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: between, Stage: "between", Result: "pass"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 0 {
+			t.Fatalf("review finding injection = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+	})
+
+	t.Run("repository-writable review still uses host task authority", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "repo-writable-host-reopen"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+		configPath := filepath.Join(suite.layout.Repo, ".agent", "loop.yaml")
+		config, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config = bytes.Replace(config, []byte("signoff:\n"), []byte("signoff:\n  writes: repo\n"), 1)
+		if err := os.WriteFile(configPath, config, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "reopen"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 0 {
+			t.Fatalf("repo-writable host reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 4 || records[1].Stage != "signoff" || records[1].Reopened != 1 ||
+			records[1].QueueDoing != 1 || records[1].QueueDone != 0 {
+			t.Fatalf("repo-writable host reopen telemetry = %#v", records)
+		}
+		var runs []*processTrace
+		for _, event := range readProcessTrace(t, suite.layout.Trace) {
+			if event.Source == "runtime" && event.Event == "run" {
+				runs = append(runs, event)
+			}
+		}
+		if len(runs) != len(attempts) {
+			t.Fatalf("repo-writable review runtime runs = %d, want %d", len(runs), len(attempts))
+		}
+		if runs[1].Run == nil || runs[3].Run == nil {
+			t.Fatalf("repo-writable review run details missing: %#v", runs)
+		}
+		assertLoopReviewRepoMount(t, suite.layout, runs[1].Run.Mounts, false)
+		assertLoopReviewRepoMount(t, suite.layout, runs[3].Run.Mounts, false)
+	})
+
+	t.Run("reopened work cannot add a second task binding", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "reopen-second-binding"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, nil, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "reopen"},
+			{Target: work, Stage: "work", Result: "second-binding"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "reachable HEAD each need exactly one commit") {
+			t.Fatalf("second binding = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("second binding rejection did not restore the task")
+		}
+		if commits := commitsForTask(suite.layout.Repo, "", taskID); len(commits) != 2 {
+			t.Fatalf("fixture produced %d reachable bindings, want 2: %v", len(commits), commits)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+	})
+
+	t.Run("worker cannot forge review authority for an archived task", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "forged-review-authority"
+		archiveID := taskID + "-archive"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		writeTaskFile(t, filepath.Join(suite.layout.Repo, tasksRoot, stateDone, archiveID, "task.md"), "# Archive\n")
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete-forged-archive-binding"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 1 ||
+			!strings.Contains(result.Stderr, "reachable HEAD each need exactly one commit") {
+			t.Fatalf("forged review authority = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+			t.Fatal("forged binding rejection did not restore the assigned task")
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, archiveID)) {
+			t.Fatal("forged binding rejection disturbed the archived task")
+		}
+		if commits := commitsForTask(suite.layout.Repo, "", archiveID); len(commits) != 1 {
+			t.Fatalf("fixture produced %d forged archived bindings, want 1: %v", len(commits), commits)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+	})
+
 	t.Run("signoff round cap blocks repeated reopen", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "signoff-round-cap"
@@ -178,9 +306,9 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		attempts := []loopProcessAttempt{
 			{Target: work, Stage: "work", Result: "complete"},
 			{Target: signoff, Stage: "signoff", Result: "reopen"},
-			{Target: work, Stage: "work", Result: "repair-binding"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
 			{Target: signoff, Stage: "signoff", Result: "reopen"},
-			{Target: work, Stage: "work", Result: "repair-binding"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
 			{Target: signoff, Stage: "signoff", Result: "reopen"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
@@ -233,7 +361,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
 	})
 
-	t.Run("failed review that reopens stops without retry", func(t *testing.T) {
+	t.Run("failed review receipt cannot reopen", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "failed-review-reopen"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
@@ -242,25 +370,26 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
 		attempts := []loopProcessAttempt{
 			{Target: work, Stage: "work", Result: "complete"},
-			{Target: signoff, Stage: "signoff", Result: "reopen-ordinary"},
+			{Target: signoff, Stage: "signoff", Result: "reopen-authentication"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "failed review stage also reopened "+taskID) {
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "authentication failed") {
 			t.Fatalf("failed review reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
-		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
-			t.Fatal("failed review did not preserve its reopened task")
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+			t.Fatal("failed review receipt changed task state")
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != 2 || records[1].Stage != "signoff" || records[1].Outcome != "process_failure" ||
-			records[1].Exit != 23 || records[1].Retries != 0 || records[1].Reopened != 1 {
+		if len(records) != 2 || records[1].Stage != "signoff" || records[1].Outcome != "authentication" ||
+			records[1].Exit != 23 || records[1].Retries != 0 || records[1].Reopened != 0 {
 			t.Fatalf("failed review reopen telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
 	})
 
-	t.Run("hard stop after review reopen remains interrupted", func(t *testing.T) {
+	t.Run("hard stop after review receipt leaves task done", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "hard-stop-after-review-reopen"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
@@ -292,11 +421,12 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if result.ExitCode != loopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") || strings.Contains(result.Stderr, "completion ownership") {
 			t.Fatalf("hard stop after reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
-		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
-			t.Fatal("interrupted review did not preserve its reopened task")
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+			t.Fatal("interrupted review receipt changed task state")
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loopInterruptedExitCode || records[1].Reopened != 1 {
+		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loopInterruptedExitCode || records[1].Reopened != 0 {
 			t.Fatalf("hard stop after reopen telemetry = %#v", records)
 		}
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
@@ -546,7 +676,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			}
 		}
 		wantExit := 0
-		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" && attempt.Result != "repair-binding" && attempt.Result != "pass" && attempt.Result != "reopen" {
+		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" && attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" && attempt.Result != "repair-review-binding" && attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "reopen" && attempt.Result != "reopen-injection" {
 			wantExit = 23
 		}
 		if attempt.Result == "wait" {
@@ -573,16 +703,13 @@ func loopPromptIndex(provider string, argv []string) (int, bool) {
 func assertLoopReviewMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
 	t.Helper()
 	repo := processTracePath(layout.Root, layout.Repo)
-	queue := repo + "/.agent/tasks"
 	profile := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
 	profileTarget := "<container>/home/node/." + provider
-	foundRepo, foundQueue, foundProfile := false, false, false
+	foundRepo, foundProfile := false, false
 	for _, mount := range mounts {
 		switch {
 		case mount.Source == repo && mount.Target == repo && mount.ReadOnly:
 			foundRepo = true
-		case mount.Source == queue && mount.Target == queue && !mount.ReadOnly:
-			foundQueue = true
 		case mount.Source == profile && mount.Target == profileTarget && !mount.ReadOnly:
 			foundProfile = true
 		case mount.Named:
@@ -595,7 +722,28 @@ func assertLoopReviewMounts(t *testing.T, layout procharness.Layout, provider, a
 			t.Errorf("review read-only mount did not come from generated temp state: %#v", mount)
 		}
 	}
-	if !foundRepo || !foundQueue || !foundProfile {
-		t.Fatalf("review mounts repo/queue/profile = %v/%v/%v in %#v", foundRepo, foundQueue, foundProfile, mounts)
+	if !foundRepo || !foundProfile {
+		t.Fatalf("review mounts repo/profile = %v/%v in %#v", foundRepo, foundProfile, mounts)
+	}
+}
+
+func assertLoopReviewRepoMount(t *testing.T, layout procharness.Layout, mounts []processMount, readOnly bool) {
+	t.Helper()
+	repo := processTracePath(layout.Root, layout.Repo)
+	queue := processTracePath(layout.Root, filepath.Join(layout.Repo, tasksRoot))
+	var matches, protected []processMount
+	for _, mount := range mounts {
+		if mount.Source == repo && mount.Target == repo {
+			matches = append(matches, mount)
+		}
+		if mount.Source == queue && mount.Target == queue {
+			protected = append(protected, mount)
+		}
+	}
+	if len(matches) != 1 || matches[0].ReadOnly != readOnly {
+		t.Fatalf("review repo mount = %#v, want exactly one read-only=%v mount", matches, readOnly)
+	}
+	if !readOnly && (len(protected) != 1 || !protected[0].ReadOnly) {
+		t.Fatalf("repository-writable review task mounts = %#v, want one read-only queue mount", protected)
 	}
 }

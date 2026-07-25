@@ -37,7 +37,13 @@ func TestTrustedSignArgs(t *testing.T) {
 		git(t, repo, "config", "--global", "commit.gpgsign", "true")
 		git(t, repo, "config", "--global", "user.signingkey", "ABCD1234")
 		git(t, repo, "config", "gpg.program", "/tmp/evil") // repo-local: must be ignored
-		want := []string{"-c", "commit.gpgsign=true", "-c", "gpg.program=gpg", "-c", "user.signingkey=ABCD1234"}
+		want := []string{
+			"-c", "commit.gpgsign=true",
+			"-c", "user.signingkey=",
+			"-c", "gpg.ssh.defaultKeyCommand=",
+			"-c", "gpg.program=gpg",
+			"-c", "user.signingkey=ABCD1234",
+		}
 		if got := trustedSignArgs(); !slices.Equal(got, want) {
 			t.Errorf("trustedSignArgs = %v, want %v (gpg.program must come from global, not the repo)", got, want)
 		}
@@ -48,7 +54,31 @@ func TestTrustedSignArgs(t *testing.T) {
 		git(t, repo, "config", "--global", "commit.gpgsign", "true")
 		git(t, repo, "config", "--global", "gpg.format", "ssh")
 		git(t, repo, "config", "--global", "user.signingkey", "/k.pub")
-		want := []string{"-c", "commit.gpgsign=true", "-c", "gpg.format=ssh", "-c", "gpg.ssh.program=ssh-keygen", "-c", "user.signingkey=/k.pub"}
+		want := []string{
+			"-c", "commit.gpgsign=true",
+			"-c", "user.signingkey=",
+			"-c", "gpg.ssh.defaultKeyCommand=",
+			"-c", "gpg.format=ssh",
+			"-c", "gpg.ssh.program=ssh-keygen",
+			"-c", "user.signingkey=/k.pub",
+		}
+		if got := trustedSignArgs(); !slices.Equal(got, want) {
+			t.Errorf("trustedSignArgs = %v, want %v", got, want)
+		}
+	})
+	t.Run("ssh default key command comes only from global config", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
+		repo := initRepo(t)
+		git(t, repo, "config", "--global", "gpg.format", "ssh")
+		git(t, repo, "config", "--global", "gpg.ssh.defaultKeyCommand", "trusted-key-command")
+		want := []string{
+			"-c", "commit.gpgsign=true",
+			"-c", "user.signingkey=",
+			"-c", "gpg.ssh.defaultKeyCommand=",
+			"-c", "gpg.format=ssh",
+			"-c", "gpg.ssh.program=ssh-keygen",
+			"-c", "gpg.ssh.defaultKeyCommand=trusted-key-command",
+		}
 		if got := trustedSignArgs(); !slices.Equal(got, want) {
 			t.Errorf("trustedSignArgs = %v, want %v", got, want)
 		}

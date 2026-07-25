@@ -283,10 +283,12 @@ signed — see [Landing](#land-it-rebase-gate-sign).)
 Since box commits are unsigned, a remote that requires signed commits (a protected `main`)
 would reject them. If you sign by default (`commit.gpgsign=true`), coop re-signs on the HOST,
 where your key lives: `coop loop` signs each cycle's commits, an interactive/run/fusion box
-signs its session's commits on exit (a dirty tree is skipped — commit or stash, then
-`coop sign`), and `coop sign` re-signs the unpushed range (`@{upstream}..HEAD`, or `--from
-<ref>`) anytime. For editor (ACP) sessions, `coop prompt` shows an `unsigned` nudge when HEAD
-is unsigned — run `coop sign` before pushing. It never pushes or rewrites pushed history.
+signs its session's commits on exit, and `coop sign` re-signs the unpushed range
+(`@{upstream}..HEAD`, or `--from <ref>`) anytime. Re-signing happens in a clean linked
+worktree and advances your branch with an old-SHA compare-and-swap, so staged, unstaged,
+untracked, and secret-decoy changes in the active checkout are preserved and do not block it.
+For editor (ACP) sessions, `coop prompt` shows an `unsigned` nudge when HEAD is unsigned —
+run `coop sign` before pushing. It never pushes or rewrites pushed history.
 
 ### Prove it: `coop doctor`
 
@@ -1081,6 +1083,12 @@ task it keeps reopening is blocked for a human rather than reported as done. The
 `[3, signoff.rounds]` (default `5`) — a small batch still gets a few tries, a big
 overnight batch can't ping-pong one stuck task forever.
 
+Each completed task must have exactly one `Coop-Task: <id>` binding in the current
+iteration's commit range and exactly one such binding reachable from `HEAD`. Rework after a
+review therefore amends or rewrites the existing task commit; adding a second bound commit is
+rejected and the task is restored to in-progress. A worker also cannot bind another task in its
+iteration: verify subjects come only from tasks the host accepted as completed during this run.
+
 Each controller leases its exact task with a host-held lock in the task's `tmp/` directory while
 the agent runs. A second loop skips a held task and can take independent todo work; `coop tasks
 watch` shows concise `busy`, `stalled`, or `unleased` lease state without exposing run IDs or PIDs.
@@ -1095,10 +1103,15 @@ that host-only registry. It removes the journal only after validating the box's 
 controller crash, the next loop replays it and restores any unowned completion instead of silently
 grandfathering it. Completions made outside a supervised box remain ordinary task history.
 
-Every review closes with a structured PASS/FAIL receipt naming the exact sorted task IDs it
-reopened. Coop compares that receipt with the review's done-to-actionable folder delta and its
-named subjects; unrelated pre-existing queue work does not count as a reopen, while a missing,
-malformed, or mismatched receipt fails closed and is never accepted as a clean review.
+Every review closes with one structured evidence line per subject and a PASS/FAIL receipt naming
+the exact sorted task IDs it proposes reopening. The default `writes: tasks` mode is report-only:
+the whole repository, including task queues, is read-only. Coop validates the complete proposal,
+acquires every subject's host-side task authority, and applies all exact-subject reopens as one
+transaction. Missing, malformed, interrupted, failed, and out-of-scope proposals mutate no task.
+Reviewer findings are stored in a delimited untrusted log block; the next worker gets a fixed
+reproduction-first action instead of reviewer-authored instructions. `writes: repo` remains the
+deliberate source-fixing escape hatch, but every task queue is remounted read-only and lifecycle
+changes are still host-applied.
 
 Tune the loop in one committed **`.agent/loop.yaml`** — a section per step (`preflight` /
 `work` / `between` / `signoff` / `verify`), each with its own `agent:` model ladder and a prompt:
@@ -1516,11 +1529,11 @@ context:
 ```
 
 ```bash
-coop context --changed              # scope = the paths git reports changed
-coop context --task <id>            # scope = a task's declared `paths:` frontmatter
-coop context portal/lib/user.ex     # scope = explicit repo-relative paths
-coop context --changed --json       # same, as data (files + the route that selected each)
-coop context --changed --rendered   # the compiled content itself, canonical first
+coop context --changed            # scope = the paths git reports changed
+coop context --task <id>              # scope = a task's declared `paths:` frontmatter
+coop context portal/lib/user.ex   # scope = explicit repo-relative paths
+coop context --changed --json     # same, as data (files + the route that selected each)
+coop context --changed --rendered # the compiled content itself, canonical first
 ```
 
 Scope is **deterministic** — explicit paths, git-changed paths, a task's declared paths, or the
@@ -1658,7 +1671,7 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 |---|---|---|
 | Blocking | `make check` | formatting, vet, unit tests, deterministic provider process E2E, tagged process-control races, generated docs, casts, and maintenance tools; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork/fleet policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
-| Runtime boundary | `make doctor` · `make review-writes-e2e` | real box isolation and task-only review writes; requires Docker/Podman (or Apple `container` for doctor) |
+| Runtime boundary | `make doctor` · `make review-writes-e2e` | real box isolation and report-only review mounts; requires Docker/Podman (or Apple `container` for doctor) |
 | Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 
 `.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's

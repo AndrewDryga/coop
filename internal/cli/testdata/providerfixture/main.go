@@ -501,8 +501,7 @@ func translateWorkdir(root, workdir string, mounts []mount) (string, error) {
 }
 
 func validateMountPolicy(root string, run runCommand, providerHomes []string) error {
-	repoMounts, reviewQueueMounts := 0, 0
-	repoReadOnly := false
+	repoMounts := 0
 	for _, m := range run.Mounts {
 		if m.Named {
 			if (m.Source != "coop-cache" || m.Target != "/home/node/.cache") &&
@@ -516,7 +515,6 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 		if m.Target == run.Workdir {
 			repoMounts++
-			repoReadOnly = m.ReadOnly
 			if m.Source != run.HostWorkdir {
 				return fmt.Errorf("repo mount %q:%q must be the translated workdir", m.Source, m.Target)
 			}
@@ -524,10 +522,6 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 			if err != nil || !info.IsDir() {
 				return fmt.Errorf("repo mount source %q is not a directory", m.Source)
 			}
-			continue
-		}
-		if !m.ReadOnly && m.Source == filepath.Join(run.HostWorkdir, ".agent", "tasks") && m.Target == filepath.Join(run.Workdir, ".agent", "tasks") {
-			reviewQueueMounts++
 			continue
 		}
 		if provider, ok := credentialMountProvider(m.Target); ok && credentialSourceMatches(root, provider, m.Source) {
@@ -541,6 +535,15 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 		if !m.ReadOnly {
 			return fmt.Errorf("unexpected writable mount %q:%q", m.Source, m.Target)
+		}
+		if rel, err := filepath.Rel(run.HostWorkdir, m.Source); err == nil && rel != "." &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) &&
+			filepath.Join(run.Workdir, rel) == m.Target {
+			info, err := os.Stat(m.Source)
+			if err != nil || !info.IsDir() {
+				return fmt.Errorf("nested read-only repo mount source %q is not a directory", m.Source)
+			}
+			continue
 		}
 		if m.Target == fusion.ConsultWrapperPath {
 			if err := validateConsultWrapperMount(root, m); err != nil {
@@ -563,9 +566,6 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 	}
 	if repoMounts != 1 {
 		return fmt.Errorf("run has %d repo mounts, want one", repoMounts)
-	}
-	if (repoReadOnly && reviewQueueMounts != 1) || (!repoReadOnly && reviewQueueMounts != 0) {
-		return fmt.Errorf("run has repo read-only=%v and %d review queue mounts", repoReadOnly, reviewQueueMounts)
 	}
 	return nil
 }

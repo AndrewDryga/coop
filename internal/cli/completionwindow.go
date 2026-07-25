@@ -37,9 +37,9 @@ type completionFingerprint struct {
 }
 
 type completionWindowRecord struct {
-	Baseline             map[string]completionFingerprint `json:"baseline"`
-	AllowDoneDepartures  bool                             `json:"allow_done_departures,omitempty"`
-	AllowedDoneDeparture string                           `json:"allowed_done_departure,omitempty"`
+	Baseline              map[string]completionFingerprint `json:"baseline"`
+	AllowedDoneDeparture  string                           `json:"allowed_done_departure,omitempty"`
+	AllowedDoneDepartures []string                         `json:"allowed_done_departures,omitempty"`
 }
 
 type completionWindowIndex struct {
@@ -283,18 +283,22 @@ func lockCompletionWindowIndex(root string) (*os.File, completionWindowIndex, er
 }
 
 func beginCompletionWindows(hosts []string) (*completionWindowSet, error) {
-	return beginCompletionWindowsWithPolicy(hosts, false, "")
+	return beginCompletionWindowsWithPolicy(hosts, nil)
 }
 
 func beginReviewCompletionWindows(hosts []string) (*completionWindowSet, error) {
-	return beginCompletionWindowsWithPolicy(hosts, true, "")
+	return beginCompletionWindows(hosts)
 }
 
 func beginCompletionWindowsAllowing(hosts []string, taskID string) (*completionWindowSet, error) {
-	return beginCompletionWindowsWithPolicy(hosts, false, taskID)
+	return beginCompletionWindowsAllowingTasks(hosts, []string{taskID})
 }
 
-func beginCompletionWindowsWithPolicy(hosts []string, allowDoneDepartures bool, allowedDoneDeparture string) (*completionWindowSet, error) {
+func beginCompletionWindowsAllowingTasks(hosts, taskIDs []string) (*completionWindowSet, error) {
+	return beginCompletionWindowsWithPolicy(hosts, taskIDs)
+}
+
+func beginCompletionWindowsWithPolicy(hosts []string, allowedDoneDepartures []string) (*completionWindowSet, error) {
 	if len(hosts) == 0 {
 		return &completionWindowSet{}, nil
 	}
@@ -326,7 +330,9 @@ func beginCompletionWindowsWithPolicy(hosts []string, allowDoneDepartures bool, 
 			}
 			return nil, errors.Join(err, unlockErr, removeErr, set.close())
 		}
-		record := completionWindowRecord{Baseline: baseline, AllowDoneDepartures: allowDoneDepartures, AllowedDoneDeparture: allowedDoneDeparture}
+		record := completionWindowRecord{
+			Baseline: baseline, AllowedDoneDepartures: slices.Compact(slices.Sorted(slices.Values(allowedDoneDepartures))),
+		}
 		index.Windows[id] = record
 		writeErr := writeCompletionWindowIndex(root, index)
 		unlockErr := unlockLeaseFile(indexFile)
@@ -389,7 +395,7 @@ func completionWindowDepartures(root string, record completionWindowRecord) ([]s
 	}
 	var disallowed []string
 	for _, task := range departed {
-		if !record.AllowDoneDepartures && task.ID != record.AllowedDoneDeparture {
+		if task.ID != record.AllowedDoneDeparture && !slices.Contains(record.AllowedDoneDepartures, task.ID) {
 			disallowed = append(disallowed, task.ID)
 		}
 	}
@@ -505,39 +511,10 @@ func (s *completionWindowSet) rejectAndClose(assigned queuedTask) error {
 	return errors.Join(ownershipErr, departureErr, s.close())
 }
 
-func (s *completionWindowSet) clearReopenedReceipts() ([]string, error) {
-	if s == nil {
-		return nil, nil
-	}
-	seen := map[string]bool{}
-	for _, window := range s.windows {
-		departed, missing := completionWindowBaselineChanges(window.root, window.record)
-		if len(missing) > 0 {
-			return nil, fmt.Errorf("task(s) %s left the queue during this review stage", strings.Join(missing, ", "))
-		}
-		for _, current := range departed {
-			if err := clearTaskCompletionReceipt(window.root, current.ID); err != nil {
-				return nil, fmt.Errorf("clear reopened task %s completion receipt: %w", current.ID, err)
-			}
-			seen[current.ID] = true
-		}
-	}
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	return ids, nil
-}
-
 func (s *completionWindowSet) finishReview() ([]string, error) {
-	reopened, reopenErr := s.clearReopenedReceipts()
-	if reopenErr != nil {
-		return reopened, errors.Join(reopenErr, s.abandon())
-	}
 	candidates, rejected, err := s.auditDoneCandidates(queuedTask{})
 	if err != nil {
-		return reopened, errors.Join(err, s.abandon())
+		return nil, errors.Join(err, s.abandon())
 	}
 	var changedErr error
 	if len(candidates) > 0 {
@@ -552,7 +529,11 @@ func (s *completionWindowSet) finishReview() ([]string, error) {
 	if len(rejected) > 0 {
 		ownershipErr = unownedCompletionError(rejected, nil)
 	}
-	return reopened, errors.Join(changedErr, ownershipErr, s.close())
+	departed, departureErr := s.departures()
+	if departureErr == nil && len(departed) > 0 {
+		departureErr = fmt.Errorf("review task lifecycle changed for %s; reviews must report verdicts for host application", strings.Join(departed, ", "))
+	}
+	return nil, errors.Join(changedErr, ownershipErr, departureErr, s.close())
 }
 
 func reconcileCompletionWindows(hosts []string) error {

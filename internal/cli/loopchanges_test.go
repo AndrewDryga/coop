@@ -11,11 +11,16 @@ import (
 )
 
 func TestParseLoopCommits(t *testing.T) {
-	out := "a1\tadd json\ttask-json\n" +
-		"b2\tfix egress\ttask-egress\n" +
-		"c3\tmore json\ttask-json\n" +
-		"d4\tmanual fixup\t\n"
-	order, byTask, misc := parseLoopCommits(out)
+	records := []taskTrailerCommit{
+		{info: commitInfo{sha: "a1", subject: "add json"}, values: []string{"task-json"}},
+		{info: commitInfo{sha: "b2", subject: "fix egress"}, values: []string{"task-egress"}},
+		{info: commitInfo{sha: "c3", subject: "more json"}, values: []string{"task-json"}},
+		{info: commitInfo{sha: "d4", subject: "manual fixup"}},
+	}
+	order, byTask, misc, invalid := parseLoopCommits(records)
+	if invalid {
+		t.Fatal("valid records were marked invalid")
+	}
 	if want := []string{"task-json", "task-egress"}; !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v (first-seen, deduped)", order, want)
 	}
@@ -24,6 +29,13 @@ func TestParseLoopCommits(t *testing.T) {
 	}
 	if len(misc) != 1 || misc[0].subject != "manual fixup" {
 		t.Errorf("misc = %+v, want the one untrailered commit", misc)
+	}
+	_, _, misc, invalid = parseLoopCommits([]taskTrailerCommit{
+		{info: commitInfo{sha: "e5", subject: "empty"}, values: []string{""}},
+		{info: commitInfo{sha: "f6", subject: "duplicate"}, values: []string{"task-json", "foreign"}},
+	})
+	if !invalid || len(misc) != 2 {
+		t.Fatalf("ambiguous records = invalid %v misc %+v, want fail-closed", invalid, misc)
 	}
 }
 

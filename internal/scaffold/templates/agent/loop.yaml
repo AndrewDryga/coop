@@ -46,10 +46,10 @@ between:
   # audit, using this target/prompt when configured or the signoff target + built-in prompt otherwise.
   #enabled: true
 
-  # Review boxes can write task queues only: the repository is read-only, then
-  # every configured queue (including monorepo queues) is remounted read-write
-  # so audits may reopen tasks. Use this escape hatch only when the reviewer is
-  # intentionally allowed to fix source.
+  # `tasks` is report-only: the entire repository, including every task queue,
+  # is read-only. The reviewer returns evidence + exact task ids; Coop applies
+  # validated reopens host-side. Use `repo` only when the reviewer is
+  # intentionally allowed to fix source; task lifecycle remains report-only.
   # Values: tasks | repo. Default: tasks.
   #writes: repo
 
@@ -60,12 +60,14 @@ between:
   # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
   #prompt: |
   #  Audit the task named above: confirm every acceptance criterion is demonstrably met
-  #  and its failure path is tested; reopen it (move the folder back to 10_in_progress/) if not.
+  #  and its failure path is tested; report the concrete finding and task id
+  #  if not.
 
 signoff:
-  # Like every review stage, signoff writes task queues only by default. Opt
-  # into source fixes only when a workflow expects final review to edit and
-  # commit.
+  # Like every review stage, signoff is report-only by default and Coop applies
+  # validated task reopens host-side. Opt into source fixes only when a
+  # workflow expects final review to edit and commit; task lifecycle stays
+  # report-only.
   # Values: tasks | repo. Default: tasks.
   #writes: repo
 
@@ -90,9 +92,10 @@ verify:
   # prompt says — typically e2e/integration tests for the AFFECTED features. Default: off.
   #enabled: true
 
-  # Like every review stage, verify writes task queues only by default. Opt
-  # into full repository writes only when the e2e reviewer is expected to fix
-  # what it finds.
+  # Like every review stage, verify is report-only by default and Coop applies
+  # validated task reopens host-side. Opt into full repository writes only
+  # when the e2e reviewer is expected to fix source; task lifecycle stays
+  # report-only.
   # Values: tasks | repo. Default: tasks.
   #writes: repo
 
@@ -102,7 +105,8 @@ verify:
   # The verify prompt — SET it here (verify has no built-in; required when enabled). "Affected
   # features" resolves against the injected per-task change list, so you can just say:
   #prompt: |
-  #  e2e-test every feature this loop affected. Reopen the task whose e2e fails, with the failure.
+  #  e2e-test every feature this loop affected. Report the task whose e2e
+  #  fails and the failure.
 
 # In any review prompt above (between / signoff / verify) you can PLACE the run's context inline with
 # template variables — coop substitutes them before the pass runs:
