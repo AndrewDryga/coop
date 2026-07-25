@@ -8,6 +8,10 @@ import capture_cast
 from cast_hygiene import CastValidationError, validate_cast
 
 
+CAPTURED_HOST_HOME = Path("/private/captured-user")
+GENERATED_CONTAINER_HOME = "/home/node"
+
+
 def write_cast(path: Path, text: str, version: int = 3) -> None:
     header = {"version": version, "term": {"cols": 80, "rows": 24}, "env": {"SHELL": "/bin/zsh"}}
     path.write_text(json.dumps(header) + "\n" + json.dumps([0.1, "o", text]) + "\n", encoding="utf-8")
@@ -17,25 +21,36 @@ class CastHygieneTest(unittest.TestCase):
     def test_safe_generic_capture(self):
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "safe.cast"
-            write_cast(path, "· using codex model sol credential personal\r\n/home/node/work is boxed\r\n")
-            validate_cast(path, environ={}, root=Path(raw) / "repo")
+            write_cast(path, f"· using codex model sol credential personal\r\n{GENERATED_CONTAINER_HOME}/work is boxed\r\n")
+            validate_cast(path, environ={}, root=Path(raw) / "repo", home=CAPTURED_HOST_HOME)
+
+    def test_rejects_runtime_home_by_default(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "runtime-home.cast"
+            write_cast(path, f"{Path.home()}/private\r\n")
+            with self.assertRaises(CastValidationError):
+                validate_cast(path, environ={}, root=Path(raw) / "repo")
 
     def test_rejects_private_paths_credentials_and_secrets(self):
-        cases = {
-            "home": "/Users/alice/code/private\r\n",
-            "account": "target codex:gpt-5@alice-backup\r\n",
-            "credential": "· using codex model sol credential customer-prod\r\n",
-            "secret": "OPENAI_API_KEY=sk-example0123456789abcdef\r\n",
-            "environment": "token-from-test-environment\r\n",
-        }
         with tempfile.TemporaryDirectory() as raw:
+            root = (Path(raw) / "repo").resolve()
+            cases = {
+                "mac_home": "/Users/alice/code/private\r\n",
+                "linux_home": "/home/alice/code/private\r\n",
+                "captured_home": f"{CAPTURED_HOST_HOME}/code/private\r\n",
+                "repository": f"{root}/internal/private\r\n",
+                "account": "target codex:gpt-5@alice-backup\r\n",
+                "credential": "· using codex model sol credential customer-prod\r\n",
+                "secret": "OPENAI_API_KEY=sk-example0123456789abcdef\r\n",
+                "environment": "token-from-test-environment\r\n",
+            }
             for name, text in cases.items():
                 with self.subTest(name=name):
                     path = Path(raw) / f"{name}.cast"
                     write_cast(path, text)
                     env = {"SERVICE_TOKEN": "token-from-test-environment"}
                     with self.assertRaises(CastValidationError):
-                        validate_cast(path, environ=env, root=Path(raw) / "repo")
+                        validate_cast(path, environ=env, root=root, home=CAPTURED_HOST_HOME)
 
     def test_rejects_split_private_value(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -46,7 +61,7 @@ class CastHygieneTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaises(CastValidationError):
-                validate_cast(path, environ={}, root=Path(raw) / "repo")
+                validate_cast(path, environ={}, root=Path(raw) / "repo", home=CAPTURED_HOST_HOME)
 
     def test_capture_resolves_current_task_only_when_promoting(self):
         with tempfile.TemporaryDirectory() as raw:

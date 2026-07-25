@@ -91,19 +91,26 @@ def _unsafe_environment_values(environ: dict[str, str] | None) -> list[str]:
     return [value for key, value in env.items() if SECRET_ENV_NAME_RE.search(key) and len(value) >= 12]
 
 
-def cast_findings(path: Path, *, environ: dict[str, str] | None = None, root: Path | None = None) -> list[str]:
+def cast_findings(
+    path: Path,
+    *,
+    environ: dict[str, str] | None = None,
+    root: Path | None = None,
+    home: Path | None = None,
+) -> list[str]:
     _, text = _read_cast(path)
     findings: list[str] = []
 
     for match in POSIX_HOME_RE.finditer(text):
-        home = (match.group(1), match.group(2))
-        if home not in SAFE_POSIX_HOMES:
+        posix_home = (match.group(1), match.group(2))
+        if posix_home not in SAFE_POSIX_HOMES:
             findings.append(f"host home path {match.group(0).rstrip('/')!r}")
     if match := WINDOWS_HOME_RE.search(text):
         findings.append(f"Windows home path {match.group(0).rstrip(chr(92))!r}")
 
     resolved_root = (root or Path(__file__).resolve().parent.parent).resolve()
-    for private_path in {str(Path.home()), str(resolved_root)}:
+    local_home = Path.home() if home is None else home
+    for private_path in {str(local_home), str(resolved_root)}:
         if private_path and private_path in text:
             findings.append(f"private local path {private_path!r}")
 
@@ -129,8 +136,14 @@ def cast_findings(path: Path, *, environ: dict[str, str] | None = None, root: Pa
     return list(dict.fromkeys(findings))
 
 
-def validate_cast(path: Path, *, environ: dict[str, str] | None = None, root: Path | None = None) -> None:
-    findings = cast_findings(path, environ=environ, root=root)
+def validate_cast(
+    path: Path,
+    *,
+    environ: dict[str, str] | None = None,
+    root: Path | None = None,
+    home: Path | None = None,
+) -> None:
+    findings = cast_findings(path, environ=environ, root=root, home=home)
     if findings:
         raise CastValidationError("; ".join(findings))
 
