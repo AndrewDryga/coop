@@ -101,6 +101,10 @@ review-writes-e2e: ## Review mount-isolation e2e (needs Docker; pulls a small te
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21
 	@go test -tags reviewwritee2e -run '^TestReviewWritesDockerRuntime$$' -count=1 -v ./internal/box/
 
+box-runtime-e2e: ## Init/reaping + signal contract (set COOP_RUNTIME=docker or podman)
+	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
+	@go test -tags boxruntimee2e -run '^TestRuntimeInit' -count=1 -v ./internal/box/
+
 clean: ## Remove build artifacts
 	@rm -f coop
 	@rm -rf dist
@@ -108,4 +112,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e clean help
+.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e box-runtime-e2e clean help

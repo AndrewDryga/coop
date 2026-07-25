@@ -326,9 +326,9 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	t.Setenv("TZ", "America/Merida") // pin hostTimezone so the exact-args check is machine-independent
 
 	// A plain `coop claude` mounts only its own credential home — never the Codex/Gemini ones.
-	got := assembleArgs(cfg, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	got := assembleArgs(cfg, true, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	want := []string{
-		"run", "--rm", "--label", "coop=box",
+		"run", "--rm", "--init", "--label", "coop=box",
 		"-e", "TZ=America/Merida",
 		"-v", "/repo:/workspace",
 		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
@@ -344,6 +344,21 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	}
 }
 
+func TestAssembleArgsInitProcess(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	args := func(initProcess bool) []string {
+		return assembleArgs(cfg, initProcess, RunSpec{Image: "i", Repo: "/r"},
+			[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	}
+	if got := strings.Count(strings.Join(args(true), " "), "--init"); got != 1 {
+		t.Errorf("Docker/Podman run must contain one --init, got %d", got)
+	}
+	if slices.Contains(args(false), "--init") {
+		t.Error("a runtime without the verified init contract received --init")
+	}
+}
+
 // TestAssembleArgsHostTimezone: every box (any mode, Homes or not) carries the host's
 // timezone, so in-box agents render clock times ("try again at 4:28 PM") on the host's
 // wall clock — coop parses that prose back host-local when scheduling a rate-limit wait.
@@ -353,7 +368,7 @@ func TestAssembleArgsHostTimezone(t *testing.T) {
 		t.Fatalf("hostTimezone must honor $TZ first, got %q", got)
 	}
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
-	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if !containsSeq(got, []string{"-e", "TZ=Europe/Kyiv"}) {
 		t.Errorf("box args must carry the host timezone: %v", got)
@@ -362,7 +377,7 @@ func TestAssembleArgsHostTimezone(t *testing.T) {
 
 func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
-	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 		"/d", "/dd", "/workspace", ttyInteractive, false, nil, nil, nil, nil, nil, "", "")
 	if !slices.Contains(got, "-it") {
 		t.Errorf("interactive run should pass -it: %v", got)
@@ -389,7 +404,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	gitMounts := []extraMount{{"/tmp/gc", "/home/node/.gitconfig"}}
 	instructionMounts := []extraMount{{filepath.Join(dir, "INSTRUCTIONS.md"), "/home/node/.claude/CLAUDE.md"}}
 
-	got := assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+	got := assembleArgs(cfg, true, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 		"/d", "/dd", "/workspace", ttyNone, true, mcpMounts, nil, gitMounts, instructionMounts, nil, "coop-r_default", filepath.Join(dir, "env"))
 	joined := slices.Clone(got)
 
@@ -480,7 +495,7 @@ func TestAssembleArgsEgressFailsClosed(t *testing.T) {
 	netArgs := func(egress, servicesNet string) []string {
 		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
 		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true}
-		return assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		return assembleArgs(cfg, true, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, servicesNet, "")
 	}
 	// "open" joins a services net; "open" with no services leaves the default bridge (no --network).
@@ -505,7 +520,7 @@ func TestAssembleArgsConsultTimeout(t *testing.T) {
 	mk := func(timeout string) []string {
 		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), ConsultTimeout: timeout}
 		spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true}
-		return assembleArgs(cfg, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		return assembleArgs(cfg, true, spec, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	}
 	if !containsSeq(mk("3600"), []string{"-e", "COOP_CONSULT_TIMEOUT=3600"}) {
@@ -564,7 +579,7 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 		{"/tmp/claude-ins", "/home/node/.claude/CLAUDE.md"},
 		{"/tmp/gemini-ins", "/home/node/.gemini/GEMINI.md"},
 	}
-	got := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}, mounts,
+	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}, mounts,
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, nil, "", "")
 	for _, want := range [][]string{
 		{"-e", "COOP_PRIMARY=codex"},
@@ -944,25 +959,26 @@ func TestAgentBaseInstructions(t *testing.T) {
 func TestBoxLimits(t *testing.T) {
 	// docker/podman get the caps; values come from config.
 	cfg := &config.Config{Pids: "4096", Memory: "4g", CPUs: "2", NoNewPrivileges: true}
-	for _, rt := range []string{"docker", "podman"} {
+	for _, name := range []string{"docker", "podman", "/usr/local/bin/docker", "/opt/homebrew/bin/podman"} {
+		rt := runtime.Runtime{Name: name}
 		got := boxLimits(cfg, rt)
 		for _, want := range [][]string{
 			{"--security-opt", "no-new-privileges"}, {"--pids-limit", "4096"},
 			{"--memory", "4g"}, {"--cpus", "2"}, {"--cap-drop", "ALL"},
 		} {
 			if !containsSeq(got, want) {
-				t.Errorf("%s: boxLimits missing %v in %v", rt, want, got)
+				t.Errorf("%s: boxLimits missing %v in %v", name, want, got)
 			}
 		}
 	}
 	// Apple `container` (and any non-OCI/unknown runtime) gets none — its CLI differs.
-	if got := boxLimits(cfg, "container"); got != nil {
+	if got := boxLimits(cfg, runtime.Runtime{Name: "container"}); got != nil {
 		t.Errorf("container runtime should get no docker flags, got %v", got)
 	}
 	// Off switches drop the resource/privilege flags, but --cap-drop ALL is unconditional (the
 	// agent workloads need no capabilities) — so the floor is exactly that.
 	off := &config.Config{Pids: "unlimited", NoNewPrivileges: false}
-	if got := boxLimits(off, "docker"); !slices.Equal(got, []string{"--cap-drop", "ALL"}) {
+	if got := boxLimits(off, runtime.Runtime{Name: "docker"}); !slices.Equal(got, []string{"--cap-drop", "ALL"}) {
 		t.Errorf("with everything off, boxLimits should be just --cap-drop ALL, got %v", got)
 	}
 }
@@ -1000,7 +1016,7 @@ func TestBuildArgs(t *testing.T) {
 func TestAssembleArgsForkLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: "open"}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	with := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, ForkName: "perf", ForkOwner: "v1-owner"},
+	with := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, ForkName: "perf", ForkOwner: "v1-owner"},
 		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if !containsSeq(with, []string{"--label", "coop.fork=perf"}) {
 		t.Errorf("a fork-loop box must be labeled coop.fork=perf: %v", with)
@@ -1008,7 +1024,7 @@ func TestAssembleArgsForkLabel(t *testing.T) {
 	if !containsSeq(with, []string{"--label", "coop.fork-owner=v1-owner"}) {
 		t.Errorf("a fork-loop box must carry its scoped cleanup owner: %v", with)
 	}
-	without := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true},
+	without := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true},
 		mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if slices.Contains(without, "coop.fork=") || containsSeq(without, []string{"--label", "coop.fork=perf"}) {
 		t.Errorf("a non-fork box must not carry a coop.fork label: %v", without)
@@ -1022,13 +1038,13 @@ func TestAssembleArgsAsdfVolume(t *testing.T) {
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	asdf := []string{"-v", "coop-asdf:/home/node/.asdf"}
 
-	base := assembleArgs(cfg, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
+	base := assembleArgs(cfg, true, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
 		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if !containsSeq(base, asdf) {
 		t.Errorf("base image should mount the asdf volume:\n%v", base)
 	}
 
-	custom := assembleArgs(cfg, RunSpec{Image: "coop-myrepo", Repo: "/r", Homes: true}, mounts,
+	custom := assembleArgs(cfg, true, RunSpec{Image: "coop-myrepo", Repo: "/r", Homes: true}, mounts,
 		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if containsSeq(custom, asdf) {
 		t.Errorf("a per-project image should not mount the asdf volume:\n%v", custom)
@@ -1039,7 +1055,7 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 
-	sup := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r", SupervisorID: "abc123"}, mounts,
+	sup := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", SupervisorID: "abc123"}, mounts,
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, nil, "", "")
 	if !containsSeq(sup, []string{"--label", "coop.supervised=1"}) {
 		t.Errorf("supervised run should be tagged coop.supervised=1 so build/update restart it: %v", sup)
@@ -1048,7 +1064,7 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 		t.Errorf("supervised run should carry coop.sup=<id> for precise teardown: %v", sup)
 	}
 
-	plain := assembleArgs(cfg, RunSpec{Image: "i", Repo: "/r"}, mounts,
+	plain := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"}, mounts,
 		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	if slices.Contains(plain, "coop.supervised=1") {
 		t.Errorf("non-supervised run must not carry the supervised label: %v", plain)
@@ -1059,7 +1075,7 @@ func TestAssembleArgsSharesSessionsOnlyForACP(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	args := func(supervisor string, share bool) []string {
-		return assembleArgs(cfg, RunSpec{
+		return assembleArgs(cfg, true, RunSpec{
 			Image: "i", Repo: "/r", Agent: "gemini", Homes: true,
 			SupervisorID: supervisor, ShareACPSessions: share,
 		}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
@@ -1118,7 +1134,7 @@ func TestAssembleArgsEgress(t *testing.T) {
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
 	args := func(egress, networkName string) []string {
 		c := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), Egress: egress}
-		return assembleArgs(c, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, networkName, "")
+		return assembleArgs(c, true, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, networkName, "")
 	}
 	// COOP_EGRESS=none → --network none, overriding any services-net join.
 	if got := args("none", "coop-x_default"); !containsSeq(got, []string{"--network", "none"}) {

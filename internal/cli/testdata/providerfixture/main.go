@@ -51,6 +51,7 @@ type runCommand struct {
 	EnvFiles     []string          `json:"env_files,omitempty"`
 	Labels       []string          `json:"labels,omitempty"`
 	Network      string            `json:"network,omitempty"`
+	Init         bool              `json:"init,omitempty"`
 	Interactive  bool              `json:"interactive,omitempty"`
 	TTY          bool              `json:"tty,omitempty"`
 }
@@ -347,11 +348,14 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 			break
 		}
 		switch arg {
-		case "--rm":
+		case "--rm", "--init":
 			if seen[arg] {
 				return runCommand{}, fmt.Errorf("duplicate runtime flag %s", arg)
 			}
 			seen[arg] = true
+			if arg == "--init" {
+				run.Init = true
+			}
 			i++
 		case "-i":
 			if run.Interactive {
@@ -1060,7 +1064,7 @@ func traceRuntimeArgv(root, image string, args []string) []string {
 		}
 		out = append(out, arg)
 		switch arg {
-		case "--rm", "-i", "-t", "-it":
+		case "--rm", "--init", "-i", "-t", "-it":
 			i++
 		case "-e":
 			if i+1 >= len(args) {

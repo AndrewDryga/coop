@@ -50,11 +50,11 @@ jobs:
       - name: shellcheck
         run: shellcheck install.sh
 
-  # Exercise the real container boundary (coop doctor) per runtime, so a change that
-  # breaks isolation or a runtime's run-args fails CI. (The fork-merge hardening test
-  # already runs in `check` via `go test`.) docker and podman (rootless on the runner)
-  # are both blocking. Apple's `container` needs macOS 26+ runners, so it isn't covered
-  # here yet.
+  # Exercise the real container boundary per runtime, so a change that breaks isolation,
+  # process reaping, signal forwarding, or a runtime's run-args fails CI. (The fork-merge
+  # hardening test already runs in `check` via `go test`.) docker and podman (rootless on
+  # the runner) are both blocking. Apple's `container` needs macOS 26+ runners, so it isn't
+  # covered here yet.
   doctor:
     runs-on: ubuntu-latest
     strategy:
@@ -76,6 +76,10 @@ jobs:
         run: go build -o coop .
       - name: doctor
         run: ./coop doctor
+        env:
+          COOP_RUNTIME: ${{ matrix.runtime }}
+      - name: init process contract
+        run: make box-runtime-e2e
         env:
           COOP_RUNTIME: ${{ matrix.runtime }}
 

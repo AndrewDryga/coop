@@ -29,6 +29,15 @@ type Runtime struct {
 	Name string
 }
 
+type runtimeKind int
+
+const (
+	runtimeUnknown runtimeKind = iota
+	runtimeDocker
+	runtimePodman
+	runtimeAppleContainer
+)
+
 // Detect picks the runtime: an explicit override wins; otherwise the first of
 // container, docker, podman found on PATH.
 func Detect(override string) (Runtime, error) {
@@ -58,23 +67,52 @@ func Detect(override string) (Runtime, error) {
 // isKnownRuntime reports whether name is one of the container runtimes coop drives, by its base
 // name (so an absolute path like /usr/bin/docker still counts).
 func isKnownRuntime(name string) bool {
+	return runtimeKindOf(name) != runtimeUnknown
+}
+
+func runtimeKindOf(name string) runtimeKind {
 	switch filepath.Base(name) {
-	case "docker", "podman", "container":
-		return true
+	case "docker":
+		return runtimeDocker
+	case "podman":
+		return runtimePodman
+	case "container":
+		return runtimeAppleContainer
 	}
-	return false
+	return runtimeUnknown
+}
+
+func (r Runtime) kind() runtimeKind {
+	return runtimeKindOf(r.Name)
+}
+
+func (r Runtime) isDockerOrPodman() bool {
+	return r.kind() == runtimeDocker || r.kind() == runtimePodman
 }
 
 // EnsureDaemon verifies the daemon is reachable. Only Docker exposes a daemon we
 // probe up front; container and podman are checked lazily by their commands.
 func (r Runtime) EnsureDaemon() error {
-	if filepath.Base(r.Name) != "docker" {
+	if r.kind() != runtimeDocker {
 		return nil
 	}
 	if err := exec.Command(r.Name, "info").Run(); err != nil {
 		return errors.New("docker is installed but its daemon isn't responding — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry")
 	}
 	return nil
+}
+
+// SupportsInit reports whether the runtime's run command has the shared Docker/Podman
+// --init contract: install a PID 1 that forwards signals and reaps orphaned descendants.
+// Apple's container CLI is kept out until its supported-version floor carries the same contract.
+func (r Runtime) SupportsInit() bool {
+	return r.isDockerOrPodman()
+}
+
+// SupportsRunLimits reports whether the runtime accepts Coop's shared Docker/Podman
+// resource and privilege flags.
+func (r Runtime) SupportsRunLimits() bool {
+	return r.isDockerOrPodman()
 }
 
 // Run executes the runtime with the given stdio and returns its exit code. A
@@ -245,7 +283,7 @@ func (r Runtime) psIDsContext(ctx context.Context, filters ...string) ([]string,
 }
 
 func (r Runtime) containerIDsContext(ctx context.Context, all bool, filters ...string) ([]string, error) {
-	if filepath.Base(r.Name) == "container" {
+	if r.kind() == runtimeAppleContainer {
 		return r.appleContainerIDsContext(ctx, all, filters...)
 	}
 	args := []string{"ps", "-q"}
@@ -337,7 +375,7 @@ func (r Runtime) CountByLabel(key, value string) int {
 // Compose migration cleanup uses this to prove workspace ownership before addressing a legacy
 // basename-only project. Query and inspect failures are errors, never an empty result.
 func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[string]string, error) {
-	if filepath.Base(r.Name) == "container" {
+	if r.kind() == runtimeAppleContainer {
 		return nil, errors.New("label inspection is unsupported by Apple container")
 	}
 	ids, err := r.containerIDsContext(ctx, true, "label="+key+"="+value)
@@ -427,6 +465,5 @@ func (r Runtime) RemoveByLabel(ctx context.Context, key, value string) (int, err
 // SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and
 // podman do; Apple's `container` CLI differs, so the supervisor falls back to labels there.
 func (r Runtime) SupportsCIDFile() bool {
-	name := filepath.Base(r.Name)
-	return name == "docker" || name == "podman"
+	return r.isDockerOrPodman()
 }

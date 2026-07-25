@@ -40,6 +40,33 @@ func TestDetectOverride(t *testing.T) {
 			t.Errorf("a non-runtime override (`false`) should be 'not usable', got %v", err)
 		}
 	}
+
+	// A compatible wrapper may be selected explicitly, but its unknown executable name must
+	// not opt it into Docker/Podman-only flags without a verified dialect.
+	wrapper := filepath.Join(t.TempDir(), "runtime-wrapper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\n[ \"$1\" = --version ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Detect(wrapper)
+	if err != nil || got.Name != wrapper {
+		t.Fatalf("Detect(wrapper) = (%+v, %v), want accepted wrapper", got, err)
+	}
+	if got.SupportsInit() || got.SupportsRunLimits() || got.SupportsCIDFile() {
+		t.Fatal("an unknown-name runtime wrapper gained unverified Docker/Podman capabilities")
+	}
+}
+
+func TestSupportsInit(t *testing.T) {
+	for _, name := range []string{"docker", "/usr/local/bin/docker", "podman", "/opt/homebrew/bin/podman"} {
+		if !(Runtime{Name: name}).SupportsInit() {
+			t.Errorf("%q should support the container init contract", name)
+		}
+	}
+	for _, name := range []string{"container", "/usr/local/bin/container", "providerfixture", ""} {
+		if (Runtime{Name: name}).SupportsInit() {
+			t.Errorf("%q should not receive an unverified --init flag", name)
+		}
+	}
 }
 
 func TestRunExitCodes(t *testing.T) {
@@ -424,11 +451,16 @@ func TestAbsoluteRuntimePathsKeepDockerCapabilities(t *testing.T) {
 	if !rt.SupportsCIDFile() {
 		t.Fatal("absolute Docker path lost cidfile support")
 	}
-	if !(Runtime{Name: filepath.Join(dir, "podman")}).SupportsCIDFile() {
-		t.Fatal("absolute Podman path lost cidfile support")
+	if !rt.SupportsInit() || !rt.SupportsRunLimits() {
+		t.Fatal("absolute Docker path lost run capabilities")
 	}
-	if (Runtime{Name: filepath.Join(dir, "container")}).SupportsCIDFile() {
-		t.Fatal("Apple container path gained unsupported cidfile support")
+	podman := Runtime{Name: filepath.Join(dir, "podman")}
+	if !podman.SupportsCIDFile() || !podman.SupportsInit() || !podman.SupportsRunLimits() {
+		t.Fatal("absolute Podman path lost run capabilities")
+	}
+	container := Runtime{Name: filepath.Join(dir, "container")}
+	if container.SupportsCIDFile() || container.SupportsInit() || container.SupportsRunLimits() {
+		t.Fatal("Apple container path gained unsupported run capabilities")
 	}
 }
 

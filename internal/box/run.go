@@ -509,8 +509,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
-	limits := boxLimits(cfg, rt.Name)
-	args := assembleArgs(cfg, spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
+	limits := boxLimits(cfg, rt)
+	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
 	if spec.Ctx != nil {
 		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 	}
@@ -1107,8 +1107,8 @@ func boxPolicyEmpty(b project.Box) bool {
 // Apple's `container` CLI differs, so they're skipped there (its hardening is
 // tracked separately). All are config-driven (COOP_PIDS/MEMORY/CPUS,
 // COOP_NO_NEW_PRIVILEGES).
-func boxLimits(cfg *config.Config, runtimeName string) []string {
-	if runtimeName != "docker" && runtimeName != "podman" {
+func boxLimits(cfg *config.Config, rt runtime.Runtime) []string {
+	if !rt.SupportsRunLimits() {
 		return nil
 	}
 	var a []string
@@ -1271,8 +1271,14 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
-func assembleArgs(cfg *config.Config, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
-	args := []string{"run", "--rm", "--label", LabelKey + "=" + LabelBox}
+func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
+	args := []string{"run", "--rm"}
+	if initProcess {
+		// Docker and Podman provide the same runtime-native contract: this PID 1 forwards
+		// signals to the workload and reaps descendants orphaned by killed provider processes.
+		args = append(args, "--init")
+	}
+	args = append(args, "--label", LabelKey+"="+LabelBox)
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
 		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its

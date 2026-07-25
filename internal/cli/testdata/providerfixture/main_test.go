@@ -25,7 +25,7 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := []string{
-		"run", "--rm", "--label", "coop=box", "-e", "TZ=UTC",
+		"run", "--rm", "--init", "--label", "coop=box", "-e", "TZ=UTC",
 		"-v", repo + ":" + repo, "--network", "none", "-w", repo,
 		"fixture-image", "claude", "--dangerously-skip-permissions",
 	}
@@ -33,7 +33,7 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Kind != "run" || got.Run.Image != "fixture-image" || got.Run.Workdir != repo {
+	if got.Kind != "run" || got.Run.Image != "fixture-image" || got.Run.Workdir != repo || !got.Run.Init {
 		t.Fatalf("parsed run = %#v", got)
 	}
 	if len(got.Run.Mounts) != 1 || got.Run.Mounts[0].Source != repo || got.Run.Mounts[0].ReadOnly {
@@ -70,6 +70,7 @@ func TestParseRuntimeRejectsUnknownSyntaxAndImageConfusion(t *testing.T) {
 	cases := [][]string{
 		{"pull", "fixture-image"},
 		{"run", "--privileged", "fixture-image", "claude"},
+		{"run", "--init", "--init", "fixture-image", "claude"},
 		{"run", "fixture-image", "claude", "fixture-image"},
 		{"run", "other-image", "claude"},
 		{"run", "--label", "fixture-image", "claude"},

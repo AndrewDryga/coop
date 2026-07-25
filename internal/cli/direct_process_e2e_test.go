@@ -194,6 +194,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	fixtureBin := filepath.Join(layout.Bin, "providerfixture")
 	buildProcessBinary(t, moduleRoot, coopBin, ".")
 	buildProcessBinary(t, moduleRoot, fixtureBin, "./internal/cli/testdata/providerfixture")
+	runtimeBin := installDockerRuntimeFixture(t, fixtureBin)
 	for _, alias := range append(append([]string(nil), providers...), "timeout", "flock", "setsid") {
 		if err := os.Link(fixtureBin, filepath.Join(layout.Bin, alias)); err != nil {
 			t.Fatalf("create fixed provider fixture alias %s: %v", alias, err)
@@ -257,7 +258,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 		t.Fatal(err)
 	}
 	env, err := procharness.Environment(layout, map[string]string{
-		"PATH": controlledPath(layout.Bin, filepath.Dir(gitBin), filepath.Dir(jqBin), filepath.Dir(shBin)), "COOP_RUNTIME": fixtureBin,
+		"PATH": controlledPath(layout.Bin, filepath.Dir(gitBin), filepath.Dir(jqBin), filepath.Dir(shBin)), "COOP_RUNTIME": runtimeBin,
 		"COOP_IMAGE": "fixture-image", "COOP_HOMES": "1", "COOP_PROVIDER_FIXTURE_ROOT": layout.Root,
 		"COOP_PROVIDER_FIXTURE_IMAGE": "fixture-image", "COOP_PROVIDER_FIXTURE_TRACE": layout.Trace,
 		"COOP_PROVIDER_FIXTURE_SCENARIO": scenarioPath,
@@ -399,7 +400,7 @@ func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*p
 	assertDirectRuntimeInvocations(t, trace)
 	run := oneProcessEvent(t, trace, "runtime", "run")
 	wantArgv := processTraceArgv(argv)
-	if run.Run == nil || run.Run.Provider != provider || !reflect.DeepEqual(run.Run.ProviderArgv, wantArgv) {
+	if run.Run == nil || run.Run.Provider != provider || !run.Run.Init || !reflect.DeepEqual(run.Run.ProviderArgv, wantArgv) {
 		t.Fatalf("runtime provider contract = %#v, want %s %q", run.Run, provider, wantArgv)
 	}
 	assertProcessMounts(t, suite.layout, provider, account, run.Run.Mounts)

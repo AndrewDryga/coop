@@ -68,6 +68,7 @@ type processRun struct {
 	EnvFiles     []string       `json:"env_files"`
 	Labels       []string       `json:"labels"`
 	Network      string         `json:"network"`
+	Init         bool           `json:"init"`
 	Interactive  bool           `json:"interactive"`
 	TTY          bool           `json:"tty"`
 }
@@ -124,6 +125,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			fixtureBin := filepath.Join(layout.Bin, "providerfixture")
 			buildProcessBinary(t, moduleRoot, coopBin, ".")
 			buildProcessBinary(t, moduleRoot, fixtureBin, "./internal/cli/testdata/providerfixture")
+			runtimeBin := installDockerRuntimeFixture(t, fixtureBin)
 
 			gitBin, err := exec.LookPath("git")
 			if err != nil {
@@ -157,7 +159,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			}
 			path := controlledPath(layout.Bin, filepath.Dir(gitBin))
 			env, err := procharness.Environment(layout, map[string]string{
-				"PATH": path, "COOP_RUNTIME": fixtureBin, "COOP_IMAGE": "fixture-image",
+				"PATH": path, "COOP_RUNTIME": runtimeBin, "COOP_IMAGE": "fixture-image",
 				"COOP_HOMES": "1", "COOP_PROVIDER_FIXTURE_ROOT": layout.Root,
 				"COOP_PROVIDER_FIXTURE_IMAGE": "fixture-image", "COOP_PROVIDER_FIXTURE_TRACE": layout.Trace,
 				"COOP_PROVIDER_FIXTURE_SCENARIO": scenarioPath,
@@ -200,8 +202,8 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			if !reflect.DeepEqual(run.Run.ProviderArgv, traceArgv) {
 				t.Fatalf("provider argv = %q, want %q", run.Run.ProviderArgv, traceArgv)
 			}
-			if run.Run.Network != "none" || !reflect.DeepEqual(run.Run.Labels, []string{"coop=box"}) || run.Run.Interactive || run.Run.TTY {
-				t.Fatalf("runtime boundary = network %q labels %q interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Interactive, run.Run.TTY)
+			if run.Run.Network != "none" || !reflect.DeepEqual(run.Run.Labels, []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
+				t.Fatalf("runtime boundary = network %q labels %q init %v interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Init, run.Run.Interactive, run.Run.TTY)
 			}
 			assertProcessMounts(t, layout, provider, "default", run.Run.Mounts)
 			assertProcessEnvironment(t, run.Run.Environment, provider, credentialKey[provider])
@@ -241,6 +243,15 @@ func buildProcessBinary(t *testing.T, root, output, pkg string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", pkg, err, out)
 	}
+}
+
+func installDockerRuntimeFixture(t *testing.T, fixtureBin string) string {
+	t.Helper()
+	runtimeBin := filepath.Join(filepath.Dir(fixtureBin), "docker")
+	if err := os.Link(fixtureBin, runtimeBin); err != nil {
+		t.Fatalf("install Docker runtime fixture: %v", err)
+	}
+	return runtimeBin
 }
 
 func initProcessRepo(t *testing.T, gitBin, repo string, env []string) {
@@ -323,9 +334,9 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace) {
 			got = append(got, event.Argv)
 		}
 	}
-	wantPrefix := [][]string{{"--version"}, {"image", "inspect", "fixture-image"}}
+	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}, {"info"}}
 	if len(got) != 3 || !reflect.DeepEqual(got[:2], wantPrefix) || len(got[2]) == 0 || got[2][0] != "run" {
-		t.Fatalf("runtime invocations = %q, want version, inspect, run", got)
+		t.Fatalf("runtime invocations = %q, want inspect, info, run", got)
 	}
 }
 
