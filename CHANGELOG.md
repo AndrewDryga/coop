@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 7.1.0
 
 - **Compose sidecars now reconcile removed services and basename-era projects.** `coop up`,
