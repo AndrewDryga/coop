@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -45,9 +46,14 @@ func NewLayout(root string) (Layout, error) {
 	if err != nil {
 		return Layout{}, fmt.Errorf("make process-test root absolute: %w", err)
 	}
+	home := filepath.Join(canonical, "home")
+	cache := filepath.Join(canonical, "xdg", "cache")
+	if runtime.GOOS == "darwin" {
+		cache = filepath.Join(home, "Library", "Caches")
+	}
 	l := Layout{
-		Root: canonical, Bin: filepath.Join(canonical, "bin"), Home: filepath.Join(canonical, "home"),
-		XDGConfig: filepath.Join(canonical, "xdg", "config"), XDGCache: filepath.Join(canonical, "xdg", "cache"),
+		Root: canonical, Bin: filepath.Join(canonical, "bin"), Home: home,
+		XDGConfig: filepath.Join(canonical, "xdg", "config"), XDGCache: cache,
 		XDGState: filepath.Join(canonical, "xdg", "state"), Tmp: filepath.Join(canonical, "tmp"),
 		Config: filepath.Join(canonical, "config"), Repo: filepath.Join(canonical, "repo"),
 		Plans: filepath.Join(canonical, "plans"), State: filepath.Join(canonical, "state"),

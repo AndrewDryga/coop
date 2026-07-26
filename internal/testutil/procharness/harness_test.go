@@ -5,12 +5,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestLayoutCacheMatchesUserCacheDirContract(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(layout.Root, "xdg", "cache")
+	if runtime.GOOS == "darwin" {
+		want = filepath.Join(layout.Home, "Library", "Caches")
+	}
+	if layout.XDGCache != want {
+		t.Fatalf("cache root = %q, want %q", layout.XDGCache, want)
+	}
+}
 
 func TestEnvironmentStartsEmptyAndOwnsState(t *testing.T) {
 	t.Setenv("COOP_AMBIENT_SENTINEL", "must-not-leak")
