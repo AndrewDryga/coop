@@ -2648,12 +2648,15 @@ func absJoin(repo string, queues []string) string {
 // forkName is non-empty only for a detached fork loop — it labels each iteration's box so
 // `coop fork stop` can tear the container down by label (see RunSpec.ForkName); the local
 // `coop loop` passes "".
-// watchInterrupt turns a stream of interrupt signals into the loop's two-stage stop: the first
-// signal calls onSoft (finish the current iteration, then stop before the next), the second calls
-// onHard (stop now). Pulled out of loop() so the escalation is unit-testable with a plain channel;
-// it returns when the channel is closed (loop() stops delivery and closes it on exit).
+// watchInterrupt gives SIGINT its two-stage stop. A termination signal is always hard, including
+// when it arrives first, because TERM/HUP callers cannot be expected to signal twice.
 func watchInterrupt(sig <-chan os.Signal, onSoft, onHard func()) {
-	if _, ok := <-sig; !ok {
+	first, ok := <-sig
+	if !ok {
+		return
+	}
+	if first != os.Interrupt {
+		onHard()
 		return
 	}
 	onSoft()
@@ -2855,7 +2858,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	}
 	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
 	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
-	// stops before the next; a second stops now (tears the box down). We watch SIGINT only there.
+	// stops before the next; a second stops now (tears the box down). TERM and HUP are always hard.
 	// A redirected loop — a CI pipe, or a DETACHED fork worker stopped by `coop fork stop`
 	// (SIGTERM) — needs its own watcher now: every built-in attempt runs the box in its own
 	// cancelable process group for the provider watchdog, so a delivered signal no longer takes
@@ -2863,6 +2866,11 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// cleanly instead of exiting and orphaning it.
 	var softStop atomic.Bool
 	wake := make(chan struct{}) // closed on the first stop signal so any in-progress wait returns at once
+	var wakeOnce sync.Once
+	requestStop := func() {
+		softStop.Store(true)
+		wakeOnce.Do(func() { close(wake) })
+	}
 	interactive := ui.IsTerminal(os.Stdin)
 	var iterCtx context.Context
 	{
@@ -2871,26 +2879,25 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		defer cancel()
 		sig := make(chan os.Signal, 2)
 		if interactive {
-			signal.Notify(sig, os.Interrupt)
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			go watchInterrupt(sig,
 				func() {
-					softStop.Store(true)
-					close(wake)
+					requestStop()
 					loopInterruptInfo("⏸ finishing this iteration, then stopping — Ctrl-C again to stop now")
 				},
 				func() {
 					loopInterruptInfo("■ stopping now")
+					requestStop()
 					cancel()
 				})
 		} else {
-			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			go func() {
 				if _, ok := <-sig; !ok {
 					return
 				}
 				loopInterruptInfo("■ stop requested — tearing down this iteration's box, then exiting")
-				softStop.Store(true)
-				close(wake)
+				requestStop()
 				cancel()
 			}()
 		}

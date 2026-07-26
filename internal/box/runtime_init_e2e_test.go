@@ -120,6 +120,12 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 		}
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	runID := fmt.Sprintf("runtime-init-%d", os.Getpid())
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		_, _ = rt.RemoveByLabel(cleanupCtx, LabelRun, runID)
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan struct {
@@ -130,6 +136,7 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 		code, err := Run(cfg, rt, RunSpec{
 			Image: runtimeInitTestImage, Repo: repo, Workdir: "/workspace", Ctx: ctx,
 			Cmd:       []string{"/coop-init-probe", "signal", "/workspace/ready", "/workspace/received"},
+			RunID:     runID,
 			Batch:     true,
 			Quiet:     true,
 			ExtraArgs: []string{"-v", helper + ":/coop-init-probe:ro"},
@@ -141,6 +148,9 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 	}()
 
 	awaitRuntimeInitMarker(t, ready, "ready\n")
+	if got := rt.CountByLabel(LabelRun, runID); got != 1 {
+		t.Fatalf("running box count = %d, want 1", got)
+	}
 	cancel()
 	select {
 	case got := <-result:
@@ -151,6 +161,9 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 		t.Fatal("canceled runtime did not return")
 	}
 	awaitRuntimeInitMarker(t, received, "term\n")
+	if got := rt.CountByLabel(LabelRun, runID); got != 0 {
+		t.Fatalf("canceled box count = %d, want 0", got)
+	}
 }
 
 func runtimeInitTestRuntime(t *testing.T) runtime.Runtime {

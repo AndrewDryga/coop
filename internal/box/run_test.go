@@ -1084,6 +1084,17 @@ func TestAssembleArgsSupervisedLabel(t *testing.T) {
 	}
 }
 
+func TestAssembleArgsRunLabel(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+
+	args := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", RunID: "run123"}, mounts,
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	if !containsSeq(args, []string{"--label", "coop.run=run123"}) {
+		t.Errorf("loop run should carry coop.run=<id> for precise cancellation cleanup: %v", args)
+	}
+}
+
 func TestAssembleArgsSharesSessionsOnlyForACP(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}

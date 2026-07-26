@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -31,6 +32,7 @@ const (
 	LabelSupervisor = "coop.sup"        // value=<supervisor id>, so a supervisor kills only its own
 	LabelFork       = "coop.fork"       // readable value=<fork name> for runtime diagnostics
 	LabelForkOwner  = "coop.fork-owner" // repo-scoped value, so stop never reaps another repo's namesake
+	LabelRun        = "coop.run"        // value=<loop run id>, so cancellation reaps the daemon-owned box
 	// DescendantsDrainedExit and DescendantsTimedOutExit are emitted only by coop-entry in an
 	// opted-in supervised run. Keep them outside ordinary provider conventions and remap raw
 	// provider use in the entrypoint before the host sees it.
@@ -521,7 +523,16 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	limits := boxLimits(cfg, rt)
 	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
 	if spec.Ctx != nil {
-		return rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
+		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
+		if spec.Ctx.Err() == nil || spec.RunID == "" {
+			return code, runErr
+		}
+		// Killing a Docker/Podman client does not guarantee its daemon-owned container exits.
+		// The loop run id owns one box at a time, so remove that exact canceled box as a backstop.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, cleanupErr := rt.RemoveByLabel(cleanupCtx, LabelRun, spec.RunID)
+		return code, errors.Join(runErr, cleanupErr)
 	}
 	return rt.Run(stdin, stdout, stderr, args...)
 }
@@ -1288,6 +1299,9 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		args = append(args, "--init")
 	}
 	args = append(args, "--label", LabelKey+"="+LabelBox)
+	if spec.RunID != "" {
+		args = append(args, "--label", LabelRun+"="+spec.RunID)
+	}
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
 		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -58,6 +59,23 @@ func TestWatchInterrupt(t *testing.T) {
 			t.Fatalf("soft=%d hard=%d, want 0,0", soft.Load(), hard.Load())
 		}
 	})
+
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
+		t.Run(sig.String()+" is immediately hard", func(t *testing.T) {
+			signals := make(chan os.Signal, 1)
+			var soft, hard atomic.Int32
+			done := make(chan struct{})
+			go func() {
+				watchInterrupt(signals, func() { soft.Add(1) }, func() { hard.Add(1) })
+				close(done)
+			}()
+			signals <- sig
+			<-done
+			if soft.Load() != 0 || hard.Load() != 1 {
+				t.Fatalf("soft=%d hard=%d, want 0,1", soft.Load(), hard.Load())
+			}
+		})
+	}
 }
 
 // On the plain line-oriented path (no live bar: piped output) the notice starts on a fresh

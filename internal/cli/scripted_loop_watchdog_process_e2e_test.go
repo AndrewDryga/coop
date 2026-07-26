@@ -277,6 +277,47 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	for _, interactive := range []bool{true, false} {
+		for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
+			mode := "redirected"
+			if interactive {
+				mode = "interactive"
+			}
+			t.Run(mode+" "+sig.String()+" tears down active provider", func(t *testing.T) {
+				setLoopWatchdogDeadlines(t, suite, "start=8s,idle=20s,tool=30s")
+				resetLoopProcessRepo(t, suite)
+				taskID := "watchdog-" + mode + "-" + strings.ToLower(sig.String())
+				seedLoopProcessTask(t, suite.layout.Repo, taskID)
+				target := loopRecoveryTarget("codex", "termination-model", "work")
+				attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "wait"}}
+				suite.reset(t, loopRecoveryScenario(taskID, attempts))
+				start := startLoopRecovery
+				if interactive {
+					start = startLoopRecoveryPTY
+				}
+				process := start(t, suite, target)
+				defer process.Cleanup()
+				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+				coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+				if err := syscall.Kill(coopPID, sig); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				result := process.Wait(ctx)
+				cancel()
+				if result.ExitCode == 0 {
+					t.Fatalf("%s-interrupted loop unexpectedly succeeded: %#v", sig, result)
+				}
+				records := readLoopStageRecords(t, suite)
+				if len(records) != 1 || records[0].Outcome != "interrupted" {
+					t.Fatalf("%s telemetry = %#v, want interrupted", sig, records)
+				}
+				assertLoopTaskRecoverable(t, suite, taskID)
+				assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+			})
+		}
+	}
+
 	t.Run("signoff timeout discards the receipt and retries", func(t *testing.T) {
 		setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
 		resetLoopProcessRepo(t, suite)
