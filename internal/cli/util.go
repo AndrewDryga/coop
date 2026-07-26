@@ -380,13 +380,13 @@ func gitGlobalOut(args ...string) string {
 
 // gitHardening are -c overrides applied to EVERY git command coop runs for effect on a working
 // tree, because every repo coop touches is agent-writable: the box binds the repo (its .git
-// included) read-write on a normal run, so an agent can plant hooks or local config that execute
-// host commands the moment coop fetches, rebases, merges, diffs, or even `status`es it — whether
-// that's a fork's workspace OR the parent repo. We turn hooks off and blank every config knob that
-// shells out. Verified host-exec vectors: .git/hooks/* (and core.hooksPath), core.fsmonitor,
-// core.pager, diff.external, and a forced commit.gpgsign with a planted gpg.program; the rest are
-// defense in depth. Signing on land is re-enabled with trusted values appended after these (git's
-// last -c for a key wins; see trustedSignArgs).
+// included) read-write on a normal run, so an agent can plant hooks, replacement objects, or local
+// config that changes what the host executes or considers to be Git history. We ignore replacement
+// objects, turn hooks off, and blank every config knob that shells out. Verified host-exec vectors:
+// .git/hooks/* (and core.hooksPath), core.fsmonitor, core.pager, diff.external, and a forced
+// commit.gpgsign with a planted gpg.program; the rest are defense in depth. Signing on land is
+// re-enabled with trusted values appended after these (git's last -c for a key wins; see
+// trustedSignArgs).
 //
 // A value coop reads then EXECUTES (or reads a host file from) — your editor, signing program,
 // global excludesfile — must not come from the agent-writable repo at all: those use gitGlobalOut
@@ -397,6 +397,7 @@ func gitGlobalOut(args ...string) string {
 // checkout — is closed by forkDriverNeutralizer, which enumerates the fork's driver names and
 // blanks each before that rebase. policyScan stays the human-facing backstop for the .gitattributes.
 var gitHardening = []string{
+	"--no-replace-objects",
 	"-c", "core.hooksPath=/dev/null",
 	"-c", "core.fsmonitor=",
 	"-c", "core.sshCommand=",

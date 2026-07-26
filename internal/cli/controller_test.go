@@ -2337,6 +2337,26 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 			t.Fatalf("multiple trailer error = %v", err)
 		}
 	})
+	t.Run("prose plus trailer is unbound in both parsers", func(t *testing.T) {
+		repo, git, _ := newRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "bad\n\nnot a trailer\nCoop-Task: task-b")
+		if got := commitsForTask(repo, "HEAD", "task-b"); len(got) != 0 {
+			t.Fatalf("ordinary parser bound prose-plus-trailer commit: %v", got)
+		}
+		if _, err := captureAuditReopen(repo, "task-a"); err == nil ||
+			!strings.Contains(err.Error(), "invalid task binding") {
+			t.Fatalf("raw parser accepted prose-plus-trailer commit: %v", err)
+		}
+	})
+	t.Run("repository trailer separators cannot hide bindings", func(t *testing.T) {
+		repo, git, subject := newRepo(t)
+		git("config", "trailer.separators", "=")
+		git("config", "trailer.coop.key", "Coop-Task:")
+		bindings, ok := rawTaskBindings(repo, subject)
+		if !ok || !slices.Equal(bindings["task-a"], []string{subject}) {
+			t.Fatalf("raw task bindings = %#v, ok=%v", bindings, ok)
+		}
+	})
 	t.Run("duplicate task ids", func(t *testing.T) {
 		repo, git, _ := newRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "B1\n\nCoop-Task: task-b")
@@ -2346,6 +2366,30 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 			t.Fatalf("duplicate task error = %v", err)
 		}
 	})
+	for _, metadata := range []string{"grafts", "shallow"} {
+		t.Run(metadata+" cannot hide an older duplicate binding", func(t *testing.T) {
+			repo, git := gitRepo(t)
+			git("commit", "-q", "--allow-empty", "-m", "old A\n\nCoop-Task: task-a")
+			git("commit", "-q", "--allow-empty", "-m", "unrelated pre-subject work")
+			subjectParent := gitOut(repo, "rev-parse", "HEAD")
+			git("commit", "-q", "--allow-empty", "-m", "new A\n\nCoop-Task: task-a")
+			git("commit", "-q", "--allow-empty", "-m", "tail")
+			var path, body string
+			if metadata == "grafts" {
+				path = filepath.Join(repo, ".git", "info", "grafts")
+				body = subjectParent + "\n"
+			} else {
+				path = filepath.Join(repo, ".git", "shallow")
+				body = subjectParent + "\n"
+			}
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := captureAuditReopen(repo, "task-a"); err == nil {
+				t.Fatalf("%s-hidden duplicate task binding was accepted", metadata)
+			}
+		})
+	}
 	t.Run("merge", func(t *testing.T) {
 		repo, git, _ := newRepo(t)
 		branch := gitOut(repo, "branch", "--show-current")
@@ -2420,18 +2464,445 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 	})
 }
 
+func TestAuditTaskTrailersUseFixedRawGrammar(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		values  []string
+		invalid bool
+	}{
+		{name: "ordinary", message: "subject\n\nCoop-Task: task-a\n", values: []string{"task-a"}},
+		{name: "case insensitive key", message: "subject\n\ncoop-task: task-a", values: []string{"task-a"}},
+		{name: "other trailers", message: "subject\n\nOther: value\nCoop-Task: task-a", values: []string{"task-a"}},
+		{name: "not final paragraph", message: "Coop-Task: decoy\n\nsubject"},
+		{
+			name: "prose in final paragraph", message: "subject\n\nnot a trailer\nCoop-Task: task-a",
+			values: []string{"task-a"}, invalid: true,
+		},
+		{name: "empty", message: "subject\n\nCoop-Task:", invalid: true},
+		{
+			name: "duplicate", message: "subject\n\nCoop-Task: task-a\nCoop-Task: task-b",
+			values: []string{"task-a", "task-b"},
+		},
+		{
+			name: "folded", message: "subject\n\nCoop-Task: task-a\n continuation",
+			values: []string{"task-a"}, invalid: true,
+		},
+		{
+			name:    "oversized value",
+			message: "subject\n\nCoop-Task: " + strings.Repeat("x", auditTaskTrailerValueLimit+1),
+			invalid: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values, invalid := auditTaskTrailersFromMessage([]byte(tt.message))
+			if !slices.Equal(values, tt.values) || invalid != tt.invalid {
+				t.Fatalf("trailers = %v, invalid=%v; want %v, %v", values, invalid, tt.values, tt.invalid)
+			}
+		})
+	}
+}
+
+func TestOrdinaryAuditBindingIdentityRejectsGraftedDecoy(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "root")
+	main := gitOut(repo, "branch", "--show-current")
+	git("checkout", "-q", "-b", "decoy")
+	git("commit", "-q", "--allow-empty", "-m", "decoy\n\nCoop-Task=task-a")
+	decoy := gitOut(repo, "rev-parse", "HEAD")
+	git("checkout", "-q", main)
+	git("commit", "-q", "--allow-empty", "-m", "subject\n\nCoop-Task: task-a")
+	subject := gitOut(repo, "rev-parse", "HEAD")
+	git("config", "trailer.separators", "=")
+	if err := os.WriteFile(
+		filepath.Join(repo, ".git", "info", "grafts"),
+		[]byte(subject+" "+decoy+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := commitsForTask(repo, subject, "task-a")
+	raw, ok := rawTaskBindings(repo, subject)
+	if !ok || len(ordinary) != 1 || len(raw["task-a"]) != 1 ||
+		ordinary[0] == subject[:len(ordinary[0])] || raw["task-a"][0] != subject {
+		t.Fatalf("decoy fixture ordinary=%v raw=%v ok=%v", ordinary, raw, ok)
+	}
+	if ordinaryBindingMatchesRaw(repo, subject, "task-a") {
+		t.Fatal("grafted ordinary decoy matched the distinct raw audit subject")
+	}
+}
+
+func TestAuditTreeParserRejectsNoncanonicalDirectoryMode(t *testing.T) {
+	raw := append([]byte("040000 dir\x00"), make([]byte, 20)...)
+	if _, _, err := auditTreeChildren(raw, 20); err == nil ||
+		!strings.Contains(err.Error(), "noncanonical") {
+		t.Fatalf("zero-padded directory mode error = %v", err)
+	}
+}
+
+func TestAuditCommitParent(t *testing.T) {
+	total := int64(auditLinearHistoryByteLimit)
+	if err := addAuditLinearHistoryBytes(&total, []byte{0}); err == nil ||
+		!strings.Contains(err.Error(), "linear audit history") {
+		t.Fatalf("linear history byte bound error = %v", err)
+	}
+
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "root")
+	root := gitOut(repo, "rev-parse", "HEAD")
+	if got, err := auditCommitParent(repo, root); err != nil || got != "" {
+		t.Fatalf("root parent = %q, %v; want empty", got, err)
+	}
+
+	git("commit", "-q", "--allow-empty", "-m", "child")
+	child := gitOut(repo, "rev-parse", "HEAD")
+	if got, err := auditCommitParent(repo, child); err != nil || got != root {
+		t.Fatalf("child parent = %q, %v; want %s", got, err, root)
+	}
+	if _, err := rawReachableAuditCommitsLimit(repo, child, 10, 10, 1); err == nil ||
+		!strings.Contains(err.Error(), "exceeds 1 bytes") {
+		t.Fatalf("raw reachable byte bound error = %v", err)
+	}
+	if _, err := auditCommitParent(repo, strings.Repeat("f", 40)); err == nil {
+		t.Fatal("missing commit parent was accepted")
+	}
+
+	writeRawCommit := func(body string) string {
+		t.Helper()
+		cmd := exec.Command("git", gitArgs(repo,
+			[]string{"hash-object", "-t", "commit", "-w", "--stdin", "--literally"})...)
+		cmd.Stdin = strings.NewReader(body)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	tree := gitOut(repo, "rev-parse", child+"^{tree}")
+	identity := "Test User <test@example.com> 1 +0000"
+	misplacedParent := writeRawCommit(
+		"tree " + tree + "\n" +
+			"author " + identity + "\n" +
+			"parent " + root + "\n" +
+			"committer " + identity + "\n\nmalformed parent placement\n",
+	)
+	if _, err := auditCommitParent(repo, misplacedParent); err == nil {
+		t.Error("parent after author header was accepted")
+	}
+	danglingParent := writeRawCommit(
+		"tree " + tree + "\n" +
+			"parent " + strings.Repeat("f", 40) + "\n" +
+			"author " + identity + "\n" +
+			"committer " + identity + "\n\ndangling parent\n",
+	)
+	if _, err := auditCommitParent(repo, danglingParent); err == nil {
+		t.Error("dangling parent was accepted")
+	}
+	duplicateParent := writeRawCommit(
+		"tree " + tree + "\n" +
+			"parent " + root + "\n" +
+			"parent " + root + "\n" +
+			"author " + identity + "\n" +
+			"committer " + identity + "\n\nduplicate parent\n",
+	)
+	if _, err := auditCommitParent(repo, duplicateParent); err == nil {
+		t.Error("duplicate raw parent was accepted")
+	}
+	oversizedCommit := writeRawCommit(
+		"tree " + tree + "\n" +
+			"author " + identity + "\n" +
+			"committer " + identity + "\n\n" +
+			strings.Repeat("x", 1<<20),
+	)
+	if _, err := rawAuditHistoryCount(repo, oversizedCommit, 1); err == nil {
+		t.Error("oversized raw commit was accepted")
+	}
+
+	blobCmd := exec.Command("git", gitArgs(repo, []string{"hash-object", "-t", "blob", "-w", "--stdin"})...)
+	blobCmd.Stdin = strings.NewReader(strings.Repeat("x", 1<<20))
+	blobOut, err := blobCmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobParent := strings.TrimSpace(string(blobOut))
+	limitedBlob := exec.Command("git", gitArgs(repo, []string{"cat-file", "blob", blobParent})...)
+	if _, err := auditCommandOutput(limitedBlob, 1024); err == nil {
+		t.Error("bounded command output accepted an oversized stream")
+	}
+	blobParentCommit := writeRawCommit(
+		"tree " + tree + "\n" +
+			"parent " + blobParent + "\n" +
+			"author " + identity + "\n" +
+			"committer " + identity + "\n\nblob parent\n",
+	)
+	badParent := make(chan error, 1)
+	go func() {
+		_, err := rawAuditHistoryCount(repo, blobParentCommit, 1)
+		badParent <- err
+	}()
+	select {
+	case err := <-badParent:
+		if err == nil {
+			t.Error("blob parent was accepted as a commit")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blob parent left cat-file blocked on unread output")
+	}
+
+	branch := gitOut(repo, "branch", "--show-current")
+	git("checkout", "-q", "-b", "parent-side", root)
+	git("commit", "-q", "--allow-empty", "-m", "side")
+	git("checkout", "-q", branch)
+	git("commit", "-q", "--allow-empty", "-m", "main")
+	git("merge", "-q", "--no-ff", "parent-side", "-m", "merge")
+	if _, err := auditCommitParent(repo, gitOut(repo, "rev-parse", "HEAD")); err == nil {
+		t.Fatal("merge commit parent was accepted")
+	}
+}
+
+func TestSemanticHistoryRejectsOversizedTreeBeforeDiff(t *testing.T) {
+	repo, _ := gitRepo(t)
+	writeObject := func(objectType, body string) string {
+		t.Helper()
+		cmd := exec.Command("git", gitArgs(repo,
+			[]string{"hash-object", "-t", objectType, "-w", "--stdin", "--literally"})...)
+		cmd.Stdin = strings.NewReader(body)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	tree := writeObject("tree", strings.Repeat("x", auditTreeObjectSizeLimit+1))
+	identity := "Test User <test@example.com> 1 +0000"
+	commit := writeObject(
+		"commit",
+		"tree "+tree+"\n"+
+			"author "+identity+"\n"+
+			"committer "+identity+"\n\noversized tree\n",
+	)
+	rawHistory, err := rawAuditHistoryCount(repo, commit, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := semanticHistoryCommitsExact(repo, rawHistory); err == nil ||
+		!strings.Contains(err.Error(), "tree "+tree+" size") {
+		t.Fatalf("oversized tree error = %v", err)
+	}
+}
+
+func TestAuditTreeSnapshotSurvivesSourceRemoval(t *testing.T) {
+	repo, git := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "tree")
+	tree := gitOut(repo, "rev-parse", "HEAD^{tree}")
+	empty := auditObjectID("tree", nil, len(tree))
+	snapshot, err := snapshotAuditTreeDAGs(repo, []string{empty, tree})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(snapshot) })
+	if err := os.Remove(filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", gitArgs(snapshot, []string{"diff-tree", "--raw", "-r", empty, tree})...)
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		t.Fatalf("snapshot diff after source removal = %q, %v", out, err)
+	}
+}
+
+func TestSemanticHistoryExactIgnoresGrafts(t *testing.T) {
+	repo, git := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "parent")
+	parent := gitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "-qam", "child")
+	child := gitOut(repo, "rev-parse", "HEAD")
+	rawHistory, err := rawAuditHistoryCount(repo, child, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := semanticHistoryCommitsExact(repo, rawHistory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("decoy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	decoyTree := gitOut(repo, "write-tree")
+	decoyParent := gitOut(repo, "commit-tree", decoyTree, "-p", parent, "-m", "decoy parent")
+	if err := os.WriteFile(
+		filepath.Join(repo, ".git", "info", "grafts"),
+		[]byte(child+" "+decoyParent+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err := semanticHistoryCommitsExact(repo, rawHistory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("graft changed exact semantic history: got %#v want %#v", got, want)
+	}
+}
+
+func TestSemanticHistoryExactSupportsSHA256Root(t *testing.T) {
+	repo := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "--object-format=sha256")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	run("config", "commit.gpgsign", "false")
+	emptyTree, err := auditEmptyTree(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emptyTree) != 64 {
+		t.Fatalf("SHA-256 empty tree length = %d, want 64", len(emptyTree))
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "A implementation\n\nCoop-Task: task-a")
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "b.txt")
+	run("commit", "-q", "-m", "B implementation\n\nCoop-Task: task-b")
+	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	if len(oldHead) != 64 {
+		t.Fatalf("SHA-256 HEAD length = %d, want 64", len(oldHead))
+	}
+	descendant := commitsForTask(repo, oldHead, "task-b")
+	if len(descendant) != 1 {
+		t.Fatalf("descendant bindings = %v, want exactly one", descendant)
+	}
+	record, err := captureAuditReopen(repo, "task-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run("checkout", "-q", "--orphan", "rewritten-root")
+	run("rm", "-q", "-rf", ".")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+	run("cherry-pick", descendant[0])
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if !auditReopenCompletionValid(repo, oldHead, head, "task-a", record) {
+		t.Fatal("SHA-256 root subject with exact semantic descendant replay was rejected")
+	}
+}
+
+func TestAuditReopenCompletionAcceptsRootSubjectReplay(t *testing.T) {
+	repo, git := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: task-a")
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "b.txt")
+	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: task-b")
+	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	descendant := commitsForTask(repo, oldHead, "task-b")
+	if len(descendant) != 1 {
+		t.Fatalf("descendant bindings = %v, want exactly one", descendant)
+	}
+	record, err := captureAuditReopen(repo, "task-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	git("checkout", "-q", "--orphan", "rewritten-root")
+	git("rm", "-q", "-rf", ".")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+	git("cherry-pick", descendant[0])
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if !auditReopenCompletionValid(repo, oldHead, head, "task-a", record) {
+		t.Fatal("root subject with exact semantic descendant replay was rejected")
+	}
+}
+
 func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 	type fixture struct {
+		repo                     string
+		git                      func(...string)
+		subjectParent, a, manual string
+		bound, tail, base        string
+		record                   auditReopenRecord
+	}
+	type graftFixture struct {
 		repo                   string
 		git                    func(...string)
-		a, manual, bound, tail string
-		base                   string
+		root, subjectParent, a string
+		manual, bound, tail    string
 		record                 auditReopenRecord
 	}
 	newFixture := func(t *testing.T) fixture {
 		t.Helper()
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
+		commit := func(name, body, message string) string {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			git("add", name)
+			git("commit", "-q", "-m", message)
+			return gitOut(repo, "rev-parse", "HEAD")
+		}
+		subjectParent := commit("before.txt", "before\n", "unrelated pre-subject work")
+		a := commit("a.txt", "A\n", "A implementation\n\nCoop-Task: task-a")
+		manual := commit("manual.txt", "manual\n", "manual release step")
+		bound := commit("b.txt", "B\n", "B implementation\n\nCoop-Task: task-b")
+		tail := commit("tail.txt", "tail\n", "unbound release tail")
+		record, err := captureAuditReopen(repo, "task-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fixture{
+			repo: repo, git: git, subjectParent: subjectParent, a: a, manual: manual,
+			bound: bound, tail: tail, base: tail, record: record,
+		}
+	}
+	newGraftFixture := func(t *testing.T) graftFixture {
+		t.Helper()
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		root := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "unrelated pre-subject work")
+		subjectParent := gitOut(repo, "rev-parse", "HEAD")
 		commit := func(name, body, message string) string {
 			t.Helper()
 			if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
@@ -2449,9 +2920,9 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return fixture{
-			repo: repo, git: git, a: a, manual: manual, bound: bound, tail: tail,
-			base: tail, record: record,
+		return graftFixture{
+			repo: repo, git: git, root: root, subjectParent: subjectParent, a: a,
+			manual: manual, bound: bound, tail: tail, record: record,
 		}
 	}
 	rewrite := func(t *testing.T, f fixture) {
@@ -2483,6 +2954,86 @@ func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 		rewrite(t, f)
 		f.git("cherry-pick", f.manual, f.bound, f.tail)
 		assertValid(t, f)
+	})
+	t.Run("dropped subject parent", func(t *testing.T) {
+		f := newFixture(t)
+		f.git("reset", "--hard", "-q", f.subjectParent+"^")
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+		f.git("cherry-pick", f.manual, f.bound, f.tail)
+		assertRejected(t, f)
+	})
+	t.Run("replace ref cannot forge subject parent", func(t *testing.T) {
+		f := newFixture(t)
+		f.git("reset", "--hard", "-q", f.subjectParent+"^")
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+		rewrittenSubject := gitOut(f.repo, "rev-parse", "HEAD")
+		f.git("cherry-pick", f.manual, f.bound, f.tail)
+		f.git("replace", "--graft", rewrittenSubject, f.subjectParent)
+		assertRejected(t, f)
+	})
+	t.Run("graft cannot redirect reviewed subject", func(t *testing.T) {
+		f := newGraftFixture(t)
+		f.git("reset", "--hard", "-q", f.root)
+		f.git("cherry-pick", f.a, f.manual, f.bound)
+		redirectedParent := gitOut(f.repo, "rev-parse", "HEAD")
+		if err := os.WriteFile(
+			filepath.Join(f.repo, ".git", "info", "grafts"),
+			[]byte(f.tail+" "+redirectedParent+"\n"),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		f.git("reset", "--hard", "-q", f.root)
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+		f.git("cherry-pick", f.manual, f.bound, f.tail)
+		if auditReopenCompletionValid(
+			f.repo, f.tail, gitOut(f.repo, "rev-parse", "HEAD"), "task-a", f.record,
+		) {
+			t.Fatal("graft-selected reviewed subject was accepted")
+		}
+	})
+	t.Run("graft cannot redirect rewritten subject", func(t *testing.T) {
+		f := newGraftFixture(t)
+		f.git("reset", "--hard", "-q", f.root)
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+		actualSubject := gitOut(f.repo, "rev-parse", "HEAD")
+		f.git("cherry-pick", f.manual)
+		firstDescendant := gitOut(f.repo, "rev-parse", "HEAD")
+		f.git("cherry-pick", f.bound, f.tail)
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+
+		tree := gitOut(f.repo, "rev-parse", actualSubject+"^{tree}")
+		decoySubject := gitOut(
+			f.repo, "commit-tree", tree, "-p", f.subjectParent,
+			"-m", "A repaired\n\nCoop-Task: task-a",
+		)
+		if err := os.WriteFile(
+			filepath.Join(f.repo, ".git", "info", "grafts"),
+			[]byte(firstDescendant+" "+decoySubject+"\n"),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if auditReopenCompletionValid(f.repo, f.tail, head, "task-a", f.record) {
+			t.Fatal("graft-selected rewritten subject was accepted")
+		}
 	})
 	t.Run("dropped", func(t *testing.T) {
 		f := newFixture(t)
@@ -2819,6 +3370,7 @@ func TestLegacyAuditReopenAdoption(t *testing.T) {
 
 type blockedAuditUpgradeFixture struct {
 	repo, root, authorityRoot, id string
+	subjectParent, descendant     string
 	task                          taskItem
 	record                        auditReopenRecord
 	git                           func(...string)
@@ -2831,6 +3383,8 @@ func newBlockedAuditUpgradeFixture(t *testing.T) blockedAuditUpgradeFixture {
 	t.Setenv(testLeaseAuthorityRootEnv, authorityRoot)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	id := "blocked-upgrade"
+	git("commit", "-q", "--allow-empty", "-m", "unrelated pre-subject work")
+	subjectParent := gitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -2872,7 +3426,7 @@ func newBlockedAuditUpgradeFixture(t *testing.T) blockedAuditUpgradeFixture {
 	git("cherry-pick", b)
 	return blockedAuditUpgradeFixture{
 		repo: repo, root: root, authorityRoot: authorityRoot, id: id,
-		task: task, record: record, git: git,
+		subjectParent: subjectParent, descendant: b, task: task, record: record, git: git,
 	}
 }
 
@@ -2909,6 +3463,109 @@ func TestBlockedAuditUnblockUpgradesStaleAuthority(t *testing.T) {
 	if got.Generation != f.record.Generation || got.Subject != wantSubject ||
 		!slices.Equal(got.History, f.record.History) {
 		t.Fatalf("upgraded authority = %#v, want generation %q subject %#v history %#v", got, f.record.Generation, wantSubject, f.record.History)
+	}
+}
+
+func TestUpgradeBlockedAuditReopenAcceptsRootSubjectReplay(t *testing.T) {
+	repo, git := gitRepo(t)
+	id := "blocked-root-upgrade"
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: "+id)
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "b.txt")
+	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: blocked-root-descendant")
+	descendant := gitOut(repo, "rev-parse", "HEAD")
+	record, err := captureAuditReopen(repo, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	git("checkout", "-q", "--orphan", "rewritten-root")
+	git("rm", "-q", "-rf", ".")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A repaired\n\nCoop-Task: "+id)
+	git("cherry-pick", descendant)
+	head := gitOut(repo, "rev-parse", "HEAD")
+
+	replacement, err := upgradeBlockedAuditReopen(repo, head, id, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !auditReopenCurrentValid(repo, head, id, replacement) {
+		t.Fatal("root subject replay produced invalid upgraded authority")
+	}
+}
+
+func TestRawAuditRewriteHistoryUsesSubjectBoundary(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "reviewed parent")
+	reviewedParent := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "rewritten subject")
+	subject := gitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "replayed descendant")
+	head := gitOut(repo, "rev-parse", "HEAD")
+
+	history, err := rawAuditRewriteHistory(repo, head, reviewedParent, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].sha != subject || history[1].sha != head {
+		t.Fatalf("rewrite history = %#v, want subject and descendant within exact limit", history)
+	}
+}
+
+func TestUpgradeBlockedAuditReopenAcceptsMergeSubjectParent(t *testing.T) {
+	repo, git := gitRepo(t)
+	id := "blocked-merge-parent-upgrade"
+	git("commit", "-q", "--allow-empty", "-m", "root")
+	root := gitOut(repo, "rev-parse", "HEAD")
+	branch := gitOut(repo, "branch", "--show-current")
+	git("checkout", "-q", "-b", "parent-side", root)
+	git("commit", "-q", "--allow-empty", "-m", "side")
+	git("checkout", "-q", branch)
+	git("commit", "-q", "--allow-empty", "-m", "main")
+	git("merge", "-q", "--no-ff", "parent-side", "-m", "merge parent")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: "+id)
+	subject := gitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "b.txt")
+	git("commit", "-q", "-m", "descendant")
+	descendant := gitOut(repo, "rev-parse", "HEAD")
+	record, err := captureAuditReopen(repo, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	git("reset", "--hard", "-q", subject+"^")
+	git("cherry-pick", subject)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "--amend", "-q", "-m", "A repaired\n\nCoop-Task: "+id)
+	git("cherry-pick", descendant)
+	head := gitOut(repo, "rev-parse", "HEAD")
+
+	replacement, err := upgradeBlockedAuditReopen(repo, head, id, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !auditReopenCurrentValid(repo, head, id, replacement) {
+		t.Fatal("merge-parent replay produced invalid upgraded authority")
 	}
 }
 
@@ -3012,6 +3669,59 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		got, ok, err := readAuditReopenRecord(f.root, f.id)
 		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
 			t.Fatalf("rejected descendant changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+
+	t.Run("dropped subject parent", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		f.git("reset", "--hard", "-q", f.subjectParent+"^")
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: "+f.id)
+		f.git("cherry-pick", f.descendant)
+		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil {
+			t.Fatal("dropped subject parent was accepted")
+		}
+		assertBlocked(t, f)
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("rejected parent rewrite changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+
+	t.Run("graft cannot redirect rewritten subject", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		f.git("reset", "--hard", "-q", f.subjectParent+"^")
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: "+f.id)
+		actualSubject := gitOut(f.repo, "rev-parse", "HEAD")
+		f.git("cherry-pick", f.descendant)
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+
+		tree := gitOut(f.repo, "rev-parse", actualSubject+"^{tree}")
+		decoySubject := gitOut(
+			f.repo, "commit-tree", tree, "-p", f.subjectParent,
+			"-m", "A repaired\n\nCoop-Task: "+f.id,
+		)
+		if err := os.WriteFile(
+			filepath.Join(f.repo, ".git", "info", "grafts"),
+			[]byte(head+" "+decoySubject+"\n"),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil {
+			t.Fatal("graft-selected blocked rewrite subject was accepted")
+		}
+		assertBlocked(t, f)
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("rejected graft rewrite changed authority: got=%#v ok=%v err=%v", got, ok, err)
 		}
 	})
 

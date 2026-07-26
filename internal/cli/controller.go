@@ -1,14 +1,20 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
+	"compress/zlib"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,8 +29,21 @@ import (
 // (git log --grep <id> was 0 repo-wide), so "one task = one commit" was unobservable and a crash
 // between commit and folder-move was ambiguous.
 const (
-	coopTaskTrailer         = "Coop-Task"
-	auditReopenHistoryLimit = 4096
+	coopTaskTrailer             = "Coop-Task"
+	auditReopenHistoryLimit     = 4096
+	auditReachableHistoryLimit  = 100000
+	auditReachableEdgeLimit     = 200000
+	auditReachableByteLimit     = 128 << 20
+	auditLinearHistoryByteLimit = 128 << 20
+	auditReopenCommitSizeLimit  = 1 << 20
+	auditTaskTrailerValueLimit  = 4096
+	auditTreeObjectSizeLimit    = 4 << 20
+	auditTreeObjectCountLimit   = 100000
+	auditTreeEntryLimit         = 1000000
+	auditTreeByteLimit          = 64 << 20
+	auditHistoryOutputLimit     = 20 << 20
+	auditDiffOutputLimit        = 64 << 20
+	auditMetadataOutputLimit    = 2 << 20
 )
 
 type taskTrailerCommit struct {
@@ -54,7 +73,7 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 		args = append(args, rangeExpr)
 	}
 	cmd := exec.Command("git", gitArgs(repo, args)...)
-	raw, err := cmd.Output()
+	raw, err := auditCommandOutput(cmd, auditHistoryOutputLimit)
 	if err != nil {
 		return nil, false
 	}
@@ -82,20 +101,24 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 
 func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]taskTrailerCommit, bool) {
 	args := []string{"log", "--reverse", fmt.Sprintf("--max-count=%d", limit)}
-	format := "%h%x00%H%x00%s%x00%P%x00%an%x00%ae%x00%aI%x00%B%x00" +
-		"%(trailers:key=" + coopTaskTrailer + ",only,unfold,separator=%x1f)"
-	args = append(args, "-z", "--format="+format, rangeExpr)
+	return auditHistoryCommits(repo, args, []string{rangeExpr})
+}
+
+func auditHistoryCommits(repo string, args, revisions []string) ([]taskTrailerCommit, bool) {
+	format := "%h%x00%H%x00%s%x00%P%x00%an%x00%ae%x00%aI%x00%B"
+	args = append(args, "-z", "--format="+format)
+	args = append(args, revisions...)
 	cmd := exec.Command("git", gitArgs(repo, args)...)
-	raw, err := cmd.Output()
+	raw, err := auditCommandOutput(cmd, auditHistoryOutputLimit)
 	if err != nil {
 		return nil, false
 	}
 	fields := strings.Split(string(raw), "\x00")
-	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%9 != 0 {
+	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%8 != 0 {
 		return nil, false
 	}
-	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/9)
-	for i := 0; i < len(fields)-1; i += 9 {
+	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/8)
+	for i := 0; i < len(fields)-1; i += 8 {
 		record := taskTrailerCommit{
 			info:          commitInfo{sha: fields[i], subject: fields[i+2]},
 			fullSHA:       fields[i+1],
@@ -105,19 +128,38 @@ func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]taskTraile
 			authorDate:    fields[i+6],
 			commitMessage: fields[i+7],
 		}
-		if fields[i+8] != "" {
-			for _, trailer := range strings.Split(fields[i+8], "\x1f") {
-				key, value, ok := strings.Cut(trailer, ":")
-				if !ok || !strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer) {
-					record.malformed = true
-					continue
-				}
-				record.values = append(record.values, strings.TrimSpace(value))
-			}
-		}
+		record.values, record.malformed = auditTaskTrailersFromMessage([]byte(record.commitMessage))
 		commits = append(commits, record)
 	}
 	return commits, true
+}
+
+func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(stdout, limit+1))
+	overflow := int64(len(raw)) > limit
+	if overflow || readErr != nil {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}
+	waitErr := cmd.Wait()
+	if overflow {
+		return nil, fmt.Errorf("command output exceeds %d bytes", limit)
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, waitErr
+	}
+	return raw, nil
 }
 
 // commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
@@ -136,16 +178,14 @@ func commitsForTask(repo, rangeExpr, id string) []string {
 	return shas
 }
 
-func taskBindingCounts(repo, rangeExpr string) (map[string]int, bool) {
-	commits, ok := taskTrailerCommits(repo, rangeExpr, false)
+func taskBindingCounts(repo, head string) (map[string]int, bool) {
+	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
 		return nil, false
 	}
 	counts := map[string]int{}
-	for _, commit := range commits {
-		if !commit.malformed && len(commit.values) == 1 && commit.values[0] != "" {
-			counts[commit.values[0]]++
-		}
+	for id, shas := range bindings {
+		counts[id] = len(shas)
 	}
 	return counts, true
 }
@@ -953,8 +993,52 @@ func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticH
 	if !ok {
 		return nil, errors.New("read complete audit history")
 	}
+	return semanticHistoryCommitsFromRecords(repo, commits, limit)
+}
+
+func semanticHistoryCommitsExact(repo string, rawHistory []rawAuditCommit) ([]semanticHistoryCommit, error) {
+	commits := make([]taskTrailerCommit, len(rawHistory))
+	for i := range rawHistory {
+		raw := rawHistory[i]
+		if raw.sha == "" || raw.authorDate == "" {
+			return nil, errors.New("exact raw audit history metadata is incomplete")
+		}
+		commits[i] = taskTrailerCommit{
+			fullSHA: raw.sha, authorName: raw.authorName, authorEmail: raw.authorEmail,
+			authorDate: raw.authorDate, commitMessage: raw.commitMessage,
+			values: slices.Clone(raw.taskValues), malformed: raw.taskBindingInvalid,
+		}
+	}
+	changeTrees, err := semanticRawHistoryChangeTrees(repo, rawHistory)
+	if err != nil {
+		return nil, err
+	}
+	return semanticHistoryCommitsFromChangeTrees(commits, changeTrees, len(commits), false)
+}
+
+func semanticHistoryCommitsFromRecords(
+	repo string,
+	commits []taskTrailerCommit,
+	limit int,
+) ([]semanticHistoryCommit, error) {
+	changeTrees, err := semanticHistoryChangeTrees(repo, commits)
+	if err != nil {
+		return nil, err
+	}
+	return semanticHistoryCommitsFromChangeTrees(commits, changeTrees, limit, true)
+}
+
+func semanticHistoryCommitsFromChangeTrees(
+	commits []taskTrailerCommit,
+	changeTrees []string,
+	limit int,
+	rejectTraversalMerges bool,
+) ([]semanticHistoryCommit, error) {
 	if len(commits) > limit {
 		return nil, fmt.Errorf("audit history exceeds %d commits", limit)
+	}
+	if len(changeTrees) != len(commits) {
+		return nil, errors.New("complete audit history changes are incomplete")
 	}
 	taskIDs := make([]string, len(commits))
 	seen := map[string]bool{}
@@ -965,7 +1049,7 @@ func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticH
 		if !validAuditReopenHead(commit.fullSHA) {
 			return nil, errors.New("history contains an invalid commit id")
 		}
-		if len(strings.Fields(commit.parents)) > 1 {
+		if rejectTraversalMerges && len(strings.Fields(commit.parents)) > 1 {
 			return nil, fmt.Errorf("audit history merge commit %s cannot be replayed safely", commit.fullSHA)
 		}
 		if len(commit.values) == 1 {
@@ -975,10 +1059,6 @@ func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticH
 			}
 			seen[taskIDs[i]] = true
 		}
-	}
-	changeTrees, err := semanticHistoryChangeTrees(repo, commits)
-	if err != nil {
-		return nil, err
 	}
 	result := make([]semanticHistoryCommit, len(commits))
 	for i, commit := range commits {
@@ -997,6 +1077,262 @@ func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticH
 	return result, nil
 }
 
+// semanticRawHistoryChangeTrees hashes diffs between explicit raw parent/child objects. No Git
+// traversal metadata participates after the raw walk, so a concurrent graft or shallow-file edit
+// cannot change a commit's semantic identity between validation and diff extraction.
+func semanticRawHistoryChangeTrees(repo string, history []rawAuditCommit) ([]string, error) {
+	if len(history) == 0 {
+		return []string{}, nil
+	}
+	emptyTree := auditObjectID("tree", nil, len(history[0].tree))
+	if emptyTree == "" {
+		return nil, errors.New("derive repository empty tree")
+	}
+	type treePair struct{ parent, child string }
+	pairs := make([]treePair, len(history))
+	var input strings.Builder
+	for i, commit := range history {
+		if !validAuditReopenHead(commit.tree) {
+			return nil, fmt.Errorf("audit history commit %s has an invalid raw tree", commit.sha)
+		}
+		parentTree := emptyTree
+		if commit.parent != "" {
+			if i > 0 && history[i-1].sha == commit.parent {
+				parentTree = history[i-1].tree
+			} else {
+				var err error
+				parentTree, err = auditCommitTree(repo, commit.parent)
+				if err != nil {
+					return nil, fmt.Errorf("resolve audit history commit %s parent tree", commit.sha)
+				}
+			}
+		}
+		pairs[i] = treePair{parent: parentTree, child: commit.tree}
+		input.WriteString(parentTree)
+		input.WriteByte(' ')
+		input.WriteString(commit.tree)
+		input.WriteByte('\n')
+	}
+	treeRoots := make([]string, 0, len(pairs)*2)
+	for _, pair := range pairs {
+		treeRoots = append(treeRoots, pair.parent, pair.child)
+	}
+	treeSnapshot, err := snapshotAuditTreeDAGs(repo, treeRoots)
+	if err != nil {
+		return nil, fmt.Errorf("validate exact raw audit history trees: %w", err)
+	}
+	defer os.RemoveAll(treeSnapshot)
+	cmd := exec.Command("git", gitArgs(treeSnapshot,
+		[]string{"diff-tree", "--stdin", "--root", "--always", "--raw", "-z", "-r", "--no-renames"})...)
+	cmd.Stdin = strings.NewReader(input.String())
+	raw, err := auditCommandOutput(cmd, auditDiffOutputLimit)
+	if err != nil {
+		return nil, fmt.Errorf("read exact raw audit history changes: %w", err)
+	}
+	trees := make([]string, 0, len(pairs))
+	for i, pair := range pairs {
+		header := []byte(pair.parent + " " + pair.child + "\n")
+		if !bytes.HasPrefix(raw, header) {
+			return nil, errors.New("exact raw audit history changes are out of order")
+		}
+		raw = raw[len(header):]
+		var diff bytes.Buffer
+		for len(raw) > 0 {
+			if i+1 < len(pairs) {
+				next := []byte(pairs[i+1].parent + " " + pairs[i+1].child + "\n")
+				if bytes.HasPrefix(raw, next) {
+					break
+				}
+			}
+			if raw[0] != ':' {
+				return nil, errors.New("parse exact raw audit history change")
+			}
+			metaEnd := bytes.IndexByte(raw, 0)
+			if metaEnd < 0 {
+				return nil, errors.New("parse exact raw audit history metadata")
+			}
+			pathEnd := bytes.IndexByte(raw[metaEnd+1:], 0)
+			if pathEnd < 0 {
+				return nil, errors.New("parse exact raw audit history path")
+			}
+			pathEnd += metaEnd + 1
+			diff.Write(raw[:pathEnd+1])
+			raw = raw[pathEnd+1:]
+		}
+		sum := sha256.Sum256(diff.Bytes())
+		trees = append(trees, fmt.Sprintf("%x", sum))
+	}
+	if len(raw) != 0 {
+		return nil, errors.New("exact raw audit history changes have trailing output")
+	}
+	return trees, nil
+}
+
+func snapshotAuditTreeDAGs(repo string, roots []string) (snapshot string, err error) {
+	if len(roots) == 0 {
+		return "", errors.New("audit tree snapshot needs a root")
+	}
+	objectIDBytes := len(roots[0]) / 2
+	if objectIDBytes != 20 && objectIDBytes != 32 {
+		return "", errors.New("audit tree has an unsupported object id")
+	}
+	snapshot, err = os.MkdirTemp("", "coop-audit-trees-")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, os.RemoveAll(snapshot))
+		}
+	}()
+	initArgs := []string{"init", "--bare", "--quiet"}
+	if objectIDBytes == sha256.Size {
+		initArgs = append(initArgs, "--object-format=sha256")
+	}
+	initCmd := exec.Command("git", gitArgs(snapshot, initArgs)...)
+	if _, err = auditCommandOutput(initCmd, auditMetadataOutputLimit); err != nil {
+		return "", fmt.Errorf("initialize audit tree snapshot: %w", err)
+	}
+	batch, err := openAuditCommitBatch(repo)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, batch.close()) }()
+
+	pending := make([]string, 0, len(roots))
+	queued := make(map[string]bool, len(roots))
+	for _, root := range roots {
+		if !validAuditReopenHead(root) || len(root) != objectIDBytes*2 {
+			return "", errors.New("audit tree has an invalid object id")
+		}
+		if !queued[root] {
+			pending = append(pending, root)
+			queued[root] = true
+		}
+	}
+	emptyTree := auditObjectID("tree", nil, objectIDBytes*2)
+	seen := map[string]bool{}
+	var totalBytes int64
+	totalEntries := 0
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		delete(queued, current)
+		if seen[current] {
+			continue
+		}
+		if len(seen) >= auditTreeObjectCountLimit {
+			return "", fmt.Errorf("audit tree history exceeds %d tree objects", auditTreeObjectCountLimit)
+		}
+		var raw []byte
+		if current != emptyTree {
+			var readErr error
+			raw, readErr = batch.tree(current)
+			if readErr != nil {
+				return "", readErr
+			}
+		}
+		totalBytes += int64(len(raw))
+		if totalBytes > auditTreeByteLimit {
+			return "", fmt.Errorf("audit tree history exceeds %d bytes", auditTreeByteLimit)
+		}
+		children, entries, parseErr := auditTreeChildren(raw, objectIDBytes)
+		if parseErr != nil {
+			return "", fmt.Errorf("parse raw audit tree %s: %w", current, parseErr)
+		}
+		totalEntries += entries
+		if totalEntries > auditTreeEntryLimit {
+			return "", fmt.Errorf("audit tree history exceeds %d entries", auditTreeEntryLimit)
+		}
+		if err := writeAuditSnapshotObject(snapshot, "tree", current, raw); err != nil {
+			return "", err
+		}
+		seen[current] = true
+		for _, child := range children {
+			if !seen[child] && !queued[child] {
+				pending = append(pending, child)
+				queued[child] = true
+			}
+		}
+	}
+	return snapshot, nil
+}
+
+func writeAuditSnapshotObject(snapshot, objectType, objectID string, raw []byte) (retErr error) {
+	if auditObjectID(objectType, raw, len(objectID)) != objectID {
+		return fmt.Errorf("verify audit snapshot %s %s", objectType, objectID)
+	}
+	dir := filepath.Join(snapshot, "objects", objectID[:2])
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(filepath.Join(dir, objectID[2:]), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, file.Close()) }()
+	compressed := zlib.NewWriter(file)
+	header := []byte(fmt.Sprintf("%s %d%c", objectType, len(raw), 0))
+	if _, err := compressed.Write(header); err != nil {
+		_ = compressed.Close()
+		return err
+	}
+	if _, err := compressed.Write(raw); err != nil {
+		_ = compressed.Close()
+		return err
+	}
+	return compressed.Close()
+}
+
+func auditTreeChildren(raw []byte, objectIDBytes int) ([]string, int, error) {
+	var children []string
+	entries := 0
+	for len(raw) > 0 {
+		modeEnd := bytes.IndexByte(raw, ' ')
+		if modeEnd <= 0 {
+			return nil, 0, errors.New("invalid tree mode")
+		}
+		mode := string(raw[:modeEnd])
+		switch mode {
+		case "40000", "100644", "100755", "120000", "160000":
+		default:
+			return nil, 0, errors.New("invalid or noncanonical tree mode")
+		}
+		nameStart := modeEnd + 1
+		nameEnd := bytes.IndexByte(raw[nameStart:], 0)
+		if nameEnd <= 0 {
+			return nil, 0, errors.New("invalid tree name")
+		}
+		nameEnd += nameStart
+		if bytes.IndexByte(raw[nameStart:nameEnd], '/') >= 0 {
+			return nil, 0, errors.New("invalid tree name")
+		}
+		objectStart := nameEnd + 1
+		objectEnd := objectStart + objectIDBytes
+		if objectEnd > len(raw) {
+			return nil, 0, errors.New("truncated tree object id")
+		}
+		entries++
+		if mode == "40000" {
+			children = append(children, hex.EncodeToString(raw[objectStart:objectEnd]))
+		}
+		raw = raw[objectEnd:]
+	}
+	return children, entries, nil
+}
+
+func auditEmptyTree(repo string) (string, error) {
+	format := gitOut(repo, "rev-parse", "--show-object-format")
+	switch format {
+	case "sha1":
+		return auditObjectID("tree", nil, sha1.Size*2), nil
+	case "sha256":
+		return auditObjectID("tree", nil, sha256.Size*2), nil
+	default:
+		return "", fmt.Errorf("derive repository empty tree for object format %q", format)
+	}
+}
+
 // semanticHistoryChangeTrees batches raw diff extraction for the bounded history. Git prefixes
 // each --stdin result with its full commit id; raw entries then carry exactly one NUL-delimited
 // path because rename detection is disabled. Parsing that structure avoids spawning one Git
@@ -1013,16 +1349,24 @@ func semanticHistoryChangeTrees(repo string, commits []taskTrailerCommit) ([]str
 	cmd := exec.Command("git", gitArgs(repo,
 		[]string{"diff-tree", "--stdin", "--root", "--always", "--raw", "-z", "-r", "--no-renames"})...)
 	cmd.Stdin = strings.NewReader(input.String())
-	raw, err := cmd.Output()
+	raw, err := auditCommandOutput(cmd, auditDiffOutputLimit)
 	if err != nil {
 		return nil, fmt.Errorf("read complete audit history changes: %w", err)
 	}
+	expected := make([]string, len(commits))
+	for i := range commits {
+		expected[i] = commits[i].fullSHA
+	}
+	return parseSemanticHistoryChangeTrees(raw, expected)
+}
+
+func parseSemanticHistoryChangeTrees(raw []byte, expected []string) ([]string, error) {
 	fields := bytes.Split(raw, []byte{0})
 	if len(fields) == 0 || len(fields[len(fields)-1]) != 0 {
 		return nil, errors.New("parse complete audit history changes")
 	}
 	fields = fields[:len(fields)-1]
-	trees := make([]string, 0, len(commits))
+	trees := make([]string, 0, len(expected))
 	var diff bytes.Buffer
 	current := -1
 	flush := func() {
@@ -1048,42 +1392,52 @@ func semanticHistoryChangeTrees(repo string, commits []taskTrailerCommit) ([]str
 		}
 		flush()
 		current++
-		if current >= len(commits) || string(field) != commits[current].fullSHA {
+		if current >= len(expected) || string(field) != expected[current] {
 			return nil, errors.New("complete audit history changes are out of order")
 		}
 		i++
 	}
 	flush()
-	if len(trees) != len(commits) {
+	if len(trees) != len(expected) {
 		return nil, errors.New("complete audit history changes are incomplete")
 	}
 	return trees, nil
 }
 
 func semanticCommit(repo, sha, taskID string) (auditReopenCommit, error) {
+	semantic, _, err := semanticCommitAndParent(repo, sha, taskID)
+	return semantic, err
+}
+
+func semanticCommitAndParent(repo, sha, taskID string) (auditReopenCommit, string, error) {
+	rawParent, err := auditCommitParent(repo, sha)
+	if err != nil {
+		return auditReopenCommit{}, "", err
+	}
 	parents := strings.Fields(gitOut(repo, "rev-list", "--parents", "-n", "1", sha))
 	if len(parents) == 0 {
-		return auditReopenCommit{}, fmt.Errorf("resolve audit history commit %s", sha)
+		return auditReopenCommit{}, "", fmt.Errorf("resolve audit history commit %s", sha)
 	}
-	if len(parents) > 2 {
-		return auditReopenCommit{}, fmt.Errorf("audit history merge commit %s cannot be replayed safely", sha)
+	if (rawParent == "" && len(parents) != 1) ||
+		(rawParent != "" && (len(parents) != 2 || parents[1] != rawParent)) {
+		return auditReopenCommit{}, "", fmt.Errorf("audit history commit %s traversal parent differs from its raw object", sha)
 	}
 	diffCmd := exec.Command("git", gitArgs(repo,
 		[]string{"diff-tree", "--root", "--no-commit-id", "--raw", "-z", "-r", "--no-renames", sha})...)
-	diff, err := diffCmd.Output()
+	diff, err := auditCommandOutput(diffCmd, auditDiffOutputLimit)
 	if err != nil {
-		return auditReopenCommit{}, fmt.Errorf("read audit history commit %s changes: %w", sha, err)
+		return auditReopenCommit{}, "", fmt.Errorf("read audit history commit %s changes: %w", sha, err)
 	}
 	sum := sha256.Sum256(diff)
 	metaCmd := exec.Command("git", gitArgs(repo,
 		[]string{"show", "-s", "--format=format:%an%x00%ae%x00%aI%x00%B", sha})...)
-	meta, err := metaCmd.Output()
+	meta, err := auditCommandOutput(metaCmd, auditMetadataOutputLimit)
 	if err != nil {
-		return auditReopenCommit{}, fmt.Errorf("read audit history commit %s metadata: %w", sha, err)
+		return auditReopenCommit{}, "", fmt.Errorf("read audit history commit %s metadata: %w", sha, err)
 	}
 	fields := strings.SplitN(string(meta), "\x00", 4)
 	if len(fields) != 4 {
-		return auditReopenCommit{}, fmt.Errorf("parse audit history commit %s metadata", sha)
+		return auditReopenCommit{}, "", fmt.Errorf("parse audit history commit %s metadata", sha)
 	}
 	return auditReopenCommit{
 		TaskID:        taskID,
@@ -1092,7 +1446,616 @@ func semanticCommit(repo, sha, taskID string) (auditReopenCommit, error) {
 		AuthorEmail:   fields[1],
 		AuthorDate:    fields[2],
 		CommitMessage: fields[3],
+	}, rawParent, nil
+}
+
+// auditCommitParent returns the raw object's sole parent, or "" for a root commit. Reading the
+// commit object directly keeps grafts and shallow boundaries from rewriting parent identity;
+// gitHardening separately disables agent-writable replacement objects. Missing objects, malformed
+// parents, and merges fail closed.
+func auditCommitParent(repo, sha string) (parent string, err error) {
+	resolved := gitOut(repo, "rev-parse", "--verify", sha+"^{commit}")
+	if !validAuditReopenHead(resolved) {
+		return "", fmt.Errorf("resolve audit history commit %s parent", sha)
+	}
+	batch, err := openAuditCommitBatch(repo)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, batch.close()) }()
+	raw, err := batch.commit(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve audit history commit %s parent: %w", sha, err)
+	}
+	parent, err = auditCommitParentFromRaw(resolved, raw)
+	if err != nil || parent == "" {
+		return parent, err
+	}
+	if _, err := batch.commit(parent); err != nil {
+		return "", fmt.Errorf("resolve audit history commit %s parent: %w", sha, err)
+	}
+	return parent, nil
+}
+
+func auditCommitTree(repo, sha string) (tree string, err error) {
+	if !validAuditReopenHead(sha) {
+		return "", fmt.Errorf("resolve audit history commit %s tree", sha)
+	}
+	batch, err := openAuditCommitBatch(repo)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, batch.close()) }()
+	raw, err := batch.commit(sha)
+	if err != nil {
+		return "", err
+	}
+	tree, _, err = auditCommitHeaderFromRaw(sha, raw)
+	return tree, err
+}
+
+func auditCommitParentFromRaw(sha string, raw []byte) (string, error) {
+	_, parents, err := auditCommitHeaderFromRaw(sha, raw)
+	if err != nil {
+		return "", err
+	}
+	if len(parents) > 1 {
+		return "", fmt.Errorf("audit history merge commit %s cannot be replayed safely", sha)
+	}
+	if len(parents) == 0 {
+		return "", nil
+	}
+	return parents[0], nil
+}
+
+func auditCommitHeaderFromRaw(sha string, raw []byte) (string, []string, error) {
+	lines := strings.Split(string(raw), "\n")
+	tree, ok := strings.CutPrefix(lines[0], "tree ")
+	if !ok || !validAuditReopenHead(tree) {
+		return "", nil, fmt.Errorf("resolve audit history commit %s parent", sha)
+	}
+	tree = strings.Clone(tree)
+	var parents []string
+	parentSet := map[string]bool{}
+	parentsDone := false
+	headersDone := false
+	for _, line := range lines[1:] {
+		if line == "" {
+			headersDone = true
+			break
+		}
+		candidate, isParent := strings.CutPrefix(line, "parent ")
+		if line == "parent" || (isParent && parentsDone) {
+			return "", nil, fmt.Errorf("resolve audit history commit %s parent", sha)
+		}
+		if isParent {
+			if !validAuditReopenHead(candidate) {
+				return "", nil, fmt.Errorf("resolve audit history commit %s parent", sha)
+			}
+			candidate = strings.Clone(candidate)
+			if parentSet[candidate] {
+				return "", nil, fmt.Errorf("audit history commit %s repeats parent %s", sha, candidate)
+			}
+			parentSet[candidate] = true
+			parents = append(parents, candidate)
+			continue
+		}
+		parentsDone = true
+	}
+	if !headersDone {
+		return "", nil, fmt.Errorf("resolve audit history commit %s parent", sha)
+	}
+	return tree, parents, nil
+}
+
+func auditTaskTrailersFromRaw(raw []byte) ([]string, bool) {
+	separator := bytes.Index(raw, []byte("\n\n"))
+	if separator < 0 {
+		return nil, false
+	}
+	return auditTaskTrailersFromMessage(raw[separator+2:])
+}
+
+func auditTaskTrailersFromMessage(raw []byte) ([]string, bool) {
+	message := strings.TrimRight(string(raw), "\n")
+	lines := strings.Split(message, "\n")
+	start := len(lines) - 1
+	for start > 0 && strings.TrimSpace(lines[start-1]) != "" {
+		start--
+	}
+	var values []string
+	invalid := false
+	currentCoop := false
+	sawTrailer := false
+	invalidBlock := false
+	for _, line := range lines[start:] {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			if !sawTrailer {
+				invalidBlock = true
+			}
+			if currentCoop {
+				invalid = true
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			invalidBlock = true
+			if strings.EqualFold(strings.TrimSpace(line), coopTaskTrailer) {
+				invalid = true
+			}
+			currentCoop = false
+			continue
+		}
+		sawTrailer = true
+		currentCoop = strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer)
+		if !currentCoop {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > auditTaskTrailerValueLimit {
+			invalid = true
+			continue
+		}
+		values = append(values, strings.Clone(value))
+	}
+	if len(values) > 0 && invalidBlock {
+		invalid = true
+	}
+	return values, invalid
+}
+
+type rawAuditCommit struct {
+	sha, tree, parent  string
+	authorName         string
+	authorEmail        string
+	authorDate         string
+	commitMessage      string
+	taskValues         []string
+	taskBindingInvalid bool
+}
+
+func rawAuditCommitFromObject(sha string, raw []byte) (rawAuditCommit, error) {
+	tree, parents, err := auditCommitHeaderFromRaw(sha, raw)
+	if err != nil {
+		return rawAuditCommit{}, err
+	}
+	if len(parents) > 1 {
+		return rawAuditCommit{}, fmt.Errorf("audit history merge commit %s cannot be replayed safely", sha)
+	}
+	parent := ""
+	if len(parents) == 1 {
+		parent = parents[0]
+	}
+	separator := bytes.Index(raw, []byte("\n\n"))
+	if separator < 0 {
+		return rawAuditCommit{}, fmt.Errorf("parse raw audit commit %s message", sha)
+	}
+	var authorLine string
+	for _, line := range strings.Split(string(raw[:separator]), "\n") {
+		if candidate, ok := strings.CutPrefix(line, "author "); ok {
+			if authorLine != "" {
+				return rawAuditCommit{}, fmt.Errorf("parse raw audit commit %s author", sha)
+			}
+			authorLine = candidate
+		}
+	}
+	authorName, authorEmail, authorDate, err := auditAuthorIdentity(authorLine)
+	if err != nil {
+		return rawAuditCommit{}, fmt.Errorf("parse raw audit commit %s author: %w", sha, err)
+	}
+	message := bytes.Clone(raw[separator+2:])
+	taskValues, taskBindingInvalid := auditTaskTrailersFromMessage(message)
+	return rawAuditCommit{
+		sha: sha, tree: tree, parent: parent,
+		authorName: authorName, authorEmail: authorEmail, authorDate: authorDate,
+		commitMessage: string(message),
+		taskValues:    taskValues, taskBindingInvalid: taskBindingInvalid,
 	}, nil
+}
+
+func auditAuthorIdentity(raw string) (string, string, string, error) {
+	emailEnd := strings.LastIndex(raw, "> ")
+	if emailEnd < 0 {
+		return "", "", "", errors.New("missing email")
+	}
+	emailStart := strings.LastIndex(raw[:emailEnd], " <")
+	if emailStart < 0 {
+		return "", "", "", errors.New("missing email")
+	}
+	dateFields := strings.Fields(raw[emailEnd+2:])
+	if len(dateFields) != 2 || len(dateFields[1]) != 5 ||
+		(dateFields[1][0] != '+' && dateFields[1][0] != '-') {
+		return "", "", "", errors.New("invalid date")
+	}
+	unixSeconds, err := strconv.ParseInt(dateFields[0], 10, 64)
+	if err != nil {
+		return "", "", "", errors.New("invalid date")
+	}
+	hours, hoursErr := strconv.Atoi(dateFields[1][1:3])
+	minutes, minutesErr := strconv.Atoi(dateFields[1][3:5])
+	if hoursErr != nil || minutesErr != nil || hours > 23 || minutes > 59 {
+		return "", "", "", errors.New("invalid timezone")
+	}
+	offset := (hours*60 + minutes) * 60
+	if dateFields[1][0] == '-' {
+		offset = -offset
+	}
+	date := time.Unix(unixSeconds, 0).
+		In(time.FixedZone("", offset)).
+		Format(time.RFC3339)
+	return strings.Clone(raw[:emailStart]), strings.Clone(raw[emailStart+2 : emailEnd]), date, nil
+}
+
+type auditCommitBatch struct {
+	cmd     *exec.Cmd
+	input   io.WriteCloser
+	output  *bufio.Reader
+	stderr  bytes.Buffer
+	aborted bool
+}
+
+func openAuditCommitBatch(repo string) (*auditCommitBatch, error) {
+	batch := &auditCommitBatch{}
+	batch.cmd = exec.Command("git", gitArgs(repo, []string{"cat-file", "--batch"})...)
+	input, err := batch.cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	output, err := batch.cmd.StdoutPipe()
+	if err != nil {
+		_ = input.Close()
+		return nil, err
+	}
+	batch.input = input
+	batch.output = bufio.NewReader(output)
+	batch.cmd.Stderr = &batch.stderr
+	if err := batch.cmd.Start(); err != nil {
+		_ = input.Close()
+		return nil, err
+	}
+	return batch, nil
+}
+
+func (b *auditCommitBatch) close() error {
+	closeErr := b.input.Close()
+	waitErr := b.cmd.Wait()
+	if b.aborted {
+		return nil
+	}
+	if waitErr != nil && b.stderr.Len() > 0 {
+		waitErr = fmt.Errorf("%w: %s", waitErr, strings.TrimSpace(b.stderr.String()))
+	}
+	return errors.Join(closeErr, waitErr)
+}
+
+func (b *auditCommitBatch) abort() {
+	b.aborted = true
+	_ = b.input.Close()
+	if b.cmd.Process != nil {
+		_ = b.cmd.Process.Kill()
+	}
+}
+
+func (b *auditCommitBatch) object(
+	sha, peel, objectType string,
+	sizeLimit int,
+) ([]byte, error) {
+	if _, err := fmt.Fprintln(b.input, sha+peel); err != nil {
+		b.abort()
+		return nil, err
+	}
+	header, err := b.output.ReadString('\n')
+	if err != nil {
+		b.abort()
+		return nil, err
+	}
+	fields := strings.Fields(header)
+	if len(fields) != 3 || !strings.EqualFold(fields[0], sha) || fields[1] != objectType {
+		b.abort()
+		return nil, fmt.Errorf("resolve raw audit %s %s", objectType, sha)
+	}
+	size, err := strconv.Atoi(fields[2])
+	if err != nil || size < 0 || size > sizeLimit {
+		b.abort()
+		return nil, fmt.Errorf("read raw audit %s %s size", objectType, sha)
+	}
+	raw := make([]byte, size)
+	if _, err := io.ReadFull(b.output, raw); err != nil {
+		b.abort()
+		return nil, err
+	}
+	if terminator, err := b.output.ReadByte(); err != nil || terminator != '\n' {
+		b.abort()
+		return nil, fmt.Errorf("read raw audit %s %s terminator", objectType, sha)
+	}
+	if auditObjectID(objectType, raw, len(sha)) != strings.ToLower(sha) {
+		b.abort()
+		return nil, fmt.Errorf("verify raw audit %s %s content", objectType, sha)
+	}
+	return raw, nil
+}
+
+func auditObjectID(objectType string, raw []byte, hexLength int) string {
+	header := []byte(fmt.Sprintf("%s %d%c", objectType, len(raw), 0))
+	switch hexLength {
+	case sha1.Size * 2:
+		hash := sha1.New()
+		_, _ = hash.Write(header)
+		_, _ = hash.Write(raw)
+		return hex.EncodeToString(hash.Sum(nil))
+	case sha256.Size * 2:
+		hash := sha256.New()
+		_, _ = hash.Write(header)
+		_, _ = hash.Write(raw)
+		return hex.EncodeToString(hash.Sum(nil))
+	default:
+		return ""
+	}
+}
+
+func (b *auditCommitBatch) commit(sha string) ([]byte, error) {
+	return b.object(sha, "^{commit}", "commit", auditReopenCommitSizeLimit)
+}
+
+func (b *auditCommitBatch) tree(sha string) ([]byte, error) {
+	return b.object(sha, "", "tree", auditTreeObjectSizeLimit)
+}
+
+type rawReachableAuditCommit struct {
+	sha                string
+	taskValues         []string
+	taskBindingInvalid bool
+}
+
+func rawReachableAuditCommits(repo, head string) (commits []rawReachableAuditCommit, err error) {
+	return rawReachableAuditCommitsLimit(
+		repo,
+		head,
+		auditReachableHistoryLimit,
+		auditReachableEdgeLimit,
+		auditReachableByteLimit,
+	)
+}
+
+func rawReachableAuditCommitsLimit(
+	repo, head string,
+	commitLimit, edgeLimit int,
+	byteLimit int64,
+) (commits []rawReachableAuditCommit, err error) {
+	current := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	if !validAuditReopenHead(current) {
+		return nil, fmt.Errorf("resolve raw audit terminal %s", head)
+	}
+	batch, err := openAuditCommitBatch(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, batch.close()) }()
+	pending := []string{current}
+	seen := map[string]bool{}
+	queued := map[string]bool{current: true}
+	edges := 0
+	var rawBytes int64
+	for len(pending) > 0 {
+		current = pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		delete(queued, current)
+		if seen[current] {
+			continue
+		}
+		if len(seen) >= commitLimit {
+			return nil, fmt.Errorf("raw reachable audit history exceeds %d commits", commitLimit)
+		}
+		raw, readErr := batch.commit(current)
+		if readErr != nil {
+			return nil, readErr
+		}
+		rawBytes += int64(len(raw))
+		if rawBytes > byteLimit {
+			return nil, fmt.Errorf("raw reachable audit history exceeds %d bytes", byteLimit)
+		}
+		_, parents, parseErr := auditCommitHeaderFromRaw(current, raw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		taskValues, taskBindingInvalid := auditTaskTrailersFromRaw(raw)
+		seen[current] = true
+		commits = append(commits, rawReachableAuditCommit{
+			sha: current, taskValues: taskValues, taskBindingInvalid: taskBindingInvalid,
+		})
+		for i := len(parents) - 1; i >= 0; i-- {
+			edges++
+			if edges > edgeLimit {
+				return nil, fmt.Errorf("raw reachable audit history exceeds %d parent edges", edgeLimit)
+			}
+			if !seen[parents[i]] && !queued[parents[i]] {
+				pending = append(pending, parents[i])
+				queued[parents[i]] = true
+			}
+		}
+	}
+	return commits, nil
+}
+
+func rawTaskBindings(repo, head string) (map[string][]string, bool) {
+	commits, err := rawReachableAuditCommits(repo, head)
+	if err != nil {
+		return nil, false
+	}
+	bindings := map[string][]string{}
+	for _, commit := range commits {
+		if !commit.taskBindingInvalid && len(commit.taskValues) == 1 {
+			bindings[commit.taskValues[0]] = append(bindings[commit.taskValues[0]], commit.sha)
+		}
+	}
+	return bindings, true
+}
+
+func rawAuditHistoryCount(repo, head string, count int) (history []rawAuditCommit, err error) {
+	if count < 1 || count > auditReopenHistoryLimit+1 {
+		return nil, errors.New("audit history length is outside its bound")
+	}
+	current := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	if !validAuditReopenHead(current) {
+		return nil, fmt.Errorf("resolve raw audit terminal %s", head)
+	}
+	batch, err := openAuditCommitBatch(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, batch.close()) }()
+	history = make([]rawAuditCommit, count)
+	var rawBytes int64
+	for i := count - 1; i >= 0; i-- {
+		raw, readErr := batch.commit(current)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if err := addAuditLinearHistoryBytes(&rawBytes, raw); err != nil {
+			return nil, err
+		}
+		commit, parseErr := rawAuditCommitFromObject(current, raw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		history[i] = commit
+		if i > 0 {
+			if commit.parent == "" {
+				return nil, errors.New("audit history exceeds its raw ancestry")
+			}
+			current = commit.parent
+		}
+	}
+	if history[0].parent != "" {
+		raw, err := batch.commit(history[0].parent)
+		if err != nil {
+			return nil, err
+		}
+		if err := addAuditLinearHistoryBytes(&rawBytes, raw); err != nil {
+			return nil, err
+		}
+	}
+	return history, nil
+}
+
+func rawAuditHistoryUntil(
+	repo, head string,
+	limit int,
+	stop func(rawAuditCommit) bool,
+) (history []rawAuditCommit, err error) {
+	current := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	if !validAuditReopenHead(current) {
+		return nil, fmt.Errorf("resolve raw audit terminal %s", head)
+	}
+	batch, err := openAuditCommitBatch(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, batch.close()) }()
+	var rawBytes int64
+	for len(history) < limit {
+		raw, readErr := batch.commit(current)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if err := addAuditLinearHistoryBytes(&rawBytes, raw); err != nil {
+			return nil, err
+		}
+		commit, parseErr := rawAuditCommitFromObject(current, raw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		history = append(history, commit)
+		if stop(commit) {
+			if commit.parent != "" {
+				raw, err := batch.commit(commit.parent)
+				if err != nil {
+					return nil, err
+				}
+				if err := addAuditLinearHistoryBytes(&rawBytes, raw); err != nil {
+					return nil, err
+				}
+			}
+			slices.Reverse(history)
+			return history, nil
+		}
+		if commit.parent == "" {
+			return nil, errors.New("raw audit history ended before its required boundary")
+		}
+		current = commit.parent
+	}
+	return nil, fmt.Errorf("raw audit history exceeds %d commits", limit)
+}
+
+func addAuditLinearHistoryBytes(total *int64, raw []byte) error {
+	*total += int64(len(raw))
+	if *total > auditLinearHistoryByteLimit {
+		return fmt.Errorf("raw linear audit history exceeds %d bytes", auditLinearHistoryByteLimit)
+	}
+	return nil
+}
+
+func auditReviewedSubject(repo, id string, record auditReopenRecord) (rawAuditCommit, error) {
+	rawHistory, err := rawAuditHistoryCount(repo, record.BaselineHead, len(record.History)+1)
+	if err != nil {
+		return rawAuditCommit{}, err
+	}
+	semantics, err := semanticHistoryCommitsExact(repo, rawHistory)
+	if err != nil || len(semantics) != len(record.History)+1 {
+		return rawAuditCommit{}, errors.New("read raw recorded audit history")
+	}
+	if semantics[0].semantic != record.Subject {
+		return rawAuditCommit{}, errors.New("raw audit subject does not match its recorded semantic identity")
+	}
+	for i := range record.History {
+		if semantics[i+1].semantic != record.History[i] {
+			return rawAuditCommit{}, fmt.Errorf("raw audit history commit %d does not match its recorded semantic identity", i+1)
+		}
+	}
+	return rawHistory[0], nil
+}
+
+func auditReviewedSubjectParent(repo, id string, record auditReopenRecord) (string, error) {
+	subject, err := auditReviewedSubject(repo, id, record)
+	if err != nil {
+		return "", err
+	}
+	return subject.parent, nil
+}
+
+func rawAuditHistory(repo, head string, count int) ([]semanticHistoryCommit, string, error) {
+	rawHistory, err := rawAuditHistoryCount(repo, head, count)
+	if err != nil {
+		return nil, "", err
+	}
+	semantics, err := semanticHistoryCommitsExact(repo, rawHistory)
+	if err != nil {
+		return nil, "", err
+	}
+	return semantics, rawHistory[0].parent, nil
+}
+
+func rawAuditHistoryFromSubject(repo, head, subject string) ([]semanticHistoryCommit, error) {
+	rawHistory, err := rawAuditHistoryUntil(
+		repo,
+		head,
+		auditReopenHistoryLimit+1,
+		func(commit rawAuditCommit) bool { return commit.sha == subject },
+	)
+	if err != nil {
+		return nil, err
+	}
+	return semanticHistoryCommitsExact(repo, rawHistory)
+}
+
+func rawAuditRewriteHistory(repo, head, reviewedParent string, limit int) ([]rawAuditCommit, error) {
+	return rawAuditHistoryUntil(
+		repo,
+		head,
+		limit,
+		func(commit rawAuditCommit) bool { return commit.parent == reviewedParent },
+	)
 }
 
 func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
@@ -1100,29 +2063,37 @@ func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
 	if !validAuditReopenHead(head) {
 		return auditReopenRecord{}, errors.New("resolve audit reopen baseline HEAD")
 	}
-	subjects := commitsForTask(repo, "", id)
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok {
+		return auditReopenRecord{}, errors.New("read raw reachable task bindings for audit reopen")
+	}
+	subjects := bindings[id]
 	if len(subjects) != 1 {
 		return auditReopenRecord{}, fmt.Errorf(
 			"review subject %s needs exactly one reachable %s binding before reopen", id, coopTaskTrailer,
 		)
 	}
-	subject, err := semanticCommit(repo, subjects[0], id)
+	rawHistory, err := rawAuditHistoryUntil(
+		repo,
+		head,
+		auditReopenHistoryLimit+1,
+		func(commit rawAuditCommit) bool { return commit.sha == subjects[0] },
+	)
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
-	commits, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
+	commits, err := semanticHistoryCommitsExact(repo, rawHistory)
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
-	bindingCounts, ok := taskBindingCounts(repo, head)
-	if !ok {
-		return auditReopenRecord{}, errors.New("read reachable task bindings for audit reopen")
+	if len(commits) == 0 || commits[0].semantic.TaskID != id {
+		return auditReopenRecord{}, fmt.Errorf("resolve raw review subject %s", id)
 	}
 	seen := map[string]bool{id: true}
-	history := make([]auditReopenCommit, 0, len(commits))
-	for _, commit := range commits {
+	history := make([]auditReopenCommit, 0, len(commits)-1)
+	for _, commit := range commits[1:] {
 		taskID := commit.semantic.TaskID
-		if taskID != "" && (seen[taskID] || bindingCounts[taskID] != 1) {
+		if taskID != "" && (seen[taskID] || len(bindings[taskID]) != 1) {
 			return auditReopenRecord{}, fmt.Errorf(
 				"descendant task %s needs exactly one reachable %s binding before review reopens %s",
 				taskID, coopTaskTrailer, id,
@@ -1139,7 +2110,7 @@ func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
 	}
 	return auditReopenRecord{
 		Version: auditReopenVersion, Generation: generation, TaskID: id, BaselineHead: head,
-		Subject: subject, History: history,
+		Subject: commits[0].semantic, History: history,
 	}, nil
 }
 
@@ -1151,53 +2122,54 @@ func auditReopenCurrentHistory(repo, head, id string, record auditReopenRecord) 
 		return nil, errors.New("audit authority is not active")
 	}
 	resolvedHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
-	if resolvedHead == "" {
+	if !validAuditReopenHead(resolvedHead) {
 		return nil, fmt.Errorf("resolve current audit HEAD %s", head)
 	}
-	if gitRun(repo, "merge-base", "--is-ancestor", record.BaselineHead, resolvedHead) != nil {
-		return nil, fmt.Errorf("recorded baseline %s is not an ancestor of current HEAD %s", record.BaselineHead, resolvedHead)
-	}
-	subjects := commitsForTask(repo, head, id)
-	if len(subjects) != 1 {
-		return nil, fmt.Errorf("task %s has %d reachable subject bindings, want exactly one", id, len(subjects))
-	}
-	reachableSubject, err := semanticCommit(repo, subjects[0], id)
+	reviewedSubject, err := auditReviewedSubject(repo, id, record)
 	if err != nil {
-		return nil, fmt.Errorf("read current audit subject for task %s: %w", id, err)
+		return nil, fmt.Errorf("locate recorded raw audit subject: %w", err)
 	}
-	if reachableSubject != record.Subject {
-		return nil, fmt.Errorf("task %s subject no longer matches its recorded semantic identity", id)
+	rawCurrent, err := rawAuditHistoryUntil(
+		repo,
+		resolvedHead,
+		auditReopenHistoryLimit+1,
+		func(commit rawAuditCommit) bool { return commit.sha == reviewedSubject.sha },
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read current raw audit history: %w", err)
 	}
-	current, err := semanticHistoryCommits(repo, subjects[0]+".."+resolvedHead)
+	complete, err := semanticHistoryCommitsExact(repo, rawCurrent)
 	if err != nil {
 		return nil, fmt.Errorf("read current complete audit history: %w", err)
 	}
-	if len(current) < len(record.History) {
-		return nil, fmt.Errorf("current audit history has %d commits, shorter than recorded prefix %d", len(current), len(record.History))
+	if len(complete) < len(record.History)+1 {
+		return nil, fmt.Errorf(
+			"current audit history has %d commits, shorter than recorded prefix %d",
+			len(complete)-1, len(record.History),
+		)
+	}
+	if complete[0].semantic != record.Subject {
+		return nil, fmt.Errorf("task %s subject no longer matches its recorded semantic identity", id)
 	}
 	for i := range record.History {
-		if current[i].semantic != record.History[i] {
+		if complete[i+1].semantic != record.History[i] {
 			return nil, fmt.Errorf("current audit history commit %d does not match the recorded prefix", i+1)
 		}
 	}
-	baselineCommit := subjects[0]
-	if len(record.History) > 0 {
-		baselineCommit = current[len(record.History)-1].sha
-	}
-	if gitOut(repo, "rev-parse", "--verify", baselineCommit+"^{commit}") != record.BaselineHead {
+	if complete[len(record.History)].sha != record.BaselineHead {
 		return nil, fmt.Errorf("recorded history prefix does not terminate at baseline %s", record.BaselineHead)
 	}
 	bindingCounts, ok := taskBindingCounts(repo, resolvedHead)
 	if !ok {
 		return nil, errors.New("read reachable task bindings for current audit history")
 	}
-	for _, commit := range current {
+	for _, commit := range complete {
 		if commit.semantic.TaskID != "" &&
 			bindingCounts[commit.semantic.TaskID] != 1 {
 			return nil, fmt.Errorf("task %s no longer has exactly one reachable history binding", commit.semantic.TaskID)
 		}
 	}
-	return current, nil
+	return complete[1:], nil
 }
 
 func auditReopenCurrentValid(repo, head, id string, record auditReopenRecord) bool {
@@ -1216,11 +2188,16 @@ func auditReopenCompletionValid(repo, base, head, id string, record auditReopenR
 	if err != nil {
 		return false
 	}
-	if len(commitsForTask(repo, head, id)) != 1 {
+	reviewedParent, err := auditReviewedSubjectParent(repo, id, record)
+	if err != nil {
 		return false
 	}
-	rangeCommits, err := semanticHistoryCommits(repo, base+".."+head)
-	if err != nil {
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok || len(bindings[id]) != 1 {
+		return false
+	}
+	rangeCommits, rewrittenParent, err := rawAuditHistory(repo, head, len(baseHistory)+1)
+	if err != nil || rewrittenParent != reviewedParent {
 		return false
 	}
 	if len(rangeCommits) != len(baseHistory)+1 || rangeCommits[0].semantic.TaskID != id ||
@@ -1232,13 +2209,9 @@ func auditReopenCompletionValid(repo, base, head, id string, record auditReopenR
 			return false
 		}
 	}
-	bindingCounts, ok := taskBindingCounts(repo, head)
-	if !ok {
-		return false
-	}
 	for _, commit := range rangeCommits {
 		if commit.semantic.TaskID != "" &&
-			bindingCounts[commit.semantic.TaskID] != 1 {
+			len(bindings[commit.semantic.TaskID]) != 1 {
 			return false
 		}
 	}
@@ -1249,56 +2222,54 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record auditReopenRec
 	if !auditReopenCompletionValid(repo, base, head, id, record) {
 		return auditReopenRecord{}, fmt.Errorf("audit rewrite for task %s changed its reviewed subject or descendants outside the host authority", id)
 	}
-	subjects := commitsForTask(repo, head, id)
-	if len(subjects) != 1 {
-		return auditReopenRecord{}, fmt.Errorf("resolve audit rewrite for task %s", id)
-	}
-	subject, err := semanticCommit(repo, subjects[0], id)
+	baseHistory, err := auditReopenCurrentHistory(repo, base, id, record)
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
-	historyCommits, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
+	replacement, _, err := rawAuditHistory(repo, head, len(baseHistory)+1)
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
-	history := make([]auditReopenCommit, len(historyCommits))
-	for i := range historyCommits {
-		history[i] = historyCommits[i].semantic
+	if len(replacement) != len(baseHistory)+1 {
+		return auditReopenRecord{}, fmt.Errorf("resolve complete audit rewrite for task %s", id)
+	}
+	history := make([]auditReopenCommit, len(replacement)-1)
+	for i := range history {
+		history[i] = replacement[i+1].semantic
 	}
 	baselineHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(baselineHead) {
 		return auditReopenRecord{}, fmt.Errorf("resolve rebased audit HEAD for task %s", id)
 	}
-	replacement := record
-	replacement.Version = auditReopenVersion
-	replacement.BaselineHead = baselineHead
-	replacement.Subject = subject
-	replacement.History = history
-	replacement.Descendants = nil
-	replacement.UnblockPending = false
-	return replacement, nil
+	rebased := record
+	rebased.Version = auditReopenVersion
+	rebased.BaselineHead = baselineHead
+	rebased.Subject = replacement[0].semantic
+	rebased.History = history
+	rebased.Descendants = nil
+	rebased.UnblockPending = false
+	return rebased, nil
 }
 
 func auditReopenLegacyBaselineMatches(repo, head, id string, record auditReopenRecord) bool {
 	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordLegacy(record) {
 		return false
 	}
-	subjects := commitsForTask(repo, head, id)
-	if len(subjects) != 1 {
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok || len(bindings[id]) != 1 {
 		return false
 	}
-	subject, err := semanticCommit(repo, subjects[0], id)
-	if err != nil || subject != record.Subject {
+	history, err := rawAuditHistoryFromSubject(repo, head, bindings[id][0])
+	if err != nil || len(history) == 0 || history[0].semantic != record.Subject {
 		return false
 	}
-	history, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
 	var descendants []auditReopenCommit
-	for _, commit := range history {
+	for _, commit := range history[1:] {
 		if commit.semantic.TaskID != "" {
 			descendants = append(descendants, commit.semantic)
 		}
 	}
-	if err != nil || len(descendants) != len(record.Descendants) {
+	if len(descendants) != len(record.Descendants) {
 		return false
 	}
 	for i := range descendants {
@@ -1353,19 +2324,18 @@ func adoptLegacyAuditReopen(
 			head, id,
 		)
 	}
-	subjects := commitsForTask(repo, head, id)
-	historyCommits, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
-	if err != nil {
-		return auditReopenRecord{}, err
-	}
-	bindingCounts, ok := taskBindingCounts(repo, head)
-	if !ok {
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok || len(bindings[id]) != 1 {
 		return auditReopenRecord{}, fmt.Errorf("read reachable task bindings before legacy adoption of %s", id)
 	}
-	history := make([]auditReopenCommit, len(historyCommits))
-	for i := range historyCommits {
-		history[i] = historyCommits[i].semantic
-		if history[i].TaskID != "" && bindingCounts[history[i].TaskID] != 1 {
+	complete, err := rawAuditHistoryFromSubject(repo, head, bindings[id][0])
+	if err != nil || len(complete) == 0 {
+		return auditReopenRecord{}, fmt.Errorf("read complete legacy audit history for %s", id)
+	}
+	history := make([]auditReopenCommit, len(complete)-1)
+	for i := range history {
+		history[i] = complete[i+1].semantic
+		if history[i].TaskID != "" && len(bindings[history[i].TaskID]) != 1 {
 			return auditReopenRecord{}, fmt.Errorf(
 				"descendant task %s needs exactly one reachable %s binding before legacy adoption of %s",
 				history[i].TaskID, coopTaskTrailer, id,
@@ -1396,7 +2366,16 @@ func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) 
 			id, record.BaselineHead,
 		)
 	}
-	current, err := semanticHistoryCommits(repo, record.BaselineHead+".."+head)
+	reviewedParent, err := auditReviewedSubjectParent(repo, id, record)
+	if err != nil {
+		return auditReopenRecord{}, fmt.Errorf("resolve blocked audit subject parent for task %s: %w", id, err)
+	}
+	current, err := rawAuditRewriteHistory(
+		repo,
+		head,
+		reviewedParent,
+		auditReopenHistoryLimit+1,
+	)
 	if err != nil {
 		return auditReopenRecord{}, fmt.Errorf("read blocked audit rewrite for task %s: %w", id, err)
 	}
@@ -1404,7 +2383,7 @@ func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) 
 	if len(current) < rewriteLen {
 		return auditReopenRecord{}, fmt.Errorf("blocked audit task %s has no complete replay after its recorded baseline", id)
 	}
-	rewriteHead := gitOut(repo, "rev-parse", "--verify", current[rewriteLen-1].sha+"^{commit}")
+	rewriteHead := current[rewriteLen-1].sha
 	if rewriteHead == "" {
 		return auditReopenRecord{}, fmt.Errorf("resolve blocked audit rewrite terminal for task %s", id)
 	}
@@ -1638,10 +2617,21 @@ func completionUnbindableTasks(repo, base, head string, finished []string, reope
 	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
 		return unbindableTasks(repo, base, head, finished)
 	}
-	if auditReopenCompletionValid(repo, base, head, finished[0], *reopen) {
+	if auditReopenCompletionValid(repo, base, head, finished[0], *reopen) &&
+		ordinaryBindingMatchesRaw(repo, head, finished[0]) {
 		return nil
 	}
 	return slices.Clone(finished)
+}
+
+func ordinaryBindingMatchesRaw(repo, head, id string) bool {
+	ordinary := commitsForTask(repo, head, id)
+	raw, ok := rawTaskBindings(repo, head)
+	if !ok || len(ordinary) != 1 || len(raw[id]) != 1 {
+		return false
+	}
+	resolved := gitOut(repo, "rev-parse", "--verify", ordinary[0]+"^{commit}")
+	return resolved == raw[id][0]
 }
 
 // unbindableTasks returns finished ids without exactly one Coop-Task binding both in this

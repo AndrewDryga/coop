@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/taskcmd.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
+sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/taskcmd.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/cli/util.go, internal/loopcfg/loopcfg.go]
 updated: 2026-07-26
 ---
 
@@ -43,7 +43,21 @@ excluding parent and committer identity. Task IDs are ownership metadata, not a 
 Lease-start validation permits a later host suffix only after the exact recorded prefix; completion
 snapshots that whole base sequence and requires the rewritten subject first followed by an exact
 semantic replay. Dropped, changed, reordered, or invented unbound commits therefore fail just like
-task-bound descendants. The generation may still re-close an independently disproved finding
+task-bound descendants. A rewritten subject must also retain the reviewed subject's exact raw sole
+parent (or remain a root). Hardened Git reads ignore replacement objects. Authority capture and use
+walk the complete reachable commit DAG from raw objects, so graft and shallow metadata cannot hide
+older duplicate bindings. Subject and replacement validation then walk raw sole-parent chains from
+their exact terminals. Semantic change hashes compare explicit raw parent/child trees, never a
+traversal-selected parent. Parent headers must be canonical and contiguous, every named parent must
+resolve to a commit, and raw commit reads are type-constrained, size-bounded, and locally
+content-hashed before use. Raw authority trailers use a fixed final-paragraph grammar independent
+of repository trailer configuration. Linear and complete-DAG walks have aggregate byte/work
+budgets. Tree objects likewise have per-object and aggregate object/byte/entry caps, accept only
+canonical modes, and are content-hashed into a host-private bare snapshot; semantic diffs read only
+that immutable snapshot, never the mutable agent repository. Resets, replacement refs, baseline or
+replacement grafts, shallow boundaries, malformed objects, oversized commits or trees, and
+non-commit parents therefore fail closed without discarding ancestry or blocking the batch reader.
+The generation may still re-close an independently disproved finding
 without changing Git. A duplicate/redirected binding, message-only receipt rewrite, or task-local
 forgery is rejected. Failed attempts retain the generation;
 when a validated rewrite parks the task blocked for external acceptance, the still-held lease
@@ -82,6 +96,12 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-26 — pinned audit rewrites to the reviewed subject's raw sole parent (including root),
+  raw-walked reachable bindings plus the persisted baseline and complete replacement sequence,
+  parsed fixed-grammar bindings and metadata from locally hashed commit bodies, snapshotted locally
+  hashed and bounded tree DAGs before diffing, ignored replacement/graft/shallow traversal
+  metadata, and rejected dropped ancestry, decoys, forged or malformed parents, dangling objects,
+  non-commit parents, and oversized input in direct and blocked recovery.
 - 2026-07-26 — replaced the task-bound descendant projection with baseline-anchored complete
   ordered history, including unbound commits; v1/v2 are inert until exact-HEAD host adoption, and
   v3/v4 recovery uses only the persisted baseline.
