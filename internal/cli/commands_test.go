@@ -736,7 +736,8 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 			t.Fatalf("host audit authority = %#v, ok=%v err=%v", record, ok, err)
 		}
 		if record.Generation == "" || record.Subject.TaskID != task.ID ||
-			len(record.Descendants) != 1 || record.Descendants[0].TaskID != "task-b" {
+			record.BaselineHead == "" || len(record.History) != 1 ||
+			record.History[0].TaskID != "task-b" {
 			t.Fatalf("host audit authority = %#v", record)
 		}
 		if pathExists(filepath.Join(root, stateInProgress, task.ID, "audit-reopen.json")) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -2266,7 +2265,7 @@ func TestAuditReopenCompletionAcceptsSemanticDescendantReplay(t *testing.T) {
 		t.Fatalf("clean-tree reproduction unexpectedly changed: got %v", got)
 	}
 	if got := completionUnbindableTasks(repo, oldHead, newHead, []string{"task-a"}, &reopen); len(got) != 0 {
-		replayed, err := semanticTaskCommits(repo, oldHead+".."+newHead)
+		replayed, err := semanticHistoryCommits(repo, oldHead+".."+newHead)
 		t.Fatalf("authorized semantic descendant replay rejected: %v; recorded=%#v replayed=%#v err=%v", got, reopen, replayed, err)
 	}
 	for _, id := range []string{"task-a", "task-b"} {
@@ -2274,6 +2273,280 @@ func TestAuditReopenCompletionAcceptsSemanticDescendantReplay(t *testing.T) {
 			t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
 		}
 	}
+}
+
+func TestCaptureAuditReopenRecordsCompleteOrderedHistory(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	write := func(name, body, message string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", name)
+		git("commit", "-q", "-m", message)
+		return gitOut(repo, "rev-parse", "HEAD")
+	}
+	write("a.txt", "A\n", "A implementation\n\nCoop-Task: task-a")
+	write("manual.txt", "manual\n", "manual release note")
+	write("b.txt", "B\n", "B implementation\n\nCoop-Task: task-b")
+	head := write("release.txt", "release\n", "release v-next")
+
+	record, err := captureAuditReopen(repo, "task-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Version != auditReopenVersion || record.BaselineHead != head ||
+		record.History == nil || len(record.History) != 3 || len(record.Descendants) != 0 {
+		t.Fatalf("complete audit record = %#v", record)
+	}
+	wantIDs := []string{"", "task-b", ""}
+	for i, want := range wantIDs {
+		if record.History[i].TaskID != want {
+			t.Errorf("history[%d] task = %q, want %q", i, record.History[i].TaskID, want)
+		}
+	}
+	if record.History[0].CommitMessage != "manual release note\n" ||
+		record.History[2].CommitMessage != "release v-next\n" {
+		t.Fatalf("unbound messages were not captured exactly: %#v", record.History)
+	}
+}
+
+func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
+	newRepo := func(t *testing.T) (string, func(...string), string) {
+		t.Helper()
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		git("commit", "-q", "--allow-empty", "-m", "subject\n\nCoop-Task: task-a")
+		return repo, git, gitOut(repo, "rev-parse", "HEAD")
+	}
+
+	t.Run("malformed task trailer", func(t *testing.T) {
+		repo, git, _ := newRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "bad\n\nCoop-Task:")
+		if _, err := captureAuditReopen(repo, "task-a"); err == nil ||
+			!strings.Contains(err.Error(), "invalid task binding") {
+			t.Fatalf("malformed trailer error = %v", err)
+		}
+	})
+	t.Run("multiple task trailers", func(t *testing.T) {
+		repo, git, _ := newRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "bad\n\nCoop-Task: task-b\nCoop-Task: task-c")
+		if _, err := captureAuditReopen(repo, "task-a"); err == nil ||
+			!strings.Contains(err.Error(), "invalid task binding") {
+			t.Fatalf("multiple trailer error = %v", err)
+		}
+	})
+	t.Run("duplicate task ids", func(t *testing.T) {
+		repo, git, _ := newRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "B1\n\nCoop-Task: task-b")
+		git("commit", "-q", "--allow-empty", "-m", "B2\n\nCoop-Task: task-b")
+		if _, err := captureAuditReopen(repo, "task-a"); err == nil ||
+			!strings.Contains(err.Error(), "duplicate task binding") {
+			t.Fatalf("duplicate task error = %v", err)
+		}
+	})
+	t.Run("merge", func(t *testing.T) {
+		repo, git, _ := newRepo(t)
+		branch := gitOut(repo, "branch", "--show-current")
+		git("checkout", "-q", "-b", "side")
+		git("commit", "-q", "--allow-empty", "-m", "side")
+		git("checkout", "-q", branch)
+		git("commit", "-q", "--allow-empty", "-m", "main")
+		git("merge", "-q", "--no-ff", "side", "-m", "merge")
+		if _, err := captureAuditReopen(repo, "task-a"); err == nil ||
+			!strings.Contains(err.Error(), "merge commit") {
+			t.Fatalf("merge history error = %v", err)
+		}
+	})
+	t.Run("overflow", func(t *testing.T) {
+		repo, git, subject := newRepo(t)
+		for i := 0; i < 3; i++ {
+			git("commit", "-q", "--allow-empty", "-m", "manual")
+		}
+		if _, err := semanticHistoryCommitsLimit(repo, subject+"..HEAD", 2); err == nil ||
+			!strings.Contains(err.Error(), "exceeds 2") {
+			t.Fatalf("history overflow error = %v", err)
+		}
+	})
+	t.Run("batch diff boundaries handle empty commits and hex paths", func(t *testing.T) {
+		repo, git, subject := newRepo(t)
+		name := strings.Repeat("a", 40)
+		var heads []string
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("hex path\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", name)
+		git("commit", "-q", "-m", "hex-shaped path")
+		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		if err := os.Chmod(filepath.Join(repo, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		git("add", name)
+		git("commit", "-q", "-m", "mode change")
+		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		if err := os.Remove(filepath.Join(repo, name)); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "-u")
+		git("commit", "-q", "-m", "delete hex-shaped path")
+		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		git("commit", "-q", "--allow-empty", "-m", "empty manual marker")
+		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
+		history, err := semanticHistoryCommits(repo, subject+"..HEAD")
+		if err != nil || len(history) != len(heads) {
+			t.Fatalf("batched complete history = %#v, err=%v", history, err)
+		}
+		for i, commit := range history {
+			want, err := semanticCommit(repo, heads[i], "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if commit.sha != heads[i] || commit.semantic != want {
+				t.Errorf("history[%d] = %#v, want sha %s semantic %#v", i, commit, heads[i], want)
+			}
+		}
+	})
+	t.Run("representative bounded history is extracted in one batch", func(t *testing.T) {
+		repo, git, subject := newRepo(t)
+		const count = 128
+		for i := 0; i < count; i++ {
+			git("commit", "-q", "--allow-empty", "-m", "manual marker")
+		}
+		history, err := semanticHistoryCommitsLimit(repo, subject+"..HEAD", count)
+		if err != nil || len(history) != count {
+			t.Fatalf("representative batch length = %d, err=%v", len(history), err)
+		}
+	})
+}
+
+func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
+	type fixture struct {
+		repo                   string
+		git                    func(...string)
+		a, manual, bound, tail string
+		base                   string
+		record                 auditReopenRecord
+	}
+	newFixture := func(t *testing.T) fixture {
+		t.Helper()
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		commit := func(name, body, message string) string {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			git("add", name)
+			git("commit", "-q", "-m", message)
+			return gitOut(repo, "rev-parse", "HEAD")
+		}
+		a := commit("a.txt", "A\n", "A implementation\n\nCoop-Task: task-a")
+		manual := commit("manual.txt", "manual\n", "manual release step")
+		bound := commit("b.txt", "B\n", "B implementation\n\nCoop-Task: task-b")
+		tail := commit("tail.txt", "tail\n", "unbound release tail")
+		record, err := captureAuditReopen(repo, "task-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fixture{
+			repo: repo, git: git, a: a, manual: manual, bound: bound, tail: tail,
+			base: tail, record: record,
+		}
+	}
+	rewrite := func(t *testing.T, f fixture) {
+		t.Helper()
+		f.git("reset", "--hard", "-q", f.a+"^")
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+	}
+	assertValid := func(t *testing.T, f fixture) {
+		t.Helper()
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+		if !auditReopenCompletionValid(f.repo, f.base, head, "task-a", f.record) {
+			t.Fatal("exact complete-history replay was rejected")
+		}
+	}
+	assertRejected := func(t *testing.T, f fixture) {
+		t.Helper()
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+		if auditReopenCompletionValid(f.repo, f.base, head, "task-a", f.record) {
+			t.Fatal("unsafe unbound history replay was accepted")
+		}
+	}
+
+	t.Run("exact replay with new committer metadata", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.manual, f.bound, f.tail)
+		assertValid(t, f)
+	})
+	t.Run("dropped", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.bound, f.tail)
+		assertRejected(t, f)
+	})
+	t.Run("changed tree", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.manual)
+		if err := os.WriteFile(filepath.Join(f.repo, "manual.txt"), []byte("changed\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "manual.txt")
+		f.git("commit", "--amend", "-q", "--no-edit")
+		f.git("cherry-pick", f.bound, f.tail)
+		assertRejected(t, f)
+	})
+	t.Run("changed message", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.manual)
+		f.git("commit", "--amend", "-q", "-m", "changed manual message")
+		f.git("cherry-pick", f.bound, f.tail)
+		assertRejected(t, f)
+	})
+	t.Run("changed author", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.manual)
+		f.git("commit", "--amend", "-q", "--no-edit", "--author", "Other <other@example.com>")
+		f.git("cherry-pick", f.bound, f.tail)
+		assertRejected(t, f)
+	})
+	t.Run("reordered", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.bound, f.manual, f.tail)
+		assertRejected(t, f)
+	})
+	t.Run("invented", func(t *testing.T) {
+		f := newFixture(t)
+		rewrite(t, f)
+		f.git("cherry-pick", f.manual, f.bound, f.tail)
+		f.git("commit", "-q", "--allow-empty", "-m", "invented unbound descendant")
+		assertRejected(t, f)
+	})
+	t.Run("later host suffix is snapshotted", func(t *testing.T) {
+		f := newFixture(t)
+		if err := os.WriteFile(filepath.Join(f.repo, "suffix.txt"), []byte("suffix\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "suffix.txt")
+		f.git("commit", "-q", "-m", "later host suffix")
+		f.base = gitOut(f.repo, "rev-parse", "HEAD")
+		if !auditReopenCurrentValid(f.repo, f.base, "task-a", f.record) {
+			t.Fatal("later host suffix invalidated the recorded prefix")
+		}
+		suffix := f.base
+		rewrite(t, f)
+		f.git("cherry-pick", f.manual, f.bound, f.tail, suffix)
+		assertValid(t, f)
+	})
 }
 
 func TestAuditReopenCompletionRejectsChangedOrInventedHistory(t *testing.T) {
@@ -2381,6 +2654,169 @@ func TestAuditReopenCompletionRejectsChangedOrInventedHistory(t *testing.T) {
 	})
 }
 
+type legacyAuditAdoptionFixture struct {
+	repo, root, id, head, subjectHead string
+	task                              taskItem
+	record                            auditReopenRecord
+	git                               func(...string)
+}
+
+func newLegacyAuditAdoptionFixture(t *testing.T) legacyAuditAdoptionFixture {
+	t.Helper()
+	repo, git := gitRepo(t)
+	t.Setenv(testLeaseAuthorityRootEnv, t.TempDir())
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	commit := func(name, body, message string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", name)
+		git("commit", "-q", "-m", message)
+		return gitOut(repo, "rev-parse", "HEAD")
+	}
+	id := "legacy-adoption"
+	subjectHead := commit("a.txt", "A\n", "A implementation\n\nCoop-Task: "+id)
+	commit("manual.txt", "manual\n", "manual release")
+	descendantHead := commit("b.txt", "B\n", "B implementation\n\nCoop-Task: legacy-descendant")
+	subject, err := semanticCommit(repo, subjectHead, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descendant, err := semanticCommit(repo, descendantHead, "legacy-descendant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := auditReopenRecord{
+		Version: auditReopenLegacyVersion, Generation: "legacy-generation", TaskID: id,
+		Subject: subject, Descendants: []auditReopenCommit{descendant},
+	}
+	root := filepath.Join(repo, tasksRoot)
+	task := taskForLease(t, root, stateBlocked, id)
+	writeTaskFile(t, filepath.Join(task.Dir, "decision.md"), "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
+	authority, err := openLeaseAuthority(root, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	return legacyAuditAdoptionFixture{
+		repo: repo, root: root, id: id, head: descendantHead, subjectHead: subjectHead,
+		task: task, record: record, git: git,
+	}
+}
+
+func TestLegacyAuditReopenAdoption(t *testing.T) {
+	t.Run("ordinary unblock names the required adoption retry", func(t *testing.T) {
+		f := newLegacyAuditAdoptionFixture(t)
+		code, err := tasksFolderUnblock(f.root, []string{f.id, "restored baseline"})
+		want := "retry: coop tasks unblock " + f.id + ` --adopt-audit-head <full-sha> "<answer>"`
+		if code != -1 || err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("legacy retry = code %d err %v, want %q", code, err, want)
+		}
+		if decisionResolved(filepath.Join(f.task.Dir, "decision.md")) {
+			t.Fatal("rejected legacy unblock recorded its answer")
+		}
+	})
+	t.Run("interactive answer returns the adoption command", func(t *testing.T) {
+		f := newLegacyAuditAdoptionFixture(t)
+		var out strings.Builder
+		code, err := runDecisionBrowser(
+			[]decisionRef{{root: f.root, id: f.id}},
+			strings.NewReader("restored baseline\n"),
+			&out,
+		)
+		want := "retry: coop tasks unblock " + f.id + ` --adopt-audit-head <full-sha> "<answer>"`
+		if code != -1 || err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("interactive legacy retry = code %d err %v, want %q", code, err, want)
+		}
+		if decisionResolved(filepath.Join(f.task.Dir, "decision.md")) {
+			t.Fatal("rejected interactive legacy answer was recorded")
+		}
+	})
+	t.Run("exact HEAD captures complete history and retains generation", func(t *testing.T) {
+		f := newLegacyAuditAdoptionFixture(t)
+		code, err := tasksFolderUnblock(f.root, []string{
+			f.id, "--adopt-audit-head", f.head, "restored audited baseline",
+		})
+		if code != 0 || err != nil {
+			t.Fatalf("legacy adoption = code %d err %v", code, err)
+		}
+		current, ok := currentTask(f.root, f.id)
+		if !ok || current.State != stateTodo {
+			t.Fatalf("adopted task = %#v, ok=%v", current, ok)
+		}
+		record, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !auditReopenRecordActive(record) {
+			t.Fatalf("adopted authority = %#v, ok=%v err=%v", record, ok, err)
+		}
+		if record.Generation != f.record.Generation || record.BaselineHead != f.head ||
+			len(record.History) != 2 || record.History[0].TaskID != "" ||
+			record.History[1].TaskID != "legacy-descendant" || len(record.Descendants) != 0 {
+			t.Fatalf("adopted complete history = %#v", record)
+		}
+	})
+	t.Run("wrong current SHA fails closed", func(t *testing.T) {
+		f := newLegacyAuditAdoptionFixture(t)
+		code, err := tasksFolderUnblock(f.root, []string{
+			f.id, "--adopt-audit-head", f.subjectHead, "must not be recorded",
+		})
+		if code != -1 || err == nil ||
+			!strings.Contains(err.Error(), "was authorized for "+f.subjectHead) ||
+			!strings.Contains(err.Error(), "restore "+f.subjectHead+" exactly") ||
+			!strings.Contains(err.Error(), "same --adopt-audit-head value") {
+			t.Fatalf("stale adoption = code %d err %v", code, err)
+		}
+		got, ok, readErr := readAuditReopenRecord(f.root, f.id)
+		if readErr != nil || !ok || !sameAuditReopenRecord(got, f.record) ||
+			!pathExists(f.task.Dir) || decisionResolved(filepath.Join(f.task.Dir, "decision.md")) {
+			t.Fatalf("stale adoption mutated state: record=%#v ok=%v err=%v", got, ok, readErr)
+		}
+	})
+	t.Run("unbound drift does not replace the supplied audited SHA", func(t *testing.T) {
+		f := newLegacyAuditAdoptionFixture(t)
+		auditedHead := f.head
+		f.git("commit", "-q", "--allow-empty", "-m", "later unbound drift")
+		currentHead := gitOut(f.repo, "rev-parse", "HEAD")
+		code, err := tasksFolderUnblock(f.root, []string{
+			f.id, "--adopt-audit-head", auditedHead, "must not be recorded",
+		})
+		if code != -1 || err == nil ||
+			!strings.Contains(err.Error(), auditedHead) ||
+			!strings.Contains(err.Error(), currentHead) ||
+			!strings.Contains(err.Error(), "restore "+auditedHead+" exactly") {
+			t.Fatalf("unbound drift adoption = code %d err %v", code, err)
+		}
+		if strings.Contains(err.Error(), "--adopt-audit-head "+currentHead) {
+			t.Fatalf("drift error suggested adopting current HEAD: %v", err)
+		}
+		got, ok, readErr := readAuditReopenRecord(f.root, f.id)
+		if readErr != nil || !ok || !sameAuditReopenRecord(got, f.record) ||
+			!pathExists(f.task.Dir) || decisionResolved(filepath.Join(f.task.Dir, "decision.md")) {
+			t.Fatalf("unbound drift mutated state: record=%#v ok=%v err=%v", got, ok, readErr)
+		}
+	})
+	t.Run("changed legacy projection fails closed", func(t *testing.T) {
+		f := newLegacyAuditAdoptionFixture(t)
+		f.git("commit", "--amend", "-q", "-m", "changed B\n\nCoop-Task: legacy-descendant")
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+		code, err := tasksFolderUnblock(f.root, []string{
+			f.id, "--adopt-audit-head", head, "must not be recorded",
+		})
+		if code != -1 || err == nil || !strings.Contains(err.Error(), "legacy subject and task-bound descendant projection") {
+			t.Fatalf("changed projection adoption = code %d err %v", code, err)
+		}
+		got, ok, readErr := readAuditReopenRecord(f.root, f.id)
+		if readErr != nil || !ok || !sameAuditReopenRecord(got, f.record) || !pathExists(f.task.Dir) {
+			t.Fatalf("changed projection mutated state: record=%#v ok=%v err=%v", got, ok, readErr)
+		}
+	})
+}
+
 type blockedAuditUpgradeFixture struct {
 	repo, root, authorityRoot, id string
 	task                          taskItem
@@ -2441,9 +2877,7 @@ func newBlockedAuditUpgradeFixture(t *testing.T) blockedAuditUpgradeFixture {
 }
 
 func sameAuditReopenRecord(a, b auditReopenRecord) bool {
-	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
-		a.Subject == b.Subject && slices.Equal(a.Descendants, b.Descendants) &&
-		a.UnblockPending == b.UnblockPending
+	return auditReopenRecordsEqual(a, b)
 }
 
 func TestBlockedAuditUnblockUpgradesStaleAuthority(t *testing.T) {
@@ -2473,8 +2907,8 @@ func TestBlockedAuditUnblockUpgradesStaleAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Generation != f.record.Generation || got.Subject != wantSubject ||
-		!slices.Equal(got.Descendants, f.record.Descendants) {
-		t.Fatalf("upgraded authority = %#v, want generation %q subject %#v descendants %#v", got, f.record.Generation, wantSubject, f.record.Descendants)
+		!slices.Equal(got.History, f.record.History) {
+		t.Fatalf("upgraded authority = %#v, want generation %q subject %#v history %#v", got, f.record.Generation, wantSubject, f.record.History)
 	}
 }
 
@@ -2880,26 +3314,23 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		}
 	})
 
-	t.Run("reflog candidate search is bounded", func(t *testing.T) {
+	t.Run("recorded baseline is the only recovery candidate", func(t *testing.T) {
 		f := newBlockedAuditUpgradeFixture(t)
-		rewriteHead := gitOut(f.repo, "rev-parse", "HEAD")
-		f.git("checkout", "-q", "-b", "audit-decoys")
-		for i := 0; i <= auditReopenHistoryCandidateLimit; i++ {
-			f.git("commit", "-q", "--allow-empty", "-m",
-				fmt.Sprintf("decoy %d\n\nCoop-Task: blocked-upgrade-descendant", i))
+		tampered := f.record
+		tampered.BaselineHead = gitOut(f.repo, "rev-parse", "HEAD")
+		if err := writeAuditReopenRecord(f.root, tampered); err != nil {
+			t.Fatal(err)
 		}
-		f.git("checkout", "-q", "--detach", rewriteHead)
-		f.git("branch", "-D", "audit-decoys")
 		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil ||
-			!strings.Contains(err.Error(), "retained history candidates") {
-			t.Fatalf("unbounded candidate history error = %v", err)
+			!strings.Contains(err.Error(), "recorded baseline") {
+			t.Fatalf("wrong exact-baseline error = %v", err)
 		}
 		if !pathExists(f.task.Dir) {
-			t.Fatal("candidate overflow moved the blocked task")
+			t.Fatal("wrong exact baseline moved the blocked task")
 		}
 		got, ok, err := readAuditReopenRecord(f.root, f.id)
-		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
-			t.Fatalf("candidate overflow changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		if err != nil || !ok || !sameAuditReopenRecord(got, tampered) {
+			t.Fatalf("wrong exact baseline changed authority: got=%#v ok=%v err=%v", got, ok, err)
 		}
 	})
 }
@@ -3013,7 +3444,8 @@ func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
 	writeTaskFile(t, filepath.Join(dir, "decision.md"), "# Prior decision\n\n**Resolution:** accepted earlier\n")
 
 	item := readTaskTree(root)[0]
-	if err := parkStaleAuditReopen(queuedTask{Root: root, Item: item}); err != nil {
+	baseline := strings.Repeat("b", 40)
+	if err := parkStaleAuditReopen(queuedTask{Root: root, Item: item}, baseline); err != nil {
 		t.Fatalf("parkStaleAuditReopen: %v", err)
 	}
 	blockedDir := filepath.Join(root, stateBlocked, id)
@@ -3023,7 +3455,9 @@ func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
 	decision := readFileString(filepath.Join(blockedDir, "decision.md"))
 	for _, want := range []string{
 		"restore the host-audited Git baseline",
-		"restore the exact pre-attempt Git history",
+		"restore the exact pre-attempt baseline",
+		baseline,
+		"git rev-parse HEAD",
 		"Blocking and unblocking alone cannot repair Git history",
 		"> **Resolution:** accepted earlier",
 	} {
@@ -3035,7 +3469,7 @@ func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
 		t.Errorf("stale audit decision retained a live prior resolution:\n%s", decision)
 	}
 	state := readFileString(filepath.Join(blockedDir, "state.md"))
-	for _, want := range []string{"**Status:** blocked", "stopped before provider launch", "never add a Coop-Recovery receipt"} {
+	for _, want := range []string{"**Status:** blocked", "stopped before provider launch", baseline, "git rev-parse HEAD", "never add a Coop-Recovery receipt"} {
 		if !strings.Contains(state, want) {
 			t.Errorf("stale audit state missing %q:\n%s", want, state)
 		}

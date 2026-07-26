@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Audit-reopened tasks now protect complete descendant history.** Host authority records the
+  exact baseline HEAD and every ordered later commit, including manual and release commits without
+  a `Coop-Task` trailer. Rework rejects dropped, changed, reordered, or invented unbound history
+  while still allowing exact replay and a later host suffix. Legacy task-only v1/v2 records cannot
+  lease or complete until a human restores the audited HEAD and explicitly adopts its full SHA;
+  blocked recovery for current records uses the persisted baseline instead of a reflog guess.
+
 - **Byte-identical review wrapper echoes count as one verdict.** The host verdict boundary now
   collapses one exact normalized duplicate of the complete evidence-plus-receipt envelope, so a
   Codex usage footer routed separately from its repeated final message does not consume the

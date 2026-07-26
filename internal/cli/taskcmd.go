@@ -442,7 +442,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 	if t.State == newState {
 		if newState == stateDone {
 			if err := completeTrustedTask(root, t); err != nil {
-				return -1, fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+				return -1, trustedCompletionError(err, t.ID)
 			}
 		}
 		ui.Note("%s is already %s", t.ID, stateLabel(newState))
@@ -450,7 +450,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 	}
 	if newState == stateDone {
 		if err := completeTrustedTask(root, t); err != nil {
-			return -1, fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, t.ID)
+			return -1, trustedCompletionError(err, t.ID)
 		}
 	} else {
 		var err error
@@ -465,6 +465,14 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 	}
 	ui.OK("%s %s", pastVerb, t.ID)
 	return 0, nil
+}
+
+func trustedCompletionError(err error, id string) error {
+	var recovery auditCompletionRecoveryError
+	if errors.As(err, &recovery) {
+		return err
+	}
+	return fmt.Errorf("%w — fix the obstruction, then retry: coop tasks done %s", err, id)
 }
 
 // tasksFolderPath prints a task's resolved folder — the id-command companion to `coop fork path`,
@@ -482,17 +490,40 @@ func tasksFolderPath(root string, args []string) (int, error) {
 	return 0, nil
 }
 
-// tasksFolderUnblock moves a task out of 50_blocked/ back to 10_in_progress/ — but only if it's
+func parseTaskUnblockArgs(args []string) (id, answer, adoptionHead string, err error) {
+	if len(args) < 1 {
+		return "", "", "", errors.New(`usage: coop tasks unblock <id> [--adopt-audit-head <full-sha>] ["<answer>"]`)
+	}
+	id = args[0]
+	var answerParts []string
+	for i := 1; i < len(args); i++ {
+		if args[i] != "--adopt-audit-head" {
+			answerParts = append(answerParts, args[i])
+			continue
+		}
+		if adoptionHead != "" {
+			return "", "", "", errors.New("coop tasks unblock: --adopt-audit-head may be passed only once")
+		}
+		if i+1 >= len(args) {
+			return "", "", "", errors.New("coop tasks unblock: --adopt-audit-head needs a full commit SHA")
+		}
+		i++
+		adoptionHead = args[i]
+	}
+	return id, strings.TrimSpace(strings.Join(answerParts, " ")), adoptionHead, nil
+}
+
+// tasksFolderUnblock moves a task out of 50_blocked/ back to 00_todo/ — but only if it's
 // actually blocked, so a fat-fingered id can't silently reopen a done (or todo) task.
 func tasksFolderUnblock(root string, args []string) (int, error) {
-	if len(args) < 1 {
-		return 2, errors.New(`usage: coop tasks unblock <id> [answer]`)
+	id, answer, adoptionHead, parseErr := parseTaskUnblockArgs(args)
+	if parseErr != nil {
+		return 2, parseErr
 	}
-	t, err := findTask(root, args[0])
+	t, err := findTask(root, id)
 	if err != nil {
 		return 1, err
 	}
-	answer := strings.TrimSpace(strings.Join(args[1:], " "))
 	if t.State == stateTodo {
 		record, ok, readErr := readAuditReopenRecord(root, t.ID)
 		if readErr != nil {
@@ -501,7 +532,16 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 				t.ID, readErr, t.ID,
 			)
 		}
+		if ok && auditReopenRecordLegacy(record) {
+			return 1, fmt.Errorf(
+				"%s has legacy audit-reopen authority but is already todo — block it without changing Git history, then retry with --adopt-audit-head <full-sha>",
+				t.ID,
+			)
+		}
 		if ok && record.UnblockPending {
+			if adoptionHead != "" {
+				return 2, fmt.Errorf("%s already has complete-history pending authority; --adopt-audit-head is only for legacy records", t.ID)
+			}
 			if answer != "" {
 				decision := filepath.Join(t.Dir, "decision.md")
 				if err := recordResolution(decision, answer); err != nil {
@@ -538,8 +578,8 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if answer == "" && t.HasDecision && !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
 		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
 	}
-	if err := resolveAndUnblock(root, t, answer); err != nil {
-		return -1, unblockRetryError(t.ID, answer != "", err)
+	if err := resolveAndUnblockWithAdoption(root, t, answer, adoptionHead); err != nil {
+		return -1, unblockRetryErrorWithAdoption(t.ID, answer != "", adoptionHead, err)
 	}
 	if answer != "" {
 		ui.OK("unblocked %s — recorded your answer in decision.md, back in todo (claim it to start)", t.ID)
@@ -596,6 +636,10 @@ func (e *unblockStageError) Error() string { return e.err.Error() }
 func (e *unblockStageError) Unwrap() error { return e.err }
 
 func unblockRetryError(id string, hasAnswer bool, err error) error {
+	return unblockRetryErrorWithAdoption(id, hasAnswer, "", err)
+}
+
+func unblockRetryErrorWithAdoption(id string, hasAnswer bool, adoptionHead string, err error) error {
 	var failure *unblockStageError
 	if errors.As(err, &failure) && failure.state == stateTodo {
 		return fmt.Errorf(
@@ -610,6 +654,13 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 		)
 	}
 	command := "coop tasks unblock " + id
+	var legacy *legacyAuditAdoptionRequiredError
+	if adoptionHead == "" && errors.As(err, &legacy) {
+		command += " --adopt-audit-head <full-sha>"
+	}
+	if adoptionHead != "" {
+		command += " --adopt-audit-head " + adoptionHead
+	}
 	if hasAnswer {
 		command += ` "<answer>"`
 	}
@@ -639,7 +690,11 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 // `claim`, so a just-unblocked task with nobody on it belongs in the queue as available work; the
 // resolved decision.md rides along as the audit trail. Shared by `unblock` and the -i browser.
 func resolveAndUnblock(root string, t taskItem, answer string) error {
-	upgrade, err := prepareBlockedAuditReopenUnblock(root, t)
+	return resolveAndUnblockWithAdoption(root, t, answer, "")
+}
+
+func resolveAndUnblockWithAdoption(root string, t taskItem, answer, adoptionHead string) error {
+	upgrade, err := prepareBlockedAuditReopenUnblockWithAdoption(root, t, adoptionHead)
 	if err != nil {
 		return &unblockStageError{stage: "audit authority validation", state: stateBlocked, err: err}
 	}

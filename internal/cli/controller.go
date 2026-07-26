@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"context"
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -23,16 +23,20 @@ import (
 // (git log --grep <id> was 0 repo-wide), so "one task = one commit" was unobservable and a crash
 // between commit and folder-move was ambiguous.
 const (
-	coopTaskTrailer                  = "Coop-Task"
-	auditReopenHistoryCandidateLimit = 64
-	auditReopenSemanticMatchLimit    = 8
-	auditReopenHistoryTimeout        = 10 * time.Second
+	coopTaskTrailer         = "Coop-Task"
+	auditReopenHistoryLimit = 4096
 )
 
 type taskTrailerCommit struct {
-	info      commitInfo
-	values    []string
-	malformed bool
+	info          commitInfo
+	fullSHA       string
+	parents       string
+	authorName    string
+	authorEmail   string
+	authorDate    string
+	commitMessage string
+	values        []string
+	malformed     bool
 }
 
 // taskTrailerCommits uses one NUL-delimited Git stream, so a trailer value can never be confused
@@ -76,6 +80,46 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 	return commits, true
 }
 
+func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]taskTrailerCommit, bool) {
+	args := []string{"log", "--reverse", fmt.Sprintf("--max-count=%d", limit)}
+	format := "%h%x00%H%x00%s%x00%P%x00%an%x00%ae%x00%aI%x00%B%x00" +
+		"%(trailers:key=" + coopTaskTrailer + ",only,unfold,separator=%x1f)"
+	args = append(args, "-z", "--format="+format, rangeExpr)
+	cmd := exec.Command("git", gitArgs(repo, args)...)
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	fields := strings.Split(string(raw), "\x00")
+	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%9 != 0 {
+		return nil, false
+	}
+	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/9)
+	for i := 0; i < len(fields)-1; i += 9 {
+		record := taskTrailerCommit{
+			info:          commitInfo{sha: fields[i], subject: fields[i+2]},
+			fullSHA:       fields[i+1],
+			parents:       fields[i+3],
+			authorName:    fields[i+4],
+			authorEmail:   fields[i+5],
+			authorDate:    fields[i+6],
+			commitMessage: fields[i+7],
+		}
+		if fields[i+8] != "" {
+			for _, trailer := range strings.Split(fields[i+8], "\x1f") {
+				key, value, ok := strings.Cut(trailer, ":")
+				if !ok || !strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer) {
+					record.malformed = true
+					continue
+				}
+				record.values = append(record.values, strings.TrimSpace(value))
+			}
+		}
+		commits = append(commits, record)
+	}
+	return commits, true
+}
+
 // commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
 // the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history.
 func commitsForTask(repo, rangeExpr, id string) []string {
@@ -90,6 +134,20 @@ func commitsForTask(repo, rangeExpr, id string) []string {
 		}
 	}
 	return shas
+}
+
+func taskBindingCounts(repo, rangeExpr string) (map[string]int, bool) {
+	commits, ok := taskTrailerCommits(repo, rangeExpr, false)
+	if !ok {
+		return nil, false
+	}
+	counts := map[string]int{}
+	for _, commit := range commits {
+		if !commit.malformed && len(commit.values) == 1 && commit.values[0] != "" {
+			counts[commit.values[0]]++
+		}
+	}
+	return counts, true
 }
 
 // gateGuardGlobs name the files that DEFINE what "green" means — the candidate's own verifier: the
@@ -223,6 +281,38 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 	reopen, reopened, err := readAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return err
+	}
+	if reopened {
+		repo := gitOut(root, "rev-parse", "--show-toplevel")
+		head := gitOut(root, "rev-parse", "--verify", "HEAD^{commit}")
+		if auditReopenRecordLegacy(reopen) {
+			return &legacyAuditAdoptionRequiredError{id: task.ID}
+		}
+		if reopen.UnblockPending {
+			return &auditCompletionStateError{message: fmt.Sprintf(
+				"task %s has non-authorizing pending audit authority from an interrupted unblock; "+
+					"run `coop tasks unblock %s` to activate it, then retry completion",
+				task.ID, task.ID,
+			)}
+		}
+		_, matchErr := auditReopenCurrentHistory(repo, head, task.ID, reopen)
+		if !auditReopenRecordActive(reopen) || repo == "" || matchErr != nil {
+			recovery := fmt.Sprintf(
+				"run `coop tasks unblock %s \"restored or validated audited baseline\"`",
+				task.ID,
+			)
+			if current.State != stateBlocked {
+				recovery = fmt.Sprintf(
+					"run `coop tasks block %s` without changing Git history, then %s",
+					task.ID, recovery,
+				)
+			}
+			return &auditCompletionStateError{message: fmt.Sprintf(
+				"task %s complete-history audit authority no longer matches current HEAD; "+
+					"its exact recorded baseline is %s: %v — %s before completion",
+				task.ID, reopen.BaselineHead, matchErr, recovery,
+			)}
+		}
 	}
 	if err := clearLeaseCompletionReceipt(authority); err != nil {
 		return err
@@ -638,6 +728,28 @@ func reconcileInterruptedCompletions(hosts []string) error {
 				continue
 			}
 			if receipt, ok := lock.completionReceipt(current.Dir); ok {
+				record, hasAuditAuthority, authorityErr := readAuditReopenRecord(host, current.ID)
+				if authorityErr != nil {
+					restoreErrs = append(restoreErrs, errors.Join(
+						fmt.Errorf("inspect interrupted task %s audit authority: %w", current.ID, authorityErr),
+						lock.release(),
+					))
+					continue
+				}
+				if receipt.AuditReopenGeneration != "" && hasAuditAuthority &&
+					(!auditReopenRecordActive(record) ||
+						record.Generation != receipt.AuditReopenGeneration) {
+					restoreErr := restoreQueuedCompletion(
+						queuedTask{Root: host, Item: current},
+						hasAuditAuthority,
+					)
+					clearErr := lock.clearCompleted()
+					unlockErr := lock.release()
+					if err := errors.Join(restoreErr, clearErr, unlockErr); err != nil {
+						restoreErrs = append(restoreErrs, err)
+					}
+					continue
+				}
 				cleanupErr := errors.Join(
 					removeAuditReopenRecordIfMatches(host, current.ID, receipt.AuditReopenGeneration),
 					removeLeaseAuthorityMetadata(host, current.ID),
@@ -822,62 +934,156 @@ func blockedTaskIDs(hosts []string) []string {
 	return ids
 }
 
-type semanticTaskCommit struct {
+type semanticHistoryCommit struct {
 	sha      string
 	semantic auditReopenCommit
 }
 
-// semanticTaskCommits identifies task-bound commits by their exact introduced content and author
-// intent. The raw diff-tree includes paths, modes, and old/new blob ids, so an unrelated ancestor
-// repair does not change a replayed descendant's identity while any change to that descendant
-// does. Author identity/date and the complete message make this deliberately stricter than
-// patch-id.
-func semanticTaskCommits(repo, rangeExpr string) ([]semanticTaskCommit, error) {
-	commits, ok := taskTrailerCommits(repo, rangeExpr, true)
+// semanticHistoryCommits identifies every commit by its exact introduced content and author
+// intent, retaining an optional task binding as ownership metadata. The raw diff-tree includes
+// paths, modes, and old/new blob ids, so an unrelated ancestor repair does not change a replayed
+// descendant's identity while any change to that descendant does. Author identity/date and the
+// complete message make this deliberately stricter than patch-id.
+func semanticHistoryCommits(repo, rangeExpr string) ([]semanticHistoryCommit, error) {
+	return semanticHistoryCommitsLimit(repo, rangeExpr, auditReopenHistoryLimit)
+}
+
+func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticHistoryCommit, error) {
+	commits, ok := auditHistoryCommitsLimited(repo, rangeExpr, limit+1)
 	if !ok {
-		return nil, errors.New("read task-bound commit history")
+		return nil, errors.New("read complete audit history")
 	}
-	var result []semanticTaskCommit
-	for _, commit := range commits {
+	if len(commits) > limit {
+		return nil, fmt.Errorf("audit history exceeds %d commits", limit)
+	}
+	taskIDs := make([]string, len(commits))
+	seen := map[string]bool{}
+	for i, commit := range commits {
 		if commit.malformed || len(commit.values) > 1 || (len(commit.values) == 1 && commit.values[0] == "") {
 			return nil, errors.New("history contains an invalid task binding")
 		}
-		if len(commit.values) == 0 {
-			continue
+		if !validAuditReopenHead(commit.fullSHA) {
+			return nil, errors.New("history contains an invalid commit id")
 		}
-		semantic, err := semanticCommit(repo, commit.info.sha, commit.values[0])
-		if err != nil {
-			return nil, err
+		if len(strings.Fields(commit.parents)) > 1 {
+			return nil, fmt.Errorf("audit history merge commit %s cannot be replayed safely", commit.fullSHA)
 		}
-		result = append(result, semanticTaskCommit{sha: commit.info.sha, semantic: semantic})
+		if len(commit.values) == 1 {
+			taskIDs[i] = commit.values[0]
+			if seen[taskIDs[i]] {
+				return nil, fmt.Errorf("history contains duplicate task binding %s", taskIDs[i])
+			}
+			seen[taskIDs[i]] = true
+		}
+	}
+	changeTrees, err := semanticHistoryChangeTrees(repo, commits)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]semanticHistoryCommit, len(commits))
+	for i, commit := range commits {
+		result[i] = semanticHistoryCommit{
+			sha: commit.fullSHA,
+			semantic: auditReopenCommit{
+				TaskID:        taskIDs[i],
+				ChangeTree:    changeTrees[i],
+				AuthorName:    commit.authorName,
+				AuthorEmail:   commit.authorEmail,
+				AuthorDate:    commit.authorDate,
+				CommitMessage: commit.commitMessage,
+			},
+		}
 	}
 	return result, nil
+}
+
+// semanticHistoryChangeTrees batches raw diff extraction for the bounded history. Git prefixes
+// each --stdin result with its full commit id; raw entries then carry exactly one NUL-delimited
+// path because rename detection is disabled. Parsing that structure avoids spawning one Git
+// process per commit while hashing the exact same bytes as semanticCommit.
+func semanticHistoryChangeTrees(repo string, commits []taskTrailerCommit) ([]string, error) {
+	if len(commits) == 0 {
+		return []string{}, nil
+	}
+	var input strings.Builder
+	for _, commit := range commits {
+		input.WriteString(commit.fullSHA)
+		input.WriteByte('\n')
+	}
+	cmd := exec.Command("git", gitArgs(repo,
+		[]string{"diff-tree", "--stdin", "--root", "--always", "--raw", "-z", "-r", "--no-renames"})...)
+	cmd.Stdin = strings.NewReader(input.String())
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read complete audit history changes: %w", err)
+	}
+	fields := bytes.Split(raw, []byte{0})
+	if len(fields) == 0 || len(fields[len(fields)-1]) != 0 {
+		return nil, errors.New("parse complete audit history changes")
+	}
+	fields = fields[:len(fields)-1]
+	trees := make([]string, 0, len(commits))
+	var diff bytes.Buffer
+	current := -1
+	flush := func() {
+		if current < 0 {
+			return
+		}
+		sum := sha256.Sum256(diff.Bytes())
+		trees = append(trees, fmt.Sprintf("%x", sum))
+		diff.Reset()
+	}
+	for i := 0; i < len(fields); {
+		field := fields[i]
+		if len(field) > 0 && field[0] == ':' {
+			if current < 0 || i+1 >= len(fields) {
+				return nil, errors.New("parse complete audit history raw change")
+			}
+			diff.Write(field)
+			diff.WriteByte(0)
+			diff.Write(fields[i+1])
+			diff.WriteByte(0)
+			i += 2
+			continue
+		}
+		flush()
+		current++
+		if current >= len(commits) || string(field) != commits[current].fullSHA {
+			return nil, errors.New("complete audit history changes are out of order")
+		}
+		i++
+	}
+	flush()
+	if len(trees) != len(commits) {
+		return nil, errors.New("complete audit history changes are incomplete")
+	}
+	return trees, nil
 }
 
 func semanticCommit(repo, sha, taskID string) (auditReopenCommit, error) {
 	parents := strings.Fields(gitOut(repo, "rev-list", "--parents", "-n", "1", sha))
 	if len(parents) == 0 {
-		return auditReopenCommit{}, fmt.Errorf("resolve task-bound commit %s", sha)
+		return auditReopenCommit{}, fmt.Errorf("resolve audit history commit %s", sha)
 	}
 	if len(parents) > 2 {
-		return auditReopenCommit{}, fmt.Errorf("task-bound merge commit %s cannot be replayed safely", sha)
+		return auditReopenCommit{}, fmt.Errorf("audit history merge commit %s cannot be replayed safely", sha)
 	}
 	diffCmd := exec.Command("git", gitArgs(repo,
 		[]string{"diff-tree", "--root", "--no-commit-id", "--raw", "-z", "-r", "--no-renames", sha})...)
 	diff, err := diffCmd.Output()
 	if err != nil {
-		return auditReopenCommit{}, fmt.Errorf("read task-bound commit %s changes: %w", sha, err)
+		return auditReopenCommit{}, fmt.Errorf("read audit history commit %s changes: %w", sha, err)
 	}
 	sum := sha256.Sum256(diff)
 	metaCmd := exec.Command("git", gitArgs(repo,
 		[]string{"show", "-s", "--format=format:%an%x00%ae%x00%aI%x00%B", sha})...)
 	meta, err := metaCmd.Output()
 	if err != nil {
-		return auditReopenCommit{}, fmt.Errorf("read task-bound commit %s metadata: %w", sha, err)
+		return auditReopenCommit{}, fmt.Errorf("read audit history commit %s metadata: %w", sha, err)
 	}
 	fields := strings.SplitN(string(meta), "\x00", 4)
 	if len(fields) != 4 {
-		return auditReopenCommit{}, fmt.Errorf("parse task-bound commit %s metadata", sha)
+		return auditReopenCommit{}, fmt.Errorf("parse audit history commit %s metadata", sha)
 	}
 	return auditReopenCommit{
 		TaskID:        taskID,
@@ -890,6 +1096,10 @@ func semanticCommit(repo, sha, taskID string) (auditReopenCommit, error) {
 }
 
 func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	if !validAuditReopenHead(head) {
+		return auditReopenRecord{}, errors.New("resolve audit reopen baseline HEAD")
+	}
 	subjects := commitsForTask(repo, "", id)
 	if len(subjects) != 1 {
 		return auditReopenRecord{}, fmt.Errorf(
@@ -900,63 +1110,99 @@ func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
-	bound, err := semanticTaskCommits(repo, subjects[0]+"..HEAD")
+	commits, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
+	bindingCounts, ok := taskBindingCounts(repo, head)
+	if !ok {
+		return auditReopenRecord{}, errors.New("read reachable task bindings for audit reopen")
+	}
 	seen := map[string]bool{id: true}
-	descendants := make([]auditReopenCommit, 0, len(bound))
-	for _, commit := range bound {
+	history := make([]auditReopenCommit, 0, len(commits))
+	for _, commit := range commits {
 		taskID := commit.semantic.TaskID
-		if seen[taskID] || len(commitsForTask(repo, "HEAD", taskID)) != 1 {
+		if taskID != "" && (seen[taskID] || bindingCounts[taskID] != 1) {
 			return auditReopenRecord{}, fmt.Errorf(
 				"descendant task %s needs exactly one reachable %s binding before review reopens %s",
 				taskID, coopTaskTrailer, id,
 			)
 		}
-		seen[taskID] = true
-		descendants = append(descendants, commit.semantic)
+		if taskID != "" {
+			seen[taskID] = true
+		}
+		history = append(history, commit.semantic)
 	}
 	generation, err := newAuditReopenGeneration()
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
 	return auditReopenRecord{
-		Version: auditReopenVersion, Generation: generation, TaskID: id,
-		Subject: subject, Descendants: descendants,
+		Version: auditReopenVersion, Generation: generation, TaskID: id, BaselineHead: head,
+		Subject: subject, History: history,
 	}, nil
 }
 
-func auditReopenCurrentValid(repo, head, id string, record auditReopenRecord) bool {
-	if validateAuditReopenRecord(record, id) != nil || record.UnblockPending {
-		return false
+func auditReopenCurrentHistory(repo, head, id string, record auditReopenRecord) ([]semanticHistoryCommit, error) {
+	if err := validateAuditReopenRecord(record, id); err != nil {
+		return nil, fmt.Errorf("validate persisted audit authority: %w", err)
+	}
+	if !auditReopenRecordActive(record) {
+		return nil, errors.New("audit authority is not active")
+	}
+	resolvedHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	if resolvedHead == "" {
+		return nil, fmt.Errorf("resolve current audit HEAD %s", head)
+	}
+	if gitRun(repo, "merge-base", "--is-ancestor", record.BaselineHead, resolvedHead) != nil {
+		return nil, fmt.Errorf("recorded baseline %s is not an ancestor of current HEAD %s", record.BaselineHead, resolvedHead)
 	}
 	subjects := commitsForTask(repo, head, id)
 	if len(subjects) != 1 {
-		return false
+		return nil, fmt.Errorf("task %s has %d reachable subject bindings, want exactly one", id, len(subjects))
 	}
 	reachableSubject, err := semanticCommit(repo, subjects[0], id)
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("read current audit subject for task %s: %w", id, err)
 	}
 	if reachableSubject != record.Subject {
-		return false
+		return nil, fmt.Errorf("task %s subject no longer matches its recorded semantic identity", id)
 	}
-	current, err := semanticTaskCommits(repo, subjects[0]+".."+head)
+	current, err := semanticHistoryCommits(repo, subjects[0]+".."+resolvedHead)
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("read current complete audit history: %w", err)
 	}
-	recorded := make(map[string]auditReopenCommit, len(record.Descendants))
-	for _, descendant := range record.Descendants {
-		recorded[descendant.TaskID] = descendant
+	if len(current) < len(record.History) {
+		return nil, fmt.Errorf("current audit history has %d commits, shorter than recorded prefix %d", len(current), len(record.History))
 	}
-	var retained []auditReopenCommit
-	for _, commit := range current {
-		if _, ok := recorded[commit.semantic.TaskID]; ok {
-			retained = append(retained, commit.semantic)
+	for i := range record.History {
+		if current[i].semantic != record.History[i] {
+			return nil, fmt.Errorf("current audit history commit %d does not match the recorded prefix", i+1)
 		}
 	}
-	return slices.Equal(retained, record.Descendants)
+	baselineCommit := subjects[0]
+	if len(record.History) > 0 {
+		baselineCommit = current[len(record.History)-1].sha
+	}
+	if gitOut(repo, "rev-parse", "--verify", baselineCommit+"^{commit}") != record.BaselineHead {
+		return nil, fmt.Errorf("recorded history prefix does not terminate at baseline %s", record.BaselineHead)
+	}
+	bindingCounts, ok := taskBindingCounts(repo, resolvedHead)
+	if !ok {
+		return nil, errors.New("read reachable task bindings for current audit history")
+	}
+	for _, commit := range current {
+		if commit.semantic.TaskID != "" &&
+			bindingCounts[commit.semantic.TaskID] != 1 {
+			return nil, fmt.Errorf("task %s no longer has exactly one reachable history binding", commit.semantic.TaskID)
+		}
+	}
+	return current, nil
+}
+
+func auditReopenCurrentValid(repo, head, id string, record auditReopenRecord) bool {
+	_, err := auditReopenCurrentHistory(repo, head, id, record)
+	return err == nil
 }
 
 func auditReopenCompletionValid(repo, base, head, id string, record auditReopenRecord) bool {
@@ -966,33 +1212,33 @@ func auditReopenCompletionValid(repo, base, head, id string, record auditReopenR
 	// A rewrite generation authorizes a transition only from the exact semantic state the host
 	// reviewed. Without this baseline check, a raw-moved stale record could authorize a second
 	// rewrite merely because the new subject differed from the much older recorded tree.
-	if !auditReopenCurrentValid(repo, base, id, record) {
+	baseHistory, err := auditReopenCurrentHistory(repo, base, id, record)
+	if err != nil {
 		return false
 	}
 	if len(commitsForTask(repo, head, id)) != 1 {
 		return false
 	}
-	rangeCommits, err := semanticTaskCommits(repo, base+".."+head)
+	rangeCommits, err := semanticHistoryCommits(repo, base+".."+head)
 	if err != nil {
 		return false
 	}
-	subjects := 0
-	var descendants []auditReopenCommit
-	for _, commit := range rangeCommits {
-		if commit.semantic.TaskID == id {
-			subjects++
-			if commit.semantic.ChangeTree == record.Subject.ChangeTree {
-				return false // a message-only receipt rewrite is not an implementation repair
-			}
-			continue
-		}
-		descendants = append(descendants, commit.semantic)
-	}
-	if subjects != 1 || !slices.Equal(descendants, record.Descendants) {
+	if len(rangeCommits) != len(baseHistory)+1 || rangeCommits[0].semantic.TaskID != id ||
+		rangeCommits[0].semantic.ChangeTree == record.Subject.ChangeTree {
 		return false
 	}
-	for _, descendant := range record.Descendants {
-		if len(commitsForTask(repo, head, descendant.TaskID)) != 1 {
+	for i := range baseHistory {
+		if rangeCommits[i+1].semantic != baseHistory[i].semantic {
+			return false
+		}
+	}
+	bindingCounts, ok := taskBindingCounts(repo, head)
+	if !ok {
+		return false
+	}
+	for _, commit := range rangeCommits {
+		if commit.semantic.TaskID != "" &&
+			bindingCounts[commit.semantic.TaskID] != 1 {
 			return false
 		}
 	}
@@ -1011,12 +1257,32 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record auditReopenRec
 	if err != nil {
 		return auditReopenRecord{}, err
 	}
+	historyCommits, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
+	if err != nil {
+		return auditReopenRecord{}, err
+	}
+	history := make([]auditReopenCommit, len(historyCommits))
+	for i := range historyCommits {
+		history[i] = historyCommits[i].semantic
+	}
+	baselineHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+	if !validAuditReopenHead(baselineHead) {
+		return auditReopenRecord{}, fmt.Errorf("resolve rebased audit HEAD for task %s", id)
+	}
 	replacement := record
+	replacement.Version = auditReopenVersion
+	replacement.BaselineHead = baselineHead
 	replacement.Subject = subject
+	replacement.History = history
+	replacement.Descendants = nil
+	replacement.UnblockPending = false
 	return replacement, nil
 }
 
-func auditReopenBaselineMatches(repo, head, id string, record auditReopenRecord) bool {
+func auditReopenLegacyBaselineMatches(repo, head, id string, record auditReopenRecord) bool {
+	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordLegacy(record) {
+		return false
+	}
 	subjects := commitsForTask(repo, head, id)
 	if len(subjects) != 1 {
 		return false
@@ -1025,111 +1291,128 @@ func auditReopenBaselineMatches(repo, head, id string, record auditReopenRecord)
 	if err != nil || subject != record.Subject {
 		return false
 	}
-	descendants, err := semanticTaskCommits(repo, subjects[0]+".."+head)
+	history, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
+	var descendants []auditReopenCommit
+	for _, commit := range history {
+		if commit.semantic.TaskID != "" {
+			descendants = append(descendants, commit.semantic)
+		}
+	}
 	if err != nil || len(descendants) != len(record.Descendants) {
 		return false
 	}
 	for i := range descendants {
-		if descendants[i].semantic != record.Descendants[i] {
+		if descendants[i] != record.Descendants[i] {
 			return false
 		}
 	}
 	return true
 }
 
-func auditReopenTrailerLine(commit auditReopenCommit) (string, bool) {
-	for _, line := range strings.Split(commit.CommitMessage, "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer) &&
-			strings.TrimSpace(value) == commit.TaskID {
-			return strings.TrimSpace(line), true
-		}
-	}
-	return "", false
+type auditCompletionRecoveryError interface {
+	error
+	auditCompletionRecovery()
 }
 
-// upgradeBlockedAuditReopen recovers the pre-rewrite tip an older supervisor did not retain.
-// A bounded reflog query first narrows candidates to the recorded terminal task trailer. Only a
-// small bounded set of exact semantic terminal matches may run the full baseline validator, and
-// the current range must then pass the same validator used by a live lease.
-func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) (auditReopenRecord, error) {
-	if validateAuditReopenRecord(record, id) != nil {
-		return auditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
-	}
-	subjects := commitsForTask(repo, head, id)
-	if len(subjects) != 1 {
-		return auditReopenRecord{}, fmt.Errorf("resolve current subject for blocked audit task %s", id)
-	}
-	rewriteHead := subjects[0]
-	if len(record.Descendants) > 0 {
-		last := record.Descendants[len(record.Descendants)-1]
-		descendants := commitsForTask(repo, head, last.TaskID)
-		if len(descendants) != 1 {
-			return auditReopenRecord{}, fmt.Errorf("resolve current descendant %s for blocked audit task %s", last.TaskID, id)
-		}
-		current, err := semanticCommit(repo, descendants[0], last.TaskID)
-		if err != nil || current != last {
-			return auditReopenRecord{}, fmt.Errorf("current descendant %s changed for blocked audit task %s", last.TaskID, id)
-		}
-		rewriteHead = descendants[0]
-	}
-	terminal := record.Subject
-	if len(record.Descendants) > 0 {
-		terminal = record.Descendants[len(record.Descendants)-1]
-	}
-	trailer, ok := auditReopenTrailerLine(terminal)
-	if !ok {
-		return auditReopenRecord{}, fmt.Errorf("blocked audit task %s has an invalid recorded terminal binding", id)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), auditReopenHistoryTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", gitArgs(repo, []string{
-		"log", "--all", "--reflog", "--format=%H", "--fixed-strings", "--grep=" + trailer,
-		fmt.Sprintf("--max-count=%d", auditReopenHistoryCandidateLimit+1),
-	})...)
-	raw, err := cmd.Output()
-	if ctx.Err() != nil {
-		return auditReopenRecord{}, fmt.Errorf("reflog search timed out for blocked audit task %s", id)
-	}
-	if err != nil {
-		return auditReopenRecord{}, fmt.Errorf("search reflog for blocked audit task %s: %w", id, err)
-	}
-	candidates := strings.Fields(string(raw))
-	if len(candidates) > auditReopenHistoryCandidateLimit {
+type legacyAuditAdoptionRequiredError struct{ id string }
+
+func (e *legacyAuditAdoptionRequiredError) Error() string {
+	return fmt.Sprintf(
+		"task %s has legacy task-bound-only audit authority; if it is not blocked, run "+
+			"`coop tasks block %s` without changing Git history; preserve wanted work, restore the "+
+			"audited pre-attempt HEAD, verify `git rev-parse HEAD`, then run "+
+			"`coop tasks unblock %s --adopt-audit-head <full-sha> \"<answer>\"`; "+
+			"do not retry completion until that authority is active",
+		e.id, e.id, e.id,
+	)
+}
+
+func (*legacyAuditAdoptionRequiredError) auditCompletionRecovery() {}
+
+type auditCompletionStateError struct{ message string }
+
+func (e *auditCompletionStateError) Error() string          { return e.message }
+func (*auditCompletionStateError) auditCompletionRecovery() {}
+
+func adoptLegacyAuditReopen(
+	repo, head, id string,
+	record auditReopenRecord,
+	adoptionHead string,
+) (auditReopenRecord, error) {
+	if !validAuditReopenHead(adoptionHead) || adoptionHead != head {
 		return auditReopenRecord{}, fmt.Errorf(
-			"blocked audit task %s has more than %d retained history candidates",
-			id, auditReopenHistoryCandidateLimit,
+			"legacy audit adoption for task %s was authorized for %s, but current HEAD is %s; "+
+				"preserve wanted work, restore %s exactly, verify `git rev-parse HEAD` prints %s, "+
+				"then retry with the same --adopt-audit-head value",
+			id, adoptionHead, head, adoptionHead, adoptionHead,
 		)
 	}
-	seen := map[string]bool{}
-	var matches []string
-	for _, candidate := range candidates {
-		if candidate == head || seen[candidate] {
-			continue
-		}
-		seen[candidate] = true
-		semantic, err := semanticCommit(repo, candidate, terminal.TaskID)
-		if err != nil || semantic != terminal {
-			continue
-		}
-		matches = append(matches, candidate)
-		if len(matches) > auditReopenSemanticMatchLimit {
+	if !auditReopenLegacyBaselineMatches(repo, head, id, record) {
+		return auditReopenRecord{}, fmt.Errorf(
+			"current HEAD %s does not match task %s's legacy subject and task-bound descendant projection",
+			head, id,
+		)
+	}
+	subjects := commitsForTask(repo, head, id)
+	historyCommits, err := semanticHistoryCommits(repo, subjects[0]+".."+head)
+	if err != nil {
+		return auditReopenRecord{}, err
+	}
+	bindingCounts, ok := taskBindingCounts(repo, head)
+	if !ok {
+		return auditReopenRecord{}, fmt.Errorf("read reachable task bindings before legacy adoption of %s", id)
+	}
+	history := make([]auditReopenCommit, len(historyCommits))
+	for i := range historyCommits {
+		history[i] = historyCommits[i].semantic
+		if history[i].TaskID != "" && bindingCounts[history[i].TaskID] != 1 {
 			return auditReopenRecord{}, fmt.Errorf(
-				"blocked audit task %s has more than %d matching retained baselines",
-				id, auditReopenSemanticMatchLimit,
+				"descendant task %s needs exactly one reachable %s binding before legacy adoption of %s",
+				history[i].TaskID, coopTaskTrailer, id,
 			)
 		}
 	}
-	for _, candidate := range matches {
-		if !auditReopenBaselineMatches(repo, candidate, id, record) {
-			continue
-		}
-		replacement, err := rebasedAuditReopenRecord(repo, candidate, rewriteHead, id, record)
-		if err == nil && auditReopenCompletionValid(repo, head, head, id, replacement) {
-			return replacement, nil
-		}
+	replacement := auditReopenRecord{
+		Version: auditReopenVersion, Generation: record.Generation, TaskID: id,
+		BaselineHead: head, Subject: record.Subject, History: history,
 	}
-	return auditReopenRecord{}, fmt.Errorf("blocked audit task %s has no retained pre-upgrade baseline matching its host authority", id)
+	if validateAuditReopenRecord(replacement, id) != nil ||
+		!auditReopenCurrentValid(repo, head, id, replacement) {
+		return auditReopenRecord{}, fmt.Errorf("capture complete legacy audit history for task %s", id)
+	}
+	return replacement, nil
+}
+
+// upgradeBlockedAuditReopen recovers a rewrite from the exact baseline recorded by the host.
+// The complete replay must be the first sequence after the rewritten subject; unrelated work that
+// landed later may remain as a suffix, but no reflog guess or task-only projection can authorize it.
+func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) (auditReopenRecord, error) {
+	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordActive(record) {
+		return auditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
+	}
+	if !auditReopenCurrentValid(repo, record.BaselineHead, id, record) {
+		return auditReopenRecord{}, fmt.Errorf(
+			"blocked audit task %s recorded baseline %s is unavailable or no longer matches its host authority",
+			id, record.BaselineHead,
+		)
+	}
+	current, err := semanticHistoryCommits(repo, record.BaselineHead+".."+head)
+	if err != nil {
+		return auditReopenRecord{}, fmt.Errorf("read blocked audit rewrite for task %s: %w", id, err)
+	}
+	rewriteLen := len(record.History) + 1
+	if len(current) < rewriteLen {
+		return auditReopenRecord{}, fmt.Errorf("blocked audit task %s has no complete replay after its recorded baseline", id)
+	}
+	rewriteHead := gitOut(repo, "rev-parse", "--verify", current[rewriteLen-1].sha+"^{commit}")
+	if rewriteHead == "" {
+		return auditReopenRecord{}, fmt.Errorf("resolve blocked audit rewrite terminal for task %s", id)
+	}
+	replacement, err := rebasedAuditReopenRecord(repo, record.BaselineHead, rewriteHead, id, record)
+	if err != nil || !auditReopenCurrentValid(repo, head, id, replacement) {
+		return auditReopenRecord{}, fmt.Errorf("blocked audit task %s changed its subject or complete descendant history", id)
+	}
+	return replacement, nil
 }
 
 type blockedAuditUnblock struct {
@@ -1154,7 +1437,11 @@ func (u *blockedAuditUnblock) persist() error {
 	if u == nil || u.replacement == nil {
 		return nil
 	}
-	if err := replaceAuditReopenRecordIfMatches(u.root, *u.previous, *u.replacement); err != nil {
+	previous := u.previous
+	if u.pendingPersisted {
+		previous = u.pending
+	}
+	if err := replaceAuditReopenRecordIfMatches(u.root, *previous, *u.replacement); err != nil {
 		return err
 	}
 	return nil
@@ -1181,17 +1468,33 @@ func (u *blockedAuditUnblock) finish(operationErr error) error {
 // of the same host generation. The returned transaction holds the authority flock; before moving,
 // it persists a non-authorizing pending form that makes a crash safe and recoverable.
 func prepareBlockedAuditReopenUnblock(root string, task taskItem) (*blockedAuditUnblock, error) {
+	return prepareBlockedAuditReopenUnblockWithAdoption(root, task, "")
+}
+
+func prepareBlockedAuditReopenUnblockWithAdoption(root string, task taskItem, adoptionHead string) (*blockedAuditUnblock, error) {
 	observed, ok, err := readAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read blocked audit reopen authority for task %s: %w", task.ID, err)
 	}
 	if !ok {
+		if adoptionHead != "" {
+			return nil, fmt.Errorf("task %s has no legacy audit-reopen authority to adopt", task.ID)
+		}
 		return nil, nil
 	}
-	return lockBlockedAuditReopenUnblock(root, task, observed)
+	return lockBlockedAuditReopenUnblockWithAdoption(root, task, observed, adoptionHead)
 }
 
 func lockBlockedAuditReopenUnblock(root string, task taskItem, observed auditReopenRecord) (*blockedAuditUnblock, error) {
+	return lockBlockedAuditReopenUnblockWithAdoption(root, task, observed, "")
+}
+
+func lockBlockedAuditReopenUnblockWithAdoption(
+	root string,
+	task taskItem,
+	observed auditReopenRecord,
+	adoptionHead string,
+) (*blockedAuditUnblock, error) {
 	authority, err := openLeaseAuthority(root, task.ID, false)
 	if err != nil {
 		return nil, fmt.Errorf("open blocked audit reopen authority for task %s: %w", task.ID, err)
@@ -1208,9 +1511,7 @@ func lockBlockedAuditReopenUnblock(root string, task taskItem, observed auditReo
 	if err != nil {
 		return fail(fmt.Errorf("re-read blocked audit reopen authority for task %s: %w", task.ID, err))
 	}
-	if !ok || record.Version != observed.Version || record.UnblockPending != observed.UnblockPending ||
-		record.Generation != observed.Generation || record.Subject != observed.Subject ||
-		!slices.Equal(record.Descendants, observed.Descendants) {
+	if !ok || !auditReopenRecordsEqual(record, observed) {
 		return fail(fmt.Errorf("audit reopen authority changed while unblocking task %s", task.ID))
 	}
 	current, ok := currentTask(root, task.ID)
@@ -1221,6 +1522,25 @@ func lockBlockedAuditReopenUnblock(root string, task taskItem, observed auditReo
 	head := gitOut(root, "rev-parse", "HEAD")
 	if repo == "" || head == "" {
 		return fail(fmt.Errorf("resolve repository history for blocked audit task %s", task.ID))
+	}
+	if auditReopenRecordLegacy(record) {
+		if adoptionHead == "" {
+			return fail(&legacyAuditAdoptionRequiredError{id: task.ID})
+		}
+		replacement, err := adoptLegacyAuditReopen(repo, head, task.ID, record, adoptionHead)
+		if err != nil {
+			return fail(err)
+		}
+		pending := replacement
+		pending.Version = auditReopenPendingVersion
+		pending.UnblockPending = true
+		upgrade.previous = &record
+		upgrade.pending = &pending
+		upgrade.replacement = &replacement
+		return upgrade, nil
+	}
+	if adoptionHead != "" {
+		return fail(fmt.Errorf("task %s already has complete-history audit authority; --adopt-audit-head is only for legacy records", task.ID))
 	}
 	if record.UnblockPending {
 		replacement := record
@@ -1267,8 +1587,7 @@ func finishPendingAuditUnblock(root string, task taskItem, observed auditReopenR
 	if err != nil {
 		return fail(fmt.Errorf("re-read pending audit unblock authority for task %s: %w", task.ID, err))
 	}
-	if !ok || !record.UnblockPending || record.Generation != observed.Generation ||
-		record.Subject != observed.Subject || !slices.Equal(record.Descendants, observed.Descendants) {
+	if !ok || !record.UnblockPending || !auditReopenRecordsEqual(record, observed) {
 		return fail(fmt.Errorf("pending audit unblock authority changed for task %s", task.ID))
 	}
 	current, ok := currentTask(root, task.ID)
@@ -1508,7 +1827,7 @@ func auditBindingRecovery(id string) string {
 		"task %s is host-authorized review rework: independently verify the recorded finding; if it is false, "+
 			"re-close with zero new commits; if it is real, amend or rewrite the already-bound implementation "+
 			"commit so its tree actually changes, keeping exactly one reachable %s binding and semantically "+
-			"unchanged later task commits; a Coop-Recovery trailer, a message-only commit, or a recovery-only "+
+			"unchanged later commits, including commits with no task binding; a Coop-Recovery trailer, a message-only commit, or a recovery-only "+
 			"replay of unchanged descendants will be rejected again",
 		id, coopTaskTrailer,
 	)
@@ -1563,7 +1882,8 @@ func auditResumeLine(id string) string {
 		"history untouched and move the task folder to 99_done/ — the host audit authority accepts a " +
 		"verification-only completion. If the finding is real, do the rework by amending or rewriting the " +
 		"already-bound implementation commit so its tree actually changes, keeping exactly one reachable " +
-		"Coop-Task binding and semantically unchanged later task commits. Do NOT add a Coop-Recovery trailer, " +
+		"Coop-Task binding and semantically unchanged later commits, including commits with no task binding. " +
+		"Do NOT add a Coop-Recovery trailer, " +
 		"a message-only or receipt-only commit, or a recovery-only replay of unchanged descendants — a history " +
 		"rewrite without a real tree change will be rejected."
 }
@@ -1580,21 +1900,27 @@ func (a *app) resumePrefixFor(repo, id string, reopen *auditReopenRecord) string
 }
 
 func validateLeasedAuditReopen(repo, head, id string, reopen *auditReopenRecord) error {
-	if reopen == nil || auditReopenCurrentValid(repo, head, id, *reopen) {
+	if reopen == nil {
 		return nil
 	}
-	return fmt.Errorf(
-		"task %s host audit-reopen authority no longer matches current HEAD — no provider started",
-		id,
-	)
+	if _, err := auditReopenCurrentHistory(repo, head, id, *reopen); err == nil {
+		return nil
+	} else {
+		return fmt.Errorf(
+			"task %s host audit-reopen authority no longer matches current HEAD; "+
+				"its exact recorded baseline is %s — no provider started: %w",
+			id, reopen.BaselineHead, err,
+		)
+	}
 }
 
-func staleAuditReopenRecovery(id string) string {
+func staleAuditReopenRecovery(id, baseline string) string {
 	return fmt.Sprintf(
 		"task parked in blocked: preserve any wanted work separately, restore the exact audited "+
-			"pre-attempt Git history from reflog or backup, then run `coop tasks unblock %s "+
-			"\"restored audited pre-attempt HEAD\"`; blocking and unblocking alone cannot repair Git history",
-		id,
+			"pre-attempt baseline %s from reflog or backup, verify `git rev-parse HEAD` prints %s, "+
+			"then run `coop tasks unblock %s \"restored audited pre-attempt HEAD\"`; blocking and "+
+			"unblocking alone cannot repair Git history",
+		baseline, baseline, id,
 	)
 }
 
@@ -1602,10 +1928,13 @@ func staleAuditReopenRecovery(id string) string {
 // discarding the rejected Git rewrite. The operator must restore the exact audited baseline before
 // explicit unblock can reactivate that generation. Metadata and the folder move roll back together
 // so a failed decision/state write never leaves a malformed blocked task.
-func parkStaleAuditReopen(task queuedTask) error {
+func parkStaleAuditReopen(task queuedTask, baseline string) error {
 	id := task.Item.ID
 	if task.Item.State != stateInProgress {
 		return fmt.Errorf("park stale audit task %s from %s: want in progress", id, stateLabel(task.Item.State))
+	}
+	if !validAuditReopenHead(baseline) {
+		return fmt.Errorf("park stale audit task %s without a valid recorded baseline", id)
 	}
 	metadata, err := snapshotTaskMetadata(task.Item.Dir, "decision.md", "log.md", "state.md")
 	if err != nil {
@@ -1623,17 +1952,22 @@ func parkStaleAuditReopen(task queuedTask) error {
 		moveErr := moveTaskDir(task.Root, current, stateInProgress)
 		return errors.Join(cause, metadataErr, moveErr)
 	}
-	if err := writeStaleAuditReopenDecision(blockedDir, id, task.Item.Title, metadata["decision.md"]); err != nil {
+	if err := writeStaleAuditReopenDecision(blockedDir, id, task.Item.Title, baseline, metadata["decision.md"]); err != nil {
 		return rollback(fmt.Errorf("write stale audit decision for task %s: %w", id, err))
 	}
-	if err := appendTaskLogStrict(blockedDir, "host preflight parked this task because current HEAD no longer matches its audit-reopen authority; restore the exact audited pre-attempt Git history before explicit unblock — blocking and unblocking alone cannot repair Git history"); err != nil {
+	if err := appendTaskLogStrict(blockedDir, fmt.Sprintf(
+		"host preflight parked this task because current HEAD no longer matches its audit-reopen authority; "+
+			"restore exact baseline %s and verify `git rev-parse HEAD` before explicit unblock — "+
+			"blocking and unblocking alone cannot repair Git history",
+		baseline,
+	)); err != nil {
 		return rollback(fmt.Errorf("record stale audit park for task %s: %w", id, err))
 	}
 	if err := normalizeTaskState(
 		id,
 		blockedDir,
 		"blocked — stale audit authority",
-		"preserve wanted work separately, restore the exact audited pre-attempt Git history, then explicitly unblock this task",
+		fmt.Sprintf("preserve wanted work separately, restore exact baseline %s, verify `git rev-parse HEAD`, then explicitly unblock this task", baseline),
 		"the host stopped before provider launch because current HEAD no longer matches its audit authority",
 		"blocking and unblocking alone cannot repair Git history; never add a Coop-Recovery receipt",
 	); err != nil {
@@ -1642,7 +1976,7 @@ func parkStaleAuditReopen(task queuedTask) error {
 	return nil
 }
 
-func writeStaleAuditReopenDecision(taskDir, id, title string, previous taskMetadataSnapshot) error {
+func writeStaleAuditReopenDecision(taskDir, id, title, baseline string, previous taskMetadataSnapshot) error {
 	body := fmt.Sprintf(
 		"# Decision: restore the host-audited Git baseline for %q\n\n"+
 			"**Blocks:** this task (`%s`).\n\n"+
@@ -1650,7 +1984,8 @@ func writeStaleAuditReopenDecision(taskDir, id, title string, previous taskMetad
 			"this audit-rework attempt. Coop cannot safely infer which rejected history to discard.\n\n"+
 			"**Options:**\n"+
 			"- **A — restore the audited baseline:** Preserve any wanted work separately, then restore "+
-			"the exact pre-attempt Git history from reflog or backup.\n"+
+			"the exact pre-attempt baseline `%s` from reflog or backup; verify "+
+			"`git rev-parse HEAD` prints `%s`.\n"+
 			"- **B — stop for manual authority repair:** Use this when the exact baseline is unavailable; "+
 			"do not manufacture a recovery receipt or merely cycle the task state.\n\n"+
 			"**Recommendation:** Choose A, verify the repository is back at the exact audited baseline, "+
@@ -1658,7 +1993,7 @@ func writeStaleAuditReopenDecision(taskDir, id, title string, previous taskMetad
 			"unblocking alone cannot repair Git history.\n\n"+
 			"---\n\n"+
 			"**Resolution:** <!-- HUMAN: record how the audited baseline was restored, then explicitly unblock -->\n",
-		title, id, id,
+		title, id, baseline, baseline, id,
 	)
 	if previous.exists && strings.TrimSpace(string(previous.body)) != "" {
 		var quoted strings.Builder

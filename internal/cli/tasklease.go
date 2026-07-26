@@ -18,14 +18,16 @@ import (
 )
 
 const (
-	leaseLockName             = "lease.lock"
-	leaseMetadataName         = "lease.json"
-	leaseAuthorityVersion     = "v1"
-	auditReopenVersion        = 1
-	auditReopenPendingVersion = 2
-	leaseHeartbeatInterval    = 10 * time.Second
-	leaseStaleAfter           = time.Minute
-	leaseMetadataVersion      = 1
+	leaseLockName                   = "lease.lock"
+	leaseMetadataName               = "lease.json"
+	leaseAuthorityVersion           = "v1"
+	auditReopenLegacyVersion        = 1
+	auditReopenLegacyPendingVersion = 2
+	auditReopenVersion              = 3
+	auditReopenPendingVersion       = 4
+	leaseHeartbeatInterval          = 10 * time.Second
+	leaseStaleAfter                 = time.Minute
+	leaseMetadataVersion            = 1
 )
 
 const testLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
@@ -53,7 +55,9 @@ type auditReopenRecord struct {
 	Version        int                 `json:"version"`
 	Generation     string              `json:"generation"`
 	TaskID         string              `json:"task_id"`
+	BaselineHead   string              `json:"baseline_head,omitempty"`
 	Subject        auditReopenCommit   `json:"subject"`
+	History        []auditReopenCommit `json:"history"`
 	Descendants    []auditReopenCommit `json:"descendants,omitempty"`
 	UnblockPending bool                `json:"unblock_pending,omitempty"`
 }
@@ -436,20 +440,65 @@ func auditReopenRecordName(root, id string) (string, error) {
 }
 
 func validateAuditReopenRecord(record auditReopenRecord, id string) error {
-	versionValid := record.Version == auditReopenVersion && !record.UnblockPending ||
+	legacy := record.Version == auditReopenLegacyVersion && !record.UnblockPending ||
+		record.Version == auditReopenLegacyPendingVersion && record.UnblockPending
+	current := record.Version == auditReopenVersion && !record.UnblockPending ||
 		record.Version == auditReopenPendingVersion && record.UnblockPending
-	if !versionValid || record.Generation == "" || record.TaskID != id ||
+	if (!legacy && !current) || record.Generation == "" || record.TaskID != id ||
 		record.Subject.TaskID != id || record.Subject.ChangeTree == "" {
 		return errors.New("invalid audit reopen record")
 	}
-	seen := map[string]bool{id: true}
-	for _, commit := range record.Descendants {
-		if commit.TaskID == "" || seen[commit.TaskID] || commit.ChangeTree == "" {
-			return errors.New("invalid audit reopen descendant")
+	if legacy {
+		if record.BaselineHead != "" || record.History != nil {
+			return errors.New("invalid legacy audit reopen record")
 		}
-		seen[commit.TaskID] = true
+		seen := map[string]bool{id: true}
+		for _, commit := range record.Descendants {
+			if commit.TaskID == "" || seen[commit.TaskID] || commit.ChangeTree == "" {
+				return errors.New("invalid audit reopen descendant")
+			}
+			seen[commit.TaskID] = true
+		}
+		return nil
+	}
+	if !validAuditReopenHead(record.BaselineHead) || record.History == nil ||
+		len(record.History) > auditReopenHistoryLimit || len(record.Descendants) != 0 {
+		return errors.New("invalid complete-history audit reopen record")
+	}
+	seen := map[string]bool{id: true}
+	for _, commit := range record.History {
+		if commit.ChangeTree == "" || (commit.TaskID != "" && seen[commit.TaskID]) {
+			return errors.New("invalid audit reopen history")
+		}
+		if commit.TaskID != "" {
+			seen[commit.TaskID] = true
+		}
 	}
 	return nil
+}
+
+func validAuditReopenHead(head string) bool {
+	if len(head) != 40 && len(head) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(head)
+	return err == nil
+}
+
+func auditReopenRecordLegacy(record auditReopenRecord) bool {
+	return record.Version == auditReopenLegacyVersion ||
+		record.Version == auditReopenLegacyPendingVersion
+}
+
+func auditReopenRecordActive(record auditReopenRecord) bool {
+	return record.Version == auditReopenVersion && !record.UnblockPending
+}
+
+func auditReopenRecordsEqual(a, b auditReopenRecord) bool {
+	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
+		a.BaselineHead == b.BaselineHead && a.Subject == b.Subject &&
+		slices.Equal(a.History, b.History) && slices.Equal(a.Descendants, b.Descendants) &&
+		a.UnblockPending == b.UnblockPending
 }
 
 func readAuditReopenRecord(root, id string) (auditReopenRecord, bool, error) {
@@ -504,8 +553,8 @@ func replaceAuditReopenRecordIfMatches(root string, previous, replacement auditR
 	if err != nil {
 		return err
 	}
-	if !ok || current.Generation != previous.Generation {
-		return fmt.Errorf("audit reopen generation changed for task %s", previous.TaskID)
+	if !ok || !auditReopenRecordsEqual(current, previous) {
+		return fmt.Errorf("audit reopen authority changed for task %s", previous.TaskID)
 	}
 	if replacement.Generation != previous.Generation || replacement.TaskID != previous.TaskID {
 		return fmt.Errorf("audit reopen replacement changed authority for task %s", previous.TaskID)
@@ -999,6 +1048,23 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = unlockLeaseFile(authority)
 		return nil, taskLeaseObservation{}, fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err)
 	} else if ok {
+		if auditReopenRecordLegacy(record) {
+			_ = removeLeaseMetadata(root, item.ID)
+			_ = removeLeaseAuthorityMetadata(root, item.ID)
+			_ = unlockLeaseFile(f)
+			_ = unlockLeaseFile(authority)
+			recovery := fmt.Sprintf(
+				"restore the audited pre-attempt HEAD, then run coop tasks unblock %s --adopt-audit-head <full-sha> \"<answer>\"",
+				item.ID,
+			)
+			if item.State != stateBlocked {
+				recovery = "block the task without changing Git history, " + recovery
+			}
+			return nil, taskLeaseObservation{}, fmt.Errorf(
+				"task %s has legacy audit-reopen authority that protects only task-bound descendants — no lease started; %s",
+				item.ID, recovery,
+			)
+		}
 		if record.UnblockPending {
 			_ = removeLeaseMetadata(root, item.ID)
 			_ = removeLeaseAuthorityMetadata(root, item.ID)

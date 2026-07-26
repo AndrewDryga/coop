@@ -22,6 +22,20 @@ import (
 
 func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 	suite := newDirectProcessSuite(t)
+	commitUnbound := func(t *testing.T, taskID, position string) string {
+		t.Helper()
+		name := taskID + "-" + position + "-unbound.txt"
+		if err := os.WriteFile(
+			filepath.Join(suite.layout.Repo, name),
+			[]byte(position+" unbound history\n"),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		loopProcessGit(t, suite, "add", name)
+		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: "+position+" unbound history")
+		return loopProcessGit(t, suite, "rev-parse", "HEAD")
+	}
 
 	t.Run("Codex footer and echo envelopes preserve PASS and FAIL receipts", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
@@ -537,12 +551,14 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		defer process.Cleanup()
 		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
 
+		commitUnbound(t, taskID, "intervening")
 		descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
 		if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		loopProcessGit(t, suite, "add", "descendant.txt")
 		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
+		commitUnbound(t, taskID, "trailing")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		hostCompletion := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
@@ -619,14 +635,16 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				process := startLoopRecovery(t, suite, work)
 				defer process.Cleanup()
 				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-				var staleRecord auditReopenRecord
+				var staleRecord, legacyRecord auditReopenRecord
 
+				commitUnbound(t, taskID, "intervening")
 				descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
 				if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 				loopProcessGit(t, suite, "add", "descendant.txt")
 				loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
+				commitUnbound(t, taskID, "trailing")
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				hostCompletion := procharness.Run(ctx, procharness.Command{
 					Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
@@ -647,6 +665,15 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 					staleRecord, ok, err = readAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 					if err != nil || !ok {
 						t.Fatalf("read pre-upgrade audit authority: ok=%v err=%v", ok, err)
+					}
+					legacyRecord = auditReopenRecord{
+						Version: auditReopenLegacyVersion, Generation: staleRecord.Generation,
+						TaskID: staleRecord.TaskID, Subject: staleRecord.Subject,
+					}
+					for _, commit := range staleRecord.History {
+						if commit.TaskID != "" {
+							legacyRecord.Descendants = append(legacyRecord.Descendants, commit)
+						}
 					}
 					if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-upgrade-release-"+taskID), nil, 0o600); err != nil {
 						t.Fatal(err)
@@ -671,20 +698,36 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 					if current.Generation != staleRecord.Generation || current.Subject == staleRecord.Subject {
 						t.Fatalf("blocked fixture did not produce one rebased generation: stale=%#v current=%#v", staleRecord, current)
 					}
-					if err := writeAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), staleRecord); err != nil {
-						t.Fatalf("restore pre-upgrade blocked audit authority: %v", err)
+					if err := writeAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), legacyRecord); err != nil {
+						t.Fatalf("restore legacy blocked audit authority: %v", err)
 					}
-					laterPath := filepath.Join(suite.layout.Repo, "post-block-upgrade.txt")
-					if err := os.WriteFile(laterPath, []byte("landed after the older task blocked\n"), 0o600); err != nil {
-						t.Fatal(err)
+					commitUnbound(t, taskID, "post-block")
+					ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+					automatic := procharness.Run(ctx, procharness.Command{
+						Path: suite.coopBin, Args: []string{"tasks", "unblock", taskID, "must not auto-upgrade"},
+						Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
+					})
+					cancel()
+					if automatic.ExitCode == 0 ||
+						!strings.Contains(automatic.Stderr, "legacy task-bound-only audit authority") ||
+						!strings.Contains(automatic.Stderr, "--adopt-audit-head <full-sha>") {
+						t.Fatalf("legacy automatic bridge = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+							automatic.ExitCode, automatic.Err, automatic.Stdout, automatic.Stderr)
 					}
-					loopProcessGit(t, suite, "add", "post-block-upgrade.txt")
-					loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: post-block upgrade", "-m", "Coop-Task: post-block-upgrade")
+					loopProcessGit(t, suite, "reset", "--hard", "-q", staleRecord.BaselineHead)
 				}
 
+				unblockArgs := []string{"tasks", "unblock", taskID, "external acceptance passed"}
+				if tc.preUpgrade {
+					unblockArgs = []string{
+						"tasks", "unblock", taskID,
+						"--adopt-audit-head", staleRecord.BaselineHead,
+						"external acceptance passed",
+					}
+				}
 				ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 				unblocked := procharness.Run(ctx, procharness.Command{
-					Path: suite.coopBin, Args: []string{"tasks", "unblock", taskID, "external acceptance passed"},
+					Path: suite.coopBin, Args: unblockArgs,
 					Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
 				})
 				cancel()
@@ -778,7 +821,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			"host audit-reopen authority no longer matches current HEAD",
 			"no provider started",
 			"task parked in blocked",
-			"restore the exact audited pre-attempt Git history",
+			"restore the exact audited pre-attempt baseline " + record.BaselineHead,
+			"git rev-parse HEAD",
 			"coop tasks unblock " + taskID,
 			"blocking and unblocking alone cannot repair Git history",
 		} {
@@ -797,7 +841,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal("stale audit authority did not park the task")
 		}
 		decision, err := os.ReadFile(filepath.Join(current.Dir, "decision.md"))
-		if err != nil || !strings.Contains(string(decision), "restore the exact pre-attempt Git history") ||
+		if err != nil || !strings.Contains(string(decision), record.BaselineHead) ||
+			!strings.Contains(string(decision), "git rev-parse HEAD") ||
 			!strings.Contains(string(decision), "Blocking and unblocking alone cannot repair Git history") {
 			t.Fatalf("stale audit decision = %q, %v", decision, err)
 		}
@@ -1019,7 +1064,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			"host audit-reopen authority no longer matches current HEAD",
 			"no provider started",
 			"task parked in blocked",
-			"restore the exact audited pre-attempt Git history",
+			"restore the exact audited pre-attempt baseline",
+			"git rev-parse HEAD",
 			"blocking and unblocking alone cannot repair Git history",
 		} {
 			if retry.Err != nil || retry.ExitCode != 1 || !strings.Contains(retry.Stderr, want) {
@@ -1041,7 +1087,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("second binding retry task = %+v/%v, want blocked", current, ok)
 		}
 		decision, err := os.ReadFile(filepath.Join(current.Dir, "decision.md"))
-		if err != nil || !strings.Contains(string(decision), "restore the exact pre-attempt Git history") {
+		if err != nil || !strings.Contains(string(decision), "restore the exact pre-attempt baseline") ||
+			!strings.Contains(string(decision), "git rev-parse HEAD") {
 			t.Fatalf("second binding retry decision = %q, %v", decision, err)
 		}
 	})

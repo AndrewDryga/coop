@@ -2304,7 +2304,7 @@ func loopWorkPrompt(repo string, queues []string, assignedID, agent string, peer
 	citationPolicy := "When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale."
 	completionPolicy := "AFTER the commit, refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review."
 	if auditReopen {
-		commitPolicy = "Do the work and run the gate. This task is host-authorized audit rework: if independent verification shows the finding is false, do NOT create, amend, or rewrite any commit — complete it with zero new commits. If the finding is real, amend or rewrite the already-bound implementation commit with a real tree change while keeping exactly one reachable `Coop-Task: <task-id>` binding and semantically unchanged later task commits."
+		commitPolicy = "Do the work and run the gate. This task is host-authorized audit rework: if independent verification shows the finding is false, do NOT create, amend, or rewrite any commit — complete it with zero new commits. If the finding is real, amend or rewrite the already-bound implementation commit with a real tree change while keeping exactly one reachable `Coop-Task: <task-id>` binding and semantically unchanged later commits, including commits with no task binding."
 		citationPolicy = "If you cite the existing or rewritten implementation commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs rewritten commits on the host after this run, which changes their SHA."
 		completionPolicy = "AFTER the gate — and after rewriting the existing implementation commit only when a real fix was required — refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review."
 	}
@@ -2991,7 +2991,8 @@ reviewAgain:
 			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
 			iterHead := gitOut(repo, "rev-parse", "HEAD")
 			if authorityErr := validateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.reopen); authorityErr != nil {
-				parkErr := parkStaleAuditReopen(assigned)
+				baseline := lease.reopen.BaselineHead
+				parkErr := parkStaleAuditReopen(assigned, baseline)
 				releaseErr := lease.release()
 				if parkErr != nil {
 					return 1, errors.Join(
@@ -3001,7 +3002,7 @@ reviewAgain:
 					)
 				}
 				return 1, errors.Join(
-					fmt.Errorf("%w; %s", authorityErr, staleAuditReopenRecovery(assigned.Item.ID)),
+					fmt.Errorf("%w; %s", authorityErr, staleAuditReopenRecovery(assigned.Item.ID, baseline)),
 					releaseErr,
 				)
 			}

@@ -45,11 +45,119 @@ func taskForLease(t *testing.T, root, state, id string) taskItem {
 func testAuditReopenRecord(id, generation string) auditReopenRecord {
 	return auditReopenRecord{
 		Version: auditReopenVersion, Generation: generation, TaskID: id,
-		Subject: auditReopenCommit{TaskID: id, ChangeTree: "subject-tree"},
-		Descendants: []auditReopenCommit{{
+		BaselineHead: strings.Repeat("a", 40),
+		Subject:      auditReopenCommit{TaskID: id, ChangeTree: "subject-tree"},
+		History: []auditReopenCommit{{
 			TaskID: "descendant", ChangeTree: "descendant-tree",
 		}},
 	}
+}
+
+func testLegacyAuditReopenRecord(id, generation string, pending bool) auditReopenRecord {
+	version := auditReopenLegacyVersion
+	if pending {
+		version = auditReopenLegacyPendingVersion
+	}
+	return auditReopenRecord{
+		Version: version, Generation: generation, TaskID: id, UnblockPending: pending,
+		Subject: auditReopenCommit{TaskID: id, ChangeTree: "legacy-subject-tree"},
+		Descendants: []auditReopenCommit{{
+			TaskID: "legacy-descendant", ChangeTree: "legacy-descendant-tree",
+		}},
+	}
+}
+
+func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
+	t.Run("new record requires baseline and non-nil history", func(t *testing.T) {
+		record := testAuditReopenRecord("new", "generation")
+		record.History = nil
+		if validateAuditReopenRecord(record, record.TaskID) == nil {
+			t.Fatal("new record with nil history was accepted")
+		}
+		record.History = []auditReopenCommit{}
+		record.BaselineHead = ""
+		if validateAuditReopenRecord(record, record.TaskID) == nil {
+			t.Fatal("new record without baseline HEAD was accepted")
+		}
+	})
+	t.Run("legacy versions decode but cannot lease", func(t *testing.T) {
+		for _, pending := range []bool{false, true} {
+			t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
+				root := t.TempDir()
+				task := taskForLease(t, root, stateInProgress, "legacy")
+				record := testLegacyAuditReopenRecord(task.ID, "legacy-generation", pending)
+				if err := writeAuditReopenRecord(root, record); err != nil {
+					t.Fatal(err)
+				}
+				got, ok, err := readAuditReopenRecord(root, task.ID)
+				if err != nil || !ok || !reflect.DeepEqual(got, record) {
+					t.Fatalf("legacy decode = %#v, ok=%v err=%v", got, ok, err)
+				}
+				lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+				if lease != nil || err == nil ||
+					!strings.Contains(err.Error(), "legacy audit-reopen authority") ||
+					!strings.Contains(err.Error(), "--adopt-audit-head <full-sha>") {
+					t.Fatalf("legacy lease = %#v, %v", lease, err)
+				}
+			})
+		}
+	})
+	t.Run("legacy authority cannot complete", func(t *testing.T) {
+		root := t.TempDir()
+		task := taskForLease(t, root, stateInProgress, "legacy-complete")
+		record := testLegacyAuditReopenRecord(task.ID, "legacy-generation", false)
+		if err := writeAuditReopenRecord(root, record); err != nil {
+			t.Fatal(err)
+		}
+		if err := completeTrustedTask(root, task); err == nil ||
+			!strings.Contains(err.Error(), "legacy") {
+			t.Fatalf("legacy completion error = %v", err)
+		}
+		code, err := tasksFolderMove(root, []string{task.ID}, stateDone, "done", "completed")
+		if code != -1 || err == nil ||
+			!strings.Contains(err.Error(), "coop tasks block "+task.ID) ||
+			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID+" --adopt-audit-head <full-sha>") ||
+			strings.Contains(err.Error(), "retry: coop tasks done") {
+			t.Fatalf("legacy tasks done recovery = code %d err %v", code, err)
+		}
+		current, ok := currentTask(root, task.ID)
+		if !ok || current.State != stateInProgress {
+			t.Fatalf("legacy completion moved task: %#v, ok=%v", current, ok)
+		}
+	})
+	t.Run("pending authority names activation before completion", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		t.Setenv(testLeaseAuthorityRootEnv, t.TempDir())
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		git("commit", "-q", "--allow-empty", "-m", "pending implementation\n\nCoop-Task: pending")
+		root := filepath.Join(repo, tasksRoot)
+		task := taskForLease(t, root, stateTodo, "pending")
+		record, err := captureAuditReopen(repo, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record.Version = auditReopenPendingVersion
+		record.UnblockPending = true
+		if err := writeAuditReopenRecord(root, record); err != nil {
+			t.Fatal(err)
+		}
+		err = completeTrustedTask(root, task)
+		if err == nil || !strings.Contains(err.Error(), "pending audit authority") ||
+			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) ||
+			strings.Contains(err.Error(), "legacy adoption") {
+			t.Fatalf("pending completion error = %v", err)
+		}
+		code, err := tasksFolderMove(root, []string{task.ID}, stateDone, "done", "completed")
+		if code != -1 || err == nil ||
+			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) ||
+			strings.Contains(err.Error(), "retry: coop tasks done") {
+			t.Fatalf("pending tasks done recovery = code %d err %v", code, err)
+		}
+		current, ok := currentTask(root, task.ID)
+		if !ok || current.State != stateTodo {
+			t.Fatalf("pending completion moved task: %#v, ok=%v", current, ok)
+		}
+	})
 }
 
 func TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable(t *testing.T) {
@@ -178,9 +286,15 @@ func TestInterruptedAcceptedCompletionConsumesAuditReopenGeneration(t *testing.T
 }
 
 func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
-	root := t.TempDir()
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("commit", "-q", "--allow-empty", "-m", "manual implementation\n\nCoop-Task: manual")
+	root := filepath.Join(repo, tasksRoot)
 	task := taskForLease(t, root, stateInProgress, "manual")
-	record := testAuditReopenRecord(task.ID, "generation-manual")
+	record, err := captureAuditReopen(repo, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := writeAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
 	}

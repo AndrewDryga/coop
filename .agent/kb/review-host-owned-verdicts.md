@@ -37,12 +37,15 @@ byte-identical to the terminal envelope. A non-identical, partial, or additional
 ambiguous and is rejected.
 
 Each accepted reopen also writes one random generation in the host-only task-authority registry.
-It records the subject's semantic commit and the ordered later task-bound commits: exact introduced
-paths/modes/blob ids, author identity/date, and complete message, excluding parent and committer
-identity. The next leased completion may use that generation either to re-close an independently
-disproved finding without changing Git, or to rewrite the subject while replaying those later task
-changes byte-for-byte. A changed or invented descendant, duplicate/redirected binding, message-only
-receipt rewrite, and task-local forgery are rejected. Failed attempts retain the generation;
+Current records anchor the full baseline HEAD and every ordered later commit, whether task-bound or
+unbound: exact introduced paths/modes/blob ids, author identity/date, and complete message,
+excluding parent and committer identity. Task IDs are ownership metadata, not a history filter.
+Lease-start validation permits a later host suffix only after the exact recorded prefix; completion
+snapshots that whole base sequence and requires the rewritten subject first followed by an exact
+semantic replay. Dropped, changed, reordered, or invented unbound commits therefore fail just like
+task-bound descendants. The generation may still re-close an independently disproved finding
+without changing Git. A duplicate/redirected binding, message-only receipt rewrite, or task-local
+forgery is rejected. Failed attempts retain the generation;
 when a validated rewrite parks the task blocked for external acceptance, the still-held lease
 rebases that same generation to the rewritten subject while retaining the descendant baseline.
 Unblocking therefore resumes the same single-use authority rather than requiring another rewrite.
@@ -52,18 +55,17 @@ or make a real tree-changing rewrite, and must never use the ordinary crash-reco
 Before building that prompt, the loop requires the leased record to match current HEAD exactly.
 A mismatch launches no provider and parks the task blocked with manual guidance to restore the
 audited pre-attempt history; cycling the task state alone cannot repair stale Git history.
-An upgraded binary also bridges tasks that an older supervisor had already parked with the stale
-pre-rewrite subject: the host-authorized unblock holds the authority flock, recovers a
-reflog-reachable terminal commit whose semantic subject and ordered descendants exactly match the
-record, validates that old terminal-to-current-rewrite-terminal range, then validates the rebased
-record against current HEAD
-(which may include unrelated later task commits). While still holding the authority flock it first
-persists a non-authorizing pending form of the same generation, moves the folder, then activates the
-replacement. Pending uses a new record version that older binaries reject. Both a pre-move blocked
-task and a post-move todo task require an explicit host unblock retry; a lease never self-activates
-either pending form. Provider-written resolution prose cannot invoke this upgrade, and an
-authority-inspection error parks the task. Missing or excessive history candidates, changed
-records, direct folder moves, and semantic mismatches leave it stale.
+Complete active/pending records are versions 3/4. Their blocked recovery uses the exact persisted
+baseline HEAD as its only candidate, then validates the rewritten subject plus full replay before
+allowing a later host suffix. Versions 1/2 decode for diagnostics but authorize no lease,
+completion, activation, or automatic upgrade: they omitted an old HEAD anchor and all unbound
+history. After restoring the audited pre-attempt HEAD, a human must run
+`coop tasks unblock <id> --adopt-audit-head <full-sha> "<answer>"`; Coop requires that exact SHA and
+the legacy subject/bound projection, captures complete history, and retains the generation. The
+transaction first persists a non-authorizing v4 form, moves the folder, then activates v3. Both a
+pre-move blocked task and a post-move todo task require explicit host recovery; a lease never
+self-activates pending authority. Provider-written resolution prose cannot invoke adoption, and
+changed records, direct folder moves, overflow, or semantic mismatches remain inert.
 finalization copies it into the host completion receipt before consuming it, so crash replay can
 finish consumption and an accepted generation cannot be reused.
 
@@ -80,6 +82,9 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-26 — replaced the task-bound descendant projection with baseline-anchored complete
+  ordered history, including unbound commits; v1/v2 are inert until exact-HEAD host adoption, and
+  v3/v4 recovery uses only the persisted baseline.
 - 2026-07-26 — made leased work prompts and rejected-completion remedies distinguish
   host-authorized audit rework from ordinary commit-bound crash recovery; exact-HEAD preflight
   launches no provider and parks stale generations for explicit history restoration.
