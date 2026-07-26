@@ -348,7 +348,7 @@ func TestInit(t *testing.T) {
 	// The canonical cross-agent instructions teach professional use of native
 	// orchestration features without depending on one agent's exact command names.
 	agents, _ := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
-	for _, want := range []string{"/goal", "/batch", "subagents", "native", "do not invent slash commands", "Keep writes serialized"} {
+	for _, want := range []string{"/goal", "/batch", "subagents", "native", "do not invent slash commands", "Keep writes serialized", "static and bounded"} {
 		if !strings.Contains(string(agents), want) {
 			t.Errorf("AGENTS.md missing agent-stack guidance %q:\n%s", want, agents)
 		}
