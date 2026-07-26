@@ -1665,6 +1665,31 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		}
 	})
 
+	t.Run("audit completion restores with host-authority remedy", func(t *testing.T) {
+		repo, _ := newRepo(t)
+		id := "interrupted-audit"
+		seedDone(t, repo, id)
+		host := filepath.Join(repo, tasksRoot)
+		if err := writeAuditReopenRecord(host, testAuditReopenRecord(id, "generation-interrupted")); err != nil {
+			t.Fatal(err)
+		}
+		if err := reconcileInterruptedCompletions([]string{host}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(host, stateInProgress, id)
+		log := readFileString(filepath.Join(dir, "log.md"))
+		state := readFileString(filepath.Join(dir, "state.md"))
+		for _, want := range []string{"host-authorized review rework", "zero new commits", "tree actually changes"} {
+			if !strings.Contains(log, want) {
+				t.Errorf("reconciled audit log missing %q:\n%s", want, log)
+			}
+		}
+		if strings.Contains(log, "Coop-Recovery: <current UTC timestamp>") ||
+			!strings.Contains(state, "never add a Coop-Recovery trailer") {
+			t.Errorf("reconciled audit completion received ordinary recovery guidance:\nlog:\n%s\nstate:\n%s", log, state)
+		}
+	})
+
 	t.Run("unbound completion restores", func(t *testing.T) {
 		repo, _ := newRepo(t)
 		id := "interrupted-unbound"
@@ -1923,6 +1948,36 @@ func TestResumeLine(t *testing.T) {
 		if !strings.Contains(l, want) {
 			t.Errorf("resume line missing %q:\n%s", want, l)
 		}
+	}
+}
+
+func TestAuditResumeLine(t *testing.T) {
+	l := auditResumeLine("my-task")
+	// Host-authorized rework: verify the finding, then either a zero-commit re-close or a real
+	// tree change — with the recovery-only shapes forbidden by name.
+	for _, want := range []string{
+		"my-task", "host-authorized review rework", "NOT crash recovery", "log.md",
+		"independently verify", "ZERO new commits", "99_done/", "verification-only",
+		"tree actually changes", "exactly one reachable", "semantically unchanged",
+		"Do NOT add a Coop-Recovery trailer", "message-only", "recovery-only replay",
+	} {
+		if !strings.Contains(l, want) {
+			t.Errorf("audit resume line missing %q:\n%s", want, l)
+		}
+	}
+	// It forbids the recovery receipt but must never carry the case-(a) recipe that produces one.
+	for _, banned := range []string{"Coop-Recovery: <current UTC timestamp>", "determine which case applies", "amend the commit with"} {
+		if strings.Contains(l, banned) {
+			t.Errorf("audit resume line carries crash-recovery guidance %q:\n%s", banned, l)
+		}
+	}
+	// The lease's host audit authority — not commit presence — selects the audit preamble.
+	record := auditReopenRecord{TaskID: "my-task"}
+	if got := (&app{}).resumePrefixFor(t.TempDir(), "my-task", &record); got != l {
+		t.Errorf("resumePrefixFor with audit authority = %q, want the audit resume line", got)
+	}
+	if got := (&app{}).resumePrefixFor(t.TempDir(), "my-task", nil); got != "" {
+		t.Errorf("resumePrefixFor without commits or authority = %q, want empty", got)
 	}
 }
 
@@ -2857,7 +2912,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
 
 	item := readTaskTree(root)[0]
-	if err := restoreQueuedCompletion(queuedTask{Root: root, Item: item}); err != nil {
+	if err := restoreQueuedCompletion(queuedTask{Root: root, Item: item}, false); err != nil {
 		t.Fatalf("restoreQueuedCompletion: %v", err)
 	}
 	inProgressDir := filepath.Join(root, stateInProgress, id)
@@ -2897,6 +2952,123 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	}
 	if strings.Contains(rejectErr.Error(), "git commit --amend --no-edit --trailer") {
 		t.Errorf("controller error retained the index-unsafe amend command: %v", rejectErr)
+	}
+}
+
+func TestRestoreAuditRejectedCompletion(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-audit-reopened"
+	doneDir := filepath.Join(root, stateDone, id)
+	writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Audit\n")
+	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
+
+	item := readTaskTree(root)[0]
+	if err := restoreQueuedCompletion(queuedTask{Root: root, Item: item}, true); err != nil {
+		t.Fatalf("restoreQueuedCompletion: %v", err)
+	}
+	inProgressDir := filepath.Join(root, stateInProgress, id)
+	if !pathExists(inProgressDir) || pathExists(doneDir) {
+		t.Fatalf("rejected audit completion was not restored: in_progress=%v done=%v", pathExists(inProgressDir), pathExists(doneDir))
+	}
+	log := readFileString(filepath.Join(inProgressDir, "log.md"))
+	for _, want := range []string{"completion rejected", "host-authorized review rework", "zero new commits", "tree actually changes", "semantically", "rejected again", id} {
+		if !strings.Contains(log, want) {
+			t.Errorf("audit rejection log missing %q:\n%s", want, log)
+		}
+	}
+	// The audit remedy forbids the recovery receipt but must never prescribe its recipe.
+	for _, banned := range []string{"Coop-Recovery: <current UTC timestamp>", "git commit --amend"} {
+		if strings.Contains(log, banned) {
+			t.Errorf("audit rejection log prescribes the recovery recipe %q:\n%s", banned, log)
+		}
+	}
+	state := readFileString(filepath.Join(inProgressDir, "state.md"))
+	for _, want := range []string{"**Status:** in progress", "rejected by the host audit authority", "**Next action:** independently verify the audit finding, then re-close with zero commits or a real tree change"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("audit rejection state missing %q:\n%s", want, state)
+		}
+	}
+
+	rejectErr := auditCompletionError(id, nil)
+	if rejectErr == nil {
+		t.Fatal("audit-invalid completion must stop the controller")
+	}
+	for _, want := range []string{"completion rejected", "restored to in_progress", "host-authorized review rework", "zero-commit verification-only re-close", "semantically unchanged descendants", "then re-run `coop loop`", id} {
+		if !strings.Contains(rejectErr.Error(), want) {
+			t.Errorf("audit controller error missing %q: %v", want, rejectErr)
+		}
+	}
+	if strings.Contains(rejectErr.Error(), "Coop-Recovery: <current UTC timestamp>") {
+		t.Errorf("audit controller error prescribes the recovery trailer recipe: %v", rejectErr)
+	}
+}
+
+func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-01-01-stale-audit"
+	dir := filepath.Join(root, stateInProgress, id)
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Stale audit\n")
+	writeTaskFile(t, filepath.Join(dir, "log.md"), "# Log\n")
+	writeTaskFile(t, filepath.Join(dir, "state.md"), "# State\n")
+	writeTaskFile(t, filepath.Join(dir, "decision.md"), "# Prior decision\n\n**Resolution:** accepted earlier\n")
+
+	item := readTaskTree(root)[0]
+	if err := parkStaleAuditReopen(queuedTask{Root: root, Item: item}); err != nil {
+		t.Fatalf("parkStaleAuditReopen: %v", err)
+	}
+	blockedDir := filepath.Join(root, stateBlocked, id)
+	if !pathExists(blockedDir) || pathExists(dir) {
+		t.Fatalf("stale audit task was not parked: blocked=%v in_progress=%v", pathExists(blockedDir), pathExists(dir))
+	}
+	decision := readFileString(filepath.Join(blockedDir, "decision.md"))
+	for _, want := range []string{
+		"restore the host-audited Git baseline",
+		"restore the exact pre-attempt Git history",
+		"Blocking and unblocking alone cannot repair Git history",
+		"> **Resolution:** accepted earlier",
+	} {
+		if !strings.Contains(decision, want) {
+			t.Errorf("stale audit decision missing %q:\n%s", want, decision)
+		}
+	}
+	if decisionResolved(filepath.Join(blockedDir, "decision.md")) {
+		t.Errorf("stale audit decision retained a live prior resolution:\n%s", decision)
+	}
+	state := readFileString(filepath.Join(blockedDir, "state.md"))
+	for _, want := range []string{"**Status:** blocked", "stopped before provider launch", "never add a Coop-Recovery receipt"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("stale audit state missing %q:\n%s", want, state)
+		}
+	}
+}
+
+func TestRestoreCompromisedCompletionTrapFollowsLeaseAuthority(t *testing.T) {
+	cases := []struct {
+		name, want, banned string
+		audit              bool
+	}{
+		{name: "ordinary", want: "the next completion needs a unique Coop-Recovery trailer"},
+		{name: "audit", audit: true, want: "never a Coop-Recovery receipt", banned: "unique Coop-Recovery trailer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			id := "2026-01-01-compromised"
+			doneDir := filepath.Join(root, stateDone, id)
+			writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Compromised\n")
+			writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
+			item := readTaskTree(root)[0]
+			if err := restoreCompromisedCompletion(queuedTask{Root: root, Item: item}, tc.audit); err != nil {
+				t.Fatalf("restoreCompromisedCompletion: %v", err)
+			}
+			state := readFileString(filepath.Join(root, stateInProgress, id, "state.md"))
+			if !strings.Contains(state, tc.want) {
+				t.Errorf("compromised state missing %q:\n%s", tc.want, state)
+			}
+			if tc.banned != "" && strings.Contains(state, tc.banned) {
+				t.Errorf("audit compromised state prescribes %q:\n%s", tc.banned, state)
+			}
+		})
 	}
 }
 

@@ -46,6 +46,12 @@ receipt rewrite, and task-local forgery are rejected. Failed attempts retain the
 when a validated rewrite parks the task blocked for external acceptance, the still-held lease
 rebases that same generation to the rewritten subject while retaining the descendant baseline.
 Unblocking therefore resumes the same single-use authority rather than requiring another rewrite.
+The leased work prompt and any rejection remedy also select from that host authority: an
+audit-reopened task must independently verify the finding, then either re-close without a commit
+or make a real tree-changing rewrite, and must never use the ordinary crash-recovery receipt path.
+Before building that prompt, the loop requires the leased record to match current HEAD exactly.
+A mismatch launches no provider and parks the task blocked with manual guidance to restore the
+audited pre-attempt history; cycling the task state alone cannot repair stale Git history.
 An upgraded binary also bridges tasks that an older supervisor had already parked with the stale
 pre-rewrite subject: the host-authorized unblock holds the authority flock, recovers a
 reflog-reachable terminal commit whose semantic subject and ordered descendants exactly match the
@@ -74,6 +80,9 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-26 — made leased work prompts and rejected-completion remedies distinguish
+  host-authorized audit rework from ordinary commit-bound crash recovery; exact-HEAD preflight
+  launches no provider and parks stale generations for explicit history restoration.
 - 2026-07-26 — explicit host unblock transactionally upgrades a pre-existing stale blocked
   generation from a bounded exact reflog baseline through the current rewrite terminal, then
   validates current HEAD; a downgrade-safe, non-authorizing pending form makes both crash

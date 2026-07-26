@@ -739,7 +739,7 @@ func assertLoopAttemptContractsWithStreaming(t *testing.T, suite *directProcessS
 			t.Fatal(err)
 		}
 		provider := target.Provider
-		prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil)
+		prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil, false)
 		argv := loopProcessArgv(provider, target.Model, target.Effort, prompt)
 		if streaming {
 			var ok bool

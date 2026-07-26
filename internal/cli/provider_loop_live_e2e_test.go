@@ -84,7 +84,7 @@ func prepareProviderLoopLiveRepository(layout procharness.Layout, target agents.
 }
 
 func providerLoopLivePrompt(repo, provider string) string {
-	return loopWorkPrompt(repo, []string{tasksRoot}, providerLoopLiveTaskID(provider), provider, nil, nil)
+	return loopWorkPrompt(repo, []string{tasksRoot}, providerLoopLiveTaskID(provider), provider, nil, nil, false)
 }
 
 func snapshotProviderLoopLiveBaseline(layout procharness.Layout, repository liveprovider.RepositorySnapshot) (providerLoopLiveBaseline, error) {

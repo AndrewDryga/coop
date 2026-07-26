@@ -418,7 +418,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 		t.Fatal("fork loop changed the parent queue before merge")
 	}
 	assertForkProcessContract(t, suite, firstForkRunTrace(trace), ws, provider, account,
-		loopProcessArgv(provider, model, effort, loopWorkPrompt(ws, []string{tasksRoot}, taskID, provider, nil, nil)), model, effort)
+		loopProcessArgv(provider, model, effort, loopWorkPrompt(ws, []string{tasksRoot}, taskID, provider, nil, nil, false)), model, effort)
 
 	result, trace = suite.run(t, []string{"fork", "merge", name}, processScenario(provider, nil, 0, ""))
 	if result.Err != nil || result.ExitCode != 1 || len(trace) != 0 || !pathExists(ws) || !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, taskID)) {

@@ -2299,7 +2299,15 @@ func receiptIDs(ids []string) string {
 // CLAUDE.md→AGENTS.md symlink / AGENTS.md / GEMINI.md), so an unconditional "Read AGENTS.md" made
 // each iteration re-read ~2K tokens already in its context and burn a tool turn doing it — the
 // conditional keeps the fallback for a repo where the auto-load didn't happen.
-func loopWorkPrompt(repo string, queues []string, assignedID, agent string, peers []agents.Target, p *preset.Preset) string {
+func loopWorkPrompt(repo string, queues []string, assignedID, agent string, peers []agents.Target, p *preset.Preset, auditReopen bool) string {
+	commitPolicy := "Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge."
+	citationPolicy := "When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale."
+	completionPolicy := "AFTER the commit, refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review."
+	if auditReopen {
+		commitPolicy = "Do the work and run the gate. This task is host-authorized audit rework: if independent verification shows the finding is false, do NOT create, amend, or rewrite any commit — complete it with zero new commits. If the finding is real, amend or rewrite the already-bound implementation commit with a real tree change while keeping exactly one reachable `Coop-Task: <task-id>` binding and semantically unchanged later task commits."
+		citationPolicy = "If you cite the existing or rewritten implementation commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs rewritten commits on the host after this run, which changes their SHA."
+		completionPolicy = "AFTER the gate — and after rewriting the existing implementation commit only when a real fix was required — refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review."
+	}
 	instructions := strings.Join([]string{
 		"The project contract is your instruction file, normally already loaded in your context — read %s only if its content is not.",
 		"Read the task queue(s) %s, then work the queue per the protocol. A task is a folder under a queue dir and its state is its directory (named with a sort prefix): 00_todo/ · 10_in_progress/ · 50_blocked/ · 99_done/.",
@@ -2310,9 +2318,9 @@ func loopWorkPrompt(repo string, queues []string, assignedID, agent string, peer
 		"Put disposable but resumable scratch work (temporary worktrees, patches, generated files) under the assigned task's tmp/ directory; it survives interruption and blocked transitions but Coop removes it on completion. Before finishing, promote anything a reviewer or future maintainer needs to the task's durable artifacts/ directory.",
 		"Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit).",
 		"Do not end your turn while any gate, consult, delegate, or other background job you started remains live; wait for and inspect its result, and rerun an ambiguous gate in the foreground.",
-		"Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge.",
-		"When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale.",
-		"AFTER the commit, refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review.",
+		commitPolicy,
+		citationPolicy,
+		completionPolicy,
 		"If you hit a one-way-door decision, move its folder into 50_blocked/ and fill in its decision.md.",
 		"If you SPOT a SEPARATE task while working (not part of this one), do NOT fold it into your commit: a simple, ready fix → create its folder in 00_todo/ with a task.md whose acceptance you can state in a line (a later iteration works it); a big one that needs a spec → create it under xx_backlog/ instead (the backlog is only for the big/not-yet-ready, never small stuff).",
 		"Work exactly ONE task per run: take the assigned task to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",
@@ -2977,15 +2985,32 @@ reviewAgain:
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			active := assigned.Item.Title
 			ui.Info("%s · owned by %s", progressBanner(n, c, active), agent)
-			// Informed resume: if an in_progress task already carries a landed Coop-Task commit (a crash
-			// after commit before the folder-move, or a review reopen), prepend a line telling the agent
-			// to disambiguate and act — instead of blindly redoing it. Empty prefix → prompt unchanged.
-			work := loopWorkPrompt(repo, queues, assigned.Item.ID, agent, peers, a.preset)
+			// Informed resume: a lease carrying host audit-reopen authority gets the audit-rework
+			// preamble (verify the finding; zero-commit re-close or a real tree change — never a
+			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
+			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
+			iterHead := gitOut(repo, "rev-parse", "HEAD")
+			if authorityErr := validateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.reopen); authorityErr != nil {
+				parkErr := parkStaleAuditReopen(assigned)
+				releaseErr := lease.release()
+				if parkErr != nil {
+					return 1, errors.Join(
+						authorityErr,
+						fmt.Errorf("could not park stale audit task %s: %w", assigned.Item.ID, parkErr),
+						releaseErr,
+					)
+				}
+				return 1, errors.Join(
+					fmt.Errorf("%w; %s", authorityErr, staleAuditReopenRecovery(assigned.Item.ID)),
+					releaseErr,
+				)
+			}
+			work := loopWorkPrompt(repo, queues, assigned.Item.ID, agent, peers, a.preset, lease.reopen != nil)
 			iterWork := work
-			if pre := a.resumePrefixFor(repo, assigned.Item.ID); pre != "" {
+			if pre := a.resumePrefixFor(repo, assigned.Item.ID, lease.reopen); pre != "" {
 				iterWork = pre + "\n\n" + work
 			}
-			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+			iterStart := time.Now()
 			cmd, streaming := iterCmd(agent, iterWork)
 			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active)
 			if errors.Is(runErr, errCompletionWindowSetup) {
@@ -3044,13 +3069,13 @@ reviewAgain:
 			var restoreErr error
 			if departureErr != nil {
 				if assignedCompletion != nil {
-					restoreErr = restoreCompromisedCompletion(*assignedCompletion)
+					restoreErr = restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil)
 				}
 				return 1, errors.Join(departureErr, restoreErr, lease.release(), windows.abandon())
 			}
 			if len(departed) > 0 {
 				if assignedCompletion != nil {
-					restoreErr = restoreCompromisedCompletion(*assignedCompletion)
+					restoreErr = restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil)
 				}
 				var windowErr error
 				if restoreErr != nil {
@@ -3063,7 +3088,7 @@ reviewAgain:
 				return 1, errors.Join(departureErr, restoreErr, releaseErr)
 			}
 			if len(missing) > 0 {
-				restoreErr = errors.Join(restoreErr, restoreQueuedCompletion(*assignedCompletion))
+				restoreErr = errors.Join(restoreErr, restoreQueuedCompletion(*assignedCompletion, lease.reopen != nil))
 				var windowErr error
 				if restoreErr != nil {
 					windowErr = windows.abandon()
@@ -3075,11 +3100,17 @@ reviewAgain:
 				if len(unowned) > 0 {
 					unownedErr = unownedCompletionError(unowned, nil)
 				}
-				return 1, errors.Join(unbindableCompletionError(missing, restoreErr), unownedErr, releaseErr)
+				bindErr := unbindableCompletionError(missing, restoreErr)
+				if lease.reopen != nil {
+					// With audit authority, missing is exactly the assigned reopened task and the
+					// failure was the semantic replay validation, not trailer counting.
+					bindErr = auditCompletionError(missing[0], restoreErr)
+				}
+				return 1, errors.Join(bindErr, unownedErr, releaseErr)
 			}
 			if len(unowned) > 0 {
 				if assignedCompletion != nil {
-					restoreErr = errors.Join(restoreErr, restoreCompromisedCompletion(*assignedCompletion))
+					restoreErr = errors.Join(restoreErr, restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil))
 				}
 				var windowErr error
 				if restoreErr != nil {

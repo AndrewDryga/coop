@@ -699,10 +699,14 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 					{Target: signoff, Stage: "signoff", Result: "pass"},
 				}
 				suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
+				recloseHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
 				reclosed := runLoopReview(t, suite, work, 20*time.Second)
 				if reclosed.Err != nil || reclosed.ExitCode != 0 {
 					t.Fatalf("verification-only re-close after unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 						reclosed.ExitCode, reclosed.Err, reclosed.Stdout, reclosed.Stderr)
+				}
+				if got := loopProcessGit(t, suite, "rev-parse", "HEAD"); got != recloseHead {
+					t.Fatalf("verification-only re-close changed HEAD from %s to %s", recloseHead, got)
 				}
 				for _, id := range []string{taskID, descendantID} {
 					if got := commitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
@@ -721,6 +725,84 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				}
 				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts, false)
 			})
+		}
+	})
+
+	t.Run("stale active audit authority stops before provider launch", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "stale-active-audit-reopen"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		root := filepath.Join(suite.layout.Repo, tasksRoot)
+		task, ok := currentTask(root, taskID)
+		if !ok || task.State != stateTodo {
+			t.Fatal("stale-authority fixture task is not todo")
+		}
+		if err := moveTaskDir(root, task, stateInProgress); err != nil {
+			t.Fatal(err)
+		}
+		change := filepath.Join(suite.layout.Repo, "loop-claude.txt")
+		if err := os.WriteFile(change, []byte("completed by claude\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loopProcessGit(t, suite, "add", "loop-claude.txt")
+		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: stale audit subject", "-m", "Coop-Task: "+taskID)
+		record, err := captureAuditReopen(suite.layout.Repo, taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(testLeaseAuthorityRootEnv, filepath.Join(
+			suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion,
+		))
+		if err := os.MkdirAll(os.Getenv(testLeaseAuthorityRootEnv), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeAuditReopenRecord(root, record); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(change, []byte("changed outside host authority\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loopProcessGit(t, suite, "add", "loop-claude.txt")
+		loopProcessGit(t, suite, "commit", "--amend", "-q", "--no-edit")
+		head := loopProcessGit(t, suite, "rev-parse", "HEAD")
+		if auditReopenCurrentValid(suite.layout.Repo, head, taskID, record) {
+			t.Fatal("stale-authority fixture unexpectedly remained current-valid")
+		}
+
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, nil, nil, 3)
+		attempts := []loopProcessAttempt{{Target: work, Stage: "work", Result: "verify-only-after-block"}}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 5*time.Second)
+		for _, want := range []string{
+			"host audit-reopen authority no longer matches current HEAD",
+			"no provider started",
+			"task parked in blocked",
+			"restore the exact audited pre-attempt Git history",
+			"coop tasks unblock " + taskID,
+			"blocking and unblocking alone cannot repair Git history",
+		} {
+			if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, want) {
+				t.Fatalf("stale audit authority = exit %d err %v, missing %q\nstdout:\n%s\nstderr:\n%s",
+					result.ExitCode, result.Err, want, result.Stdout, result.Stderr)
+			}
+		}
+		for _, event := range readProcessTrace(t, suite.layout.Trace) {
+			if event.Source == "provider" || event.Source == "runtime" && event.Event == "run" {
+				t.Fatalf("stale audit authority launched external work: %#v", event)
+			}
+		}
+		current, ok := currentTask(root, taskID)
+		if !ok || current.State != stateBlocked {
+			t.Fatal("stale audit authority did not park the task")
+		}
+		decision, err := os.ReadFile(filepath.Join(current.Dir, "decision.md"))
+		if err != nil || !strings.Contains(string(decision), "restore the exact pre-attempt Git history") ||
+			!strings.Contains(string(decision), "Blocking and unblocking alone cannot repair Git history") {
+			t.Fatalf("stale audit decision = %q, %v", decision, err)
+		}
+		if got, ok, err := readAuditReopenRecord(root, taskID); err != nil || !ok || !sameAuditReopenRecord(got, record) {
+			t.Fatalf("stale audit authority changed the host record: got=%#v ok=%v err=%v", got, ok, err)
 		}
 	})
 
@@ -918,7 +1000,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "reachable HEAD each need exactly one commit") {
+		if result.Err != nil || result.ExitCode != 1 ||
+			!strings.Contains(result.Stderr, "host audit authority accepts only") {
 			t.Fatalf("second binding = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) ||
@@ -929,6 +1012,38 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("fixture produced %d reachable bindings, want 2: %v", len(commits), commits)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+
+		traceBeforeRetry := readProcessTrace(t, suite.layout.Trace)
+		retry := runLoopReview(t, suite, work, 5*time.Second)
+		for _, want := range []string{
+			"host audit-reopen authority no longer matches current HEAD",
+			"no provider started",
+			"task parked in blocked",
+			"restore the exact audited pre-attempt Git history",
+			"blocking and unblocking alone cannot repair Git history",
+		} {
+			if retry.Err != nil || retry.ExitCode != 1 || !strings.Contains(retry.Stderr, want) {
+				t.Fatalf("second binding retry = exit %d err %v, missing %q\nstdout:\n%s\nstderr:\n%s",
+					retry.ExitCode, retry.Err, want, retry.Stdout, retry.Stderr)
+			}
+		}
+		traceAfterRetry := readProcessTrace(t, suite.layout.Trace)
+		if len(traceAfterRetry) < len(traceBeforeRetry) {
+			t.Fatalf("second binding retry truncated process trace: before=%d after=%d", len(traceBeforeRetry), len(traceAfterRetry))
+		}
+		for _, event := range traceAfterRetry[len(traceBeforeRetry):] {
+			if event.Source == "provider" || event.Source == "runtime" && event.Event == "run" {
+				t.Fatalf("second binding retry launched external work: %#v", event)
+			}
+		}
+		current, ok := currentTask(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+		if !ok || current.State != stateBlocked {
+			t.Fatalf("second binding retry task = %+v/%v, want blocked", current, ok)
+		}
+		decision, err := os.ReadFile(filepath.Join(current.Dir, "decision.md"))
+		if err != nil || !strings.Contains(string(decision), "restore the exact pre-attempt Git history") {
+			t.Fatalf("second binding retry decision = %q, %v", decision, err)
+		}
 	})
 
 	t.Run("worker cannot forge review authority for an archived task", func(t *testing.T) {

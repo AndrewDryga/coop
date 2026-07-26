@@ -70,7 +70,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					t.Fatalf("coop loop %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", target, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 				}
 
-				prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil)
+				prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil, false)
 				argv := loopProcessArgv(provider, model, effort, prompt)
 				assertDirectRunContract(t, suite, trace, provider, "work", argv, model, effort)
 				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", suite.repoHead, 1, false)

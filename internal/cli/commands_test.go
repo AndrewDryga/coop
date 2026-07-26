@@ -145,14 +145,14 @@ func TestLoopTaskLimitRejectsLostSelection(t *testing.T) {
 // unable to read their own queue (claude resolved it against cwd and was fine).
 func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	repo := "/home/node/proj"
-	work := loopWorkPrompt(repo, []string{".agent/tasks"}, "task-42", "claude", nil, nil)
+	work := loopWorkPrompt(repo, []string{".agent/tasks"}, "task-42", "claude", nil, nil, false)
 	for _, want := range []string{"/home/node/proj/.agent/tasks", "/home/node/proj/AGENTS.md"} {
 		if !strings.Contains(work, want) {
 			t.Errorf("work prompt missing absolute %q:\n%s", want, work)
 		}
 	}
 	// Several queues (a monorepo's per-component trees) are all listed, each absolute.
-	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"}, "task-42", "claude", nil, nil)
+	multi := loopWorkPrompt(repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"}, "task-42", "claude", nil, nil, false)
 	for _, want := range []string{"/home/node/proj/portal/.agent/tasks", "/home/node/proj/runner/.agent/tasks"} {
 		if !strings.Contains(multi, want) {
 			t.Errorf("multi-queue work prompt missing %q:\n%s", want, multi)
@@ -182,7 +182,7 @@ func TestReviewRepoReadOnly(t *testing.T) {
 }
 
 func TestLoopWorkPromptPeerCapabilities(t *testing.T) {
-	withoutPeers := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil)
+	withoutPeers := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil, false)
 	for _, want := range []string{"no peer wrappers are mounted", "`coop-consult` and `coop-delegate` are unavailable", "do not invoke or probe them"} {
 		if !strings.Contains(withoutPeers, want) {
 			t.Errorf("no-peer work prompt missing %q:\n%s", want, withoutPeers)
@@ -193,7 +193,7 @@ func TestLoopWorkPromptPeerCapabilities(t *testing.T) {
 		{Provider: "codex", Model: "gpt-5.5"},
 		{Provider: "gemini"},
 	}
-	withPeers := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", peers, nil)
+	withPeers := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", peers, nil, false)
 	for _, want := range []string{
 		"`coop-consult` is available", "configured read-only targets only", "codex:gpt-5.5, gemini",
 		"`coop-delegate` is unavailable", "do not invoke it", "Do not assume any other peers or preset roles are mounted",
@@ -212,7 +212,7 @@ func TestLoopWorkPromptPeerCapabilities(t *testing.T) {
 		{Name: "critic", Mode: preset.ModeConsult},
 		{Name: "fast", Mode: preset.ModeDelegate},
 	}}
-	withRoles := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", peers, rolePreset)
+	withRoles := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", peers, rolePreset, false)
 	for _, want := range []string{"read-only targets only: critic", "write-capable roles only: fast"} {
 		if !strings.Contains(withRoles, want) {
 			t.Errorf("preset work prompt missing actual role capability %q:\n%s", want, withRoles)
@@ -243,7 +243,7 @@ func TestDropDashDash(t *testing.T) {
 // state.md + the git diff, finalize state.md (never blank it), and work ONE task per run then stop
 // so the loop re-invokes a fresh agent for the next — not one agent draining the queue itself.
 func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
-	work := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil)
+	work := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil, false)
 	for _, want := range []string{
 		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/", "into 50_blocked/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
@@ -266,6 +266,27 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	for _, forbidden := range []string{"pick the next task", "claim it by moving", "take the task you claimed"} {
 		if strings.Contains(work, forbidden) {
 			t.Errorf("folder work prompt still delegates host-side selection/claim with %q:\n%s", forbidden, work)
+		}
+	}
+}
+
+func TestLoopWorkPromptAuditFinalization(t *testing.T) {
+	work := loopWorkPrompt("/repo", []string{".agent/tasks"}, "task-42", "claude", nil, nil, true)
+	for _, want := range []string{
+		"host-authorized audit rework",
+		"finding is false, do NOT create, amend, or rewrite any commit",
+		"zero new commits",
+		"finding is real",
+		"real tree change",
+		"after rewriting the existing implementation commit only when a real fix was required",
+	} {
+		if !strings.Contains(work, want) {
+			t.Errorf("audit work prompt missing %q:\n%s", want, work)
+		}
+	}
+	for _, forbidden := range []string{"then commit your work", "AFTER the commit"} {
+		if strings.Contains(work, forbidden) {
+			t.Errorf("audit work prompt retained unconditional commit guidance %q:\n%s", forbidden, work)
 		}
 	}
 }

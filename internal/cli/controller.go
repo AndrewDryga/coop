@@ -649,7 +649,18 @@ func reconcileInterruptedCompletions(hosts []string) error {
 				}
 				continue
 			}
-			restoreErr := restoreQueuedCompletion(queuedTask{Root: host, Item: current})
+			record, hasAuditAuthority, authorityErr := readAuditReopenRecord(host, current.ID)
+			if authorityErr != nil {
+				restoreErrs = append(restoreErrs, errors.Join(
+					fmt.Errorf("inspect interrupted task %s audit authority: %w", current.ID, authorityErr),
+					lock.release(),
+				))
+				continue
+			}
+			restoreErr := restoreQueuedCompletion(
+				queuedTask{Root: host, Item: current},
+				hasAuditAuthority && !record.UnblockPending,
+			)
 			clearErr := lock.clearCompleted()
 			unlockErr := lock.release()
 			if err := errors.Join(restoreErr, clearErr, unlockErr); err != nil {
@@ -1345,7 +1356,7 @@ func unbindableTasks(repo, base, head string, finished []string) []string {
 	return missing
 }
 
-func restoreQueuedCompletion(task queuedTask) error {
+func restoreQueuedCompletion(task queuedTask, audit bool) error {
 	id := task.Item.ID
 	if task.Item.State == stateDone {
 		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
@@ -1354,11 +1365,16 @@ func restoreQueuedCompletion(task queuedTask) error {
 	}
 	dir := filepath.Join(task.Root, stateInProgress, id)
 	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", coopTaskTrailer, taskBindingRecovery(id))
+	normalize := normalizeRejectedTaskState
+	if audit {
+		note = fmt.Sprintf("completion rejected: %s; then re-run `coop loop`", auditBindingRecovery(id))
+		normalize = normalizeAuditRejectedTaskState
+	}
 	var errs []error
 	if err := appendTaskLogStrict(dir, note); err != nil {
 		errs = append(errs, fmt.Errorf("record rejection for task %s: %w", id, err))
 	}
-	if err := normalizeRejectedTaskState(id, dir); err != nil {
+	if err := normalize(id, dir); err != nil {
 		errs = append(errs, fmt.Errorf("refresh rejected task %s: %w", id, err))
 	}
 	return errors.Join(errs...)
@@ -1396,7 +1412,7 @@ func restoreUnownedCompletion(task queuedTask) error {
 	)
 }
 
-func restoreCompromisedCompletion(task queuedTask) error {
+func restoreCompromisedCompletion(task queuedTask, audit bool) error {
 	id := task.Item.ID
 	if task.Item.State == stateDone {
 		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
@@ -1404,10 +1420,17 @@ func restoreCompromisedCompletion(task queuedTask) error {
 		}
 	}
 	dir := filepath.Join(task.Root, stateInProgress, id)
+	// The restored task's next completion is validated by its lease authority: a Coop-Recovery
+	// receipt closes an ordinary rejected range, but under audit authority that same receipt is the
+	// message-only rewrite audit validation rejects.
+	trap := "the next completion needs a unique Coop-Recovery trailer"
+	if audit {
+		trap = "the next completion stays under the host audit authority: zero new commits or a real tree change, never a Coop-Recovery receipt"
+	}
 	note := "completion rejected: this iteration also moved an unleased task, so its assigned completion was restored for a clean reviewed attempt"
 	return errors.Join(
 		appendTaskLogStrict(dir, note),
-		normalizeTaskState(id, dir, "in progress — completion rejected", "resume the assigned task and complete it without touching another task", "the assigned work committed but its iteration violated task ownership", "the next completion needs a unique Coop-Recovery trailer"),
+		normalizeTaskState(id, dir, "in progress — completion rejected", "resume the assigned task and complete it without touching another task", "the assigned work committed but its iteration violated task ownership", trap),
 	)
 }
 
@@ -1437,6 +1460,17 @@ func normalizeRejectedTaskState(id, taskDir string) error {
 	)
 }
 
+func normalizeAuditRejectedTaskState(id, taskDir string) error {
+	return normalizeTaskState(
+		id,
+		taskDir,
+		"in progress — completion rejected",
+		"independently verify the audit finding, then re-close with zero commits or a real tree change, and re-run `coop loop`",
+		"completion was rejected by the host audit authority",
+		"a message-only rewrite or a recovery-only descendant replay is rejected; never add a Coop-Recovery trailer",
+	)
+}
+
 func unbindableCompletionError(ids []string, restoreErr error) error {
 	recoveries := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -1462,6 +1496,30 @@ func taskBindingRecovery(id string) string {
 			"binding; never add a second task-bound commit",
 		coopTaskTrailer+": "+id, coopTaskTrailer,
 	)
+}
+
+// auditBindingRecovery replaces the generic trailer recipe when the host's audit-reopen authority
+// owns the completion. The case-(a) receipt (a Coop-Recovery trailer on an unchanged tree) is
+// exactly the shape audit validation rejects, so the remedy never prescribes it: either the
+// finding is false and the re-close needs zero commits, or it is real and the subject tree must
+// actually change.
+func auditBindingRecovery(id string) string {
+	return fmt.Sprintf(
+		"task %s is host-authorized review rework: independently verify the recorded finding; if it is false, "+
+			"re-close with zero new commits; if it is real, amend or rewrite the already-bound implementation "+
+			"commit so its tree actually changes, keeping exactly one reachable %s binding and semantically "+
+			"unchanged later task commits; a Coop-Recovery trailer, a message-only commit, or a recovery-only "+
+			"replay of unchanged descendants will be rejected again",
+		id, coopTaskTrailer,
+	)
+}
+
+func auditCompletionError(id string, restoreErr error) error {
+	msg := fmt.Sprintf("completion rejected for audit-reopened task %s: the host audit authority accepts only a zero-commit verification-only re-close or a rewrite whose subject tree actually changes with semantically unchanged descendants; task restored to in_progress — %s; then re-run `coop loop`", id, auditBindingRecovery(id))
+	if restoreErr != nil {
+		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
+	}
+	return errors.New(msg)
 }
 
 func unownedCompletionError(ids []string, restoreErr error) error {
@@ -1494,10 +1552,129 @@ func resumeLine(id string, commits []string) string {
 		"binding and semantically unchanged later task commits; do not add a second task-bound commit. Disambiguate before acting."
 }
 
-// resumePrefixFor builds the informed-resume preamble for the assigned task when its Coop-Task
-// trailer is already in history. Empty when none, so a fresh claim keeps the ordinary prompt.
-func (a *app) resumePrefixFor(repo, id string) string {
+// auditResumeLine is the informed-resume preamble when the assigned lease carries the host's
+// audit-reopen authority. The record — not commit presence — selects the remedy: this is
+// host-authorized review rework, never case-(a) crash recovery, and the case-(a) recipe (a
+// Coop-Recovery receipt on an unchanged tree) is exactly what audit completion validation rejects.
+func auditResumeLine(id string) string {
+	return "Task " + id + " is host-authorized review rework: a host audit reopened it, and its Coop-Task " +
+		"commit is already in history — this is NOT crash recovery. Read its log.md/state.md for the recorded " +
+		"finding and independently verify it. If the finding is false, re-close with ZERO new commits: leave " +
+		"history untouched and move the task folder to 99_done/ — the host audit authority accepts a " +
+		"verification-only completion. If the finding is real, do the rework by amending or rewriting the " +
+		"already-bound implementation commit so its tree actually changes, keeping exactly one reachable " +
+		"Coop-Task binding and semantically unchanged later task commits. Do NOT add a Coop-Recovery trailer, " +
+		"a message-only or receipt-only commit, or a recovery-only replay of unchanged descendants — a history " +
+		"rewrite without a real tree change will be rejected."
+}
+
+// resumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the
+// host's audit-reopen authority selects the audit-rework preamble regardless of commit presence;
+// otherwise the Coop-Task trailer already in history selects the crash/reopen disambiguation line.
+// Empty when neither applies, so a fresh claim keeps the ordinary prompt.
+func (a *app) resumePrefixFor(repo, id string, reopen *auditReopenRecord) string {
+	if reopen != nil {
+		return auditResumeLine(id)
+	}
 	return resumeLine(id, commitsForTask(repo, "", id))
+}
+
+func validateLeasedAuditReopen(repo, head, id string, reopen *auditReopenRecord) error {
+	if reopen == nil || auditReopenCurrentValid(repo, head, id, *reopen) {
+		return nil
+	}
+	return fmt.Errorf(
+		"task %s host audit-reopen authority no longer matches current HEAD — no provider started",
+		id,
+	)
+}
+
+func staleAuditReopenRecovery(id string) string {
+	return fmt.Sprintf(
+		"task parked in blocked: preserve any wanted work separately, restore the exact audited "+
+			"pre-attempt Git history from reflog or backup, then run `coop tasks unblock %s "+
+			"\"restored audited pre-attempt HEAD\"`; blocking and unblocking alone cannot repair Git history",
+		id,
+	)
+}
+
+// parkStaleAuditReopen removes a stale host authority from the unattended work queue without
+// discarding the rejected Git rewrite. The operator must restore the exact audited baseline before
+// explicit unblock can reactivate that generation. Metadata and the folder move roll back together
+// so a failed decision/state write never leaves a malformed blocked task.
+func parkStaleAuditReopen(task queuedTask) error {
+	id := task.Item.ID
+	if task.Item.State != stateInProgress {
+		return fmt.Errorf("park stale audit task %s from %s: want in progress", id, stateLabel(task.Item.State))
+	}
+	metadata, err := snapshotTaskMetadata(task.Item.Dir, "decision.md", "log.md", "state.md")
+	if err != nil {
+		return fmt.Errorf("snapshot stale audit task %s: %w", id, err)
+	}
+	if err := moveTaskDir(task.Root, task.Item, stateBlocked); err != nil {
+		return fmt.Errorf("move stale audit task %s to blocked: %w", id, err)
+	}
+	blockedDir := filepath.Join(task.Root, stateBlocked, id)
+	rollback := func(cause error) error {
+		metadataErr := restoreTaskMetadata(blockedDir, metadata)
+		current := task.Item
+		current.State = stateBlocked
+		current.Dir = blockedDir
+		moveErr := moveTaskDir(task.Root, current, stateInProgress)
+		return errors.Join(cause, metadataErr, moveErr)
+	}
+	if err := writeStaleAuditReopenDecision(blockedDir, id, task.Item.Title, metadata["decision.md"]); err != nil {
+		return rollback(fmt.Errorf("write stale audit decision for task %s: %w", id, err))
+	}
+	if err := appendTaskLogStrict(blockedDir, "host preflight parked this task because current HEAD no longer matches its audit-reopen authority; restore the exact audited pre-attempt Git history before explicit unblock — blocking and unblocking alone cannot repair Git history"); err != nil {
+		return rollback(fmt.Errorf("record stale audit park for task %s: %w", id, err))
+	}
+	if err := normalizeTaskState(
+		id,
+		blockedDir,
+		"blocked — stale audit authority",
+		"preserve wanted work separately, restore the exact audited pre-attempt Git history, then explicitly unblock this task",
+		"the host stopped before provider launch because current HEAD no longer matches its audit authority",
+		"blocking and unblocking alone cannot repair Git history; never add a Coop-Recovery receipt",
+	); err != nil {
+		return rollback(fmt.Errorf("refresh stale audit task %s: %w", id, err))
+	}
+	return nil
+}
+
+func writeStaleAuditReopenDecision(taskDir, id, title string, previous taskMetadataSnapshot) error {
+	body := fmt.Sprintf(
+		"# Decision: restore the host-audited Git baseline for %q\n\n"+
+			"**Blocks:** this task (`%s`).\n\n"+
+			"**The decision:** Current HEAD no longer matches the host authority captured before "+
+			"this audit-rework attempt. Coop cannot safely infer which rejected history to discard.\n\n"+
+			"**Options:**\n"+
+			"- **A — restore the audited baseline:** Preserve any wanted work separately, then restore "+
+			"the exact pre-attempt Git history from reflog or backup.\n"+
+			"- **B — stop for manual authority repair:** Use this when the exact baseline is unavailable; "+
+			"do not manufacture a recovery receipt or merely cycle the task state.\n\n"+
+			"**Recommendation:** Choose A, verify the repository is back at the exact audited baseline, "+
+			"then run `coop tasks unblock %s \"restored audited pre-attempt HEAD\"`. Blocking and "+
+			"unblocking alone cannot repair Git history.\n\n"+
+			"---\n\n"+
+			"**Resolution:** <!-- HUMAN: record how the audited baseline was restored, then explicitly unblock -->\n",
+		title, id, id,
+	)
+	if previous.exists && strings.TrimSpace(string(previous.body)) != "" {
+		var quoted strings.Builder
+		for _, line := range strings.Split(strings.TrimRight(string(previous.body), "\n"), "\n") {
+			quoted.WriteString("> ")
+			quoted.WriteString(line)
+			quoted.WriteByte('\n')
+		}
+		body += "\n## Previous decision record\n\n" + quoted.String()
+	}
+	root, err := openTaskMetadataRoot(taskDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return atomicWriteTaskFile(root, "decision.md", []byte(body))
 }
 
 type taskAssignmentOutcome uint8

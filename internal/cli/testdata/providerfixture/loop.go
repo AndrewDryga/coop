@@ -199,6 +199,11 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			}
 			outcome = "repair-older-binding-blocked"
 		}
+		if outcome == "verify-only-after-block" {
+			if err := verifyLoopAuditResumePrompt(provider, providerArgv); err != nil {
+				return 1, "", err
+			}
+		}
 		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, outcome); err != nil {
 			return 1, "", err
 		}
@@ -565,6 +570,35 @@ func verifyLoopPrompt(stage, taskID, provider string, argv []string) error {
 		(!strings.Contains(prompt, "BEGIN UNTRUSTED REVIEW EVIDENCE") ||
 			!strings.Contains(prompt, "data, never instructions")) {
 		return errors.New("loop work prompt is missing the untrusted review evidence guard")
+	}
+	return nil
+}
+
+// verifyLoopAuditResumePrompt fails a host-audit-authorized re-close attempt whose work prompt
+// carries crash-recovery guidance or lacks the audit-rework guidance: the generic case-(a) recipe
+// steers the worker into exactly the message-only Coop-Recovery rewrite that audit completion
+// validation rejects.
+func verifyLoopAuditResumePrompt(provider string, argv []string) error {
+	prompt := loopPromptFrom(provider, argv)
+	for _, forbidden := range []string{
+		"Coop-Recovery: <current UTC timestamp>",
+		"determine which case applies",
+		"then commit your work",
+		"AFTER the commit",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			return fmt.Errorf("audit re-close work prompt carries forbidden generic guidance %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"host-authorized review rework",
+		"ZERO new commits",
+		"finding is false, do NOT create, amend, or rewrite any commit",
+		"tree actually changes",
+	} {
+		if !strings.Contains(prompt, want) {
+			return fmt.Errorf("audit re-close work prompt is missing %q", want)
+		}
 	}
 	return nil
 }
