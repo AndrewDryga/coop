@@ -473,7 +473,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// output (and the real error) when you need to diagnose a failure. EnsureServices validates
 			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here and the
 			// session continues WITHOUT services rather than running anything host-dangerous.
-			if err := EnsureServices(rt, spec.Repo, projectPolicyRepo(spec), io.Discard, io.Discard); err != nil {
+			if _, err := EnsureServices(rt, spec.Repo, projectPolicyRepo(spec), io.Discard, io.Discard); err != nil {
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
 			}
 		}

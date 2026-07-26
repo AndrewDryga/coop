@@ -786,8 +786,9 @@ var commandHelp = map[string]string{
 
   Usage: coop up
 
-  Brings up the services in .agent/compose.yml on coop's network; an agent in
-  the box reaches db/redis/... by hostname. Stop them with: coop down`,
+  Brings up the services in .agent/compose.yml on coop's network. The final
+  status names the exact resolved Compose services, in Compose order; an agent
+  in the box reaches each one by that hostname. Stop them with: coop down`,
 
 	"down": `coop down [-v] — stop the repo's sibling services.
 

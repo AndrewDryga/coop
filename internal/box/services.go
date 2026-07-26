@@ -1,6 +1,7 @@
 package box
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,23 +15,22 @@ import (
 
 // EnsureServices brings the repo's sibling services up (compose up -d --wait) so a box can
 // reach them by name. It is idempotent — already-running services are a fast no-op — and a
-// no-op (nil) when the repo has no compose file. Progress is written to stdout/stderr; the
-// caller decides where to point them and gates on a compose-capable runtime (Apple
-// `container` has no compose). Shared by `coop up` and box.Run's auto-start.
-func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer) error {
+// no-op (nil, nil) when the repo has no compose file. On success it returns the non-empty
+// service names in Compose's resolved order, from the same project and file selection it
+// started. Progress is written to stdout/stderr; the caller decides where to point them and
+// gates on a compose-capable runtime (Apple `container` has no compose). Shared by `coop up`
+// and box.Run's auto-start.
+func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer) ([]string, error) {
 	file := ComposeFile(workspace, policyRepo)
 	if file == "" {
-		return nil
+		return nil, nil
 	}
 	// coop runs this file on the HOST daemon, so validate it first: an in-box agent may author it
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
 	if err := ValidateComposeFile(file, workspace); err != nil {
-		return fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
-	}
-	if err := reconcileLegacyServices(rt, workspace, file, stdout, stderr); err != nil {
-		return err
+		return nil, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
 	proj := ComposeProject(workspace)
 	args := []string{"compose", "-p", proj, "-f", file}
@@ -39,13 +39,41 @@ func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, st
 	if sp := ServicePorts(rt, workspace, file); len(sp) > 0 {
 		override, cleanup, err := writeServiceOverride(sp)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer cleanup()
 		args = append(args, "-f", override)
 	}
-	args = append(args, "up", "-d", "--wait", "--remove-orphans")
-	return runCompose(rt, stdout, stderr, "up", args)
+	services, err := resolvedComposeServices(rt, args, stderr)
+	if err != nil {
+		return nil, err
+	}
+	if err := reconcileLegacyServices(rt, workspace, file, stdout, stderr); err != nil {
+		return nil, err
+	}
+	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
+	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
+		return nil, err
+	}
+	return services, nil
+}
+
+func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer) ([]string, error) {
+	var stdout bytes.Buffer
+	configArgs := append(append([]string(nil), args...), "config", "--services")
+	if err := runCompose(rt, &stdout, stderr, "config --services", configArgs); err != nil {
+		return nil, err
+	}
+	var services []string
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			services = append(services, name)
+		}
+	}
+	if len(services) == 0 {
+		return nil, errors.New("compose config --services returned no services")
+	}
+	return services, nil
 }
 
 // DownServices stops the current workspace's hashed Compose project and reconciles a positively

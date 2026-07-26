@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -47,7 +48,11 @@ func TestAutoUpServices(t *testing.T) {
 func recorderRuntime(t *testing.T, recorder string) runtime.Runtime {
 	t.Helper()
 	shim := filepath.Join(t.TempDir(), "rt")
-	script := "#!/bin/sh\necho \"$@\" >> " + recorder + "\n"
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + strconv.Quote(recorder) + "\n" +
+		"case \"$*\" in\n" +
+		"  *\"config --services\"*) printf '%s\\n' db ;;\n" +
+		"esac\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +68,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 		os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
 			[]byte("services:\n  db:\n    image: postgres:18\n"), 0o644)
 		rec := filepath.Join(t.TempDir(), "rec")
-		if err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard); err != nil {
+		if _, err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard); err != nil {
 			t.Fatalf("valid file should run: %v", err)
 		}
 		out, _ := os.ReadFile(rec)
@@ -78,7 +83,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 		os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
 			[]byte("services:\n  x:\n    image: a\n    privileged: true\n"), 0o644)
 		rec := filepath.Join(t.TempDir(), "rec")
-		err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard)
+		_, err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard)
 		if err == nil {
 			t.Fatal("an unsafe compose file must be refused")
 		}
@@ -94,8 +99,12 @@ func TestEnsureServicesValidates(t *testing.T) {
 	t.Run("no compose file is a no-op", func(t *testing.T) {
 		rec := filepath.Join(t.TempDir(), "rec")
 		dir := t.TempDir()
-		if err := EnsureServices(recorderRuntime(t, rec), dir, dir, io.Discard, io.Discard); err != nil {
+		services, err := EnsureServices(recorderRuntime(t, rec), dir, dir, io.Discard, io.Discard)
+		if err != nil {
 			t.Fatalf("no compose file should be a nil no-op: %v", err)
+		}
+		if len(services) != 0 {
+			t.Fatalf("no compose file services = %v, want none", services)
 		}
 		if _, statErr := os.Stat(rec); statErr == nil {
 			t.Error("compose must not run when there's no file")
@@ -104,6 +113,10 @@ func TestEnsureServicesValidates(t *testing.T) {
 }
 
 func composeLabelRuntime(t *testing.T, recorder string, ids []string, labels map[string]string) runtime.Runtime {
+	return composeLabelRuntimeWithServices(t, recorder, ids, labels, []string{"db"}, 0)
+}
+
+func composeLabelRuntimeWithServices(t *testing.T, recorder string, ids []string, labels map[string]string, services []string, serviceExit int) runtime.Runtime {
 	t.Helper()
 	shim := filepath.Join(t.TempDir(), "rt")
 	var script strings.Builder
@@ -117,7 +130,29 @@ func composeLabelRuntime(t *testing.T, recorder string, ids []string, labels map
 		script.WriteString("    " + id + ") printf '%s\\n' " + strconv.Quote(value) + " ;;\n")
 	}
 	script.WriteString("  esac\nfi\n")
+	script.WriteString("case \"$*\" in\n  *\"config --services\"*)\n")
+	for _, service := range services {
+		script.WriteString("    printf '%s\\n' " + strconv.Quote(service) + "\n")
+	}
+	if serviceExit != 0 {
+		script.WriteString("    exit " + strconv.Itoa(serviceExit) + "\n")
+	}
+	script.WriteString("    ;;\nesac\n")
 	if err := os.WriteFile(shim, []byte(script.String()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+func composeOverrideRuntime(t *testing.T, recorder string) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "rt")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"case \"$*\" in\n" +
+		"  *\"config --format json\"*) printf '%s\\n' " + strconv.Quote(`{"services":{"keycloak":{"expose":["8443"]}}}`) + " ;;\n" +
+		"  *\"config --services\"*) printf '%s\\n' keycloak ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return runtime.Runtime{Name: shim}
@@ -136,6 +171,123 @@ func testComposeRepo(t *testing.T) string {
 	return repo
 }
 
+func testComposeRepoWithServices(t *testing.T, services ...string) string {
+	t.Helper()
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var compose strings.Builder
+	compose.WriteString("services:\n")
+	for _, service := range services {
+		compose.WriteString("  " + service + ":\n    image: example/" + service + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte(compose.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func TestEnsureServicesReturnsResolvedServiceNames(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		services []string
+	}{
+		{name: "db and keycloak", services: []string{"db", "keycloak"}},
+		{name: "different names", services: []string{"api", "worker"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := testComposeRepoWithServices(t, tc.services...)
+			rec := filepath.Join(t.TempDir(), "rec")
+			rt := composeLabelRuntimeWithServices(t, rec, nil, nil, tc.services, 0)
+
+			got, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.services) {
+				t.Fatalf("services = %v, want Compose order %v", got, tc.services)
+			}
+			data, err := os.ReadFile(rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := string(data)
+			config := "compose -p " + ComposeProject(repo) + " -f " + filepath.Join(repo, ".agent", "compose.yml") + " config --services"
+			up := "compose -p " + ComposeProject(repo) + " -f " + filepath.Join(repo, ".agent", "compose.yml") + " up -d --wait --remove-orphans"
+			if i, j := strings.Index(calls, config), strings.Index(calls, up); i < 0 || j < 0 || i >= j {
+				t.Fatalf("service discovery must use the current project/file before up:\n%s", calls)
+			}
+		})
+	}
+}
+
+func TestEnsureServicesUsesOneGeneratedOverrideForDiscoveryAndStartup(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services:\n  keycloak:\n    image: example/keycloak\n    expose: [8443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(t.TempDir(), "rec")
+
+	services, err := EnsureServices(composeOverrideRuntime(t, rec), repo, repo, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(services, []string{"keycloak"}) {
+		t.Fatalf("services = %v, want [keycloak]", services)
+	}
+
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var discoveryOverride, startupOverride string
+	for _, call := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		fields := strings.Fields(call)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "-f" || !strings.Contains(filepath.Base(fields[i+1]), "coop-compose-override-") {
+				continue
+			}
+			switch {
+			case strings.HasSuffix(call, "config --services"):
+				discoveryOverride = fields[i+1]
+			case strings.HasSuffix(call, "up -d --wait --remove-orphans"):
+				startupOverride = fields[i+1]
+			}
+		}
+	}
+	if discoveryOverride == "" || startupOverride == "" {
+		t.Fatalf("generated override missing from discovery/startup calls:\n%s", data)
+	}
+	if discoveryOverride != startupOverride {
+		t.Fatalf("discovery override %q differs from startup override %q", discoveryOverride, startupOverride)
+	}
+}
+
+func TestEnsureServicesStopsWhenServiceDiscoveryFails(t *testing.T) {
+	repo := testComposeRepoWithServices(t, "db", "keycloak")
+	rec := filepath.Join(t.TempDir(), "rec")
+	rt := composeLabelRuntimeWithServices(t, rec, nil, nil, nil, 23)
+
+	services, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "compose config --services exited with code 23") {
+		t.Fatalf("discovery error = %v, want named compose failure", err)
+	}
+	if len(services) != 0 {
+		t.Fatalf("failed discovery returned services %v", services)
+	}
+	data, readErr := os.ReadFile(rec)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(data), " up -d ") {
+		t.Fatalf("compose up must not run after discovery fails:\n%s", data)
+	}
+}
+
 func legacyLabels(repo, project string) string {
 	return `{"com.docker.compose.project":` + strconv.Quote(project) +
 		`,"com.docker.compose.project.working_dir":` + strconv.Quote(filepath.Join(repo, ".agent")) + `}`
@@ -148,7 +300,7 @@ func TestEnsureServicesReconcilesOwnedLegacyBeforeCurrentUp(t *testing.T) {
 	rt := composeLabelRuntime(t, rec, []string{"old-db"}, map[string]string{
 		"old-db": legacyLabels(repo, legacy),
 	})
-	if err := EnsureServices(rt, repo, repo, io.Discard, io.Discard); err != nil {
+	if _, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(rec)

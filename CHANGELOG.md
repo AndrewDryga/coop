@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop up` names the Compose services it actually starts.** The success hint now gets the
+  exact non-empty service names, in Compose order, from the selected runtime's resolved
+  configuration instead of inventing `db`, `redis`, or another example. A discovery failure
+  stops before `compose up` and never prints a misleading success line.
+
 - **Claude model-credit limits rotate the loop instead of spending failure strikes.** A terminal
   `Fable` limit reply that points to `/usage-credits` and `/model` now advances to the next account
   and then the next provider, whether Claude exposes structured rate-limit metadata or prints only

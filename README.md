@@ -1406,13 +1406,16 @@ Sibling services are opt-in: `coop init` asks which to add (or pass
 `--services postgres,redis`), scaffolding a `.agent/compose.yml` — none by default.
 
 ```bash
-coop up        # starts Postgres + Redis from .agent/compose.yml, waits until healthy
-coop claude    # the box reaches them by name (db, redis)
+coop up        # starts the configured Compose services, waits until healthy
+coop claude    # the box reaches each service by its Compose name
 coop down -v   # stop services and wipe their throwaway data
 ```
 
 Services run as their own containers on a private network the box joins — connect with
 e.g. `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in `agents/env`).
+Before startup, `coop up` asks Compose for the resolved service list; its final status echoes
+those exact non-empty names in Compose order. If discovery fails, Coop does not start the
+project or print the success hint.
 Changing the configured Compose file is reconciled on the next `coop up` or box launch: services
 removed from the file are stopped. `coop down` does the same. Coop also removes a legacy
 basename-only stack when its container labels prove it belongs to this checkout; its old volumes

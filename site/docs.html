@@ -1208,8 +1208,14 @@ roles:
                     <pre
                         class="code"
                     ><span class="k">coop</span> up        <span class="t"># start the services, wait until healthy</span>
-<span class="k">coop</span> claude    <span class="t"># the box reaches them by name (db, redis)</span>
+<span class="k">coop</span> claude    <span class="t"># the box reaches each service by its Compose name</span>
 <span class="k">coop</span> down -v   <span class="t"># stop them and wipe the throwaway data</span></pre>
+                    <p>
+                        The final <code>coop up</code> status names the exact non-empty services
+                        resolved by Compose, in Compose order. If resolution fails, Coop stops
+                        before startup and tells you to fix the reported cause and retry
+                        <code>coop up</code>.
+                    </p>
                     <p>
                         To pull the latest agent CLIs and base image,
                         <code>coop update</code> rebuilds the box fresh;

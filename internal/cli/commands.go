@@ -1275,10 +1275,11 @@ func (a *app) cmdUp(args []string) (int, error) {
 	proj := box.ComposeProject(repo)
 	rel, _ := filepath.Rel(repo, file)
 	ui.Info("starting services from %s (waiting until healthy)", rel)
-	if err := box.EnsureServices(a.rt, repo, repo, os.Stdout, os.Stderr); err != nil {
-		return -1, err
+	services, err := box.EnsureServices(a.rt, repo, repo, os.Stdout, os.Stderr)
+	if err != nil {
+		return -1, fmt.Errorf("could not start services from %s: %w — fix the Compose file or runtime, then retry: coop up", rel, err)
 	}
-	ui.Info("up on network %s_default — the box reaches them by name (db, redis, ...)", proj)
+	ui.Info("up on network %s_default — the box reaches %s by name", proj, strings.Join(services, ", "))
 	return 0, nil
 }
 

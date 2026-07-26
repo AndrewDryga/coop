@@ -955,6 +955,94 @@ func fusionRecordingRuntime(t *testing.T, recorder string) runtime.Runtime {
 	return runtime.Runtime{Name: shim}
 }
 
+func composeUpRuntime(t *testing.T, services []string, serviceExit int) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "runtime")
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\ncase \"$*\" in\n  *\"config --services\"*)\n")
+	for _, service := range services {
+		script.WriteString("    printf '%s\\n' " + strconv.Quote(service) + "\n")
+	}
+	if serviceExit != 0 {
+		script.WriteString("    exit " + strconv.Itoa(serviceExit) + "\n")
+	}
+	script.WriteString("    ;;\nesac\n")
+	if err := os.WriteFile(shim, []byte(script.String()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+func TestCmdUpReportsResolvedServiceNames(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		services []string
+	}{
+		{name: "db and keycloak", services: []string{"db", "keycloak"}},
+		{name: "different names", services: []string{"api", "worker"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var compose strings.Builder
+			compose.WriteString("services:\n")
+			for _, service := range tc.services {
+				compose.WriteString("  " + service + ":\n    image: example/" + service + "\n")
+			}
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte(compose.String()), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			a := &app{
+				cfg:   &config.Config{RepoOverride: repo},
+				rt:    composeUpRuntime(t, tc.services, 0),
+				rtSet: true,
+			}
+			var code int
+			var runErr error
+			out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
+			if code != 0 || runErr != nil {
+				t.Fatalf("cmdUp = (%d, %v), want success; stderr:\n%s", code, runErr, out)
+			}
+			want := "the box reaches " + strings.Join(tc.services, ", ") + " by name"
+			if !strings.Contains(out, want) {
+				t.Errorf("cmdUp output missing %q:\n%s", want, out)
+			}
+			if strings.Contains(out, "redis") {
+				t.Errorf("cmdUp invented an unconfigured redis service:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestCmdUpStopsWhenServiceDiscoveryFails(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
+		[]byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{
+		cfg:   &config.Config{RepoOverride: repo},
+		rt:    composeUpRuntime(t, nil, 19),
+		rtSet: true,
+	}
+	var code int
+	var runErr error
+	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
+	if code == 0 || runErr == nil ||
+		!strings.Contains(runErr.Error(), "compose config --services exited with code 19") ||
+		!strings.Contains(runErr.Error(), "then retry: coop up") {
+		t.Fatalf("cmdUp discovery failure = (%d, %v), want named failure", code, runErr)
+	}
+	if strings.Contains(out, "up on network") {
+		t.Errorf("cmdUp printed success after discovery failed:\n%s", out)
+	}
+}
+
 func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
 	t.Setenv("COOP_ACP_INNER", "1")
 	t.Setenv("COOP_ACP_PRESET", "")
