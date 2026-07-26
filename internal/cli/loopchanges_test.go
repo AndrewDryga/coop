@@ -174,6 +174,40 @@ func TestAuditEvidenceForSignoff(t *testing.T) {
 	})
 }
 
+func TestAuditFindingsNone(t *testing.T) {
+	for _, tc := range []struct {
+		findings string
+		want     bool
+	}{
+		{"none", true},
+		{"  None  ", true},
+		{"NONE", true},
+		{"none (empty verification commit carries correct trailer, no scope creep)", true},
+		{"none(gate green)", true},
+		{"None (Gate Green)", true},
+		{"", false},
+		{"broken", false},
+		{"nonempty diff left behind", false},
+		{"none of the acceptance tests ran", false},
+		{"nonexistent flag silently ignored", false},
+		{"not none", false},
+		{"none — flaky test fails", false},
+		{"none: test X fails", false},
+		{"none-critical issues found", false},
+		{"none; all subtasks verified", false},
+		{"none.", false},
+		{"none (", false},
+		{"none (gate green).", false},
+		{"none\u200bcritical issue", false},
+		{"none\u0301critical issue", false},
+		{"none \xff(gate green)", false},
+	} {
+		if got := auditFindingsNone(tc.findings); got != tc.want {
+			t.Errorf("auditFindingsNone(%q) = %v, want %v", tc.findings, got, tc.want)
+		}
+	}
+}
+
 func TestTaskScopedGateFiles(t *testing.T) {
 	cs := loopChangeSet{tasks: []taskChanges{
 		{id: "earlier", files: []string{".github/workflows/check.yml", "internal/cli/a.go"}},

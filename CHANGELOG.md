@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An annotated `none` in audit evidence no longer voids a passing review.** The findings field
+  now accepts exactly `none` or `none (parenthesized annotation)` — the form models habitually
+  write — so a PASS receipt with `findings: none (gate green, no scope creep)` applies cleanly
+  instead of dying as a malformed verdict. The injected evidence contract states the same grammar.
+  Anything looser ("none — flaky test fails", "none-critical issues found", invalid UTF-8) still
+  reads as a finding, keeping the receipt/evidence agreement check fail-closed.
+
 - **A malformed review receipt gets one bounded correction turn.** Between, signoff, and verify
   now re-run the complete review once over the same subjects under the same configured writes
   policy when a successful process returns malformed structured output, appending a fixed

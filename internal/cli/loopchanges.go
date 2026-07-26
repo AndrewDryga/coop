@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -139,6 +140,28 @@ func auditEvidenceFrom(output string) (map[string]auditEvidence, bool) {
 		}
 	}
 	return evidence, len(evidence) > 0
+}
+
+// auditFindingsNone reports whether an evidence line's findings field means "no unresolved
+// findings". Models habitually annotate the bare token ("none (gate green, no scope creep)"),
+// so the grammar accepts exactly what the injected contract states: `none`, optionally followed
+// by one parenthesized annotation — and nothing looser. Punctuation-led continuations ("none —
+// flaky test fails", "none-critical issues found") stay findings: swallowing them would let a
+// PASS receipt agree with prose that reports a defect. A benign near-miss costs one re-ask.
+func auditFindingsNone(findings string) bool {
+	if !utf8.ValidString(findings) {
+		return false
+	}
+	value := strings.TrimSpace(findings)
+	if strings.EqualFold(value, "none") {
+		return true
+	}
+	rest, ok := strings.CutPrefix(strings.ToLower(value), "none")
+	if !ok {
+		return false
+	}
+	rest = strings.TrimSpace(rest)
+	return len(rest) >= 2 && rest[0] == '(' && rest[len(rest)-1] == ')'
 }
 
 // capture replaces evidence for these audit subjects only when the terminal receipt agrees with

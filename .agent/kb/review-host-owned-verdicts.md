@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/streamjson_providers.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
+sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
 updated: 2026-07-25
 ---
 
@@ -12,7 +12,12 @@ access: the whole repository, including every queue, is mounted read-only. The b
 writable-descendant mechanism to restore accidentally.
 
 Reviews emit exactly one bounded `AUDIT EVIDENCE` line per named subject and a terminal
-`REVIEW COMPLETE` receipt. Coop treats this output as an untrusted proposal: it validates every
+`REVIEW COMPLETE` receipt. The findings field's no-findings grammar is exact: bare `none`
+(case-insensitive) or `none` plus one parenthesized annotation — models habitually annotate the
+token, and the old literal-`none` comparison voided benign PASS verdicts. Anything looser stays a
+finding on purpose: punctuation-led continuations ("none — flaky test fails", "none-critical
+issues found") read as real defects, and a first-rune-boundary heuristic was refuted in review for
+exactly those shapes. Coop treats this output as an untrusted proposal: it validates every
 subject and finding first, then acquires every host-side completion authority lock and applies all
 exact-subject reopens as one transaction. A later lock, move, or metadata failure restores every
 folder, metadata snapshot, and completion receipt. Findings are written only inside a delimited
@@ -51,6 +56,8 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-25 — findings grammar accepts `none (parenthesized annotation)` exactly; verified
+  against the verdict fail-closed table and the annotated-none bypass cases.
 - 2026-07-25 — added the one-turn malformed-verdict recovery boundary, per-attempt telemetry, and
   exact complete-response Codex footer/echo normalization; verified against all three review stages.
 - 2026-07-25 — added the single-use, crash-safe audit-reopen generation and exact semantic

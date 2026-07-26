@@ -538,6 +538,20 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 		}
 	})
 
+	t.Run("pass with annotated none applies cleanly", func(t *testing.T) {
+		root := t.TempDir()
+		task := taskForLease(t, root, stateDone, "task-a")
+		output := "AUDIT EVIDENCE — task-a — gate: make check — findings: none (empty verification commit carries correct trailer, no scope creep)\n" +
+			"REVIEW COMPLETE — PASS — reopened: none"
+		reopened, err := applyReviewVerdictInRepo("", []string{root}, []string{task.ID}, output)
+		if err != nil || len(reopened) != 0 {
+			t.Fatalf("annotated-none pass verdict = %v, %v", reopened, err)
+		}
+		if !pathExists(task.Dir) {
+			t.Fatal("annotated-none pass verdict moved the archived task")
+		}
+	})
+
 	t.Run("fail reopens exact subject with evidence", func(t *testing.T) {
 		repo, root, tasks := reviewVerdictFixture(t, "task-a")
 		task := tasks["task-a"]
@@ -668,7 +682,10 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 		{"missing receipt", "review prose only"},
 		{"missing evidence", "REVIEW COMPLETE — FAIL — reopened: task-a"},
 		{"none finding", "AUDIT EVIDENCE — task-a — gate: make check — findings: none\nREVIEW COMPLETE — FAIL — reopened: task-a"},
+		{"annotated none finding", "AUDIT EVIDENCE — task-a — gate: make check — findings: none (looks clean)\nREVIEW COMPLETE — FAIL — reopened: task-a"},
 		{"pass with finding", "AUDIT EVIDENCE — task-a — gate: make check — findings: broken\nREVIEW COMPLETE — PASS — reopened: none"},
+		{"pass with none-prefixed prose", "AUDIT EVIDENCE — task-a — gate: make check — findings: none of the acceptance tests ran\nREVIEW COMPLETE — PASS — reopened: none"},
+		{"pass with none-prefixed word", "AUDIT EVIDENCE — task-a — gate: make check — findings: nonempty diff left behind\nREVIEW COMPLETE — PASS — reopened: none"},
 		{"pass without evidence", "REVIEW COMPLETE — PASS — reopened: none"},
 		{"unexpected evidence", "AUDIT EVIDENCE — other — gate: make check — findings: none\nREVIEW COMPLETE — PASS — reopened: none"},
 		{"out of scope", "AUDIT EVIDENCE — other — gate: make check — findings: broken\nREVIEW COMPLETE — FAIL — reopened: other"},

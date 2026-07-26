@@ -2097,7 +2097,7 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 		if !exists {
 			return nil, fmt.Errorf("%w: %w: review subject %s has no structured audit record", errReviewVerdict, errReviewVerdictMalformed, id)
 		}
-		hasFinding := !strings.EqualFold(strings.TrimSpace(observation.findings), "none")
+		hasFinding := !auditFindingsNone(observation.findings)
 		if reopenSet[id] != hasFinding {
 			return nil, fmt.Errorf("%w: %w: review subject %s findings disagree with the terminal receipt", errReviewVerdict, errReviewVerdictMalformed, id)
 		}
@@ -2328,7 +2328,7 @@ func reviewContextFooter(repo string, queues []string) string {
 		" GATE INTEGRITY: a task that changed a gate-defining file — the Makefile/gate, .agent/project.yaml, .agent/loop.yaml, .claude/hooks/, or CI — could be passing by WEAKENING its own checker (removing an assertion, relaxing the gate, disabling a hook). Scrutinize any such change and REOPEN the task if the gate was weakened rather than the code fixed; a green gate the candidate loosened is not a pass."
 }
 
-const auditEvidencePrompt = "Before the final receipt, write exactly one compact evidence line for EACH audit subject: `AUDIT EVIDENCE — <id> — gate: <test actually run, or not run with why> — findings: <unresolved findings, or none>`. Put those lines immediately before the receipt, one per task and with no duplicates. Every id listed for reopen must have a concrete finding other than `none`; Coop stores it in a clearly delimited untrusted log block while the host writes a fixed reproduction-first resume action."
+const auditEvidencePrompt = "Before the final receipt, write exactly one compact evidence line for EACH audit subject: `AUDIT EVIDENCE — <id> — gate: <test actually run, or not run with why> — findings: <unresolved findings, or none>`. The findings field is either the word `none` — optionally followed by a parenthesized annotation, e.g. `none (gate green, no scope creep)` — or the concrete unresolved findings; never prose that merely begins with the word none. Put those lines immediately before the receipt, one per task and with no duplicates. Every id listed for reopen must have a concrete finding other than `none`; Coop stores it in a clearly delimited untrusted log block while the host writes a fixed reproduction-first resume action."
 
 // loopBetweenPrompt is the opt-in per-task audit run after each completed task. A header names
 // the task(s) the last iteration moved to done — the audit's subject, computed at fire time so
