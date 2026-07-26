@@ -37,26 +37,19 @@ func TestIterationCommandStreamFlags(t *testing.T) {
 	}
 	custom := []string{"codex", "exec", "--json", "stream-json", "streaming-json"}
 	for _, c := range cases {
-		t.Run(c.agent+"/tty", func(t *testing.T) {
-			got, streaming := iterationCommand(c.agent, c.base, nil, true)
+		// Built-in commands always stream — redirected runs included — because the stream is
+		// also the provider watchdog's only trustworthy activity signal.
+		t.Run(c.agent+"/builtin", func(t *testing.T) {
+			got, streaming := iterationCommand(c.agent, c.base, nil)
 			if !slices.Equal(got, c.want) {
 				t.Errorf("iterationCommand() = %#v, want %#v", got, c.want)
 			}
 			if !streaming {
-				t.Errorf("TTY built-in command did not enable streaming: %#v", got)
-			}
-		})
-		t.Run(c.agent+"/non-tty", func(t *testing.T) {
-			got, streaming := iterationCommand(c.agent, c.base, nil, false)
-			if !slices.Equal(got, c.base) {
-				t.Errorf("non-TTY command = %#v, want untouched %#v", got, c.base)
-			}
-			if streaming {
-				t.Errorf("non-TTY command unexpectedly streams: %#v", got)
+				t.Errorf("built-in command did not enable streaming: %#v", got)
 			}
 		})
 		t.Run(c.agent+"/custom", func(t *testing.T) {
-			got, streaming := iterationCommand(c.agent, c.base, custom, true)
+			got, streaming := iterationCommand(c.agent, c.base, custom)
 			if !slices.Equal(got, custom) {
 				t.Errorf("custom command = %#v, want untouched %#v", got, custom)
 			}

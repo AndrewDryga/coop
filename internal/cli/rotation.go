@@ -202,6 +202,22 @@ func (r *rotation) selectTarget(attempt int, now time.Time) (sleep time.Duration
 	return limitWait(limitHint{limited: true, resetAt: until}, attempt, now), until
 }
 
+// advanceOnTimeout moves to the next usable rung after a provider-attempt timeout. A timeout
+// is not a rate limit, so the abandoned rung is NOT marked cooling — it keeps its standing and
+// comes straight back around. With a single rung (or every other rung cooling) it stays put
+// and the caller retries the same rung under the dedicated timeout cap.
+func (r *rotation) advanceOnTimeout(now time.Time) {
+	r.clearExpired(now)
+	n := len(r.targets)
+	for i := 1; i < n; i++ {
+		cand := (r.idx + i) % n
+		if _, limited := r.limited[r.targets[cand].String()]; !limited {
+			r.idx = cand
+			return
+		}
+	}
+}
+
 func (r *rotation) clearExpired(now time.Time) {
 	for target, until := range r.limited {
 		if !until.After(now) {

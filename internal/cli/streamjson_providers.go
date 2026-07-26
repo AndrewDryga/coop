@@ -306,20 +306,29 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 	}
 	switch ev.Type {
 	case "thread.started":
+		d.noteBootstrap()
 		d.showModel()
 	case "turn.started":
+		// The turn was dispatched, but nothing proves the model acted yet.
 	case "item.started":
+		d.noteItemActivity(ev.Item, true)
 		d.itemStarted(ev.Item)
 	case "item.updated":
+		if codexRecognizedItem(ev.Item.Type) {
+			d.noteProgress()
+		}
 	case "item.completed":
+		d.noteItemActivity(ev.Item, false)
 		d.itemCompleted(ev.Item)
 	case "turn.completed":
+		d.noteTerminal()
 		d.last = &iterResult{
 			InTok:  ev.Usage.InputTokens,
 			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningOutputTokens,
 		}
 		d.emit(ui.Dim("· " + tokenUsage(d.last.InTok, d.last.OutTok)))
 	case "turn.failed":
+		d.noteTerminal()
 		d.failed = true
 		msg := strings.TrimSpace(ev.Message)
 		if msg == "" {
@@ -338,6 +347,43 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 
 func (d *codexStreamDecoder) showModel() {
 	d.emit(streamModelLine(d.agent, streamDisplayModel(d.model), d.profile))
+}
+
+// codexRecognizedItem lists the item types the Codex stream is known to emit; only these prove
+// model progress for the watchdog. Unknown item types render but never reset activity.
+func codexRecognizedItem(kind string) bool {
+	switch kind {
+	case "agent_message", "reasoning", "command_execution", "file_change",
+		"mcp_tool_call", "web_search", "collab_tool_call", "todo_list":
+		return true
+	}
+	return false
+}
+
+// codexBlockingItem marks the item kinds that run a foreground child whose lifecycle the
+// watchdog tracks by ID — a gate under command_execution, an MCP call, a collab wait — so the
+// idle deadline suspends until their completion while the absolute tool cap still bounds them.
+func codexBlockingItem(kind string) bool {
+	switch kind {
+	case "command_execution", "mcp_tool_call", "collab_tool_call":
+		return true
+	}
+	return false
+}
+
+func (d *codexStreamDecoder) noteItemActivity(item codexStreamItem, started bool) {
+	if !codexRecognizedItem(item.Type) {
+		return
+	}
+	if codexBlockingItem(item.Type) {
+		if started {
+			d.noteToolStart(item.ID)
+		} else {
+			d.noteToolEnd(item.ID)
+		}
+		return
+	}
+	d.noteProgress()
 }
 
 func (d *codexStreamDecoder) itemStarted(item codexStreamItem) {
@@ -536,24 +582,31 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 	}
 	switch ev.Type {
 	case "init":
+		d.noteBootstrap()
 		d.emit(streamModelLine(d.agent, streamDisplayModel(d.model), d.profile))
 	case "message":
 		switch ev.Role {
 		case "assistant":
+			d.noteProgress()
 			d.assistant.WriteString(ev.Content)
 		case "user":
-			// Gemini echoes the whole prompt as a user message; it is intentionally suppressed.
+			// Gemini echoes the whole prompt as a user message; it is intentionally suppressed —
+			// and being the host's own prompt, it proves nothing about model progress either.
 		default:
 			role := strings.TrimSpace("message " + ev.Role)
 			d.emit(ui.Dim("· " + role))
 		}
 	case "tool_use":
+		d.noteToolStart(ev.ToolID)
 		d.toolUse(&ev)
 	case "tool_result":
+		d.noteToolEnd(ev.ToolID)
 		d.toolResult(&ev)
 	case "result":
+		d.noteTerminal()
 		d.result(&ev)
 	case "error":
+		d.noteTerminal()
 		d.failed = true
 		msg := strings.TrimSpace(ev.Message)
 		if msg == "" {
@@ -727,9 +780,12 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 	}
 	switch ev.Type {
 	case "thought":
+		d.noteProgress() // hidden reasoning is still model action
 	case "text":
+		d.noteProgress()
 		d.text.WriteString(ev.Data)
 	case "end":
+		d.noteTerminal()
 		d.last = &iterResult{
 			Turns:  ev.NumTurns,
 			InTok:  ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens,

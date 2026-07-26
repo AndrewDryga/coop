@@ -65,7 +65,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != len(attempts) || records[1].Reopened != 1 || records[3].Reopened != 0 || records[4].Reopened != 0 {
 			t.Fatalf("Codex wrapper matrix telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, true)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
@@ -106,7 +106,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("background review telemetry = %#v", records)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
-		assertLoopReviewContracts(t, suite, trace, taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
@@ -138,7 +138,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != len(attempts) || records[1].Stage != "between" || records[1].Reopened != 0 {
 			t.Fatalf("Codex split footer echo telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, true)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
@@ -196,7 +196,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				t.Fatalf("corrected review telemetry[%d] = %#v", i, record)
 			}
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, true)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
@@ -227,7 +227,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			records[1].Reopened != 0 || records[2].Reopened != 0 {
 			t.Fatalf("double-malformed telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
@@ -253,7 +253,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("review stage matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
-		assertLoopReviewContracts(t, suite, trace, taskID, attempts, true)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 4 {
 			t.Fatalf("review stage telemetry = %#v", records)
@@ -347,7 +347,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("config drift telemetry = %#v", records)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
-		assertLoopReviewContracts(t, suite, trace, taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
@@ -422,7 +422,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			records[2].Stage != "signoff" || records[2].Reopened != 0 || records[2].QueueDone != 2 {
 			t.Fatalf("concurrent completion telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("concurrent host completion during verify forces later signoff", func(t *testing.T) {
@@ -462,7 +462,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != 5 || records[3].Stage != "signoff" || records[4].Stage != "verify" {
 			t.Fatalf("verify concurrent-completion telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("between rotation records terminal target", func(t *testing.T) {
@@ -486,7 +486,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("between rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
-		assertLoopReviewContracts(t, suite, trace, taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 3 || records[1].Stage != "between" || records[1].Provider != "gemini" || records[1].Model != "fallback-review" ||
 			records[1].Account != "work" || records[1].Outcome != "success" || records[1].Retries != 1 {
@@ -520,15 +520,15 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			records[3].Stage != "between" || records[3].Reopened != 0 || records[4].Stage != "signoff" {
 			t.Fatalf("between reopen telemetry = %#v", records)
 		}
-		paths, err := loopStageTelemetryPaths(suite.layout.Repo)
-		if err != nil || len(paths) != 1 {
-			t.Fatalf("loop telemetry paths = %v, %v", paths, err)
+		// Every built-in attempt streams now, so each stage records its provider's real
+		// closing usage — the fixture's exact cost and tokens, never a synthetic zero.
+		if records[0].CostUSD != 0.25 || records[0].InTok != 101 || records[0].OutTok != 11 {
+			t.Fatalf("streamed work usage telemetry = %#v", records[0])
 		}
-		raw, err := os.ReadFile(paths[0])
-		if err != nil || bytes.Contains(raw, []byte(`"cost_usd"`)) || bytes.Contains(raw, []byte(`"in_tok"`)) || bytes.Contains(raw, []byte(`"out_tok"`)) {
-			t.Fatalf("unavailable usage was serialized as synthetic zero: %s, %v", raw, err)
+		if records[1].InTok != 202 || records[1].OutTok != 22 || records[1].CostUSD != 0 {
+			t.Fatalf("streamed between usage telemetry = %#v", records[1])
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("older audit reopen replays an unchanged descendant exactly once", func(t *testing.T) {
@@ -594,7 +594,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
 			t.Fatal("accepted audit generation remained reusable")
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("blocked older audit rewrite retains authority for verification-only re-close", func(t *testing.T) {
@@ -689,7 +689,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)) {
 					t.Fatal("rewritten audit task did not remain blocked")
 				}
-				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts, false)
+				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts)
 				if tc.preUpgrade {
 					current, ok, err := readAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 					if err != nil || !ok {
@@ -766,7 +766,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				if pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
 					t.Fatal("accepted audit generation remained reusable")
 				}
-				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts, false)
+				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts)
 			})
 		}
 	})
@@ -905,7 +905,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if !pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
 			t.Fatal("failed recovery consumed its host generation")
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("verification-only audit re-close needs fresh host authority", func(t *testing.T) {
@@ -932,7 +932,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if got := commitsForTask(suite.layout.Repo, "HEAD", taskID); len(got) != 1 {
 			t.Fatalf("verification-only re-close bindings = %v, want one unchanged binding", got)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 
 		doneTask, ok := currentTask(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 		if !ok || doneTask.State != stateDone {
@@ -980,7 +980,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("review finding injection = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("repository-writable review still uses host task authority", func(t *testing.T) {
@@ -1056,7 +1056,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if commits := commitsForTask(suite.layout.Repo, "", taskID); len(commits) != 2 {
 			t.Fatalf("fixture produced %d reachable bindings, want 2: %v", len(commits), commits)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 
 		traceBeforeRetry := readProcessTrace(t, suite.layout.Trace)
 		retry := runLoopReview(t, suite, work, 5*time.Second)
@@ -1119,7 +1119,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if commits := commitsForTask(suite.layout.Repo, "", archiveID); len(commits) != 1 {
 			t.Fatalf("fixture produced %d forged archived bindings, want 1: %v", len(commits), commits)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("signoff round cap blocks repeated reopen", func(t *testing.T) {
@@ -1156,7 +1156,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				t.Fatalf("signoff cap telemetry[%d] = %#v", index, records[index])
 			}
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("verify reopen exits unverified", func(t *testing.T) {
@@ -1184,7 +1184,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != 3 || records[2].Stage != "verify" || records[2].Reopened != 1 || records[2].QueueDoing != 1 || records[2].QueueDone != 0 {
 			t.Fatalf("verify reopen telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("failed review receipt cannot reopen", func(t *testing.T) {
@@ -1212,7 +1212,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			records[1].Exit != 23 || records[1].Retries != 0 || records[1].Reopened != 0 {
 			t.Fatalf("failed review reopen telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("hard stop after review receipt leaves task done", func(t *testing.T) {
@@ -1281,7 +1281,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if len(records) != 2 || records[1].Stage != "signoff" || records[1].Outcome != "output_limit" || records[1].Exit != 23 || records[1].Retries != 5 || records[1].Reopened != 0 {
 			t.Fatalf("signoff output cap telemetry = %#v", records)
 		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
 	t.Run("soft stop still runs completed task audit", func(t *testing.T) {
@@ -1314,7 +1314,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("soft-stop audit = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
-		assertLoopReviewContracts(t, suite, trace, taskID, attempts, true)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 2 || records[0].Stage != "work" || records[1].Stage != "between" || records[1].Outcome != "success" {
 			t.Fatalf("soft-stop audit telemetry = %#v", records)
@@ -1357,7 +1357,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("hard-stop audit = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
-		assertLoopReviewContracts(t, suite, trace, taskID, attempts, true)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loopInterruptedExitCode || records[1].Provider != "codex" || records[1].Retries != 1 || records[1].QueueDone != 1 || records[1].QueueDoing != 0 {
 			t.Fatalf("hard-stop audit telemetry = %#v", records)
@@ -1438,7 +1438,7 @@ func loopReviewCommand(suite *directProcessSuite, target string) procharness.Com
 	}
 }
 
-func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []*processTrace, taskID string, attempts []loopProcessAttempt, streaming bool) {
+func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []*processTrace, taskID string, attempts []loopProcessAttempt) {
 	t.Helper()
 	var runs, starts, exits []*processTrace
 	for i, event := range trace {
@@ -1462,13 +1462,11 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		if err != nil {
 			t.Fatal(err)
 		}
-		argv := loopProcessArgv(target.Provider, target.Model, target.Effort, "fixture-prompt-sentinel")
-		var ok bool
-		if streaming {
-			argv, ok = iterationCommand(target.Provider, argv, nil, true)
-			if !ok {
-				t.Fatalf("review attempt %d provider %q has no streaming command", i, target.Provider)
-			}
+		// Built-in attempts always request the adapter stream, PTY or not — it feeds the
+		// provider watchdog.
+		argv, ok := iterationCommand(target.Provider, loopProcessArgv(target.Provider, target.Model, target.Effort, "fixture-prompt-sentinel"), nil)
+		if !ok {
+			t.Fatalf("review attempt %d provider %q has no streaming command", i, target.Provider)
 		}
 		wantArgv := processTraceArgv(argv)
 		promptIndex, ok := loopPromptIndex(target.Provider, argv)
@@ -1490,15 +1488,13 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		}
 		assertDirectEnvironment(t, run.Environment, suite.allCredKeys, target.Provider, directProviderContracts[target.Provider], target.Model, target.Effort)
 		assertDirectEnvironment(t, starts[i].Environment, suite.allCredKeys, target.Provider, directProviderContracts[target.Provider], target.Model, target.Effort)
-		if streaming {
-			agent, ok := agents.Get(target.Provider)
-			if !ok {
-				t.Fatalf("review attempt %d provider %q is unregistered", i, target.Provider)
-			}
-			for _, flag := range agent.Stream().Flags {
-				if processSafeFlag(flag) && !slices.Contains(run.ProviderArgv, flag) {
-					t.Fatalf("review attempt %d %s missing streaming flag %q in %q", i, attempt.Stage, flag, run.ProviderArgv)
-				}
+		agent, ok := agents.Get(target.Provider)
+		if !ok {
+			t.Fatalf("review attempt %d provider %q is unregistered", i, target.Provider)
+		}
+		for _, flag := range agent.Stream().Flags {
+			if processSafeFlag(flag) && !slices.Contains(run.ProviderArgv, flag) {
+				t.Fatalf("review attempt %d %s missing streaming flag %q in %q", i, attempt.Stage, flag, run.ProviderArgv)
 			}
 		}
 		wantExit := 0

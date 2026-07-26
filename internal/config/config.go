@@ -55,6 +55,11 @@ type Config struct {
 
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (default 1800, owned by the wrapper)
 
+	// ProviderTimeouts is the INTERNAL provider-attempt watchdog override
+	// ("start=2s,idle=3s,tool=6s"), read only so deterministic fixture tests can shorten the
+	// fixed deadlines; it is deliberately not a documented user knob.
+	ProviderTimeouts string // COOP_PROVIDER_TIMEOUTS
+
 	Editor    string // COOP_EDITOR — editor for `coop fork review --open` (else $VISUAL/$EDITOR or a detected GUI editor)
 	ReviewCmd string // COOP_REVIEW_CMD — full override for `coop fork review` (run via sh -c; gets $COOP_FORK_PATH/$COOP_FORK_NAME/$COOP_REVIEW_REF)
 
@@ -182,6 +187,8 @@ func Load() *Config {
 		Egress:          get("COOP_EGRESS", "open"),
 
 		ConsultTimeout: get("COOP_CONSULT_TIMEOUT", ""),
+
+		ProviderTimeouts: get("COOP_PROVIDER_TIMEOUTS", ""),
 
 		Editor:    get("COOP_EDITOR", ""),
 		ReviewCmd: get("COOP_REVIEW_CMD", ""),

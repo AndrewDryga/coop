@@ -71,7 +71,10 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				}
 
 				prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil, false)
-				argv := loopProcessArgv(provider, model, effort, prompt)
+				argv, streaming := iterationCommand(provider, loopProcessArgv(provider, model, effort, prompt), nil)
+				if !streaming {
+					t.Fatalf("provider %s has no streaming loop command", provider)
+				}
 				assertDirectRunContract(t, suite, trace, provider, "work", argv, model, effort)
 				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", suite.repoHead, 1, false)
 				for _, event := range trace {

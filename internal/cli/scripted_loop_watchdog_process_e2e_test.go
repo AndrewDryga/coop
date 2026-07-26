@@ -1,0 +1,260 @@
+//go:build providere2e
+
+package cli
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+)
+
+// setLoopWatchdogDeadlines appends the internal COOP_PROVIDER_TIMEOUTS override to the suite's
+// conf file so ONE subtest runs the real binary under short watchdog deadlines, restoring the
+// original conf afterwards — the process-harness environment is allowlist-only, so the conf
+// file is the deadline's channel into the host process.
+func setLoopWatchdogDeadlines(t *testing.T, suite *directProcessSuite, value string) {
+	t.Helper()
+	conf := filepath.Join(suite.layout.Config, "missing.conf")
+	original, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.WriteFile(conf, original, 0o600); err != nil {
+			t.Errorf("restore suite conf: %v", err)
+		}
+	})
+	updated := string(original) + "COOP_PROVIDER_TIMEOUTS=" + value + "\n"
+	if err := os.WriteFile(conf, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+
+	t.Run("no first output rotates without cooling then completes", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-silent-start"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		targets := []string{
+			loopRecoveryTarget("claude", "silent-model", "work"),
+			loopRecoveryTarget("codex", "rescue-model", "work"),
+		}
+		writeLoopRecoveryPreset(t, suite.layout.Repo, "watchdog-start", targets)
+		attempts := []loopProcessAttempt{
+			{Target: targets[0], Stage: "work", Result: "wait"},
+			{Target: targets[1], Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, "watchdog-start")
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_start_timeout)") ||
+			!strings.Contains(output, "switching to") ||
+			strings.Contains(output, "iteration failed (") ||
+			strings.Contains(output, "rate limited") {
+			t.Fatalf("silent start = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		parsed, _ := agents.ParseTarget(targets[1])
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Stage != "work" || records[0].Outcome != "provider_start_timeout" || records[0].Provider != "claude" ||
+			records[1].Stage != "work" || records[1].Outcome != "success" || records[1].Provider != "codex" {
+			t.Fatalf("silent start telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("post-progress silence retries the sole rung", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=2s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-idle-silence"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "idle-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "progress-wait"},
+			{Target: target, Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, target)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_idle_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") ||
+			strings.Contains(output, "switching to") {
+			t.Fatalf("idle silence = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		parsed, _ := agents.ParseTarget(target)
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Outcome != "provider_idle_timeout" || records[1].Outcome != "success" {
+			t.Fatalf("idle silence telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("open foreground tool suspends the idle deadline", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=1s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-tool-gate"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("claude", "gate-model", "work")
+		attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "tool-gated-complete"}}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		process := startLoopRecovery(t, suite, target)
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		// Hold the tool open well past the idle deadline; a false idle fire would kill the
+		// provider and fail the run below.
+		time.Sleep(2500 * time.Millisecond)
+		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := process.Wait(ctx)
+		cancel()
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 || strings.Contains(output, "timed out (") {
+			t.Fatalf("gated tool = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		parsed, _ := agents.ParseTarget(target)
+		assertLoopProcessResult(t, suite, "claude", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 1, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 1 || records[0].Outcome != "success" {
+			t.Fatalf("gated tool telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("tool cap kills a wedged foreground tool", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=2s,tool=4s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-tool-cap"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "cap-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "tool-wait"},
+			{Target: target, Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, target)
+		output := result.Stdout + result.Stderr
+		// The tool-cap outcome doubles as the suspension proof: with idle at 2s, an
+		// unsuspended idle deadline would have fired first and named the wrong timeout.
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_tool_timeout)") {
+			t.Fatalf("tool cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Outcome != "provider_tool_timeout" || records[1].Outcome != "success" {
+			t.Fatalf("tool cap telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("three consecutive timeouts stop with the task actionable", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=1s,idle=20s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-timeout-cap"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("claude", "cap-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "wait"},
+			{Target: target, Stage: "work", Result: "wait"},
+			{Target: target, Stage: "work", Result: "wait"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, target)
+		if result.ExitCode == 0 || !strings.Contains(result.Stderr, "timed out 3 times in a row") {
+			t.Fatalf("timeout cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 {
+			t.Fatalf("timeout cap telemetry = %#v", records)
+		}
+		for i, record := range records {
+			if record.Outcome != "provider_start_timeout" {
+				t.Fatalf("timeout cap record %d outcome = %q, want provider_start_timeout", i, record.Outcome)
+			}
+		}
+		assertLoopTaskRecoverable(t, suite, taskID)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("user interrupt wins over an armed watchdog", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=8s,idle=20s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-interrupt-precedence"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "interrupt-model", "work")
+		attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "wait"}}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		process := startLoopRecoveryPTY(t, suite, target)
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		awaitLoopProcessOutput(t, process, "finishing this iteration, then stopping", 5*time.Second)
+		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := process.Wait(ctx)
+		cancel()
+		if result.ExitCode == 0 {
+			t.Fatalf("hard-interrupted loop unexpectedly succeeded: %#v", result)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 1 || records[0].Outcome != "interrupted" {
+			t.Fatalf("interrupt precedence telemetry = %#v, want interrupted (never a provider timeout)", records)
+		}
+		assertLoopTaskRecoverable(t, suite, taskID)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("signoff timeout discards the receipt and retries", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-signoff-timeout"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("codex", "work-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "wait"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "review provider attempt timed out (provider_start_timeout)") {
+			t.Fatalf("signoff timeout = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 ||
+			records[0].Stage != "work" || records[0].Outcome != "success" ||
+			records[1].Stage != "signoff" || records[1].Outcome != "provider_start_timeout" ||
+			records[2].Stage != "signoff" || records[2].Outcome != "success" {
+			t.Fatalf("signoff timeout telemetry = %#v", records)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("signoff-timed-out task did not stay completed after the retried pass")
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+}

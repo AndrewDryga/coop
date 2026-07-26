@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Silent provider attempts are now bounded by a stream-fed watchdog.** Every built-in loop,
+  review, and pre-flight attempt requests its provider's structured stream — redirected runs
+  included — and only adapter-recognized events count as progress: 10 minutes to the first model
+  action, 30 minutes of post-progress silence, and a 2-hour cap on the oldest open foreground
+  tool, which suspends the idle deadline so a long gate survives. A fired deadline cancels the
+  box, records an explicit `provider_*_timeout` outcome, restores any premature completion, keeps
+  held audit authority truthful (rebase a valid complete rewrite, park fail-closed otherwise),
+  and retries on the next usable rung without cooling under a dedicated consecutive cap of three;
+  a user interrupt still wins over any watchdog fire. Redirected loops — CI pipes and detached
+  fork workers — now tear their running box down on SIGINT/SIGTERM instead of exiting around an
+  orphan.
+
 - **Audit-reopened tasks now protect complete descendant history.** Host authority records the
   exact baseline HEAD and every ordered later commit, including manual and release commits without
   a `Coop-Task` trailer. Rework rejects dropped, changed, reordered, or invented unbound history

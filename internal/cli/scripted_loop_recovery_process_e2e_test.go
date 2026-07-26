@@ -68,74 +68,45 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 	})
 
 	t.Run("Claude terminal credit limit rotates account then provider", func(t *testing.T) {
-		tests := []struct {
-			name      string
-			results   [2]string
-			notices   []string
-			streaming bool
-		}{
-			{
-				name:      "structured stream",
-				results:   [2]string{"claude-credit-limit", "claude-credit-limit"},
-				notices:   []string{"You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."},
-				streaming: true,
-			},
-			{
-				name:    "plain stdout",
-				results: [2]string{"claude-credit-limit-plain", "claude-credit-limit-plain-uncontracted"},
-				notices: []string{
-					"You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.",
-					"You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.",
-				},
-			},
+		// Built-in attempts always stream now, so the terminal credit-limit signal has exactly
+		// one shape: the structured assistant notice. (The plain-stdout probe remains only for
+		// custom work commands, which never reach this rotation.)
+		resetLoopProcessRepo(t, suite)
+		taskID := "claude-credit-limit-structured-stream"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		targets := []string{
+			loopRecoveryTarget("claude", "claude-fable-5", "personal"),
+			loopRecoveryTarget("claude", "claude-fable-5", "work"),
+			loopRecoveryTarget("codex", "gpt-5.6-sol", "personal"),
 		}
-		for _, tc := range tests {
-			t.Run(tc.name, func(t *testing.T) {
-				resetLoopProcessRepo(t, suite)
-				taskID := "claude-credit-limit-" + strings.ReplaceAll(tc.name, " ", "-")
-				seedLoopProcessTask(t, suite.layout.Repo, taskID)
-				targets := []string{
-					loopRecoveryTarget("claude", "claude-fable-5", "personal"),
-					loopRecoveryTarget("claude", "claude-fable-5", "work"),
-					loopRecoveryTarget("codex", "gpt-5.6-sol", "personal"),
-				}
-				writeLoopRecoveryPreset(t, suite.layout.Repo, "claude-credit-limit", targets)
-				attempts := []loopProcessAttempt{
-					{Target: targets[0], Stage: "work", Result: tc.results[0]},
-					{Target: targets[1], Stage: "work", Result: tc.results[1]},
-					{Target: targets[2], Stage: "work", Result: "complete"},
-				}
-				suite.reset(t, loopRecoveryScenario(taskID, attempts))
-				run := runLoopRecovery
-				if tc.streaming {
-					run = runLoopRecoveryPTY
-				}
-				result := run(t, suite, "claude-credit-limit")
-				output := result.Stdout + result.Stderr
-				failed := result.Err != nil || result.ExitCode != 0 ||
-					!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[0], targets[1])) ||
-					!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[1], targets[2])) ||
-					strings.Contains(output, "iteration failed (")
-				for _, notice := range tc.notices {
-					failed = failed || !strings.Contains(output, notice)
-				}
-				if failed {
-					t.Fatalf("Claude credit-limit rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
-				}
-				trace := readProcessTrace(t, suite.layout.Trace)
-				assertLoopAttemptContractsWithStreaming(t, suite, trace, taskID, attempts, tc.streaming)
-				parsed, _ := agents.ParseTarget(targets[2])
-				assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 3, false)
-				records := readLoopStageRecords(t, suite)
-				if len(records) != 3 ||
-					records[0].Outcome != "rate_limit" || records[0].Provider != "claude" || records[0].Account != "personal" ||
-					records[1].Outcome != "rate_limit" || records[1].Provider != "claude" || records[1].Account != "work" ||
-					records[2].Outcome != "success" || records[2].Provider != "codex" {
-					t.Fatalf("Claude credit-limit rotation telemetry = %#v", records)
-				}
-				assertLoopTraceProcessesGone(t, trace)
-			})
+		writeLoopRecoveryPreset(t, suite.layout.Repo, "claude-credit-limit", targets)
+		attempts := []loopProcessAttempt{
+			{Target: targets[0], Stage: "work", Result: "claude-credit-limit"},
+			{Target: targets[1], Stage: "work", Result: "claude-credit-limit"},
+			{Target: targets[2], Stage: "work", Result: "complete"},
 		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecoveryPTY(t, suite, "claude-credit-limit")
+		output := result.Stdout + result.Stderr
+		notice := "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[0], targets[1])) ||
+			!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[1], targets[2])) ||
+			strings.Contains(output, "iteration failed (") || !strings.Contains(output, notice) {
+			t.Fatalf("Claude credit-limit rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
+		parsed, _ := agents.ParseTarget(targets[2])
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 3, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 ||
+			records[0].Outcome != "rate_limit" || records[0].Provider != "claude" || records[0].Account != "personal" ||
+			records[1].Outcome != "rate_limit" || records[1].Provider != "claude" || records[1].Account != "work" ||
+			records[2].Outcome != "success" || records[2].Provider != "codex" {
+			t.Fatalf("Claude credit-limit rotation telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, trace)
 	})
 
 	t.Run("authentication fails fast for every provider", func(t *testing.T) {
@@ -249,7 +220,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatalf("stream failure = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 				}
 				trace := readProcessTrace(t, suite.layout.Trace)
-				assertLoopAttemptContractsWithStreaming(t, suite, trace, taskID, attempts, true)
+				assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
 				records := readLoopStageRecords(t, suite)
 				if len(records) != 1 || records[0].Outcome != "malformed_stream" {
 					t.Fatalf("stream failure telemetry = %#v, want malformed_stream", records)
@@ -393,6 +364,20 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		firstTrace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopTaskRecoverable(t, suite, taskID)
 		assertLoopTraceProcessesGone(t, firstTrace)
+		// The redirected loop handles the stop signal itself now — the box is torn down and
+		// the attempt is recorded as interrupted before exit. Clear that run's telemetry so
+		// the resumed run's records stand alone below.
+		interruptedRecords := readLoopStageRecords(t, suite)
+		if len(interruptedRecords) != 1 || interruptedRecords[0].Outcome != "interrupted" {
+			t.Fatalf("interrupted attempt telemetry = %#v", interruptedRecords)
+		}
+		interruptedPaths, err := loopStageTelemetryPaths(suite.layout.Repo)
+		if err != nil || len(interruptedPaths) != 1 {
+			t.Fatalf("interrupted telemetry files = %v, %v", interruptedPaths, err)
+		}
+		if err := os.Remove(interruptedPaths[0]); err != nil {
+			t.Fatal(err)
+		}
 
 		suite.reset(t, scenario)
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-cursor.json"), []byte("{\"index\":1}\n"), 0o600); err != nil {
@@ -475,7 +460,10 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		process := startLoopRecovery(t, suite, work)
 		defer process.Cleanup()
 		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
-		if err := process.SignalGroup(syscall.SIGKILL); err != nil {
+		// Crash the CONTROLLER only — the box runs in its own process group (the provider
+		// watchdog's cancel seam) and survives its killed client, exactly like a real
+		// container — then reap the orphan as the container runtime would.
+		if err := syscall.Kill(process.PID(), syscall.SIGKILL); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -484,7 +472,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		if killed.ExitCode == 0 {
 			t.Fatalf("killed loop unexpectedly succeeded: %#v", killed)
 		}
-		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		killedTrace := readProcessTrace(t, suite.layout.Trace)
+		terminateOrphanedProviders(t, killedTrace)
+		assertLoopTraceProcessesGone(t, killedTrace)
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("fixture did not leave a completed task under the killed controller")
 		}
@@ -537,7 +527,10 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				process := startLoopRecovery(t, suite, target)
 				defer process.Cleanup()
 				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
-				if err := process.SignalGroup(syscall.SIGINT); err != nil {
+				// Crash the CONTROLLER between the provider's completion and host
+				// finalization — kill only coop (a graceful stop signal would now finalize
+				// cleanly), then reap the surviving box as the container runtime would.
+				if err := syscall.Kill(process.PID(), syscall.SIGKILL); err != nil {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -547,6 +540,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatalf("interrupted completion unexpectedly succeeded: %#v", first)
 				}
 				firstTrace := readProcessTrace(t, suite.layout.Trace)
+				terminateOrphanedProviders(t, firstTrace)
 				assertLoopTraceProcessesGone(t, firstTrace)
 				done := filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)
 				if !fileExists(filepath.Join(done, "tmp", "lease.json")) {
@@ -711,10 +705,6 @@ func loopRecoveryCommand(suite *directProcessSuite, target string) procharness.C
 }
 
 func assertLoopAttemptContracts(t *testing.T, suite *directProcessSuite, trace []*processTrace, taskID string, attempts []loopProcessAttempt) {
-	assertLoopAttemptContractsWithStreaming(t, suite, trace, taskID, attempts, false)
-}
-
-func assertLoopAttemptContractsWithStreaming(t *testing.T, suite *directProcessSuite, trace []*processTrace, taskID string, attempts []loopProcessAttempt, streaming bool) {
 	t.Helper()
 	var runs, starts, exits []*processTrace
 	for i, event := range trace {
@@ -740,13 +730,11 @@ func assertLoopAttemptContractsWithStreaming(t *testing.T, suite *directProcessS
 		}
 		provider := target.Provider
 		prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil, false)
-		argv := loopProcessArgv(provider, target.Model, target.Effort, prompt)
-		if streaming {
-			var ok bool
-			argv, ok = iterationCommand(provider, argv, nil, true)
-			if !ok {
-				t.Fatalf("provider %s has no streaming loop command", provider)
-			}
+		// Built-in loop attempts always request the adapter stream — redirected runs
+		// included — because it feeds the provider watchdog.
+		argv, ok := iterationCommand(provider, loopProcessArgv(provider, target.Model, target.Effort, prompt), nil)
+		if !ok {
+			t.Fatalf("provider %s has no streaming loop command", provider)
 		}
 		wantArgv := processTraceArgv(argv)
 		run := runs[i].Run
@@ -835,6 +823,19 @@ func assertLoopTraceProcessesGone(t *testing.T, trace []*processTrace) {
 	t.Helper()
 	for _, event := range trace {
 		awaitProcessGone(t, event.PID)
+	}
+}
+
+// terminateOrphanedProviders reaps provider fixtures that survive a killed controller. The box
+// runs in its own process group (the provider watchdog's cancel seam), so kill -9 of coop no
+// longer takes the box down with it — matching a real container runtime, where the container
+// outlives its client. The test stands in for that runtime's cleanup before asserting recovery.
+func terminateOrphanedProviders(t *testing.T, trace []*processTrace) {
+	t.Helper()
+	for _, event := range trace {
+		if event.Source == "provider" && event.Event == "ready" {
+			_ = syscall.Kill(event.PID, syscall.SIGTERM)
+		}
 	}
 }
 

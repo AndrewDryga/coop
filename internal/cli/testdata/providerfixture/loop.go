@@ -64,11 +64,12 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		if !homes[target.Provider] {
 			return fmt.Errorf("loop attempt %d provider %q has no projected home", i, target.Provider)
 		}
-		if (attempt.Result == "claude-credit-limit" ||
-			attempt.Result == "claude-credit-limit-plain" ||
-			attempt.Result == "claude-credit-limit-plain-uncontracted") &&
-			target.Provider != "claude" {
+		if attempt.Result == "claude-credit-limit" && target.Provider != "claude" {
 			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
+		}
+		if (attempt.Result == "tool-wait" || attempt.Result == "tool-gated-complete") &&
+			target.Provider == "grok" {
+			return fmt.Errorf("loop attempt %d result %q requires a provider with streamed tool events", i, attempt.Result)
 		}
 		if err := validateLoopResult(i, attempt.Stage, attempt.Result); err != nil {
 			return err
@@ -87,9 +88,9 @@ func loopAttemptTarget(index int, attempt loopAttempt) (agents.Target, error) {
 
 func validateLoopResult(index int, stage, result string) error {
 	common := result == "rate-limit" || result == "rate-limit-short" || result == "claude-credit-limit" ||
-		result == "claude-credit-limit-plain" || result == "claude-credit-limit-plain-uncontracted" ||
 		result == "output-limit" || result == "authentication" || result == "ordinary" ||
-		result == "ambiguous-limit-prose" || result == "ambiguous-auth-prose" || result == "malformed" || result == "truncated" || result == "wait"
+		result == "ambiguous-limit-prose" || result == "ambiguous-auth-prose" || result == "malformed" || result == "truncated" || result == "wait" ||
+		result == "progress-wait"
 	switch stage {
 	case "work":
 		if common || result == "complete" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
@@ -99,7 +100,8 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
 			result == "verify-only-after-block" || result == "second-binding" ||
 			result == "background-drained" || result == "background-timeout" ||
-			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" {
+			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
+			result == "tool-wait" || result == "tool-gated-complete" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -399,15 +401,6 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			"is_error": true,
 			"result":   notice,
 		})
-	case "claude-credit-limit-plain", "claude-credit-limit-plain-uncontracted":
-		if provider != "claude" || loopStreaming(provider, providerArgv) {
-			return 1, "", errors.New("plain Claude credit-limit outcome requires a non-streaming Claude attempt")
-		}
-		notice := "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
-		if attempt.Result == "claude-credit-limit-plain-uncontracted" {
-			notice = "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
-		}
-		fmt.Fprintln(os.Stdout, notice)
 	case "output-limit":
 		fmt.Fprintln(os.Stderr, "maximum output length")
 	case "authentication":
@@ -415,17 +408,146 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 	case "ordinary":
 		fmt.Fprintln(os.Stdout, "fixture ordinary provider failure")
 	case "ambiguous-limit-prose":
-		fmt.Fprintln(os.Stdout, "error: rate limited")
+		// Limit-shaped prose inside streamed NARRATION stays response context, never a
+		// terminal diagnostic — it must not rotate targets.
+		if err := emitLoopNarration(provider, providerArgv, "error: rate limited"); err != nil {
+			return 1, "", err
+		}
 	case "ambiguous-auth-prose":
-		fmt.Fprintln(os.Stdout, loopAuthenticationFailure(provider))
+		if err := emitLoopNarration(provider, providerArgv, loopAuthenticationFailure(provider)); err != nil {
+			return 1, "", err
+		}
 	case "malformed":
 		fmt.Fprintln(os.Stdout, `{"type":not-json}`)
 	case "truncated":
 		fmt.Fprint(os.Stdout, `{"type":"result"`)
 	case "wait":
 		return waitLoopSignal(root, trace)
+	case "progress-wait":
+		// One recognized model-progress event, then silence: the host watchdog's idle
+		// deadline must kill this attempt.
+		if err := emitLoopWatchdogEvent(provider, providerArgv, false); err != nil {
+			return 1, "", err
+		}
+		return waitLoopSignal(root, trace)
+	case "tool-wait":
+		// An open foreground tool that never finishes: idle is suspended, so only the
+		// absolute tool cap may kill this attempt.
+		if err := emitLoopWatchdogEvent(provider, providerArgv, true); err != nil {
+			return 1, "", err
+		}
+		return waitLoopSignal(root, trace)
+	case "tool-gated-complete":
+		// A slow foreground tool that finishes after the test lets it: proves an open tool
+		// suspends the ordinary idle deadline without wedging the attempt.
+		if err := emitLoopWatchdogEvent(provider, providerArgv, true); err != nil {
+			return 1, "", err
+		}
+		if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
+			return 1, "", err
+		}
+		if err := waitLoopRelease(root, plan.TaskID); err != nil {
+			return 1, "", err
+		}
+		if err := emitLoopWatchdogToolEnd(provider, providerArgv); err != nil {
+			return 1, "", err
+		}
+		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, ""); err != nil {
+			return 1, "", err
+		}
+		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
+		return 0, "", nil
 	}
 	return 23, "", nil
+}
+
+const loopWatchdogToolID = "fixture-watchdog-tool"
+
+// emitLoopNarration streams one assistant-narration event with no terminal event, so the
+// attempt still ends incomplete while the prose rides the response channel.
+func emitLoopNarration(provider string, argv []string, text string) error {
+	if !loopStreaming(provider, argv) {
+		return errors.New("narration outcomes require a streaming attempt")
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	switch provider {
+	case "claude":
+		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}})
+	case "codex":
+		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": "fixture"})
+		_ = encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"id": "fixture-narration", "type": "agent_message", "text": text}})
+	case "gemini":
+		_ = encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": text})
+	case "grok":
+		_ = encoder.Encode(map[string]any{"type": "text", "data": text})
+	default:
+		return fmt.Errorf("unsupported narration provider %q", provider)
+	}
+	return nil
+}
+
+// emitLoopWatchdogEvent emits exactly one adapter-recognized streamed event: a model-progress
+// event, or (tool) an open foreground tool start. These outcomes exist to exercise the host
+// provider watchdog, so a non-streaming attempt is a scenario error.
+func emitLoopWatchdogEvent(provider string, argv []string, tool bool) error {
+	if !loopStreaming(provider, argv) {
+		return errors.New("watchdog fixture outcomes require a streaming attempt")
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	switch provider {
+	case "claude":
+		if tool {
+			_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{
+				"type": "tool_use", "id": loopWatchdogToolID, "name": "Bash",
+				"input": map[string]any{"command": "make check"},
+			}}}})
+			return nil
+		}
+		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "fixture watchdog progress"}}}})
+	case "codex":
+		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": "fixture"})
+		if tool {
+			_ = encoder.Encode(map[string]any{"type": "item.started", "item": map[string]any{"id": loopWatchdogToolID, "type": "command_execution", "command": "make check"}})
+			return nil
+		}
+		_ = encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"id": "fixture-reasoning", "type": "reasoning"}})
+	case "gemini":
+		_ = encoder.Encode(map[string]any{"type": "init"})
+		if tool {
+			_ = encoder.Encode(map[string]any{"type": "tool_use", "tool_name": "run_shell_command", "tool_id": loopWatchdogToolID, "parameters": map[string]any{"command": "make check"}})
+			return nil
+		}
+		_ = encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": "fixture watchdog progress"})
+	case "grok":
+		if tool {
+			return errors.New("grok streams no tool lifecycle events")
+		}
+		_ = encoder.Encode(map[string]any{"type": "text", "data": "fixture watchdog progress"})
+	default:
+		return fmt.Errorf("unsupported watchdog provider %q", provider)
+	}
+	return nil
+}
+
+// emitLoopWatchdogToolEnd closes the tool emitLoopWatchdogEvent opened.
+func emitLoopWatchdogToolEnd(provider string, argv []string) error {
+	if !loopStreaming(provider, argv) {
+		return errors.New("watchdog fixture outcomes require a streaming attempt")
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	switch provider {
+	case "claude":
+		_ = encoder.Encode(map[string]any{"type": "user", "message": map[string]any{"content": []map[string]any{{
+			"type": "tool_result", "tool_use_id": loopWatchdogToolID, "content": "ok", "is_error": false,
+		}}}})
+	case "codex":
+		_ = encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"id": loopWatchdogToolID, "type": "command_execution", "exit_code": 0}})
+	case "gemini":
+		_ = encoder.Encode(map[string]any{"type": "tool_result", "tool_id": loopWatchdogToolID, "status": "success"})
+	default:
+		return fmt.Errorf("unsupported watchdog tool provider %q", provider)
+	}
+	return nil
 }
 
 func addLoopTaskBinding(root, taskID string) error {

@@ -1795,7 +1795,7 @@ func reviewReadOnlyPaths(mode completionWindowMode, repoReadOnly bool, hosts []s
 }
 
 func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
-	var fails, waits, outputRetries, totalRetries, handoffs int
+	var fails, waits, outputRetries, totalRetries, handoffs, timeouts int
 	var concurrent []string
 	last := reviewRunResult{target: rev.active()}
 	for {
@@ -1838,7 +1838,25 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 			ui.Warn("review provider ended with live background work; discarding its receipt and starting a fresh observed attempt (%d/3)", handoffs)
 			continue
 		}
-		handoffs = 0
+		// A timed-out review attempt was killed for proven silence, so any receipt it printed
+		// is not an observed verdict: discard it, rotate without cooling, and retry under the
+		// dedicated timeout cap. Three consecutive timeouts stop the stage — a review that
+		// can't run is never an accept.
+		if isProviderTimeout(classification.outcome) {
+			last.output = ""
+			timeouts++
+			if timeouts >= maxProviderTimeouts {
+				return last, fmt.Errorf("review provider attempt timed out %d times in a row (%s) — stopping (a review that can't run is never an accept)", timeouts, classification.outcome)
+			}
+			if observeHandoff != nil {
+				observeHandoff(last, start, headBefore)
+			}
+			totalRetries++
+			rev.advanceOnTimeout(time.Now())
+			ui.Warn("review provider attempt timed out (%s) — discarding its partial output and retrying (%d/%d)", classification.outcome, timeouts, maxProviderTimeouts)
+			continue
+		}
+		handoffs, timeouts = 0, 0
 		if receipt, ok := reviewReopenReceipt(out); ok && len(receipt.reopened) > 0 && classification.outcome != "success" {
 			verdictErr := fmt.Errorf("failed review stage declared reopen for %s; verdict was not applied", strings.Join(receipt.reopened, ", "))
 			if classification.outcome == "authentication" {
@@ -2778,10 +2796,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
 	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.
 	defer armKeepAwake(a.cfg)()
-	// On a TTY every built-in provider streams JSON that coop decodes into the same live lines.
-	// A custom work.command or non-terminal (pipe/CI/fork log) keeps plain text output. This is
-	// decided per iteration because a cross-provider rotation can swap the active agent.
-	tty := ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stderr)
+	// Every built-in provider streams JSON that coop decodes into the same live lines — on a
+	// TTY and on redirected runs alike, since the stream also feeds the provider watchdog. Only
+	// a custom work.command keeps plain text output.
 	// signoff.prompt APPENDS to the built-in senior review (it never replaces it).
 	health := newLoopHealth() // per-task risk signals (reopens and gate edits) accumulated across the run
 	audits := newAuditEvidenceStore()
@@ -2834,34 +2851,50 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if len(custom) == 0 {
 			cmd = a.agentLoopCmd(iterAgent, prompt)
 		}
-		return iterationCommand(iterAgent, cmd, custom, tty)
+		return iterationCommand(iterAgent, cmd, custom)
 	}
 	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
 	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
-	// stops before the next; a second stops now (tears the box down). A DETACHED fork worker has
-	// no stdin tty (its stdin is /dev/null) and is stopped by `coop fork stop` (SIGTERM), so the
-	// tty check below leaves it out — it keeps the plain, uninterruptible box and that SIGTERM
-	// teardown is untouched. We watch SIGINT only. iterCtx stays nil otherwise.
+	// stops before the next; a second stops now (tears the box down). We watch SIGINT only there.
+	// A redirected loop — a CI pipe, or a DETACHED fork worker stopped by `coop fork stop`
+	// (SIGTERM) — needs its own watcher now: every built-in attempt runs the box in its own
+	// cancelable process group for the provider watchdog, so a delivered signal no longer takes
+	// the box down with coop. One SIGINT/SIGTERM cancels the box context — the run tears down
+	// cleanly instead of exiting and orphaning it.
 	var softStop atomic.Bool
-	wake := make(chan struct{}) // closed on the first Ctrl-C so any in-progress wait returns at once
+	wake := make(chan struct{}) // closed on the first stop signal so any in-progress wait returns at once
+	interactive := ui.IsTerminal(os.Stdin)
 	var iterCtx context.Context
-	if ui.IsTerminal(os.Stdin) {
+	{
 		ctx, cancel := context.WithCancel(context.Background())
 		iterCtx = ctx
 		defer cancel()
 		sig := make(chan os.Signal, 2)
-		signal.Notify(sig, os.Interrupt)
-		defer func() { signal.Stop(sig); close(sig) }()
-		go watchInterrupt(sig,
-			func() {
+		if interactive {
+			signal.Notify(sig, os.Interrupt)
+			go watchInterrupt(sig,
+				func() {
+					softStop.Store(true)
+					close(wake)
+					loopInterruptInfo("⏸ finishing this iteration, then stopping — Ctrl-C again to stop now")
+				},
+				func() {
+					loopInterruptInfo("■ stopping now")
+					cancel()
+				})
+		} else {
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				if _, ok := <-sig; !ok {
+					return
+				}
+				loopInterruptInfo("■ stop requested — tearing down this iteration's box, then exiting")
 				softStop.Store(true)
 				close(wake)
-				loopInterruptInfo("⏸ finishing this iteration, then stopping — Ctrl-C again to stop now")
-			},
-			func() {
-				loopInterruptInfo("■ stopping now")
 				cancel()
-			})
+			}()
+		}
+		defer func() { signal.Stop(sig); close(sig) }()
 	}
 
 	// Pre-flight: one best-effort housekeeping pass before working the queue. The built-in job —
@@ -2908,7 +2941,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	stopHint := "Ctrl-C to stop"
 	if limit.enabled() {
 		stopHint = fmt.Sprintf("at most %s, then pause", ui.Count(limit.max, "task"))
-	} else if iterCtx != nil {
+	} else if interactive {
 		stopHint = "Ctrl-C to stop after this task, again to stop now"
 	}
 	if len(custom) == 0 {
@@ -2919,7 +2952,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if rot.rotates() {
 		ui.Info("rotating %d targets on rate limit: %s", len(rot.targets), strings.Join(rot.members(), ", "))
 	}
-	fails, waits, retries, handoffs, completed, stalls := 0, 0, 0, 0, 0, 0
+	fails, waits, retries, handoffs, timeouts, completed, stalls := 0, 0, 0, 0, 0, 0, 0
 	completedThisRun := map[string]bool{}
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
@@ -2943,7 +2976,7 @@ reviewAgain:
 			// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
 			// below — stops here, before the next task is claimed; a second (hard) Ctrl-C that
 			// canceled iterCtx during a between-tasks audit stops here too, before respawning a box.
-			if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+			if softStop.Load() || iterCtx.Err() != nil {
 				break
 			}
 			reached, limitErr := limit.observe(queueSnapshot(hosts))
@@ -3060,7 +3093,47 @@ reviewAgain:
 				ui.Warn("provider ended with live background work; restored %s and starting a fresh observed attempt (%d/3)", assigned.Item.ID, handoffs)
 				continue
 			}
-			handoffs = 0
+			// The watchdog killed this attempt for proven silence. Any completion it produced is
+			// premature: restore it, keep held audit authority truthful (rebase over a valid
+			// complete rewrite, park fail-closed otherwise), release the lease, and retry under
+			// the dedicated timeout policy — rotate to the next usable rung without cooling,
+			// capped at three consecutive timeouts, no ordinary counter consumed.
+			if isProviderTimeout(classification.outcome) {
+				if assignedCompletion != nil {
+					if restoreErr := restoreProviderTimeoutCompletion(*assignedCompletion, lease.reopen != nil); restoreErr != nil {
+						return 1, errors.Join(restoreErr, lease.release(), windows.abandon())
+					}
+				}
+				if authorityErr := lease.rebaseTimedOutAuditReopen(repo, iterHead, gitOut(repo, "rev-parse", "HEAD")); authorityErr != nil {
+					baseline := lease.reopen.BaselineHead
+					parkErr := parkStaleAuditReopen(assigned, baseline)
+					releaseErr := errors.Join(lease.release(), windows.abandon())
+					if parkErr != nil {
+						return 1, errors.Join(authorityErr, fmt.Errorf("could not park stale audit task %s: %w", assigned.Item.ID, parkErr), releaseErr)
+					}
+					return 1, errors.Join(
+						fmt.Errorf("task %s audit authority no longer matches the tree its timed-out attempt left: %w; %s", assigned.Item.ID, authorityErr, staleAuditReopenRecovery(assigned.Item.ID, baseline)),
+						releaseErr,
+					)
+				}
+				if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
+					return 1, fmt.Errorf("release task lease %s after provider timeout: %w", assigned.Item.ID, releaseErr)
+				}
+				timeouts++
+				a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
+				if timeouts >= maxProviderTimeouts {
+					return code, fmt.Errorf("provider attempt timed out %d times in a row on task %s (%s) — stopped; the task remains actionable, inspect the provider and re-run `coop loop`", timeouts, assigned.Item.ID, classification.outcome)
+				}
+				prev := rot.active()
+				rot.advanceOnTimeout(time.Now())
+				if next := rot.active(); next.String() != prev.String() {
+					ui.Warn("provider attempt for %s timed out (%s) — switching to %q for a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, next, timeouts, maxProviderTimeouts)
+				} else {
+					ui.Warn("provider attempt for %s timed out (%s) — starting a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, timeouts, maxProviderTimeouts)
+				}
+				continue
+			}
+			handoffs, timeouts = 0, 0
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
 			var missing []string
 			if assignedCompletion != nil {
@@ -3158,7 +3231,7 @@ reviewAgain:
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop only after
 			// completion validation and finalization closed the crash boundary above. Record the actual
 			// attempt as interrupted rather than silently dropping it from telemetry.
-			if iterCtx != nil && iterCtx.Err() != nil {
+			if iterCtx.Err() != nil {
 				a.recordStage(repo, runid, "work", "interrupted", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
 				break
 			}
@@ -3203,10 +3276,7 @@ reviewAgain:
 						}
 						// A first Ctrl-C is a soft stop: the completed task still earns its audit. Only
 						// the second cancels iterCtx; its Done channel also wakes a review backoff promptly.
-						var hardStop <-chan struct{}
-						if iterCtx != nil {
-							hardStop = iterCtx.Done()
-						}
+						hardStop := iterCtx.Done()
 						observe := func(run reviewRunResult, start time.Time, headBefore string) {
 							a.recordStage(repo, runid, "between", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, auditGateFiles, run.usage)
 						}
@@ -3222,7 +3292,7 @@ reviewAgain:
 						if rerr != nil {
 							ui.Warn("between audit could not run for %s: %v — left unaudited", strings.Join(finishedIDs, ", "), rerr)
 						}
-						interrupted := iterCtx != nil && iterCtx.Err() != nil
+						interrupted := iterCtx.Err() != nil
 						if verdictErr := protectedAuditVerdict(protectedAudit, interrupted, rerr, btRun.output, reopenedIDs, finishedIDs); verdictErr != nil {
 							return 1, fmt.Errorf("protected-change audit for %s: %w — stopped before another task could trust the changed gate; inspect the task and re-run `coop loop`", strings.Join(finishedIDs, ", "), verdictErr)
 						}
@@ -3293,7 +3363,7 @@ reviewAgain:
 		}
 		// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
 		// signoff pass and the drain summary — the queue isn't done, the user asked to stop.
-		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+		if softStop.Load() || iterCtx.Err() != nil {
 			cf, _ := queueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
@@ -3347,7 +3417,7 @@ reviewAgain:
 			return 1, serr
 		}
 		// A stop that landed during the signoff pass is honored before the next round is decided.
-		if softStop.Load() || (iterCtx != nil && iterCtx.Err() != nil) {
+		if softStop.Load() || iterCtx.Err() != nil {
 			cf, _ := queueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
@@ -3405,7 +3475,7 @@ reviewAgain:
 	// whose e2e it can't get to pass (surfaced in the closing digest + exit). Skipped on a custom
 	// work.command or a requested stop. Ordinary process failures remain best-effort; completion
 	// ownership setup/audit failures are hard boundaries and stop the loop.
-	if verifyEnabled && !softStop.Load() && (iterCtx == nil || iterCtx.Err() == nil) {
+	if verifyEnabled && !softStop.Load() && iterCtx.Err() == nil {
 		cs := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD"))
 		if cs.empty() {
 			ui.Info("verify pass — nothing changed this run, skipping")
@@ -3675,7 +3745,11 @@ const progressPoll = 2 * time.Second // how often the live bar re-reads the queu
 // iterationCommand adds streaming flags only to coop's known headless forms on a TTY. Claude's
 // existing form appends them after the prompt; the other CLIs require their trailing prompt token
 // (or -p/value pair) to remain last.
-func iterationCommand(agent string, cmd, custom []string, tty bool) ([]string, bool) {
+// iterationCommand always requests the adapter's structured stream for a built-in command —
+// on a TTY for the live view, and on redirected runs (fork logs, CI) because the stream is the
+// provider watchdog's only trustworthy activity signal. Custom work commands keep their own
+// output: Coop does not own their protocol, so they run unstreamed and unwatched.
+func iterationCommand(agent string, cmd, custom []string) ([]string, bool) {
 	if len(custom) > 0 {
 		return custom, false
 	}
@@ -3684,7 +3758,7 @@ func iterationCommand(agent string, cmd, custom []string, tty bool) ([]string, b
 		return cmd, false
 	}
 	stream := adapter.Stream()
-	if !tty || stream.Format == agents.StreamNone || len(stream.Flags) == 0 {
+	if stream.Format == agents.StreamNone || len(stream.Flags) == 0 {
 		return cmd, false
 	}
 	return spliceBeforeTrailing(cmd, stream.Flags, stream.TrailingArgs), true
@@ -3845,6 +3919,22 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	if len(peers) > 0 || a.preset != nil {
 		lead = agent
 	}
+	// A structured stream gives the watchdog trustworthy activity, so only then does the
+	// attempt get a child context it may cancel on proven silence. The parent ctx stays
+	// untouched: a user interrupt keeps winning over any watchdog fire.
+	boxCtx := ctx
+	var watchdog *providerWatchdog
+	if dec != nil {
+		parent := ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		childCtx, cancelChild := context.WithCancel(parent)
+		defer cancelChild()
+		watchdog = newProviderWatchdog(watchdogDeadlinesFor(a.cfg), cancelChild)
+		dec.setActivity(watchdog)
+		boxCtx = childCtx
+	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: a.forkOwner, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
 		SuperviseDescendants: true,
@@ -3853,8 +3943,11 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		Homes:                a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		Stdout: stdoutW,
 		Stderr: stderrW,
-		Ctx:    ctx,
+		Ctx:    boxCtx,
 	})
+	if watchdog != nil {
+		watchdog.stop() // nothing may fire once the box run returned
+	}
 	if live {
 		close(stop)
 		wg.Wait() // no goroutine repaints the region after this, so the teardown below is clean
@@ -3894,6 +3987,14 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		output, _ = normalizeCodexReviewOutput(output)
 	}
 	classification = classifyIteration(agent, code, err, diagnostic.String(), streamOutcome, time.Now())
+	// A watchdog kill owns the classification only when the attempt actually died and the
+	// parent was not interrupted: parent cancellation wins and remains "interrupted", and a
+	// provider that finished before a racing fire keeps its real outcome.
+	if watchdog != nil && err != nil && (ctx == nil || ctx.Err() == nil) {
+		if timeout := watchdog.timedOut(); timeout != "" {
+			classification = iterationClassification{outcome: timeout}
+		}
+	}
 	return code, output, res, classification, windows, err
 }
 

@@ -114,6 +114,46 @@ func TestRotationSelectionSkipsFutureLimitAndClearsExpired(t *testing.T) {
 	}
 }
 
+func TestRotationAdvanceOnTimeout(t *testing.T) {
+	now := time.Unix(1000, 0)
+
+	// A timeout rotates to the next usable rung WITHOUT cooling the abandoned one.
+	r := rts("a", "b", "c")
+	r.advanceOnTimeout(now)
+	if r.active().String() != "claude@b" || len(r.limited) != 0 {
+		t.Fatalf("after timeout: active=%q limited=%v, want b with no cooling", r.active(), r.limited)
+	}
+
+	// Cooling rungs are skipped; the sole usable one is the next stop.
+	r = rts("a", "b", "c")
+	r.limited["claude@b"] = now.Add(time.Hour)
+	r.advanceOnTimeout(now)
+	if r.active().String() != "claude@c" {
+		t.Fatalf("cooling b skipped: active=%q, want c", r.active())
+	}
+
+	// A single rung — or every other rung cooling — retries the same rung.
+	r = rts("only")
+	r.advanceOnTimeout(now)
+	if r.active().String() != "claude@only" {
+		t.Fatalf("single rung moved: active=%q", r.active())
+	}
+	r = rts("a", "b")
+	r.limited["claude@b"] = now.Add(time.Hour)
+	r.advanceOnTimeout(now)
+	if r.active().String() != "claude@a" {
+		t.Fatalf("all others cooling: active=%q, want a retried", r.active())
+	}
+
+	// An expired mark is usable again — timeouts never extend cooling.
+	r = rts("a", "b")
+	r.limited["claude@b"] = now.Add(-time.Second)
+	r.advanceOnTimeout(now)
+	if r.active().String() != "claude@b" || len(r.limited) != 0 {
+		t.Fatalf("expired mark: active=%q limited=%v, want b cleared", r.active(), r.limited)
+	}
+}
+
 func TestRememberPreflightLimitAdvancesWorkRotation(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	reset := now.Add(time.Hour)

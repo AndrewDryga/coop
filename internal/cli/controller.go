@@ -2613,6 +2613,27 @@ func (l *taskLease) preserveBlockedAuditReopen(repo, base, head string) error {
 	return nil
 }
 
+// rebaseTimedOutAuditReopen keeps held audit authority truthful after a timed-out attempt.
+// An unchanged tree leaves the recorded baseline valid. A tree-changing attempt is accepted
+// only when it is a complete, semantically valid rewrite of the reviewed subject — then the
+// authority rebases onto the new head without consuming its single-use generation. Anything
+// else errors so the caller can park the task fail-closed instead of retrying on a tree the
+// audit never authorized.
+func (l *taskLease) rebaseTimedOutAuditReopen(repo, base, head string) error {
+	if l.reopen == nil || base == head {
+		return nil
+	}
+	replacement, err := rebasedAuditReopenRecord(repo, base, head, l.id, *l.reopen)
+	if err != nil {
+		return err
+	}
+	if err := replaceAuditReopenRecordIfMatches(l.root, *l.reopen, replacement); err != nil {
+		return err
+	}
+	l.reopen = &replacement
+	return nil
+}
+
 func completionUnbindableTasks(repo, base, head string, finished []string, reopen *auditReopenRecord) []string {
 	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
 		return unbindableTasks(repo, base, head, finished)
@@ -2703,6 +2724,28 @@ func restoreBackgroundHandoffCompletion(task queuedTask) error {
 	return errors.Join(
 		appendTaskLogStrict(dir, "provider exited while an agent-owned background job remained live; host drained or terminated it, so this completion is restored for a fresh observed attempt"),
 		normalizeTaskState(id, dir, "in progress — background handoff", "inspect the background result and rerun any ambiguous gate in the foreground", "the provider ended before its background work settled", "do not mark complete until every started gate, consult, or delegate has finished"),
+	)
+}
+
+// restoreProviderTimeoutCompletion rejects a completion produced by an attempt the watchdog
+// killed for proven silence. The provider may have moved the folder and then wedged before the
+// host could observe a trustworthy finish, so the completion is restored for a fresh observed
+// attempt with the standard recovery contract for any commit it already landed.
+func restoreProviderTimeoutCompletion(task queuedTask, audit bool) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore timed-out task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	trap := "if the prior attempt already committed, follow the informed-resume recovery: verify the work, then amend with a unique Coop-Recovery trailer while preserving exactly one Coop-Task binding"
+	if audit {
+		trap = "the next completion stays under the host audit authority: zero new commits or a real tree change, never a Coop-Recovery receipt"
+	}
+	return errors.Join(
+		appendTaskLogStrict(dir, "the host watchdog killed this provider attempt after it stopped producing observable progress; its completion was restored for a fresh observed attempt"),
+		normalizeTaskState(id, dir, "in progress — provider timeout", "resume the task and complete it under a live provider attempt", "the provider went silent and was killed before its completion could be trusted", trap),
 	)
 }
 

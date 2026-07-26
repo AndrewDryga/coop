@@ -54,6 +54,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 - [model-tiers-and-role-vs-lead](model-tiers-and-role-vs-lead.md) — ModelFor is one model per provider (active>target>fallback>env); a preset role's model rides its wrapper target, never global state, or it shadows a rotated lead
+- [loop-provider-watchdog](loop-provider-watchdog.md) — built-in attempts always stream; the watchdog trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 - [acp-preset-owns-toolbar](acp-preset-owns-toolbar.md) — active ACP presets own the whole lead target and refuse stale Provider/Account editor replays
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state

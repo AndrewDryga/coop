@@ -260,7 +260,7 @@ func providerResumeLiveCommand(ag agents.Agent, cfg *config.Config, stage, sessi
 	if ag.Stream().Format != agents.StreamCodexJSON {
 		return nil, false
 	}
-	command, streaming := iterationCommand(ag.Name(), ag.Headless(cfg, prompt), nil, true)
+	command, streaming := iterationCommand(ag.Name(), ag.Headless(cfg, prompt), nil)
 	if !streaming || len(command) < 2 || command[1] != "exec" {
 		return nil, false
 	}

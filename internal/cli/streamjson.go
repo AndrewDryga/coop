@@ -54,6 +54,20 @@ type iterationStreamDecoder interface {
 	flush()
 	lastIterResult() *iterResult
 	streamOutcome() providerStreamOutcome
+	setActivity(streamActivity)
+}
+
+// streamActivity receives the host-trusted semantic activity one provider attempt proves. Only
+// valid adapter-recognized events reach it: CLI bootstrap, model progress (assistant text,
+// reasoning, or a recognized stream item), foreground tool lifecycle under the provider's own
+// IDs, and the terminal event. Malformed, unknown, raw, or repaint-only output never lands
+// here, so the provider watchdog can trust every callback.
+type streamActivity interface {
+	bootstrap()
+	progress()
+	toolStart(id string)
+	toolEnd(id string)
+	terminal()
 }
 
 type providerStreamOutcome int
@@ -121,6 +135,7 @@ type ndjsonDecoder struct {
 	malformed  bool
 	event      func(json.RawMessage)
 	beforeRaw  func()
+	activity   streamActivity
 }
 
 const (
@@ -177,6 +192,40 @@ func (d *ndjsonDecoder) flush() {
 		d.line(d.buf)
 	}
 	d.buf = nil
+}
+
+// setActivity attaches the watchdog sink. The nil-safe note helpers below are the ONLY path
+// provider decoders may report activity through, and only from valid decoded events.
+func (d *ndjsonDecoder) setActivity(a streamActivity) { d.activity = a }
+
+func (d *ndjsonDecoder) noteBootstrap() {
+	if d.activity != nil {
+		d.activity.bootstrap()
+	}
+}
+
+func (d *ndjsonDecoder) noteProgress() {
+	if d.activity != nil {
+		d.activity.progress()
+	}
+}
+
+func (d *ndjsonDecoder) noteToolStart(id string) {
+	if d.activity != nil {
+		d.activity.toolStart(id)
+	}
+}
+
+func (d *ndjsonDecoder) noteToolEnd(id string) {
+	if d.activity != nil {
+		d.activity.toolEnd(id)
+	}
+}
+
+func (d *ndjsonDecoder) noteTerminal() {
+	if d.activity != nil {
+		d.activity.terminal()
+	}
 }
 
 func (d *ndjsonDecoder) emit(s string) { fmt.Fprintln(d.out, s) }
@@ -318,6 +367,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 	if json.Unmarshal(msg, &m) != nil {
 		return
 	}
+	d.noteProgress() // a decoded assistant turn — text, thinking, or tool calls — is model action
 	d.terminalLimitNotice = ""
 	for _, b := range m.Content {
 		switch b.Type {
@@ -348,6 +398,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			}
 			d.emit(line)
 			d.tool[b.ID] = strings.TrimSpace(displayName + " " + label)
+			d.noteToolStart(b.ID)
 		}
 	}
 }
@@ -391,7 +442,11 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 		return
 	}
 	for _, b := range m.Content {
-		if b.Type != "tool_result" || !b.IsError {
+		if b.Type != "tool_result" {
+			continue
+		}
+		d.noteToolEnd(b.ToolUseID) // every result closes its tool; only failures earn a line
+		if !b.IsError {
 			continue
 		}
 		line := "  " + ui.Red("✗")
@@ -413,8 +468,11 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 // ANSI bold code (ESC[1m) but is literal text; normalizing it would risk misrepresenting the
 // model, so we deliberately don't.
 func (d *streamDecoder) system(ev *streamEvent) {
-	if ev.Subtype == "init" && ev.Model != "" {
-		d.emit(streamModelLine(d.agent, ev.Model, d.profile))
+	if ev.Subtype == "init" {
+		d.noteBootstrap()
+		if ev.Model != "" {
+			d.emit(streamModelLine(d.agent, ev.Model, d.profile))
+		}
 	}
 }
 
@@ -455,6 +513,7 @@ func streamLimitNotice(s string) bool {
 
 // result renders the iteration's closing summary, or its error.
 func (d *streamDecoder) result(ev *streamEvent) {
+	d.noteTerminal()
 	if ev.IsError {
 		d.failed = true
 		msg := strings.TrimSpace(ev.Result)
