@@ -2663,23 +2663,47 @@ func unbindableTasks(repo, base, head string, finished []string) []string {
 	if base == "" || head == "" || base == head {
 		return slices.Clone(finished)
 	}
-	search := base + ".." + head
+	headCommits, headErr := rawReachableAuditCommits(repo, head)
+	baseCommits, baseErr := rawReachableAuditCommits(repo, base)
+	if headErr != nil || baseErr != nil {
+		return slices.Clone(finished)
+	}
+	baseReachable := make(map[string]bool, len(baseCommits))
+	for _, commit := range baseCommits {
+		baseReachable[commit.sha] = true
+	}
 	allowed := make(map[string]bool, len(finished))
 	for _, id := range finished {
 		allowed[id] = true
 	}
-	changes := loopChanges(repo, base, head)
-	if changes.invalidTaskBindings {
-		return slices.Clone(finished)
-	}
-	for _, id := range changes.taskIDs() {
-		if !allowed[id] {
+	rangeBindings := make(map[string]int, len(finished))
+	reachableBindings := make(map[string]int, len(finished))
+	reachableInvalid := make(map[string]bool, len(finished))
+	for _, commit := range headCommits {
+		inRange := !baseReachable[commit.sha]
+		if inRange && (commit.taskBindingInvalid || len(commit.taskValues) > 1) {
 			return slices.Clone(finished)
+		}
+		for _, id := range commit.taskValues {
+			if !allowed[id] {
+				if inRange {
+					return slices.Clone(finished)
+				}
+				continue
+			}
+			if commit.taskBindingInvalid || len(commit.taskValues) != 1 {
+				reachableInvalid[id] = true
+				continue
+			}
+			reachableBindings[id]++
+			if inRange {
+				rangeBindings[id]++
+			}
 		}
 	}
 	var missing []string
 	for _, id := range finished {
-		if len(commitsForTask(repo, search, id)) != 1 || len(commitsForTask(repo, head, id)) != 1 {
+		if rangeBindings[id] != 1 || reachableBindings[id] != 1 || reachableInvalid[id] {
 			missing = append(missing, id)
 		}
 	}

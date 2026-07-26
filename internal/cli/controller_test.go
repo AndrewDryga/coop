@@ -2790,6 +2790,73 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	}
 }
 
+func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
+	hideParents := func(t *testing.T, repo, metadata, commit string) {
+		t.Helper()
+		path := filepath.Join(repo, ".git", "shallow")
+		if metadata == "grafts" {
+			path = filepath.Join(repo, ".git", "info", "grafts")
+		}
+		if err := os.WriteFile(path, []byte(commit+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, metadata := range []string{"grafts", "shallow"} {
+		t.Run(metadata+" cannot hide older duplicate", func(t *testing.T) {
+			repo, git := gitRepo(t)
+			git("commit", "-q", "--allow-empty", "-m", "old binding\n\nCoop-Task: task-a")
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			git("commit", "-q", "--allow-empty", "-m", "new binding\n\nCoop-Task: task-a")
+			head := gitOut(repo, "rev-parse", "HEAD")
+			hideParents(t, repo, metadata, base)
+
+			if got := commitsForTask(repo, head, "task-a"); len(got) != 1 {
+				t.Fatalf("fixture did not hide the older binding from Git traversal: %v", got)
+			}
+			if got := unbindableTasks(repo, base, head, []string{"task-a"}); !slices.Equal(got, []string{"task-a"}) {
+				t.Fatalf("hidden older duplicate = %v, want [task-a]", got)
+			}
+		})
+
+		t.Run(metadata+" cannot remove in-range binding", func(t *testing.T) {
+			repo, git := gitRepo(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			git("commit", "-q", "--allow-empty", "-m", "binding\n\nCoop-Task: task-a")
+			git("commit", "-q", "--allow-empty", "-m", "tail")
+			head := gitOut(repo, "rev-parse", "HEAD")
+			hideParents(t, repo, metadata, head)
+
+			if got := commitsForTask(repo, base+".."+head, "task-a"); len(got) != 0 {
+				t.Fatalf("fixture did not hide the in-range binding from Git traversal: %v", got)
+			}
+			if got := unbindableTasks(repo, base, head, []string{"task-a"}); len(got) != 0 {
+				t.Fatalf("raw in-range binding was hidden: %v", got)
+			}
+		})
+
+		t.Run(metadata+" cannot conceal foreign in-range binding", func(t *testing.T) {
+			repo, git := gitRepo(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			git("commit", "-q", "--allow-empty", "-m", "foreign\n\nCoop-Task: task-b")
+			git("commit", "-q", "--allow-empty", "-m", "assigned\n\nCoop-Task: task-a")
+			head := gitOut(repo, "rev-parse", "HEAD")
+			hideParents(t, repo, metadata, head)
+
+			changes := loopChanges(repo, base, head)
+			if changes.invalidTaskBindings || !slices.Equal(changes.taskIDs(), []string{"task-a"}) {
+				t.Fatalf("fixture did not hide the foreign binding from Git traversal: %#v", changes)
+			}
+			if got := unbindableTasks(repo, base, head, []string{"task-a"}); !slices.Equal(got, []string{"task-a"}) {
+				t.Fatalf("hidden foreign binding = %v, want [task-a]", got)
+			}
+		})
+	}
+}
+
 // Rewriting A makes the old B tip a sibling; replaying B puts its task binding in the proposed
 // range even though B's exact introduced content and author intent are unchanged. Fresh completion
 // rejects that foreign binding, while the host-captured audit generation accepts it exactly once.
