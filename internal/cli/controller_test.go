@@ -1292,6 +1292,586 @@ func TestCompletionWindowReplayRejectsCrashLeftUnownedCompletion(t *testing.T) {
 	}
 }
 
+func TestCompletionWindowReplayLeavesChangedBaselineArchivesDone(t *testing.T) {
+	root := t.TempDir()
+	trustedArchive := func(id string) taskItem {
+		t.Helper()
+		task := taskForLease(t, root, stateInProgress, id)
+		if err := completeTrustedTask(root, task); err != nil {
+			t.Fatal(err)
+		}
+		task, _ = currentTask(root, id)
+		return task
+	}
+	first := trustedArchive("baseline-first")
+	second := trustedArchive("baseline-second")
+	rogue := taskForLease(t, root, stateInProgress, "new-unowned-completion")
+	firstWindow, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondWindow, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowIDs := []string{firstWindow.windows[0].id, secondWindow.windows[0].id}
+	for _, archived := range []taskItem{first, second} {
+		if err := os.WriteFile(filepath.Join(archived.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	for _, windows := range []*completionWindowSet{firstWindow, secondWindow} {
+		if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+			t.Fatal(err)
+		}
+		windows.windows[0].live = nil
+	}
+
+	err = reconcileCompletionWindows([]string{root})
+	if err == nil || !strings.Contains(err.Error(), first.ID) || !strings.Contains(err.Error(), second.ID) ||
+		!strings.Contains(err.Error(), "remain done") {
+		t.Fatalf("baseline mutation replay error = %v", err)
+	}
+	for _, archived := range []taskItem{first, second} {
+		current, ok := currentTask(root, archived.ID)
+		if !ok || current.State != stateDone {
+			t.Fatalf("baseline archive %s was reopened: %#v", archived.ID, current)
+		}
+		if taskCompletionRecorded(root, current) {
+			t.Fatalf("baseline archive %s retained stale completion receipt", archived.ID)
+		}
+	}
+	current, ok := currentTask(root, rogue.ID)
+	if !ok || current.State != stateInProgress {
+		t.Fatalf("new unowned completion was not restored: %#v", current)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, windowID := range windowIDs {
+		if _, ok := index.Windows[windowID]; ok {
+			t.Fatalf("deterministic baseline mutation retained stale recovery journal %s", windowID)
+		}
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("second startup recovery = %v, want clean", err)
+	}
+}
+
+func TestCompletionWindowReplayArrivalPrecedesLaterMutation(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "staggered-unowned-completion")
+	older, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	rogue, _ = currentTask(root, rogue.ID)
+	newer, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rogue.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, windows := range []*completionWindowSet{older, newer} {
+		if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+			t.Fatal(err)
+		}
+		windows.windows[0].live = nil
+	}
+
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("staggered recovery: %v", err)
+	}
+	current, ok := currentTask(root, rogue.ID)
+	if !ok || current.State != stateInProgress {
+		t.Fatalf("older window's unowned arrival was suppressed by later mutation: %#v", current)
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("second staggered recovery = %v", err)
+	}
+}
+
+func TestCompletionWindowReplayOwnedArrivalDoesNotHideLaterMutation(t *testing.T) {
+	root := t.TempDir()
+	arrival := taskForLease(t, root, stateInProgress, "owned-arrival-before-mutation")
+	older, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := completeTrustedTask(root, arrival); err != nil {
+		t.Fatal(err)
+	}
+	arrival, _ = currentTask(root, arrival.ID)
+	newer, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(arrival.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, windows := range []*completionWindowSet{older, newer} {
+		if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+			t.Fatal(err)
+		}
+		windows.windows[0].live = nil
+	}
+
+	if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		!strings.Contains(err.Error(), arrival.ID) ||
+		!strings.Contains(err.Error(), "remain done") {
+		t.Fatalf("owned staggered recovery error = %v", err)
+	}
+	current, ok := currentTask(root, arrival.ID)
+	if !ok || current.State != stateDone {
+		t.Fatalf("owned arrival mutation was reopened: %#v", current)
+	}
+	if taskCompletionRecorded(root, current) {
+		t.Fatal("owned arrival mutation retained stale completion authority")
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("second owned staggered recovery = %v", err)
+	}
+}
+
+func TestCompletionWindowReplayPersistsRecoveredDepartureAcrossCrash(t *testing.T) {
+	root := t.TempDir()
+	rogue := taskForLease(t, root, stateInProgress, "crash-persisted-recovery-departure")
+	older, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, rogue, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	rogue, _ = currentTask(root, rogue.ID)
+	newer, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, windows := range []*completionWindowSet{older, newer} {
+		if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+			t.Fatal(err)
+		}
+		windows.windows[0].live = nil
+	}
+
+	// Simulate death after the recovery provenance and older-window retirement became durable,
+	// and after the task was restored, but before the newer baseline window was retired.
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerID := newer.windows[0].id
+	record := index.Windows[newerID]
+	record.RecoveredDepartures = []string{rogue.ID}
+	index.Windows[newerID] = record
+	delete(index.Windows, older.windows[0].id)
+	if err := errors.Join(writeCompletionWindowIndex(root, index), unlockLeaseFile(indexFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreUnownedCompletion(queuedTask{Root: root, Item: rogue}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("recovered-departure retry: %v", err)
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[newerID]; ok {
+		t.Fatal("recovered-departure retry retained the newer journal")
+	}
+	current, ok := currentTask(root, rogue.ID)
+	if !ok || current.State != stateInProgress {
+		t.Fatalf("recovered departure changed state on retry: %#v", current)
+	}
+}
+
+func TestCompletionWindowReplayLeavesReplacedBaselineArchiveDone(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "replaced-baseline")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(t.TempDir(), archived.ID)
+	if err := os.Rename(archived.Dir, backup); err != nil {
+		t.Fatal(err)
+	}
+	replacement := taskForLease(t, root, stateDone, archived.ID)
+	if taskCompletionRecorded(root, replacement) {
+		t.Fatal("replacement unexpectedly inherited the inode-bound completion receipt")
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		!strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("replaced baseline recovery error = %v", err)
+	}
+	current, ok := currentTask(root, archived.ID)
+	if !ok || current.State != stateDone {
+		t.Fatalf("replaced baseline archive was reopened: %#v", current)
+	}
+}
+
+func TestCompletionWindowReplayLeavesBusyBaselineWithoutReceiptDone(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "busy-baseline-replay")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	authority, err := openLeaseAuthority(root, archived.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archived.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		!strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("busy baseline recovery error = %v", err)
+	}
+	current, ok := currentTask(root, archived.ID)
+	if !ok || current.State != stateDone {
+		t.Fatalf("busy receiptless baseline archive was reopened: %#v", current)
+	}
+}
+
+func TestCompletionWindowReplayAcceptsReceiptCompletedFromBusyBaseline(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateDone, "busy-baseline-completed-receipt")
+	authority, err := openLeaseAuthority(root, archived.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearLeaseCompletionReceipt(authority); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLeaseCompletionReceipt(authority, archived.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("completed busy-baseline receipt recovery: %v", err)
+	}
+	current, ok := currentTask(root, archived.ID)
+	if !ok || current.State != stateDone || !taskCompletionRecorded(root, current) {
+		t.Fatalf("completed busy-baseline receipt was not accepted: %#v", current)
+	}
+}
+
+func TestCompletionWindowReplayResumesPersistedBaselineMutation(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "persisted-baseline-mutation")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := os.WriteFile(filepath.Join(archived.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := index.Windows[windowID]
+	record.BaselineMutations = []string{archived.ID}
+	index.Windows[windowID] = record
+	if err := errors.Join(writeCompletionWindowIndex(root, index), unlockLeaseFile(indexFile)); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := openLeaseAuthority(root, archived.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(clearLeaseCompletionReceipt(authority), unlockLeaseFile(authority)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		!strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("persisted baseline mutation recovery error = %v", err)
+	}
+	current, ok := currentTask(root, archived.ID)
+	if !ok || current.State != stateDone {
+		t.Fatalf("persisted baseline mutation was reopened: %#v", current)
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; ok {
+		t.Fatal("persisted baseline mutation journal was not consumed")
+	}
+}
+
+func TestCompletionWindowReplayFreshReceiptSupersedesPersistedMutation(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "recompleted-marked-baseline")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	before, ok := taskCompletionReceipt(root, archived)
+	if !ok {
+		t.Fatal("initial trusted completion has no receipt")
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := os.WriteFile(filepath.Join(archived.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := index.Windows[windowID]
+	record.BaselineMutations = []string{archived.ID}
+	index.Windows[windowID] = record
+	if err := errors.Join(writeCompletionWindowIndex(root, index), unlockLeaseFile(indexFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTrustedTaskFromDone(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := currentTask(root, archived.ID)
+	if err := completeTrustedTask(root, reopened); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("fresh trusted re-completion recovery: %v", err)
+	}
+	current, ok := currentTask(root, archived.ID)
+	if !ok || current.State != stateDone {
+		t.Fatalf("fresh trusted re-completion was reopened: %#v", current)
+	}
+	after, ok := taskCompletionReceipt(root, current)
+	if !ok || after.Nonce == before.Nonce {
+		t.Fatalf("fresh trusted receipt = %q, want generation after %q", after.Nonce, before.Nonce)
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; ok {
+		t.Fatal("fresh trusted re-completion retained its stale journal")
+	}
+}
+
+func TestCompletionWindowReplayRetainsMarkedMutationWhileReceiptOwned(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "owned-marked-baseline-mutation")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := os.WriteFile(filepath.Join(archived.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := index.Windows[windowID]
+	record.BaselineMutations = []string{archived.ID}
+	index.Windows[windowID] = record
+	if err := errors.Join(writeCompletionWindowIndex(root, index), unlockLeaseFile(indexFile)); err != nil {
+		t.Fatal(err)
+	}
+	lease, _, err := tryTaskLease(root, archived, testLeaseOwner())
+	if err != nil || lease == nil {
+		t.Fatalf("live receipt owner = %v, err %v", lease, err)
+	}
+	if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		!strings.Contains(err.Error(), "authoritative owner") {
+		_ = lease.release()
+		t.Fatalf("owned marked mutation recovery = %v", err)
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		_ = lease.release()
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; !ok {
+		_ = lease.release()
+		t.Fatal("owned marked mutation consumed its recovery journal")
+	}
+	if err := lease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		!strings.Contains(err.Error(), archived.ID) {
+		t.Fatalf("released marked mutation recovery = %v", err)
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; ok {
+		t.Fatal("released marked mutation retained its recovery journal")
+	}
+}
+
+func TestBaselineMutationLockRejectsOwnerAcquiredAfterClassification(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "post-classification-owner")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	baseline, err := snapshotDoneCompletions(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archived.Dir, "late-audit.log"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := changedDoneCompletions(root, baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, mutations, err := completionReplayCandidates(
+		root,
+		completionWindowRecord{Baseline: baseline},
+		candidates,
+	)
+	if err != nil || len(replay) != 0 || len(mutations) != 1 || mutations[0].Item.ID != archived.ID {
+		t.Fatalf("classified replay=%v mutations=%v err=%v", replay, mutations, err)
+	}
+
+	lease, _, err := tryTaskLease(root, archived, testLeaseOwner())
+	if err != nil || lease == nil {
+		t.Fatalf("post-classification owner = %v, err %v", lease, err)
+	}
+	mutationTasks := map[string]queuedTask{archived.ID: mutations[0]}
+	if locked, err := lockCompletionCandidates(root, mutationTasks); err == nil || len(locked) != 0 ||
+		!strings.Contains(err.Error(), "authoritative owner") {
+		_ = releaseLockedCompletionCandidates(locked)
+		_ = lease.release()
+		t.Fatalf("post-classification mutation lock = %v, err %v", locked, err)
+	}
+	if err := lease.release(); err != nil {
+		t.Fatal(err)
+	}
+	locked, err := lockCompletionCandidates(root, mutationTasks)
+	if err != nil || len(locked) != 1 {
+		t.Fatalf("released mutation lock = %v, err %v", locked, err)
+	}
+	if err := releaseLockedCompletionCandidates(locked); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompletionWindowRecoveryDetectsSameIDMetadataHandoff(t *testing.T) {
+	root := t.TempDir()
+	archived := taskForLease(t, root, stateInProgress, "same-id-metadata-handoff")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	candidates := map[string]queuedTask{
+		archived.ID: {Root: root, Item: archived},
+	}
+	locked, err := lockCompletionCandidates(root, candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archived.Dir, "late-provider-write.log"), []byte("changed\n"), 0o600); err != nil {
+		_ = releaseLockedCompletionCandidates(locked)
+		t.Fatal(err)
+	}
+	if err := verifyLockedCompletionCandidates(locked); err == nil ||
+		!strings.Contains(err.Error(), archived.ID) {
+		_ = releaseLockedCompletionCandidates(locked)
+		t.Fatalf("same-id metadata handoff verification = %v", err)
+	}
+	if err := releaseLockedCompletionCandidates(locked); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCompletionWindowReplayWaitsForTransientReceiptReader(t *testing.T) {
 	root := t.TempDir()
 	rogue := taskForLease(t, root, stateInProgress, "reader-contended-replay")

@@ -1173,6 +1173,18 @@ func removeTaskFolderAndRecords(root string, task taskItem) (removed bool, err e
 			})
 			changed = changed || len(record.AllowedDoneDepartures) != before
 		}
+		if before := len(record.BaselineMutations); before > 0 {
+			record.BaselineMutations = slices.DeleteFunc(record.BaselineMutations, func(candidate string) bool {
+				return candidate == task.ID
+			})
+			changed = changed || len(record.BaselineMutations) != before
+		}
+		if before := len(record.RecoveredDepartures); before > 0 {
+			record.RecoveredDepartures = slices.DeleteFunc(record.RecoveredDepartures, func(candidate string) bool {
+				return candidate == task.ID
+			})
+			changed = changed || len(record.RecoveredDepartures) != before
+		}
 		if before := len(record.ReviewSubjects); before > 0 {
 			record.ReviewSubjects = slices.DeleteFunc(record.ReviewSubjects, func(candidate string) bool {
 				return candidate == task.ID

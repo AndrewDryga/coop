@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -45,6 +46,8 @@ type completionWindowRecord struct {
 	ReviewSubjectScoped   bool                             `json:"review_subject_scoped,omitempty"`
 	WorkWindow            bool                             `json:"work_window,omitempty"`
 	WorkSubject           string                           `json:"work_subject,omitempty"`
+	BaselineMutations     []string                         `json:"baseline_mutations,omitempty"`
+	RecoveredDepartures   []string                         `json:"recovered_departures,omitempty"`
 }
 
 type completionWindowIndex struct {
@@ -80,6 +83,14 @@ func snapshotDoneCompletions(root string) (map[string]completionFingerprint, err
 }
 
 func completionFingerprintFor(root string, task taskItem) (completionFingerprint, error) {
+	accepted, valid, busy := inspectTaskCompletionReceipt(root, task)
+	if !valid {
+		accepted.Nonce = ""
+	}
+	return completionFingerprintWithReceipt(task, accepted.Nonce, busy)
+}
+
+func completionFingerprintWithReceipt(task taskItem, receipt string, receiptBusy bool) (completionFingerprint, error) {
 	info, err := os.Lstat(task.Dir)
 	if err != nil {
 		return completionFingerprint{}, err
@@ -93,14 +104,18 @@ func completionFingerprintFor(root string, task taskItem) (completionFingerprint
 	if err != nil {
 		return completionFingerprint{}, err
 	}
-	accepted, valid, busy := inspectTaskCompletionReceipt(root, task)
-	if !valid {
-		accepted.Nonce = ""
-	}
 	return completionFingerprint{
 		Device: uint64(stat.Dev), Inode: uint64(stat.Ino), ChangeSec: sec, ChangeNsec: nsec,
-		Receipt: accepted.Nonce, ReceiptBusy: busy, Tree: tree,
+		Receipt: receipt, ReceiptBusy: receiptBusy, Tree: tree,
 	}, nil
+}
+
+func completionFingerprintLocked(task taskItem, lock crashCompletionLock) (completionFingerprint, error) {
+	receipt, valid := lock.completionReceipt(task.Dir)
+	if !valid {
+		receipt.Nonce = ""
+	}
+	return completionFingerprintWithReceipt(task, receipt.Nonce, false)
 }
 
 // completionTreeMetadataDigest detects in-place writes below a done task without reading task
@@ -163,6 +178,89 @@ func changedDoneCompletions(root string, baseline map[string]completionFingerpri
 	return changed, nil
 }
 
+type completionCandidateKind uint8
+
+const (
+	completionCandidateUnchanged completionCandidateKind = iota
+	completionCandidateReplay
+	completionCandidateMutation
+)
+
+func completionFingerprintChanged(before, current completionFingerprint) bool {
+	return before.Device != current.Device || before.Inode != current.Inode ||
+		before.ChangeSec != current.ChangeSec || before.ChangeNsec != current.ChangeNsec ||
+		before.Tree != current.Tree || before.Receipt != current.Receipt ||
+		before.ReceiptBusy || current.ReceiptBusy
+}
+
+func classifyCompletionCandidate(
+	record completionWindowRecord,
+	id string,
+	current completionFingerprint,
+) completionCandidateKind {
+	before, existed := record.Baseline[id]
+	if !existed {
+		return completionCandidateReplay
+	}
+	if !completionFingerprintChanged(before, current) &&
+		!slices.Contains(record.BaselineMutations, id) {
+		return completionCandidateUnchanged
+	}
+	// A fresh host receipt can supersede a crash-persisted mutation marker. A window whose
+	// baseline already carries that same receipt still proves any later metadata mutation.
+	if current.Receipt != "" && (before.ReceiptBusy || before.Receipt != current.Receipt) {
+		return completionCandidateReplay
+	}
+	// Trusted reopen invalidates the old receipt before moving the folder. If the controller dies
+	// in that gap, startup must finish the intended departure instead of blessing the old archive.
+	if current.Receipt == "" && completionWindowAllowsDoneDeparture(record, id) {
+		return completionCandidateReplay
+	}
+	return completionCandidateMutation
+}
+
+// completionReplayCandidates separates lifecycle arrivals from mutations of folders that were
+// already archived when the window began. Startup recovery re-runs this classification from
+// authority-locked fingerprints before it writes markers or mutates lifecycle state.
+func completionReplayCandidates(
+	root string,
+	record completionWindowRecord,
+	candidates []queuedTask,
+) (replay []queuedTask, baselineMutations []queuedTask, err error) {
+	for _, candidate := range candidates {
+		current, fingerprintErr := completionFingerprintFor(root, candidate.Item)
+		if fingerprintErr != nil {
+			return nil, nil, fingerprintErr
+		}
+		if current.ReceiptBusy {
+			return nil, nil, fmt.Errorf("task %s completion receipt is busy", candidate.Item.ID)
+		}
+		switch classifyCompletionCandidate(record, candidate.Item.ID, current) {
+		case completionCandidateReplay:
+			replay = append(replay, candidate)
+		case completionCandidateMutation:
+			baselineMutations = append(baselineMutations, candidate)
+		}
+	}
+	return replay, baselineMutations, nil
+}
+
+func baselineCompletionMutationError(tasks []queuedTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	ids := make([]string, len(tasks))
+	for i := range tasks {
+		ids[i] = tasks[i].Item.ID
+	}
+	return fmt.Errorf(
+		"archived task metadata changed before completion-window recovery for %s; "+
+			"the tasks were already in the window baseline and remain done — inspect or restore "+
+			"their task metadata manually",
+		strings.Join(ids, ", "),
+	)
+}
+
 func invalidateStaleCandidateReceipts(root string, baseline map[string]completionFingerprint, candidates []queuedTask) error {
 	var errs []error
 	for _, candidate := range candidates {
@@ -186,6 +284,10 @@ func invalidateStaleCandidateReceipts(root string, baseline map[string]completio
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func completionWindowAllowsDoneDeparture(record completionWindowRecord, id string) bool {
+	return id == record.AllowedDoneDeparture || slices.Contains(record.AllowedDoneDepartures, id)
 }
 
 func completionWindowIndexName(root string) (string, error) {
@@ -438,6 +540,9 @@ func completionWindowDepartures(root string, record completionWindowRecord) ([]s
 	}
 	var disallowed []string
 	for _, task := range departed {
+		if slices.Contains(record.RecoveredDepartures, task.ID) {
+			continue
+		}
 		if record.WorkWindow {
 			if task.ID == record.WorkSubject {
 				disallowed = append(disallowed, task.ID)
@@ -453,7 +558,7 @@ func completionWindowDepartures(root string, record completionWindowRecord) ([]s
 			}
 			continue
 		}
-		if task.ID != record.AllowedDoneDeparture && !slices.Contains(record.AllowedDoneDepartures, task.ID) {
+		if !completionWindowAllowsDoneDeparture(record, task.ID) {
 			disallowed = append(disallowed, task.ID)
 		}
 	}
@@ -661,6 +766,145 @@ func (s *completionWindowSet) finishReview() ([]string, error) {
 	return slices.Compact(slices.Sorted(slices.Values(append(concurrent, afterClose...)))), nil
 }
 
+type completionWindowRecovery struct {
+	id         string
+	record     completionWindowRecord
+	live       *os.File
+	candidates []queuedTask
+	replay     []queuedTask
+}
+
+func markedCompletionCandidates(
+	root string,
+	candidates []queuedTask,
+	marked []string,
+) []queuedTask {
+	seen := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		seen[candidate.Item.ID] = true
+	}
+	for _, id := range marked {
+		if seen[id] {
+			continue
+		}
+		task, ok := currentTask(root, id)
+		if ok && task.State == stateDone {
+			candidates = append(candidates, queuedTask{Root: root, Item: task})
+			seen[id] = true
+		}
+	}
+	slices.SortFunc(candidates, func(a, b queuedTask) int {
+		return strings.Compare(a.Item.ID, b.Item.ID)
+	})
+	return candidates
+}
+
+func setRecordBaselineMutations(record *completionWindowRecord, protected map[string]bool) bool {
+	var marked []string
+	for id := range record.Baseline {
+		if protected[id] {
+			marked = append(marked, id)
+		}
+	}
+	slices.Sort(marked)
+	if slices.Equal(marked, record.BaselineMutations) {
+		return false
+	}
+	record.BaselineMutations = marked
+	return true
+}
+
+func recordRecoveredDepartures(record *completionWindowRecord, restored map[string]bool) bool {
+	recovered := slices.Clone(record.RecoveredDepartures)
+	for id := range record.Baseline {
+		if restored[id] {
+			recovered = append(recovered, id)
+		}
+	}
+	recovered = slices.Compact(slices.Sorted(slices.Values(recovered)))
+	if slices.Equal(recovered, record.RecoveredDepartures) {
+		return false
+	}
+	record.RecoveredDepartures = recovered
+	return true
+}
+
+type lockedCompletionCandidate struct {
+	task        queuedTask
+	current     taskItem
+	fingerprint completionFingerprint
+	lock        crashCompletionLock
+}
+
+// lockCompletionCandidates closes classification's receipt race. Recovery derives its final
+// disposition from these locked fingerprints, persists the matching journal evidence, and retains
+// every lock until task mutation and journal retirement are durable.
+func lockCompletionCandidates(
+	root string,
+	tasks map[string]queuedTask,
+) (map[string]lockedCompletionCandidate, error) {
+	ids := slices.Sorted(maps.Keys(tasks))
+	locked := make(map[string]lockedCompletionCandidate, len(ids))
+	release := func() error {
+		return releaseLockedCompletionCandidates(locked)
+	}
+	for _, id := range ids {
+		candidate := tasks[id]
+		lock, current, acquired, err := lockCrashCompletion(root, candidate.Item)
+		if err != nil {
+			return nil, errors.Join(
+				fmt.Errorf("lock completion-window task %s: %w", id, err),
+				release(),
+			)
+		}
+		if !acquired {
+			return nil, errors.Join(
+				fmt.Errorf("completion-window task %s changed state or has an authoritative owner; retry recovery", id),
+				release(),
+			)
+		}
+		fingerprint, err := completionFingerprintLocked(current, lock)
+		if err != nil {
+			_ = lock.release()
+			return nil, errors.Join(
+				fmt.Errorf("fingerprint locked completion-window task %s: %w", id, err),
+				release(),
+			)
+		}
+		locked[id] = lockedCompletionCandidate{
+			task: candidate, current: current, fingerprint: fingerprint, lock: lock,
+		}
+	}
+	return locked, nil
+}
+
+func releaseLockedCompletionCandidates(locked map[string]lockedCompletionCandidate) error {
+	var errs []error
+	for _, id := range slices.Sorted(maps.Keys(locked)) {
+		errs = append(errs, locked[id].lock.release())
+	}
+	return errors.Join(errs...)
+}
+
+func verifyLockedCompletionCandidates(locked map[string]lockedCompletionCandidate) error {
+	var errs []error
+	for _, id := range slices.Sorted(maps.Keys(locked)) {
+		candidate := locked[id]
+		current, err := completionFingerprintLocked(candidate.current, candidate.lock)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("re-fingerprint locked completion-window task %s: %w", id, err))
+			continue
+		}
+		if completionFingerprintChanged(candidate.fingerprint, current) {
+			errs = append(errs, fmt.Errorf(
+				"completion-window task %s metadata changed while recovery held task authority; retry recovery",
+				id,
+			))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 	var concurrent []string
 	var errs []error
@@ -670,33 +914,208 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 			errs = append(errs, err)
 			continue
 		}
+		releaseRecoveries := func(recoveries []completionWindowRecovery, remove map[string]bool) error {
+			var releaseErrs []error
+			for _, recovery := range recoveries {
+				unlockErr := unlockLeaseFile(recovery.live)
+				releaseErrs = append(releaseErrs, unlockErr)
+				if unlockErr == nil && remove[recovery.id] {
+					releaseErrs = append(releaseErrs, removeLeaseAuthorityLock(
+						root,
+						completionWindowLockPrefix+recovery.id,
+					))
+				}
+			}
+			return errors.Join(releaseErrs...)
+		}
+
+		candidateTasks := map[string]queuedTask{}
+		var recoveries []completionWindowRecovery
+		var acquireErrs []error
 		for id, record := range index.Windows {
 			live, openErr := openLeaseAuthority(root, completionWindowLockPrefix+id, true)
 			if openErr != nil {
-				errs = append(errs, openErr)
+				acquireErrs = append(acquireErrs, openErr)
 				continue
 			}
 			if lockErr := syscall.Flock(int(live.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); lockErr != nil {
 				_ = live.Close()
 				if !errors.Is(lockErr, syscall.EWOULDBLOCK) && !errors.Is(lockErr, syscall.EAGAIN) {
-					errs = append(errs, lockErr)
+					acquireErrs = append(acquireErrs, lockErr)
 				}
 				continue
 			}
 			candidates, candidateErr := changedDoneCompletions(root, record.Baseline)
-			invalidateErr := invalidateStaleCandidateReceipts(root, record.Baseline, candidates)
-			rejected, rejectErr := rejectUnownedCompletions(candidates, queuedTask{})
+			candidates = markedCompletionCandidates(root, candidates, record.BaselineMutations)
+			if candidateErr != nil {
+				acquireErrs = append(acquireErrs, candidateErr, unlockLeaseFile(live))
+				continue
+			}
+			for _, candidate := range candidates {
+				candidateTasks[candidate.Item.ID] = candidate
+			}
+			recoveries = append(recoveries, completionWindowRecovery{
+				id: id, record: record, live: live,
+			})
+		}
+		if err := errors.Join(acquireErrs...); err != nil {
+			errs = append(errs, err, releaseRecoveries(recoveries, nil), unlockLeaseFile(indexFile))
+			continue
+		}
+
+		locked, lockErr := lockCompletionCandidates(root, candidateTasks)
+		if lockErr != nil {
+			errs = append(errs, lockErr, releaseRecoveries(recoveries, nil), unlockLeaseFile(indexFile))
+			continue
+		}
+
+		// A candidate that appeared while the known set was being locked must be handled by the
+		// next retry. Consuming a window from a partial locked set would reopen the same race.
+		var stabilizationErrs []error
+		stabilizationErrs = append(stabilizationErrs, verifyLockedCompletionCandidates(locked))
+		for _, recovery := range recoveries {
+			latest, latestErr := changedDoneCompletions(root, recovery.record.Baseline)
+			latest = markedCompletionCandidates(root, latest, recovery.record.BaselineMutations)
+			if latestErr != nil {
+				stabilizationErrs = append(stabilizationErrs, latestErr)
+				continue
+			}
+			for _, candidate := range latest {
+				if _, ok := locked[candidate.Item.ID]; !ok {
+					stabilizationErrs = append(stabilizationErrs, fmt.Errorf(
+						"completion-window task %s changed while recovery acquired task authority; retry recovery",
+						candidate.Item.ID,
+					))
+				}
+			}
+		}
+		if err := errors.Join(stabilizationErrs...); err != nil {
+			errs = append(
+				errs,
+				err,
+				releaseLockedCompletionCandidates(locked),
+				releaseRecoveries(recoveries, nil),
+				unlockLeaseFile(indexFile),
+			)
+			continue
+		}
+
+		replaySeen := map[string]bool{}
+		unownedReplaySeen := map[string]bool{}
+		mutationSeen := map[string]bool{}
+		lockedIDs := slices.Sorted(maps.Keys(locked))
+		for i := range recoveries {
+			recoveries[i].candidates = nil
+			recoveries[i].replay = nil
+			for _, id := range lockedIDs {
+				candidate := locked[id]
+				switch classifyCompletionCandidate(recoveries[i].record, id, candidate.fingerprint) {
+				case completionCandidateReplay:
+					recoveries[i].candidates = append(recoveries[i].candidates, candidate.task)
+					recoveries[i].replay = append(recoveries[i].replay, candidate.task)
+					replaySeen[id] = true
+					if candidate.fingerprint.Receipt == "" {
+						unownedReplaySeen[id] = true
+					}
+				case completionCandidateMutation:
+					recoveries[i].candidates = append(recoveries[i].candidates, candidate.task)
+					mutationSeen[id] = true
+				}
+			}
+		}
+
+		protectedMutations := map[string]bool{}
+		for id := range mutationSeen {
+			// An unreceipted arrival was never accepted as an archive, so recovery restores it
+			// even if a later overlapping baseline observed provider-written metadata.
+			if !unownedReplaySeen[id] {
+				protectedMutations[id] = true
+			}
+		}
+		restored := map[string]bool{}
+		for id := range replaySeen {
+			if unownedReplaySeen[id] && !protectedMutations[id] {
+				restored[id] = true
+			}
+		}
+
+		indexChanged := false
+		for i := range recoveries {
+			if setRecordBaselineMutations(&recoveries[i].record, protectedMutations) {
+				index.Windows[recoveries[i].id] = recoveries[i].record
+				indexChanged = true
+			}
+			if recordRecoveredDepartures(&recoveries[i].record, restored) {
+				index.Windows[recoveries[i].id] = recoveries[i].record
+				indexChanged = true
+			}
+		}
+		if indexChanged {
+			if err := writeCompletionWindowIndex(root, index); err != nil {
+				errs = append(
+					errs,
+					err,
+					releaseLockedCompletionCandidates(locked),
+					releaseRecoveries(recoveries, nil),
+					unlockLeaseFile(indexFile),
+				)
+				continue
+			}
+		}
+
+		var actionErrs []error
+		for _, id := range slices.Sorted(maps.Keys(protectedMutations)) {
+			if err := locked[id].lock.clearCompleted(); err != nil {
+				actionErrs = append(actionErrs, fmt.Errorf(
+					"invalidate baseline mutation task %s completion receipt: %w",
+					id,
+					err,
+				))
+			}
+		}
+		for _, id := range slices.Sorted(maps.Keys(restored)) {
+			candidate := locked[id]
+			actionErrs = append(
+				actionErrs,
+				restoreUnownedCompletion(queuedTask{Root: root, Item: candidate.current}),
+				candidate.lock.clearCompleted(),
+			)
+		}
+		if err := errors.Join(actionErrs...); err != nil {
+			errs = append(
+				errs,
+				err,
+				releaseLockedCompletionCandidates(locked),
+				releaseRecoveries(recoveries, nil),
+				unlockLeaseFile(indexFile),
+			)
+			continue
+		}
+
+		restoredIDs := slices.Sorted(maps.Keys(restored))
+		deleteWindows := map[string]bool{}
+		var recoveredConcurrent []string
+		for _, recovery := range recoveries {
+			id, record := recovery.id, recovery.record
+			reviewCandidates := slices.DeleteFunc(slices.Clone(recovery.replay), func(candidate queuedTask) bool {
+				return protectedMutations[candidate.Item.ID]
+			})
 			var reviewErr error
 			var observed []string
 			if record.ReviewWindow {
 				subjectScoped := record.ReviewSubjectScoped || len(record.ReviewSubjects) > 0
-				changed, recovered := classifyReviewCompletionCandidates(candidates, rejected, record.ReviewSubjects, subjectScoped)
+				changed, recovered := classifyReviewCompletionCandidates(
+					reviewCandidates,
+					restoredIDs,
+					record.ReviewSubjects,
+					subjectScoped,
+				)
 				observed = recovered
 				if len(changed) > 0 {
 					reviewErr = fmt.Errorf("review completion set changed before recovery for %s", strings.Join(changed, ", "))
 				}
 				relevant := slices.Clone(record.ReviewSubjects)
-				for _, candidate := range candidates {
+				for _, candidate := range recovery.candidates {
 					relevant = append(relevant, candidate.Item.ID)
 				}
 				if duplicates := duplicateReviewTaskIDs(hosts, relevant); len(duplicates) > 0 {
@@ -704,26 +1123,43 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 				}
 			}
 			departed, departureErr := completionWindowDepartures(root, record)
-			if err := errors.Join(candidateErr, invalidateErr, rejectErr, reviewErr, departureErr); err != nil {
-				errs = append(errs, err, unlockLeaseFile(live))
+			if err := errors.Join(reviewErr, departureErr); err != nil {
+				errs = append(errs, err)
 				continue
 			}
 			if len(departed) > 0 {
 				errs = append(errs, fmt.Errorf("completion ownership changed before recovery: archived task(s) %s left done", strings.Join(departed, ", ")))
 			}
+			deleteWindows[id] = true
+			recoveredConcurrent = append(recoveredConcurrent, observed...)
+		}
+
+		for id := range deleteWindows {
 			delete(index.Windows, id)
-			if writeErr := writeCompletionWindowIndex(root, index); writeErr != nil {
-				errs = append(errs, writeErr, unlockLeaseFile(live))
-				index.Windows[id] = record
+		}
+		if len(deleteWindows) > 0 {
+			if err := writeCompletionWindowIndex(root, index); err != nil {
+				errs = append(
+					errs,
+					err,
+					releaseLockedCompletionCandidates(locked),
+					releaseRecoveries(recoveries, nil),
+					unlockLeaseFile(indexFile),
+				)
 				continue
 			}
-			unlockErr := unlockLeaseFile(live)
-			errs = append(errs, unlockErr)
-			if unlockErr == nil {
-				errs = append(errs, removeLeaseAuthorityLock(root, completionWindowLockPrefix+id))
-			}
-			concurrent = append(concurrent, observed...)
+			concurrent = append(concurrent, recoveredConcurrent...)
 		}
+		mutations := make([]queuedTask, 0, len(protectedMutations))
+		for _, id := range slices.Sorted(maps.Keys(protectedMutations)) {
+			mutations = append(mutations, locked[id].task)
+		}
+		slices.SortFunc(mutations, func(a, b queuedTask) int {
+			return strings.Compare(a.Item.ID, b.Item.ID)
+		})
+		errs = append(errs, baselineCompletionMutationError(mutations))
+		errs = append(errs, releaseLockedCompletionCandidates(locked))
+		errs = append(errs, releaseRecoveries(recoveries, deleteWindows))
 		errs = append(errs, unlockLeaseFile(indexFile))
 	}
 	return slices.Compact(slices.Sorted(slices.Values(concurrent))), errors.Join(errs...)

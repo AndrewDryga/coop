@@ -58,9 +58,28 @@ review keeps that scope in a separate journal bit when deletion removes its fina
 distinguishes it from an intentionally subject-free preflight/verify window, so later host-valid
 completions still replay as concurrent activity.
 
+Startup recovery must also distinguish a task newly entering `99_done/` from metadata changes to a
+task already present in the durable window baseline. It locks every changed task's host completion
+authority, then classifies all overlapping windows from the locked receipt generation. An
+unreceipted arrival was never an accepted archive and is restored even if a later window observed
+more provider-written metadata. A host-receipted arrival does not hide a later same-generation
+baseline mutation: that archive remains done and its stale authority is cleared. A fresh receipt
+can supersede a crash-persisted marker or an uncertain busy baseline unless another baseline
+already carries the same generation and proves a later mutation. Recovery re-fingerprints locked
+tasks before classification and retries if provider-written metadata changed during lock handoff.
+
+Before changing lifecycle state, recovery persists per-window mutation markers and the ids of
+baseline tasks it will restore. Those records are the crash boundary: a cleared nonce cannot be
+reinterpreted as a new completion, and a reboot between overlapping-window retirements cannot
+misreport recovery's own done-to-actionable move. Task authority stays locked through receipt
+clearing, lifecycle repair, and journal retirement. Deterministic stale windows are consumed, one
+actionable integrity error names mutated archives, and the next startup is clean.
+
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-07-26 — documented authority-locked startup classification, overlapping-window precedence,
+  and durable mutation/recovered-departure markers for crash-safe recovery.
 - 2026-07-26 — documented CLI-authoritative task deletion and live-lease refusal; verified against
   `internal/cli/taskcmd.go` and the completion-window restart fixture.
 - 2026-07-26 — documented nonce-bound concurrent host reopens in work completion windows; verified

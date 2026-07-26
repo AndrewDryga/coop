@@ -530,6 +530,8 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	record := index.Windows[windowID]
 	record.AllowedDoneDeparture = task.ID
 	record.AllowedDoneDepartures = []string{task.ID, "keep-other-task"}
+	record.BaselineMutations = []string{task.ID, "keep-other-task"}
+	record.RecoveredDepartures = []string{task.ID, "keep-other-task"}
 	record.WorkSubject = task.ID
 	index.Windows[windowID] = record
 	writeErr := writeCompletionWindowIndex(root, index)
@@ -564,6 +566,8 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	}
 	if record.AllowedDoneDeparture != "" ||
 		len(record.AllowedDoneDepartures) != 1 || record.AllowedDoneDepartures[0] != "keep-other-task" ||
+		len(record.BaselineMutations) != 1 || record.BaselineMutations[0] != "keep-other-task" ||
+		len(record.RecoveredDepartures) != 1 || record.RecoveredDepartures[0] != "keep-other-task" ||
 		len(record.ReviewSubjects) != 0 || !record.ReviewSubjectScoped || record.WorkSubject != "" {
 		t.Fatalf("removed task survived in completion-window policy fields: %#v", record)
 	}
