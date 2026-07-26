@@ -1794,8 +1794,8 @@ func reviewReadOnlyPaths(mode completionWindowMode, repoReadOnly bool, hosts []s
 	return hosts
 }
 
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}) (reviewRunResult, error) {
-	var fails, waits, outputRetries, totalRetries int
+func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
+	var fails, waits, outputRetries, totalRetries, handoffs int
 	var concurrent []string
 	last := reviewRunResult{target: rev.active()}
 	for {
@@ -1805,6 +1805,7 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		agent := a.applyTarget(rev)
 		target := rev.active()
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
+		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity)
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
 		if errors.Is(runErr, errCompletionWindowSetup) {
@@ -1822,6 +1823,22 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		if ctx != nil && ctx.Err() != nil {
 			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 		}
+		// The entrypoint only reports a handoff after the provider ended while work it started was
+		// still live. Its review receipt is therefore not an observed verdict: discard it and rerun
+		// the review with a fresh provider that can inspect the settled result.
+		if isBackgroundHandoff(classification.outcome) {
+			if observeHandoff != nil {
+				observeHandoff(last, start, headBefore)
+			}
+			handoffs++
+			if handoffs >= 3 {
+				return last, fmt.Errorf("review provider ended with live background work %d times — stopped; rerun the review after its gate, consult, and delegate work finish in the foreground", handoffs)
+			}
+			totalRetries++
+			ui.Warn("review provider ended with live background work; discarding its receipt and starting a fresh observed attempt (%d/3)", handoffs)
+			continue
+		}
+		handoffs = 0
 		if receipt, ok := reviewReopenReceipt(out); ok && len(receipt.reopened) > 0 && classification.outcome != "success" {
 			verdictErr := fmt.Errorf("failed review stage declared reopen for %s; verdict was not applied", strings.Join(receipt.reopened, ", "))
 			if classification.outcome == "authentication" {
@@ -1932,7 +1949,7 @@ func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *rotat
 			attemptPrompt += reviewVerdictCorrection
 		}
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		run, err := a.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, writes, sink, peers, wake)
+		run, err := a.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, writes, sink, peers, wake, observe)
 		concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, run.concurrent...))))
 		run.concurrent = slices.Clone(concurrent)
 		if err == nil {
@@ -2230,6 +2247,7 @@ func loopWorkPrompt(repo string, queues []string, assignedID, agent string, peer
 		"As you work, keep that task's state.md current — a small, overwritten snapshot of the status, what is done, the next action, and any traps — refreshed before each commit and before you pause; append your reasoning to its log.md.",
 		"Put disposable but resumable scratch work (temporary worktrees, patches, generated files) under the assigned task's tmp/ directory; it survives interruption and blocked transitions but Coop removes it on completion. Before finishing, promote anything a reviewer or future maintainer needs to the task's durable artifacts/ directory.",
 		"Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit).",
+		"Do not end your turn while any gate, consult, delegate, or other background job you started remains live; wait for and inspect its result, and rerun an ambiguous gate in the foreground.",
 		"Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge.",
 		"When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale.",
 		"AFTER the commit, refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review.",
@@ -2831,7 +2849,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if rot.rotates() {
 		ui.Info("rotating %d targets on rate limit: %s", len(rot.targets), strings.Join(rot.members(), ", "))
 	}
-	fails, waits, retries, completed, stalls := 0, 0, 0, 0, 0
+	fails, waits, retries, handoffs, completed, stalls := 0, 0, 0, 0, 0, 0
 	completedThisRun := map[string]bool{}
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
 	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
@@ -2933,6 +2951,28 @@ reviewAgain:
 					break
 				}
 			}
+			// coop-entry returns this only after a successful provider left live agent-owned
+			// descendants and it drained or forcibly terminated them. Any completion is premature:
+			// restore it before the normal binding/finalization path and launch a fresh provider that
+			// can inspect the outcome. A small dedicated cap prevents a quiet respawn loop.
+			if isBackgroundHandoff(classification.outcome) {
+				if assignedCompletion != nil {
+					if restoreErr := restoreBackgroundHandoffCompletion(*assignedCompletion); restoreErr != nil {
+						return 1, errors.Join(restoreErr, lease.release(), windows.abandon())
+					}
+				}
+				if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
+					return 1, fmt.Errorf("release task lease %s after background handoff: %w", assigned.Item.ID, releaseErr)
+				}
+				handoffs++
+				a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
+				if handoffs >= 3 {
+					return code, fmt.Errorf("provider ended with live background work 3 times for task %s — stopped; inspect the task's restored state and run its gate, consult, and delegate work in the foreground", assigned.Item.ID)
+				}
+				ui.Warn("provider ended with live background work; restored %s and starting a fresh observed attempt (%d/3)", assigned.Item.ID, handoffs)
+				continue
+			}
+			handoffs = 0
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
 			var missing []string
 			if assignedCompletion != nil {
@@ -3713,9 +3753,10 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: a.forkOwner, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
-		RepoReadOnly:      repoReadOnly,
-		RepoReadOnlyPaths: reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),
-		Homes:             a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
+		SuperviseDescendants: true,
+		RepoReadOnly:         repoReadOnly,
+		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),
+		Homes:                a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		Stdout: stdoutW,
 		Stderr: stderrW,
 		Ctx:    ctx,

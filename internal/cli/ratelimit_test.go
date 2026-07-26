@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 )
 
 func decideIterationOutput(provider string, code int, err error, output string, now time.Time, fails, waits, retries *int) (loopAction, time.Duration, time.Time) {
@@ -350,6 +351,8 @@ func TestIterationOutcome(t *testing.T) {
 		{name: "rate", provider: "codex", code: 1, output: "rate limit exceeded", want: "rate_limit"},
 		{name: "output", provider: "codex", code: 1, output: "maximum output length", want: "output_limit"},
 		{name: "process", provider: "codex", code: 1, output: "boom", want: "process_failure"},
+		{name: "drained background handoff", provider: "codex", code: box.DescendantsDrainedExit, want: "background_drained"},
+		{name: "timed out background handoff", provider: "codex", code: box.DescendantsTimedOutExit, want: "background_timeout"},
 		{name: "malformed", provider: "codex", err: errors.New("bad stream"), output: "malformed provider stream event", stream: streamMalformed, want: "malformed_stream"},
 	}
 	for _, tc := range cases {

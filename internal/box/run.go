@@ -31,6 +31,11 @@ const (
 	LabelSupervisor = "coop.sup"        // value=<supervisor id>, so a supervisor kills only its own
 	LabelFork       = "coop.fork"       // readable value=<fork name> for runtime diagnostics
 	LabelForkOwner  = "coop.fork-owner" // repo-scoped value, so stop never reaps another repo's namesake
+	// DescendantsDrainedExit and DescendantsTimedOutExit are emitted only by coop-entry in an
+	// opted-in supervised run. Keep them outside ordinary provider conventions and remap raw
+	// provider use in the entrypoint before the host sees it.
+	DescendantsDrainedExit  = 190
+	DescendantsTimedOutExit = 191
 )
 
 // RunSpec describes a single container run.
@@ -64,15 +69,19 @@ type RunSpec struct {
 	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
-	ShareACPSessions bool      // mount credential-independent ACP transcript dirs across account switches
-	ForkName         string    // non-empty for a detached fork loop's box: readable runtime label
-	ForkOwner        string    // repo-scoped label used by `coop fork stop`; required with ForkName
-	RunID            string    // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
-	Batch            bool      // loop/doctor: no tty, stdin from /dev/null
-	Quiet            bool      // suppress the "shadowed N secret path(s)" line (doctor)
-	Stdout           io.Writer // capture output (doctor); nil means inherit os.Stdout
-	Stderr           io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
-	ExtraArgs        []string  // extra runtime args for this run (e.g. doctor's probe mount)
+	ShareACPSessions bool   // mount credential-independent ACP transcript dirs across account switches
+	ForkName         string // non-empty for a detached fork loop's box: readable runtime label
+	ForkOwner        string // repo-scoped label used by `coop fork stop`; required with ForkName
+	RunID            string // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
+	Batch            bool   // loop/doctor: no tty, stdin from /dev/null
+	// SuperviseDescendants keeps coop-entry alive after a successful provider exit long enough to
+	// drain agent-owned background jobs. It is intentionally opt-in: an interactive box retains
+	// the ordinary exec contract and never waits for a shell job the user started.
+	SuperviseDescendants bool
+	Quiet                bool      // suppress the "shadowed N secret path(s)" line (doctor)
+	Stdout               io.Writer // capture output (doctor); nil means inherit os.Stdout
+	Stderr               io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
+	ExtraArgs            []string  // extra runtime args for this run (e.g. doctor's probe mount)
 
 	// Ctx, when non-nil, makes the run cancelable: the container runs in its own process group
 	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets this so a second Ctrl-C
@@ -1385,6 +1394,11 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 	args = append(args, cfg.ExtraRunArgs...)
 	args = append(args, spec.ExtraArgs...)
 	args = append(args, "-e", "COOP_BOX=1")
+	if spec.SuperviseDescendants {
+		// The provider cannot spoof these entrypoint-owned exits: coop-entry remaps a raw use
+		// of either code to an ordinary failure before it reaches the host classifier.
+		args = append(args, "-e", "COOP_SUPERVISE_DESCENDANTS=1")
+	}
 	if spec.Serve {
 		args = appendPublish(args, cfg, spec)
 	}

@@ -96,7 +96,9 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
 			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
-			result == "verify-only-after-block" || result == "second-binding" {
+			result == "verify-only-after-block" || result == "second-binding" ||
+			result == "background-drained" || result == "background-timeout" ||
+			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -104,7 +106,8 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "pass-corrected" || result == "reopen" || result == "reopen-gated" || result == "reopen-injection" ||
 			result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" ||
 			result == "reopen-corrected" || result == "malformed-review" || result == "malformed-review-corrected" ||
-			result == "complete-extra" || isCodexReviewWrapperResult(result) {
+			result == "complete-extra" || result == "background-drained-review" ||
+			result == "background-timeout-review" || isCodexReviewWrapperResult(result) {
 			return nil
 		}
 	default:
@@ -178,9 +181,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		return 1, "", err
 	}
 	switch attempt.Result {
-	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding":
+	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete":
 		outcome := attempt.Result
-		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" {
+		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
 			outcome = ""
 		} else if outcome == "unbound-extra-finalized" {
 			outcome = "unbound"
@@ -239,9 +242,24 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		if strings.HasSuffix(attempt.Result, "-wait") {
 			return waitLoopSignal(root, trace)
 		}
+		if attempt.Result == "background-drained-complete" {
+			return 190, "", nil
+		}
 		return 0, "", nil
+	case "background-drained", "background-timeout", "background-timeout-after-restored-completion":
+		if attempt.Result == "background-timeout-after-restored-completion" {
+			if err := verifyBackgroundHandoffState(root, plan.TaskID); err != nil {
+				return 1, "", err
+			}
+		}
+		emitLoopReply(provider, providerArgv, "fixture-loop-background-"+provider)
+		if attempt.Result == "background-drained" {
+			return 190, "", nil
+		}
+		return 191, "", nil
 	case "pass", "pass-host-completion", "pass-with-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
-		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer":
+		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer",
+		"background-drained-review", "background-timeout-review":
 		switch attempt.Result {
 		case "malformed-review":
 			if err := verifyLoopReviewCorrection(root, plan.TaskID, attempt.Stage, provider, providerArgv, false); err != nil {
@@ -320,6 +338,12 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			reply = "I inspected the complete task before writing the structured proposal.\n" + reply
 		}
 		emitLoopReplyWithWrapper(provider, providerArgv, reply, codexReviewWrapper(attempt.Result))
+		if attempt.Result == "background-drained-review" {
+			return 190, "", nil
+		}
+		if attempt.Result == "background-timeout-review" {
+			return 191, "", nil
+		}
 		if attempt.Result == "reopen-ordinary" {
 			fmt.Fprintln(os.Stderr, "fixture ordinary provider failure after reopen")
 			return 23, "", nil
@@ -539,6 +563,27 @@ func verifyLoopTaskDone(root, taskID string) error {
 	info, err := os.Stat(task)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("loop review task %q is not a done directory", taskID)
+	}
+	return nil
+}
+
+func verifyBackgroundHandoffState(root, taskID string) error {
+	repo, err := loopRepo(root)
+	if err != nil {
+		return err
+	}
+	statePath, err := procharness.CanonicalUnderRoot(root, filepath.Join(repo, ".agent", "tasks", "10_in_progress", taskID, "state.md"))
+	if err != nil {
+		return fmt.Errorf("background handoff task is not in progress: %w", err)
+	}
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		return err
+	}
+	text := string(state)
+	if !strings.Contains(text, "**Status:** in progress — background handoff") ||
+		!strings.Contains(text, "**Next action:** inspect the background result and rerun any ambiguous gate in the foreground") {
+		return fmt.Errorf("background handoff state was not restored: %q", text)
 	}
 	return nil
 }

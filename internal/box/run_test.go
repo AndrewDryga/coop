@@ -359,6 +359,19 @@ func TestAssembleArgsInitProcess(t *testing.T) {
 	}
 }
 
+func TestAssembleArgsDescendantSupervisionIsOptIn(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
+	plain := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	supervised := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", SuperviseDescendants: true}, mounts, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	if slices.Contains(plain, "COOP_SUPERVISE_DESCENDANTS=1") {
+		t.Fatal("ordinary and interactive boxes must retain the exec entrypoint contract")
+	}
+	if !containsSeq(supervised, []string{"-e", "COOP_SUPERVISE_DESCENDANTS=1"}) {
+		t.Fatalf("supervised run omitted entrypoint opt-in: %v", supervised)
+	}
+}
+
 // TestAssembleArgsHostTimezone: every box (any mode, Homes or not) carries the host's
 // timezone, so in-box agents render clock times ("try again at 4:28 PM") on the host's
 // wall clock — coop parses that prose back host-local when scheduling a rate-limit wait.

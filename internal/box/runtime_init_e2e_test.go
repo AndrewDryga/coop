@@ -19,6 +19,72 @@ import (
 
 const runtimeInitTestImage = "alpine:3.21"
 
+func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
+	rt := runtimeInitTestRuntime(t)
+	image := buildRuntimeEntrypointImage(t, rt)
+	repo := runtimeInitTestRepo(t)
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+
+	run := func(command string, extra ...string) (int, error) {
+		t.Helper()
+		return Run(cfg, rt, RunSpec{
+			Image: image, Repo: repo, Workdir: "/workspace", Batch: true, Quiet: true,
+			Cmd: []string{"sh", "-c", command}, SuperviseDescendants: true, ExtraArgs: extra,
+		})
+	}
+
+	t.Run("clean provider exit stays successful", func(t *testing.T) {
+		code, err := run("exit 0", "-e", "COOP_DESCENDANT_TIMEOUT=1")
+		if err != nil || code != 0 {
+			t.Fatalf("clean supervised provider = exit %d, err %v; want exit 0, nil", code, err)
+		}
+	})
+
+	t.Run("double setsid descendant drains", func(t *testing.T) {
+		code, err := run("setsid setsid sh -c 'sleep 1; echo drained > /workspace/drained' &", "-e", "COOP_DESCENDANT_TIMEOUT=5")
+		if err != nil || code != DescendantsDrainedExit {
+			t.Fatalf("drained descendant = exit %d, err %v; want exit %d, nil", code, err, DescendantsDrainedExit)
+		}
+		awaitRuntimeInitMarker(t, filepath.Join(repo, "drained"), "drained\n")
+	})
+
+	t.Run("term resistant descendant times out and is killed", func(t *testing.T) {
+		code, err := run("setsid setsid sh -c 'trap \"echo term > /workspace/term\" TERM; while :; do sleep 1; done' &", "-e", "COOP_DESCENDANT_TIMEOUT=1")
+		if err != nil || code != DescendantsTimedOutExit {
+			t.Fatalf("timed-out descendant = exit %d, err %v; want exit %d, nil", code, err, DescendantsTimedOutExit)
+		}
+		awaitRuntimeInitMarker(t, filepath.Join(repo, "term"), "term\n")
+	})
+
+	t.Run("forwarder does not delay a failed provider", func(t *testing.T) {
+		start := time.Now()
+		code, err := run("exit 7", "-e", "COOP_FORWARD=45678:missing:45678", "-e", "COOP_DESCENDANT_TIMEOUT=1")
+		if err != nil || code != 7 {
+			t.Fatalf("failed provider with forwarder = exit %d, err %v; want exit 7, nil", code, err)
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("forwarder delayed failed provider for %s", elapsed)
+		}
+	})
+
+	t.Run("failed provider terminates detached descendants", func(t *testing.T) {
+		command := "setsid setsid sh -c 'trap \"echo killed > /workspace/failed-killed; exit 0\" TERM; echo ready > /workspace/failed-ready; while :; do sleep 1; done' & " +
+			"while [ ! -e /workspace/failed-ready ]; do :; done; exit 7"
+		code, err := run(command, "-e", "COOP_DESCENDANT_TIMEOUT=1")
+		if err != nil || code != 7 {
+			t.Fatalf("failed provider with descendant = exit %d, err %v; want exit 7, nil", code, err)
+		}
+		awaitRuntimeInitMarker(t, filepath.Join(repo, "failed-killed"), "killed\n")
+	})
+
+	t.Run("provider cannot spoof a handoff", func(t *testing.T) {
+		code, err := run("exit 190", "-e", "COOP_DESCENDANT_TIMEOUT=1")
+		if err != nil || code != 1 {
+			t.Fatalf("spoofed reserved exit = exit %d, err %v; want exit 1, nil", code, err)
+		}
+	})
+}
+
 func TestRuntimeInitReapsKilledOrphan(t *testing.T) {
 	rt := runtimeInitTestRuntime(t)
 	helper := buildRuntimeInitProbe(t, rt)
@@ -136,6 +202,37 @@ func buildRuntimeInitProbe(t *testing.T, rt runtime.Runtime) string {
 		t.Fatalf("build init probe: %v\n%s", err, output)
 	}
 	return path
+}
+
+func buildRuntimeEntrypointImage(t *testing.T, rt runtime.Runtime) string {
+	t.Helper()
+	dir := t.TempDir()
+	entrypoint := BaseDockerfile()
+	const start = "COPY <<'ENTRY' /usr/local/bin/coop-entry\n"
+	const end = "\nENTRY\nRUN chmod +x /usr/local/bin/coop-entry"
+	_, entrypoint, ok := strings.Cut(entrypoint, start)
+	if !ok {
+		t.Fatal("base Dockerfile has no coop-entry heredoc")
+	}
+	entrypoint, _, ok = strings.Cut(entrypoint, end)
+	if !ok {
+		t.Fatal("base Dockerfile coop-entry heredoc is unterminated")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "coop-entry"), []byte(entrypoint), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := "FROM alpine:3.21\nRUN apk add --no-cache util-linux socat\nCOPY coop-entry /usr/local/bin/coop-entry\nENTRYPOINT [\"/usr/local/bin/coop-entry\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	image := fmt.Sprintf("coop-entry-runtime-test-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _, _ = rt.Run(nil, nil, nil, "image", "rm", "-f", image) })
+	var stdout, stderr strings.Builder
+	code, err := rt.Run(nil, &stdout, &stderr, "build", "-t", image, dir)
+	if err != nil || code != 0 {
+		t.Fatalf("build entrypoint runtime image = exit %d, err %v\n%s%s", code, err, stdout.String(), stderr.String())
+	}
+	return image
 }
 
 func runtimeInitTestImageArchitecture(t *testing.T, rt runtime.Runtime) string {

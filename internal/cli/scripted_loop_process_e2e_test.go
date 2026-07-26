@@ -80,6 +80,101 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			})
 		}
 	})
+	t.Run("background handoffs restore completion and keep explicit telemetry", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "loop-background-handoff"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := "codex:loop-model/high@work"
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "background-drained-complete"},
+			{Target: target, Stage: "work", Result: "background-timeout-after-restored-completion"},
+			{Target: target, Stage: "work", Result: "repair-binding"},
+		}
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin,
+			Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+			Dir:  suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		cancel()
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(result.Stderr, "starting a fresh observed attempt (1/3)") ||
+			!strings.Contains(result.Stderr, "starting a fresh observed attempt (2/3)") ||
+			strings.Contains(result.Stderr, "iteration failed") || strings.Contains(result.Stderr, "no progress") {
+			t.Fatalf("background handoff loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 ||
+			records[0].Outcome != "background_drained" ||
+			records[1].Outcome != "background_timeout" ||
+			records[2].Outcome != "success" {
+			t.Fatalf("background handoff telemetry = %#v", records)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("fresh provider did not complete the restored task")
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		exits := processEvents(trace, "provider", "exit")
+		wantExits := []int{190, 191, 0}
+		if len(exits) != len(wantExits) {
+			t.Fatalf("background handoff provider exits = %#v", exits)
+		}
+		for i, want := range wantExits {
+			if exits[i].ExitCode == nil || *exits[i].ExitCode != want {
+				t.Fatalf("background handoff provider exit[%d] = %#v, want %d", i, exits[i], want)
+			}
+		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
+	t.Run("three background handoffs stop without a failure strike", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "loop-background-handoff-cap"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := "codex:loop-model/high@work"
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "background-drained"},
+			{Target: target, Stage: "work", Result: "background-drained"},
+			{Target: target, Stage: "work", Result: "background-drained"},
+		}
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin,
+			Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+			Dir:  suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		cancel()
+		if result.ExitCode == 0 ||
+			!strings.Contains(result.Stderr, "live background work 3 times") ||
+			strings.Contains(result.Stderr, "iteration failed") || strings.Contains(result.Stderr, "no progress") {
+			t.Fatalf("background handoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 {
+			t.Fatalf("background handoff cap telemetry = %#v", records)
+		}
+		for i, record := range records {
+			if record.Outcome != "background_drained" {
+				t.Fatalf("background handoff cap telemetry[%d] = %#v", i, record)
+			}
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+			t.Fatal("capped background handoff did not leave the task actionable")
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
+		assertLoopTraceProcessesGone(t, trace)
+	})
 	t.Run("rejects unbound completion", func(t *testing.T) {
 		for _, outcome := range []string{"unbound", "unbound-log-symlink", "unbound-state-symlink"} {
 			t.Run(outcome, func(t *testing.T) {

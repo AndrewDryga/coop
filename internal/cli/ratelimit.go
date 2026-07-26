@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -167,6 +168,12 @@ type iterationClassification struct {
 }
 
 func classifyIteration(provider string, code int, err error, diagnostic string, stream providerStreamOutcome, now time.Time) iterationClassification {
+	if err == nil && code == box.DescendantsDrainedExit {
+		return iterationClassification{outcome: "background_drained"}
+	}
+	if err == nil && code == box.DescendantsTimedOutExit {
+		return iterationClassification{outcome: "background_timeout"}
+	}
 	if err == nil && code == 0 {
 		return iterationClassification{outcome: "success"}
 	}
@@ -183,6 +190,10 @@ func classifyIteration(provider string, code int, err error, diagnostic string, 
 		return iterationClassification{outcome: "rate_limit", limit: hint}
 	}
 	return iterationClassification{outcome: "process_failure"}
+}
+
+func isBackgroundHandoff(outcome string) bool {
+	return outcome == "background_drained" || outcome == "background_timeout"
 }
 
 // parseResetTime reads the "resets <when>" clause of a subscription-limit notice

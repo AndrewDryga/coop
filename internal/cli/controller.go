@@ -1057,6 +1057,23 @@ func restoreQueuedCompletion(task queuedTask) error {
 	return errors.Join(errs...)
 }
 
+// restoreBackgroundHandoffCompletion rejects a completion produced before the provider observed
+// its background gate/consult result. The next fresh provider gets a precise resume note instead
+// of treating an incomplete asynchronous attempt as success.
+func restoreBackgroundHandoffCompletion(task queuedTask) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore background handoff task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	return errors.Join(
+		appendTaskLogStrict(dir, "provider exited while an agent-owned background job remained live; host drained or terminated it, so this completion is restored for a fresh observed attempt"),
+		normalizeTaskState(id, dir, "in progress — background handoff", "inspect the background result and rerun any ambiguous gate in the foreground", "the provider ended before its background work settled", "do not mark complete until every started gate, consult, or delegate has finished"),
+	)
+}
+
 func restoreUnownedCompletion(task queuedTask) error {
 	id := task.Item.ID
 	if task.Item.State == stateDone {

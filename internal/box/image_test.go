@@ -221,3 +221,20 @@ func TestBaseDockerfileHasSidecarForwarder(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseDockerfileSupervisesDetachedDescendantsPortably(t *testing.T) {
+	df := BaseDockerfile()
+	for _, want := range []string{
+		"echo \"${20}\"",
+		"current=${20}",
+		"quiescence_rescan=",
+		"Rescan once before treating a clean provider exit as",
+	} {
+		if !strings.Contains(df, want) {
+			t.Errorf("base Dockerfile missing descendant-supervision bit %q", want)
+		}
+	}
+	if strings.Contains(df, "echo \"$20\"") || strings.Contains(df, "current=$20") {
+		t.Errorf("base Dockerfile must brace positional field 20:\n%s", df)
+	}
+}

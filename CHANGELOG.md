@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop and review boxes now preserve live background work long enough to hand it off safely.**
+  Their entrypoint distinguishes authenticated service forwarders from agent-owned descendants,
+  including detached sessions; it drains or terminates the latter on a bounded deadline and reports
+  an entrypoint-owned status that providers cannot forge. Coop restores any premature task
+  completion, discards an unobserved review receipt, records the handoff, and starts a fresh
+  provider attempt. Three consecutive handoffs stop with an actionable foreground-work message;
+  interactive boxes keep their existing immediate-exec behavior.
+
 - **Host-receipted foreign reopens no longer kill a work iteration.** A work completion window now journals its exact assigned task and accepts a concurrent host `coop tasks claim` of a different archived task only when a host-only, nonce-bound departure record proves the move invalidated that archive's baseline completion receipt. Raw folder moves, stale or forged records, duplicate subjects, and any change to the assigned task still fail closed; crash replay applies the identical classifier.
 
 - **The loop announces and pins its `loop.yaml` snapshot.** Every loop — including a fork loop —

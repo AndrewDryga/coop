@@ -55,6 +55,47 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	t.Run("background review receipts are discarded and retried with explicit telemetry", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "review-background-handoff"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "background-drained-review"},
+			{Target: between, Stage: "between", Result: "background-timeout-review"},
+			{Target: between, Stage: "between", Result: "pass"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(result.Stderr, "discarding its receipt and starting a fresh observed attempt (1/3)") ||
+			!strings.Contains(result.Stderr, "discarding its receipt and starting a fresh observed attempt (2/3)") ||
+			!strings.Contains(result.Stdout+result.Stderr, "queue verified done") {
+			t.Fatalf("background review handoff = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("background review attempts changed the completed subject")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 5 ||
+			records[0].Outcome != "success" ||
+			records[1].Outcome != "background_drained" ||
+			records[2].Outcome != "background_timeout" ||
+			records[3].Outcome != "success" ||
+			records[4].Outcome != "success" {
+			t.Fatalf("background review telemetry = %#v", records)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts, false)
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
 	t.Run("malformed verdict gets one corrected full-review attempt at every review stage", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
@@ -1231,6 +1272,10 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		}
 		if attempt.Result == "wait" {
 			wantExit = 130
+		} else if attempt.Result == "background-drained-review" {
+			wantExit = 190
+		} else if attempt.Result == "background-timeout-review" {
+			wantExit = 191
 		}
 		if exits[i].ExitCode == nil || *exits[i].ExitCode != wantExit {
 			t.Fatalf("review attempt %d provider exit = %#v, want %d", i, exits[i], wantExit)

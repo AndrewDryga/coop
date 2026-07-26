@@ -157,13 +157,120 @@ fi
 # the box's own 127.0.0.1:<hostport> and forward raw TCP to <service>:<containerport> on the compose
 # network. Raw TCP passes TLS through untouched, so the app in the box reaches a sidecar at the SAME
 # localhost:<hostport> URL the host browser uses (OIDC issuer match).
+proc_start_token() {
+  IFS= read -r stat < "/proc/$1/stat" || return
+  fields=${stat##*) }
+  [ "$fields" = "$stat" ] && return
+  set -- $fields
+  [ "$#" -ge 20 ] && echo "${20}"
+} 2>/dev/null
+
+forward_sessions=
 if [ -n "$COOP_FORWARD" ] && command -v socat >/dev/null 2>&1; then
-  echo "$COOP_FORWARD" | tr , '\n' | while IFS=: read -r hp svc sp; do
-    [ -n "$hp" ] && [ -n "$svc" ] && [ -n "$sp" ] || continue
-    socat "TCP-LISTEN:$hp,bind=127.0.0.1,fork,reuseaddr" "TCP:$svc:$sp" >/dev/null 2>&1 &
+  oldifs=$IFS; IFS=,
+  for forward in $COOP_FORWARD; do
+    IFS=$oldifs; hp=${forward%%:*}; rest=${forward#*:}; svc=${rest%%:*}; sp=${rest#*:}
+    [ -n "$hp" ] && [ -n "$svc" ] && [ -n "$sp" ] || { IFS=,; continue; }
+    # Each forwarder gets its own session. Supervision authenticates an exemption with this
+    # session leader's PID *and* Linux start token, never with a spoofable executable name.
+    setsid socat "TCP-LISTEN:$hp,bind=127.0.0.1,fork,reuseaddr" "TCP:$svc:$sp" >/dev/null 2>&1 &
+    fp=$!
+    token=$(proc_start_token "$fp")
+    [ -n "$token" ] && forward_sessions="$forward_sessions $fp:$token"
+    IFS=,
   done
+  IFS=$oldifs
 fi
-exec "$@"
+
+[ "$COOP_SUPERVISE_DESCENDANTS" = 1 ] || exec "$@"
+
+# Reserved results are returned only by this supervisor. A provider that exits with either code
+# is deliberately mapped to a normal failure so it cannot forge a host handoff.
+coop_drained_exit=190
+coop_timeout_exit=191
+
+# A live process is agent-owned unless it is PID 1, this entrypoint, or belongs to a forwarder
+# session whose leader still has its recorded start token. This scans /proc directly: PPID and
+# provider-session walks lose double-setsid orphans, while names are provider-controlled.
+live_jobs() {
+  for p in /proc/[0-9]*; do
+    pid=${p##*/}
+    # /proc/<pid>/stat's comm field is parenthesized and may itself contain spaces. Strip it
+    # before splitting: the remaining fields start at state (3), so session is $4 and start $20.
+    IFS= read -r stat < "$p/stat" || continue
+    fields=${stat##*) }
+    [ "$fields" != "$stat" ] || continue
+    set -- $fields
+    [ "$#" -ge 20 ] || continue
+    state=$1; parent=$2; session=$4
+    [ "$state" = Z ] && continue
+    # PID 1 is the container init; this entrypoint and its transient direct children are not
+    # provider work. Everything else remains visible even when it reparented or called setsid.
+    [ "$pid" = 1 ] || [ "$pid" = "$$" ] || [ "$parent" = "$$" ] && continue
+    exempt=
+    for record in $forward_sessions; do
+      leader=${record%%:*}; token=${record#*:}
+      current=
+      if IFS= read -r leader_stat < "/proc/$leader/stat"; then
+        leader_fields=${leader_stat##*) }
+        [ "$leader_fields" = "$leader_stat" ] || { set -- $leader_fields; [ "$#" -ge 20 ] && current=${20}; }
+      fi
+      [ "$session" = "$leader" ] && [ "$current" = "$token" ] && exempt=1
+    done
+    [ -n "$exempt" ] || echo "$pid"
+  done
+} 2>/dev/null
+
+terminate_jobs() {
+  jobs=$1
+  [ -n "$jobs" ] || return
+  for pid in $jobs; do kill -TERM "$pid" 2>/dev/null || true; done
+  sleep 2
+  for pid in $(live_jobs); do kill -KILL "$pid" 2>/dev/null || true; done
+}
+
+provider_exit=0
+setsid "$@" & provider=$!
+trap 'kill -TERM -- -$provider 2>/dev/null || true; wait "$provider" 2>/dev/null; terminate_jobs "$(live_jobs)"; exit 143' INT TERM HUP
+wait "$provider" || provider_exit=$?
+if [ "$provider_exit" -ne 0 ]; then
+  [ "$provider_exit" -eq "$coop_drained_exit" ] && provider_exit=1
+  [ "$provider_exit" -eq "$coop_timeout_exit" ] && provider_exit=1
+  terminate_jobs "$(live_jobs)"
+  exit "$provider_exit"
+fi
+
+# The default is deliberately bounded but long enough for the default consult wrapper timeout.
+# Tests and operators may shorten it at the container boundary; invalid values fail closed to 30m.
+handoff_wait=${COOP_DESCENDANT_TIMEOUT:-1800}
+case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=1800;; esac
+IFS=. read -r now _ < /proc/uptime
+deadline=$(( now + handoff_wait ))
+saw_live_job=
+quiescence_rescan=
+while :; do
+  jobs=$(live_jobs)
+  if [ -n "$jobs" ]; then
+    saw_live_job=1
+    IFS=. read -r now _ < /proc/uptime
+    [ "$now" -lt "$deadline" ] || break
+    sleep 1
+    continue
+  fi
+  [ -n "$saw_live_job" ] && break
+  # A double-setsid child can be between its short-lived launch process and its reparented
+  # session leader during the first scan. Rescan once before treating a clean provider exit as
+  # quiescent, while keeping the ordinary success path bounded.
+  [ -n "$quiescence_rescan" ] && break
+  quiescence_rescan=1
+  IFS=. read -r now _ < /proc/uptime
+  [ "$now" -lt "$deadline" ] || break
+  sleep 0.1
+done
+[ -n "$saw_live_job" ] || exit 0
+[ -z "$jobs" ] && exit "$coop_drained_exit"
+terminate_jobs "$jobs"
+exit "$coop_timeout_exit"
 ENTRY
 RUN chmod +x /usr/local/bin/coop-entry
 

@@ -706,6 +706,12 @@ func assertLoopAttemptContractsWithStreaming(t *testing.T, suite *directProcessS
 			wantExit = 0
 		} else if attempt.Result == "wait" {
 			wantExit = 130
+		} else if attempt.Result == "background-drained" || attempt.Result == "background-drained-complete" ||
+			attempt.Result == "background-drained-review" {
+			wantExit = 190
+		} else if attempt.Result == "background-timeout" || attempt.Result == "background-timeout-after-restored-completion" ||
+			attempt.Result == "background-timeout-review" {
+			wantExit = 191
 		}
 		if exits[i].ExitCode == nil || *exits[i].ExitCode != wantExit {
 			t.Fatalf("attempt %d provider exit = %#v, want %d", i, exits[i], wantExit)
