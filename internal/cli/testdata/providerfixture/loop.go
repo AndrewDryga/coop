@@ -95,6 +95,7 @@ func validateLoopResult(index int, stage, result string) error {
 		if common || result == "complete" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
+			result == "repair-older-binding-blocked-gated" ||
 			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
 			result == "verify-only-after-block" || result == "second-binding" ||
 			result == "background-drained" || result == "background-timeout" ||
@@ -181,7 +182,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		return 1, "", err
 	}
 	switch attempt.Result {
-	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete":
+	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-blocked-gated", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete":
 		outcome := attempt.Result
 		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
 			outcome = ""
@@ -189,6 +190,14 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			outcome = "unbound"
 		} else if outcome == "unbound-wait" {
 			outcome = "unbound"
+		} else if outcome == "repair-older-binding-blocked-gated" {
+			if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
+				return 1, "", err
+			}
+			if err := waitLoopUpgradeRelease(root, plan.TaskID); err != nil {
+				return 1, "", err
+			}
+			outcome = "repair-older-binding-blocked"
 		}
 		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, outcome); err != nil {
 			return 1, "", err
@@ -490,7 +499,15 @@ func hostClaimLoopTask(root, taskID string) error {
 }
 
 func waitLoopRelease(root, taskID string) error {
-	path := filepath.Join(root, "state", "loop-release-"+taskID)
+	return waitLoopReleaseFile(root, "loop-release-"+taskID)
+}
+
+func waitLoopUpgradeRelease(root, taskID string) error {
+	return waitLoopReleaseFile(root, "loop-upgrade-release-"+taskID)
+}
+
+func waitLoopReleaseFile(root, name string) error {
+	path := filepath.Join(root, "state", name)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {

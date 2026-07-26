@@ -582,94 +582,146 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 	})
 
 	t.Run("blocked older audit rewrite retains authority for verification-only re-close", func(t *testing.T) {
-		resetLoopProcessRepo(t, suite)
-		taskID := "blocked-older-audit-reopen"
-		descendantID := taskID + "-descendant"
-		seedLoopProcessTask(t, suite.layout.Repo, taskID)
-		seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, descendantID)
-		work := loopRecoveryTarget("claude", "work-model", "personal")
-		between := loopRecoveryTarget("codex", "between-model", "work")
-		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
-		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
-		blockAttempts := []loopProcessAttempt{
-			{Target: work, Stage: "work", Result: "complete"},
-			{Target: between, Stage: "between", Result: "reopen-gated"},
-			{Target: work, Stage: "work", Result: "repair-older-binding-blocked"},
+		cases := []struct {
+			name       string
+			preUpgrade bool
+		}{
+			{name: "current blocked record"},
+			{name: "pre-upgrade stale blocked record", preUpgrade: true},
 		}
-		suite.reset(t, loopRecoveryScenario(taskID, blockAttempts))
-		process := startLoopRecovery(t, suite, work)
-		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				resetLoopProcessRepo(t, suite)
+				taskID := "blocked-older-audit-reopen"
+				if tc.preUpgrade {
+					taskID = "pre-upgrade-blocked-older-audit-reopen"
+					t.Setenv(testLeaseAuthorityRootEnv, filepath.Join(
+						suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion,
+					))
+				}
+				descendantID := taskID + "-descendant"
+				seedLoopProcessTask(t, suite.layout.Repo, taskID)
+				seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, descendantID)
+				work := loopRecoveryTarget("claude", "work-model", "personal")
+				between := loopRecoveryTarget("codex", "between-model", "work")
+				signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+				writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+				blockResult := "repair-older-binding-blocked"
+				if tc.preUpgrade {
+					blockResult = "repair-older-binding-blocked-gated"
+				}
+				blockAttempts := []loopProcessAttempt{
+					{Target: work, Stage: "work", Result: "complete"},
+					{Target: between, Stage: "between", Result: "reopen-gated"},
+					{Target: work, Stage: "work", Result: blockResult},
+				}
+				suite.reset(t, loopRecoveryScenario(taskID, blockAttempts))
+				process := startLoopRecovery(t, suite, work)
+				defer process.Cleanup()
+				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+				var staleRecord auditReopenRecord
 
-		descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
-		if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		loopProcessGit(t, suite, "add", "descendant.txt")
-		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		hostCompletion := procharness.Run(ctx, procharness.Command{
-			Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
-			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
-		})
-		cancel()
-		if hostCompletion.Err != nil || hostCompletion.ExitCode != 0 {
-			t.Fatalf("host descendant completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-				hostCompletion.ExitCode, hostCompletion.Err, hostCompletion.Stdout, hostCompletion.Stderr)
-		}
-		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
-		blockedResult := process.Wait(ctx)
-		cancel()
-		if blockedResult.Err != nil || blockedResult.ExitCode != 0 {
-			t.Fatalf("blocked audit rewrite = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-				blockedResult.ExitCode, blockedResult.Err, blockedResult.Stdout, blockedResult.Stderr)
-		}
-		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)) {
-			t.Fatal("rewritten audit task did not remain blocked")
-		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts, false)
+				descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
+				if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				loopProcessGit(t, suite, "add", "descendant.txt")
+				loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				hostCompletion := procharness.Run(ctx, procharness.Command{
+					Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
+					Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
+				})
+				cancel()
+				if hostCompletion.Err != nil || hostCompletion.ExitCode != 0 {
+					t.Fatalf("host descendant completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+						hostCompletion.ExitCode, hostCompletion.Err, hostCompletion.Stdout, hostCompletion.Stderr)
+				}
+				if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if tc.preUpgrade {
+					awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "ready", 2, 10*time.Second)
+					var ok bool
+					var err error
+					staleRecord, ok, err = readAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+					if err != nil || !ok {
+						t.Fatalf("read pre-upgrade audit authority: ok=%v err=%v", ok, err)
+					}
+					if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-upgrade-release-"+taskID), nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+				blockedResult := process.Wait(ctx)
+				cancel()
+				if blockedResult.Err != nil || blockedResult.ExitCode != 0 {
+					t.Fatalf("blocked audit rewrite = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+						blockedResult.ExitCode, blockedResult.Err, blockedResult.Stdout, blockedResult.Stderr)
+				}
+				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)) {
+					t.Fatal("rewritten audit task did not remain blocked")
+				}
+				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts, false)
+				if tc.preUpgrade {
+					current, ok, err := readAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+					if err != nil || !ok {
+						t.Fatalf("read current blocked audit authority: ok=%v err=%v", ok, err)
+					}
+					if current.Generation != staleRecord.Generation || current.Subject == staleRecord.Subject {
+						t.Fatalf("blocked fixture did not produce one rebased generation: stale=%#v current=%#v", staleRecord, current)
+					}
+					if err := writeAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), staleRecord); err != nil {
+						t.Fatalf("restore pre-upgrade blocked audit authority: %v", err)
+					}
+					laterPath := filepath.Join(suite.layout.Repo, "post-block-upgrade.txt")
+					if err := os.WriteFile(laterPath, []byte("landed after the older task blocked\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					loopProcessGit(t, suite, "add", "post-block-upgrade.txt")
+					loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: post-block upgrade", "-m", "Coop-Task: post-block-upgrade")
+				}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		unblocked := procharness.Run(ctx, procharness.Command{
-			Path: suite.coopBin, Args: []string{"tasks", "unblock", taskID, "external acceptance passed"},
-			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
-		})
-		cancel()
-		if unblocked.Err != nil || unblocked.ExitCode != 0 {
-			t.Fatalf("host unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-				unblocked.ExitCode, unblocked.Err, unblocked.Stdout, unblocked.Stderr)
-		}
+				ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+				unblocked := procharness.Run(ctx, procharness.Command{
+					Path: suite.coopBin, Args: []string{"tasks", "unblock", taskID, "external acceptance passed"},
+					Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
+				})
+				cancel()
+				if unblocked.Err != nil || unblocked.ExitCode != 0 {
+					t.Fatalf("host unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+						unblocked.ExitCode, unblocked.Err, unblocked.Stdout, unblocked.Stderr)
+				}
 
-		recloseAttempts := []loopProcessAttempt{
-			{Target: work, Stage: "work", Result: "verify-only-after-block"},
-			{Target: between, Stage: "between", Result: "pass"},
-			{Target: signoff, Stage: "signoff", Result: "pass"},
+				recloseAttempts := []loopProcessAttempt{
+					{Target: work, Stage: "work", Result: "verify-only-after-block"},
+					{Target: between, Stage: "between", Result: "pass"},
+					{Target: signoff, Stage: "signoff", Result: "pass"},
+				}
+				suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
+				reclosed := runLoopReview(t, suite, work, 20*time.Second)
+				if reclosed.Err != nil || reclosed.ExitCode != 0 {
+					t.Fatalf("verification-only re-close after unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+						reclosed.ExitCode, reclosed.Err, reclosed.Stdout, reclosed.Stderr)
+				}
+				for _, id := range []string{taskID, descendantID} {
+					if got := commitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
+						t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
+					}
+					if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
+						t.Fatalf("task %s did not remain done", id)
+					}
+				}
+				key, err := leaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
+					t.Fatal("accepted audit generation remained reusable")
+				}
+				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts, false)
+			})
 		}
-		suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
-		reclosed := runLoopReview(t, suite, work, 20*time.Second)
-		if reclosed.Err != nil || reclosed.ExitCode != 0 {
-			t.Fatalf("verification-only re-close after unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-				reclosed.ExitCode, reclosed.Err, reclosed.Stdout, reclosed.Stderr)
-		}
-		for _, id := range []string{taskID, descendantID} {
-			if got := commitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
-				t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
-			}
-			if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
-				t.Fatalf("task %s did not remain done", id)
-			}
-		}
-		key, err := leaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
-			t.Fatal("accepted audit generation remained reusable")
-		}
-		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts, false)
 	})
 
 	t.Run("older audit reopen rejects a changed descendant", func(t *testing.T) {
@@ -1292,6 +1344,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" &&
 			attempt.Result != "repair-review-binding" && attempt.Result != "repair-older-binding" &&
 			attempt.Result != "repair-older-binding-blocked" &&
+			attempt.Result != "repair-older-binding-blocked-gated" &&
 			attempt.Result != "repair-older-binding-changed-descendant" && attempt.Result != "verify-only" &&
 			attempt.Result != "verify-only-after-block" &&
 			attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" &&

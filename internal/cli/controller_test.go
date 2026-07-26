@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -2324,6 +2326,529 @@ func TestAuditReopenCompletionRejectsChangedOrInventedHistory(t *testing.T) {
 	})
 }
 
+type blockedAuditUpgradeFixture struct {
+	repo, root, authorityRoot, id string
+	task                          taskItem
+	record                        auditReopenRecord
+	git                           func(...string)
+}
+
+func newBlockedAuditUpgradeFixture(t *testing.T) blockedAuditUpgradeFixture {
+	t.Helper()
+	repo, git := gitRepo(t)
+	authorityRoot := t.TempDir()
+	t.Setenv(testLeaseAuthorityRootEnv, authorityRoot)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	id := "blocked-upgrade"
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: "+id)
+	a := gitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "b.txt")
+	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: blocked-upgrade-descendant")
+	b := gitOut(repo, "rev-parse", "HEAD")
+	record, err := captureAuditReopen(repo, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := filepath.Join(repo, tasksRoot)
+	task := taskForLease(t, root, stateBlocked, id)
+	writeTaskFile(t, filepath.Join(task.Dir, "decision.md"), "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
+	authority, err := openLeaseAuthority(root, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+
+	git("reset", "--hard", "-q", a+"^")
+	git("cherry-pick", a)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "--amend", "-q", "-m", "A repaired\n\nCoop-Task: "+id+"\nCoop-Recovery: fixture")
+	git("cherry-pick", b)
+	return blockedAuditUpgradeFixture{
+		repo: repo, root: root, authorityRoot: authorityRoot, id: id,
+		task: task, record: record, git: git,
+	}
+}
+
+func sameAuditReopenRecord(a, b auditReopenRecord) bool {
+	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
+		a.Subject == b.Subject && slices.Equal(a.Descendants, b.Descendants) &&
+		a.UnblockPending == b.UnblockPending
+}
+
+func TestBlockedAuditUnblockUpgradesStaleAuthority(t *testing.T) {
+	f := newBlockedAuditUpgradeFixture(t)
+	if err := os.WriteFile(filepath.Join(f.repo, "later.txt"), []byte("later task\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.git("add", "later.txt")
+	f.git("commit", "-q", "-m", "Later implementation\n\nCoop-Task: later-task")
+	if err := resolveAndUnblock(f.root, f.task, "external acceptance passed"); err != nil {
+		t.Fatal(err)
+	}
+	current, ok := currentTask(f.root, f.id)
+	if !ok || current.State != stateTodo {
+		t.Fatalf("upgraded unblock task = %#v, ok=%v", current, ok)
+	}
+	got, ok, err := readAuditReopenRecord(f.root, f.id)
+	if err != nil || !ok {
+		t.Fatalf("read upgraded authority: ok=%v err=%v", ok, err)
+	}
+	subjects := commitsForTask(f.repo, "HEAD", f.id)
+	if len(subjects) != 1 {
+		t.Fatalf("reachable subject bindings = %v", subjects)
+	}
+	wantSubject, err := semanticCommit(f.repo, subjects[0], f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Generation != f.record.Generation || got.Subject != wantSubject ||
+		!slices.Equal(got.Descendants, f.record.Descendants) {
+		t.Fatalf("upgraded authority = %#v, want generation %q subject %#v descendants %#v", got, f.record.Generation, wantSubject, f.record.Descendants)
+	}
+}
+
+func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
+	assertBlocked := func(t *testing.T, f blockedAuditUpgradeFixture) {
+		t.Helper()
+		current, ok := currentTask(f.root, f.id)
+		if !ok || current.State != stateBlocked {
+			t.Fatalf("rejected unblock task = %#v, ok=%v", current, ok)
+		}
+	}
+
+	t.Run("tampered subject", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		tampered := f.record
+		tampered.Subject.ChangeTree = strings.Repeat("0", 64)
+		if err := writeAuditReopenRecord(f.root, tampered); err != nil {
+			t.Fatal(err)
+		}
+		code, err := tasksFolderUnblock(f.root, []string{f.id, "must not be recorded"})
+		if code != -1 || err == nil {
+			t.Fatalf("tampered subject unblock = code %d, err %v", code, err)
+		}
+		for _, want := range []string{
+			"unblock " + f.id + " failed during audit authority validation",
+			"task remains blocked", "restore the unchanged host audit record and reviewed Git baseline",
+			`coop tasks unblock ` + f.id + ` "<answer>"`,
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("unblock error missing %q: %v", want, err)
+			}
+		}
+		assertBlocked(t, f)
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, tampered) {
+			t.Fatalf("rejected subject changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+		if decisionResolved(filepath.Join(f.task.Dir, "decision.md")) {
+			t.Fatal("rejected subject recorded the inline answer")
+		}
+	})
+
+	t.Run("missing generation", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		invalid := f.record
+		invalid.Generation = ""
+		body, err := json.Marshal(invalid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name, err := auditReopenRecordName(f.root, f.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(f.authorityRoot, name)
+		body = append(body, '\n')
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil {
+			t.Fatal("missing generation was accepted")
+		}
+		assertBlocked(t, f)
+		if got, err := os.ReadFile(path); err != nil || !slices.Equal(got, body) {
+			t.Fatalf("rejected invalid generation changed authority: %q err=%v", got, err)
+		}
+	})
+
+	t.Run("replaced generation", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		replacement := f.record
+		replacement.Generation = "replacement-generation"
+		if err := writeAuditReopenRecord(f.root, replacement); err != nil {
+			t.Fatal(err)
+		}
+		upgrade, err := lockBlockedAuditReopenUnblock(f.root, f.task, f.record)
+		if upgrade != nil {
+			_ = upgrade.finish(nil)
+		}
+		if err == nil {
+			t.Fatal("replaced generation was accepted")
+		}
+		assertBlocked(t, f)
+		got, ok, readErr := readAuditReopenRecord(f.root, f.id)
+		if readErr != nil || !ok || !sameAuditReopenRecord(got, replacement) {
+			t.Fatalf("rejected replacement changed authority: got=%#v ok=%v err=%v", got, ok, readErr)
+		}
+	})
+
+	t.Run("changed descendant", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		if err := os.WriteFile(filepath.Join(f.repo, "tamper.txt"), []byte("tampered\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "tamper.txt")
+		f.git("commit", "--amend", "-q", "--no-edit")
+		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil {
+			t.Fatal("changed descendant was accepted")
+		}
+		assertBlocked(t, f)
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("rejected descendant changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+
+	t.Run("raw move does not rebase", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		if err := moveTaskDir(f.root, f.task, stateTodo); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("raw move changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+		if auditReopenCompletionValid(f.repo, head, head, f.id, got) {
+			t.Fatal("raw move silently upgraded stale authority")
+		}
+
+		base := head
+		subjects := commitsForTask(f.repo, head, f.id)
+		descendants := commitsForTask(f.repo, head, "blocked-upgrade-descendant")
+		if len(subjects) != 1 || len(descendants) != 1 {
+			t.Fatalf("fixture bindings = subject %v descendant %v", subjects, descendants)
+		}
+		f.git("reset", "--hard", "-q", subjects[0]+"^")
+		f.git("cherry-pick", subjects[0])
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired again\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "--amend", "-q", "--no-edit")
+		f.git("cherry-pick", descendants[0])
+		secondHead := gitOut(f.repo, "rev-parse", "HEAD")
+		if auditReopenCompletionValid(f.repo, base, secondHead, f.id, got) {
+			t.Fatal("raw-moved stale authority authorized a second rewrite")
+		}
+	})
+
+	t.Run("decision write failure leaves authority stale", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		decision := filepath.Join(f.task.Dir, "decision.md")
+		if err := os.Remove(decision); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(decision, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil {
+			t.Fatal("decision write obstruction was accepted")
+		}
+		if !pathExists(f.task.Dir) {
+			t.Fatal("decision write obstruction moved the blocked task")
+		}
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("decision write obstruction changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+
+	t.Run("move failure leaves authority stale", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obstruction := filepath.Join(f.root, stateTodo, f.id)
+		if err := os.MkdirAll(obstruction, 0o755); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := moveBlockedAuditUnblock(f.root, f.task, upgrade); err == nil {
+			t.Fatal("destination obstruction was accepted")
+		}
+		if !pathExists(f.task.Dir) {
+			t.Fatal("destination obstruction moved the blocked task")
+		}
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("destination obstruction changed stale authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+
+	t.Run("authority write failure restores blocked folder", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upgrade.replacement.Generation = "invalid-replacement-generation"
+		if err := moveBlockedAuditUnblock(f.root, f.task, upgrade); err == nil {
+			t.Fatal("authority persistence failure was accepted")
+		}
+		if !pathExists(f.task.Dir) || pathExists(filepath.Join(f.root, stateTodo, f.id)) {
+			t.Fatal("authority persistence failure did not restore the blocked folder")
+		}
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("authority persistence failure changed stale authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+
+	t.Run("rollback failure reports unknown state", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upgrade.replacement.Generation = "invalid-replacement-generation"
+		if err := upgrade.markPending(); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := moveTaskDir(f.root, f.task, stateTodo); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(f.task.Dir, 0o755); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		persistErr := upgrade.persist()
+		moved := f.task
+		moved.State = stateTodo
+		moved.Dir = filepath.Join(f.root, stateTodo, f.id)
+		rollbackErr := moveTaskDir(f.root, moved, stateBlocked)
+		if persistErr == nil || rollbackErr == nil {
+			_ = upgrade.finish(nil)
+			t.Fatalf("failure seam = persist %v rollback %v", persistErr, rollbackErr)
+		}
+		stageErr := &unblockStageError{
+			stage: "audit authority persistence", state: "",
+			err: upgrade.finish(errors.Join(persistErr, rollbackErr)),
+		}
+		reported := unblockRetryError(f.id, true, stageErr).Error()
+		for _, want := range []string{"could not restore a known task state", "coop tasks path " + f.id} {
+			if !strings.Contains(reported, want) {
+				t.Errorf("unknown-state error missing %q: %s", want, reported)
+			}
+		}
+		if strings.Contains(reported, "task remains blocked") {
+			t.Errorf("unknown-state error claimed blocked: %s", reported)
+		}
+		pending, ok, readErr := readAuditReopenRecord(f.root, f.id)
+		if readErr != nil || !ok || !pending.UnblockPending ||
+			!pathExists(filepath.Join(f.root, stateTodo, f.id)) {
+			t.Fatalf("rollback failure state = pending %#v ok=%v todo=%v err=%v",
+				pending, ok, pathExists(filepath.Join(f.root, stateTodo, f.id)), readErr)
+		}
+	})
+
+	t.Run("crash boundary after move cannot grant authority", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := upgrade.markPending(); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := recordResolution(filepath.Join(f.task.Dir, "decision.md"), "external acceptance passed"); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := moveTaskDir(f.root, f.task, stateTodo); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := upgrade.finish(nil); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !got.UnblockPending || got.Generation != f.record.Generation {
+			t.Fatalf("move-before-persist boundary lost pending authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+		if auditReopenCompletionValid(f.repo, head, head, f.id, got) {
+			t.Fatal("move-before-persist boundary granted verification-only authority")
+		}
+		if got.Version != auditReopenPendingVersion || got.Version == auditReopenVersion {
+			t.Fatalf("pending record version = %d, want downgrade-safe %d", got.Version, auditReopenPendingVersion)
+		}
+		downgraded := got
+		downgraded.Version = auditReopenVersion
+		if validateAuditReopenRecord(downgraded, f.id) == nil {
+			t.Fatal("v1 reader-compatible pending record was accepted")
+		}
+		if code, err := tasksFolderUnblock(f.root, []string{f.id}); code != 0 || err != nil {
+			t.Fatalf("explicit recovery of post-move pending unblock = code %d err %v", code, err)
+		}
+		recovered, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || recovered.UnblockPending ||
+			!auditReopenCompletionValid(f.repo, head, head, f.id, recovered) {
+			t.Fatalf("lease recovery did not activate valid authority: got=%#v ok=%v err=%v", recovered, ok, err)
+		}
+	})
+
+	t.Run("pending marker plus raw move cannot activate on lease", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := upgrade.markPending(); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := upgrade.finish(nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := moveTaskDir(f.root, f.task, stateTodo); err != nil {
+			t.Fatal(err)
+		}
+		todo, ok := currentTask(f.root, f.id)
+		if !ok {
+			t.Fatal("raw-moved pending task disappeared")
+		}
+		if err := moveTaskDir(f.root, todo, stateInProgress); err != nil {
+			t.Fatal(err)
+		}
+		inProgress, ok := currentTask(f.root, f.id)
+		if !ok {
+			t.Fatal("claimed pending task disappeared")
+		}
+		lease, _, err := tryTaskLease(f.root, inProgress, testLeaseOwner())
+		if lease != nil || err == nil || !strings.Contains(err.Error(), "non-authorizing pending audit unblock") {
+			t.Fatalf("pending raw-move lease = lease %#v err %v", lease, err)
+		}
+		pending, ok, readErr := readAuditReopenRecord(f.root, f.id)
+		if readErr != nil || !ok || !pending.UnblockPending || pending.Version != auditReopenPendingVersion {
+			t.Fatalf("denied lease changed pending authority: got=%#v ok=%v err=%v", pending, ok, readErr)
+		}
+	})
+
+	t.Run("todo pending inspection error is actionable", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := upgrade.markPending(); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := moveTaskDir(f.root, f.task, stateTodo); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := upgrade.finish(nil); err != nil {
+			t.Fatal(err)
+		}
+		name, err := auditReopenRecordName(f.root, f.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(f.authorityRoot, name), []byte("{malformed\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code, err := tasksFolderUnblock(f.root, []string{f.id})
+		if code != -1 || err == nil {
+			t.Fatalf("todo authority inspection = code %d err %v", code, err)
+		}
+		for _, want := range []string{"inspect interrupted audit unblock", "task remains todo", "coop tasks unblock " + f.id} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("todo authority inspection error missing %q: %v", want, err)
+			}
+		}
+		if !pathExists(filepath.Join(f.root, stateTodo, f.id)) {
+			t.Fatal("todo authority inspection error moved the task")
+		}
+	})
+
+	t.Run("crash boundary before move is explicitly retryable", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		upgrade, err := prepareBlockedAuditReopenUnblock(f.root, f.task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := upgrade.markPending(); err != nil {
+			_ = upgrade.finish(nil)
+			t.Fatal(err)
+		}
+		if err := upgrade.finish(nil); err != nil {
+			t.Fatal(err)
+		}
+		pending, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !pending.UnblockPending || !pathExists(f.task.Dir) {
+			t.Fatalf("pre-move boundary = record %#v ok=%v blocked=%v err=%v", pending, ok, pathExists(f.task.Dir), err)
+		}
+
+		if err := resolveAndUnblock(f.root, f.task, "external acceptance passed"); err != nil {
+			t.Fatalf("explicit retry of pending unblock: %v", err)
+		}
+		recovered, ok, err := readAuditReopenRecord(f.root, f.id)
+		head := gitOut(f.repo, "rev-parse", "HEAD")
+		if err != nil || !ok || recovered.UnblockPending ||
+			!auditReopenCompletionValid(f.repo, head, head, f.id, recovered) ||
+			!pathExists(filepath.Join(f.root, stateTodo, f.id)) {
+			t.Fatalf("explicit pending retry = record %#v ok=%v todo=%v err=%v",
+				recovered, ok, pathExists(filepath.Join(f.root, stateTodo, f.id)), err)
+		}
+	})
+
+	t.Run("reflog candidate search is bounded", func(t *testing.T) {
+		f := newBlockedAuditUpgradeFixture(t)
+		rewriteHead := gitOut(f.repo, "rev-parse", "HEAD")
+		f.git("checkout", "-q", "-b", "audit-decoys")
+		for i := 0; i <= auditReopenHistoryCandidateLimit; i++ {
+			f.git("commit", "-q", "--allow-empty", "-m",
+				fmt.Sprintf("decoy %d\n\nCoop-Task: blocked-upgrade-descendant", i))
+		}
+		f.git("checkout", "-q", "--detach", rewriteHead)
+		f.git("branch", "-D", "audit-decoys")
+		if err := resolveAndUnblock(f.root, f.task, "must not be recorded"); err == nil ||
+			!strings.Contains(err.Error(), "retained history candidates") {
+			t.Fatalf("unbounded candidate history error = %v", err)
+		}
+		if !pathExists(f.task.Dir) {
+			t.Fatal("candidate overflow moved the blocked task")
+		}
+		got, ok, err := readAuditReopenRecord(f.root, f.id)
+		if err != nil || !ok || !sameAuditReopenRecord(got, f.record) {
+			t.Fatalf("candidate overflow changed authority: got=%#v ok=%v err=%v", got, ok, err)
+		}
+	})
+}
+
 func TestRestoreUnbindableCompletions(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-unbound"
@@ -2621,5 +3146,42 @@ func TestUnblockResolved(t *testing.T) {
 		if !pathExists(filepath.Join(root, stateBlocked, id)) {
 			t.Errorf("%s should have stayed blocked", id)
 		}
+	}
+}
+
+func TestUnblockResolvedDoesNotUpgradeAuditAuthority(t *testing.T) {
+	root := t.TempDir()
+	authorityRoot := t.TempDir()
+	t.Setenv(testLeaseAuthorityRootEnv, authorityRoot)
+	task := taskForLease(t, root, stateBlocked, "audit-answer")
+	writeTaskFile(t, filepath.Join(task.Dir, "decision.md"), "# Decision\n\n**Resolution:** provider supplied prose\n")
+	record := testAuditReopenRecord(task.ID, "preflight-generation")
+	if err := writeAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+
+	if ids := unblockResolved([]string{root}); len(ids) != 0 {
+		t.Fatalf("audit-authority preflight unblocked %v", ids)
+	}
+	if !pathExists(task.Dir) || pathExists(filepath.Join(root, stateTodo, task.ID)) {
+		t.Fatal("provider-written resolution moved an audit-authority task")
+	}
+	got, ok, err := readAuditReopenRecord(root, task.ID)
+	if err != nil || !ok || !sameAuditReopenRecord(got, record) {
+		t.Fatalf("preflight changed audit authority: got=%#v ok=%v err=%v", got, ok, err)
+	}
+
+	name, err := auditReopenRecordName(root, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authorityRoot, name), []byte("{malformed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ids := unblockResolved([]string{root}); len(ids) != 0 {
+		t.Fatalf("authority read error preflight unblocked %v", ids)
+	}
+	if !pathExists(task.Dir) || pathExists(filepath.Join(root, stateTodo, task.ID)) {
+		t.Fatal("authority read error did not fail closed")
 	}
 }

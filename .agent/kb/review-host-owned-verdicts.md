@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
+sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/taskcmd.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
 updated: 2026-07-26
 ---
 
@@ -46,6 +46,18 @@ receipt rewrite, and task-local forgery are rejected. Failed attempts retain the
 when a validated rewrite parks the task blocked for external acceptance, the still-held lease
 rebases that same generation to the rewritten subject while retaining the descendant baseline.
 Unblocking therefore resumes the same single-use authority rather than requiring another rewrite.
+An upgraded binary also bridges tasks that an older supervisor had already parked with the stale
+pre-rewrite subject: the host-authorized unblock holds the authority flock, recovers a
+reflog-reachable terminal commit whose semantic subject and ordered descendants exactly match the
+record, validates that old terminal-to-current-rewrite-terminal range, then validates the rebased
+record against current HEAD
+(which may include unrelated later task commits). While still holding the authority flock it first
+persists a non-authorizing pending form of the same generation, moves the folder, then activates the
+replacement. Pending uses a new record version that older binaries reject. Both a pre-move blocked
+task and a post-move todo task require an explicit host unblock retry; a lease never self-activates
+either pending form. Provider-written resolution prose cannot invoke this upgrade, and an
+authority-inspection error parks the task. Missing or excessive history candidates, changed
+records, direct folder moves, and semantic mismatches leave it stale.
 finalization copies it into the host completion receipt before consuming it, so crash replay can
 finish consumption and an accepted generation cannot be reused.
 
@@ -62,6 +74,11 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-26 — explicit host unblock transactionally upgrades a pre-existing stale blocked
+  generation from a bounded exact reflog baseline through the current rewrite terminal, then
+  validates current HEAD; a downgrade-safe, non-authorizing pending form makes both crash
+  boundaries explicitly recoverable and fail-closed, while preflight/direct moves, leases, and
+  authority-inspection errors remain inert.
 - 2026-07-26 — accepted one exact normalized evidence+receipt echo at the host verdict boundary,
   including a Codex footer routed on the other stream; verified against conflict, partial,
   additional, subject-scope, and external process cases.

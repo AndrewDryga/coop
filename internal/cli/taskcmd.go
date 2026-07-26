@@ -492,11 +492,46 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	answer := strings.TrimSpace(strings.Join(args[1:], " "))
+	if t.State == stateTodo {
+		record, ok, readErr := readAuditReopenRecord(root, t.ID)
+		if readErr != nil {
+			return -1, fmt.Errorf(
+				"inspect interrupted audit unblock for %s failed: %w — task remains todo; repair the host authority registry, then retry: coop tasks unblock %s",
+				t.ID, readErr, t.ID,
+			)
+		}
+		if ok && record.UnblockPending {
+			if answer != "" {
+				decision := filepath.Join(t.Dir, "decision.md")
+				if err := recordResolution(decision, answer); err != nil {
+					return -1, fmt.Errorf(
+						"update interrupted audit unblock decision %q failed: %w — task remains todo with non-authorizing pending authority; repair the decision file, then retry: coop tasks unblock %s \"<answer>\"",
+						decision, err, t.ID,
+					)
+				}
+			}
+			committed, err := finishPendingAuditUnblock(root, t, record)
+			if err != nil && committed {
+				return -1, fmt.Errorf(
+					"interrupted audit unblock for %s activated and the task remains todo, but releasing its authority lock failed: %w — do not retry; inspect the current task path: coop tasks path %s",
+					t.ID, err, t.ID,
+				)
+			}
+			if err != nil {
+				return -1, fmt.Errorf(
+					"finish interrupted audit unblock for %s failed: %w — task remains todo with non-authorizing pending authority; repair the host authority or Git history named by the error, then retry: coop tasks unblock %s",
+					t.ID, err, t.ID,
+				)
+			}
+			ui.OK("finished interrupted unblock for %s — pending audit authority activated, task remains in todo", t.ID)
+			return 0, nil
+		}
+	}
 	if t.State != stateBlocked {
 		return 1, fmt.Errorf("%s is not blocked (it's %s) — nothing to unblock", t.ID, stateLabel(t.State))
 	}
 	// The optional inline answer makes deciding one command — no open-file/edit/save round-trip.
-	answer := strings.TrimSpace(strings.Join(args[1:], " "))
 	// Don't unblock into a state lint rejects: a todo task with an UNRESOLVED decision.md is the
 	// inconsistency lint flags. Require a resolution — inline, or pre-written in decision.md — or
 	// the task stays blocked.
@@ -504,7 +539,7 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
 	}
 	if err := resolveAndUnblock(root, t, answer); err != nil {
-		return -1, err
+		return -1, unblockRetryError(t.ID, answer != "", err)
 	}
 	if answer != "" {
 		ui.OK("unblocked %s — recorded your answer in decision.md, back in todo (claim it to start)", t.ID)
@@ -552,17 +587,112 @@ func decisionResolved(decPath string) bool {
 	return false
 }
 
+type unblockStageError struct {
+	stage, artifact, state string
+	err                    error
+}
+
+func (e *unblockStageError) Error() string { return e.err.Error() }
+func (e *unblockStageError) Unwrap() error { return e.err }
+
+func unblockRetryError(id string, hasAnswer bool, err error) error {
+	var failure *unblockStageError
+	if errors.As(err, &failure) && failure.state == stateTodo {
+		return fmt.Errorf(
+			"unblock %s moved the task to todo, but %s failed: %w — do not retry; inspect the current task path: coop tasks path %s",
+			id, failure.stage, err, id,
+		)
+	}
+	if failure != nil && failure.state == "" {
+		return fmt.Errorf(
+			"unblock %s failed during %s and could not restore a known task state: %w — inspect the current path before retrying: coop tasks path %s",
+			id, failure.stage, err, id,
+		)
+	}
+	command := "coop tasks unblock " + id
+	if hasAnswer {
+		command += ` "<answer>"`
+	}
+	stage := "unblock transition"
+	remedy := "fix the task state named by the error"
+	if errors.As(err, &failure) {
+		stage = failure.stage
+		switch failure.stage {
+		case "audit authority validation":
+			remedy = "restore the unchanged host audit record and reviewed Git baseline named by the error"
+		case "decision write":
+			remedy = fmt.Sprintf("make %q a writable regular decision file", failure.artifact)
+		case "task folder move":
+			remedy = "remove or repair the source/destination task folder named by the error"
+		case "audit authority persistence":
+			remedy = "repair the host task-authority registry entry named by the error"
+		}
+	}
+	return fmt.Errorf(
+		"unblock %s failed during %s: %w — task remains blocked; %s, then retry: %s",
+		id, stage, err, remedy, command,
+	)
+}
+
 // resolveAndUnblock records answer (if non-empty) into the task's decision.md, then returns the
 // task to 00_todo/ — NOT 10_in_progress/: in_progress is the "an agent is on this" lock taken by
 // `claim`, so a just-unblocked task with nobody on it belongs in the queue as available work; the
 // resolved decision.md rides along as the audit trail. Shared by `unblock` and the -i browser.
 func resolveAndUnblock(root string, t taskItem, answer string) error {
+	upgrade, err := prepareBlockedAuditReopenUnblock(root, t)
+	if err != nil {
+		return &unblockStageError{stage: "audit authority validation", state: stateBlocked, err: err}
+	}
 	if answer != "" {
-		if err := recordResolution(filepath.Join(t.Dir, "decision.md"), answer); err != nil {
-			return err
+		decision := filepath.Join(t.Dir, "decision.md")
+		if err := recordResolution(decision, answer); err != nil {
+			return &unblockStageError{
+				stage: "decision write", artifact: decision, state: stateBlocked,
+				err: upgrade.finish(err),
+			}
 		}
 	}
-	return moveTaskDir(root, t, stateTodo)
+	return moveBlockedAuditUnblock(root, t, upgrade)
+}
+
+// moveBlockedAuditUnblock writes a non-authorizing pending record, moves the folder, then activates
+// the replacement. A crash at either boundary remains fail-closed: blocked+pending is explicitly
+// retryable, while todo+pending requires the explicit host unblock recovery under the same lock.
+func moveBlockedAuditUnblock(root string, t taskItem, upgrade *blockedAuditUnblock) error {
+	if err := upgrade.markPending(); err != nil {
+		return &unblockStageError{
+			stage: "audit authority persistence", state: stateBlocked,
+			err: upgrade.finish(err),
+		}
+	}
+	if err := moveTaskDir(root, t, stateTodo); err != nil {
+		return &unblockStageError{
+			stage: "task folder move", state: stateBlocked,
+			err: upgrade.finish(errors.Join(err, upgrade.restorePrevious())),
+		}
+	}
+	moved := t
+	moved.State = stateTodo
+	moved.Dir = filepath.Join(root, stateTodo, t.ID)
+	if err := upgrade.persist(); err != nil {
+		rollbackErr := moveTaskDir(root, moved, stateBlocked)
+		var recordRollbackErr error
+		if rollbackErr == nil {
+			recordRollbackErr = upgrade.restorePrevious()
+		}
+		state := stateBlocked
+		if rollbackErr != nil {
+			state = ""
+		}
+		return &unblockStageError{
+			stage: "audit authority persistence", state: state,
+			err: upgrade.finish(errors.Join(err, rollbackErr, recordRollbackErr)),
+		}
+	}
+	if err := upgrade.finish(nil); err != nil {
+		return &unblockStageError{stage: "host authority lock release", state: stateTodo, err: err}
+	}
+	return nil
 }
 
 // moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
@@ -1478,7 +1608,7 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		default:
 			if t.State == stateBlocked {
 				if err := resolveAndUnblock(ref.root, t, line); err != nil {
-					return -1, err
+					return -1, unblockRetryError(t.ID, true, err)
 				}
 				answered++
 			} else if err := recordResolution(decPath, line); err != nil {

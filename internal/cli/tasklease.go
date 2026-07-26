@@ -18,13 +18,14 @@ import (
 )
 
 const (
-	leaseLockName          = "lease.lock"
-	leaseMetadataName      = "lease.json"
-	leaseAuthorityVersion  = "v1"
-	auditReopenVersion     = 1
-	leaseHeartbeatInterval = 10 * time.Second
-	leaseStaleAfter        = time.Minute
-	leaseMetadataVersion   = 1
+	leaseLockName             = "lease.lock"
+	leaseMetadataName         = "lease.json"
+	leaseAuthorityVersion     = "v1"
+	auditReopenVersion        = 1
+	auditReopenPendingVersion = 2
+	leaseHeartbeatInterval    = 10 * time.Second
+	leaseStaleAfter           = time.Minute
+	leaseMetadataVersion      = 1
 )
 
 const testLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
@@ -49,11 +50,12 @@ type auditReopenCommit struct {
 }
 
 type auditReopenRecord struct {
-	Version     int                 `json:"version"`
-	Generation  string              `json:"generation"`
-	TaskID      string              `json:"task_id"`
-	Subject     auditReopenCommit   `json:"subject"`
-	Descendants []auditReopenCommit `json:"descendants,omitempty"`
+	Version        int                 `json:"version"`
+	Generation     string              `json:"generation"`
+	TaskID         string              `json:"task_id"`
+	Subject        auditReopenCommit   `json:"subject"`
+	Descendants    []auditReopenCommit `json:"descendants,omitempty"`
+	UnblockPending bool                `json:"unblock_pending,omitempty"`
 }
 
 // taskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
@@ -434,7 +436,9 @@ func auditReopenRecordName(root, id string) (string, error) {
 }
 
 func validateAuditReopenRecord(record auditReopenRecord, id string) error {
-	if record.Version != auditReopenVersion || record.Generation == "" || record.TaskID != id ||
+	versionValid := record.Version == auditReopenVersion && !record.UnblockPending ||
+		record.Version == auditReopenPendingVersion && record.UnblockPending
+	if !versionValid || record.Generation == "" || record.TaskID != id ||
 		record.Subject.TaskID != id || record.Subject.ChangeTree == "" {
 		return errors.New("invalid audit reopen record")
 	}
@@ -995,6 +999,20 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = unlockLeaseFile(authority)
 		return nil, taskLeaseObservation{}, fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err)
 	} else if ok {
+		if record.UnblockPending {
+			_ = removeLeaseMetadata(root, item.ID)
+			_ = removeLeaseAuthorityMetadata(root, item.ID)
+			_ = unlockLeaseFile(f)
+			_ = unlockLeaseFile(authority)
+			recovery := "coop tasks unblock " + item.ID
+			if item.State != stateTodo {
+				recovery = "coop tasks block " + item.ID + " && " + recovery
+			}
+			return nil, taskLeaseObservation{}, fmt.Errorf(
+				"task %s has a non-authorizing pending audit unblock — no lease started; recover explicitly: %s",
+				item.ID, recovery,
+			)
+		}
 		l.reopen = &record
 	}
 	l.startHeartbeat()
