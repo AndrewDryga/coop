@@ -109,11 +109,13 @@ func auditEvidenceFrom(output string) (map[string]auditEvidence, bool) {
 		return nil, false
 	}
 	evidence := map[string]auditEvidence{}
+	blockStart := last
 	for i := last - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if !strings.HasPrefix(line, prefix) {
 			break
 		}
+		blockStart = i
 		id, rest, ok := strings.Cut(strings.TrimPrefix(line, prefix), gateMarker)
 		if !ok || id == "" {
 			return nil, false
@@ -127,6 +129,14 @@ func auditEvidenceFrom(output string) (map[string]auditEvidence, bool) {
 			return nil, false
 		}
 		evidence[id] = auditEvidence{gate: gate, findings: findings}
+	}
+	// A second structured block is not evidence to merge or deduplicate. It is an ambiguous
+	// provider response and must fail closed unless the Codex adapter already proved it was the
+	// exact echoed block in its transport-owned footer envelope.
+	for _, line := range lines[:blockStart] {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return nil, false
+		}
 	}
 	return evidence, len(evidence) > 0
 }

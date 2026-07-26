@@ -1870,9 +1870,43 @@ type reviewReceipt struct {
 	reopened []string
 }
 
-// reviewReopenReceipt parses the strict terminal receipt emitted by every review. Old count-only
-// receipts are deliberately rejected: only the exact task ids can bind the verdict to the queue
-// delta and distinguish review work from unrelated actionable tasks.
+// parseReviewReceiptLine parses one strict receipt line. Old count-only receipts are deliberately
+// rejected: only the exact task ids can bind the verdict to the queue delta and distinguish review
+// work from unrelated actionable tasks.
+func parseReviewReceiptLine(line string) (reviewReceipt, bool) {
+	const prefix = "REVIEW COMPLETE — "
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, prefix) {
+		return reviewReceipt{}, false
+	}
+	parts := strings.Split(strings.TrimPrefix(line, prefix), " — reopened: ")
+	if len(parts) != 2 || (parts[0] != "PASS" && parts[0] != "FAIL") {
+		return reviewReceipt{}, false
+	}
+	var ids []string
+	if parts[1] != "none" {
+		ids = strings.Split(parts[1], ",")
+		if slices.Contains(ids, "") || !slices.IsSorted(ids) {
+			return reviewReceipt{}, false
+		}
+		if slices.ContainsFunc(ids, func(id string) bool { return strings.ContainsAny(id, " \t\r\n") }) {
+			return reviewReceipt{}, false
+		}
+		for j := 1; j < len(ids); j++ {
+			if ids[j] == ids[j-1] {
+				return reviewReceipt{}, false
+			}
+		}
+	}
+	if (parts[0] == "PASS") != (len(ids) == 0) {
+		return reviewReceipt{}, false
+	}
+	return reviewReceipt{verdict: parts[0], reopened: ids}, true
+}
+
+// reviewReopenReceipt parses the strict terminal receipt emitted by every review. A receipt-looking
+// line earlier in the response is rejected too: otherwise ordinary prose could contain an old
+// verdict while the parser silently trusted a later block.
 func reviewReopenReceipt(output string) (reviewReceipt, bool) {
 	const prefix = "REVIEW COMPLETE — "
 	lines := strings.Split(output, "\n")
@@ -1881,36 +1915,16 @@ func reviewReopenReceipt(output string) (reviewReceipt, bool) {
 		if line == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, prefix) {
+		receipt, ok := parseReviewReceiptLine(line)
+		if !ok {
 			return reviewReceipt{}, false
 		}
-		parts := strings.Split(strings.TrimPrefix(line, prefix), " — reopened: ")
-		if len(parts) != 2 || (parts[0] != "PASS" && parts[0] != "FAIL") {
-			return reviewReceipt{}, false
-		}
-		var ids []string
-		if parts[1] != "none" {
-			ids = strings.Split(parts[1], ",")
-			if slices.Contains(ids, "") || !slices.IsSorted(ids) {
-				return reviewReceipt{}, false
-			}
-			if slices.ContainsFunc(ids, func(id string) bool { return strings.ContainsAny(id, " \t\r\n") }) {
-				return reviewReceipt{}, false
-			}
-			for j := 1; j < len(ids); j++ {
-				if ids[j] == ids[j-1] {
-					ids = nil
-					break
-				}
-			}
-			if ids == nil {
+		for _, earlier := range lines[:i] {
+			if strings.Contains(earlier, prefix) {
 				return reviewReceipt{}, false
 			}
 		}
-		if (parts[0] == "PASS") != (len(ids) == 0) {
-			return reviewReceipt{}, false
-		}
-		return reviewReceipt{verdict: parts[0], reopened: ids}, true
+		return receipt, true
 	}
 	return reviewReceipt{}, false
 }
@@ -3606,8 +3620,12 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		funnel.flush()
 		bar.stop()
 	}
+	output = tail.String()
+	if windowMode == completionWindowReview && agent == "codex" {
+		output, _ = normalizeCodexReviewOutput(output)
+	}
 	classification = classifyIteration(agent, code, err, diagnostic.String(), streamOutcome, time.Now())
-	return code, tail.String(), res, classification, windows, err
+	return code, output, res, classification, windows, err
 }
 
 // monitorProgress watches the queue while an iteration runs and pushes count changes into the live

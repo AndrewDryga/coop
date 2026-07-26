@@ -147,6 +147,12 @@ func TestAuditEvidenceForSignoff(t *testing.T) {
 				t.Errorf("keyed multi-task evidence missing %q:\n%s", want, block)
 			}
 		}
+
+		duplicate := multi + "\n" + multi
+		audits.capture([]string{"task-a", "task-b"}, nil, false, duplicate)
+		if got := audits.signoffBlock([]string{"task-a", "task-b"}); got != "" {
+			t.Errorf("duplicate model block was not rejected:\n%s", got)
+		}
 	})
 
 	t.Run("quotes injected reviewer instructions and bounds retained tasks", func(t *testing.T) {

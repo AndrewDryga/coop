@@ -22,6 +22,38 @@ import (
 func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 
+	t.Run("Codex footer and echo envelopes preserve PASS and FAIL receipts", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "codex-review-wrapper-matrix"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("codex", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "reopen-codex-footer"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: between, Stage: "between", Result: "pass-codex-footer-echo"},
+			{Target: signoff, Stage: "signoff", Result: "pass-codex-echo-footer"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReviewPTY(t, suite, work)
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "queue verified done") || strings.Contains(result.Stderr, "review verdict invalid") {
+			t.Fatalf("Codex review wrapper matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("Codex wrapper matrix did not leave the reviewed task done")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[1].Reopened != 1 || records[3].Reopened != 0 || records[4].Reopened != 0 {
+			t.Fatalf("Codex wrapper matrix telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, true)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
 	t.Run("four provider stage and usage matrix", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
@@ -763,7 +795,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			}
 		}
 		wantExit := 0
-		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" && attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" && attempt.Result != "repair-review-binding" && attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" && attempt.Result != "pass-with-host" && attempt.Result != "reopen" && attempt.Result != "reopen-injection" {
+		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" && attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" && attempt.Result != "repair-review-binding" && attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" && attempt.Result != "pass-with-host" && attempt.Result != "reopen" && attempt.Result != "reopen-injection" && !slices.Contains([]string{"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer"}, attempt.Result) {
 			wantExit = 23
 		}
 		if attempt.Result == "wait" {

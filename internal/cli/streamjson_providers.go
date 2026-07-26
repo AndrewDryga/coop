@@ -16,7 +16,140 @@ const (
 	geminiYOLOWarning  = "YOLO mode is enabled. All tool calls will be automatically approved."
 	codexRouterError   = "ERROR codex_core::tools::router:"
 	codexStdinBanner   = "Reading additional input from stdin..."
+	codexReviewFooter  = "tokens used"
+	// This marker is returned only through the internal response tail. It keeps an adapter-owned
+	// envelope that failed validation from accidentally reaching a later valid-looking receipt.
+	codexMalformedReviewEnvelope = "\x00coop-codex-review-envelope-invalid\x00"
 )
+
+// normalizeCodexReviewOutput removes only the footer shape emitted by the Codex transport wrapper.
+// The wrapper either appends `tokens used` plus a formatted count, or repeats the exact terminal
+// model block before or after that footer. A different trailing block is not a second answer to
+// merge: it is an invalid envelope and gets an impossible terminal marker so strict receipt parsing
+// fails.
+func normalizeCodexReviewOutput(output string) (string, bool) {
+	lines := strings.Split(output, "\n")
+	end := len(lines) - 1
+	for end >= 0 && strings.TrimSpace(lines[end]) == "" {
+		end--
+	}
+	if end < 0 {
+		return output, true
+	}
+
+	footer := -1
+	for i := 0; i < end; i++ {
+		if lines[i] != codexReviewFooter {
+			continue
+		}
+		if !codexTokenCount(lines[i+1]) {
+			return rejectCodexReviewEnvelope(output)
+		}
+		if footer >= 0 {
+			return rejectCodexReviewEnvelope(output)
+		}
+		footer = i
+	}
+	if end >= 0 && lines[end] == codexReviewFooter {
+		return rejectCodexReviewEnvelope(output)
+	}
+	if footer < 0 {
+		if strings.Contains(output, "REVIEW COMPLETE — ") {
+			if _, ok := reviewReopenReceipt(output); !ok {
+				return rejectCodexReviewEnvelope(output)
+			}
+		}
+		return output, true
+	}
+
+	// Only blank lines may separate the model's receipt from the adapter footer. This keeps a
+	// model-authored paragraph containing the same words from becoming transport-owned syntax.
+	receiptLine := footer - 1
+	for receiptLine >= 0 && strings.TrimSpace(lines[receiptLine]) == "" {
+		receiptLine--
+	}
+	if receiptLine < 0 {
+		return rejectCodexReviewEnvelope(output)
+	}
+	if _, ok := parseReviewReceiptLine(lines[receiptLine]); !ok {
+		return rejectCodexReviewEnvelope(output)
+	}
+
+	// The terminal block is contiguous evidence plus its receipt. Comparing its line bytes exactly
+	// prevents two model-authored answers from being treated as a harmless duplicate.
+	const evidencePrefix = "AUDIT EVIDENCE — "
+	blockStart := receiptLine
+	for blockStart > 0 && strings.HasPrefix(strings.TrimSpace(lines[blockStart-1]), evidencePrefix) {
+		blockStart--
+	}
+	terminalBlock := strings.Join(lines[blockStart:receiptLine+1], "\n")
+
+	// In the block-before-footer form, the wrapper repeats the terminal block immediately before
+	// the footer. Accept that only when the whole block is byte-identical; otherwise the strict
+	// parser must see an ambiguous response and reject it.
+	duplicateStart := -1
+	previous := blockStart - 1
+	for previous >= 0 && strings.TrimSpace(lines[previous]) == "" {
+		previous--
+	}
+	if previous >= 0 {
+		if _, ok := parseReviewReceiptLine(lines[previous]); ok {
+			previousStart := previous
+			for previousStart > 0 && strings.HasPrefix(strings.TrimSpace(lines[previousStart-1]), evidencePrefix) {
+				previousStart--
+			}
+			previousBlock := strings.Join(lines[previousStart:previous+1], "\n")
+			if previousBlock != terminalBlock {
+				return rejectCodexReviewEnvelope(output)
+			}
+			duplicateStart = blockStart
+		} else if strings.Contains(lines[previous], "REVIEW COMPLETE — ") {
+			return rejectCodexReviewEnvelope(output)
+		}
+	}
+
+	afterFooter := strings.Join(lines[footer+2:end+1], "\n")
+	if afterFooter != "" && afterFooter != terminalBlock {
+		return rejectCodexReviewEnvelope(output)
+	}
+
+	// Keep the model response and discard the adapter-owned footer (and, when present, its exact
+	// echo). The parser still validates the remaining response as one strict terminal block.
+	canonical := strings.Join(lines[:footer], "\n")
+	if duplicateStart >= 0 {
+		canonical = strings.TrimRight(strings.Join(lines[:duplicateStart], "\n"), "\r\n")
+	}
+	if _, ok := reviewReopenReceipt(canonical); !ok {
+		return rejectCodexReviewEnvelope(output)
+	}
+	return canonical, true
+}
+
+func rejectCodexReviewEnvelope(output string) (string, bool) {
+	return strings.TrimRight(output, "\r\n") + "\n" + codexMalformedReviewEnvelope, false
+}
+
+func codexTokenCount(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	groups := strings.Split(value, ",")
+	if len(groups) > 1 && (len(groups[0]) < 1 || len(groups[0]) > 3) {
+		return false
+	}
+	for i, group := range groups {
+		if group == "" || (i > 0 && len(group) != 3) {
+			return false
+		}
+		for _, r := range group {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // stderrLineFilter removes provider-specific noise from the live view while preserving every
 // other stderr byte, including a final line without a newline.

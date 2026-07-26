@@ -168,6 +168,85 @@ func TestCodexStreamDecoder(t *testing.T) {
 	}
 }
 
+func TestNormalizeCodexReviewOutput(t *testing.T) {
+	pass := "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+		"REVIEW COMPLETE — PASS — reopened: none"
+	fail := "AUDIT EVIDENCE — task-a — gate: make check — findings: missing test\n" +
+		"REVIEW COMPLETE — FAIL — reopened: task-a"
+	footer := "tokens used\n162,824"
+	for _, tc := range []struct {
+		name, block      string
+		echoAfterFooter  bool
+		echoBeforeFooter bool
+	}{
+		{name: "pass footer", block: pass},
+		{name: "fail footer", block: fail},
+		{name: "pass footer and echo", block: pass, echoAfterFooter: true},
+		{name: "fail footer and echo", block: fail, echoAfterFooter: true},
+		{name: "pass echo and footer", block: pass, echoBeforeFooter: true},
+		{name: "fail echo and footer", block: fail, echoBeforeFooter: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output := tc.block
+			if tc.echoBeforeFooter {
+				output += "\n" + tc.block
+			}
+			output += "\n" + footer
+			if tc.echoAfterFooter {
+				output += "\n" + tc.block
+			}
+			got, ok := normalizeCodexReviewOutput(output)
+			if !ok || got != tc.block {
+				t.Fatalf("normalizeCodexReviewOutput = %q/%v, want %q/true", got, ok, tc.block)
+			}
+			receipt, ok := reviewReopenReceipt(got)
+			if !ok || (tc.block == pass && receipt.verdict != "PASS") || (tc.block == fail && receipt.verdict != "FAIL") {
+				t.Fatalf("normalized receipt = %+v/%v", receipt, ok)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name, output string
+	}{
+		{
+			name:   "non-identical echo after footer",
+			output: pass + "\n" + footer + "\n" + fail,
+		},
+		{
+			name:   "non-identical echo before footer",
+			output: pass + "\n" + fail + "\n" + footer,
+		},
+		{
+			name:   "two model blocks without envelope",
+			output: pass + "\n" + pass,
+		},
+		{
+			name:   "arbitrary trailing prose",
+			output: pass + "\n" + footer + "\nnot adapter output",
+		},
+		{
+			name:   "footer with malformed count",
+			output: pass + "\ntokens used\nnot-a-count",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := normalizeCodexReviewOutput(tc.output)
+			if ok || !strings.Contains(got, codexMalformedReviewEnvelope) {
+				t.Fatalf("malformed envelope = %q/%v, want internal rejection marker", got, ok)
+			}
+			if _, ok := reviewReopenReceipt(got); ok {
+				t.Fatal("malformed Codex envelope retained a usable receipt")
+			}
+		})
+	}
+
+	got, ok := normalizeCodexReviewOutput(pass)
+	if !ok || got != pass {
+		t.Fatalf("ordinary Codex response = %q/%v, want unchanged", got, ok)
+	}
+}
+
 func TestCodexStreamDecoderFailureAndUnknownItem(t *testing.T) {
 	lines := []string{
 		`{"type":"item.started","item":{"id":"bad","type":"command_execution","command":"/bin/bash -lc cd /repo && make check"}}`,

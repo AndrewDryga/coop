@@ -484,6 +484,7 @@ func TestReviewReopenReceipt(t *testing.T) {
 		{"duplicates", "REVIEW COMPLETE — FAIL — reopened: task-a,task-a", "", nil, false},
 		{"spaces in ids", "REVIEW COMPLETE — FAIL — reopened: task-a, task-b", "", nil, false},
 		{"not terminal", "REVIEW COMPLETE — PASS — reopened: none\nmore prose", "", nil, false},
+		{"receipt embedded earlier", "ordinary REVIEW COMPLETE — PASS — reopened: none\nREVIEW COMPLETE — PASS — reopened: none", "", nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
