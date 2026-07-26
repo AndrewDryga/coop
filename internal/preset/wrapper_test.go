@@ -103,7 +103,14 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 	if err := os.WriteFile(contract, []byte("ROLE CONTRACT TEXT"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h.env = append(os.Environ(),
+	baseEnv := os.Environ()
+	h.env = make([]string, 0, len(baseEnv)+11)
+	for _, entry := range baseEnv {
+		if !strings.HasPrefix(entry, "COOP_") {
+			h.env = append(h.env, entry)
+		}
+	}
+	h.env = append(h.env,
 		"PATH="+h.dir+":"+os.Getenv("PATH"),
 		"TMPDIR="+h.dir,
 		"COOP_DELEGATE_FAST_TARGETS=gemini:gemini-3.5-flash",
@@ -117,6 +124,30 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 		"COOP_DELEGATE_TIMEOUT_HELPER=1",
 	)
 	return h
+}
+
+func TestDelegateHarnessScrubsAmbientCoopEnvironment(t *testing.T) {
+	t.Setenv("COOP_AMBIENT_ONLY", "must-not-survive")
+	t.Setenv("COOP_DELEGATE_FAST_CONTRACT", "/nonexistent")
+	t.Setenv("COOP_PEERS", "ambient-peer")
+
+	h := newDelegateHarness(t)
+	values := map[string][]string{}
+	for _, entry := range h.env {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(name, "COOP_") {
+			values[name] = append(values[name], value)
+		}
+	}
+	if len(values["COOP_AMBIENT_ONLY"]) != 0 {
+		t.Fatalf("ambient-only Coop variable survived: %v", values["COOP_AMBIENT_ONLY"])
+	}
+	if got := values["COOP_DELEGATE_FAST_CONTRACT"]; len(got) != 1 || got[0] == "/nonexistent" {
+		t.Fatalf("delegate contract env = %v, want one harness-owned path", got)
+	}
+	if got := values["COOP_PEERS"]; len(got) != 1 || got[0] != "codex gemini grok" {
+		t.Fatalf("delegate peers env = %v, want harness-owned scope", got)
+	}
 }
 
 func TestDelegateFlockHelper(t *testing.T) {
