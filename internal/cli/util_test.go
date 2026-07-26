@@ -73,6 +73,22 @@ func TestDestroyGate(t *testing.T) {
 	if err := destroyGate("delete task Y (todo)", false); err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Errorf("destroyGate(no, piped) = %v, want a refusal naming --yes", err)
 	}
+	var prompt string
+	ask := func(got string) bool {
+		prompt = got
+		return confirmationResponse("yes", false)
+	}
+	if err := destroyGate("delete task Z", false, ask); err != nil {
+		t.Errorf("destroyGate(injected yes) = %v, want nil (proceed)", err)
+	}
+	if prompt != "delete task Z? this can't be undone" {
+		t.Errorf("destroyGate prompt = %q", prompt)
+	}
+	if err := destroyGate("delete task Z", false, func(string) bool {
+		return confirmationResponse("", false)
+	}); err == nil || err.Error() != "cancelled" {
+		t.Errorf("destroyGate(injected default No) = %v, want cancelled", err)
+	}
 }
 
 func TestTruncate(t *testing.T) {

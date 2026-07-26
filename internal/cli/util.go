@@ -531,8 +531,20 @@ func hasYes(args []string) bool {
 // to confirm against, so a script must opt in with --yes; at a TTY it asks "<what>? …" defaulting to
 // No, so a stray Enter cancels. `what` names the blast radius, e.g. "delete task X (todo)". One gate
 // for every rm (tasks, profiles, forks) so they can't drift. See rule destructive-confirm-gate.
-func destroyGate(what string, yes bool) error {
+//
+// An interactive flow that already owns its input scanner may provide one ask callback. That keeps
+// the destructive decision in this gate without making the flow compete with fmt.Scanln for stdin.
+func destroyGate(what string, yes bool, asks ...func(string) bool) error {
 	if yes {
+		return nil
+	}
+	if len(asks) > 1 {
+		return errors.New("destroy gate accepts at most one prompt callback")
+	}
+	if len(asks) == 1 {
+		if !asks[0](what + "? this can't be undone") {
+			return errors.New("cancelled")
+		}
 		return nil
 	}
 	if !ui.IsTerminal(os.Stdin) {
@@ -557,6 +569,11 @@ func confirm(prompt string, def bool) bool {
 	fmt.Fprintf(os.Stderr, "%s [%s] ", prompt, hint)
 	var resp string
 	fmt.Scanln(&resp)
+	return confirmationResponse(resp, def)
+}
+
+// confirmationResponse applies the shared y/N parsing after a caller has read a response.
+func confirmationResponse(resp string, def bool) bool {
 	switch strings.ToLower(strings.TrimSpace(resp)) {
 	case "":
 		return def

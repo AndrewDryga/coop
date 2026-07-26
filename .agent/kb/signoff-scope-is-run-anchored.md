@@ -2,7 +2,7 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/cli/commands.go, internal/cli/completionwindow.go, internal/cli/loopchanges.go]
+sources: [internal/cli/commands.go, internal/cli/completionwindow.go, internal/cli/loopchanges.go, internal/cli/taskcmd.go]
 updated: 2026-07-26
 ---
 
@@ -46,9 +46,23 @@ stale or forged nonce records, missing receipts, duplicate assigned ids, and the
 itself all fail closed. The same journal fields drive crash replay, so an interrupted work stage gets
 the live-stage verdict rather than a broader recovery exception.
 
+Human deletion is the explicit exception to the missing-folder fail-closed rule. Completion-window
+creation holds the index lock across its DONE snapshot and journal registration; every confirmed
+CLI task deletion takes that same index lock first, then the task's persistent authority flock.
+While both remain held, deletion removes the id from every completion-window policy field, clears
+the receipt plus auxiliary records, and removes the folder. A live authority flock refuses deletion
+without partially purging the journal. A free flock from a killed controller permits cleanup, but
+its inode remains so later claimants cannot bypass the lock through a new file. Box-side or manual
+folder deletion still has no such authority and remains a hard audit failure. A subject-scoped
+review keeps that scope in a separate journal bit when deletion removes its final subject id; this
+distinguishes it from an intentionally subject-free preflight/verify window, so later host-valid
+completions still replay as concurrent activity.
+
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-07-26 — documented CLI-authoritative task deletion and live-lease refusal; verified against
+  `internal/cli/taskcmd.go` and the completion-window restart fixture.
 - 2026-07-26 — documented nonce-bound concurrent host reopens in work completion windows; verified
   against `internal/cli/completionwindow.go`, `internal/cli/controller.go`, and the scripted loop
   process fixture.

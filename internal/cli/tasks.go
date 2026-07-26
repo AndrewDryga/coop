@@ -370,10 +370,13 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 		removed := 0
 		for _, rel := range rels {
 			n, err := removeAllDone(filepath.Join(repo, rel))
-			if err != nil {
-				return -1, err
-			}
 			removed += n
+			if err != nil {
+				return -1, fmt.Errorf(
+					"%w; %s removed before stop across configured queues; re-run 'coop tasks rm --all-done --yes'",
+					err, ui.Count(removed, "task"),
+				)
+			}
 		}
 		ui.OK("removed %s across %s", ui.Count(removed, "done task"), ui.Count(len(rels), "queue"))
 		return 0, nil

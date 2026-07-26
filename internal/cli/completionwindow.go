@@ -42,6 +42,7 @@ type completionWindowRecord struct {
 	AllowedDoneDepartures []string                         `json:"allowed_done_departures,omitempty"`
 	ReviewWindow          bool                             `json:"review_window,omitempty"`
 	ReviewSubjects        []string                         `json:"review_subjects,omitempty"`
+	ReviewSubjectScoped   bool                             `json:"review_subject_scoped,omitempty"`
 	WorkWindow            bool                             `json:"work_window,omitempty"`
 	WorkSubject           string                           `json:"work_subject,omitempty"`
 }
@@ -304,8 +305,9 @@ func duplicateReviewTaskIDs(hosts, ids []string) []string {
 // beginReviewCompletionWindows opens review-stage windows bound to the exact task ids under
 // review, persisting the subject set in the journal record so finishReview and crash replay
 // apply the same scope: subjects stay strict, other completions are classified by ownership.
-// ReviewWindow stays explicit because an empty subject list is strict for preflight/verify, while
-// an ordinary work window has no review subjects for a different reason.
+// ReviewWindow stays explicit because an empty unscoped subject list is strict for preflight/verify,
+// while ReviewSubjectScoped preserves concurrent-host semantics if authoritative deletion later
+// removes the last id from a subject-scoped review.
 func beginReviewCompletionWindows(hosts, subjects []string) (*completionWindowSet, error) {
 	if duplicates := duplicateReviewTaskIDs(hosts, subjects); len(duplicates) > 0 {
 		return nil, fmt.Errorf("review subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
@@ -344,33 +346,32 @@ func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjec
 	}
 	set := &completionWindowSet{}
 	for _, root := range hosts {
-		baseline, err := snapshotDoneCompletions(root)
+		// Snapshot and register under one index critical section. Task deletion uses the same
+		// boundary, so a window cannot capture a task before deletion and register that stale
+		// baseline after deletion has purged the index.
+		indexFile, index, err := lockCompletionWindowIndex(root)
 		if err != nil {
 			return nil, errors.Join(err, set.close())
 		}
+		baseline, err := snapshotDoneCompletions(root)
+		if err != nil {
+			return nil, errors.Join(err, unlockLeaseFile(indexFile), set.close())
+		}
 		live, err := openLeaseAuthority(root, completionWindowLockPrefix+id, true)
 		if err != nil {
-			return nil, errors.Join(err, set.close())
+			return nil, errors.Join(err, unlockLeaseFile(indexFile), set.close())
 		}
 		if err := syscall.Flock(int(live.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			closeErr := live.Close()
 			removeErr := removeLeaseAuthorityLock(root, completionWindowLockPrefix+id)
-			return nil, errors.Join(err, closeErr, removeErr, set.close())
-		}
-		indexFile, index, err := lockCompletionWindowIndex(root)
-		if err != nil {
-			unlockErr := unlockLeaseFile(live)
-			var removeErr error
-			if unlockErr == nil {
-				removeErr = removeLeaseAuthorityLock(root, completionWindowLockPrefix+id)
-			}
-			return nil, errors.Join(err, unlockErr, removeErr, set.close())
+			return nil, errors.Join(err, closeErr, removeErr, unlockLeaseFile(indexFile), set.close())
 		}
 		record := completionWindowRecord{
 			Baseline:              baseline,
 			AllowedDoneDepartures: slices.Compact(slices.Sorted(slices.Values(allowedDoneDepartures))),
 			ReviewWindow:          reviewWindow,
 			ReviewSubjects:        slices.Compact(slices.Sorted(slices.Values(reviewSubjects))),
+			ReviewSubjectScoped:   len(reviewSubjects) > 0,
 		}
 		if len(workSubjects) == 1 {
 			record.WorkWindow, record.WorkSubject = true, workSubjects[0]
@@ -568,7 +569,7 @@ func (s *completionWindowSet) rejectAndClose(assigned queuedTask) error {
 	return errors.Join(ownershipErr, departureErr, s.close())
 }
 
-func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subjectIDs []string) (changed, concurrent []string) {
+func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subjectIDs []string, subjectScoped bool) (changed, concurrent []string) {
 	subjects := make(map[string]bool, len(subjectIDs))
 	for _, id := range subjectIDs {
 		subjects[id] = true
@@ -579,7 +580,7 @@ func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subje
 	}
 	for _, candidate := range candidates {
 		switch id := candidate.Item.ID; {
-		case len(subjects) == 0 || subjects[id]:
+		case (!subjectScoped && len(subjects) == 0) || subjects[id]:
 			changed = append(changed, id)
 		case !rejectedSet[id]:
 			concurrent = append(concurrent, id)
@@ -588,24 +589,26 @@ func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subje
 	return slices.Compact(changed), slices.Compact(concurrent) // candidates are sorted by id
 }
 
-func (s *completionWindowSet) reviewScope() (hosts, subjectIDs []string) {
+func (s *completionWindowSet) reviewScope() (hosts, subjectIDs []string, subjectScoped bool) {
 	for _, window := range s.windows {
 		hosts = append(hosts, window.root)
 		subjectIDs = append(subjectIDs, window.record.ReviewSubjects...)
+		subjectScoped = subjectScoped || window.record.ReviewSubjectScoped || len(window.record.ReviewSubjects) > 0
 	}
 	return slices.Compact(slices.Sorted(slices.Values(hosts))),
-		slices.Compact(slices.Sorted(slices.Values(subjectIDs)))
+		slices.Compact(slices.Sorted(slices.Values(subjectIDs))),
+		subjectScoped
 }
 
 // auditReview applies one snapshot comparison without closing the journal. scanErr means the
 // comparison itself could not be trusted and the live window must be abandoned for replay;
 // reviewErr is a completed comparison that found lifecycle or ownership churn.
-func (s *completionWindowSet) auditReview(hosts, subjectIDs []string) (concurrent []string, scanErr, reviewErr error) {
+func (s *completionWindowSet) auditReview(hosts, subjectIDs []string, subjectScoped bool) (concurrent []string, scanErr, reviewErr error) {
 	candidates, rejected, err := s.auditDoneCandidates(queuedTask{})
 	if err != nil {
 		return nil, err, nil
 	}
-	changed, concurrent := classifyReviewCompletionCandidates(candidates, rejected, subjectIDs)
+	changed, concurrent := classifyReviewCompletionCandidates(candidates, rejected, subjectIDs, subjectScoped)
 	var changedErr error
 	if len(changed) > 0 {
 		changedErr = fmt.Errorf("review completion set changed for %s", strings.Join(changed, ", "))
@@ -637,21 +640,21 @@ func (s *completionWindowSet) auditReview(hosts, subjectIDs []string) (concurren
 // the next review round's baseline instead of failing the run. After closing the durable window,
 // the saved snapshot is audited once more so activity in the scan-to-close handoff cannot escape.
 // Tolerance exists ONLY under an explicit subject contract: a window with no recorded subjects
-// (preflight, a subject-free verify) stays fully strict.
+// and no persisted subject-scoped marker (preflight, a subject-free verify) stays fully strict.
 func (s *completionWindowSet) finishReview() ([]string, error) {
-	hosts, subjectIDs := s.reviewScope()
+	hosts, subjectIDs, subjectScoped := s.reviewScope()
 	closed := &completionWindowSet{windows: slices.Clone(s.windows), scan: s.scan}
 	for i := range closed.windows {
 		closed.windows[i].live = nil
 	}
-	concurrent, scanErr, reviewErr := s.auditReview(hosts, subjectIDs)
+	concurrent, scanErr, reviewErr := s.auditReview(hosts, subjectIDs, subjectScoped)
 	if scanErr != nil {
 		return nil, errors.Join(scanErr, s.abandon())
 	}
 	if err := errors.Join(reviewErr, s.close()); err != nil {
 		return nil, err
 	}
-	afterClose, scanErr, reviewErr := closed.auditReview(hosts, subjectIDs)
+	afterClose, scanErr, reviewErr := closed.auditReview(hosts, subjectIDs, subjectScoped)
 	if err := errors.Join(scanErr, reviewErr); err != nil {
 		return nil, err
 	}
@@ -686,7 +689,8 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 			var reviewErr error
 			var observed []string
 			if record.ReviewWindow {
-				changed, recovered := classifyReviewCompletionCandidates(candidates, rejected, record.ReviewSubjects)
+				subjectScoped := record.ReviewSubjectScoped || len(record.ReviewSubjects) > 0
+				changed, recovered := classifyReviewCompletionCandidates(candidates, rejected, record.ReviewSubjects, subjectScoped)
 				observed = recovered
 				if len(changed) > 0 {
 					reviewErr = fmt.Errorf("review completion set changed before recovery for %s", strings.Join(changed, ", "))

@@ -460,6 +460,65 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
+	t.Run("removed interrupted completion stays removed on restart", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "removed-interrupted-completion"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("codex", "removed-work-model", "work")
+		review := loopRecoveryTarget("gemini", "removed-review-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{review}, nil, nil, 3)
+		scenario := loopRecoveryScenario(taskID, []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: review, Stage: "between", Result: "reopen-wait"},
+		})
+		suite.reset(t, scenario)
+		process := startLoopRecovery(t, suite, work)
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
+		if err := process.SignalGroup(syscall.SIGKILL); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		killed := process.Wait(ctx)
+		cancel()
+		if killed.ExitCode == 0 {
+			t.Fatalf("killed loop unexpectedly succeeded: %#v", killed)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("fixture did not leave a completed task under the killed controller")
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		removed := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"tasks", "rm", taskID, "--yes"},
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
+		})
+		cancel()
+		if removed.Err != nil || removed.ExitCode != 0 {
+			t.Fatalf("tasks rm after killed loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", removed.ExitCode, removed.Err, removed.Stdout, removed.Stderr)
+		}
+		for _, state := range taskStates {
+			if pathExists(filepath.Join(suite.layout.Repo, tasksRoot, state, taskID)) {
+				t.Fatalf("tasks rm left %s in %s", taskID, state)
+			}
+		}
+
+		suite.reset(t, scenario)
+		restart := runLoopRecovery(t, suite, work)
+		if restart.Err != nil || restart.ExitCode != 0 {
+			t.Fatalf("restart after tasks rm = exit %d err %v\nstdout:\n%s\nstderr:\n%s", restart.ExitCode, restart.Err, restart.Stdout, restart.Stderr)
+		}
+		if trace := readProcessTrace(t, suite.layout.Trace); loopTraceHasAttempt(trace) {
+			t.Fatalf("restart resurrected removed task in a provider attempt:\n%#v", trace)
+		}
+		for _, state := range taskStates {
+			if pathExists(filepath.Join(suite.layout.Repo, tasksRoot, state, taskID)) {
+				t.Fatalf("restart resurrected %s in %s", taskID, state)
+			}
+		}
+	})
+
 	t.Run("interrupted completion is reconciled before cleanup", func(t *testing.T) {
 		for _, tc := range []struct {
 			name   string

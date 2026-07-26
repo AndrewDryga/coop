@@ -324,6 +324,62 @@ func TestIntegrationMultiQueueRollup(t *testing.T) {
 	}
 }
 
+func TestIntegrationMultiQueueClearReportsPartialRemoval(t *testing.T) {
+	repo := t.TempDir()
+	rootA := filepath.Join(repo, "a", tasksRoot)
+	rootB := filepath.Join(repo, "b", tasksRoot)
+	writeTaskFile(t, filepath.Join(rootA, stateDone, "2026-01-01-a", "task.md"), "# A\n")
+	busy := taskForLease(t, rootB, stateInProgress, "2026-01-02-b")
+	lease, _, err := tryTaskLease(rootB, busy, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(rootB, busy, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done, ok := currentTask(rootB, busy.ID)
+	if !ok {
+		t.Fatal("busy completed task disappeared")
+	}
+	if err := lease.markCompleted(done.Dir); err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{
+		"--tasks", "a/" + tasksRoot,
+		"--tasks", "b/" + tasksRoot,
+		"rm", "--all-done", "--yes",
+	}
+	code, err := appFor(repo).cmdTasks(args)
+	if code != -1 || err == nil {
+		t.Fatalf("multi-queue rm with later live lease = (%d, %v), want failure", code, err)
+	}
+	for _, want := range []string{
+		busy.ID,
+		"1 task removed before stop",
+		"across configured queues",
+		"coop tasks rm --all-done --yes",
+		"still leased by a live controller",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("multi-queue bulk failure missing %q:\n%s", want, err)
+		}
+	}
+	if _, ok := currentTask(rootA, "2026-01-01-a"); ok {
+		t.Fatal("multi-queue bulk failure restored the task removed from the earlier queue")
+	}
+	if current, ok := currentTask(rootB, busy.ID); !ok || current.State != stateDone {
+		t.Fatal("multi-queue bulk failure removed or moved the busy task")
+	}
+
+	if err := lease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := appFor(repo).cmdTasks(args); code != 0 || err != nil {
+		t.Fatalf("multi-queue bulk retry after lease release = (%d, %v), want success", code, err)
+	}
+}
+
 // TestIntegrationListShowsCleanLabels confirms the prefix never leaks into output: the list
 // groups by the clean state name (todo/in_progress/…), not the on-disk 00_todo/ dir name.
 func TestIntegrationListShowsCleanLabels(t *testing.T) {

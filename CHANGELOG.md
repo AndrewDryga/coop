@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Deleting a task now deletes its stale orchestration authority too.** `coop tasks rm`,
+  `rm --all-done`, and interactive decision deletion remove the task id from interrupted
+  completion-window journals, lease receipts, controller metadata, audit-reopen generations, and
+  trusted departure records before deleting its folder. A killed run can no longer make a
+  deliberately cancelled task reappear on the next loop start. Removal refuses a still-live lease
+  and leaves the folder intact until that controller stops.
+
 - **Loop and review boxes now preserve live background work long enough to hand it off safely.**
   Their entrypoint distinguishes authenticated service forwarders from agent-owned descendants,
   including detached sessions; it drains or terminates the latter on a bounded deadline and reports

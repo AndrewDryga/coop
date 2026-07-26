@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -491,6 +493,185 @@ func TestTasksRemoveGate(t *testing.T) {
 	}
 }
 
+func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateInProgress, "2026-01-01-cancelled")
+	lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, task, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done, ok := currentTask(root, task.ID)
+	if !ok {
+		t.Fatal("completed task disappeared")
+	}
+	if err := lease.markCompleted(done.Dir); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a controller dying after durable completion but before releasing its claim.
+	lease.quiesce()
+	if err := errors.Join(unlockLeaseFile(lease.local), unlockLeaseFile(lease.authority)); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginReviewCompletionWindows([]string{root}, []string{task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := windows.abandon(); err != nil {
+		t.Fatal(err)
+	}
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := index.Windows[windowID]
+	record.AllowedDoneDeparture = task.ID
+	record.AllowedDoneDepartures = []string{task.ID, "keep-other-task"}
+	record.WorkSubject = task.ID
+	index.Windows[windowID] = record
+	writeErr := writeCompletionWindowIndex(root, index)
+	if unlockErr := unlockLeaseFile(indexFile); unlockErr != nil {
+		writeErr = errors.Join(writeErr, unlockErr)
+	}
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if err := writeAuditReopenRecord(root, testAuditReopenRecord(task.ID, "cancelled-generation")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTrustedDoneDeparture(root, trustedDoneDeparture{
+		Version: trustedDoneDepartureVersion, TaskID: task.ID, Nonces: []string{strings.Repeat("0", 32)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, err := tasksFolderRemove(root, []string{task.ID, "--yes"}); code != 0 || err != nil {
+		t.Fatalf("rm cancelled task = (%d, %v), want (0, nil)", code, err)
+	}
+	if _, ok := currentTask(root, task.ID); ok {
+		t.Fatal("removed task survived in a lifecycle state")
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record = index.Windows[windowID]
+	if _, ok := record.Baseline[task.ID]; ok {
+		t.Fatal("removed task survived in the stale completion-window baseline")
+	}
+	if record.AllowedDoneDeparture != "" ||
+		len(record.AllowedDoneDepartures) != 1 || record.AllowedDoneDepartures[0] != "keep-other-task" ||
+		len(record.ReviewSubjects) != 0 || !record.ReviewSubjectScoped || record.WorkSubject != "" {
+		t.Fatalf("removed task survived in completion-window policy fields: %#v", record)
+	}
+	authority, err := openLeaseAuthority(root, task.ID, false)
+	if err != nil {
+		t.Fatalf("removed task lost its persistent authority inode: %v", err)
+	}
+	lockErr := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	info, statErr := authority.Stat()
+	closeErr := unlockLeaseFile(authority)
+	var size int64 = -1
+	if info != nil {
+		size = info.Size()
+	}
+	if lockErr != nil || statErr != nil || closeErr != nil || size != 0 {
+		t.Fatalf(
+			"removed task authority = size %d, lock %v, stat %v, close %v; want empty unlocked persistent inode",
+			size, lockErr, statErr, closeErr,
+		)
+	}
+	if leaseAuthorityMetadataExists(root, task.ID) {
+		t.Fatal("removed task retained stale controller metadata")
+	}
+	if auditReopenRecordExists(root, task.ID) {
+		t.Fatal("removed task retained stale audit-reopen authority")
+	}
+	if _, ok, err := readTrustedDoneDeparture(root, task.ID); err != nil || ok {
+		t.Fatalf("removed task trusted departure = ok %v, err %v; want absent", ok, err)
+	}
+	concurrent := taskForLease(t, root, stateInProgress, "2026-01-02-concurrent")
+	concurrentLease, _, err := tryTaskLease(root, concurrent, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, concurrent, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	concurrentDone, ok := currentTask(root, concurrent.ID)
+	if !ok {
+		t.Fatal("concurrently completed task disappeared")
+	}
+	if err := concurrentLease.markCompleted(concurrentDone.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := concurrentLease.release(); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := reconcileCompletionWindowsWithActivity([]string{root})
+	if err != nil {
+		t.Fatalf("restart reconciliation after subject deletion: %v", err)
+	}
+	if !slices.Equal(recovered, []string{concurrent.ID}) {
+		t.Fatalf("restart recovered concurrent completions %v, want [%s]", recovered, concurrent.ID)
+	}
+}
+
+func TestTasksRemoveRefusesLiveLeaseBeforePurging(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateInProgress, "2026-01-01-live")
+	lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, task, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done, ok := currentTask(root, task.ID)
+	if !ok {
+		t.Fatal("completed live task disappeared")
+	}
+	if err := lease.markCompleted(done.Dir); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := windows.abandon(); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, err := tasksFolderRemove(root, []string{task.ID, "--yes"}); code != -1 || err == nil ||
+		!strings.Contains(err.Error(), "still leased by a live controller") {
+		t.Fatalf("rm live task = (%d, %v), want refusal", code, err)
+	}
+	if _, ok := currentTask(root, task.ID); !ok {
+		t.Fatal("refused rm deleted the live task")
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID].Baseline[task.ID]; !ok {
+		t.Fatal("refused rm partially purged the completion-window baseline")
+	}
+	if !leaseAuthorityMetadataExists(root, task.ID) {
+		t.Fatal("refused rm removed the active controller's metadata")
+	}
+
+	if err := lease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderRemove(root, []string{task.ID, "--yes"}); code != 0 || err != nil {
+		t.Fatalf("rm after lease release = (%d, %v), want success", code, err)
+	}
+}
+
 // `coop tasks clear` is the bulk-delete idiom: it clears the done archive (= `rm --all-done`),
 // gated the same way as rm — refuses without --yes in a non-TTY, deletes with it.
 func TestTasksClear(t *testing.T) {
@@ -517,6 +698,14 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-02-b", "task.md"), "# b\n")
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-03-c", "task.md"), "# c\n")
 	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-04-d", "task.md"), "# d\n")
+	windows, err := beginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := windows.abandon(); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm --all-done: code=%d err=%v", code, err)
@@ -530,6 +719,16 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 			t.Errorf("a done task survived --all-done: %s", it.ID)
 		}
 	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(index.Windows[windowID].Baseline); got != 0 {
+		t.Fatalf("rm --all-done retained %d archived task(s) in the stale completion-window baseline", got)
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("restart reconciliation after rm --all-done: %v", err)
+	}
 	// A second run is a clean no-op (nothing done left), not an error.
 	if code, err := tasksFolderRemove(root, []string{"--all-done"}); code != 0 || err != nil {
 		t.Errorf("rm --all-done with no done tasks should be a no-op, got (%d, %v)", code, err)
@@ -537,6 +736,57 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 	// Bare `rm` (no id, no flag) is a usage error.
 	if code, _ := tasksFolderRemove(root, nil); code != 2 {
 		t.Errorf("rm with no args should be a usage error (2), got %d", code)
+	}
+}
+
+func TestTasksFolderRemoveAllDoneStopsAtLiveLease(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-01-a", "task.md"), "# a\n")
+	busy := taskForLease(t, root, stateInProgress, "2026-01-02-b")
+	lease, _, err := tryTaskLease(root, busy, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, busy, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done, ok := currentTask(root, busy.ID)
+	if !ok {
+		t.Fatal("busy completed task disappeared")
+	}
+	if err := lease.markCompleted(done.Dir); err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"})
+	if code != -1 || err == nil {
+		t.Fatalf("rm --all-done with a later live lease = (%d, %v), want failure", code, err)
+	}
+	for _, want := range []string{
+		busy.ID,
+		"1 task removed before stop",
+		"coop tasks rm --all-done --yes",
+		"still leased by a live controller",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("bulk failure missing %q:\n%s", want, err)
+		}
+	}
+	if _, ok := currentTask(root, "2026-01-01-a"); ok {
+		t.Fatal("bulk failure restored an earlier successfully removed task")
+	}
+	if current, ok := currentTask(root, busy.ID); !ok || current.State != stateDone {
+		t.Fatal("bulk failure removed or moved the busy task")
+	}
+
+	if err := lease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("bulk retry after lease release = (%d, %v), want success", code, err)
+	}
+	if _, ok := currentTask(root, busy.ID); ok {
+		t.Fatal("bulk retry left the released task")
 	}
 }
 
@@ -1109,6 +1359,26 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 	if len(decisions) != 2 {
 		t.Fatalf("want 2 blocked decisions, got %d", len(decisions))
 	}
+	const windowID = "decision-delete-window"
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index.Windows[windowID] = completionWindowRecord{
+		Baseline: map[string]completionFingerprint{
+			decisions[0].ID: {},
+			decisions[1].ID: {},
+		},
+		ReviewWindow:   true,
+		ReviewSubjects: []string{decisions[0].ID, decisions[1].ID},
+	}
+	writeErr := writeCompletionWindowIndex(root, index)
+	if unlockErr := unlockLeaseFile(indexFile); unlockErr != nil {
+		writeErr = errors.Join(writeErr, unlockErr)
+	}
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
 	in := strings.NewReader(":d\ny\n:d\ny\n") // delete both, each behind a y confirm
 	var out bytes.Buffer
 	if code, err := runDecisionBrowser(decisionRefs(root, "", decisions), in, &out); code != 0 || err != nil {
@@ -1124,6 +1394,17 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "this can't be undone") {
 		t.Errorf("delete confirm should warn it can't be undone:\n%s", out.String())
+	}
+	index, err = readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := index.Windows[windowID]
+	if len(record.Baseline) != 0 || len(record.ReviewSubjects) != 0 {
+		t.Fatalf(":d retained deleted tasks in its stale completion window: %#v", record)
+	}
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("restart reconciliation after :d: %v", err)
 	}
 }
 

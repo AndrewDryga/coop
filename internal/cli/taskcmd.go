@@ -907,7 +907,10 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 		}
 		removed, err := removeAllDone(root)
 		if err != nil {
-			return -1, err
+			return -1, fmt.Errorf(
+				"%w; %s removed before stop; re-run 'coop tasks rm --all-done --yes'",
+				err, ui.Count(removed, "task"),
+			)
 		}
 		ui.OK("removed %s", ui.Count(removed, "done task"))
 		return 0, nil
@@ -922,11 +925,107 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	if err := destroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, stateLabel(t.State)), yes); err != nil {
 		return 2, err
 	}
-	if err := os.RemoveAll(t.Dir); err != nil {
-		return -1, err
+	removed, err := removeTaskFolderAndRecords(root, t)
+	if err != nil && removed {
+		return -1, fmt.Errorf("delete task %s: task was removed, but final lock cleanup failed: %w", t.ID, err)
+	}
+	if err != nil {
+		return -1, fmt.Errorf("delete task %s: %w — task not removed; re-run 'coop tasks rm %s'", t.ID, err, t.ID)
 	}
 	ui.OK("removed %s (was %s — note why in the commit)", t.ID, stateLabel(t.State))
 	return 0, nil
+}
+
+// removeTaskFolderAndRecords is the single post-confirmation deletion boundary. Completion-window
+// snapshots take the index lock too, and every controller shares the persistent task-authority
+// inode, so holding both through RemoveAll makes the folder and its host records disappear as one
+// serialized operation. A box-side deletion bypasses this helper and still fails closed at replay.
+func removeTaskFolderAndRecords(root string, task taskItem) (removed bool, err error) {
+	indexFile, index, err := lockCompletionWindowIndex(root)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		err = errors.Join(err, unlockLeaseFile(indexFile))
+	}()
+
+	authority, err := openLeaseAuthority(root, task.ID, true)
+	if err != nil {
+		return false, err
+	}
+	if lockErr := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); lockErr != nil {
+		closeErr := authority.Close()
+		if errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN) {
+			return false, errors.Join(errors.New("task is still leased by a live controller; stop it before deleting"), closeErr)
+		}
+		return false, errors.Join(lockErr, closeErr)
+	}
+	defer func() {
+		err = errors.Join(err, unlockLeaseFile(authority))
+	}()
+
+	current, ok := currentTask(root, task.ID)
+	if !ok {
+		return false, errors.New("task disappeared before deletion")
+	}
+	if current.Dir != task.Dir {
+		return false, fmt.Errorf("task changed state from %s to %s before deletion", stateLabel(task.State), stateLabel(current.State))
+	}
+
+	changed := false
+	for windowID, record := range index.Windows {
+		if _, ok := record.Baseline[task.ID]; ok {
+			delete(record.Baseline, task.ID)
+			changed = true
+		}
+		if record.AllowedDoneDeparture == task.ID {
+			record.AllowedDoneDeparture = ""
+			changed = true
+		}
+		if before := len(record.AllowedDoneDepartures); before > 0 {
+			record.AllowedDoneDepartures = slices.DeleteFunc(record.AllowedDoneDepartures, func(candidate string) bool {
+				return candidate == task.ID
+			})
+			changed = changed || len(record.AllowedDoneDepartures) != before
+		}
+		if before := len(record.ReviewSubjects); before > 0 {
+			record.ReviewSubjects = slices.DeleteFunc(record.ReviewSubjects, func(candidate string) bool {
+				return candidate == task.ID
+			})
+			if len(record.ReviewSubjects) != before {
+				// Keep subject-scoped review semantics after the final subject id is
+				// authoritatively deleted; an empty unscoped review remains strict.
+				record.ReviewSubjectScoped = true
+				changed = true
+			}
+		}
+		if record.WorkSubject == task.ID {
+			record.WorkSubject = ""
+			changed = true
+		}
+		index.Windows[windowID] = record
+	}
+	if changed {
+		err = writeCompletionWindowIndex(root, index)
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := errors.Join(
+		clearLeaseCompletionReceipt(authority),
+		removeLeaseAuthorityMetadata(root, task.ID),
+		removeAuditReopenRecord(root, task.ID),
+		removeTrustedDoneDeparture(root, task.ID),
+	); err != nil {
+		return false, err
+	}
+	if err := os.RemoveAll(task.Dir); err != nil {
+		return false, err
+	}
+	if survivor, ok := currentTask(root, task.ID); ok {
+		return false, fmt.Errorf("task changed state during deletion and survives in %s", stateLabel(survivor.State))
+	}
+	return true, nil
 }
 
 // removeAllDone deletes every task folder in root's 99_done/ archive, returning how many went.
@@ -937,10 +1036,16 @@ func removeAllDone(root string) (int, error) {
 		if t.State != stateDone {
 			continue
 		}
-		if err := os.RemoveAll(t.Dir); err != nil {
-			return removed, err
+		taskRemoved, err := removeTaskFolderAndRecords(root, t)
+		if taskRemoved {
+			removed++
 		}
-		removed++
+		if err != nil && taskRemoved {
+			return removed, fmt.Errorf("delete task %s: task was removed, but final lock cleanup failed: %w", t.ID, err)
+		}
+		if err != nil {
+			return removed, fmt.Errorf("delete task %s: %w — task not removed", t.ID, err)
+		}
 	}
 	return removed, nil
 }
@@ -1327,20 +1432,32 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			break // EOF / ^D ends the session
 		}
 		line := strings.TrimSpace(sc.Text())
-		// :d deletes (drops) the current decision's task — an unrecoverable folder removal, so confirm
-		// inline first, reading the y/N from the browser's own scanner (default No, so a stray Enter
+		// :d deletes (drops) the current decision's task — an unrecoverable folder removal, so route
+		// the browser's own scanner through the shared destruction gate (default No, so a stray Enter
 		// cancels). A declined confirm is a safe no-op that stays on the current decision. Deleting
 		// the folder also drops its ref, so :p/:n never revisit a gone task.
 		if line == ":d" {
-			fmt.Fprintf(out, "%s %s? this can't be undone [y/N]: ", p.Red("delete"), p.Bold(t.ID))
-			if !sc.Scan() {
+			readConfirmation := false
+			gateErr := destroyGate("delete task "+t.ID, false, func(prompt string) bool {
+				fmt.Fprintf(out, "%s [y/N]: ", p.Red(prompt))
+				if !sc.Scan() {
+					return false
+				}
+				readConfirmation = true
+				return confirmationResponse(sc.Text(), false)
+			})
+			if !readConfirmation {
 				break // EOF at the confirm ends the session — nothing deleted
 			}
-			if ans := strings.ToLower(strings.TrimSpace(sc.Text())); ans != "y" && ans != "yes" {
+			if gateErr != nil {
 				continue // declined: stay on the current decision
 			}
-			if err := os.RemoveAll(t.Dir); err != nil {
-				return -1, err
+			removedTask, err := removeTaskFolderAndRecords(ref.root, t)
+			if err != nil && removedTask {
+				return -1, fmt.Errorf("delete task %s: task was removed, but final lock cleanup failed: %w", t.ID, err)
+			}
+			if err != nil {
+				return -1, fmt.Errorf("delete task %s: %w — task not removed", t.ID, err)
 			}
 			deleted++
 			refs = append(refs[:i], refs[i+1:]...) // drop the gone ref; index i now points at the next
