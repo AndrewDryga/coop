@@ -266,17 +266,20 @@ type trustedTaskMove struct {
 }
 
 type trustedTaskMoveState struct {
-	move             trustedTaskMove
-	current          taskItem
-	authority        *os.File
-	metadata         map[string]taskMetadataSnapshot
-	previous         leaseCompletionReceipt
-	previousOK       bool
-	previousReopen   auditReopenRecord
-	previousReopenOK bool
-	receiptTouched   bool
-	reopenTouched    bool
-	moved            bool
+	move                trustedTaskMove
+	current             taskItem
+	authority           *os.File
+	metadata            map[string]taskMetadataSnapshot
+	previous            leaseCompletionReceipt
+	previousOK          bool
+	previousReopen      auditReopenRecord
+	previousReopenOK    bool
+	previousDeparture   trustedDoneDeparture
+	previousDepartureOK bool
+	receiptTouched      bool
+	reopenTouched       bool
+	departureTouched    bool
+	moved               bool
 }
 
 // moveTrustedTaskFromDoneWith is the one-task form of the atomic host move used for review
@@ -392,6 +395,12 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		}
 		states[len(states)-1].previousReopen = previousReopen
 		states[len(states)-1].previousReopenOK = previousReopenOK
+		previousDeparture, previousDepartureOK, err := readTrustedDoneDeparture(move.root, move.task.ID)
+		if err != nil {
+			return failBeforeMutation(err)
+		}
+		states[len(states)-1].previousDeparture = previousDeparture
+		states[len(states)-1].previousDepartureOK = previousDepartureOK
 	}
 	rollback := func(cause error) error {
 		rollbackErr := rollbackTrustedTaskMoves(states)
@@ -402,6 +411,12 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		return errors.Join(cause, unlockErr, closeWindow(false))
 	}
 	for i := range states {
+		if states[i].current.State == stateDone && states[i].move.newState != stateDone && states[i].previousOK {
+			states[i].departureTouched = true
+			if err := appendTrustedDoneDeparture(states[i].move.root, states[i].current.ID, states[i].previous.Nonce); err != nil {
+				return rollback(err)
+			}
+		}
 		states[i].receiptTouched = true
 		if err := clearLeaseCompletionReceipt(states[i].authority); err != nil {
 			return rollback(err)
@@ -456,6 +471,18 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 	}
 	for i := range states {
 		state := &states[i]
+		if state.departureTouched {
+			var err error
+			if state.previousDepartureOK {
+				err = writeTrustedDoneDeparture(state.move.root, state.previousDeparture)
+			} else {
+				err = removeTrustedDoneDeparture(state.move.root, state.current.ID)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("restore task %s trusted done departure: %w", state.current.ID, err))
+				restored[i] = false
+			}
+		}
 		if state.reopenTouched {
 			var err error
 			if state.previousReopenOK {

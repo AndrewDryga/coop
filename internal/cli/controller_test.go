@@ -422,6 +422,106 @@ func TestWorkCompletionWindowRejectsArchivedTaskDeparture(t *testing.T) {
 	}
 }
 
+func TestWorkCompletionWindowAcceptsHostReceiptedForeignArchivedDeparture(t *testing.T) {
+	root := t.TempDir()
+	assigned := taskForLease(t, root, stateInProgress, "work-subject")
+	archived := taskForLease(t, root, stateDone, "host-reopened-archive")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginWorkCompletionWindows([]string{root}, assigned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTrustedTaskFromDone(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	if departed, err := windows.departures(); err != nil || len(departed) != 0 {
+		t.Fatalf("host-receipted foreign departure = %v, %v", departed, err)
+	}
+	if err := windows.rejectAndClose(queuedTask{Root: root, Item: assigned}); err != nil {
+		t.Fatalf("host-receipted foreign departure rejected: %v", err)
+	}
+}
+
+func TestWorkCompletionWindowRejectsSubjectAndWrongDepartureRecord(t *testing.T) {
+	t.Run("subject", func(t *testing.T) {
+		root := t.TempDir()
+		assigned := taskForLease(t, root, stateDone, "work-subject-departure")
+		if err := completeTrustedTask(root, assigned); err != nil {
+			t.Fatal(err)
+		}
+		assigned, _ = currentTask(root, assigned.ID)
+		windows, err := beginWorkCompletionWindows([]string{root}, assigned.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := moveTrustedTaskFromDone(root, assigned, stateInProgress); err != nil {
+			t.Fatal(err)
+		}
+		if err := windows.rejectAndClose(queuedTask{}); err == nil || !strings.Contains(err.Error(), assigned.ID) {
+			t.Fatalf("subject departure audit = %v, want rejection", err)
+		}
+	})
+	t.Run("wrong nonce", func(t *testing.T) {
+		root := t.TempDir()
+		assigned := taskForLease(t, root, stateInProgress, "work-subject-wrong-nonce")
+		archived := taskForLease(t, root, stateDone, "wrong-nonce-archive")
+		if err := completeTrustedTask(root, archived); err != nil {
+			t.Fatal(err)
+		}
+		archived, _ = currentTask(root, archived.ID)
+		windows, err := beginWorkCompletionWindows([]string{root}, assigned.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := moveTaskDir(root, archived, stateInProgress); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeTrustedDoneDeparture(root, trustedDoneDeparture{
+			Version: trustedDoneDepartureVersion, TaskID: archived.ID, Nonces: []string{strings.Repeat("0", 32)},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := windows.rejectAndClose(queuedTask{}); err == nil || !strings.Contains(err.Error(), archived.ID) {
+			t.Fatalf("wrong departure record audit = %v, want rejection", err)
+		}
+	})
+}
+
+func TestWorkCompletionWindowReplayAcceptsHostReceiptedForeignDeparture(t *testing.T) {
+	root := t.TempDir()
+	assigned := taskForLease(t, root, stateInProgress, "replay-work-subject")
+	archived := taskForLease(t, root, stateDone, "replay-host-reopened")
+	if err := completeTrustedTask(root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = currentTask(root, archived.ID)
+	windows, err := beginWorkCompletionWindows([]string{root}, assigned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowID := windows.windows[0].id
+	if err := moveTrustedTaskFromDone(root, archived, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+		t.Fatal(err)
+	}
+	windows.windows[0].live = nil
+	if err := reconcileCompletionWindows([]string{root}); err != nil {
+		t.Fatalf("replay host departure: %v", err)
+	}
+	index, err := readCompletionWindowIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Windows[windowID]; ok {
+		t.Fatal("replay retained a settled work window")
+	}
+}
+
 func TestReviewCompletionWindowRejectsInPlaceArchiveMutation(t *testing.T) {
 	root := t.TempDir()
 	archived := taskForLease(t, root, stateDone, "mutated-review-archive")

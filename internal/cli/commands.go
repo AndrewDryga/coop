@@ -1755,6 +1755,7 @@ type completionWindowMode uint8
 const (
 	completionWindowStrict completionWindowMode = iota
 	completionWindowReview
+	completionWindowWork
 )
 
 type reviewRunResult struct {
@@ -2906,7 +2907,7 @@ reviewAgain:
 			}
 			iterStart, iterHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			cmd, streaming := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowStrict, nil, false, sink, peers, active)
+			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active)
 			if errors.Is(runErr, errCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.release())
 			}
@@ -3609,6 +3610,12 @@ func (p *claudePlainLimitProbe) limited(code int) bool {
 func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
 	if windowMode == completionWindowReview {
 		windows, err = beginReviewCompletionWindows(hosts, reviewSubjects)
+	} else if windowMode == completionWindowWork {
+		if len(reviewSubjects) != 1 {
+			err = errors.New("work completion window requires one assigned subject")
+		} else {
+			windows, err = beginWorkCompletionWindows(hosts, reviewSubjects[0])
+		}
 	} else {
 		windows, err = beginCompletionWindows(hosts)
 	}

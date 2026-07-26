@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -303,6 +304,125 @@ func writeLeaseCompletionReceiptValue(authority *os.File, receipt leaseCompletio
 		return err
 	}
 	return authority.Sync()
+}
+
+const (
+	trustedDoneDepartureVersion = 1
+	trustedDoneDepartureLimit   = 32
+)
+
+// trustedDoneDeparture records host-authorized exits from 99_done. Completion receipts are
+// deliberately cleared before a task is made actionable again, so a later integrity window needs
+// this bounded nonce history to distinguish that host action from an unreceipted folder move.
+type trustedDoneDeparture struct {
+	Version int      `json:"version"`
+	TaskID  string   `json:"task_id"`
+	Nonces  []string `json:"nonces"`
+}
+
+func trustedDoneDepartureName(root, id string) (string, error) {
+	key, err := leaseAuthorityKey(root, id)
+	if err != nil {
+		return "", err
+	}
+	return key + ".departure.json", nil
+}
+
+func validateTrustedDoneDeparture(record trustedDoneDeparture, id string) error {
+	if record.Version != trustedDoneDepartureVersion || record.TaskID != id || len(record.Nonces) == 0 || len(record.Nonces) > trustedDoneDepartureLimit {
+		return errors.New("invalid trusted done departure record")
+	}
+	seen := make(map[string]bool, len(record.Nonces))
+	for _, nonce := range record.Nonces {
+		if len(nonce) != 32 || seen[nonce] {
+			return errors.New("invalid trusted done departure record")
+		}
+		if _, err := hex.DecodeString(nonce); err != nil {
+			return errors.New("invalid trusted done departure record")
+		}
+		seen[nonce] = true
+	}
+	return nil
+}
+
+func readTrustedDoneDeparture(root, id string) (trustedDoneDeparture, bool, error) {
+	name, err := trustedDoneDepartureName(root, id)
+	if err != nil {
+		return trustedDoneDeparture{}, false, err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return trustedDoneDeparture{}, false, err
+	}
+	defer registry.Close()
+	data, err := readTaskMetadataFile(registry, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return trustedDoneDeparture{}, false, nil
+	}
+	if err != nil {
+		return trustedDoneDeparture{}, false, err
+	}
+	var record trustedDoneDeparture
+	if err := json.Unmarshal(data, &record); err != nil {
+		return trustedDoneDeparture{}, false, err
+	}
+	if err := validateTrustedDoneDeparture(record, id); err != nil {
+		return trustedDoneDeparture{}, false, err
+	}
+	return record, true, nil
+}
+
+func writeTrustedDoneDeparture(root string, record trustedDoneDeparture) error {
+	if err := validateTrustedDoneDeparture(record, record.TaskID); err != nil {
+		return err
+	}
+	name, err := trustedDoneDepartureName(root, record.TaskID)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+}
+
+func removeTrustedDoneDeparture(root, id string) error {
+	name, err := trustedDoneDepartureName(root, id)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func appendTrustedDoneDeparture(root, id, nonce string) error {
+	record, ok, err := readTrustedDoneDeparture(root, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		record = trustedDoneDeparture{Version: trustedDoneDepartureVersion, TaskID: id}
+	}
+	if !slices.Contains(record.Nonces, nonce) {
+		record.Nonces = append(record.Nonces, nonce)
+		if len(record.Nonces) > trustedDoneDepartureLimit {
+			record.Nonces = record.Nonces[len(record.Nonces)-trustedDoneDepartureLimit:]
+		}
+	}
+	return writeTrustedDoneDeparture(root, record)
 }
 
 func auditReopenRecordName(root, id string) (string, error) {

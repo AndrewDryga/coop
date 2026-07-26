@@ -247,6 +247,60 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		assertLoopAttemptContracts(t, suite, trace, taskID, []loopProcessAttempt{attempt})
 		assertLoopTraceProcessesGone(t, trace)
 	})
+	t.Run("accepts a host-receipted foreign archived reopen during work", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "loop-work-host-reopen"
+		archiveID := taskID + "-archive"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, archiveID)
+		root := filepath.Join(suite.layout.Repo, tasksRoot)
+		if err := os.Rename(filepath.Join(root, stateTodo, archiveID), filepath.Join(root, stateDone, archiveID)); err != nil {
+			t.Fatal(err)
+		}
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		seed := procharness.Run(seedCtx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"tasks", "done", archiveID}, Dir: suite.layout.Repo,
+			Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		seedCancel()
+		if seed.ExitCode != 0 {
+			t.Fatalf("host-complete archive before work = exit %d err %v\nstdout:\n%s\nstderr:\n%s", seed.ExitCode, seed.Err, seed.Stdout, seed.Stderr)
+		}
+		target := "codex:loop-model/high@work"
+		between := "codex:between-model/high@work"
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, nil, nil, 3)
+		loopProcessGit(t, suite, "add", ".agent/loop.yaml")
+		loopProcessGit(t, suite, "commit", "-qm", "fixture loop review config")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "complete-host-reopen-archive"},
+			{Target: between, Stage: "between", Result: "pass"},
+		}
+		suite.reset(t, loopProcessScenario{
+			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
+			Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		cancel()
+		if result.ExitCode != 0 {
+			t.Fatalf("host-receipted work reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		doneState, err := os.ReadFile(filepath.Join(root, stateDone, taskID, "state.md"))
+		if err != nil || !strings.Contains(string(doneState), "**Status:** complete") || !strings.Contains(string(doneState), "**Next action:** none") {
+			t.Fatalf("assigned task did not reach the audit boundary as done: %q, %v", doneState, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, stateInProgress, archiveID, "task.md")); err != nil {
+			t.Fatalf("host-reopened archive is not actionable: %v", err)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		if len(trace) < 2 {
+			t.Fatalf("work did not continue into its between audit: trace = %#v", trace)
+		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
 	t.Run("rejects unowned completion when assigned binding also fails", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "loop-combined-rejection"

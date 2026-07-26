@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/cli/commands.go, internal/cli/completionwindow.go, internal/cli/loopchanges.go]
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -38,9 +38,20 @@ receipt-consistent per-task summaries, caps their prompt size, and drops them wh
 task. The receipt verdict is host-bound; gate and finding text is reviewer-reported context only, so
 signoff still independently inspects the task and runs the gate.
 
+Work windows use a related but deliberately distinct rule. They journal the exact assigned task id.
+When another baseline archive leaves `99_done/`, it is tolerated only if its host-only departure
+record contains the exact nonce from that window's baseline completion receipt. `coop tasks claim`
+creates that record under the task authority flock before clearing the receipt; raw folder moves,
+stale or forged nonce records, missing receipts, duplicate assigned ids, and the assigned subject
+itself all fail closed. The same journal fields drive crash replay, so an interrupted work stage gets
+the live-stage verdict rather than a broader recovery exception.
+
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-07-26 — documented nonce-bound concurrent host reopens in work completion windows; verified
+  against `internal/cli/completionwindow.go`, `internal/cli/controller.go`, and the scripted loop
+  process fixture.
 - 2026-07-25 — review completion windows became subject-scoped (parallel human `coop tasks done`
   no longer kills the run); documented the concurrent-completion baseline exclusion.
 - 2026-07-14 — documented the bounded audit-evidence handoff and rechecked its replacement/drop

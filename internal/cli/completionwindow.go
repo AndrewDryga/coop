@@ -42,6 +42,8 @@ type completionWindowRecord struct {
 	AllowedDoneDepartures []string                         `json:"allowed_done_departures,omitempty"`
 	ReviewWindow          bool                             `json:"review_window,omitempty"`
 	ReviewSubjects        []string                         `json:"review_subjects,omitempty"`
+	WorkWindow            bool                             `json:"work_window,omitempty"`
+	WorkSubject           string                           `json:"work_subject,omitempty"`
 }
 
 type completionWindowIndex struct {
@@ -311,6 +313,19 @@ func beginReviewCompletionWindows(hosts, subjects []string) (*completionWindowSe
 	return beginCompletionWindowsWithPolicy(hosts, nil, subjects, true)
 }
 
+// beginWorkCompletionWindows journals the exact leased task. A work box cannot change its own
+// subject's completion state outside the normal finalization path, but a host-receipted move of a
+// different archived task is concurrent queue activity rather than box ownership churn.
+func beginWorkCompletionWindows(hosts []string, subject string) (*completionWindowSet, error) {
+	if subject == "" {
+		return nil, errors.New("work completion window is missing its assigned subject")
+	}
+	if duplicates := duplicateReviewTaskIDs(hosts, []string{subject}); len(duplicates) > 0 {
+		return nil, fmt.Errorf("work subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
+	}
+	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false, subject)
+}
+
 func beginCompletionWindowsAllowing(hosts []string, taskID string) (*completionWindowSet, error) {
 	return beginCompletionWindowsAllowingTasks(hosts, []string{taskID})
 }
@@ -319,7 +334,7 @@ func beginCompletionWindowsAllowingTasks(hosts, taskIDs []string) (*completionWi
 	return beginCompletionWindowsWithPolicy(hosts, taskIDs, nil, false)
 }
 
-func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjects []string, reviewWindow bool) (*completionWindowSet, error) {
+func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjects []string, reviewWindow bool, workSubjects ...string) (*completionWindowSet, error) {
 	if len(hosts) == 0 {
 		return &completionWindowSet{}, nil
 	}
@@ -356,6 +371,9 @@ func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjec
 			AllowedDoneDepartures: slices.Compact(slices.Sorted(slices.Values(allowedDoneDepartures))),
 			ReviewWindow:          reviewWindow,
 			ReviewSubjects:        slices.Compact(slices.Sorted(slices.Values(reviewSubjects))),
+		}
+		if len(workSubjects) == 1 {
+			record.WorkWindow, record.WorkSubject = true, workSubjects[0]
 		}
 		index.Windows[id] = record
 		writeErr := writeCompletionWindowIndex(root, index)
@@ -419,6 +437,21 @@ func completionWindowDepartures(root string, record completionWindowRecord) ([]s
 	}
 	var disallowed []string
 	for _, task := range departed {
+		if record.WorkWindow {
+			if task.ID == record.WorkSubject {
+				disallowed = append(disallowed, task.ID)
+				continue
+			}
+			before := record.Baseline[task.ID]
+			departure, ok, err := readTrustedDoneDeparture(root, task.ID)
+			if err != nil {
+				return nil, fmt.Errorf("read trusted departure for task %s: %w", task.ID, err)
+			}
+			if before.Receipt == "" || before.ReceiptBusy || !ok || !slices.Contains(departure.Nonces, before.Receipt) {
+				disallowed = append(disallowed, task.ID)
+			}
+			continue
+		}
 		if task.ID != record.AllowedDoneDeparture && !slices.Contains(record.AllowedDoneDepartures, task.ID) {
 			disallowed = append(disallowed, task.ID)
 		}

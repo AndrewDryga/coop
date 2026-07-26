@@ -92,7 +92,7 @@ func validateLoopResult(index int, stage, result string) error {
 		result == "ambiguous-limit-prose" || result == "ambiguous-auth-prose" || result == "malformed" || result == "truncated" || result == "wait"
 	switch stage {
 	case "work":
-		if common || result == "complete" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
+		if common || result == "complete" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
 			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
@@ -178,9 +178,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		return 1, "", err
 	}
 	switch attempt.Result {
-	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding":
+	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding":
 		outcome := attempt.Result
-		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" {
+		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" {
 			outcome = ""
 		} else if outcome == "unbound-extra-finalized" {
 			outcome = "unbound"
@@ -192,6 +192,12 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		}
 		if attempt.Result == "complete-reopen-archive" {
 			if err := reopenLoopTask(root, plan.TaskID+"-archive", attempt.Stage); err != nil {
+				return 1, "", err
+			}
+		}
+		if attempt.Result == "complete-host-reopen-archive" {
+			archiveID := plan.TaskID + "-archive"
+			if err := hostClaimLoopTask(root, archiveID); err != nil {
 				return 1, "", err
 			}
 		}
@@ -427,6 +433,33 @@ func hostCompleteLoopTask(root, taskID string) error {
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("coop tasks done %s: %w: %s", taskID, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func hostClaimLoopTask(root, taskID string) error {
+	repo, err := loopRepo(root)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("coop", "tasks", "claim", taskID)
+	cmd.Dir = repo
+	cmd.Env = []string{
+		"HOME=" + filepath.Join(root, "home"),
+		"PATH=" + os.Getenv("PATH"),
+		"TMPDIR=" + filepath.Join(root, "tmp"),
+		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg", "cache"),
+		"XDG_CONFIG_HOME=" + filepath.Join(root, "xdg", "config"),
+		"XDG_STATE_HOME=" + filepath.Join(root, "xdg", "state"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "state", "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"COOP_CONF=" + filepath.Join(root, "config", "missing.conf"),
+		"COOP_CONFIG_DIR=" + filepath.Join(root, "config"),
+		"COOP_REPO=" + repo,
+		"COOP_NO_UPDATE_CHECK=1",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("coop tasks claim %s: %w: %s", taskID, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

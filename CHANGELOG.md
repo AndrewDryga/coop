@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Host-receipted foreign reopens no longer kill a work iteration.** A work completion window now journals its exact assigned task and accepts a concurrent host `coop tasks claim` of a different archived task only when a host-only, nonce-bound departure record proves the move invalidated that archive's baseline completion receipt. Raw folder moves, stale or forged records, duplicate subjects, and any change to the assigned task still fail closed; crash replay applies the identical classifier.
+
 - **The loop announces and pins its `loop.yaml` snapshot.** Every loop — including a fork loop —
   now logs the exact startup `.agent/loop.yaml` it runs on (a short SHA-256 digest, or an explicit
   absent/built-in-defaults state) and derives ladders, prompts, round caps, and write policy from
