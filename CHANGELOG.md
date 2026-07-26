@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 7.2.0
 
 - **Silent provider attempts are now bounded by a stream-fed watchdog.** Every built-in loop,
   review, and pre-flight attempt requests its provider's structured stream — redirected runs
@@ -12,9 +10,10 @@
   box, records an explicit `provider_*_timeout` outcome, restores any premature completion, keeps
   held audit authority truthful (rebase a valid complete rewrite, park fail-closed otherwise),
   and retries on the next usable rung without cooling under a dedicated consecutive cap of three;
-  a user interrupt still wins over any watchdog fire. Redirected loops — CI pipes and detached
-  fork workers — now tear their running box down on SIGINT/SIGTERM instead of exiting around an
-  orphan.
+  a user interrupt still wins over any watchdog fire. Interactive and redirected loops now treat
+  SIGTERM/SIGHUP as immediate hard cancellation (while preserving SIGINT's soft-then-hard UX),
+  and force-remove the exact run-labeled container if killing its runtime client leaves the
+  daemon-owned box behind.
 
 - **Audit-reopened tasks now protect complete descendant history.** Host authority records the
   exact baseline HEAD and every ordered later commit, including manual and release commits without
@@ -114,13 +113,18 @@
   iteration binding, any second `Coop-Task` trailer reachable from `HEAD`, and any binding for a
   different task in the iteration range. Reopened work must amend or rewrite its original task
   commit instead of stacking another bound commit, and verify authority comes only from
-  host-recorded completions.
+  host-recorded completions. Ordinary completion derives both checks from the raw commit-object
+  DAG, so provider-writable graft and shallow metadata cannot hide, invent, or redirect bindings.
 
 - **Signing no longer depends on a clean active checkout.** Coop re-signs in an isolated linked
   worktree, verifies that commit trees are unchanged, then updates the original branch with an
   old-SHA compare-and-swap. Staged, unstaged, untracked, and secret-decoy files remain untouched,
   side refs cannot be rewritten, repository-local SSH key commands are ignored, and a concurrent
   ref move leaves the signed candidate unapplied.
+
+- **Agent-supervised long commands keep static, bounded output.** The canonical and scaffolded
+  agent instructions now require repainting controls, redirected complete logs, preserved exit
+  status, and bounded tail or filter inspection, without degrading Coop's human-facing live UI.
 
 ## 7.1.0
 
