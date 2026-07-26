@@ -3116,6 +3116,20 @@ reviewAgain:
 						releaseErr,
 					)
 				}
+				departed, departureErr := windows.departures()
+				if len(departed) > 0 {
+					departureErr = errors.Join(departureErr, fmt.Errorf(
+						"work stage reopened unowned archived task(s) %s",
+						strings.Join(departed, ", "),
+					))
+				}
+				var unownedErr error
+				if len(unowned) > 0 {
+					unownedErr = unownedCompletionError(unowned, nil)
+				}
+				if auditErr := errors.Join(unownedErr, departureErr); auditErr != nil {
+					return 1, errors.Join(auditErr, lease.release(), windows.abandon())
+				}
 				if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
 					return 1, fmt.Errorf("release task lease %s after provider timeout: %w", assigned.Item.ID, releaseErr)
 				}

@@ -103,6 +103,58 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	t.Run("archived departure fails closed before timeout retry", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=1s,idle=20s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-archive-departure"
+		archiveID := taskID + "-archive"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, archiveID)
+		root := filepath.Join(suite.layout.Repo, tasksRoot)
+		if err := os.Rename(filepath.Join(root, stateTodo, archiveID), filepath.Join(root, stateDone, archiveID)); err != nil {
+			t.Fatal(err)
+		}
+		target := loopRecoveryTarget("codex", "departure-model", "work")
+		attempt := loopProcessAttempt{Target: target, Stage: "work", Result: "reopen-archive-wait"}
+		suite.reset(t, loopRecoveryScenario(taskID, []loopProcessAttempt{attempt}))
+		result := runLoopRecovery(t, suite, target)
+		if result.ExitCode != 1 ||
+			!strings.Contains(result.Stderr, "work stage reopened unowned archived task(s) "+archiveID) {
+			t.Fatalf("timed-out archive departure = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		if attempts := processEvents(trace, "provider", "start"); len(attempts) != 1 {
+			t.Fatalf("archive departure provider attempts = %d, want one\ntrace:\n%s", len(attempts), readProcessFile(t, suite.layout.Trace))
+		}
+		if !pathExists(filepath.Join(root, stateInProgress, taskID)) ||
+			!pathExists(filepath.Join(root, stateInProgress, archiveID)) {
+			t.Fatal("timeout ownership failure did not leave both tasks actionable")
+		}
+		t.Setenv(testLeaseAuthorityRootEnv, filepath.Join(
+			suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion,
+		))
+		index, err := readCompletionWindowIndex(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(index.Windows) != 1 {
+			t.Fatalf("timeout ownership failure retained %d completion windows, want one", len(index.Windows))
+		}
+		for _, window := range index.Windows {
+			if window.WorkSubject != taskID {
+				t.Fatalf("retained completion window subject = %q, want %q", window.WorkSubject, taskID)
+			}
+			if _, ok := window.Baseline[archiveID]; !ok {
+				t.Fatalf("retained completion window lost archived baseline %s", archiveID)
+			}
+		}
+		if err := reconcileCompletionWindows([]string{root}); err == nil ||
+			!strings.Contains(err.Error(), "archived task(s) "+archiveID+" left done") {
+			t.Fatalf("startup recovery archive departure = %v", err)
+		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
 	t.Run("open foreground tool suspends the idle deadline", func(t *testing.T) {
 		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=1s,tool=30s")
 		resetLoopProcessRepo(t, suite)
