@@ -519,7 +519,7 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 	if err := write(valid); err != nil {
 		t.Fatalf("valid loop scenario rejected: %v", err)
 	}
-	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "second-binding", "rate-limit", "rate-limit-short", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
+	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-changed-descendant", "verify-only", "second-binding", "rate-limit", "rate-limit-short", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
 		body := strings.Replace(valid, `"result":"complete"`, `"result":"`+result+`"`, 1)
 		if err := write(body); err != nil {
 			t.Fatalf("closed loop result %q rejected: %v", result, err)
@@ -533,7 +533,7 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 		}
 	}
 	for _, stage := range []string{"between", "signoff", "verify"} {
-		for _, result := range []string{"pass", "reopen", "reopen-authentication", "reopen-ordinary", "rate-limit", "output-limit", "authentication", "ordinary", "malformed", "truncated", "wait"} {
+		for _, result := range []string{"pass", "pass-with-descendant", "reopen", "reopen-gated", "reopen-authentication", "reopen-ordinary", "rate-limit", "output-limit", "authentication", "ordinary", "malformed", "truncated", "wait"} {
 			body := strings.Replace(valid, `"stage":"work"`, `"stage":"`+stage+`"`, 1)
 			body = strings.Replace(body, `"result":"complete"`, `"result":"`+result+`"`, 1)
 			if err := write(body); err != nil {

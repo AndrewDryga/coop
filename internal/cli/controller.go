@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -213,6 +214,10 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 	if !ok || current.Dir != task.Dir || current.State != task.State {
 		return errLeaseCandidateGone
 	}
+	reopen, reopened, err := readAuditReopenRecord(root, task.ID)
+	if err != nil {
+		return err
+	}
 	if err := clearLeaseCompletionReceipt(authority); err != nil {
 		return err
 	}
@@ -226,8 +231,17 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 	if err := finalizeCompletedTask(current.ID, current.Dir); err != nil {
 		return err
 	}
-	if err := writeLeaseCompletionReceipt(authority, current.Dir); err != nil {
+	generation := ""
+	if reopened {
+		generation = reopen.Generation
+	}
+	if err := writeLeaseCompletionReceipt(authority, current.Dir, generation); err != nil {
 		return err
+	}
+	if reopened {
+		if err := removeAuditReopenRecordIfMatches(root, task.ID, generation); err != nil {
+			return err
+		}
 	}
 	acceptedTask = queuedTask{Root: root, Item: current}
 	accepted = true
@@ -247,18 +261,22 @@ type trustedTaskMove struct {
 	newState      string
 	sourceStates  []string
 	metadataNames []string
+	reopen        *auditReopenRecord
 	afterMove     func(string) error
 }
 
 type trustedTaskMoveState struct {
-	move           trustedTaskMove
-	current        taskItem
-	authority      *os.File
-	metadata       map[string]taskMetadataSnapshot
-	previous       leaseCompletionReceipt
-	previousOK     bool
-	receiptTouched bool
-	moved          bool
+	move             trustedTaskMove
+	current          taskItem
+	authority        *os.File
+	metadata         map[string]taskMetadataSnapshot
+	previous         leaseCompletionReceipt
+	previousOK       bool
+	previousReopen   auditReopenRecord
+	previousReopenOK bool
+	receiptTouched   bool
+	reopenTouched    bool
+	moved            bool
 }
 
 // moveTrustedTaskFromDoneWith is the one-task form of the atomic host move used for review
@@ -368,6 +386,12 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		}
 		states[len(states)-1].previous, states[len(states)-1].previousOK =
 			readLeaseCompletionReceipt(authority, current.Dir)
+		previousReopen, previousReopenOK, err := readAuditReopenRecord(move.root, move.task.ID)
+		if err != nil {
+			return failBeforeMutation(err)
+		}
+		states[len(states)-1].previousReopen = previousReopen
+		states[len(states)-1].previousReopenOK = previousReopenOK
 	}
 	rollback := func(cause error) error {
 		rollbackErr := rollbackTrustedTaskMoves(states)
@@ -381,6 +405,12 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		states[i].receiptTouched = true
 		if err := clearLeaseCompletionReceipt(states[i].authority); err != nil {
 			return rollback(err)
+		}
+		if states[i].move.reopen != nil {
+			states[i].reopenTouched = true
+			if err := writeAuditReopenRecord(states[i].move.root, *states[i].move.reopen); err != nil {
+				return rollback(err)
+			}
 		}
 	}
 	for i := range states {
@@ -426,6 +456,18 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 	}
 	for i := range states {
 		state := &states[i]
+		if state.reopenTouched {
+			var err error
+			if state.previousReopenOK {
+				err = writeAuditReopenRecord(state.move.root, state.previousReopen)
+			} else {
+				err = removeAuditReopenRecord(state.move.root, state.current.ID)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("restore task %s audit reopen authority: %w", state.current.ID, err))
+				restored[i] = false
+			}
+		}
 		if !state.receiptTouched || !state.previousOK || !restored[i] {
 			continue
 		}
@@ -562,8 +604,9 @@ func reconcileInterruptedCompletions(hosts []string) error {
 			if !acquired {
 				continue
 			}
-			if lock.completed(current.Dir) {
+			if receipt, ok := lock.completionReceipt(current.Dir); ok {
 				cleanupErr := errors.Join(
+					removeAuditReopenRecordIfMatches(host, current.ID, receipt.AuditReopenGeneration),
 					removeLeaseAuthorityMetadata(host, current.ID),
 					removeLeaseMetadata(host, current.ID),
 					lock.release(),
@@ -590,7 +633,15 @@ type crashCompletionLock struct {
 }
 
 func (l crashCompletionLock) completed(taskDir string) bool {
-	return l.authority != nil && leaseCompletionReceiptMatches(l.authority, taskDir)
+	_, ok := l.completionReceipt(taskDir)
+	return ok
+}
+
+func (l crashCompletionLock) completionReceipt(taskDir string) (leaseCompletionReceipt, bool) {
+	if l.authority == nil {
+		return leaseCompletionReceipt{}, false
+	}
+	return readLeaseCompletionReceipt(l.authority, taskDir)
 }
 
 func (l crashCompletionLock) clearCompleted() error {
@@ -699,6 +750,9 @@ func crashCompletionCandidate(root string, task taskItem) bool {
 	if leaseAuthorityMetadataExists(root, task.ID) {
 		return true
 	}
+	if auditReopenRecordExists(root, task.ID) {
+		return true
+	}
 	if info, err := os.Lstat(filepath.Join(task.Dir, "tmp")); err == nil &&
 		(info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
 		return true
@@ -722,6 +776,176 @@ func blockedTaskIDs(hosts []string) []string {
 	}
 	slices.Sort(ids)
 	return ids
+}
+
+type semanticTaskCommit struct {
+	sha      string
+	semantic auditReopenCommit
+}
+
+// semanticTaskCommits identifies task-bound commits by their exact introduced content and author
+// intent. The raw diff-tree includes paths, modes, and old/new blob ids, so an unrelated ancestor
+// repair does not change a replayed descendant's identity while any change to that descendant
+// does. Author identity/date and the complete message make this deliberately stricter than
+// patch-id.
+func semanticTaskCommits(repo, rangeExpr string) ([]semanticTaskCommit, error) {
+	commits, ok := taskTrailerCommits(repo, rangeExpr, true)
+	if !ok {
+		return nil, errors.New("read task-bound commit history")
+	}
+	var result []semanticTaskCommit
+	for _, commit := range commits {
+		if commit.malformed || len(commit.values) > 1 || (len(commit.values) == 1 && commit.values[0] == "") {
+			return nil, errors.New("history contains an invalid task binding")
+		}
+		if len(commit.values) == 0 {
+			continue
+		}
+		semantic, err := semanticCommit(repo, commit.info.sha, commit.values[0])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, semanticTaskCommit{sha: commit.info.sha, semantic: semantic})
+	}
+	return result, nil
+}
+
+func semanticCommit(repo, sha, taskID string) (auditReopenCommit, error) {
+	parents := strings.Fields(gitOut(repo, "rev-list", "--parents", "-n", "1", sha))
+	if len(parents) == 0 {
+		return auditReopenCommit{}, fmt.Errorf("resolve task-bound commit %s", sha)
+	}
+	if len(parents) > 2 {
+		return auditReopenCommit{}, fmt.Errorf("task-bound merge commit %s cannot be replayed safely", sha)
+	}
+	diffCmd := exec.Command("git", gitArgs(repo,
+		[]string{"diff-tree", "--root", "--no-commit-id", "--raw", "-z", "-r", "--no-renames", sha})...)
+	diff, err := diffCmd.Output()
+	if err != nil {
+		return auditReopenCommit{}, fmt.Errorf("read task-bound commit %s changes: %w", sha, err)
+	}
+	sum := sha256.Sum256(diff)
+	metaCmd := exec.Command("git", gitArgs(repo,
+		[]string{"show", "-s", "--format=format:%an%x00%ae%x00%aI%x00%B", sha})...)
+	meta, err := metaCmd.Output()
+	if err != nil {
+		return auditReopenCommit{}, fmt.Errorf("read task-bound commit %s metadata: %w", sha, err)
+	}
+	fields := strings.SplitN(string(meta), "\x00", 4)
+	if len(fields) != 4 {
+		return auditReopenCommit{}, fmt.Errorf("parse task-bound commit %s metadata", sha)
+	}
+	return auditReopenCommit{
+		TaskID:        taskID,
+		ChangeTree:    fmt.Sprintf("%x", sum),
+		AuthorName:    fields[0],
+		AuthorEmail:   fields[1],
+		AuthorDate:    fields[2],
+		CommitMessage: fields[3],
+	}, nil
+}
+
+func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
+	subjects := commitsForTask(repo, "", id)
+	if len(subjects) != 1 {
+		return auditReopenRecord{}, fmt.Errorf(
+			"review subject %s needs exactly one reachable %s binding before reopen", id, coopTaskTrailer,
+		)
+	}
+	subject, err := semanticCommit(repo, subjects[0], id)
+	if err != nil {
+		return auditReopenRecord{}, err
+	}
+	bound, err := semanticTaskCommits(repo, subjects[0]+"..HEAD")
+	if err != nil {
+		return auditReopenRecord{}, err
+	}
+	seen := map[string]bool{id: true}
+	descendants := make([]auditReopenCommit, 0, len(bound))
+	for _, commit := range bound {
+		taskID := commit.semantic.TaskID
+		if seen[taskID] || len(commitsForTask(repo, "HEAD", taskID)) != 1 {
+			return auditReopenRecord{}, fmt.Errorf(
+				"descendant task %s needs exactly one reachable %s binding before review reopens %s",
+				taskID, coopTaskTrailer, id,
+			)
+		}
+		seen[taskID] = true
+		descendants = append(descendants, commit.semantic)
+	}
+	generation, err := newAuditReopenGeneration()
+	if err != nil {
+		return auditReopenRecord{}, err
+	}
+	return auditReopenRecord{
+		Version: auditReopenVersion, Generation: generation, TaskID: id,
+		Subject: subject, Descendants: descendants,
+	}, nil
+}
+
+func auditReopenCompletionValid(repo, base, head, id string, record auditReopenRecord) bool {
+	if validateAuditReopenRecord(record, id) != nil || len(commitsForTask(repo, head, id)) != 1 {
+		return false
+	}
+	reachableSubject, err := semanticCommit(repo, commitsForTask(repo, head, id)[0], id)
+	if err != nil {
+		return false
+	}
+	if base == head {
+		if reachableSubject != record.Subject {
+			return false
+		}
+		current, err := semanticTaskCommits(repo, commitsForTask(repo, head, id)[0]+".."+head)
+		if err != nil {
+			return false
+		}
+		recorded := make(map[string]auditReopenCommit, len(record.Descendants))
+		for _, descendant := range record.Descendants {
+			recorded[descendant.TaskID] = descendant
+		}
+		var retained []auditReopenCommit
+		for _, commit := range current {
+			if _, ok := recorded[commit.semantic.TaskID]; ok {
+				retained = append(retained, commit.semantic)
+			}
+		}
+		return slices.Equal(retained, record.Descendants)
+	}
+	rangeCommits, err := semanticTaskCommits(repo, base+".."+head)
+	if err != nil {
+		return false
+	}
+	subjects := 0
+	var descendants []auditReopenCommit
+	for _, commit := range rangeCommits {
+		if commit.semantic.TaskID == id {
+			subjects++
+			if commit.semantic.ChangeTree == record.Subject.ChangeTree {
+				return false // a message-only receipt rewrite is not an implementation repair
+			}
+			continue
+		}
+		descendants = append(descendants, commit.semantic)
+	}
+	if subjects != 1 || !slices.Equal(descendants, record.Descendants) {
+		return false
+	}
+	for _, descendant := range record.Descendants {
+		if len(commitsForTask(repo, head, descendant.TaskID)) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func completionUnbindableTasks(repo, base, head string, finished []string, reopen *auditReopenRecord) []string {
+	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
+		return unbindableTasks(repo, base, head, finished)
+	}
+	if auditReopenCompletionValid(repo, base, head, finished[0], *reopen) {
+		return nil
+	}
+	return slices.Clone(finished)
 }
 
 // unbindableTasks returns finished ids without exactly one Coop-Task binding both in this
@@ -882,8 +1106,9 @@ func resumeLine(id string, commits []string) string {
 		"attempt COMMITTED then was interrupted before moving the folder to 99_done/ — verify that work " +
 		"against the acceptance criteria, amend the commit with a unique `Coop-Recovery: <current UTC timestamp>` " +
 		"trailer while preserving exactly one Coop-Task trailer, and finish the move, but do NOT redo it; or (b) the review REOPENED it " +
-		"for rework (its log.md will say what's wrong) — do that rework by amending or rewriting the already-bound implementation commit, " +
-		"leaving exactly one reachable Coop-Task binding; do not add a second task-bound commit. Disambiguate before acting."
+		"(its log.md will say what's wrong) — independently reproduce the finding; if it is false, re-close without a receipt-only commit; " +
+		"otherwise do the rework by amending or rewriting the already-bound implementation commit, leaving exactly one reachable Coop-Task " +
+		"binding and semantically unchanged later task commits; do not add a second task-bound commit. Disambiguate before acting."
 }
 
 // resumePrefixFor builds the informed-resume preamble for the assigned task when its Coop-Task

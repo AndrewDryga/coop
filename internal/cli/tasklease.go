@@ -20,6 +20,7 @@ const (
 	leaseLockName          = "lease.lock"
 	leaseMetadataName      = "lease.json"
 	leaseAuthorityVersion  = "v1"
+	auditReopenVersion     = 1
 	leaseHeartbeatInterval = 10 * time.Second
 	leaseStaleAfter        = time.Minute
 	leaseMetadataVersion   = 1
@@ -30,10 +31,28 @@ const testLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
 var errLeaseCandidateGone = errors.New("lease candidate changed state")
 
 type leaseCompletionReceipt struct {
-	Version int    `json:"version"`
-	Device  uint64 `json:"device"`
-	Inode   uint64 `json:"inode"`
-	Nonce   string `json:"nonce"`
+	Version               int    `json:"version"`
+	Device                uint64 `json:"device"`
+	Inode                 uint64 `json:"inode"`
+	Nonce                 string `json:"nonce"`
+	AuditReopenGeneration string `json:"audit_reopen_generation,omitempty"`
+}
+
+type auditReopenCommit struct {
+	TaskID        string `json:"task_id"`
+	ChangeTree    string `json:"change_tree"`
+	AuthorName    string `json:"author_name"`
+	AuthorEmail   string `json:"author_email"`
+	AuthorDate    string `json:"author_date"`
+	CommitMessage string `json:"commit_message"`
+}
+
+type auditReopenRecord struct {
+	Version     int                 `json:"version"`
+	Generation  string              `json:"generation"`
+	TaskID      string              `json:"task_id"`
+	Subject     auditReopenCommit   `json:"subject"`
+	Descendants []auditReopenCommit `json:"descendants,omitempty"`
 }
 
 // taskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
@@ -76,6 +95,7 @@ type taskLease struct {
 	now       func() time.Time
 	ticker    func(time.Duration) (<-chan time.Time, func())
 	legacy    bool
+	reopen    *auditReopenRecord
 
 	releaseOnce sync.Once
 	quiesceOnce sync.Once
@@ -126,11 +146,22 @@ func (l *taskLease) quiesce() {
 // flock is held. Task-local state is provider-writable and cannot distinguish a foreign controller
 // from an agent that moved an unleased folder.
 func (l *taskLease) markCompleted(taskDir string) error {
-	return writeLeaseCompletionReceipt(l.authority, taskDir)
+	generation := ""
+	if l.reopen != nil {
+		generation = l.reopen.Generation
+	}
+	return writeLeaseCompletionReceipt(l.authority, taskDir, generation)
 }
 
 func (l *taskLease) clearCompleted() error {
 	return clearLeaseCompletionReceipt(l.authority)
+}
+
+func (l *taskLease) consumeAuditReopen() error {
+	if l.reopen == nil {
+		return nil
+	}
+	return removeAuditReopenRecordIfMatches(l.root, l.id, l.reopen.Generation)
 }
 
 // release stops metadata mutation before removing the evidence while still holding both flocks.
@@ -241,7 +272,7 @@ func clearLeaseCompletionReceipt(authority *os.File) error {
 	return authority.Sync()
 }
 
-func writeLeaseCompletionReceipt(authority *os.File, taskDir string) error {
+func writeLeaseCompletionReceipt(authority *os.File, taskDir string, generation ...string) error {
 	receipt, err := completionReceiptFor(taskDir)
 	if err != nil {
 		return err
@@ -251,6 +282,9 @@ func writeLeaseCompletionReceipt(authority *os.File, taskDir string) error {
 		return err
 	}
 	receipt.Nonce = hex.EncodeToString(nonce)
+	if len(generation) > 0 {
+		receipt.AuditReopenGeneration = generation[0]
+	}
 	return writeLeaseCompletionReceiptValue(authority, receipt)
 }
 
@@ -269,6 +303,129 @@ func writeLeaseCompletionReceiptValue(authority *os.File, receipt leaseCompletio
 		return err
 	}
 	return authority.Sync()
+}
+
+func auditReopenRecordName(root, id string) (string, error) {
+	key, err := leaseAuthorityKey(root, id)
+	if err != nil {
+		return "", err
+	}
+	return key + ".reopen.json", nil
+}
+
+func validateAuditReopenRecord(record auditReopenRecord, id string) error {
+	if record.Version != auditReopenVersion || record.Generation == "" || record.TaskID != id ||
+		record.Subject.TaskID != id || record.Subject.ChangeTree == "" {
+		return errors.New("invalid audit reopen record")
+	}
+	seen := map[string]bool{id: true}
+	for _, commit := range record.Descendants {
+		if commit.TaskID == "" || seen[commit.TaskID] || commit.ChangeTree == "" {
+			return errors.New("invalid audit reopen descendant")
+		}
+		seen[commit.TaskID] = true
+	}
+	return nil
+}
+
+func readAuditReopenRecord(root, id string) (auditReopenRecord, bool, error) {
+	name, err := auditReopenRecordName(root, id)
+	if err != nil {
+		return auditReopenRecord{}, false, err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return auditReopenRecord{}, false, err
+	}
+	defer registry.Close()
+	data, err := readTaskMetadataFile(registry, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return auditReopenRecord{}, false, nil
+	}
+	if err != nil {
+		return auditReopenRecord{}, false, err
+	}
+	var record auditReopenRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return auditReopenRecord{}, false, err
+	}
+	if err := validateAuditReopenRecord(record, id); err != nil {
+		return auditReopenRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+func writeAuditReopenRecord(root string, record auditReopenRecord) error {
+	if err := validateAuditReopenRecord(record, record.TaskID); err != nil {
+		return err
+	}
+	name, err := auditReopenRecordName(root, record.TaskID)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+}
+
+func removeAuditReopenRecord(root, id string) error {
+	name, err := auditReopenRecordName(root, id)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func auditReopenRecordExists(root, id string) bool {
+	name, err := auditReopenRecordName(root, id)
+	if err != nil {
+		return false
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return false
+	}
+	defer registry.Close()
+	info, err := registry.Lstat(name)
+	if err != nil {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return info.Mode().IsRegular() && ok && stat.Nlink == 1
+}
+
+func removeAuditReopenRecordIfMatches(root, id, generation string) error {
+	record, ok, err := readAuditReopenRecord(root, id)
+	if err != nil || !ok {
+		return err
+	}
+	if record.Generation != generation {
+		return fmt.Errorf("audit reopen generation changed for task %s", id)
+	}
+	return removeAuditReopenRecord(root, id)
+}
+
+func newAuditReopenGeneration() (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(nonce), nil
 }
 
 func readLeaseCompletionReceipt(authority *os.File, taskDir string) (leaseCompletionReceipt, bool) {
@@ -696,6 +853,15 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = unlockLeaseFile(f)
 		_ = unlockLeaseFile(authority)
 		return nil, taskLeaseObservation{}, err
+	}
+	if record, ok, err := readAuditReopenRecord(root, item.ID); err != nil {
+		_ = removeLeaseMetadata(root, item.ID)
+		_ = removeLeaseAuthorityMetadata(root, item.ID)
+		_ = unlockLeaseFile(f)
+		_ = unlockLeaseFile(authority)
+		return nil, taskLeaseObservation{}, fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err)
+	} else if ok {
+		l.reopen = &record
 	}
 	l.startHeartbeat()
 	return l, taskLeaseObservation{}, nil

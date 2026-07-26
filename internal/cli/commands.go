@@ -1963,7 +1963,7 @@ func lifecycleTaskSubject(hosts []string, id string) (queuedTask, error) {
 // applyReviewVerdict treats provider output as an untrusted proposal. Every id and finding is
 // validated before the first move; then the host completion authority serializes each exact-subject
 // reopen and its resume metadata. A malformed, missing, or out-of-scope verdict mutates nothing.
-func applyReviewVerdict(hosts, subjects []string, output string) ([]string, error) {
+func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output string) ([]string, error) {
 	receipt, ok := reviewReopenReceipt(output)
 	if !ok {
 		return nil, fmt.Errorf("%w: missing or malformed terminal receipt", errReviewVerdict)
@@ -2010,9 +2010,17 @@ func applyReviewVerdict(hosts, subjects []string, output string) ([]string, erro
 	if len(tasks) == 0 {
 		return nil, nil
 	}
+	if repo == "" {
+		return nil, errors.New("host authorize review reopen: repository context is required")
+	}
 	moves := make([]trustedTaskMove, 0, len(tasks))
 	for _, task := range tasks {
 		task := task
+		record, err := captureAuditReopen(repo, task.Item.ID)
+		if err != nil {
+			return nil, fmt.Errorf("host authorize review reopen for task %s: %w", task.Item.ID, err)
+		}
+		reopen := &record
 		observation := evidence[task.Item.ID]
 		note := fmt.Sprintf(
 			"review: fail — BEGIN UNTRUSTED REVIEW EVIDENCE — gate: %s — findings: %s — END UNTRUSTED REVIEW EVIDENCE",
@@ -2020,7 +2028,7 @@ func applyReviewVerdict(hosts, subjects []string, output string) ([]string, erro
 			encodeUntrustedReviewField(observation.findings),
 		)
 		moves = append(moves, trustedTaskMove{
-			root: task.Root, task: task.Item, newState: stateInProgress,
+			root: task.Root, task: task.Item, newState: stateInProgress, reopen: reopen,
 			afterMove: func(dir string) error {
 				return errors.Join(
 					appendTaskLogStrict(dir, note),
@@ -2813,7 +2821,7 @@ reviewAgain:
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
 			var missing []string
 			if assignedCompletion != nil {
-				missing = unbindableTasks(repo, iterHead, headAfter, finished)
+				missing = completionUnbindableTasks(repo, iterHead, headAfter, finished, lease.reopen)
 			}
 			departed, departureErr := windows.departures()
 			var restoreErr error
@@ -2877,6 +2885,10 @@ reviewAgain:
 					clearErr := lease.clearCompleted()
 					releaseErr := errors.Join(lease.release(), windows.abandon())
 					return 1, errors.Join(fmt.Errorf("record task completion %s: %w", assigned.Item.ID, receiptErr), restoreErr, clearErr, releaseErr)
+				}
+				if consumeErr := lease.consumeAuditReopen(); consumeErr != nil {
+					releaseErr := errors.Join(lease.release(), windows.close())
+					return 1, errors.Join(fmt.Errorf("consume task %s audit reopen authority: %w", assigned.Item.ID, consumeErr), releaseErr)
 				}
 			}
 			if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
@@ -2946,7 +2958,7 @@ reviewAgain:
 						btRun, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, lc.Between.Writes, sink, peers, hardStop)
 						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						if rerr == nil {
-							btRun.reopened, rerr = applyReviewVerdict(hosts, finishedIDs, btRun.output)
+							btRun.reopened, rerr = applyReviewVerdictInRepo(repo, hosts, finishedIDs, btRun.output)
 						}
 						reopenedIDs := btRun.reopened
 						a.recordStage(repo, runid, "between", btRun.outcome, btRun.target, btStart, btRun.exit, btRun.retries, len(reopenedIDs), btHead, hosts, nil, auditGateFiles, btRun.usage)
@@ -3071,7 +3083,7 @@ reviewAgain:
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(subjectIDs) + cs.reviewBlock(health)
 		soRun, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, lc.Signoff.Writes, sink, peers, wake)
 		if serr == nil {
-			soRun.reopened, serr = applyReviewVerdict(hosts, subjectIDs, soRun.output)
+			soRun.reopened, serr = applyReviewVerdictInRepo(repo, hosts, subjectIDs, soRun.output)
 		}
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
@@ -3159,7 +3171,7 @@ reviewAgain:
 			}
 			vRun, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, lc.Verify.Writes, sink, peers, wake)
 			if verr == nil {
-				vRun.reopened, verr = applyReviewVerdict(hosts, verifyIDs, vRun.output)
+				vRun.reopened, verr = applyReviewVerdictInRepo(repo, hosts, verifyIDs, vRun.output)
 			}
 			reopenedIDs := vRun.reopened
 			health.noteReopen(reopenedIDs)

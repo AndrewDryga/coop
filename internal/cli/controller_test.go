@@ -2054,6 +2054,176 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	}
 }
 
+// Rewriting A makes the old B tip a sibling; replaying B puts its task binding in the proposed
+// range even though B's exact introduced content and author intent are unchanged. Fresh completion
+// rejects that foreign binding, while the host-captured audit generation accepts it exactly once.
+func TestAuditReopenCompletionAcceptsSemanticDescendantReplay(t *testing.T) {
+	repo := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "T")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: task-a")
+	a := git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "b.txt")
+	git("commit", "-q", "-m", "B implementation\n\nCoop-Task: task-b")
+	oldHead := git("rev-parse", "HEAD")
+	reopen, err := captureAuditReopen(repo, "task-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := completionUnbindableTasks(repo, oldHead, oldHead, []string{"task-a"}, &reopen); len(got) != 0 {
+		t.Fatalf("verification-only audit re-close rejected: %v", got)
+	}
+	git("branch", "old-head")
+	git("reset", "--hard", "-q", a+"^")
+	git("cherry-pick", a)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A reworked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "--amend", "-q", "-m", "A reworked\n\nCoop-Task: task-a\nCoop-Recovery: fixture")
+	git("cherry-pick", git("rev-list", "--reverse", a+"..old-head"))
+	newHead := git("rev-parse", "HEAD")
+	if got := unbindableTasks(repo, oldHead, newHead, []string{"task-a"}); !slices.Equal(got, []string{"task-a"}) {
+		t.Fatalf("clean-tree reproduction unexpectedly changed: got %v", got)
+	}
+	if got := completionUnbindableTasks(repo, oldHead, newHead, []string{"task-a"}, &reopen); len(got) != 0 {
+		replayed, err := semanticTaskCommits(repo, oldHead+".."+newHead)
+		t.Fatalf("authorized semantic descendant replay rejected: %v; recorded=%#v replayed=%#v err=%v", got, reopen, replayed, err)
+	}
+	for _, id := range []string{"task-a", "task-b"} {
+		if got := commitsForTask(repo, "HEAD", id); len(got) != 1 {
+			t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
+		}
+	}
+}
+
+func TestAuditReopenCompletionRejectsChangedOrInventedHistory(t *testing.T) {
+	type fixture struct {
+		repo, oldHead, a, b string
+		reopen              auditReopenRecord
+		git                 func(...string) string
+	}
+	newFixture := func(t *testing.T) fixture {
+		t.Helper()
+		repo := t.TempDir()
+		env := append(os.Environ(),
+			"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
+			"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
+		git := func(args ...string) string {
+			t.Helper()
+			cmd := exec.Command("git", args...)
+			cmd.Dir, cmd.Env = repo, env
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		git("init", "-q")
+		git("config", "user.email", "t@t")
+		git("config", "user.name", "T")
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "a.txt")
+		git("commit", "-q", "-m", "A implementation\n\nCoop-Task: task-a")
+		a := git("rev-parse", "HEAD")
+		if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "b.txt")
+		git("commit", "-q", "-m", "B implementation\n\nCoop-Task: task-b")
+		b := git("rev-parse", "HEAD")
+		reopen, err := captureAuditReopen(repo, "task-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		git("branch", "old-head")
+		return fixture{repo: repo, oldHead: b, a: a, b: b, reopen: reopen, git: git}
+	}
+	rewriteA := func(t *testing.T, f fixture) {
+		t.Helper()
+		f.git("reset", "--hard", "-q", f.a+"^")
+		if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "a.txt")
+		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: task-a")
+	}
+	rejected := func(t *testing.T, f fixture) {
+		t.Helper()
+		head := f.git("rev-parse", "HEAD")
+		if got := completionUnbindableTasks(f.repo, f.oldHead, head, []string{"task-a"}, &f.reopen); !slices.Equal(got, []string{"task-a"}) {
+			t.Fatalf("unsafe audit recovery accepted: %v", got)
+		}
+	}
+
+	t.Run("changed descendant", func(t *testing.T) {
+		f := newFixture(t)
+		rewriteA(t, f)
+		f.git("cherry-pick", f.b)
+		if err := os.WriteFile(filepath.Join(f.repo, "b.txt"), []byte("B changed\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", "b.txt")
+		f.git("commit", "--amend", "-q", "--no-edit")
+		rejected(t, f)
+	})
+	t.Run("new foreign binding", func(t *testing.T) {
+		f := newFixture(t)
+		rewriteA(t, f)
+		f.git("cherry-pick", f.b)
+		f.git("commit", "-q", "--allow-empty", "-m", "C\n\nCoop-Task: task-c")
+		rejected(t, f)
+	})
+	t.Run("duplicate subject binding", func(t *testing.T) {
+		f := newFixture(t)
+		f.git("commit", "-q", "--allow-empty", "-m", "duplicate A\n\nCoop-Task: task-a")
+		rejected(t, f)
+	})
+	t.Run("empty receipt commit", func(t *testing.T) {
+		f := newFixture(t)
+		f.git("commit", "-q", "--allow-empty", "-m", "receipt only")
+		rejected(t, f)
+	})
+	t.Run("message-only subject rewrite", func(t *testing.T) {
+		f := newFixture(t)
+		f.git("reset", "--hard", "-q", f.a)
+		f.git("commit", "--amend", "-q", "--no-edit", "--trailer", "Coop-Recovery: forged")
+		f.git("cherry-pick", f.b)
+		rejected(t, f)
+	})
+	t.Run("record cannot authorize another task", func(t *testing.T) {
+		f := newFixture(t)
+		if got := completionUnbindableTasks(f.repo, f.oldHead, f.oldHead, []string{"task-b"}, &f.reopen); !slices.Equal(got, []string{"task-b"}) {
+			t.Fatalf("task A recovery authorized task B: %v", got)
+		}
+	})
+}
+
 func TestRestoreUnbindableCompletions(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-unbound"

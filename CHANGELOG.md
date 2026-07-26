@@ -31,6 +31,10 @@
   malformed, interrupted, failed, and out-of-scope reviews cannot mutate task lifecycle state.
   Even `writes: repo` remounts every task queue read-only. Reviewer findings are stored only as
   delimited untrusted evidence; the next worker receives a fixed reproduction-first action.
+  A host-authenticated, single-use reopen generation now also permits a false finding to be
+  re-closed without a receipt-only commit, or an older implementation commit to be repaired while
+  exact later task changes are replayed unchanged. Changed, invented, duplicated, redirected, and
+  reused bindings still fail closed, including across interrupted completion cleanup.
 
 - **A task has exactly one reachable commit binding.** Completion rejects both a missing
   iteration binding, any second `Coop-Task` trailer reachable from `HEAD`, and any binding for a

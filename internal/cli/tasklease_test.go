@@ -41,6 +41,130 @@ func taskForLease(t *testing.T, root, state, id string) taskItem {
 	return item
 }
 
+func testAuditReopenRecord(id, generation string) auditReopenRecord {
+	return auditReopenRecord{
+		Version: auditReopenVersion, Generation: generation, TaskID: id,
+		Subject: auditReopenCommit{TaskID: id, ChangeTree: "subject-tree"},
+		Descendants: []auditReopenCommit{{
+			TaskID: "descendant", ChangeTree: "descendant-tree",
+		}},
+	}
+}
+
+func TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable(t *testing.T) {
+	root := t.TempDir()
+	first := taskForLease(t, root, stateInProgress, "first")
+	second := taskForLease(t, root, stateInProgress, "second")
+	record := testAuditReopenRecord(first.ID, "generation-one")
+	if err := writeAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	// Provider-writable task prose cannot redirect the host record to another task.
+	writeTaskFile(t, filepath.Join(second.Dir, "audit-reopen.json"), `{"generation":"generation-one"}`)
+
+	firstLease, _, err := tryTaskLease(root, first, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstLease.reopen == nil || firstLease.reopen.Generation != record.Generation {
+		t.Fatalf("first lease reopen = %#v, want %q", firstLease.reopen, record.Generation)
+	}
+	if err := moveTaskDir(root, first, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := currentTask(root, first.ID)
+	if err := finalizeQueuedCompletion(queuedTask{Root: root, Item: done}); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstLease.markCompleted(done.Dir); err != nil {
+		t.Fatal(err)
+	}
+	receipt, ok := readLeaseCompletionReceipt(firstLease.authority, done.Dir)
+	if !ok || receipt.AuditReopenGeneration != record.Generation {
+		t.Fatalf("completion receipt = %#v, ok=%v", receipt, ok)
+	}
+	if err := firstLease.consumeAuditReopen(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := readAuditReopenRecord(root, first.ID); err != nil || ok {
+		t.Fatalf("accepted generation remained reusable: ok=%v err=%v", ok, err)
+	}
+	if err := firstLease.release(); err != nil {
+		t.Fatal(err)
+	}
+
+	secondLease, _, err := tryTaskLease(root, second, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondLease.reopen != nil {
+		t.Fatalf("task-local forgery redirected authority: %#v", secondLease.reopen)
+	}
+	if err := secondLease.release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInterruptedAcceptedCompletionConsumesAuditReopenGeneration(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateInProgress, "interrupted")
+	record := testAuditReopenRecord(task.ID, "generation-crash")
+	if err := writeAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveTaskDir(root, task, stateDone); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := currentTask(root, task.ID)
+	if err := finalizeQueuedCompletion(queuedTask{Root: root, Item: done}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.markCompleted(done.Dir); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate process death after the receipt is durable but before generation consumption and
+	// ordinary lease cleanup: release the kernel descriptors while retaining crash metadata.
+	lease.quiesce()
+	if err := errors.Join(unlockLeaseFile(lease.local), unlockLeaseFile(lease.authority)); err != nil {
+		t.Fatal(err)
+	}
+	lease.local, lease.authority = nil, nil
+
+	if err := reconcileInterruptedCompletions([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := readAuditReopenRecord(root, task.ID); err != nil || ok {
+		t.Fatalf("crash replay retained accepted generation: ok=%v err=%v", ok, err)
+	}
+	if !pathExists(done.Dir) {
+		t.Fatal("crash replay restored an accepted audit completion")
+	}
+}
+
+func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateInProgress, "manual")
+	record := testAuditReopenRecord(task.ID, "generation-manual")
+	if err := writeAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	if err := completeTrustedTask(root, task); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := currentTask(root, task.ID)
+	receipt, ok := taskCompletionReceipt(root, done)
+	if !ok || receipt.AuditReopenGeneration != record.Generation {
+		t.Fatalf("manual completion receipt = %#v, ok=%v", receipt, ok)
+	}
+	if _, ok, err := readAuditReopenRecord(root, task.ID); err != nil || ok {
+		t.Fatalf("manual completion retained generation: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {
 	root, id := t.TempDir(), "resume-me"
 	item := taskForLease(t, root, stateInProgress, id)
