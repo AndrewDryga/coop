@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -305,6 +306,12 @@ exec "$REAL_MV" "$@"
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		// The gated mv shim spins until RELEASE exists; a fatal before the group
+		// SIGTERM below would otherwise orphan it past the test's exit.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, err := os.Stat(ready); err == nil {
@@ -338,10 +345,14 @@ func TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit(t *testing.T) {
 	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Gated arms record $$ so the test can reap the provider's setsid group by
+	// identity: the wrapper detaches providers into their own session, so killing a
+	// dead wrapper's process group never reaches them. The CRASH provider never
+	// exits on its own — terminating it is the harness's job, not a release file's.
 	provider := `#!/bin/sh
 echo start >>"$CALLS"
-case " $* " in *FIRST*) : >"$READY"; while [ ! -e "$RELEASE" ]; do sleep 0.05; done ;; esac
-case " $* " in *CRASH*) : >"$CRASH_READY"; while [ ! -e "$CRASH_RELEASE" ]; do sleep 0.05; done ;; esac
+case " $* " in *FIRST*) printf '%s' "$$" >"$READY"; while [ ! -e "$RELEASE" ]; do sleep 0.05; done ;; esac
+case " $* " in *CRASH*) printf '%s' "$$" >"$CRASH_READY"; while :; do sleep 0.05; done ;; esac
 echo REPLY
 `
 	for name, body := range map[string]string{"claude": provider, "timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n"} {
@@ -351,14 +362,20 @@ echo REPLY
 	}
 	role, key := "lock-test", "LOCK_TEST"
 	calls, ready, release := filepath.Join(dir, "calls"), filepath.Join(dir, "ready"), filepath.Join(dir, "release")
-	crashReady, crashRelease := filepath.Join(dir, "crash-ready"), filepath.Join(dir, "crash-release")
+	crashReady := filepath.Join(dir, "crash-ready")
 	env := append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir, "CALLS="+calls, "READY="+ready, "RELEASE="+release,
-		"CRASH_READY="+crashReady, "CRASH_RELEASE="+crashRelease, "COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
+		"CRASH_READY="+crashReady, "COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
 	first := exec.Command(wrapper, role, "--fresh", "FIRST")
 	first.Env = env
+	first.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-first.Process.Pid, syscall.SIGKILL)
+		_ = first.Wait()
+		reapConsultFixtureGroup(t, ready)
+	})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, err := os.Stat(ready); err == nil {
@@ -372,9 +389,14 @@ echo REPLY
 	}
 	second := exec.Command(wrapper, role, "--fresh", "SECOND")
 	second.Env = env
+	second.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := second.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-second.Process.Pid, syscall.SIGKILL)
+		_ = second.Wait()
+	})
 	time.Sleep(250 * time.Millisecond)
 	if data, _ := os.ReadFile(calls); strings.Count(string(data), "start") != 1 {
 		t.Fatalf("second consult entered provider while the first held the lock: %q", data)
@@ -392,10 +414,19 @@ echo REPLY
 	if _, err := exec.LookPath("flock"); err == nil {
 		crashed := exec.Command(wrapper, role, "--fresh", "CRASH")
 		crashed.Env = env
+		crashed.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := crashed.Start(); err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			_ = syscall.Kill(-crashed.Process.Pid, syscall.SIGKILL)
+			_ = crashed.Wait()
+			reapConsultFixtureGroup(t, crashReady)
+		})
 		waitForConsultTestFile(t, crashReady, crashed)
+		// Kill ONLY the wrapper — the owner crash under test. Its detached provider
+		// and capture spools must stay alive here: the flock has to release without
+		// their exit. The cleanup above reaps them once recovery is proven.
 		if err := crashed.Process.Kill(); err != nil {
 			t.Fatal(err)
 		}
@@ -405,7 +436,6 @@ echo REPLY
 		if out, err := recovered.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("REPLY")) {
 			t.Fatalf("kernel lock survived an unclean owner exit: %v\n%s", err, out)
 		}
-		_ = os.WriteFile(crashRelease, nil, 0o600)
 	} else {
 		t.Log("flock unavailable; serialization was exercised through the mkdir compatibility path")
 	}
@@ -484,6 +514,34 @@ func TestConsultWrapperRejectsHardlinkedContinuationLockBeforeDispatch(t *testin
 		t.Fatal(err)
 	} else if info.Mode().Perm() != 0o644 {
 		t.Fatalf("wrapper changed hardlinked file mode to %o", info.Mode().Perm())
+	}
+}
+
+// reapConsultFixtureGroup kills the setsid'd provider group a gated fixture recorded in
+// pidFile and observes the pid actually vanish — a survivor would reparent to PID 1 and
+// wedge coop-entry's descendant supervision long after `go test` reports green.
+func reapConsultFixtureGroup(t *testing.T, pidFile string) {
+	t.Helper()
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return // the fixture never reached its gate, so no detached group was left behind
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		t.Errorf("gated fixture recorded an unusable pid: %q", data)
+		return
+	}
+	if syscall.Kill(pid, 0) != nil {
+		return // already exited and reaped
+	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	deadline := time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Errorf("consult fixture provider pid %d survived test cleanup", pid)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
