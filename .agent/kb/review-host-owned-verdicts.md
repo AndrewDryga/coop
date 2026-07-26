@@ -40,6 +40,9 @@ identity. The next leased completion may use that generation either to re-close 
 disproved finding without changing Git, or to rewrite the subject while replaying those later task
 changes byte-for-byte. A changed or invented descendant, duplicate/redirected binding, message-only
 receipt rewrite, and task-local forgery are rejected. Failed attempts retain the generation;
+when a validated rewrite parks the task blocked for external acceptance, the still-held lease
+rebases that same generation to the rewritten subject while retaining the descendant baseline.
+Unblocking therefore resumes the same single-use authority rather than requiring another rewrite.
 finalization copies it into the host completion receipt before consuming it, so crash replay can
 finish consumption and an accepted generation cannot be reused.
 
@@ -56,6 +59,9 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-25 — preserved audit-reopen authority across a validated rewrite that settles blocked;
+  verified through real unblock and verification-only completion with an older subject plus
+  descendant.
 - 2026-07-25 — findings grammar accepts `none (parenthesized annotation)` exactly; verified
   against the verdict fail-closed table and the annotated-none bypass cases.
 - 2026-07-25 — added the one-turn malformed-verdict recovery boundary, per-attempt telemetry, and

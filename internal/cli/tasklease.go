@@ -375,6 +375,20 @@ func writeAuditReopenRecord(root string, record auditReopenRecord) error {
 	return atomicWriteTaskFile(registry, name, append(data, '\n'))
 }
 
+func replaceAuditReopenRecordIfMatches(root string, previous, replacement auditReopenRecord) error {
+	current, ok, err := readAuditReopenRecord(root, previous.TaskID)
+	if err != nil {
+		return err
+	}
+	if !ok || current.Generation != previous.Generation {
+		return fmt.Errorf("audit reopen generation changed for task %s", previous.TaskID)
+	}
+	if replacement.Generation != previous.Generation || replacement.TaskID != previous.TaskID {
+		return fmt.Errorf("audit reopen replacement changed authority for task %s", previous.TaskID)
+	}
+	return writeAuditReopenRecord(root, replacement)
+}
+
 func removeAuditReopenRecord(root, id string) error {
 	name, err := auditReopenRecordName(root, id)
 	if err != nil {

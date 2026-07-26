@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Externally blocked audit rework keeps its one-time verification authority.** When a
+  review-reopened task rewrites an older implementation while replaying its later task commits,
+  then pauses in `50_blocked/` for credentialed or host-only acceptance, Coop now validates that
+  rewrite and rebases the same host-owned generation to its new semantic subject. After a genuine
+  unblock, the task can close verification-only without another history rewrite; changed
+  descendants, replaced generations, task-local forgery, and reuse after completion still fail
+  closed.
+
 - **An annotated `none` in audit evidence no longer voids a passing review.** The findings field
   now accepts exactly `none` or `none (parenthesized annotation)` — the form models habitually
   write — so a PASS receipt with `findings: none (gate green, no scope creep)` applies cleanly

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -102,6 +103,37 @@ func TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable(t *testing.
 	}
 	if err := secondLease.release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAuditReopenRecordReplacementPreservesHostGeneration(t *testing.T) {
+	root := t.TempDir()
+	id := "replace-audit-baseline"
+	original := testAuditReopenRecord(id, "generation-original")
+	if err := writeAuditReopenRecord(root, original); err != nil {
+		t.Fatal(err)
+	}
+	rebased := original
+	rebased.Subject.ChangeTree = "rewritten-subject-tree"
+	if err := replaceAuditReopenRecordIfMatches(root, original, rebased); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := readAuditReopenRecord(root, id); err != nil || !ok || !reflect.DeepEqual(got, rebased) {
+		t.Fatalf("rebased record = %#v, ok=%v err=%v", got, ok, err)
+	}
+
+	replacement := rebased
+	replacement.Generation = "generation-replaced"
+	if err := writeAuditReopenRecord(root, replacement); err != nil {
+		t.Fatal(err)
+	}
+	secondRebase := rebased
+	secondRebase.Subject.ChangeTree = "second-rewrite"
+	if err := replaceAuditReopenRecordIfMatches(root, rebased, secondRebase); err == nil {
+		t.Fatal("authority replacement was accepted")
+	}
+	if got, ok, err := readAuditReopenRecord(root, id); err != nil || !ok || !reflect.DeepEqual(got, replacement) {
+		t.Fatalf("rejected replacement changed host authority: got=%#v ok=%v err=%v", got, ok, err)
 	}
 }
 

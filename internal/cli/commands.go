@@ -2976,6 +2976,10 @@ reviewAgain:
 				releaseErr := errors.Join(lease.release(), windowErr)
 				return 1, errors.Join(unownedCompletionError(unowned, restoreErr), releaseErr)
 			}
+			if err := lease.preserveBlockedAuditReopen(repo, iterHead, headAfter); err != nil {
+				releaseErr := errors.Join(lease.release(), windows.close())
+				return 1, errors.Join(fmt.Errorf("preserve task %s blocked audit reopen authority: %w", assigned.Item.ID, err), releaseErr)
+			}
 			// Finalize only the completion whose lease this controller owns. Concurrent controllers
 			// close their own crash boundaries and unowned moves have already failed closed above.
 			if assignedCompletion != nil {

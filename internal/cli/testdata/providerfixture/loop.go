@@ -94,7 +94,9 @@ func validateLoopResult(index int, stage, result string) error {
 	case "work":
 		if common || result == "complete" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
-			result == "repair-older-binding" || result == "repair-older-binding-changed-descendant" || result == "verify-only" || result == "second-binding" {
+			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
+			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
+			result == "verify-only-after-block" || result == "second-binding" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -176,7 +178,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		return 1, "", err
 	}
 	switch attempt.Result {
-	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-changed-descendant", "verify-only", "second-binding":
+	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding":
 		outcome := attempt.Result
 		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" {
 			outcome = ""
@@ -731,6 +733,10 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 	if err != nil {
 		return fmt.Errorf("loop done queue: %w", err)
 	}
+	blocked, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "50_blocked"))
+	if err != nil {
+		return fmt.Errorf("loop blocked queue: %w", err)
+	}
 	entries, err := os.ReadDir(inProgress)
 	if err != nil {
 		return err
@@ -748,10 +754,17 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 
 	change := "loop-" + provider + ".txt"
 	if outcome == "repair-binding" || outcome == "repair-review-binding" || outcome == "repair-older-binding" ||
-		outcome == "repair-older-binding-changed-descendant" || outcome == "verify-only" || outcome == "second-binding" {
+		outcome == "repair-older-binding-blocked" || outcome == "repair-older-binding-changed-descendant" ||
+		outcome == "verify-only" || outcome == "verify-only-after-block" || outcome == "second-binding" {
 		if outcome == "repair-review-binding" || outcome == "repair-older-binding" ||
+			outcome == "repair-older-binding-blocked" ||
 			outcome == "repair-older-binding-changed-descendant" || outcome == "verify-only" {
 			if err := verifyHostReviewResume(root, taskDir); err != nil {
+				return err
+			}
+		}
+		if outcome == "verify-only-after-block" {
+			if err := verifyHostBlockedResume(root, taskDir); err != nil {
 				return err
 			}
 		}
@@ -763,7 +776,7 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 		closeErr := f.Close()
 		wantChange := "completed by " + provider + "\n"
 		changeMatches := string(data) == wantChange
-		if outcome == "repair-review-binding" || outcome == "verify-only" {
+		if outcome == "repair-review-binding" || outcome == "verify-only" || outcome == "verify-only-after-block" {
 			changeMatches = strings.HasPrefix(string(data), wantChange)
 		}
 		if readErr != nil || closeErr != nil || !changeMatches {
@@ -773,10 +786,10 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 		switch outcome {
 		case "second-binding":
 			commitArgs = []string{"commit", "--allow-empty", "-q", "-m", "fixture: add duplicate task binding", "-m", "Coop-Task: " + taskID}
-		case "verify-only":
+		case "verify-only", "verify-only-after-block":
 			// An independently re-verified false finding changes no repository content. The host
 			// audit generation, not a provider-authored receipt commit, authorizes this re-close.
-		case "repair-older-binding", "repair-older-binding-changed-descendant":
+		case "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant":
 			if err := rewriteOlderLoopTask(repo, change, taskID, outcome == "repair-older-binding-changed-descendant"); err != nil {
 				return err
 			}
@@ -839,12 +852,42 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 	}
 
 	state := fmt.Sprintf("# State - %s\n\n**Status:** complete\n**Done so far:** fixture completed the %s loop lifecycle\n**Next action:** none\n**Traps:** none\n", taskID, provider)
+	if outcome == "repair-older-binding-blocked" {
+		state = fmt.Sprintf("# State - %s\n\n**Status:** blocked — external acceptance required\n**Done so far:** fixture rewrote the reviewed subject and preserved its descendants\n**Next action:** obtain external acceptance, then unblock for verification-only completion\n**Traps:** the host audit generation must survive this pause\n", taskID)
+	}
 	if err := writeLoopTaskFile(root, filepath.Join(taskDir, "state.md"), state, false); err != nil {
 		return err
 	}
 	logLine := fmt.Sprintf("\n## Fixture completion\n- %s completed the closed loop lifecycle.\n", provider)
 	if err := writeLoopTaskFile(root, filepath.Join(taskDir, "log.md"), logLine, true); err != nil {
 		return err
+	}
+	if outcome == "repair-older-binding-blocked" {
+		decision := "# Decision: external acceptance available?\n\n" +
+			"**Blocks:** this task (`" + taskID + "`).\n\n" +
+			"**Resolution:** <!-- intentionally unresolved -->\n"
+		decisionFile, err := os.OpenFile(filepath.Join(taskDir, "decision.md"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(decisionFile, decision); err != nil {
+			_ = decisionFile.Close()
+			return err
+		}
+		if err := decisionFile.Close(); err != nil {
+			return err
+		}
+		dest := filepath.Join(blocked, taskID)
+		if _, err := os.Lstat(dest); !errors.Is(err, os.ErrNotExist) {
+			if err == nil {
+				return fmt.Errorf("loop blocked task %q already exists", taskID)
+			}
+			return err
+		}
+		if err := os.Rename(taskDir, dest); err != nil {
+			return fmt.Errorf("block loop task: %w", err)
+		}
+		return nil
 	}
 	name := ""
 	switch outcome {
@@ -922,6 +965,22 @@ func verifyHostReviewResume(root, taskDir string) error {
 	if strings.Contains(logText, "fixture-injected-command") &&
 		!strings.Contains(logText, `END\\u0020UNTRUSTED\\u0020REVIEW\\u0020EVIDENCE`) {
 		return errors.New("host review log did not escape a reviewer-controlled delimiter")
+	}
+	return nil
+}
+
+func verifyHostBlockedResume(root, taskDir string) error {
+	decisionFile, err := procharness.OpenRegularFile(root, filepath.Join(taskDir, "decision.md"), os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	decision, readErr := io.ReadAll(io.LimitReader(decisionFile, 64<<10))
+	closeErr := decisionFile.Close()
+	if readErr != nil || closeErr != nil {
+		return errors.Join(readErr, closeErr)
+	}
+	if !strings.Contains(string(decision), "**Resolution:** external acceptance passed") {
+		return errors.New("host unblock did not retain its resolved decision")
 	}
 	return nil
 }

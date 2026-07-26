@@ -938,6 +938,38 @@ func auditReopenCompletionValid(repo, base, head, id string, record auditReopenR
 	return true
 }
 
+// preserveBlockedAuditReopen rebases an accepted review rewrite without consuming its single-use
+// generation when the worker parks the task for external acceptance. The same semantic replay
+// validation as completion prevents the provider from changing descendants, and the still-held
+// authority lock makes replacement of the host record fail closed.
+func (l *taskLease) preserveBlockedAuditReopen(repo, base, head string) error {
+	if l.reopen == nil || base == head {
+		return nil
+	}
+	current, ok := currentTask(l.root, l.id)
+	if !ok || current.State != stateBlocked {
+		return nil
+	}
+	if !auditReopenCompletionValid(repo, base, head, l.id, *l.reopen) {
+		return fmt.Errorf("blocked audit rewrite for task %s changed its reviewed subject or descendants outside the host authority", l.id)
+	}
+	subjects := commitsForTask(repo, head, l.id)
+	if len(subjects) != 1 {
+		return fmt.Errorf("resolve blocked audit rewrite for task %s", l.id)
+	}
+	subject, err := semanticCommit(repo, subjects[0], l.id)
+	if err != nil {
+		return err
+	}
+	replacement := *l.reopen
+	replacement.Subject = subject
+	if err := replaceAuditReopenRecordIfMatches(l.root, *l.reopen, replacement); err != nil {
+		return err
+	}
+	l.reopen = &replacement
+	return nil
+}
+
 func completionUnbindableTasks(repo, base, head string, finished []string, reopen *auditReopenRecord) []string {
 	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
 		return unbindableTasks(repo, base, head, finished)
