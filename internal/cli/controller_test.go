@@ -3171,9 +3171,15 @@ func TestOrdinaryAuditBindingIdentityRejectsGraftedDecoy(t *testing.T) {
 	}
 	ordinary := commitsForTask(repo, subject, "task-a")
 	raw, ok := rawTaskBindings(repo, subject)
-	if !ok || len(ordinary) != 1 || len(raw["task-a"]) != 1 ||
-		ordinary[0] == subject[:len(ordinary[0])] || raw["task-a"][0] != subject {
+	if !ok || len(raw["task-a"]) != 1 || raw["task-a"][0] != subject {
 		t.Fatalf("decoy fixture ordinary=%v raw=%v ok=%v", ordinary, raw, ok)
+	}
+	// Git versions disagree on whether the configured "=" separator yields the grafted decoy or
+	// no binding. Either way, the config-sensitive traversal must not identify the raw subject.
+	for _, sha := range ordinary {
+		if gitOut(repo, "rev-parse", "--verify", sha+"^{commit}") == subject {
+			t.Fatalf("configured traversal unexpectedly identified raw subject: ordinary=%v", ordinary)
+		}
 	}
 	if ordinaryBindingMatchesRaw(repo, subject, "task-a") {
 		t.Fatal("grafted ordinary decoy matched the distinct raw audit subject")
