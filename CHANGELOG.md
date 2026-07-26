@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop announces and pins its `loop.yaml` snapshot.** Every loop — including a fork loop —
+  now logs the exact startup `.agent/loop.yaml` it runs on (a short SHA-256 digest, or an explicit
+  absent/built-in-defaults state) and derives ladders, prompts, round caps, and write policy from
+  that one read for the whole run. A mid-run edit no longer silently never applies: before each
+  later work or review box launches, Coop compares the on-disk bytes with the snapshot and prints
+  one actionable `restart to apply` warning per new digest, while the running orchestration stays
+  on its coherent startup configuration.
+
 - **Externally blocked audit rework keeps its one-time verification authority.** When a
   review-reopened task rewrites an older implementation while replaying its later task commits,
   then pauses in `50_blocked/` for credentialed or host-only acceptance, Coop now validates that

@@ -2630,10 +2630,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	}
 	// .agent/loop.yaml is the committed loop config (prompts, per-step models, settings). A bad file
 	// fails the run here, before any box work. Absent → an empty config (all built-in defaults).
-	lc, err := loopcfg.Load(repo)
+	// The snapshot pins this ONE read for the whole run — announced here so every log names the
+	// exact config the run derives from, and checked for drift before each later box launch: a
+	// mid-run edit warns "restart to apply" instead of silently never applying (or, worse,
+	// hot-reloading half of a coherent ladders+prompts+caps+writes derivation).
+	lc, cfgSnap, err := loopcfg.LoadSnapshot(repo)
 	if err != nil {
 		return 1, err
 	}
+	ui.Info("loop config: %s", cfgSnap.State())
 	// loop.yaml `mcp: false` runs EVERY stage's box without the shared MCP config — the schemas
 	// ride at the front of each model request, so a drain that doesn't need those tools shouldn't
 	// pay for them each iteration. Sitting here (not cmdLoop) it covers fork loops too. Blanking
@@ -2728,8 +2733,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	}
 	a.streamSeq, a.streamOff = 0, false
 	// iterCmd builds one iteration's command: a raw work.command override if set,
-	// otherwise the chosen agent's headless form carrying the work/signoff prompt.
+	// otherwise the chosen agent's headless form carrying the work/signoff prompt. It runs
+	// exactly once per box launch — work, pre-flight, and every review attempt — so it is also
+	// the stage-launch boundary where loop.yaml drift is announced (once per new digest); the
+	// run itself stays on its startup snapshot.
 	iterCmd := func(iterAgent, prompt string) ([]string, bool) {
+		if warning, drifted := cfgSnap.Drift(); drifted {
+			ui.Warn("%s", warning)
+		}
 		var cmd []string
 		if len(custom) == 0 {
 			cmd = a.agentLoopCmd(iterAgent, prompt)

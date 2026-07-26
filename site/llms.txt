@@ -530,7 +530,12 @@ coop loop [agent] — work the task queue until done, then sign off.
   mcp: false runs every stage's box without the shared MCP config — the servers' tool schemas ride
   at the front of every model request, so a drain that never uses those tools shouldn't pay for
   them each iteration (leave it on if a verify: pass depends on MCP tooling). A missing file or
-  field = the built-in default. (coop init scaffolds a commented loop.yaml.)
+  field = the built-in default. (coop init scaffolds a commented loop.yaml.) The launch announces
+  the exact loop.yaml snapshot the run derives from — a short sha256 digest, or an explicit
+  absent/built-in-defaults state — and pins it for the whole run; ladders, prompts, caps, and
+  writes are one coherent read. A mid-run edit never hot-reloads: before each later box launch
+  coop compares the on-disk bytes with that snapshot and warns once per new digest that the run
+  keeps its startup config — restart the loop to apply the change.
 
   Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
   rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap

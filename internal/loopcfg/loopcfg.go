@@ -12,6 +12,8 @@ package loopcfg
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -108,13 +110,30 @@ var presetNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 // with no prompt are errors — surfaced at load so a typo fails before the loop starts, not
 // mid-run.
 func Load(repo string) (*Config, error) {
-	data, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(File)))
+	c, _, err := LoadSnapshot(repo)
+	return c, err
+}
+
+// LoadSnapshot is Load plus a Snapshot of the exact bytes the returned Config was parsed from.
+// A loop run pins the pair for its lifetime: config and digest always agree because there is no
+// second read between parse and snapshot.
+func LoadSnapshot(repo string) (*Config, *Snapshot, error) {
+	path := filepath.Join(repo, filepath.FromSlash(File))
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return &Config{}, nil
+		return &Config{}, &Snapshot{path: path}, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	c, err := parse(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, &Snapshot{path: path, digest: Digest(data)}, nil
+}
+
+func parse(data []byte) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo, not silently ignored
@@ -144,6 +163,66 @@ func Load(repo string) (*Config, error) {
 		}
 	}
 	return &c, nil
+}
+
+// Digest is the short content digest identifying a loop.yaml snapshot: the first 12 hex chars
+// of the bytes' SHA-256 — enough to tell two edits apart, short enough for a log line.
+func Digest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:6])
+}
+
+// Snapshot pins the exact loop.yaml bytes a run launched with. Model ladders, prompts, round
+// caps, and write policy are all derived from that ONE read, so a mid-run edit must never
+// hot-reload into a half-old half-new orchestration — instead the run announces its startup
+// state once and, at each later box launch, warns once per new on-disk digest that a restart
+// is needed to apply the change.
+type Snapshot struct {
+	path   string              // the file this run read
+	digest string              // Digest of the startup bytes; "" when the file was absent
+	warned map[string]struct{} // drifted digests already reported during this run
+}
+
+// State describes the startup snapshot for the launch announcement, with an explicit
+// absent/default form so "no file" is stated rather than silent.
+func (s *Snapshot) State() string {
+	if s.digest == "" {
+		return File + " absent — built-in defaults"
+	}
+	return File + " (sha256 " + s.digest + ")"
+}
+
+// Drift rereads the on-disk config and, when its bytes no longer match the startup snapshot,
+// returns an actionable warning — once per new digest, so an edited file doesn't warn on every
+// subsequent launch while an edit-of-the-edit still does. A read error other than not-exist is
+// not drift: the check is best-effort and must never block or spam a launch.
+func (s *Snapshot) Drift() (string, bool) {
+	data, err := os.ReadFile(s.path)
+	current := ""
+	switch {
+	case err == nil:
+		current = Digest(data)
+	case !os.IsNotExist(err):
+		return "", false
+	}
+	if current == s.digest {
+		return "", false
+	}
+	if _, warned := s.warned[current]; warned {
+		return "", false
+	}
+	if s.warned == nil {
+		s.warned = make(map[string]struct{})
+	}
+	s.warned[current] = struct{}{}
+	switch {
+	case current == "":
+		return fmt.Sprintf("%s was deleted mid-run — this run keeps its startup config (sha256 %s); restart to apply", File, s.digest), true
+	case s.digest == "":
+		return fmt.Sprintf("%s appeared mid-run (sha256 %s) — this run keeps its built-in defaults; restart to apply", File, current), true
+	default:
+		return fmt.Sprintf("%s changed mid-run (sha256 %s → %s) — this run keeps its startup config; restart to apply", File, s.digest, current), true
+	}
 }
 
 // Rungs classifies each `agent:` entry as a TARGET or a PRESET NAME: a bare identifier that is

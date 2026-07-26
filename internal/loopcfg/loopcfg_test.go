@@ -3,6 +3,7 @@ package loopcfg
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -108,6 +109,107 @@ func TestLoadRejects(t *testing.T) {
 				t.Errorf("expected error for:\n%s", body)
 			}
 		})
+	}
+}
+
+// LoadSnapshot digests the same bytes the Config was parsed from; an absent file gets the
+// explicit built-in-defaults state instead of a digest.
+func TestLoadSnapshotState(t *testing.T) {
+	body := "signoff:\n  rounds: 7\n"
+	repo := write(t, body)
+	c, snap, err := LoadSnapshot(repo)
+	if err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
+	if c.Signoff.Rounds != 7 {
+		t.Errorf("snapshot config = %+v, want the parsed file", c)
+	}
+	if want := File + " (sha256 " + Digest([]byte(body)) + ")"; snap.State() != want {
+		t.Errorf("State() = %q, want %q", snap.State(), want)
+	}
+	if _, absentSnap, err := LoadSnapshot(t.TempDir()); err != nil || absentSnap.State() != File+" absent — built-in defaults" {
+		t.Errorf("absent State() = %q, %v", absentSnap.State(), err)
+	}
+}
+
+// A mid-run edit drifts ONCE per new digest — the run keeps its startup snapshot, so the same
+// changed bytes must not warn again at every later box launch, while an edit-of-the-edit must.
+func TestSnapshotDrift(t *testing.T) {
+	original := "signoff:\n  rounds: 7\n"
+	repo := write(t, original)
+	_, snap, err := LoadSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, ".agent", "loop.yaml")
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("unchanged file drifted: %q", warning)
+	}
+	// Drift compares bytes, never re-parses: even an invalid edit only warns.
+	edited := "signoff:\n  rounds: [not yaml"
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	warning, drifted := snap.Drift()
+	if !drifted || !strings.Contains(warning, Digest([]byte(original))) ||
+		!strings.Contains(warning, Digest([]byte(edited))) || !strings.Contains(warning, "restart to apply") {
+		t.Errorf("edit drift = %q, %v", warning, drifted)
+	}
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("same digest warned twice: %q", warning)
+	}
+	if err := os.WriteFile(path, []byte(edited+"\n# again"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, drifted := snap.Drift(); !drifted {
+		t.Error("a second distinct edit must warn again")
+	}
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("an earlier drift digest warned again: %q", warning)
+	}
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("reverting to the startup bytes drifted: %q", warning)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	warning, drifted = snap.Drift()
+	if !drifted || !strings.Contains(warning, "deleted mid-run") || !strings.Contains(warning, "restart to apply") {
+		t.Errorf("delete drift = %q, %v", warning, drifted)
+	}
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("still-deleted file warned twice: %q", warning)
+	}
+}
+
+// A run started WITHOUT loop.yaml warns when one appears — it will not be picked up mid-run.
+func TestSnapshotDriftFromAbsent(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, snap, err := LoadSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("still-absent file drifted: %q", warning)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop.yaml"), []byte("mcp: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	warning, drifted := snap.Drift()
+	if !drifted || !strings.Contains(warning, "appeared mid-run") || !strings.Contains(warning, "built-in defaults") {
+		t.Errorf("appear drift = %q, %v", warning, drifted)
+	}
+	if warning, drifted := snap.Drift(); drifted {
+		t.Errorf("appeared file warned twice: %q", warning)
 	}
 }
 

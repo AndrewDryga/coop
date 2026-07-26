@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -193,6 +194,73 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				t.Fatalf("review stage telemetry[%d] = %#v, want %+v", i, record, expected)
 			}
 		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
+	t.Run("mid-run loop.yaml edit warns once and keeps the startup snapshot", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "loop-config-drift"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+		configPath := filepath.Join(suite.layout.Repo, ".agent", "loop.yaml")
+		startupConfig, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete-gated"},
+			{Target: between, Stage: "between", Result: "pass"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		process, err := procharness.Start(loopReviewCommand(suite, work))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		// The gated work box holds the run mid-iteration: rewrite the review prompts on disk —
+		// the "audit-prompt fix committed mid-run and believed active" incident — then release.
+		edited := bytes.ReplaceAll(startupConfig, []byte("FIXTURE"), []byte("EDITED"))
+		if err := os.WriteFile(configPath, edited, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		result := process.Wait(ctx)
+		cancel()
+		combined := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(combined, "queue verified done") {
+			t.Fatalf("config drift run = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if want := "loop config: " + loopcfg.File + " (sha256 " + loopcfg.Digest(startupConfig) + ")"; !strings.Contains(combined, want) {
+			t.Fatalf("missing startup snapshot announcement %q\nstdout:\n%s\nstderr:\n%s", want, result.Stdout, result.Stderr)
+		}
+		// One actionable warning for the new digest across BOTH post-edit launches (between and
+		// signoff) — not one per launch, and never a silent continue.
+		if got := strings.Count(combined, "restart to apply"); got != 1 {
+			t.Fatalf("drift warnings = %d, want exactly 1\nstdout:\n%s\nstderr:\n%s", got, result.Stdout, result.Stderr)
+		}
+		if !strings.Contains(combined, loopcfg.Digest(edited)) {
+			t.Fatalf("drift warning does not name the new digest %s\nstderr:\n%s", loopcfg.Digest(edited), result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("config drift run did not leave the reviewed task done")
+		}
+		// The fixture itself proved the active configuration never changed: both reviews ran and
+		// verifyLoopPrompt accepted only the ORIGINAL "FIXTURE BETWEEN"/"FIXTURE SIGNOFF" prompts.
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 3 || records[0].Stage != "work" || records[1].Stage != "between" || records[2].Stage != "signoff" {
+			t.Fatalf("config drift telemetry = %#v", records)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts, false)
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
