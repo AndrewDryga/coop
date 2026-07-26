@@ -1107,7 +1107,11 @@ Every review closes with one structured evidence line per subject and a PASS/FAI
 the exact sorted task IDs it proposes reopening. The default `writes: tasks` mode is report-only:
 the whole repository, including task queues, is read-only. Coop validates the complete proposal,
 acquires every subject's host-side task authority, and applies all exact-subject reopens as one
-transaction. Missing, malformed, interrupted, failed, and out-of-scope proposals mutate no task.
+transaction. If a successful review process returns malformed structured output, Coop immediately
+re-runs the complete review once over the same subjects under the same configured writes policy
+with a fixed receipt-format correction; each attempt gets its own telemetry record. A malformed
+second verdict, lifecycle churn, interruption, process failure, or out-of-scope proposal mutates
+no task.
 Reviewer findings are stored in a delimited untrusted log block; the next worker gets a fixed
 reproduction-first action instead of reviewer-authored instructions. `writes: repo` remains the
 deliberate source-fixing escape hatch, but every task queue is remounted read-only and lifecycle

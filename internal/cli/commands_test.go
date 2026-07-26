@@ -676,13 +676,66 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 		t.Run(tc.name+" mutates nothing", func(t *testing.T) {
 			root := t.TempDir()
 			task := taskForLease(t, root, stateDone, "task-a")
-			if reopened, err := applyReviewVerdictInRepo("", []string{root}, []string{task.ID}, tc.output); err == nil || len(reopened) != 0 {
+			reopened, err := applyReviewVerdictInRepo("", []string{root}, []string{task.ID}, tc.output)
+			if err == nil || len(reopened) != 0 {
 				t.Fatalf("invalid verdict = %v, %v; want no mutation + error", reopened, err)
+			}
+			if !errors.Is(err, errReviewVerdictMalformed) {
+				t.Fatalf("invalid structured verdict error = %v, want malformed-verdict retry sentinel", err)
 			}
 			if !pathExists(task.Dir) || pathExists(filepath.Join(root, stateInProgress, task.ID)) {
 				t.Fatal("invalid verdict changed the task queue")
 			}
 		})
+	}
+
+	t.Run("subject lifecycle failure is not a malformed-verdict retry", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, output string
+		}{
+			{"pass", "AUDIT EVIDENCE — task-a — gate: make check — findings: none\nREVIEW COMPLETE — PASS — reopened: none"},
+			{"fail", "AUDIT EVIDENCE — task-a — gate: make check — findings: broken\nREVIEW COMPLETE — FAIL — reopened: task-a"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				task := taskForLease(t, root, stateDone, "task-a")
+				if err := os.MkdirAll(filepath.Join(root, stateInProgress), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(task.Dir, filepath.Join(root, stateInProgress, task.ID)); err != nil {
+					t.Fatal(err)
+				}
+				reopened, err := applyReviewVerdictInRepo("", []string{root}, []string{task.ID}, tc.output)
+				if err == nil || len(reopened) != 0 || !errors.Is(err, errReviewVerdict) {
+					t.Fatalf("lifecycle verdict = %v, %v; want fail-closed verdict error", reopened, err)
+				}
+				if errors.Is(err, errReviewVerdictMalformed) {
+					t.Fatalf("lifecycle failure was misclassified as retryable malformed output: %v", err)
+				}
+			})
+		}
+	})
+}
+
+func TestReviewSubjectSnapshotsRejectLifecycleGenerationChange(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, stateDone, "task-a")
+	snapshots, err := snapshotReviewSubjects([]string{root}, []string{task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateReviewSubjects([]string{root}, snapshots); err != nil {
+		t.Fatalf("unchanged review subject failed validation: %v", err)
+	}
+
+	oldDir := filepath.Join(t.TempDir(), task.ID)
+	if err := os.Rename(task.Dir, oldDir); err != nil {
+		t.Fatal(err)
+	}
+	taskForLease(t, root, stateDone, task.ID)
+	if err := validateReviewSubjects([]string{root}, snapshots); err == nil ||
+		!strings.Contains(err.Error(), "changed completion generation") {
+		t.Fatalf("replacement review subject validation = %v, want generation change", err)
 	}
 }
 

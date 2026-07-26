@@ -54,6 +54,95 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	t.Run("malformed verdict gets one corrected full-review attempt at every review stage", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "review-verdict-correction-matrix"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, []string{verify}, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "malformed-review"},
+			{Target: between, Stage: "between", Result: "pass-corrected"},
+			{Target: signoff, Stage: "signoff", Result: "malformed-review"},
+			{Target: signoff, Stage: "signoff", Result: "pass-corrected"},
+			{Target: verify, Stage: "verify", Result: "malformed-review"},
+			{Target: verify, Stage: "verify", Result: "reopen-corrected"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReviewPTY(t, suite, work)
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stdout+result.Stderr, "review left 1 task actionable") {
+			t.Fatalf("review verdict correction matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("valid corrected FAIL verdict was not applied exactly once")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) {
+			t.Fatalf("corrected review telemetry = %#v", records)
+		}
+		want := []struct {
+			stage       string
+			in, out     int
+			doing, done int
+			reopened    int
+		}{
+			{"work", 101, 11, 0, 1, 0},
+			{"between", 202, 22, 0, 1, 0},
+			{"between", 202, 22, 0, 1, 0},
+			{"signoff", 303, 33, 0, 1, 0},
+			{"signoff", 303, 33, 0, 1, 0},
+			{"verify", 408, 48, 0, 1, 0},
+			{"verify", 408, 48, 1, 0, 1},
+		}
+		for i, record := range records {
+			if record.Stage != want[i].stage || record.Outcome != "success" || record.Exit != 0 ||
+				record.InTok != want[i].in || record.OutTok != want[i].out ||
+				record.QueueDoing != want[i].doing || record.QueueDone != want[i].done ||
+				record.Reopened != want[i].reopened {
+				t.Fatalf("corrected review telemetry[%d] = %#v", i, record)
+			}
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, true)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("two malformed signoff verdicts fail closed", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "review-verdict-double-malformed"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "malformed-review"},
+			{Target: signoff, Stage: "signoff", Result: "malformed-review-corrected"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "review verdict invalid") {
+			t.Fatalf("double-malformed signoff = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+			t.Fatal("double-malformed verdict changed the review subject")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[1].Stage != "signoff" || records[2].Stage != "signoff" ||
+			records[1].Reopened != 0 || records[2].Reopened != 0 {
+			t.Fatalf("double-malformed telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, false)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
 	t.Run("four provider stage and usage matrix", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
@@ -973,7 +1062,9 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			attempt.Result != "repair-older-binding-changed-descendant" && attempt.Result != "verify-only" &&
 			attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" &&
 			attempt.Result != "pass-with-host" && attempt.Result != "pass-with-descendant" &&
-			attempt.Result != "reopen" && attempt.Result != "reopen-gated" && attempt.Result != "reopen-injection" &&
+			attempt.Result != "pass-corrected" && attempt.Result != "reopen" && attempt.Result != "reopen-gated" &&
+			attempt.Result != "reopen-injection" && attempt.Result != "reopen-corrected" &&
+			attempt.Result != "malformed-review" && attempt.Result != "malformed-review-corrected" &&
 			!slices.Contains([]string{"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer"}, attempt.Result) {
 			wantExit = 23
 		}

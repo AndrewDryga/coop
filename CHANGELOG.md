@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A malformed review receipt gets one bounded correction turn.** Between, signoff, and verify
+  now re-run the complete review once over the same subjects under the same configured writes
+  policy when a successful process returns malformed structured output, appending a fixed
+  receipt-format reminder and recording both attempts. Valid recovered PASS/FAIL proposals apply
+  once; a malformed second proposal,
+  lifecycle churn, interruption, or provider failure retains the existing fail-closed behavior.
+  Codex review normalization also accepts its observed footer/count plus one byte-identical echo
+  of the complete explanatory response, while non-identical or additional proposals stay invalid.
+
 - **`coop up` names the Compose services it actually starts.** The success hint now gets the
   exact non-empty service names, in Compose order, from the selected runtime's resolved
   configuration instead of inventing `db`, `redis`, or another example. A discovery failure

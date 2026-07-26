@@ -23,10 +23,11 @@ const (
 )
 
 // normalizeCodexReviewOutput removes only the footer shape emitted by the Codex transport wrapper.
-// The wrapper either appends `tokens used` plus a formatted count, or repeats the exact terminal
-// model block before or after that footer. A different trailing block is not a second answer to
-// merge: it is an invalid envelope and gets an impossible terminal marker so strict receipt parsing
-// fails.
+// The wrapper appends `tokens used` plus a formatted count and may repeat the final agent message
+// or its exact terminal evidence/receipt block before or after that footer. Earlier agent messages
+// are narration, not part of the echoed response. A different trailing block is not a second answer
+// to merge: it is an invalid envelope and gets an impossible terminal marker so strict receipt
+// parsing fails.
 func normalizeCodexReviewOutput(output string) (string, bool) {
 	lines := strings.Split(output, "\n")
 	end := len(lines) - 1
@@ -62,67 +63,70 @@ func normalizeCodexReviewOutput(output string) (string, bool) {
 		return output, true
 	}
 
-	// Only blank lines may separate the model's receipt from the adapter footer. This keeps a
-	// model-authored paragraph containing the same words from becoming transport-owned syntax.
-	receiptLine := footer - 1
-	for receiptLine >= 0 && strings.TrimSpace(lines[receiptLine]) == "" {
-		receiptLine--
-	}
-	if receiptLine < 0 {
-		return rejectCodexReviewEnvelope(output)
-	}
-	if _, ok := parseReviewReceiptLine(lines[receiptLine]); !ok {
-		return rejectCodexReviewEnvelope(output)
-	}
-
-	// The terminal block is contiguous evidence plus its receipt. Comparing its line bytes exactly
-	// prevents two model-authored answers from being treated as a harmless duplicate.
-	const evidencePrefix = "AUDIT EVIDENCE — "
-	blockStart := receiptLine
-	for blockStart > 0 && strings.HasPrefix(strings.TrimSpace(lines[blockStart-1]), evidencePrefix) {
-		blockStart--
-	}
-	terminalBlock := strings.Join(lines[blockStart:receiptLine+1], "\n")
-
-	// In the block-before-footer form, the wrapper repeats the terminal block immediately before
-	// the footer. Accept that only when the whole block is byte-identical; otherwise the strict
-	// parser must see an ambiguous response and reject it.
-	duplicateStart := -1
-	previous := blockStart - 1
-	for previous >= 0 && strings.TrimSpace(lines[previous]) == "" {
-		previous--
-	}
-	if previous >= 0 {
-		if _, ok := parseReviewReceiptLine(lines[previous]); ok {
-			previousStart := previous
-			for previousStart > 0 && strings.HasPrefix(strings.TrimSpace(lines[previousStart-1]), evidencePrefix) {
-				previousStart--
-			}
-			previousBlock := strings.Join(lines[previousStart:previous+1], "\n")
-			if previousBlock != terminalBlock {
-				return rejectCodexReviewEnvelope(output)
-			}
-			duplicateStart = blockStart
-		} else if strings.Contains(lines[previous], "REVIEW COMPLETE — ") {
+	beforeFooter := lines[:footer]
+	afterFooter := strings.Join(lines[footer+2:end+1], "\n")
+	if afterFooter != "" {
+		if !validCodexReviewCandidate(afterFooter) ||
+			codexReviewReceiptCount(beforeFooter)+codexReviewReceiptCount(strings.Split(afterFooter, "\n")) != 2 ||
+			!hasCodexReviewSuffix(beforeFooter, afterFooter) {
 			return rejectCodexReviewEnvelope(output)
 		}
+		return afterFooter, true
 	}
+	if canonical, ok := codexReviewCandidate(beforeFooter); ok {
+		return canonical, true
+	}
+	if canonical, ok := duplicatedCodexReviewSuffix(beforeFooter); ok {
+		return canonical, true
+	}
+	return rejectCodexReviewEnvelope(output)
+}
 
-	afterFooter := strings.Join(lines[footer+2:end+1], "\n")
-	if afterFooter != "" && afterFooter != terminalBlock {
-		return rejectCodexReviewEnvelope(output)
+func codexReviewCandidate(lines []string) (string, bool) {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
 	}
+	if len(lines) == 0 || codexReviewReceiptCount(lines) != 1 {
+		return "", false
+	}
+	candidate := strings.Join(lines, "\n")
+	if _, valid := reviewReopenReceipt(candidate); !valid {
+		return "", false
+	}
+	return candidate, true
+}
 
-	// Keep the model response and discard the adapter-owned footer (and, when present, its exact
-	// echo). The parser still validates the remaining response as one strict terminal block.
-	canonical := strings.Join(lines[:footer], "\n")
-	if duplicateStart >= 0 {
-		canonical = strings.TrimRight(strings.Join(lines[:duplicateStart], "\n"), "\r\n")
+func validCodexReviewCandidate(candidate string) bool {
+	_, ok := codexReviewCandidate(strings.Split(candidate, "\n"))
+	return ok
+}
+
+func codexReviewReceiptCount(lines []string) int {
+	count := 0
+	for _, line := range lines {
+		if _, valid := parseReviewReceiptLine(line); valid {
+			count++
+		}
 	}
-	if _, ok := reviewReopenReceipt(canonical); !ok {
-		return rejectCodexReviewEnvelope(output)
+	return count
+}
+
+func hasCodexReviewSuffix(lines []string, candidate string) bool {
+	before := strings.Join(lines, "\n")
+	return before == candidate || strings.HasSuffix(before, "\n"+candidate)
+}
+
+func duplicatedCodexReviewSuffix(lines []string) (string, bool) {
+	if codexReviewReceiptCount(lines) != 2 {
+		return "", false
 	}
-	return canonical, true
+	for start := 1; start < len(lines); start++ {
+		candidate, ok := codexReviewCandidate(lines[start:])
+		if ok && hasCodexReviewSuffix(lines[:start], candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func rejectCodexReviewEnvelope(output string) (string, bool) {

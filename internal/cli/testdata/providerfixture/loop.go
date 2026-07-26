@@ -99,8 +99,10 @@ func validateLoopResult(index int, stage, result string) error {
 		}
 	case "between", "signoff", "verify":
 		if common || result == "pass" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-descendant" ||
-			result == "reopen" || result == "reopen-gated" || result == "reopen-injection" || result == "reopen-authentication" ||
-			result == "reopen-ordinary" || result == "reopen-wait" || result == "complete-extra" || isCodexReviewWrapperResult(result) {
+			result == "pass-corrected" || result == "reopen" || result == "reopen-gated" || result == "reopen-injection" ||
+			result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" ||
+			result == "reopen-corrected" || result == "malformed-review" || result == "malformed-review-corrected" ||
+			result == "complete-extra" || isCodexReviewWrapperResult(result) {
 			return nil
 		}
 	default:
@@ -230,8 +232,18 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return waitLoopSignal(root, trace)
 		}
 		return 0, "", nil
-	case "pass", "pass-host-completion", "pass-with-host", "pass-with-descendant", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "complete-extra",
+	case "pass", "pass-host-completion", "pass-with-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
 		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer":
+		switch attempt.Result {
+		case "malformed-review":
+			if err := verifyLoopReviewCorrection(root, plan.TaskID, attempt.Stage, provider, providerArgv, false); err != nil {
+				return 1, "", err
+			}
+		case "malformed-review-corrected", "pass-corrected", "reopen-corrected":
+			if err := verifyLoopReviewCorrection(root, plan.TaskID, attempt.Stage, provider, providerArgv, true); err != nil {
+				return 1, "", err
+			}
+		}
 		if !strings.HasPrefix(attempt.Result, "reopen") {
 			if err := verifyLoopTaskDone(root, plan.TaskID); err != nil {
 				return 1, "", err
@@ -291,6 +303,13 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			if err := waitLoopRelease(root, plan.TaskID); err != nil {
 				return 1, "", err
 			}
+		}
+		if attempt.Result == "malformed-review" || attempt.Result == "malformed-review-corrected" {
+			reply = "AUDIT EVIDENCE — " + plan.TaskID + " — gate: fixture gate — findings: none\n" +
+				"REVIEW COMPLETE — MAYBE — reopened: none"
+		}
+		if isCodexReviewWrapperResult(attempt.Result) {
+			reply = "I inspected the complete task before writing the structured proposal.\n" + reply
 		}
 		emitLoopReplyWithWrapper(provider, providerArgv, reply, codexReviewWrapper(attempt.Result))
 		if attempt.Result == "reopen-ordinary" {
@@ -501,6 +520,27 @@ func loopReviewReply(taskID, stage string, reopened bool) string {
 func loopReviewReplyWithFinding(taskID, finding string) string {
 	return "AUDIT EVIDENCE — " + taskID + " — gate: fixture gate — findings: " + finding + "\n" +
 		"REVIEW COMPLETE — FAIL — reopened: " + taskID
+}
+
+const loopReviewVerdictCorrection = "\n\nREVIEW RECEIPT FORMAT CORRECTION: The previous review process succeeded, but Coop could not validate its structured verdict. Re-run the complete review over the same named subjects and return exactly one evidence line per subject followed by exactly one terminal `REVIEW COMPLETE` receipt, with nothing after that receipt."
+
+func verifyLoopReviewCorrection(root, taskID, stage, provider string, argv []string, corrected bool) error {
+	prompt := loopPromptFrom(provider, argv)
+	path := filepath.Join(root, "state", "loop-review-prompt-"+taskID+"-"+stage)
+	if !corrected {
+		if strings.Contains(prompt, loopReviewVerdictCorrection) {
+			return errors.New("first malformed review unexpectedly carried the correction prompt")
+		}
+		return os.WriteFile(path, []byte(prompt), 0o600)
+	}
+	base, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read malformed review base prompt: %w", err)
+	}
+	if prompt != string(base)+loopReviewVerdictCorrection {
+		return errors.New("corrected review did not preserve the base prompt and append the fixed correction")
+	}
+	return nil
 }
 
 func isCodexReviewWrapperResult(result string) bool {

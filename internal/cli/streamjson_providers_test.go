@@ -173,6 +173,8 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		"REVIEW COMPLETE — PASS — reopened: none"
 	fail := "AUDIT EVIDENCE — task-a — gate: make check — findings: missing test\n" +
 		"REVIEW COMPLETE — FAIL — reopened: task-a"
+	passWithPrelude := "I inspected the task and ran its gate.\n" + pass
+	failWithPrelude := "I found one regression after running the gate.\n" + fail
 	footer := "tokens used\n162,824"
 	for _, tc := range []struct {
 		name, block      string
@@ -185,6 +187,8 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		{name: "fail footer and echo", block: fail, echoAfterFooter: true},
 		{name: "pass echo and footer", block: pass, echoBeforeFooter: true},
 		{name: "fail echo and footer", block: fail, echoBeforeFooter: true},
+		{name: "pass full explanatory response after footer", block: passWithPrelude, echoAfterFooter: true},
+		{name: "fail full explanatory response before footer", block: failWithPrelude, echoBeforeFooter: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := tc.block
@@ -206,6 +210,34 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		})
 	}
 
+	// Codex can emit an earlier agent_message before its final review response. The transport
+	// wrapper echoes only that final message around its usage footer, not the full accumulated tail.
+	for _, tc := range []struct {
+		name             string
+		echoAfterFooter  bool
+		echoBeforeFooter bool
+	}{
+		{name: "final message echo after footer", echoAfterFooter: true},
+		{name: "final message echo before footer", echoBeforeFooter: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			narration := "I will inspect the task first."
+			final := "I inspected the task and ran its gate.\n" + pass
+			output := narration + "\n" + final
+			if tc.echoBeforeFooter {
+				output += "\n" + final
+			}
+			output += "\n" + footer
+			if tc.echoAfterFooter {
+				output += "\n" + final
+			}
+			got, ok := normalizeCodexReviewOutput(output)
+			if !ok || got != final {
+				t.Fatalf("normalizeCodexReviewOutput = %q/%v, want final response %q/true", got, ok, final)
+			}
+		})
+	}
+
 	for _, tc := range []struct {
 		name, output string
 	}{
@@ -220,6 +252,10 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		{
 			name:   "two model blocks without envelope",
 			output: pass + "\n" + pass,
+		},
+		{
+			name:   "echo on both sides of footer",
+			output: pass + "\n" + pass + "\n" + footer + "\n" + pass,
 		},
 		{
 			name:   "arbitrary trailing prose",

@@ -1745,8 +1745,9 @@ func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*
 type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming bool)
 
 var (
-	errReviewInterrupted = errors.New("review interrupted")
-	errReviewVerdict     = errors.New("review verdict invalid")
+	errReviewInterrupted      = errors.New("review interrupted")
+	errReviewVerdict          = errors.New("review verdict invalid")
+	errReviewVerdictMalformed = errors.New("review verdict malformed")
 )
 
 type completionWindowMode uint8
@@ -1821,7 +1822,11 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 		}
 		if receipt, ok := reviewReopenReceipt(out); ok && len(receipt.reopened) > 0 && classification.outcome != "success" {
-			return last, fmt.Errorf("failed review stage declared reopen for %s; verdict was not applied", strings.Join(receipt.reopened, ", "))
+			verdictErr := fmt.Errorf("failed review stage declared reopen for %s; verdict was not applied", strings.Join(receipt.reopened, ", "))
+			if classification.outcome == "authentication" {
+				return last, fmt.Errorf("%w; %v", iterationAuthenticationError(target), verdictErr)
+			}
+			return last, verdictErr
 		}
 		switch action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &outputRetries); action {
 		case actContinue:
@@ -1851,6 +1856,104 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 			return last, fmt.Errorf("review stage reached the model output limit %d times — stopping", outputRetries)
 		}
 	}
+}
+
+const reviewVerdictCorrection = "\n\nREVIEW RECEIPT FORMAT CORRECTION: The previous review process succeeded, but Coop could not validate its structured verdict. Re-run the complete review over the same named subjects and return exactly one evidence line per subject followed by exactly one terminal `REVIEW COMPLETE` receipt, with nothing after that receipt."
+
+type reviewAttemptObserver func(reviewRunResult, time.Time, string)
+
+type reviewSubjectSnapshot struct {
+	root        string
+	dir         string
+	id          string
+	fingerprint completionFingerprint
+}
+
+func snapshotReviewSubjects(hosts, subjects []string) ([]reviewSubjectSnapshot, error) {
+	snapshots := make([]reviewSubjectSnapshot, 0, len(subjects))
+	for _, id := range subjects {
+		subject, err := reviewSubject(hosts, id)
+		if err != nil {
+			return nil, err
+		}
+		fingerprint, err := completionFingerprintFor(subject.Root, subject.Item)
+		if err != nil {
+			return nil, fmt.Errorf("review subject %s fingerprint: %w", id, err)
+		}
+		snapshots = append(snapshots, reviewSubjectSnapshot{
+			root: subject.Root, dir: subject.Item.Dir, id: id, fingerprint: fingerprint,
+		})
+	}
+	return snapshots, nil
+}
+
+func validateReviewSubjects(hosts []string, snapshots []reviewSubjectSnapshot) error {
+	for _, snapshot := range snapshots {
+		subject, err := reviewSubject(hosts, snapshot.id)
+		if err != nil {
+			return err
+		}
+		if subject.Root != snapshot.root || subject.Item.Dir != snapshot.dir {
+			return fmt.Errorf("review subject %s changed task queue", snapshot.id)
+		}
+		fingerprint, err := completionFingerprintFor(subject.Root, subject.Item)
+		if err != nil {
+			return fmt.Errorf("review subject %s fingerprint: %w", snapshot.id, err)
+		}
+		if fingerprint != snapshot.fingerprint {
+			return fmt.Errorf("review subject %s changed completion generation", snapshot.id)
+		}
+	}
+	return nil
+}
+
+// runReviewVerdict owns the complete review under its configured writes policy and the host-side
+// verdict transaction. A successful process with malformed structured output gets one fresh full
+// review over cloned inputs; every other failure keeps runReview/applyReviewVerdict's existing
+// fail-closed behavior.
+func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+	hosts = slices.Clone(hosts)
+	subjects = slices.Clone(subjects)
+	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
+	if err != nil {
+		return reviewRunResult{target: rev.active()}, fmt.Errorf("%w: snapshot review subjects: %v", errCompletionWindowSetup, err)
+	}
+	var concurrent []string
+	var last reviewRunResult
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			if err := validateReviewSubjects(hosts, subjectSnapshots); err != nil {
+				return last, fmt.Errorf("%w: review subjects changed before the corrected attempt: %v", errCompletionWindowAudit, err)
+			}
+		}
+		attemptPrompt := prompt
+		if attempt > 0 {
+			attemptPrompt += reviewVerdictCorrection
+		}
+		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+		run, err := a.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, writes, sink, peers, wake)
+		concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, run.concurrent...))))
+		run.concurrent = slices.Clone(concurrent)
+		if err == nil {
+			if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+				err = fmt.Errorf("%w: review subjects changed before verdict application: %v", errCompletionWindowAudit, snapshotErr)
+			} else {
+				run.reopened, err = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
+			}
+		}
+		if observe != nil {
+			observe(run, start, headBefore)
+		}
+		last = run
+		if err == nil || !errors.Is(err, errReviewVerdictMalformed) || attempt > 0 {
+			return run, err
+		}
+		if reviewStopRequested(ctx, wake) {
+			return interruptedReviewResult(last, last.retries), errReviewInterrupted
+		}
+		ui.Warn("%s process succeeded but its structured verdict was malformed — re-running the full review once with a receipt-format correction", activity)
+	}
+	return last, nil
 }
 
 func reviewStopRequested(ctx context.Context, wake <-chan struct{}) bool {
@@ -1966,25 +2069,25 @@ func lifecycleTaskSubject(hosts []string, id string) (queuedTask, error) {
 func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output string) ([]string, error) {
 	receipt, ok := reviewReopenReceipt(output)
 	if !ok {
-		return nil, fmt.Errorf("%w: missing or malformed terminal receipt", errReviewVerdict)
+		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt", errReviewVerdict, errReviewVerdictMalformed)
 	}
 	if len(subjects) == 0 {
 		if len(receipt.reopened) != 0 {
-			return nil, fmt.Errorf("%w: review has no task subjects to reopen", errReviewVerdict)
+			return nil, fmt.Errorf("%w: %w: review has no task subjects to reopen", errReviewVerdict, errReviewVerdictMalformed)
 		}
 		if _, hasEvidence := auditEvidenceFrom(output); hasEvidence {
-			return nil, fmt.Errorf("%w: review with no task subjects reported task evidence", errReviewVerdict)
+			return nil, fmt.Errorf("%w: %w: review with no task subjects reported task evidence", errReviewVerdict, errReviewVerdictMalformed)
 		}
 		return nil, nil
 	}
 	evidence, ok := auditEvidenceFrom(output)
 	if !ok || len(evidence) != len(subjects) {
-		return nil, fmt.Errorf("%w: expected exactly one structured audit record for each review subject", errReviewVerdict)
+		return nil, fmt.Errorf("%w: %w: expected exactly one structured audit record for each review subject", errReviewVerdict, errReviewVerdictMalformed)
 	}
 	reopenSet := make(map[string]bool, len(receipt.reopened))
 	for _, id := range receipt.reopened {
 		if !slices.Contains(subjects, id) {
-			return nil, fmt.Errorf("%w: task %s is not a review subject", errReviewVerdict, id)
+			return nil, fmt.Errorf("%w: %w: task %s is not a review subject", errReviewVerdict, errReviewVerdictMalformed, id)
 		}
 		reopenSet[id] = true
 	}
@@ -1992,18 +2095,18 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 	for _, id := range subjects {
 		observation, exists := evidence[id]
 		if !exists {
-			return nil, fmt.Errorf("%w: review subject %s has no structured audit record", errReviewVerdict, id)
+			return nil, fmt.Errorf("%w: %w: review subject %s has no structured audit record", errReviewVerdict, errReviewVerdictMalformed, id)
 		}
 		hasFinding := !strings.EqualFold(strings.TrimSpace(observation.findings), "none")
 		if reopenSet[id] != hasFinding {
-			return nil, fmt.Errorf("%w: review subject %s findings disagree with the terminal receipt", errReviewVerdict, id)
-		}
-		if !reopenSet[id] {
-			continue
+			return nil, fmt.Errorf("%w: %w: review subject %s findings disagree with the terminal receipt", errReviewVerdict, errReviewVerdictMalformed, id)
 		}
 		task, err := reviewSubject(hosts, id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", errReviewVerdict, err)
+		}
+		if !reopenSet[id] {
+			continue
 		}
 		tasks = append(tasks, task)
 	}
@@ -2944,7 +3047,6 @@ reviewAgain:
 						// An ordinary configured audit preserves its historical warn-and-continue behavior.
 						// A protected audit is mandatory: failure or a missing/mismatched receipt stops
 						// before another task can trust the changed gate.
-						btStart, btHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 						stage := "between audit"
 						if protectedAudit {
 							stage = "protected audit"
@@ -2955,13 +3057,12 @@ reviewAgain:
 						if iterCtx != nil {
 							hardStop = iterCtx.Done()
 						}
-						btRun, rerr := a.runReview(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, lc.Between.Writes, sink, peers, hardStop)
-						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
-						if rerr == nil {
-							btRun.reopened, rerr = applyReviewVerdictInRepo(repo, hosts, finishedIDs, btRun.output)
+						observe := func(run reviewRunResult, start time.Time, headBefore string) {
+							a.recordStage(repo, runid, "between", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, auditGateFiles, run.usage)
 						}
+						btRun, rerr := a.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, lc.Between.Writes, sink, peers, hardStop, observe)
+						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						reopenedIDs := btRun.reopened
-						a.recordStage(repo, runid, "between", btRun.outcome, btRun.target, btStart, btRun.exit, btRun.retries, len(reopenedIDs), btHead, hosts, nil, auditGateFiles, btRun.usage)
 						if errors.Is(rerr, errReviewInterrupted) {
 							break
 						}
@@ -3074,20 +3175,19 @@ reviewAgain:
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
 		// rather than let "nothing reopened" read as an accepting signoff.
-		soStart, soHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		// Hand the signoff the run's change context (per task, bound by the Coop-Task trailer) + health,
 		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
+		soHead := gitOut(repo, "rev-parse", "HEAD")
 		cs := loopChanges(repo, loopStartHead, soHead)
 		subjectIDs := taskIDsOf(subjects)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(subjectIDs) + cs.reviewBlock(health)
-		soRun, serr := a.runReview(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, lc.Signoff.Writes, sink, peers, wake)
-		if serr == nil {
-			soRun.reopened, serr = applyReviewVerdictInRepo(repo, hosts, subjectIDs, soRun.output)
+		observe := func(run reviewRunResult, start time.Time, headBefore string) {
+			a.recordStage(repo, runid, "signoff", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
+		soRun, serr := a.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, lc.Signoff.Writes, sink, peers, wake, observe)
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
-		a.recordStage(repo, runid, "signoff", soRun.outcome, soRun.target, soStart, soRun.exit, soRun.retries, len(reopenedIDs), soHead, hosts, nil, nil, soRun.usage)
 		if errors.Is(serr, errReviewInterrupted) {
 			cf, _ := queueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
@@ -3163,19 +3263,17 @@ reviewAgain:
 			ui.Info("verify pass — e2e the affected features (%s)", strings.Join(cs.subsystems, ", "))
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) +
 				"\n\n" + auditEvidencePrompt + "\n\n" + reviewContextFooter(repo, queues)
-			vStart, vHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			verifyIDs := completedReviewSubjects(hosts, completedThisRun)
 			verifyActivity := reviewActivity("verify", verifyIDs)
 			if len(verifyIDs) == 0 {
 				verifyActivity = "verify: unbound changes"
 			}
-			vRun, verr := a.runReview(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, lc.Verify.Writes, sink, peers, wake)
-			if verr == nil {
-				vRun.reopened, verr = applyReviewVerdictInRepo(repo, hosts, verifyIDs, vRun.output)
+			observe := func(run reviewRunResult, start time.Time, headBefore string) {
+				a.recordStage(repo, runid, "verify", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 			}
+			vRun, verr := a.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, lc.Verify.Writes, sink, peers, wake, observe)
 			reopenedIDs := vRun.reopened
 			health.noteReopen(reopenedIDs)
-			a.recordStage(repo, runid, "verify", vRun.outcome, vRun.target, vStart, vRun.exit, vRun.retries, len(reopenedIDs), vHead, hosts, nil, nil, vRun.usage)
 			if errors.Is(verr, errReviewInterrupted) {
 				cf, _ := queueProgress(hosts)
 				fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
@@ -3184,7 +3282,9 @@ reviewAgain:
 			if errors.Is(verr, errCompletionWindowSetup) || errors.Is(verr, errCompletionWindowAudit) {
 				return 1, verr
 			}
-			if verr != nil {
+			if errors.Is(verr, errReviewVerdictMalformed) {
+				ui.Warn("verify verdict remained malformed after one receipt-format correction — no proposal was applied; the affected features remain unverified")
+			} else if verr != nil {
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 			}
 			reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, vRun.concurrent)

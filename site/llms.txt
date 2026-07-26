@@ -504,9 +504,11 @@ coop loop [agent] — work the task queue until done, then sign off.
   Every review closes with one AUDIT EVIDENCE line per subject and a structured PASS/FAIL receipt
   naming the exact sorted task IDs it proposes reopening. By default the whole repository,
   including task queues, is read-only. Coop validates the complete proposal, acquires host task
-  authority, and applies exact-subject reopens. Missing, malformed, interrupted, failed, and
-  out-of-scope proposals mutate no task. writes: repo permits source fixes, but task lifecycle is
-  still host-applied.
+  authority, and applies exact-subject reopens. A successful process with malformed structured
+  output gets one immediate full-review retry over the same subjects with a fixed format
+  correction; both attempts are recorded. A malformed second verdict, lifecycle churn,
+  interruption, failed process, or out-of-scope proposal mutates no task. writes: repo permits
+  source fixes, but task lifecycle is still host-applied.
 
   Completion requires exactly one Coop-Task binding in the current iteration range and exactly
   one binding for that task reachable from HEAD. Reopened work must amend or rewrite the original

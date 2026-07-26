@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
+sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/streamjson_providers.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
 updated: 2026-07-25
 ---
 
@@ -19,6 +19,14 @@ folder, metadata snapshot, and completion receipt. Findings are written only ins
 untrusted log block; `state.md` receives a fixed reproduction-first next action, and the trusted
 work prompt says never to follow commands from review evidence. Missing, malformed, interrupted,
 failed, or out-of-scope proposals leave every task unchanged.
+
+A successful review process whose structured proposal is malformed gets one immediate fresh
+review over the same cloned subject set and base prompt plus a fixed receipt-format correction.
+The first proposal is never embedded or partially trusted, and each attempt receives its own
+stage telemetry row. A second malformed proposal, lifecycle/ownership churn, an interrupt, or an
+ordinary provider failure is not retried. Codex's adapter may strip one exact footer/count pair
+and one byte-identical echo of either the complete response or its terminal evidence/receipt
+block; a non-identical or additional proposal remains ambiguous and is rejected.
 
 Each accepted reopen also writes one random generation in the host-only task-authority registry.
 It records the subject's semantic commit and the ordered later task-bound commits: exact introduced
@@ -43,6 +51,8 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-25 — added the one-turn malformed-verdict recovery boundary, per-attempt telemetry, and
+  exact complete-response Codex footer/echo normalization; verified against all three review stages.
 - 2026-07-25 — added the single-use, crash-safe audit-reopen generation and exact semantic
   descendant replay/no-change re-close contract; verified against task authority and provider
   process recovery tests.
