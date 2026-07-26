@@ -29,6 +29,7 @@ const (
 // to merge: it is an invalid envelope and gets an impossible terminal marker so strict receipt
 // parsing fails.
 func normalizeCodexReviewOutput(output string) (string, bool) {
+	output = normalizeReviewVerdictOutput(output)
 	lines := strings.Split(output, "\n")
 	end := len(lines) - 1
 	for end >= 0 && strings.TrimSpace(lines[end]) == "" {
@@ -59,6 +60,7 @@ func normalizeCodexReviewOutput(output string) (string, bool) {
 			if _, ok := reviewReopenReceipt(output); !ok {
 				return rejectCodexReviewEnvelope(output)
 			}
+			return output, true
 		}
 		return output, true
 	}
@@ -66,6 +68,9 @@ func normalizeCodexReviewOutput(output string) (string, bool) {
 	beforeFooter := lines[:footer]
 	afterFooter := strings.Join(lines[footer+2:end+1], "\n")
 	if afterFooter != "" {
+		if validCodexReviewCandidate(afterFooter) && !hasCodexStructuredReviewLine(beforeFooter) {
+			return afterFooter, true
+		}
 		if !validCodexReviewCandidate(afterFooter) ||
 			codexReviewReceiptCount(beforeFooter)+codexReviewReceiptCount(strings.Split(afterFooter, "\n")) != 2 ||
 			!hasCodexReviewSuffix(beforeFooter, afterFooter) {
@@ -80,6 +85,16 @@ func normalizeCodexReviewOutput(output string) (string, bool) {
 		return canonical, true
 	}
 	return rejectCodexReviewEnvelope(output)
+}
+
+func hasCodexStructuredReviewLine(lines []string) bool {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "AUDIT EVIDENCE — ") || strings.Contains(line, "REVIEW COMPLETE — ") {
+			return true
+		}
+	}
+	return false
 }
 
 func codexReviewCandidate(lines []string) (string, bool) {

@@ -538,6 +538,112 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 		}
 	})
 
+	t.Run("byte-identical wrapper echo is one logical verdict", func(t *testing.T) {
+		root := t.TempDir()
+		task := taskForLease(t, root, stateDone, "task-a")
+		envelope := "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+			"REVIEW COMPLETE — PASS — reopened: none"
+		output := envelope + "\n" + envelope
+		reopened, err := applyReviewVerdictInRepo("", []string{root}, []string{task.ID}, output)
+		if err != nil || len(reopened) != 0 {
+			t.Fatalf("byte-identical wrapper echo = %v, %v", reopened, err)
+		}
+		if !pathExists(task.Dir) {
+			t.Fatal("byte-identical wrapper echo moved the archived task")
+		}
+	})
+
+	t.Run("byte-identical failed wrapper echo reopens once", func(t *testing.T) {
+		repo, root, tasks := reviewVerdictFixture(t, "task-a")
+		task := tasks["task-a"]
+		envelope := "AUDIT EVIDENCE — task-a — gate: make check — findings: missing denial-path test\n" +
+			"REVIEW COMPLETE — FAIL — reopened: task-a"
+		reopened, err := applyReviewVerdictInRepo(repo, []string{root}, []string{task.ID}, envelope+"\n"+envelope)
+		if err != nil || !slices.Equal(reopened, []string{task.ID}) {
+			t.Fatalf("byte-identical failed wrapper echo = %v, %v", reopened, err)
+		}
+		if pathExists(task.Dir) || !pathExists(filepath.Join(root, stateInProgress, task.ID)) {
+			t.Fatal("byte-identical failed wrapper echo did not reopen the task exactly once")
+		}
+	})
+
+	t.Run("wrapper echo near-misses stay malformed", func(t *testing.T) {
+		pass := "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+			"REVIEW COMPLETE — PASS — reopened: none"
+		fail := "AUDIT EVIDENCE — task-a — gate: make check — findings: missing denial-path test\n" +
+			"REVIEW COMPLETE — FAIL — reopened: task-a"
+		for _, tc := range []struct {
+			name     string
+			subjects []string
+			output   string
+		}{
+			{
+				name:     "conflicting receipts",
+				subjects: []string{"task-a"},
+				output:   pass + "\n" + fail,
+			},
+			{
+				name:     "differing evidence for the same subject",
+				subjects: []string{"task-a"},
+				output: pass + "\n" +
+					"AUDIT EVIDENCE — task-a — gate: make align — findings: none\n" +
+					"REVIEW COMPLETE — PASS — reopened: none",
+			},
+			{
+				name:     "repeated evidence without its receipt",
+				subjects: []string{"task-a"},
+				output: "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+					"AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+					"REVIEW COMPLETE — PASS — reopened: none",
+			},
+			{
+				name:     "more than one echo",
+				subjects: []string{"task-a"},
+				output:   pass + "\n" + pass + "\n" + pass,
+			},
+			{
+				name:     "missing subject",
+				subjects: []string{"task-a", "task-b"},
+				output:   pass + "\n" + pass,
+			},
+			{
+				name:     "extra subject",
+				subjects: []string{"task-a"},
+				output: "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+					"AUDIT EVIDENCE — task-b — gate: make check — findings: none\n" +
+					"REVIEW COMPLETE — PASS — reopened: none\n" +
+					"AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
+					"AUDIT EVIDENCE — task-b — gate: make check — findings: none\n" +
+					"REVIEW COMPLETE — PASS — reopened: none",
+			},
+			{
+				name:     "out-of-scope reopen",
+				subjects: []string{"task-a"},
+				output: "AUDIT EVIDENCE — task-b — gate: make check — findings: broken\n" +
+					"REVIEW COMPLETE — FAIL — reopened: task-b\n" +
+					"AUDIT EVIDENCE — task-b — gate: make check — findings: broken\n" +
+					"REVIEW COMPLETE — FAIL — reopened: task-b",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				tasks := make(map[string]taskItem, len(tc.subjects))
+				for _, id := range tc.subjects {
+					tasks[id] = taskForLease(t, root, stateDone, id)
+				}
+				reopened, err := applyReviewVerdictInRepo("", []string{root}, tc.subjects, tc.output)
+				if err == nil || len(reopened) != 0 || !errors.Is(err, errReviewVerdictMalformed) {
+					t.Fatalf("wrapper echo near-miss = %v, %v; want malformed verdict", reopened, err)
+				}
+				for _, task := range tasks {
+					if !pathExists(task.Dir) || pathExists(filepath.Join(root, stateInProgress, task.ID)) {
+						t.Fatalf("wrapper echo near-miss changed task %s", task.ID)
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("pass with annotated none applies cleanly", func(t *testing.T) {
 		root := t.TempDir()
 		task := taskForLease(t, root, stateDone, "task-a")

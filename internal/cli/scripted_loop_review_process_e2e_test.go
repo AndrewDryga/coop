@@ -96,6 +96,38 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
+	t.Run("Codex split footer echo is accepted without a malformed-verdict retry", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "codex-review-split-footer-echo"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "pass-codex-split-footer-echo"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReviewPTY(t, suite, work)
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(result.Stdout+result.Stderr, "queue verified done") ||
+			strings.Contains(result.Stderr, "structured verdict was malformed") {
+			t.Fatalf("Codex split footer echo = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("Codex split footer echo did not leave the reviewed task done")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[1].Stage != "between" || records[1].Reopened != 0 {
+			t.Fatalf("Codex split footer echo telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts, true)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
 	t.Run("malformed verdict gets one corrected full-review attempt at every review stage", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
@@ -1267,7 +1299,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			attempt.Result != "pass-corrected" && attempt.Result != "reopen" && attempt.Result != "reopen-gated" &&
 			attempt.Result != "reopen-injection" && attempt.Result != "reopen-corrected" &&
 			attempt.Result != "malformed-review" && attempt.Result != "malformed-review-corrected" &&
-			!slices.Contains([]string{"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer"}, attempt.Result) {
+			!slices.Contains([]string{"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer", "pass-codex-split-footer-echo"}, attempt.Result) {
 			wantExit = 23
 		}
 		if attempt.Result == "wait" {

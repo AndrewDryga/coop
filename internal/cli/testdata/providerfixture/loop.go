@@ -259,6 +259,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		return 191, "", nil
 	case "pass", "pass-host-completion", "pass-with-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
 		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer",
+		"pass-codex-split-footer-echo",
 		"background-drained-review", "background-timeout-review":
 		switch attempt.Result {
 		case "malformed-review":
@@ -625,7 +626,7 @@ func verifyLoopReviewCorrection(root, taskID, stage, provider string, argv []str
 
 func isCodexReviewWrapperResult(result string) bool {
 	switch result {
-	case "pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer":
+	case "pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer", "pass-codex-split-footer-echo":
 		return true
 	default:
 		return false
@@ -640,6 +641,8 @@ func codexReviewWrapper(result string) string {
 		return "footer-echo"
 	case "pass-codex-echo-footer", "reopen-codex-echo-footer":
 		return "echo-footer"
+	case "pass-codex-split-footer-echo":
+		return "split-footer-echo"
 	default:
 		return ""
 	}
@@ -729,6 +732,11 @@ func emitLoopReplyWithWrapper(provider string, argv []string, reply, wrapper str
 		}
 		emitCodexReviewMessage()
 		if wrapper == "echo-footer" {
+			emitCodexReviewMessage()
+		}
+		if wrapper == "split-footer-echo" {
+			fmt.Fprintln(os.Stderr, codexReviewFixtureFooter)
+			fmt.Fprintln(os.Stderr, "162,824")
 			emitCodexReviewMessage()
 		}
 		if wrapper == "footer" || wrapper == "footer-echo" || wrapper == "echo-footer" {

@@ -250,8 +250,8 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 			output: pass + "\n" + fail + "\n" + footer,
 		},
 		{
-			name:   "two model blocks without envelope",
-			output: pass + "\n" + pass,
+			name:   "more than one model echo without envelope",
+			output: pass + "\n" + pass + "\n" + pass,
 		},
 		{
 			name:   "echo on both sides of footer",
@@ -280,6 +280,19 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 	got, ok := normalizeCodexReviewOutput(pass)
 	if !ok || got != pass {
 		t.Fatalf("ordinary Codex response = %q/%v, want unchanged", got, ok)
+	}
+	got, ok = normalizeCodexReviewOutput(pass + "\n" + pass)
+	if !ok || got != pass {
+		t.Fatalf("byte-identical Codex response echo = %q/%v, want %q/true", got, ok, pass)
+	}
+	for _, output := range []string{
+		footer + "\n" + pass,
+		footer + "\n" + pass + "\n" + pass,
+	} {
+		got, ok = normalizeCodexReviewOutput(output)
+		if !ok || got != pass {
+			t.Fatalf("Codex footer reordered before response = %q/%v, want %q/true", got, ok, pass)
+		}
 	}
 }
 

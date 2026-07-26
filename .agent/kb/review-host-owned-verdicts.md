@@ -3,7 +3,7 @@ name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
 sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/loopcfg/loopcfg.go]
-updated: 2026-07-25
+updated: 2026-07-26
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -31,7 +31,10 @@ The first proposal is never embedded or partially trusted, and each attempt rece
 stage telemetry row. A second malformed proposal, lifecycle/ownership churn, an interrupt, or an
 ordinary provider failure is not retried. Codex's adapter may strip one exact footer/count pair
 and one byte-identical echo of either the complete response or its terminal evidence/receipt
-block; a non-identical or additional proposal remains ambiguous and is rejected.
+block. Because stdout/stderr collection can place that footer outside the response tail, the host
+verdict boundary also collapses one earlier normalized evidence+receipt envelope only when it is
+byte-identical to the terminal envelope. A non-identical, partial, or additional proposal remains
+ambiguous and is rejected.
 
 Each accepted reopen also writes one random generation in the host-only task-authority registry.
 It records the subject's semantic commit and the ordered later task-bound commits: exact introduced
@@ -59,6 +62,9 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-07-26 — accepted one exact normalized evidence+receipt echo at the host verdict boundary,
+  including a Codex footer routed on the other stream; verified against conflict, partial,
+  additional, subject-scope, and external process cases.
 - 2026-07-25 — preserved audit-reopen authority across a validated rewrite that settles blocked;
   verified through real unblock and verification-only completion with an older subject plus
   descendant.

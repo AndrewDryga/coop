@@ -132,8 +132,8 @@ func auditEvidenceFrom(output string) (map[string]auditEvidence, bool) {
 		evidence[id] = auditEvidence{gate: gate, findings: findings}
 	}
 	// A second structured block is not evidence to merge or deduplicate. It is an ambiguous
-	// provider response and must fail closed unless the Codex adapter already proved it was the
-	// exact echoed block in its transport-owned footer envelope.
+	// provider response and must fail closed unless the verdict boundary already proved it was one
+	// exact normalized echo of the terminal evidence+receipt envelope.
 	for _, line := range lines[:blockStart] {
 		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
 			return nil, false

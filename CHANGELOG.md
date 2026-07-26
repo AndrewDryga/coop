@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Byte-identical review wrapper echoes count as one verdict.** The host verdict boundary now
+  collapses one exact normalized duplicate of the complete evidence-plus-receipt envelope, so a
+  Codex usage footer routed separately from its repeated final message does not consume the
+  malformed-receipt correction. Conflicting or merely similar records, partial or additional
+  echoes, missing or extra subjects, and out-of-scope reopens remain invalid.
+
 - **Deleting a task now deletes its stale orchestration authority too.** `coop tasks rm`,
   `rm --all-done`, and interactive decision deletion remove the task id from interrupted
   completion-window journals, lease receipts, controller metadata, audit-reopen generations, and

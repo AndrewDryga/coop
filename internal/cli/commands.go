@@ -1950,6 +1950,7 @@ func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *rotat
 		}
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		run, err := a.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, writes, sink, peers, wake, observe)
+		run.output = normalizeReviewVerdictOutput(run.output)
 		concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, run.concurrent...))))
 		run.concurrent = slices.Clone(concurrent)
 		if err == nil {
@@ -2050,6 +2051,66 @@ func reviewReopenReceipt(output string) (reviewReceipt, bool) {
 	return reviewReceipt{}, false
 }
 
+// normalizeReviewVerdictOutput collapses one transport-owned echo of the complete structured
+// envelope. Some wrappers split their usage footer onto stderr while stdout retains both the
+// original final message and its byte-identical echo, so provider-specific footer stripping cannot
+// prove the duplication. The host boundary can: only one earlier normalized evidence+receipt block
+// exactly equal to the terminal block is removed. Any difference, partial echo, or additional copy
+// remains in place for the strict receipt/evidence parsers to reject.
+func normalizeReviewVerdictOutput(output string) string {
+	const evidencePrefix = "AUDIT EVIDENCE — "
+
+	lines := strings.Split(output, "\n")
+	last := len(lines) - 1
+	for last >= 0 && strings.TrimSpace(lines[last]) == "" {
+		last--
+	}
+	if last < 1 {
+		return output
+	}
+	if _, ok := parseReviewReceiptLine(lines[last]); !ok {
+		return output
+	}
+	envelopeStart := last
+	for envelopeStart > 0 && strings.HasPrefix(strings.TrimSpace(lines[envelopeStart-1]), evidencePrefix) {
+		envelopeStart--
+	}
+	if envelopeStart == last {
+		return output
+	}
+
+	envelope := lines[envelopeStart : last+1]
+	matchStart := -1
+	for start := 0; start+len(envelope) <= envelopeStart; start++ {
+		if start > 0 && strings.HasPrefix(strings.TrimSpace(lines[start-1]), evidencePrefix) {
+			continue
+		}
+		equal := true
+		for offset := range envelope {
+			if strings.TrimSpace(lines[start+offset]) != strings.TrimSpace(envelope[offset]) {
+				equal = false
+				break
+			}
+		}
+		if !equal {
+			continue
+		}
+		if matchStart >= 0 {
+			return output
+		}
+		matchStart = start
+		start += len(envelope) - 1
+	}
+	if matchStart < 0 {
+		return output
+	}
+
+	normalized := make([]string, 0, len(lines)-len(envelope))
+	normalized = append(normalized, lines[:matchStart]...)
+	normalized = append(normalized, lines[matchStart+len(envelope):]...)
+	return strings.Join(normalized, "\n")
+}
+
 func reviewSubject(hosts []string, id string) (queuedTask, error) {
 	found, err := lifecycleTaskSubject(hosts, id)
 	if err != nil {
@@ -2085,6 +2146,7 @@ func lifecycleTaskSubject(hosts []string, id string) (queuedTask, error) {
 // validated before the first move; then the host completion authority serializes each exact-subject
 // reopen and its resume metadata. A malformed, missing, or out-of-scope verdict mutates nothing.
 func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output string) ([]string, error) {
+	output = normalizeReviewVerdictOutput(output)
 	receipt, ok := reviewReopenReceipt(output)
 	if !ok {
 		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt", errReviewVerdict, errReviewVerdictMalformed)
