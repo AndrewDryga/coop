@@ -2,8 +2,8 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/controller.go, internal/cli/fork.go, internal/cli/fork_loop.go, internal/cli/fork_fleet.go, internal/cli/fork_merge.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-07-16
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/fork.go, internal/cli/fork_loop.go, internal/cli/fork_fleet.go, internal/cli/fork_merge.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+updated: 2026-07-26
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -57,8 +57,13 @@ state-link case reruns the loop to repair the commit binding, clean scratch, and
 
 The recovery matrix drives the real external controller through authentication, provider and output
 limits, ordinary errors, exact diagnostic phrases in assistant prose, malformed/truncated streams,
-account/model cooling, all 12 directed rotations, all-limited waiting and process-group cancellation, and
-interruption/resume. The fixture records exactly one expected provider/target/result per attempt and
+account/model cooling, all 12 directed rotations, all-limited waiting/resume and process-group
+cancellation, and interruption/resume. Claude's credit-limit rows cover both its structured
+assistant error plus terminal error result and the non-streaming CLI's exact failed-stdout notices.
+They prove both provider boundaries route to strict iteration diagnostics, rotate first across
+accounts and then providers, and never spend the ordinary-failure counter. The plain-output path
+rejects success, extra prose, quotes, and overflow rather than trusting a truncated stdout tail.
+The fixture records exactly one expected provider/target/result per attempt and
 never selects the successor. Exact wait arithmetic remains in injected-clock unit tests. Telemetry
 asserts a closed outcome per attempt, and completion reconciliation returns both bound and unbound
 crash-left work to the normal range-validated resume path after its lease is released. The task-local
@@ -109,6 +114,9 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-07-26 - added the exact non-streaming Claude credit-limit stdout rotation boundary
+- 2026-07-25 - corrected Claude credit-limit coverage to the upstream structured assistant + result boundary
+- 2026-07-25 - added Claude assistant-only credit-limit rotation and all-limited wait/resume coverage
 - 2026-07-16 - added detached fork, fleet rotation, crash, reused-pid, and repo-scoped cleanup coverage
 - 2026-07-16 - added fork session isolation and merge lifecycle process coverage
 - 2026-07-16 - moved authoritative leases to host-only state and scoped finalization to the assigned task

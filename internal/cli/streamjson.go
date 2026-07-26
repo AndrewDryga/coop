@@ -36,6 +36,9 @@ type streamDecoder struct {
 	last       *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
 	failed     bool              // a valid terminal error event landed
 	limitShown bool              // a blocking structured limit already owns the visible notice
+	// Claude can end an exhausted model-credit run with only this exact assistant notice and a
+	// nonzero exit. Keep it provisional until runIteration proves the stream ended incomplete.
+	terminalLimitNotice string
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
@@ -246,6 +249,13 @@ func (d *streamDecoder) event(raw json.RawMessage) {
 	switch ev.Type {
 	case "assistant":
 		d.assistant(ev.Message)
+		if ev.Error == "rate_limit" {
+			// Claude's direct model-credit denial is an assistant event whose top-level error
+			// is the authoritative signal. Keep its prose in the response tail, but give the
+			// iteration classifier a canonical diagnostic independent of wording changes.
+			d.limitShown = true
+			d.toDiagnostic("rate limit exceeded")
+		}
 	case "user":
 		d.toolResult(ev.Message)
 	case "system":
@@ -308,16 +318,22 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 	if json.Unmarshal(msg, &m) != nil {
 		return
 	}
+	d.terminalLimitNotice = ""
 	for _, b := range m.Content {
 		switch b.Type {
 		case "text":
 			if t := strings.TrimSpace(b.Text); t != "" {
+				d.terminalLimitNotice = ""
 				if !d.limitShown || !streamLimitNotice(t) {
 					d.emit(ui.Magenta(llmIcon) + " " + t) // mark the agent's own voice
 				}
 				d.toTail(t) // the tail (limit detection) always gets the plain text
+				if claudeCreditLimitNotice(t) {
+					d.terminalLimitNotice = t
+				}
 			}
 		case "tool_use":
+			d.terminalLimitNotice = ""
 			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, b.Input)
 			line := glyph + " " + displayName
 			if label != "" {
@@ -334,6 +350,37 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			d.tool[b.ID] = strings.TrimSpace(displayName + " " + label)
 		}
 	}
+}
+
+// promoteTerminalLimitDiagnostic resolves Claude's one ambiguous stream shape after the process
+// exits. Assistant text normally remains response-only, but Claude's model-credit exhaustion can
+// emit this direct notice as its final event and then exit nonzero without a result event. Only
+// that otherwise-incomplete boundary is authoritative; explicit success/error and malformed
+// terminal events keep owning classification.
+func (d *streamDecoder) promoteTerminalLimitDiagnostic(code int, outcome providerStreamOutcome) {
+	if code == 0 || outcome != streamIncomplete || d.limitShown || d.terminalLimitNotice == "" {
+		return
+	}
+	d.toDiagnostic(d.terminalLimitNotice)
+}
+
+func claudeCreditLimitNotice(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if !strings.HasPrefix(lower, "you've reached your ") &&
+		!strings.HasPrefix(lower, "you have reached your ") {
+		return false
+	}
+	const action = "run /usage-credits to continue or switch models with /model"
+	actionAt := strings.Index(lower, action)
+	if actionAt < 0 {
+		return false
+	}
+	prefix := strings.TrimSpace(lower[:actionAt])
+	if !strings.HasSuffix(prefix, " limit.") || !agents.CLIRateLimited(prefix) {
+		return false
+	}
+	suffix := strings.TrimSpace(lower[actionAt+len(action):])
+	return suffix == "" || suffix == "."
 }
 
 // toolResult flags a failed tool call; a success is left implied by the next action, to keep
@@ -944,6 +991,7 @@ type streamEvent struct {
 	Model        string          `json:"model"`
 	Message      json.RawMessage `json:"message"`
 	RateLimit    *rateLimitInfo  `json:"rate_limit_info"`
+	Error        string          `json:"error"`
 	IsError      bool            `json:"is_error"`
 	Result       string          `json:"result"`
 	NumTurns     int             `json:"num_turns"`

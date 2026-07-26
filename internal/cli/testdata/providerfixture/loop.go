@@ -64,6 +64,12 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		if !homes[target.Provider] {
 			return fmt.Errorf("loop attempt %d provider %q has no projected home", i, target.Provider)
 		}
+		if (attempt.Result == "claude-credit-limit" ||
+			attempt.Result == "claude-credit-limit-plain" ||
+			attempt.Result == "claude-credit-limit-plain-uncontracted") &&
+			target.Provider != "claude" {
+			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
+		}
 		if err := validateLoopResult(i, attempt.Stage, attempt.Result); err != nil {
 			return err
 		}
@@ -80,7 +86,9 @@ func loopAttemptTarget(index int, attempt loopAttempt) (agents.Target, error) {
 }
 
 func validateLoopResult(index int, stage, result string) error {
-	common := result == "rate-limit" || result == "output-limit" || result == "authentication" || result == "ordinary" ||
+	common := result == "rate-limit" || result == "rate-limit-short" || result == "claude-credit-limit" ||
+		result == "claude-credit-limit-plain" || result == "claude-credit-limit-plain-uncontracted" ||
+		result == "output-limit" || result == "authentication" || result == "ordinary" ||
 		result == "ambiguous-limit-prose" || result == "ambiguous-auth-prose" || result == "malformed" || result == "truncated" || result == "wait"
 	switch stage {
 	case "work":
@@ -275,6 +283,40 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 	case "rate-limit":
 		fmt.Fprintln(os.Stderr, "usage limit reached")
 		fmt.Fprintln(os.Stderr, "retry-after: 3600")
+	case "rate-limit-short":
+		fmt.Fprintln(os.Stderr, "usage limit reached")
+		fmt.Fprintln(os.Stderr, "retry-after: 3s")
+	case "claude-credit-limit":
+		if provider != "claude" || !loopStreaming(provider, providerArgv) {
+			return 1, "", errors.New("claude credit-limit outcome requires a streaming Claude attempt")
+		}
+		notice := "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+		encoder := json.NewEncoder(os.Stdout)
+		_ = encoder.Encode(map[string]any{
+			"type":  "assistant",
+			"error": "rate_limit",
+			"message": map[string]any{
+				"content": []map[string]any{{
+					"type": "text",
+					"text": notice,
+				}},
+			},
+		})
+		_ = encoder.Encode(map[string]any{
+			"type":     "result",
+			"subtype":  "success",
+			"is_error": true,
+			"result":   notice,
+		})
+	case "claude-credit-limit-plain", "claude-credit-limit-plain-uncontracted":
+		if provider != "claude" || loopStreaming(provider, providerArgv) {
+			return 1, "", errors.New("plain Claude credit-limit outcome requires a non-streaming Claude attempt")
+		}
+		notice := "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+		if attempt.Result == "claude-credit-limit-plain-uncontracted" {
+			notice = "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+		}
+		fmt.Fprintln(os.Stdout, notice)
 	case "output-limit":
 		fmt.Fprintln(os.Stderr, "maximum output length")
 	case "authentication":

@@ -3427,6 +3427,38 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 	return append(result, cmd[at:]...)
 }
 
+const maxClaudePlainLimitBytes = 512
+
+// claudePlainLimitProbe keeps only small, complete non-streaming stdout. Claude can print its
+// model-credit denial there and exit nonzero, but ordinary assistant prose also uses stdout, so a
+// truncated tail is unsafe: any overflow or extra text must invalidate the signal.
+type claudePlainLimitProbe struct {
+	mu       sync.Mutex
+	buf      []byte
+	overflow bool
+}
+
+func (p *claudePlainLimitProbe) Write(chunk []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.overflow || len(chunk) > maxClaudePlainLimitBytes-len(p.buf) {
+		p.buf = nil
+		p.overflow = true
+		return len(chunk), nil
+	}
+	p.buf = append(p.buf, chunk...)
+	return len(chunk), nil
+}
+
+func (p *claudePlainLimitProbe) limited(code int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if code == 0 || p.overflow {
+		return false
+	}
+	return claudeCreditLimitNotice(strings.TrimSpace(string(p.buf)))
+}
+
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
 // capturing a response tail and a separate terminal-diagnostic tail. hosts are the queue files the
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
@@ -3478,6 +3510,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	}
 	var stdoutW io.Writer
 	var dec iterationStreamDecoder
+	var plainClaudeLimit *claudePlainLimitProbe
 	if streaming {
 		dec = newIterationStreamDecoder(agent, io.MultiWriter(outWs...), tail, diagnostic, a.cfg.ActiveProfile(agent), box.Workdir(a.cfg, repo), a.cfg.ModelFor(agent))
 	}
@@ -3492,6 +3525,10 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		plainWs := append(outWs, tail)
 		if rawTrace != nil {
 			plainWs = append([]io.Writer{rawTrace}, plainWs...)
+		}
+		if agent == "claude" && !streaming {
+			plainClaudeLimit = &claudePlainLimitProbe{}
+			plainWs = append(plainWs, plainClaudeLimit)
 		}
 		stdoutW = io.MultiWriter(plainWs...)
 	}
@@ -3543,6 +3580,9 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		dec.flush()                // before tail.String(): final events must reach the rate-limit tail
 		res = dec.lastIterResult() // result cost/turns/tokens (nil if none landed), for telemetry
 		streamOutcome = dec.streamOutcome()
+		if claude, ok := dec.(*streamDecoder); ok {
+			claude.promoteTerminalLimitDiagnostic(code, streamOutcome)
+		}
 		if streamErr := validateProviderStream(code, err, streamOutcome); err == nil && streamErr != nil {
 			message := streamErr.Error()
 			fmt.Fprintln(termErr, message)
@@ -3554,6 +3594,11 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	if stderrFilter != nil {
 		if flushErr := stderrFilter.flush(); err == nil {
 			err = flushErr
+		}
+	}
+	if plainClaudeLimit != nil {
+		if plainClaudeLimit.limited(code) {
+			_, _ = io.WriteString(diagnostic, "rate limit exceeded\n")
 		}
 	}
 	if live {

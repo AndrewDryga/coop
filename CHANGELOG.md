@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Claude model-credit limits rotate the loop instead of spending failure strikes.** A terminal
+  `Fable` limit reply that points to `/usage-credits` and `/model` now advances to the next account
+  and then the next provider, whether Claude exposes structured rate-limit metadata or prints only
+  the notice in a failed non-streaming run. If every target is limited, the loop uses its bounded
+  wait and resumes on the first recovered rung; ordinary assistant prose about limits remains
+  non-authoritative.
+
 - **Review completion windows are scoped to their exact subjects.** A parallel host session
   finishing an unrelated task (`coop tasks done`) while a between/signoff/verify box runs no
   longer kills the loop with "review completion set changed". The window records the review's

@@ -519,10 +519,17 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 	if err := write(valid); err != nil {
 		t.Fatalf("valid loop scenario rejected: %v", err)
 	}
-	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "second-binding", "rate-limit", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
+	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "second-binding", "rate-limit", "rate-limit-short", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait"} {
 		body := strings.Replace(valid, `"result":"complete"`, `"result":"`+result+`"`, 1)
 		if err := write(body); err != nil {
 			t.Fatalf("closed loop result %q rejected: %v", result, err)
+		}
+	}
+	for _, result := range []string{"claude-credit-limit", "claude-credit-limit-plain", "claude-credit-limit-plain-uncontracted"} {
+		claudeCreditLimit := strings.ReplaceAll(valid, "codex", "claude")
+		claudeCreditLimit = strings.Replace(claudeCreditLimit, `"result":"complete"`, `"result":"`+result+`"`, 1)
+		if err := write(claudeCreditLimit); err != nil {
+			t.Fatalf("closed Claude credit-limit result %q rejected: %v", result, err)
 		}
 	}
 	for _, stage := range []string{"between", "signoff", "verify"} {
@@ -539,6 +546,9 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 		strings.Replace(valid, `,"stage":"work"`, "", 1),
 		strings.Replace(valid, `"stage":"work"`, `"stage":"preflight"`, 1),
 		strings.Replace(valid, `"result":"complete"`, `"result":"pass"`, 1),
+		strings.Replace(valid, `"result":"complete"`, `"result":"claude-credit-limit"`, 1),
+		strings.Replace(valid, `"result":"complete"`, `"result":"claude-credit-limit-plain"`, 1),
+		strings.Replace(valid, `"result":"complete"`, `"result":"claude-credit-limit-plain-uncontracted"`, 1),
 		strings.Replace(strings.Replace(valid, `"stage":"work"`, `"stage":"signoff"`, 1), `"result":"complete"`, `"result":"repair-binding"`, 1),
 		strings.Replace(valid, `"task_id":"loop-task-codex"`, `"task_id":"../escape"`, 1),
 		strings.Replace(valid, `"provider":"codex"`, `"provider":"claude"`, 1),

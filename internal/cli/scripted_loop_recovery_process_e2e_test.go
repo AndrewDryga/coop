@@ -67,6 +67,77 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		}
 	})
 
+	t.Run("Claude terminal credit limit rotates account then provider", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			results   [2]string
+			notices   []string
+			streaming bool
+		}{
+			{
+				name:      "structured stream",
+				results:   [2]string{"claude-credit-limit", "claude-credit-limit"},
+				notices:   []string{"You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."},
+				streaming: true,
+			},
+			{
+				name:    "plain stdout",
+				results: [2]string{"claude-credit-limit-plain", "claude-credit-limit-plain-uncontracted"},
+				notices: []string{
+					"You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.",
+					"You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.",
+				},
+			},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				resetLoopProcessRepo(t, suite)
+				taskID := "claude-credit-limit-" + strings.ReplaceAll(tc.name, " ", "-")
+				seedLoopProcessTask(t, suite.layout.Repo, taskID)
+				targets := []string{
+					loopRecoveryTarget("claude", "claude-fable-5", "personal"),
+					loopRecoveryTarget("claude", "claude-fable-5", "work"),
+					loopRecoveryTarget("codex", "gpt-5.6-sol", "personal"),
+				}
+				writeLoopRecoveryPreset(t, suite.layout.Repo, "claude-credit-limit", targets)
+				attempts := []loopProcessAttempt{
+					{Target: targets[0], Stage: "work", Result: tc.results[0]},
+					{Target: targets[1], Stage: "work", Result: tc.results[1]},
+					{Target: targets[2], Stage: "work", Result: "complete"},
+				}
+				suite.reset(t, loopRecoveryScenario(taskID, attempts))
+				run := runLoopRecovery
+				if tc.streaming {
+					run = runLoopRecoveryPTY
+				}
+				result := run(t, suite, "claude-credit-limit")
+				output := result.Stdout + result.Stderr
+				failed := result.Err != nil || result.ExitCode != 0 ||
+					!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[0], targets[1])) ||
+					!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[1], targets[2])) ||
+					strings.Contains(output, "iteration failed (")
+				for _, notice := range tc.notices {
+					failed = failed || !strings.Contains(output, notice)
+				}
+				if failed {
+					t.Fatalf("Claude credit-limit rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+				}
+				trace := readProcessTrace(t, suite.layout.Trace)
+				assertLoopAttemptContractsWithStreaming(t, suite, trace, taskID, attempts, tc.streaming)
+				parsed, _ := agents.ParseTarget(targets[2])
+				assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 3, false)
+				records := readLoopStageRecords(t, suite)
+				if len(records) != 3 ||
+					records[0].Outcome != "rate_limit" || records[0].Provider != "claude" || records[0].Account != "personal" ||
+					records[1].Outcome != "rate_limit" || records[1].Provider != "claude" || records[1].Account != "work" ||
+					records[2].Outcome != "success" || records[2].Provider != "codex" {
+					t.Fatalf("Claude credit-limit rotation telemetry = %#v", records)
+				}
+				assertLoopTraceProcessesGone(t, trace)
+			})
+		}
+	})
+
 	t.Run("authentication fails fast for every provider", func(t *testing.T) {
 		for _, provider := range suite.providers {
 			t.Run(provider, func(t *testing.T) {
@@ -252,6 +323,50 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
+	t.Run("all targets limited wait resumes work", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "all-targets-limited-resume"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		targets := []string{
+			loopRecoveryTarget("claude", "limited-fable", "personal"),
+			loopRecoveryTarget("claude", "limited-fable", "work"),
+			loopRecoveryTarget("codex", "limited-sol", "personal"),
+		}
+		writeLoopRecoveryPreset(t, suite.layout.Repo, "all-limited-resume", targets)
+		attempts := []loopProcessAttempt{
+			{Target: targets[0], Stage: "work", Result: "rate-limit-short"},
+			{Target: targets[1], Stage: "work", Result: "rate-limit-short"},
+			{Target: targets[2], Stage: "work", Result: "rate-limit-short"},
+			{Target: targets[0], Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, "all-limited-resume")
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "all 3 targets are rate limited — waiting for the soonest reset") ||
+			!strings.Contains(output, "fixture-loop-complete-claude") ||
+			strings.Contains(output, "iteration failed (") {
+			t.Fatalf("all-limited wait/resume = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
+		parsed, _ := agents.ParseTarget(targets[0])
+		assertLoopProcessResult(t, suite, "claude", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 4, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 4 {
+			t.Fatalf("all-limited wait/resume telemetry = %#v", records)
+		}
+		for i := range 3 {
+			if records[i].Outcome != "rate_limit" || records[i].Exit != 23 {
+				t.Fatalf("all-limited wait/resume telemetry = %#v", records)
+			}
+		}
+		if records[3].Outcome != "success" || records[3].Exit != 0 {
+			t.Fatalf("all-limited wait/resume telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
 	t.Run("interrupted provider resumes the same task", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "interrupted-resume"
@@ -430,6 +545,13 @@ func runLoopRecovery(t *testing.T, suite *directProcessSuite, target string) pro
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return procharness.Run(ctx, loopRecoveryCommand(suite, target))
+}
+
+func runLoopRecoveryPTY(t *testing.T, suite *directProcessSuite, target string) procharness.Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return procharness.Run(ctx, terminalLoopCommand(t, loopRecoveryCommand(suite, target)))
 }
 
 func startLoopRecovery(t *testing.T, suite *directProcessSuite, target string) *procharness.Process {

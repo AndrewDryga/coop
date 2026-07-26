@@ -14,6 +14,8 @@ func TestCLIRateLimited(t *testing.T) {
 		want bool
 	}{
 		{"You've hit your weekly limit.", true},
+		{"You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", true},
+		{"You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", true},
 		{"Selected model is at capacity.", true},
 		{`{"status":"RESOURCE_EXHAUSTED"}`, true},
 		{"HTTP 429 Too Many Requests", true},

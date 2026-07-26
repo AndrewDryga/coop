@@ -67,6 +67,37 @@ func TestIterationCommandStreamFlags(t *testing.T) {
 	}
 }
 
+func TestClaudePlainLimitProbeRequiresExactFailedOutput(t *testing.T) {
+	const notice = "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+	tests := []struct {
+		name   string
+		chunks []string
+		code   int
+		want   bool
+	}{
+		{name: "contracted notice", chunks: []string{notice + "\n"}, code: 23, want: true},
+		{name: "uncontracted notice split across writes", chunks: []string{"You have reached your Fable 5 limit. ", "Run /usage-credits to continue or switch models with /model.\n"}, code: 23, want: true},
+		{name: "successful assistant output", chunks: []string{notice + "\n"}, code: 0},
+		{name: "discussion", chunks: []string{"The reply " + notice + " should rotate.\n"}, code: 23},
+		{name: "quoted notice", chunks: []string{"\"" + notice + "\"\n"}, code: 23},
+		{name: "extra task prose", chunks: []string{notice + "\nPlease update the classifier.\n"}, code: 23},
+		{name: "overflow before notice", chunks: []string{strings.Repeat("x", maxClaudePlainLimitBytes+1), notice}, code: 23},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var probe claudePlainLimitProbe
+			for _, chunk := range tc.chunks {
+				if _, err := probe.Write([]byte(chunk)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := probe.limited(tc.code); got != tc.want {
+				t.Fatalf("plain Claude limit diagnostic = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviderAssistantNarrationNeverBecomesTerminalDiagnostic(t *testing.T) {
 	cases := []struct {
 		agent string

@@ -255,6 +255,140 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	}
 }
 
+func TestClaudeTerminalCreditLimitPromotion(t *testing.T) {
+	const notice = "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+	const uncontractedNotice = "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+	for _, direct := range []string{notice, uncontractedNotice} {
+		if !claudeCreditLimitNotice(direct) {
+			t.Fatalf("direct Claude credit-limit notice not recognized: %q", direct)
+		}
+	}
+	assistantEvent := func(text string) []byte {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{
+			"type": "assistant",
+			"message": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": text}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(raw, '\n')
+	}
+
+	var out, tail, diagnostic bytes.Buffer
+	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+	d.diagnostic = &diagnostic
+	_, _ = d.Write(assistantEvent(notice))
+	d.flush()
+	outcome := d.streamOutcome()
+	if outcome != streamIncomplete {
+		t.Fatalf("assistant-only stream outcome = %d, want incomplete", outcome)
+	}
+	d.promoteTerminalLimitDiagnostic(23, outcome)
+	classification := classifyIteration("claude", 23, nil, diagnostic.String(), outcome, time.Now())
+	if classification.outcome != "rate_limit" || !classification.limit.limited {
+		t.Fatalf("terminal credit-limit classification = %+v, diagnostic %q", classification, diagnostic.String())
+	}
+	if !strings.Contains(tail.String(), notice) || !strings.Contains(out.String(), notice) {
+		t.Fatalf("terminal credit-limit notice was not preserved for display/response: out=%q tail=%q", out.String(), tail.String())
+	}
+
+	for _, tc := range []struct {
+		name    string
+		text    string
+		code    int
+		outcome providerStreamOutcome
+		shown   bool
+	}{
+		{
+			name:    "successful exact prose",
+			text:    notice,
+			code:    0,
+			outcome: streamIncomplete,
+		},
+		{
+			name:    "discussion mentioning commands",
+			text:    "Document how Fable limits and /usage-credits interact with /model.",
+			code:    23,
+			outcome: streamIncomplete,
+		},
+		{
+			name:    "quoted notice",
+			text:    "The reply \"" + notice + "\" must rotate to the next target.",
+			code:    23,
+			outcome: streamIncomplete,
+		},
+		{
+			name:    "explicit terminal error owns diagnostics",
+			text:    notice,
+			code:    23,
+			outcome: streamFailed,
+		},
+		{
+			name:    "structured limit owns diagnostics",
+			text:    notice,
+			code:    23,
+			outcome: streamIncomplete,
+			shown:   true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, tail, diagnostic bytes.Buffer
+			d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+			d.diagnostic = &diagnostic
+			d.limitShown = tc.shown
+			_, _ = d.Write(assistantEvent(tc.text))
+			d.flush()
+			d.promoteTerminalLimitDiagnostic(tc.code, tc.outcome)
+			if diagnostic.Len() != 0 {
+				t.Fatalf("non-authoritative assistant prose became diagnostic: %q", diagnostic.String())
+			}
+		})
+	}
+}
+
+func TestClaudeStructuredAssistantRateLimit(t *testing.T) {
+	const notice = "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
+	events := []map[string]any{
+		{
+			"type":  "assistant",
+			"error": "rate_limit",
+			"message": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": notice}},
+			},
+		},
+		{
+			"type":     "result",
+			"subtype":  "success",
+			"is_error": true,
+			"result":   notice,
+		},
+	}
+
+	var out, tail, diagnostic bytes.Buffer
+	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+	d.diagnostic = &diagnostic
+	for _, event := range events {
+		raw, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = d.Write(append(raw, '\n'))
+	}
+	d.flush()
+	outcome := d.streamOutcome()
+	if outcome != streamFailed {
+		t.Fatalf("structured rate-limit stream outcome = %d, want failed", outcome)
+	}
+	d.promoteTerminalLimitDiagnostic(1, outcome)
+	classification := classifyIteration("claude", 1, nil, diagnostic.String(), outcome, time.Now())
+	if classification.outcome != "rate_limit" || !classification.limit.limited {
+		t.Fatalf("structured rate-limit classification = %+v, diagnostic %q", classification, diagnostic.String())
+	}
+}
+
 func TestStreamDecoderModel(t *testing.T) {
 	// The init event names the running model — rendered once, so a loop iteration shows
 	// what's actually working. It never reaches the rate-limit tail (it's not human text).
