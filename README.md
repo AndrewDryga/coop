@@ -41,6 +41,7 @@ It's the working tooling behind two write-ups:
 - [Forks](#forks-hand-off-work-like-a-pr) — open · review · land work like a contractor's PR
 - [Agents & config](#agents--config) — authentication · credentials · models · presets · instructions · MCP servers
 - [Fusion](#fusion-a-governed-council) — a council of models that argues before it commits
+- [Drive it from a local service](#drive-it-from-a-local-service)
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · a fleet
 - [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `.agent/Dockerfile` · services · dev-server ports
@@ -937,6 +938,26 @@ opinion. Only the peers you name are consulted — there's no implicit "consult
 everyone signed in", and only a named peer's credentials mount (read-only). And it's
 scoped to the agent you launched, so peers it spawns never recurse.
 
+## Drive it from a local service
+
+`coop sessions serve` is the transport-neutral boundary for a trusted local service that needs
+long-lived conversations and isolated code work without driving a TTY:
+
+```bash
+coop sessions serve
+coop sessions doctor --json
+```
+
+It exposes strict HTTP/JSON over an owner-only Unix socket, never TCP. One session owns one
+generated fork, a persistent FIFO of turns, private provider/ACP state, structured change
+inspection, a read-only review, non-destructive close, and explicit two-step discard. Each turn
+starts a boxed ACP child and tears it down before parking, so an idle conversation consumes no box.
+
+The API deliberately cannot merge, sign, push, publish a PR, accept arbitrary host paths, or choose
+credentials and sandbox settings from a request. A same-UID caller is trusted at the Unix-account
+boundary. See the complete [local remote-session API](docs/session-api.md) and the separate
+[Slack/incident responder architecture](docs/external-responder-service.md).
+
 ## Drive it from Zed (ACP)
 
 The box can act as an [ACP](https://agentclientprotocol.com) agent, so you steer the
@@ -1668,8 +1689,9 @@ internal/fusion/    the council: peer commands + the governor instruction
 internal/preset/    orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
 internal/project/   .agent/project.yaml — a monorepo's subprojects + the serve ports
 internal/mcp/       one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)
+internal/session/   durable local remote sessions: idempotent operations, FIFO turns, events, recovery
 internal/scaffold/  `coop init` templates + the workflow skills (embedded in the binary)
-internal/cli/       command dispatch, grouped help, the fork lifecycle, doctor
+internal/cli/       command dispatch, fork lifecycle, session controller/UDS API, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
 install.sh          the curl one-liner: download the prebuilt binary onto PATH
 ```

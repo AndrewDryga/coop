@@ -134,6 +134,10 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop context", "compile the docs relevant to touched paths")
 	row("coop backlog", "park unscheduled ideas; promote when ready")
 
+	group("SESSIONS — LOCAL REMOTE-SESSION CONTROLLER")
+	row("coop sessions serve", "run the session controller on Unix")
+	row("coop sessions doctor", "check the session controller Unix socket")
+
 	group("SERVICES — the box's .agent/compose.yml sidecars")
 	// `coop up`/`down` act on this repo's .agent/compose.yml — always NAME the file (it's what makes
 	// the rows obvious), listing its real services when present, and dim the pair when there's none to
@@ -261,6 +265,19 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
 // own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
 // the agent's own CLI). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
+	"sessions": `coop sessions — serve and inspect local remote sessions.
+
+  Usage: coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]
+         coop sessions doctor [--socket <path>] [--json]
+
+  'serve' owns the state root and exposes the v1 JSON API over an owner-only Unix
+  socket. It never listens on TCP. 'doctor' checks only that Unix socket and exits
+  nonzero when the service is unavailable or unready.
+
+  Defaults:
+    state    ~/.local/state/coop/sessions
+    policies ~/.config/coop/session-policies.yaml
+    socket   <state>/control.sock`,
 	"sign": `coop sign — re-sign this branch's unpushed commits with your host key.
 
   Usage: coop sign [--from <ref>]

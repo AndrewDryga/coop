@@ -177,6 +177,16 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return []string{"bash", "zsh"}
 		}
+	case "sessions":
+		if len(prev) == 1 {
+			return []string{"serve", "doctor"}
+		}
+		if len(prev) > 1 && prev[1] == "serve" {
+			return []string{"--state", "--policies", "--socket"}
+		}
+		if len(prev) > 1 && prev[1] == "doctor" {
+			return []string{"--socket", "--json"}
+		}
 	}
 	return nil
 }

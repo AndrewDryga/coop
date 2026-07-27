@@ -48,6 +48,7 @@ func TestHelpTextAligned(t *testing.T) {
 	for _, want := range []string{
 		"coop fork review <name>", "coop fork merge <name>", "coop fork stop <name>",
 		"coop doctor", "coop check-secrets", "coop tasks ls", "coop tasks decisions",
+		"coop sessions serve", "coop sessions doctor",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing %q", want)

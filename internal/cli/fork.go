@@ -1077,6 +1077,19 @@ func (c forkReviewCandidate) detachBase() error {
 	return gitRun(c.dir, "checkout", "--quiet", "--detach", c.base)
 }
 
+func newForkReviewScratch(repo string) (forkReviewCandidate, error) {
+	dir, err := os.MkdirTemp("", "coop-fork-review-")
+	if err != nil {
+		return forkReviewCandidate{}, err
+	}
+	c := forkReviewCandidate{dir: dir}
+	if err := gitClone(repo, dir); err != nil {
+		c.cleanup()
+		return forkReviewCandidate{}, fmt.Errorf("clone parent into review scratch: %w", err)
+	}
+	return c, nil
+}
+
 // prepareForkReviewCandidate clones the parent's committed HEAD, fetches the fork's named branch,
 // and rebases that branch in the scratch clone. Neither source repo is modified: local clone/fetch
 // reads objects only, and every checkout/rebase occurs under c.dir. Preview rebases stay unsigned;
@@ -1327,6 +1340,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		ForkName: name, ForkOwner: forkContainerOwner(repo, name),
+		RunID: sessionRunIDFromEnv(),
 	})
 }
 

@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Trusted local services can now hold persistent conversations in isolated Coop forks.**
+  `coop sessions serve` exposes a strict versioned JSON API over an owner-only Unix socket, with
+  durable idempotent operations, one bounded FIFO per session, exact native ACP resume, per-turn
+  credential/MCP projection and cleanup, cancellation/restart reconciliation, typed binary-safe
+  changes, read-only current-parent review evidence, non-destructive close, and exact-state
+  two-step discard. Requests select only operator-owned execution policies; the API has no TCP,
+  raw host paths, arbitrary commands, merge, signing, push, PR, Slack, or incident authority.
+  `coop sessions doctor` checks the socket, and the external responder design keeps Slack,
+  authorization, Emisar approvals, audit delivery, and GitHub publication in a separate service.
+
 ## 7.2.0
 
 - **Silent provider attempts are now bounded by a stream-fed watchdog.** Every built-in loop,

@@ -52,6 +52,10 @@ TASKS — a folder-per-task queue in .agent/tasks/
   coop context                      compile the docs relevant to touched paths
   coop backlog                      park unscheduled ideas; promote when ready
 
+SESSIONS — LOCAL REMOTE-SESSION CONTROLLER
+  coop sessions serve               run the session controller on Unix
+  coop sessions doctor              check the session controller Unix socket
+
 SERVICES — the box's .agent/compose.yml sidecars
   coop up                           start the .agent/compose.yml services
   coop down                         stop the .agent/compose.yml services
@@ -739,6 +743,20 @@ coop prompt — one compact status line for a shell prompt, tmux, or menubar.
   lookup) — never a per-fork git call and never docker — so it's safe to run on
   every prompt redraw. Wire it into your shell prompt (a starship custom command)
   or tmux, e.g. set -g status-right '#(cd #{pane_current_path}; coop prompt)'.
+
+coop sessions — serve and inspect local remote sessions.
+
+  Usage: coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]
+         coop sessions doctor [--socket <path>] [--json]
+
+  'serve' owns the state root and exposes the v1 JSON API over an owner-only Unix
+  socket. It never listens on TCP. 'doctor' checks only that Unix socket and exits
+  nonzero when the service is unavailable or unready.
+
+  Defaults:
+    state    ~/.local/state/coop/sessions
+    policies ~/.config/coop/session-policies.yaml
+    socket   <state>/control.sock
 
 coop version — print coop's version and exit.
 
