@@ -160,13 +160,8 @@ func (s *SessionService) RunReview(ctx context.Context, key string, req RunRevie
 			return decodeSessionReviewDossier(op.Result)
 		case session.OperationFailed:
 			return SessionReviewDossier{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
-		case session.OperationRunning:
-			if err := s.store.MarkOperationUncertain(ctx, op.ID); err != nil {
-				return SessionReviewDossier{}, err
-			}
-			return SessionReviewDossier{}, session.ErrOperationUncertain
-		case session.OperationUncertain:
-			return SessionReviewDossier{}, session.ErrOperationUncertain
+		case session.OperationRunning, session.OperationUncertain:
+			return s.resumeReview(ctx, op)
 		default:
 			return s.executeReview(ctx, op, req)
 		}
@@ -185,6 +180,27 @@ func decodeSessionReviewDossier(data []byte) (SessionReviewDossier, error) {
 	return dossier, nil
 }
 
+func (s *SessionService) resumeReview(
+	ctx context.Context,
+	op session.Operation,
+) (SessionReviewDossier, error) {
+	var intent sessionReviewIntent
+	if err := json.Unmarshal(op.Result, &intent); err != nil {
+		if op.State == session.OperationRunning {
+			_ = s.store.MarkOperationUncertain(ctx, op.ID)
+		}
+		return SessionReviewDossier{}, &session.Error{
+			Code: session.CodeOperationUncertain, Detail: "review operation intent is unreadable",
+		}
+	}
+	dossier, err := s.executeReviewIntent(s.reviewExecutionContext(), op, intent)
+	if err != nil && session.CodeOf(err) == session.CodeOperationUncertain &&
+		op.State == session.OperationRunning {
+		_ = s.store.MarkOperationUncertain(ctx, op.ID)
+	}
+	return dossier, err
+}
+
 func (s *SessionService) executeReview(ctx context.Context, op session.Operation, req RunReviewRequest) (SessionReviewDossier, error) {
 	intent, err := s.captureReviewIntent(ctx, op.ID, req)
 	if err != nil {
@@ -197,7 +213,19 @@ func (s *SessionService) executeReview(ctx context.Context, op session.Operation
 	if err := s.store.MarkOperationRunning(ctx, op.ID, data); err != nil {
 		return SessionReviewDossier{}, err
 	}
-	return s.executeReviewIntent(ctx, op, intent)
+	return s.executeReviewIntent(s.reviewExecutionContext(), op, intent)
+}
+
+// Reviews run from a frozen intent and may outlive an HTTP request. Use the service context for
+// durable writes and cancellable review implementations so a client timeout cannot discard the
+// result. Tests and direct local callers that do not Start the service retain synchronous behavior.
+func (s *SessionService) reviewExecutionContext() context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
 }
 
 func (s *SessionService) captureReviewIntent(ctx context.Context, operationID string, req RunReviewRequest) (sessionReviewIntent, error) {

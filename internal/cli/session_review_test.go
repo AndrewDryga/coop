@@ -273,7 +273,92 @@ func TestSessionReviewIntentUsesCapturedObjectsBeforePublishabilityCheck(t *test
 	}
 }
 
-func TestSessionServiceRunReviewRunningReplayBecomesUncertainWithoutGate(t *testing.T) {
+func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testing.T) {
+	for _, initialState := range []session.OperationState{
+		session.OperationRunning,
+		session.OperationUncertain,
+	} {
+		t.Run(string(initialState), func(t *testing.T) {
+			repo, git := gitRepo(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			var gateCalls atomic.Int32
+			service := newReviewTestService(
+				t,
+				repo,
+				1<<20,
+				SessionReviewGateFunc(
+					func(context.Context, string, string) (SessionReviewGateResult, error) {
+						gateCalls.Add(1)
+						return SessionReviewGateResult{Configured: true, Passed: true}, nil
+					},
+				),
+			)
+			defer service.Stop()
+			sess := createReviewSession(t, service, string(initialState))
+			if err := os.WriteFile(
+				filepath.Join(sess.Workspace, "change.txt"),
+				[]byte("reviewed\n"),
+				0o644,
+			); err != nil {
+				t.Fatal(err)
+			}
+			sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+			sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
+			req := RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision}
+			key := "review-" + string(initialState)
+			op, replay, err := service.Store().ReserveOperation(
+				context.Background(),
+				"RunReview",
+				key,
+				req,
+			)
+			if err != nil || replay {
+				t.Fatalf("reserve review = %+v, replay=%v, err=%v", op, replay, err)
+			}
+			intent, err := service.captureReviewIntent(context.Background(), op.ID, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intentData, err := json.Marshal(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := service.Store().MarkOperationRunning(
+				context.Background(),
+				op.ID,
+				intentData,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if initialState == session.OperationUncertain {
+				if err := service.Store().MarkOperationUncertain(
+					context.Background(),
+					op.ID,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			dossier, err := service.RunReview(context.Background(), key, req)
+			if err != nil || !dossier.Publishable || dossier.OperationID != op.ID ||
+				gateCalls.Load() != 1 {
+				t.Fatalf(
+					"resumed review = %+v, err=%v, gate calls=%d",
+					dossier,
+					err,
+					gateCalls.Load(),
+				)
+			}
+			got, err := service.Store().GetOperation(context.Background(), key)
+			if err != nil || got.State != session.OperationSucceeded ||
+				got.ID != op.ID {
+				t.Fatalf("resumed operation = %+v, err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestSessionServiceRunReviewMalformedRunningIntentBecomesUncertain(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
@@ -282,22 +367,37 @@ func TestSessionServiceRunReviewRunningReplayBecomesUncertainWithoutGate(t *test
 		return SessionReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
-	sess := createReviewSession(t, service, "running")
+	sess := createReviewSession(t, service, "malformed")
 	req := RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision}
-	op, replay, err := service.Store().ReserveOperation(context.Background(), "RunReview", "review-running", req)
+	op, replay, err := service.Store().ReserveOperation(
+		context.Background(),
+		"RunReview",
+		"review-malformed",
+		req,
+	)
 	if err != nil || replay {
-		t.Fatalf("reserve running review = %+v, replay=%v, err=%v", op, replay, err)
+		t.Fatalf("reserve malformed review = %+v, replay=%v, err=%v", op, replay, err)
 	}
-	intent := []byte(`{"session_id":"` + sess.ID + `","source_head":"unknown"}`)
+	intent := []byte(`{"session_id":`)
 	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intent); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.RunReview(context.Background(), "review-running", req); !errors.Is(err, session.ErrOperationUncertain) {
-		t.Fatalf("running replay err = %v", err)
+	if _, err := service.RunReview(
+		context.Background(),
+		"review-malformed",
+		req,
+	); !errors.Is(err, session.ErrOperationUncertain) {
+		t.Fatalf("malformed replay err = %v", err)
 	}
-	got, err := service.Store().GetOperation(context.Background(), "review-running")
-	if err != nil || got.State != session.OperationUncertain || string(got.Result) != string(intent) || gateCalls.Load() != 0 {
-		t.Fatalf("uncertain replay operation = %+v, err=%v, gate calls=%d", got, err, gateCalls.Load())
+	got, err := service.Store().GetOperation(context.Background(), "review-malformed")
+	if err != nil || got.State != session.OperationUncertain ||
+		string(got.Result) != string(intent) || gateCalls.Load() != 0 {
+		t.Fatalf(
+			"malformed replay operation = %+v, err=%v, gate calls=%d",
+			got,
+			err,
+			gateCalls.Load(),
+		)
 	}
 }
 

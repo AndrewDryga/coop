@@ -403,6 +403,11 @@ Common status mapping:
 Treat `operation_uncertain` and `turn.interrupted` as reconciliation states. Never retry a mutation
 under a new key merely because its result is unknown.
 
+`RunReview` is the narrow read-only exception: after Coop captures immutable source, parent, and
+policy identities, replaying the exact request under the same key resumes that frozen review under
+the same operation ID. It never recaptures moving repository state. Unreadable or invalid captured
+intent remains `operation_uncertain`.
+
 ## Operational recovery
 
 | Situation | Action |
