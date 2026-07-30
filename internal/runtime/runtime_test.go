@@ -438,6 +438,38 @@ if [ "$1" = ps ]; then echo stopped-box; fi
 	}
 }
 
+func TestRemoveByLabelsRequiresEveryLabel(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = ps ]; then echo owned-sidecar; fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	labels := map[string]string{
+		"com.docker.compose.project.working_dir": "/repo/.agent",
+		"com.docker.compose.project":             "coop-repo-12345678",
+	}
+	if n, err := (Runtime{Name: runtimeCLI}).RemoveByLabels(context.Background(), labels); err != nil || n != 1 {
+		t.Fatalf("RemoveByLabels = (%d, %v), want (1, nil)", n, err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ps -q -a --filter label=com.docker.compose.project=coop-repo-12345678 --filter label=com.docker.compose.project.working_dir=/repo/.agent\n" +
+		"rm -f owned-sidecar\n"
+	if got := string(data); got != want {
+		t.Errorf("runtime calls = %q, want %q", got, want)
+	}
+	if _, err := (Runtime{Name: runtimeCLI}).RemoveByLabels(context.Background(), nil); err == nil {
+		t.Fatal("empty label ownership unexpectedly removed containers")
+	}
+}
+
 func TestAbsoluteRuntimePathsKeepDockerCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	docker := filepath.Join(dir, "docker")

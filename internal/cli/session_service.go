@@ -32,6 +32,7 @@ const (
 	sessionPolicyFileLimit           = 1 << 20
 	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
 	sessionServiceDefaultStopTimeout = 5 * time.Second
+	sessionServiceCleanupInterval    = time.Minute
 )
 
 // SessionPolicy is operator-owned authority for one remote session. It is intentionally small:
@@ -283,17 +284,18 @@ func (f SessionRunnerFunc) Run(ctx context.Context, sess session.Session, turn s
 type SessionRunnerFactory func(*session.Store) SessionRunner
 
 type SessionServiceConfig struct {
-	StateRoot     string
-	PolicyPath    string
-	Policies      map[string]SessionPolicy
-	SourceConfig  *config.Config
-	Config        *config.Config
-	Runtime       runtime.Runtime
-	Executable    string
-	Runner        SessionRunner
-	RunnerFactory SessionRunnerFactory
-	ReviewGate    SessionReviewGate
-	StopTimeout   time.Duration
+	StateRoot       string
+	PolicyPath      string
+	Policies        map[string]SessionPolicy
+	SourceConfig    *config.Config
+	Config          *config.Config
+	Runtime         runtime.Runtime
+	Executable      string
+	Runner          SessionRunner
+	RunnerFactory   SessionRunnerFactory
+	ReviewGate      SessionReviewGate
+	StopTimeout     time.Duration
+	CleanupInterval time.Duration
 }
 
 type sessionWorker struct {
@@ -317,14 +319,15 @@ type sessionOperationLock struct {
 }
 
 type SessionService struct {
-	store       *session.Store
-	policies    map[string]SessionPolicy
-	sourceCfg   *config.Config
-	rt          runtime.Runtime
-	executable  string
-	runner      SessionRunner
-	reviewGate  SessionReviewGate
-	stopTimeout time.Duration
+	store           *session.Store
+	policies        map[string]SessionPolicy
+	sourceCfg       *config.Config
+	rt              runtime.Runtime
+	executable      string
+	runner          SessionRunner
+	reviewGate      SessionReviewGate
+	stopTimeout     time.Duration
+	cleanupInterval time.Duration
 
 	stopMu   sync.Mutex
 	mu       sync.Mutex
@@ -338,6 +341,8 @@ type SessionService struct {
 
 	operationMu    sync.Mutex
 	operationLocks map[string]*sessionOperationLock
+	runtimeMu      sync.Mutex
+	runtimeLocks   map[string]*sessionOperationLock
 }
 
 func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
@@ -366,13 +371,18 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 	service := &SessionService{
 		store: store, policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
 		rt: cfg.Runtime, executable: cfg.Executable, runner: cfg.Runner,
-		reviewGate:  cfg.ReviewGate,
-		stopTimeout: cfg.StopTimeout,
-		workers:     make(map[string]*sessionWorker), active: make(map[string]*activeSessionTurn),
+		reviewGate:      cfg.ReviewGate,
+		stopTimeout:     cfg.StopTimeout,
+		cleanupInterval: cfg.CleanupInterval,
+		workers:         make(map[string]*sessionWorker), active: make(map[string]*activeSessionTurn),
 		operationLocks: make(map[string]*sessionOperationLock),
+		runtimeLocks:   make(map[string]*sessionOperationLock),
 	}
 	if service.stopTimeout <= 0 {
 		service.stopTimeout = sessionServiceDefaultStopTimeout
+	}
+	if service.cleanupInterval <= 0 {
+		service.cleanupInterval = sessionServiceCleanupInterval
 	}
 	if cfg.RunnerFactory != nil {
 		service.runner = cfg.RunnerFactory(store)
@@ -436,6 +446,28 @@ func (s *SessionService) lockOperation(key string) func() {
 	}
 }
 
+func (s *SessionService) lockSessionRuntime(sessionID string) func() {
+	s.runtimeMu.Lock()
+	lock := s.runtimeLocks[sessionID]
+	if lock == nil {
+		lock = &sessionOperationLock{}
+		s.runtimeLocks[sessionID] = lock
+	}
+	lock.refs++
+	s.runtimeMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.runtimeMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.runtimeLocks, sessionID)
+		}
+		s.runtimeMu.Unlock()
+	}
+}
+
 func (s *SessionService) Start(parent context.Context) error {
 	if parent == nil {
 		parent = context.Background()
@@ -496,7 +528,7 @@ func (s *SessionService) Start(parent context.Context) error {
 	if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
 		for _, sess := range sessions {
 			if err := cleaner.CleanupSession(parent, sess); err != nil {
-				ui.Warn("could not clean projected files for historical session %s: %v", sess.ID, err)
+				ui.Warn("could not clean historical session runtime state %s: %v", sess.ID, err)
 			}
 		}
 	}
@@ -522,6 +554,8 @@ func (s *SessionService) Start(parent context.Context) error {
 		return nil
 	}
 	s.started, s.starting, s.ctx, s.cancel = true, false, ctx, cancel
+	s.wg.Add(1)
+	go s.runParkedSessionCleanup(ctx)
 	for _, sess := range sessions {
 		if sess.QueuedTurnCount > 0 {
 			s.ensureWorkerLocked(sess.ID)
@@ -532,6 +566,55 @@ func (s *SessionService) Start(parent context.Context) error {
 	}
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *SessionService) runParkedSessionCleanup(ctx context.Context) {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.cleanupParkedSessions(ctx)
+		}
+	}
+}
+
+func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
+	cleaner, ok := s.runner.(sessionRunnerStartupCleaner)
+	if !ok {
+		return
+	}
+	sessions, err := s.store.ListSessionsForRecovery(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			ui.Warn("could not list parked sessions for runtime cleanup: %v", err)
+		}
+		return
+	}
+	for _, candidate := range sessions {
+		if candidate.State == session.SessionDiscarded ||
+			candidate.Activity != session.ActivityParked || candidate.ActiveTurnID != "" {
+			continue
+		}
+		unlock := s.lockSessionRuntime(candidate.ID)
+		current, getErr := s.store.GetSession(ctx, candidate.ID)
+		if getErr == nil && current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
+			getErr = cleaner.CleanupSession(ctx, current)
+		}
+		unlock()
+		if getErr != nil && ctx.Err() == nil {
+			ui.Warn("could not clean parked session runtime state %s: %v", candidate.ID, getErr)
+		}
+	}
+}
+
+func (s *SessionService) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
+	unlock := s.lockSessionRuntime(bound.ID)
+	defer unlock()
+	return s.runner.Run(ctx, bound, leased)
 }
 
 // ensureRunner keeps host-local construction (and runtime detection) out of service creation.
@@ -697,7 +780,7 @@ func (s *SessionService) drainSession(ctx context.Context, sessionID string) {
 			}
 			return active.key, active.request, true
 		})
-		_, runErr := s.runner.Run(runCtx, bound, leased)
+		_, runErr := s.runBoundSessionTurn(runCtx, bound, leased)
 		turnCancel()
 		s.mu.Lock()
 		requested, cancelKey, cancelReq := active.requested, active.key, active.request

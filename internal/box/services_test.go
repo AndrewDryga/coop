@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -57,6 +58,42 @@ func recorderRuntime(t *testing.T, recorder string) runtime.Runtime {
 		t.Fatal(err)
 	}
 	return runtime.Runtime{Name: shim}
+}
+
+func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"if [ \"$1\" = ps ]; then echo owned-sidecar; fi\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Cleanup must not depend on an agent-controlled file remaining present or valid.
+	if err := os.Remove(compose); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopSessionServices(context.Background(), runtime.Runtime{Name: shim}, repo, repo); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ps -q -a --filter label=com.docker.compose.project=" + ComposeProject(repo) +
+		" --filter label=com.docker.compose.project.working_dir=" + filepath.Join(repo, ".agent") + "\n" +
+		"rm -f owned-sidecar\n"
+	if got := string(data); got != want {
+		t.Fatalf("service cleanup calls = %q, want %q", got, want)
+	}
 }
 
 // EnsureServices validates the compose file before running it: a valid file reaches `compose up`,

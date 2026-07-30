@@ -86,6 +86,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		if child != nil {
 			cleanup = append(cleanup, child.stop())
 			cleanup = append(cleanup, r.removeTurnBox(child.runID))
+			cleanup = append(cleanup, r.stopSessionServices(context.Background(), bound))
 		}
 		if projection != nil {
 			cleanup = append(cleanup, projection.remove())
@@ -253,11 +254,14 @@ func (r *sessionTurnRunner) removeTurnBox(runID string) error {
 	return nil
 }
 
-func (r *sessionTurnRunner) ReapInterruptedTurn(ctx context.Context, _ session.Session, turn session.Turn) error {
+func (r *sessionTurnRunner) ReapInterruptedTurn(ctx context.Context, bound session.Session, turn session.Turn) error {
 	if turn.SessionID == "" || turn.ID == "" {
 		return acpFailure(sessionACPCleanupError, "interrupted turn identity is unavailable")
 	}
-	return r.removeTurnBox(sessionTurnRunID(turn.SessionID, turn.ID))
+	return errors.Join(
+		r.removeTurnBox(sessionTurnRunID(turn.SessionID, turn.ID)),
+		r.stopSessionServices(ctx, bound),
+	)
 }
 
 type sessionACPProjection struct {
@@ -467,9 +471,16 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(sourceRoot string, project
 	return nil
 }
 
-// CleanupSession removes only provider-declared credential artifacts left by an interrupted
-// process. Agent-owned session history under the same private root is deliberately preserved.
-func (r *sessionTurnRunner) CleanupSession(_ context.Context, bound session.Session) error {
+// CleanupSession removes transient runtime state left by interrupted processes. Agent-owned
+// session history and Compose volumes are deliberately preserved.
+func (r *sessionTurnRunner) CleanupSession(ctx context.Context, bound session.Session) error {
+	return errors.Join(
+		r.cleanupSessionCredentials(bound),
+		r.stopSessionServices(ctx, bound),
+	)
+}
+
+func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) error {
 	if r == nil || r.sourceCfg == nil || r.stateRoot == "" || !validSessionPathComponent(bound.ID) {
 		return acpFailure(sessionACPCleanupError, "projected credential cleanup is unavailable")
 	}
@@ -519,6 +530,24 @@ func (r *sessionTurnRunner) CleanupSession(_ context.Context, bound session.Sess
 	}
 	if err := (&sessionACPProjection{files: paths}).remove(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (r *sessionTurnRunner) stopSessionServices(parent context.Context, bound session.Session) error {
+	if bound.State == session.SessionDiscarded {
+		return nil
+	}
+	if r == nil || r.rt.Name == "" || bound.Workspace == "" || bound.Repository == "" {
+		return acpFailure(sessionACPCleanupError, "session services cleanup is unavailable")
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, sessionACPCleanupTimeout)
+	defer cancel()
+	if err := box.StopSessionServices(ctx, r.rt, bound.Workspace, bound.Repository); err != nil {
+		return acpFailure(sessionACPCleanupError, "session services cleanup failed")
 	}
 	return nil
 }

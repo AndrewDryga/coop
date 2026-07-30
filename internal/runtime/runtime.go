@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -444,7 +445,28 @@ func (r Runtime) RemoveContainerContext(ctx context.Context, id string) error {
 // matches key=value. It distinguishes no-match from query/removal failure so a caller never reports
 // successful cleanup while a known container may remain. The caller owns the overall deadline.
 func (r Runtime) RemoveByLabel(ctx context.Context, key, value string) (int, error) {
-	ids, err := r.containerIDsContext(ctx, true, "label="+key+"="+value)
+	return r.RemoveByLabels(ctx, map[string]string{key: value})
+}
+
+// RemoveByLabels force-removes every container matching all supplied labels. Sorting the filters
+// keeps runtime calls deterministic while the runtime performs the ownership intersection.
+func (r Runtime) RemoveByLabels(ctx context.Context, labels map[string]string) (int, error) {
+	if len(labels) == 0 {
+		return 0, errors.New("at least one container label is required")
+	}
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		if key == "" {
+			return 0, errors.New("container label key is empty")
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	filters := make([]string, 0, len(keys))
+	for _, key := range keys {
+		filters = append(filters, "label="+key+"="+labels[key])
+	}
+	ids, err := r.containerIDsContext(ctx, true, filters...)
 	if err != nil {
 		return 0, fmt.Errorf("list matching containers: %w", err)
 	}

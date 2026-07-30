@@ -77,7 +77,10 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	if got := readFile(t, fixture.childLog); !strings.Contains(got, `"cwd":"`+fixture.session.Workspace+`"`) {
 		t.Fatalf("ACP cwd was not the immutable fork workspace: %q", got)
 	}
-	if got := readFile(t, fixture.runtimeLog); !strings.Contains(got, "coop.run") || !strings.Contains(got, "session-") {
+	if got := readFile(t, fixture.runtimeLog); !strings.Contains(got, "coop.run") ||
+		!strings.Contains(got, "session-") ||
+		!strings.Contains(got, "com.docker.compose.project=") ||
+		!strings.Contains(got, "com.docker.compose.project.working_dir=") {
 		t.Fatalf("runtime cleanup label was not recorded: %q", got)
 	}
 }
@@ -324,6 +327,23 @@ func TestSessionTurnRunnerDoesNotReapBeforeChildStarts(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerFailsIfServiceCleanupCannotBeProved(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "1")
+	turn := fixture.submit(t, "cleanup failure")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err == nil ||
+		!strings.Contains(err.Error(), "session services cleanup failed") {
+		t.Fatalf("service cleanup failure = %v", err)
+	}
+	got, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != session.TurnFailed || got.ErrorCode != sessionACPCleanupError {
+		t.Fatalf("turn after cleanup failure = state %q code %q", got.State, got.ErrorCode)
+	}
+}
+
 func TestSessionRunIDFromEnv(t *testing.T) {
 	t.Setenv("COOP_SESSION_RUN_ID", "not-a-session-run")
 	if got := sessionRunIDFromEnv(); got != "" {
@@ -443,7 +463,18 @@ func newSessionACPFixture(t *testing.T, scenario string) *sessionACPFixture {
 	t.Setenv("COOP_MCP_FILE", filepath.Join(root, "ambient-mcp.json"))
 	t.Setenv("OPENAI_API_KEY", "secret")
 	runtimePath := filepath.Join(root, "fake-runtime")
-	runtimeScript := "#!/bin/sh\nif [ \"$1\" = ps ]; then printf '%s\\n' \"$*\" >> \"$COOP_TEST_SESSION_RUNTIME_LOG\"; echo fake-container; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_SESSION_RUNTIME_LOG\"\nexit 0\n"
+	runtimeScript := `#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_SESSION_RUNTIME_LOG"
+if [ "$1" = ps ]; then
+	case "$*" in
+		*com.docker.compose.project=*)
+			[ "$COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL" = 1 ] && exit 41
+			;;
+	esac
+	echo fake-container
+fi
+exit 0
+`
 	if err := os.WriteFile(runtimePath, []byte(runtimeScript), 0o700); err != nil {
 		t.Fatal(err)
 	}

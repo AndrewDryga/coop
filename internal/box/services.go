@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -97,6 +98,22 @@ const (
 	composeProjectLabel    = "com.docker.compose.project"
 	composeWorkingDirLabel = "com.docker.compose.project.working_dir"
 )
+
+// StopSessionServices removes only the current workspace's Compose containers while preserving
+// its volumes. It uses immutable runtime ownership labels instead of the workspace's mutable
+// Compose file, so interrupted agent edits cannot prevent cleanup. The next turn starts services
+// again through EnsureServices.
+func StopSessionServices(ctx context.Context, rt runtime.Runtime, workspace, policyRepo string) error {
+	composeDir := filepath.Dir(filepath.Join(workspace, filepath.FromSlash(project.ComposePath(policyRepo))))
+	_, err := rt.RemoveByLabels(ctx, map[string]string{
+		composeProjectLabel:    ComposeProject(workspace),
+		composeWorkingDirLabel: filepath.Clean(composeDir),
+	})
+	if err != nil {
+		return fmt.Errorf("stop session services: %w", err)
+	}
+	return nil
+}
 
 // reconcileLegacyServices removes the old basename-only Compose project only after every one of
 // its containers proves it belongs to this workspace. The current validated file is enough for

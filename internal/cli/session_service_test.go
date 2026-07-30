@@ -442,6 +442,66 @@ func TestSessionServiceCleanupFailureDoesNotBrickStartup(t *testing.T) {
 	}
 }
 
+type periodicCleanupRunner struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *periodicCleanupRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	close(r.started)
+	<-r.release
+	return turn, errors.New("test turn complete")
+}
+
+func (r *periodicCleanupRunner) CleanupSession(_ context.Context, _ session.Session) error {
+	r.calls.Add(1)
+	return nil
+}
+
+func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
+	service, err := NewSessionService(SessionServiceConfig{
+		StateRoot:       filepath.Join(t.TempDir(), "state"),
+		Policies:        testSessionPolicies(repo),
+		Runner:          runner,
+		CleanupInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(context.Background(), "create-periodic-cleanup", CreateRemoteSessionRequest{Policy: "responder", Task: "periodic cleanup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionTest(t, func() bool { return runner.calls.Load() > 0 })
+
+	turn, err := service.SubmitTurn(context.Background(), "run-during-cleanup", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-runner.started
+	during := runner.calls.Load()
+	time.Sleep(40 * time.Millisecond)
+	if got := runner.calls.Load(); got != during {
+		t.Fatalf("parked cleanup raced active turn: calls changed from %d to %d", during, got)
+	}
+	close(runner.release)
+	waitForSessionTest(t, func() bool {
+		got, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
+		return err == nil && got.State == session.TurnFailed
+	})
+	waitForSessionTest(t, func() bool { return runner.calls.Load() > during })
+}
+
 func TestSessionServiceWorkerRetiresParkedSessionAndStartsAgain(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")

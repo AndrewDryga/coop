@@ -414,7 +414,7 @@ under a new key merely because its result is unknown.
 | Queued turn at restart | Coop resumes it in FIFO order |
 | Turn interrupted after send intent | Surface interrupted; do not submit the same human input automatically |
 | Active turn must stop | Use the idempotent cancel endpoint, then reconcile the terminal turn |
-| Session should stop costing runtime | Wait for park; no box remains between turns |
+| Session should stop costing runtime | Wait for park; no agent or Compose service container remains between turns |
 | Incident is over | Close; retain the fork for review or an explicit later discard |
 | Review patch is truncated | Do not publish; reduce/split the change or use a separate human host workflow |
 
@@ -437,3 +437,9 @@ A production consumer still needs:
 
 Do not send a chat transport token, GitHub credential, Emisar administrative credential, or other
 landing authority into a Coop prompt or box.
+
+After every terminal turn, Coop removes the exact workspace-owned Compose service containers using
+their project and working-directory labels. Volumes remain so the next turn can restart services
+with durable development data. Daemon startup repeats this cleanup for historical sessions after a
+crash or upgrade, and a parked-session sweep retries cleanup every minute without racing an active
+turn. Explicit session discard remains responsible for deleting the workspace volumes and network.
