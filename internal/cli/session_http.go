@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	sessionHTTPMaxBody    = 128 << 10
-	sessionHTTPDefaultMax = 100
-	sessionHTTPMaxList    = 1000
+	sessionHTTPMaxBody     = 128 << 10
+	sessionHTTPTurnMaxBody = 12 << 20
+	sessionHTTPDefaultMax  = 100
+	sessionHTTPMaxList     = 1000
 )
 
 // These DTOs are the public v1 wire types. They deliberately do not mirror the durable records:
@@ -419,14 +420,16 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	var body struct {
-		ExpectedRevision int64  `json:"expected_revision"`
-		Prompt           string `json:"prompt"`
+		ExpectedRevision int64                   `json:"expected_revision"`
+		Prompt           string                  `json:"prompt"`
+		Artifacts        []session.InputArtifact `json:"artifacts"`
 	}
-	if !decodeSessionJSON(w, r, &body) {
+	if !decodeSessionJSONLimit(w, r, &body, sessionHTTPTurnMaxBody) {
 		return
 	}
 	turn, err := h.service.SubmitTurn(r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
-		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Prompt: body.Prompt,
+		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision,
+		Prompt: body.Prompt, Artifacts: body.Artifacts,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)
@@ -685,16 +688,25 @@ func (h *sessionHTTPHandler) requirePost(w http.ResponseWriter, r *http.Request)
 }
 
 func decodeSessionJSON(w http.ResponseWriter, r *http.Request, value any) bool {
-	if r.ContentLength > sessionHTTPMaxBody {
-		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 128 KiB")
+	return decodeSessionJSONLimit(w, r, value, sessionHTTPMaxBody)
+}
+
+func decodeSessionJSONLimit(
+	w http.ResponseWriter,
+	r *http.Request,
+	value any,
+	limit int64,
+) bool {
+	if r.ContentLength > limit {
+		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds its bound")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, sessionHTTPMaxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(value); err != nil {
 		if isSessionBodyTooLarge(err) {
-			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 128 KiB")
+			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds its bound")
 		} else if errors.Is(err, io.EOF) {
 			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "request body must contain one JSON value")
 		} else {
@@ -705,7 +717,7 @@ func decodeSessionJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
 		if isSessionBodyTooLarge(err) {
-			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 128 KiB")
+			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds its bound")
 		} else {
 			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "request body must contain exactly one JSON value")
 		}

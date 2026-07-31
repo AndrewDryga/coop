@@ -136,8 +136,9 @@ Idempotency-Key: <globally unique caller-owned key>
 ```
 
 The key and content type must each occur exactly once. Mutation URLs accept no query parameters.
-Bodies are limited to 128 KiB, must contain exactly one JSON value, and reject unknown fields.
-Prompts are further limited to 64 KiB of valid UTF-8 without NUL.
+Bodies are limited to 128 KiB except turn submission, which permits 12 MiB for encoded artifacts.
+Every body must contain exactly one JSON value and rejects unknown fields. Prompts are further
+limited to 64 KiB of valid UTF-8 without NUL.
 
 Use a stable key for one logical action. Repeating the exact method, key, and canonical body returns
 the recorded result without repeating the action. Reusing a key with a different method or body
@@ -225,7 +226,7 @@ curl --unix-socket "$SOCKET" \
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt` |
+| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`, optional `artifacts` |
 | `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | ordinal cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/cancel` | `expected_revision` |
@@ -233,6 +234,14 @@ curl --unix-socket "$SOCKET" \
 A public turn excludes its prompt and idempotency data. A completed turn's `assistant_message` is
 the user-facing response. Coop does not publish hidden reasoning, raw tool calls, raw ACP frames, or
 box logs.
+
+Each artifact has `name`, `media_type`, lowercase hex `sha256`, and base64-encoded `data`. A turn
+accepts at most four artifacts and 8 MiB of decoded content in total. Supported media types are
+PNG, JPEG, WebP, GIF, UTF-8 text/Markdown/CSV/JSON/YAML, and PDF. Coop validates the filename,
+content signature, size, and digest before admission. The agent receives negotiated ACP image,
+text, or embedded-resource blocks. Artifact bytes are omitted from every public turn and event,
+survive a daemon restart only while the turn is pending or active, and are deleted when the turn
+completes, fails, is cancelled, is interrupted after send, or is exhausted by budget.
 
 Cancellation asks ACP to cancel, then stops and reaps the exact process group and run-labeled box.
 It does not claim that external side effects were reversed.
@@ -396,7 +405,7 @@ Common status mapping:
 | `400` | invalid or over-bounds request |
 | `404` | session, turn, or operation not found |
 | `409` | idempotency, revision, state, queue, budget, resume, uncertainty, or discard conflict |
-| `413` | request body exceeds 128 KiB |
+| `413` | request body exceeds its route-specific bound |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
 | `503` | readiness endpoint is not ready |
 

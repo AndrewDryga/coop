@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
@@ -825,6 +827,15 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano()); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
+	for ordinal, artifact := range req.Artifacts {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO turn_artifacts (turn_id, ordinal, name, media_type, sha256, data)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			turn.ID, ordinal, artifact.Name, artifact.MediaType, artifact.SHA256, artifact.Data,
+		); err != nil {
+			return Turn{}, fmt.Errorf("insert turn artifact: %w", err)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE sessions SET next_ordinal = next_ordinal + 1, queued_turn_count = queued_turn_count + 1,
 		queued_prompt_bytes = queued_prompt_bytes + ?, updated_at = ? WHERE id = ?`, promptBytes,
@@ -855,7 +866,64 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 	if req.Prompt == "" || len(req.Prompt) > MaxPromptBytes || !utf8.ValidString(req.Prompt) || strings.IndexByte(req.Prompt, 0) >= 0 {
 		return &Error{Code: CodeInvalidRequest, Detail: "prompt must be bounded UTF-8 text"}
 	}
+	if len(req.Artifacts) > MaxTurnArtifacts {
+		return &Error{Code: CodeInvalidRequest, Detail: "turn has too many artifacts"}
+	}
+	total := 0
+	for _, artifact := range req.Artifacts {
+		if err := validateInputArtifact(artifact); err != nil {
+			return err
+		}
+		if total > MaxTurnArtifactBytes-len(artifact.Data) {
+			return &Error{Code: CodeInvalidRequest, Detail: "turn artifact content exceeds its bound"}
+		}
+		total += len(artifact.Data)
+	}
 	return nil
+}
+
+func validateInputArtifact(artifact InputArtifact) error {
+	if artifact.Name == "" || len(artifact.Name) > MaxArtifactNameBytes ||
+		filepath.Base(artifact.Name) != artifact.Name || artifact.Name == "." ||
+		!utf8.ValidString(artifact.Name) || strings.IndexByte(artifact.Name, 0) >= 0 {
+		return &Error{Code: CodeInvalidRequest, Detail: "artifact name is invalid"}
+	}
+	for _, r := range artifact.Name {
+		if unicode.IsControl(r) {
+			return &Error{Code: CodeInvalidRequest, Detail: "artifact name is invalid"}
+		}
+	}
+	switch artifact.MediaType {
+	case "image/png", "image/jpeg", "image/webp", "image/gif",
+		"text/plain", "text/markdown", "text/csv", "application/json",
+		"application/yaml", "application/x-yaml", "application/pdf":
+	default:
+		return &Error{Code: CodeInvalidRequest, Detail: "artifact media type is unsupported"}
+	}
+	if len(artifact.Data) == 0 || len(artifact.Data) > MaxArtifactBytes {
+		return &Error{Code: CodeInvalidRequest, Detail: "artifact content exceeds its bound"}
+	}
+	if !artifactMediaMatches(artifact.MediaType, artifact.Data) {
+		return &Error{Code: CodeInvalidRequest, Detail: "artifact content does not match its media type"}
+	}
+	digest := sha256.Sum256(artifact.Data)
+	if artifact.SHA256 != hex.EncodeToString(digest[:]) {
+		return &Error{Code: CodeInvalidRequest, Detail: "artifact digest does not match its content"}
+	}
+	return nil
+}
+
+func artifactMediaMatches(mediaType string, data []byte) bool {
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/gif":
+		return http.DetectContentType(data) == mediaType
+	case "image/webp":
+		return len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+	case "application/pdf":
+		return len(data) >= 5 && string(data[:5]) == "%PDF-"
+	default:
+		return utf8.Valid(data) && !bytes.ContainsRune(data, 0)
+	}
 }
 
 func validateRevision(sess Session, expected int64) error {
@@ -909,6 +977,10 @@ func (s *Store) LeaseNextTurn(ctx context.Context, sessionID string) (Turn, bool
 	}
 	if err != nil {
 		return Turn{}, false, fmt.Errorf("find queued turn: %w", err)
+	}
+	turn.Artifacts, err = loadTurnArtifacts(ctx, tx, turn.ID)
+	if err != nil {
+		return Turn{}, false, err
 	}
 	now := s.now()
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = ? WHERE id = ?`, string(TurnStarting), string(SendStateNone), now.UnixNano(), turn.ID); err != nil {
@@ -1086,6 +1158,9 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 		})); err != nil {
 			return nil, fmt.Errorf("append turn.interrupted: %w", err)
 		}
+		if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+			return nil, err
+		}
 		turn.State = TurnInterrupted
 		turn.FinishedAt = now
 		turn.StopReason = StopInterrupted
@@ -1243,6 +1318,9 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("cancel turn: %w", err)
 	}
+	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+		return Turn{}, err
+	}
 	if previousState == TurnQueued {
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET queued_turn_count = queued_turn_count - 1, queued_prompt_bytes = queued_prompt_bytes - ?, revision = revision + 1, updated_at = ? WHERE id = ?`, len(turn.Prompt), now.UnixNano(), sess.ID); err != nil {
 			return Turn{}, fmt.Errorf("release cancelled queue slot: %w", err)
@@ -1319,6 +1397,9 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?, assistant_message = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), turn.AssistantMessage, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("complete turn: %w", err)
 	}
+	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+		return Turn{}, err
+	}
 	if req.Message != "" {
 		if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventAssistantMessage, 1, mustJSON(map[string]any{"text": req.Message, "final": true})); err != nil {
 			return Turn{}, fmt.Errorf("append assistant.message: %w", err)
@@ -1387,6 +1468,9 @@ func (s *Store) FailTurn(ctx context.Context, req FailTurnRequest) (Turn, error)
 	turn.ErrorDetail = req.ErrorDetail
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?, error_code = ?, error_detail = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), string(turn.ErrorCode), turn.ErrorDetail, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("fail turn: %w", err)
+	}
+	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+		return Turn{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = '', activity = ?, turns_used = turns_used + 1, updated_at = ? WHERE id = ?`, string(ActivityParked), now.UnixNano(), req.SessionID); err != nil {
 		return Turn{}, fmt.Errorf("park failed turn session: %w", err)
@@ -1698,9 +1782,41 @@ func (s *Store) exhaustQueuedTx(ctx context.Context, tx *sql.Tx, sessionID strin
 		if _, err := s.appendEventTx(ctx, tx, sessionID, item.id, EventTurnFailed, 1, mustJSON(map[string]any{"error_code": string(CodeBudgetExhausted), "ordinal": item.ordinal})); err != nil {
 			return fmt.Errorf("append queued budget event: %w", err)
 		}
+		if err := deleteTurnArtifacts(ctx, tx, item.id); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET queued_turn_count = 0, queued_prompt_bytes = 0, updated_at = ? WHERE id = ?`, now.UnixNano(), sessionID); err != nil {
 		return fmt.Errorf("clear queued budget counters: %w", err)
+	}
+	return nil
+}
+
+func loadTurnArtifacts(ctx context.Context, tx *sql.Tx, turnID string) ([]InputArtifact, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT name, media_type, sha256, data
+		FROM turn_artifacts WHERE turn_id = ? ORDER BY ordinal`, turnID)
+	if err != nil {
+		return nil, fmt.Errorf("read turn artifacts: %w", err)
+	}
+	defer rows.Close()
+	var artifacts []InputArtifact
+	for rows.Next() {
+		var artifact InputArtifact
+		if err := rows.Scan(&artifact.Name, &artifact.MediaType, &artifact.SHA256, &artifact.Data); err != nil {
+			return nil, fmt.Errorf("scan turn artifact: %w", err)
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read turn artifacts: %w", err)
+	}
+	return artifacts, nil
+}
+
+func deleteTurnArtifacts(ctx context.Context, tx *sql.Tx, turnID string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM turn_artifacts WHERE turn_id = ?`, turnID); err != nil {
+		return fmt.Errorf("delete terminal turn artifacts: %w", err)
 	}
 	return nil
 }

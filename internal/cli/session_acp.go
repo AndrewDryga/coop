@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	sessionACPFrameLimit      = 1 << 20
+	sessionACPFrameLimit      = 12 << 20
 	sessionACPTranscriptLimit = 4 << 20
 	sessionACPMessageLimit    = session.MaxEventPayloadBytes
 	sessionACPArtifactLimit   = 1 << 20
@@ -1047,7 +1047,13 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		return "", err
 	}
 	var initialized struct {
-		ProtocolVersion int `json:"protocolVersion"`
+		ProtocolVersion   int `json:"protocolVersion"`
+		AgentCapabilities struct {
+			PromptCapabilities struct {
+				Image           bool `json:"image"`
+				EmbeddedContext bool `json:"embeddedContext"`
+			} `json:"promptCapabilities"`
+		} `json:"agentCapabilities"`
 	}
 	if json.Unmarshal(initializeResult, &initialized) != nil || initialized.ProtocolVersion != 1 {
 		return "", acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
@@ -1084,7 +1090,15 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	if err != nil {
 		return "", acpFailure(session.CodeInternal, "turn sent checkpoint failed")
 	}
-	prompt := map[string]any{"sessionId": nativeID, "prompt": []map[string]string{{"type": "text", "text": leased.Prompt}}}
+	content, err := sessionACPInputContent(
+		leased,
+		initialized.AgentCapabilities.PromptCapabilities.Image,
+		initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext,
+	)
+	if err != nil {
+		return "", err
+	}
+	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	if err := writeRequest(id, "session/prompt", prompt); err != nil {
 		return "", err

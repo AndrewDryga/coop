@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 1
+	SchemaVersion = 2
 
 	MaxIDBytes              = 256
 	MaxMethodBytes          = 128
@@ -22,6 +22,10 @@ const (
 	MaxEventPayloadBytes    = 256 << 10
 	MaxOperationResultBytes = 2 << 20
 	MaxErrorDetailBytes     = 4 << 10
+	MaxTurnArtifacts        = 4
+	MaxArtifactBytes        = 8 << 20
+	MaxTurnArtifactBytes    = 8 << 20
+	MaxArtifactNameBytes    = 255
 
 	MaxTurnsLimit         = 10000
 	MaxQueuedTurnsLimit   = 1000
@@ -220,21 +224,31 @@ type Session struct {
 }
 
 type Turn struct {
-	ID               string     `json:"id"`
-	SessionID        string     `json:"session_id"`
-	Ordinal          int64      `json:"ordinal"`
-	IdempotencyKey   string     `json:"idempotency_key"`
-	RequestHash      string     `json:"request_hash"`
-	State            TurnState  `json:"state"`
-	SendState        SendState  `json:"send_state"`
-	Prompt           string     `json:"prompt"`
-	QueuedAt         time.Time  `json:"queued_at"`
-	StartedAt        time.Time  `json:"started_at"`
-	FinishedAt       time.Time  `json:"finished_at"`
-	StopReason       StopReason `json:"stop_reason"`
-	AssistantMessage string     `json:"assistant_message"`
-	ErrorCode        ErrorCode  `json:"error_code"`
-	ErrorDetail      string     `json:"error_detail"`
+	ID               string          `json:"id"`
+	SessionID        string          `json:"session_id"`
+	Ordinal          int64           `json:"ordinal"`
+	IdempotencyKey   string          `json:"idempotency_key"`
+	RequestHash      string          `json:"request_hash"`
+	State            TurnState       `json:"state"`
+	SendState        SendState       `json:"send_state"`
+	Prompt           string          `json:"prompt"`
+	QueuedAt         time.Time       `json:"queued_at"`
+	StartedAt        time.Time       `json:"started_at"`
+	FinishedAt       time.Time       `json:"finished_at"`
+	StopReason       StopReason      `json:"stop_reason"`
+	AssistantMessage string          `json:"assistant_message"`
+	ErrorCode        ErrorCode       `json:"error_code"`
+	ErrorDetail      string          `json:"error_detail"`
+	Artifacts        []InputArtifact `json:"-"`
+}
+
+// InputArtifact is bounded user context attached to one turn. The public turn representation
+// omits Data so neither APIs nor event logs accidentally expose uploaded content.
+type InputArtifact struct {
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	SHA256    string `json:"sha256"`
+	Data      []byte `json:"data"`
 }
 
 type Event struct {
@@ -269,6 +283,7 @@ type SubmitTurnRequest struct {
 	SessionID        string
 	ExpectedRevision int64
 	Prompt           string
+	Artifacts        []InputArtifact
 }
 
 type CancelTurnRequest struct {

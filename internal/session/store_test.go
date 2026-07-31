@@ -2,6 +2,9 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +16,42 @@ import (
 	"testing"
 	"time"
 )
+
+func TestOpenMigratesV1WithArtifactTable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, databaseName)
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store := openTestStore(t, root)
+	defer store.Close()
+	var version int
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, SchemaVersion)
+	}
+	var table string
+	if err := store.db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name = 'turn_artifacts'`).Scan(&table); err != nil {
+		t.Fatalf("migrated artifact table: %v", err)
+	}
+}
 
 func TestOpenProtectsRootDatabaseAndRejectsUnsafeRoots(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
@@ -145,6 +184,155 @@ func TestPersistenceAndOperationReplayBeforeRevisionValidation(t *testing.T) {
 	}
 	if op, err := store.GetOperation(ctx, "turn-1"); err != nil || op.State != OperationSucceeded || op.ResourceID != turn.ID {
 		t.Fatalf("turn operation = %+v, %v", op, err)
+	}
+}
+
+func TestTurnArtifactsAreDurableBoundAndRemovedAfterCompletion(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+	sess, err := store.CreateSession(
+		ctx, "artifact-session", CreateSessionRequest{Target: "codex:model"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("\x89PNG\r\n\x1a\nartifact")
+	digest := sha256.Sum256(data)
+	artifact := InputArtifact{
+		Name: "bug.png", MediaType: "image/png",
+		SHA256: hex.EncodeToString(digest[:]), Data: data,
+	}
+	turn, err := store.SubmitTurn(ctx, "artifact-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "inspect",
+		Artifacts: []InputArtifact{artifact},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turn.Artifacts) != 0 {
+		t.Fatal("admission response exposed artifact bytes")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestStore(t, root)
+	defer store.Close()
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok || len(leased.Artifacts) != 1 {
+		t.Fatalf(
+			"durable artifact lease = %+v, ok=%v, err=%v",
+			leased.Artifacts, ok, err,
+		)
+	}
+	if string(leased.Artifacts[0].Data) != string(data) {
+		t.Fatalf("leased artifact data = %q", leased.Artifacts[0].Data)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: leased.ID, Message: "done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.db.QueryRow(
+		`SELECT count(*) FROM turn_artifacts WHERE turn_id = ?`, leased.ID,
+	).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("terminal artifact rows = %d, want 0", count)
+	}
+}
+
+func TestTurnArtifactValidationAndIdempotencyBinding(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(
+		ctx, "artifact-validation", CreateSessionRequest{Target: "target"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("hello")
+	digest := sha256.Sum256(data)
+	valid := InputArtifact{
+		Name: "notes.txt", MediaType: "text/plain",
+		SHA256: hex.EncodeToString(digest[:]), Data: data,
+	}
+	req := SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "inspect",
+		Artifacts: []InputArtifact{valid},
+	}
+	first, err := store.SubmitTurn(ctx, "artifact-idempotency", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := store.SubmitTurn(ctx, "artifact-idempotency", req)
+	if err != nil || replayed.ID != first.ID {
+		t.Fatalf("artifact replay = %+v, err=%v", replayed, err)
+	}
+	changed := req
+	changed.Artifacts = append([]InputArtifact(nil), req.Artifacts...)
+	changed.Artifacts[0].Data = []byte("other")
+	if _, err := store.SubmitTurn(
+		ctx, "artifact-idempotency", changed,
+	); CodeOf(err) != CodeIdempotencyConflict {
+		t.Fatalf("changed artifact replay error = %v", err)
+	}
+	bad := req
+	bad.Artifacts = []InputArtifact{{
+		Name: "../escape.png", MediaType: "image/png",
+		SHA256: valid.SHA256, Data: data,
+	}}
+	if _, err := store.SubmitTurn(
+		ctx, "bad-artifact", bad,
+	); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("invalid artifact error = %v", err)
+	}
+}
+
+func TestCancellingQueuedTurnRemovesArtifactPayload(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(
+		ctx, "artifact-cancel-session", CreateSessionRequest{Target: "target"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("cancel me")
+	digest := sha256.Sum256(data)
+	turn, err := store.SubmitTurn(ctx, "artifact-cancel-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "inspect",
+		Artifacts: []InputArtifact{{
+			Name: "notes.txt", MediaType: "text/plain",
+			SHA256: hex.EncodeToString(digest[:]), Data: data,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CancelTurn(ctx, "artifact-cancel", CancelTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.db.QueryRow(
+		`SELECT count(*) FROM turn_artifacts WHERE turn_id = ?`, turn.ID,
+	).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("cancelled artifact rows = %d, want 0", count)
 	}
 }
 

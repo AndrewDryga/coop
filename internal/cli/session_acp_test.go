@@ -3,7 +3,9 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,6 +84,27 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 		!strings.Contains(got, "com.docker.compose.project=") ||
 		!strings.Contains(got, "com.docker.compose.project.working_dir=") {
 		t.Fatalf("runtime cleanup label was not recorded: %q", got)
+	}
+}
+
+func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	data := []byte("\x89PNG\r\n\x1a\nimage")
+	digest := sha256.Sum256(data)
+	turn := fixture.submitArtifacts(t, "inspect screenshot", []session.InputArtifact{{
+		Name: "bug.png", MediaType: "image/png",
+		SHA256: hex.EncodeToString(digest[:]), Data: data,
+	}})
+	if _, err := fixture.runner.Run(
+		contextWithTurnDeadline(t), fixture.session, turn,
+	); err != nil {
+		t.Fatal(err)
+	}
+	wire := readFile(t, fixture.childLog)
+	if !strings.Contains(wire, `"type":"image"`) ||
+		!strings.Contains(wire, `"mimeType":"image/png"`) ||
+		!strings.Contains(wire, base64.StdEncoding.EncodeToString(data)) {
+		t.Fatalf("ACP image prompt was not projected: %q", wire)
 	}
 }
 
@@ -488,13 +511,22 @@ exit 0
 }
 
 func (f *sessionACPFixture) submit(t *testing.T, prompt string) session.Turn {
+	return f.submitArtifacts(t, prompt, nil)
+}
+
+func (f *sessionACPFixture) submitArtifacts(
+	t *testing.T,
+	prompt string,
+	artifacts []session.InputArtifact,
+) session.Turn {
 	t.Helper()
 	sess, err := f.store.GetSession(context.Background(), f.session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = f.store.SubmitTurn(context.Background(), "turn-"+prompt, session.SubmitTurnRequest{
-		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: prompt,
+		SessionID: sess.ID, ExpectedRevision: sess.Revision,
+		Prompt: prompt, Artifacts: artifacts,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -613,7 +645,17 @@ func TestSessionACPChildHelper(t *testing.T) {
 			if scenario == "initialize-fail" {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "error": map[string]any{"code": -32000, "message": "initialize failed"}})
 			} else {
-				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"protocolVersion": 1}})
+				send(map[string]any{
+					"jsonrpc": "2.0", "id": frame.ID,
+					"result": map[string]any{
+						"protocolVersion": 1,
+						"agentCapabilities": map[string]any{
+							"promptCapabilities": map[string]any{
+								"image": true, "embeddedContext": true,
+							},
+						},
+					},
+				})
 			}
 		case "session/new":
 			send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"sessionId": "native-1"}})

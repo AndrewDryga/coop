@@ -85,6 +85,20 @@ CREATE INDEX IF NOT EXISTS turns_fifo ON turns(session_id, state, ordinal);
 CREATE INDEX IF NOT EXISTS events_replay ON events(session_id, sequence);
 `
 
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS turn_artifacts (
+    turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY(turn_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS turn_artifacts_turn ON turn_artifacts(turn_id, ordinal);
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -102,10 +116,19 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("begin schema migration: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(schemaV1); err != nil {
-		return fmt.Errorf("create schema v1: %w", err)
+	if version < 1 {
+		if _, err := tx.Exec(schemaV1); err != nil {
+			return fmt.Errorf("create schema v1: %w", err)
+		}
+		version = 1
 	}
-	if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+	if version < 2 {
+		if _, err := tx.Exec(schemaV2); err != nil {
+			return fmt.Errorf("create schema v2: %w", err)
+		}
+		version = 2
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
